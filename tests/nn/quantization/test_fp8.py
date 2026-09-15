@@ -411,26 +411,26 @@ def _rollout_spec(
     )
 
 
-def test_apply_rollout_quantization_raises_when_swap_matches_nothing():
-    from vrl.models.loader import apply_rollout_quantization
+def test_quantization_pass_raises_when_swap_matches_nothing():
+    from vrl.nn.optimization import QuantizationPass
 
     with pytest.raises(RuntimeError, match="matched 0 linears"):
-        apply_rollout_quantization(_SwapModel([]), _rollout_spec("fp8"))
+        QuantizationPass().quantize(_SwapModel([]), _rollout_spec("fp8"))
 
 
-def test_apply_rollout_quantization_noop_and_count_when_not_fp8_or_swapped():
-    from vrl.models.loader import apply_rollout_quantization
+def test_quantization_pass_disabled_without_scheme_and_counts_swaps():
+    from vrl.nn.optimization import QuantizationPass
 
-    assert apply_rollout_quantization(_SwapModel([]), _rollout_spec(None)) == 0
-    assert apply_rollout_quantization(_SwapModel(["a", "b"]), _rollout_spec("fp8")) == 2
+    assert not QuantizationPass().enabled(_rollout_spec(None))
+    assert QuantizationPass().quantize(_SwapModel(["a", "b"]), _rollout_spec("fp8")) == 2
 
 
-def test_apply_rollout_quantization_rejects_blockwise_with_compile():
+def test_quantization_pass_rejects_blockwise_with_compile():
     """blockwise graph-breaks inductor (compiled ~10x slower than eager) — refuse."""
-    from vrl.models.loader import apply_rollout_quantization
+    from vrl.nn.optimization import QuantizationPass
 
     with pytest.raises(ValueError, match=r"blockwise.*torch_compile"):
-        apply_rollout_quantization(
+        QuantizationPass().quantize(
             _SwapModel(["a"]),
             _rollout_spec(
                 "fp8",
@@ -440,7 +440,7 @@ def test_apply_rollout_quantization_rejects_blockwise_with_compile():
         )
     # blockwise without compile, and rowwise with compile, both stay allowed.
     model = _SwapModel(["a"])
-    apply_rollout_quantization(
+    QuantizationPass().quantize(
         model,
         _rollout_spec(
             "fp8",
@@ -450,7 +450,7 @@ def test_apply_rollout_quantization_rejects_blockwise_with_compile():
     )
     assert model.recipe_seen == "blockwise"
     model = _SwapModel(["a"])
-    apply_rollout_quantization(
+    QuantizationPass().quantize(
         model,
         _rollout_spec(
             "fp8",
@@ -461,19 +461,19 @@ def test_apply_rollout_quantization_rejects_blockwise_with_compile():
     assert model.recipe_seen == "rowwise"
 
 
-def test_apply_rollout_quantization_passes_recipe_through():
+def test_quantization_pass_passes_recipe_through():
     """The nested rollout quantization recipe reaches the FP8 swap."""
-    from vrl.models.loader import apply_rollout_quantization
+    from vrl.nn.optimization import QuantizationPass
 
     model = _SwapModel(["a"])
-    apply_rollout_quantization(
+    QuantizationPass().quantize(
         model,
         _rollout_spec("fp8", recipe="blockwise"),
     )
     assert model.recipe_seen == "blockwise"
 
     model = _SwapModel(["a"])
-    apply_rollout_quantization(model, _rollout_spec("fp8"))
+    QuantizationPass().quantize(model, _rollout_spec("fp8"))
     assert model.recipe_seen == "rowwise"
 
 
@@ -509,16 +509,16 @@ class _FakeModel(_SwapModel):
         return [module.recipe for module in self._root.modules() if isinstance(module, Fp8Linear)]
 
 
-def test_apply_rollout_quantization_dispatches_by_scheme():
-    from vrl.models.loader import apply_rollout_quantization
+def test_quantization_pass_dispatches_by_scheme():
+    from vrl.nn.optimization import QuantizationPass
 
     model = _FakeModel()
-    # bf16/fp16/fp32 rollout: a load-time dtype, nothing to swap
-    apply_rollout_quantization(model, _rollout_spec(None))
+    # bf16/fp16/fp32 rollout: a load-time dtype, the pass never runs
+    assert not QuantizationPass().enabled(_rollout_spec(None))
     assert model.recipes == []
     # An unimplemented scheme must NOT silently no-op (that was the old footgun).
     # QuantizationPolicy rejects unknown formats at construction, so reaching the
-    # loader with one requires a raw fake — the loader still fails loud.
+    # pass with one requires a raw fake — the pass still fails loud.
     unknown_scheme = SimpleNamespace(
         device=None,
         torch_compile=None,
@@ -530,10 +530,10 @@ def test_apply_rollout_quantization_dispatches_by_scheme():
         ),
     )
     with pytest.raises(NotImplementedError, match="no rollout swap"):
-        apply_rollout_quantization(model, unknown_scheme)
+        QuantizationPass().quantize(model, unknown_scheme)
     assert model.recipes == []
     # fp8: the swap fires
-    apply_rollout_quantization(model, _rollout_spec("fp8"))
+    QuantizationPass().quantize(model, _rollout_spec("fp8"))
     assert model.recipes == ["rowwise"]
 
 

@@ -23,7 +23,7 @@ import pytest
 from torch import nn
 
 from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
-from vrl.models.loader import apply_rollout_quantization
+from vrl.nn.optimization import QuantizationPass
 from vrl.nn.quantization import QuantizedLinear
 
 
@@ -88,7 +88,7 @@ def test_wan_rollout_quantization_covers_both_experts(scheme: str, monkeypatch) 
     # it would only stop the walk this test is about from ever running on CPU.
     monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device=None: True)
 
-    count = apply_rollout_quantization(model, _rollout_build(scheme))
+    count = QuantizationPass().quantize(model, _rollout_build(scheme))
 
     assert count, "no linears swapped -- min_features/exclude gated everything"
     assert _quantized_paths(model.transformer), "expert 1 (transformer) not quantized"
@@ -129,5 +129,5 @@ def test_wan_single_expert_model_still_quantizes() -> None:
     assert model.transformer_2 is None
     assert set(model.policy_cores) == {"transformer"}
 
-    assert apply_rollout_quantization(model, _rollout_build("fp8"))
+    assert QuantizationPass().quantize(model, _rollout_build("fp8"))
     assert _quantized_paths(model.transformer)

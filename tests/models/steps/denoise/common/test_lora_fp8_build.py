@@ -430,7 +430,7 @@ def test_shared_builder_preserves_resolved_role_precision() -> None:
 def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from vrl.models.loader import apply_rollout_quantization
+    from vrl.nn.optimization import QuantizationPass
 
     class _Policy:
         quantization_exclude: tuple[str, ...] = ()
@@ -467,7 +467,7 @@ def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
     )
 
     with pytest.raises(RuntimeError, match="NVFP4-capable CUDA target"):
-        apply_rollout_quantization(model, build)
+        QuantizationPass().quantize(model, build)
 
     assert model.quantize_calls == 0
 

@@ -17,11 +17,10 @@ from vrl.models.loader import (
     load_diffusers_scheduler,
     load_diffusers_transformer,
     load_flow_match_scheduler,
-    validate_rollout_quantization_support,
 )
 from vrl.models.parking import module_on_host
 from vrl.models.precision import apply_float32_precision
-from vrl.nn.optimization import apply_rollout_optimizations
+from vrl.nn.optimization import QuantizationPass, apply_rollout_optimizations
 from vrl.nn.optimization.frame_shared_adaln import share_adaln_across_frames
 from vrl.nn.optimization.fused_rms_norm import fuse_rms_norms
 from vrl.utils.logging import init_logger
@@ -39,7 +38,7 @@ def build_denoise_runtime_bundle(
     rollout = build.require_rollout()
     # Reject unsupported NVFP4 hardware before checkpoint loading, LoRA wrapping,
     # or any other model mutation.
-    validate_rollout_quantization_support(build)
+    QuantizationPass.validate_support(build)
     model = model_cls.from_build(build)
     pipeline_offload = rollout.pipeline_offload_mode != "none"
 

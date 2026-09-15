@@ -111,9 +111,7 @@ class QuantizationPass:
         return getattr(getattr(build, "precision", None), "quantization", None) is not None
 
     def apply(self, model: Any, build: Any) -> PassResult:
-        from vrl.models.loader import apply_rollout_quantization
-
-        count = apply_rollout_quantization(model, build)
+        count = self.quantize(model, build)
         quantization = build.precision.quantization
         validate_every_core_quantized(model, quantization.format)
         return PassResult(
@@ -121,6 +119,121 @@ class QuantizationPass:
             applied=True,
             detail=f"{quantization.format}: {count} linears",
         )
+
+    @staticmethod
+    def validate_support(build: Any) -> None:
+        """Fail before model mutation when the requested rollout format cannot run.
+
+        Builders call this before loading a checkpoint, and :meth:`quantize`
+        calls it again before swapping modules, so both entry points reject
+        unsupported targets without partially constructing or transforming the
+        model.
+        """
+
+        quantization = build.precision.quantization
+        if quantization is None or quantization.format != "nvfp4":
+            return
+        from vrl.nn.quantization import nvfp4_available
+
+        if not nvfp4_available(build.device):
+            raise RuntimeError(
+                "precision.rollout.quantization.format='nvfp4' requires an "
+                "NVFP4-capable CUDA target (Blackwell-class, compute capability "
+                f">= 10.0); got {build.device!r}",
+            )
+
+    def quantize(self, model: Any, build: Any) -> int:
+        """Swap the rollout policy's big GEMMs to the configured scheme; return the count.
+
+        Reads ``build.precision.quantization`` (the caller has checked
+        :meth:`enabled`) and dispatches to its module swap. FP8 targets eligible
+        attention projections and MLPs; NVFP4 keeps the validated MLP-only
+        target profile. Quantization is rollout-only and layered on the
+        ordinary rollout dtype, which remains responsible for unswapped
+        operations and parameter masters.
+
+        Hardware/format checks happen before the swap, and a zero-match result
+        fails loudly. Runs after LoRA attachment and before compile so PEFT can
+        see plain linears and inductor can see the final quantized modules.
+        """
+
+        rollout = getattr(build, "rollout", None)
+        quantization = build.precision.quantization
+        format_name = quantization.format
+        self.validate_support(build)
+        recipe = quantization.recipe
+        # blockwise delegates to vLLM's triton kernel, whose wrapper dynamo cannot
+        # trace (lru_cache'd deep_gemm check + ctypes pynvml call): measured 45 graph
+        # breaks on SD3.5 and a compiled forward ~10x SLOWER than eager
+        # (SPRINT_rollout_optimization_layer item 2). Refuse the combination instead
+        # of silently shipping the regression.
+        if (
+            format_name == "fp8"
+            and recipe == "blockwise"
+            and getattr(build, "torch_compile", None)
+        ):
+            raise ValueError(
+                "precision.rollout.quantization.recipe='blockwise' is incompatible with "
+                "model.torch_compile (the vLLM block kernel graph-breaks inductor; the "
+                "compiled forward is ~10x slower than eager). Use recipe='rowwise' "
+                "(compile-clean) or disable model.torch_compile.",
+            )
+        from vrl.nn.quantization import QUANTIZATION_SCHEMES
+
+        scheme = QUANTIZATION_SCHEMES.get(format_name)
+        if scheme is None:
+            supported = ", ".join(sorted(QUANTIZATION_SCHEMES))
+            raise NotImplementedError(
+                f"precision.rollout.quantization.format={format_name!r} has no rollout "
+                f"swap yet (supported: {supported}); add a QuantizedLinear subclass and "
+                "register it in vrl.nn.quantization.QUANTIZATION_SCHEMES.",
+            )
+        # The scheme owns its target scope and kernel; the model declares only which
+        # roots to walk and what to exclude. Neither knows about the other, so a new
+        # scheme needs no model change and a new family needs no scheme change.
+        # ``QuantizationPolicy`` already normalized the recipe and filled the format's
+        # default, so its presence — not a second per-scheme table — decides whether
+        # this scheme takes one.
+        swap_kwargs: dict[str, Any] = {"exclude": model.quantization_exclude}
+        if recipe is not None:
+            swap_kwargs["recipe"] = recipe
+            policy_detail = f"recipe={recipe}, profile={scheme.default_target_profile}"
+        else:
+            policy_detail = f"profile={scheme.default_target_profile}"
+        # Paths are prefixed by root so the log names WHICH expert changed on a
+        # multi-root family.
+        swapped = [
+            f"{root_name}.{path}"
+            for root_name, root in model.policy_cores.items()
+            for path in scheme.swap_linears(root, **swap_kwargs)
+        ]
+        if not swapped:
+            raise RuntimeError(
+                f"precision.rollout.quantization.format={format_name!r} but the swap "
+                "matched 0 linears — the policy has no quantizable "
+                f"{scheme.default_target_profile} linears (check the exclude "
+                "list / min_features). It would be a no-op.",
+            )
+        if not getattr(rollout, "base_weight_sync", True):
+            # Base weights will never be synced into this rollout (LoRA syncs
+            # adapters; sync-free contexts sync nothing), so the source masters are
+            # dead weight — drop them BEFORE the device move so a large quantized
+            # rollout does not retain a full source-dtype copy beside its cache.
+            from vrl.nn.quantization import drop_quantized_masters
+
+            freed = drop_quantized_masters(model)
+            logger.info(
+                "%s rollout without base-weight sync: dropped source masters (%.1f GiB freed)",
+                format_name,
+                freed / 2**30,
+            )
+        logger.info(
+            "%s rollout (%s): quantized %d policy linears",
+            format_name,
+            policy_detail,
+            len(swapped),
+        )
+        return len(swapped)
 
 
 @dataclass(frozen=True, slots=True)

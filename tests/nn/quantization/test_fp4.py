@@ -153,7 +153,7 @@ def test_blocked_scale_layout_shape_and_origin() -> None:
 
 # --- the hardware gate --------------------------------------------------------
 #
-# `nvfp4_available` decides whether vrl/models/loader.py takes the NVFP4 loading
+# `nvfp4_available` decides whether QuantizationPass takes the NVFP4 swap
 # path, and every other reference to it in tests/ is a monkeypatch. These two are
 # the only places the gate itself is asserted.
 
@@ -278,13 +278,13 @@ def _rollout_spec(
     )
 
 
-def test_apply_rollout_quantization_dispatches_nvfp4(caplog, monkeypatch) -> None:
-    from vrl.models.loader import apply_rollout_quantization
+def test_quantization_pass_dispatches_nvfp4(caplog, monkeypatch) -> None:
+    from vrl.nn.optimization import QuantizationPass
 
     monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
     model = _FakeModel()
     with caplog.at_level("INFO"):
-        apply_rollout_quantization(model, _rollout_spec(device="cuda:0"))
+        QuantizationPass().quantize(model, _rollout_spec(device="cuda:0"))
     assert model.nvfp4_calls == 1
     assert "nvfp4" in caplog.text
 
@@ -294,22 +294,22 @@ def test_nvfp4_policy_rejects_fp8_recipes() -> None:
         QuantizationPolicy(format="nvfp4", recipe="rowwise")
 
 
-def test_loader_rejects_unsupported_target_before_mutation(monkeypatch) -> None:
-    from vrl.models.loader import apply_rollout_quantization
+def test_pass_rejects_unsupported_target_before_mutation(monkeypatch) -> None:
+    from vrl.nn.optimization import QuantizationPass
 
     model = _FakeModel()
     monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: False)
     with pytest.raises(RuntimeError, match="NVFP4-capable CUDA target"):
-        apply_rollout_quantization(model, _rollout_spec(device="cuda:0"))
+        QuantizationPass().quantize(model, _rollout_spec(device="cuda:0"))
     assert model.nvfp4_calls == 0
 
 
-def test_loader_allows_torch_compile_after_shape_gate(monkeypatch) -> None:
-    from vrl.models.loader import apply_rollout_quantization
+def test_pass_allows_torch_compile_after_shape_gate(monkeypatch) -> None:
+    from vrl.nn.optimization import QuantizationPass
 
     monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
     model = _FakeModel()
-    apply_rollout_quantization(
+    QuantizationPass().quantize(
         model,
         _rollout_spec(torch_compile={"enable": True, "mode": "default"}),
     )
