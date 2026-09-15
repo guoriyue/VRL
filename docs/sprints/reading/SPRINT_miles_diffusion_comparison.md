@@ -338,7 +338,7 @@ cleanup 失败合并成 `RolloutPhaseCleanupError`，release 失败时 trainer �
 并在 unmap 前 `cuda.synchronize` + 协调 barrier，避免在别的 rank 还在 unmap 时发 NCCL kernel
 （2026-08-16 Xid 79 事故的对策）。VRL 的租约在顺序和失败语义上更完整。
 
-**参照里值得核对的两点**：(1) 卸载窗口内的健康探测——VRL 的 `RayGenerationWorker.health()`
-跑在独立并发组，须确认它不触碰 CUDA（否则 park 窗口内的探测就是 Xid 模式）；(2) 分标签部分
-唤醒——VRL 的权重同步走 versioned slot，不需要唤醒引擎即可安装，因此没有"只恢复权重"的需求。
-风险：本条只记录、不改代码；门：(1) 用 park 期间持续调 `/health` 的 smoke 验证零 CUDA 调用。
+**参照里的两点在 VRL 已有对应**：(1) 卸载窗口内的健康探测——VRL 的健康监视线程在 parking 切换
+和 parked 期间暂停探测（`vrl/generation/ray/health_monitor.py:39,59-89`，启动即暂停直到 fleet 激活）；
+(2) 分标签部分唤醒——VRL 的权重同步走 versioned slot，不需要唤醒引擎即可安装，没有"只恢复
+权重"的需求。结论：相位切换这一项 VRL 不缺东西，不改代码。
