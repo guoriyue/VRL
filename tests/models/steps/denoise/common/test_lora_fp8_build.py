@@ -295,8 +295,9 @@ def test_shared_builder_installs_pipeline_offload_after_final_cpu_module_tree(
         def apply_lora(self, _build: Any) -> None:
             events.append("attach_lora")
 
-        def torch_compile_transformer(self, mode: str) -> None:
+        def torch_compile_transformer(self, mode: str, *, regional: bool = False) -> None:
             assert mode == "default"
+            assert regional is False
             events.append("compile")
             # Really compile: the pass verifies the effect on the modules, so a
             # fake that only records the call reads as a half-covering pass.

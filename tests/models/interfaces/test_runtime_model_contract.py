@@ -84,8 +84,8 @@ class _DiffusionModelBaseStub(DiffusionModelBase):
         del build
         return None
 
-    def torch_compile_transformer(self, mode: str):
-        del mode
+    def torch_compile_transformer(self, mode: str, *, regional: bool = False):
+        del mode, regional
 
     def set_num_steps(self, n: int):
         del n

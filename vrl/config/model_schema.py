@@ -80,6 +80,10 @@ class TorchCompileSection(ConfigBase):
     # ``vrl.models.interfaces.runtime.TorchCompileScope`` (validated
     # at config load by the compile matrix and per build by the property).
     scope: str | None = None
+    # Compile each repeated transformer block in place instead of the root
+    # module: one trace serves every block, so cold compile and recompiles cost
+    # one block rather than the whole graph. Steady-state math is unchanged.
+    regional: bool | None = None
 
 
 class ModelExecutorSection(ConfigBase):

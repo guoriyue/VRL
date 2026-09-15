@@ -293,7 +293,8 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
         def set_num_steps(self, _num_steps: int) -> None:
             return None
 
-        def torch_compile_transformer(self, _mode: str) -> None:
+        def torch_compile_transformer(self, _mode: str, *, regional: bool = False) -> None:
+            del regional
             return None
 
         def apply_lora(self, _build: Any) -> None:

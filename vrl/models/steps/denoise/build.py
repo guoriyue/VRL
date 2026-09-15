@@ -100,7 +100,7 @@ def assemble_replay_bundle(
 
     compile_cfg = build.torch_compile
     if compile_cfg is not None:
-        model.torch_compile_transformer(compile_cfg["mode"])
+        model.torch_compile_transformer(compile_cfg["mode"], regional=compile_cfg["regional"])
 
     apply_float32_precision(build.precision.float32_precision)
     return RuntimeBundle(
