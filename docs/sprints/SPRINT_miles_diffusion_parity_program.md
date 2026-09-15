@@ -203,3 +203,12 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   7.08056e-4（rel 1.1e-4，bf16 量级）、clip 0。即 token 分片 + loss×cp 的梯度与单卡等价。
   时间：每次 24 视频生成 325 s（leader 单独生成，与基线相同——follower 引擎空转是已知待办）。
   epoch 1 进行中；基线 epoch 1：loss 1.50e-4、reward −5.6918、parity 0.001893、grad_norm 4.87e-3。
+- 2026-09-15 04:35：**C 门通过（两个 update）**：cp=2（`none`）epoch 1：loss 1.389e-4、reward −5.670、
+  parity 0.001887、grad_norm 4.874e-3；基线 epoch 1：1.50e-4 / −5.692 / 0.001893 / 4.866e-3——epoch 1 的
+  差异来自 update 0 后权重的 bf16 级非确定性（两次单卡 run 之间也有同量级差异），epoch 0 逐位一致。
+  两项决策按用户指示照参照系统的形状定：(1) CP 预设默认 `precision_policy=none`
+  （可训练参数 fp32 master、bf16 计算走 autocast）；(2) CP 组内每个 rank 各生成自己的 prompt 切片、
+  组内 all_gather 并集（8f63044d），不再有空转引擎，组生成墙钟应减半（每 rank 3 组）。
+  验证 run `cp2_allpeers` 已在 GPU 2-3 启动。附：2 卡复现里 actor 策略的 CheckpointError 来自复现脚本
+  对 block 用了默认 `cast_forward_inputs=True`（RoPE 张量前向 bf16、重算 fp32），VRL 的
+  `apply_fsdp` 对 block 显式关闭该转型，故 actor 策略在 VRL 内不受此影响。
