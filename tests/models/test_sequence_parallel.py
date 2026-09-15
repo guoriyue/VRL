@@ -126,6 +126,79 @@ def test_two_rank_forward_matches_the_single_rank_reference(tmp_path: Path) -> N
         torch.testing.assert_close(results[rank], reference, rtol=1e-5, atol=1e-5)
 
 
+def _exchange_rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -> None:
+    try:
+        import torch
+        import torch.distributed as dist
+
+        from vrl.models.sequence_parallel import (
+            _gather_dim,
+            _heads_to_shards,
+            _local_chunk,
+            _shards_to_heads,
+        )
+
+        dist.init_process_group(
+            backend="gloo",
+            init_method=f"tcp://127.0.0.1:{port}",
+            rank=rank,
+            world_size=world,
+        )
+        try:
+            group = dist.group.WORLD
+            torch.manual_seed(rank)
+            batch, heads, shard_len, head_dim = 2, 6, 5, 4
+            # Transposed like the processor's heads_view output: not contiguous.
+            local = torch.randn(batch, shard_len, heads, head_dim).transpose(1, 2)
+            exchanged = _shards_to_heads(local, group=group)
+            # The gather-then-narrow form defines the layout the exchange must keep.
+            layout = _local_chunk(_gather_dim(local, dim=2, group=group), dim=1, group=group)
+            # A sequence-dim slice, as the image part of the joint attention output.
+            text = torch.randn(batch, heads // world, 3, head_dim)
+            image = torch.cat([exchanged, text], dim=2)[:, :, : world * shard_len]
+            round_trip = _heads_to_shards(image, group=group)
+        finally:
+            dist.destroy_process_group()
+        queue.put((rank, (exchanged, layout, round_trip, local)))
+    except BaseException as error:  # pragma: no cover - transported to parent
+        queue.put((rank, f"error: {error!r}"))
+
+
+@pytest.mark.slow_test
+def test_three_rank_exchange_matches_gather_layout_and_round_trips() -> None:
+    """An odd rank count catches head/sequence axis mix-ups a pair cannot."""
+
+    import torch
+
+    context = multiprocessing.get_context("spawn")
+    queue: multiprocessing.Queue = context.Queue()
+    port = _free_port()
+    world = 3
+    procs = [
+        context.Process(target=_exchange_rank_main, args=(rank, world, port, queue))
+        for rank in range(world)
+    ]
+    for proc in procs:
+        proc.start()
+    results = {}
+    try:
+        for _ in procs:
+            rank, payload = queue.get(timeout=300)
+            results[rank] = payload
+    finally:
+        for proc in procs:
+            proc.join(timeout=60)
+            if proc.is_alive():
+                proc.kill()
+
+    errors = {rank: payload for rank, payload in results.items() if isinstance(payload, str)}
+    assert not errors, errors
+    for rank in range(world):
+        exchanged, layout, round_trip, local = results[rank]
+        assert torch.equal(exchanged, layout)
+        assert torch.equal(round_trip, local)
+
+
 def test_install_requires_a_multi_rank_group() -> None:
     """A one-rank group is the degenerate case the plain path already serves."""
 
