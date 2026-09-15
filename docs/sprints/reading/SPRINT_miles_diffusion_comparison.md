@@ -125,6 +125,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 13:45 — 运行证据与可复现性：源码/环境/数据快照 vs 实验跟踪服务
 - 2026-09-15 14:45 — 引擎健康与恢复：死 worker 是终止 run 还是原位重建
 - 2026-09-15 15:45 — 训练中的固定 prompt 评估：低方差的学习信号
+- 2026-09-15 16:45 — rollout 请求的准入与背压：全局信号量 vs 按调度模式的槽位/字节上限
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -503,3 +504,25 @@ seed}`，在 update 边界用当前策略对固定 prompt 做**固定种子**生
 `after_train_step` 之后插入。风险：每次评估占一次生成时间（可设 every_n 大一些）；门：eval 曲线
 的逐 update 标准差 < 训练 reward 标准差的 1/3，且今天 recompute vs strict 的差异在 5 个评估点
 内可判。本小时不改代码。
+
+### hourly note 2026-09-15 16:45 — 准入：一个全局信号量，还是按调度模式的容量契约
+
+**问题**：采样请求发多少、发给谁、什么时候停——决定引擎利用率与主机内存峰值（轨迹张量在
+driver 端堆积）。
+
+**参照实现**（`miles/rollout/sglang_diffusion_rollout.py:100-116, 248-262`）：一个进程级
+`asyncio.Semaphore(server_concurrency × 引擎数)` 统一限制在飞的 microgroup 数，`dp_rank_context`
+轮询选择引擎；全异步模式再叠加成品缓冲区上限（`--async-data-buffer-capacity-factor`）和并发
+生成上限（`--async-max-concurrent-samples`）。简单、全局、与调度模式无关。
+
+**VRL 今天**：准入是**按调度模式**的契约：严格模式下请求串行、每请求按 `samples_per_generation_batch`
+切成 batch 后 `per_batch_dispatch` 分发到各引擎（`vrl/generation/ray/executor.py:103-125`，
+pipelined worker 单飞锁）；continuous 模式下生产者有固定槽位（`pending_slots`）加
+`PendingRewardCapacity` 的**字节**上限（`vrl/rollouts/orchestration/continuous/producer.py:59-137`），
+即用轨迹字节数而非请求数做背压——这比按请求计数更贴近真正的资源（主机内存），是 VRL 更细的
+地方。运行时层还有 admission 关闭语义（健康监视失败后拒绝新请求，`vrl/generation/ray/runtime.py:130-165`）。
+
+**判断**：不需要全局信号量；VRL 的字节背压 + 槽位已覆盖。一个可量化的观察：今天 recompute arm
+的 8 个 batch-16 请求在 3 张 rollout 卡上轮询，`engine_generate` 55 s ≈ 3 轮 × 13 s，说明请求粒度
+的分发已把三张卡用满；若把 `samples_per_generation_batch` 设为组大小以上不会更快。门：无需改动；
+若将来加 reward 副本池（12:45 笔记），背压字节上限需把 reward 在飞的 artifact 一并计入（现已计入）。
