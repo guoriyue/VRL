@@ -12,6 +12,7 @@ from vrl.algorithms.logprob_mismatch import (
     PrecisionCorrectionConfig,
     apply_rejection_sample_mask,
     apply_truncated_importance_weight,
+    behavior_log_prob,
     combine_keep_masks,
 )
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -191,13 +192,13 @@ class GRPO:
             raise RuntimeError("AlgorithmInput.advantages is required for GRPO")
         signals = inputs.signals.primary
         advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
-        old_log_probs = signals.old_log_prob
+        pc = self.precision_correction
+        old_log_probs = behavior_log_prob(signals.log_prob, signals.old_log_prob, pc)
 
         raw_ratio = torch.exp(signals.log_prob - old_log_probs)
         # Truncated importance sampling on the rollout->replay weight before the PPO
         # clip, so quantized-rollout (FP8/NVFP4) drift on a few samples cannot dominate
         # the gradient via the unclipped negative-advantage branch.
-        pc = self.precision_correction
         ratio, tis_keep = apply_truncated_importance_weight(raw_ratio, pc)
         # RS rejects whole samples whose rollout->replay log-ratio drift is out of
         # band — orthogonal to TIS (which clamps the per-element weight). Both feed
@@ -516,17 +517,18 @@ class FlowDPPO(GRPO):
         old_prev_sample_mean = _require_trust_region_signals(signals, "FlowDPPO")
         advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
 
-        raw_ratio = torch.exp(signals.log_prob - signals.old_log_prob)
+        pc = self.precision_correction
+        old_log_probs = behavior_log_prob(signals.log_prob, signals.old_log_prob, pc)
+        raw_ratio = torch.exp(signals.log_prob - old_log_probs)
         # Bound rollout->replay precision drift (FP8/NVFP4 rollout) before it
         # enters the trust-region loss — the same TIS/RS the base GRPO applies.
         # Without it a quantized rollout's logprob drift flows unclipped into the
         # negative-advantage branch; the trust-region KL mask below only catches
         # *policy* drift, not *precision* drift. No-op when precision is not split
         # (tis_mode/rs_mode default to "off").
-        pc = self.precision_correction
         ratio, tis_keep = apply_truncated_importance_weight(raw_ratio, pc)
         rs_keep = apply_rejection_sample_mask(
-            signals.log_prob - signals.old_log_prob,
+            signals.log_prob - old_log_probs,
             pc,
             mask=signals.mask,
         )

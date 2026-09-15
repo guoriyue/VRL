@@ -522,6 +522,7 @@ class OnlineTrainer:
         # (importance-ratio algorithms hold a `precision_correction` slot).
         if hasattr(algorithm, "precision_correction"):
             algorithm.precision_correction = config.precision_correction
+            self._validate_recompute_old_logprob(config)
         # Clean fine-tuning latents ({target artifact -> [C,T,H,W]}) for the GRPO
         # diffusion-loss regularizer; the recipe loads data.sft_latents and the
         # config layer already rejected sft_weight>0 without it.
