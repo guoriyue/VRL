@@ -1,0 +1,28 @@
+# The dedicated 3x1 arm with the two knobs that previously failed the replay
+# parity gate re-enabled — generation batch 16 against single-sample replay
+# (measured logprob drift 0.015-0.017) and torch.compile on both scopes
+# (0.014-0.030) — but with the ratio's "old" side taken from the trainer's own
+# pre-update replay forward (precision_correction.recompute_old_logprob=on).
+# ppo_epochs=1 makes
+# that the loss forward itself, so the ratio is exactly 1: the drift stays
+# visible in the parity metrics but can no longer clip 54-60% of the samples
+# under clip_ratio=1e-4, and the 1.89-2.48x compile speed-up becomes usable.
+# Compare against the strict arm's reward curve at equal epochs.
+defaults:
+  - /experiment/sd3_5/online_grpo_ocr_dedicated_3x1
+
+rollout:
+  samples_per_generation_batch: 16
+
+model:
+  torch_compile:
+    enable: true
+    scope: all
+
+trainer:
+  output_dir: outputs/sd3_5_ocr_dedicated_3x1/recompute_b16_compile
+  # Declaring the correction also tells the pre-optimizer replay-parity gate
+  # that the drift is intentional (it yields to any precision correction), so
+  # the 0.015 batch-shape drift no longer refuses the first step.
+  precision_correction:
+    recompute_old_logprob: "on"

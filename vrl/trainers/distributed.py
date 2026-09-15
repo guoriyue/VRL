@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -238,6 +239,15 @@ class DistributedTrainingContext:
     rank: int
     world_size: int
     device: torch.device
+    # Ranks per context-parallel group (fsdp mesh ["dp_shard", "cp"]). Groups are
+    # contiguous: ranks 0..cp_size-1 share one sample's sequence, and so on.
+    cp_size: int = 1
+
+    def __post_init__(self) -> None:
+        if self.cp_size < 1 or self.world_size % self.cp_size:
+            raise ValueError(
+                f"cp_size={self.cp_size} must be >= 1 and divide world_size={self.world_size}",
+            )
 
     @property
     def distributed(self) -> bool:
@@ -246,6 +256,19 @@ class DistributedTrainingContext:
     @property
     def is_primary(self) -> bool:
         return self.rank == 0
+
+    @property
+    def dp_size(self) -> int:
+        """Number of data-parallel replicas: sampler identity is dp, not rank."""
+        return self.world_size // self.cp_size
+
+    @property
+    def dp_rank(self) -> int:
+        return self.rank // self.cp_size
+
+    @property
+    def cp_rank(self) -> int:
+        return self.rank % self.cp_size
 
     @staticmethod
     def _require_env_int(env: Mapping[str, str], key: str) -> int:
@@ -331,6 +354,14 @@ class DistributedTrainingContext:
             # two known shapes map implicitly; a partial mask (more ranks than
             # visible devices, but not exactly one) must fail here instead of
             # silently double-mapping ranks onto one card and dying later in NCCL.
+            cp_size = 1
+            if strategy == "fsdp" and training.fsdp is not None:
+                cp_size = int(training.fsdp.context_parallel.size)
+                if world_size % cp_size:
+                    raise ValueError(
+                        f"distributed.training.fsdp.context_parallel size {cp_size} must "
+                        f"divide WORLD_SIZE={world_size}",
+                    )
             visible_device_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
             if visible_device_count == 0 or local_rank < visible_device_count:
                 device_index = local_rank
@@ -348,6 +379,7 @@ class DistributedTrainingContext:
                 rank=rank,
                 world_size=world_size,
                 device=torch.device(f"cuda:{device_index}"),
+                cp_size=cp_size,
             )
 
         # Schema (TrainingSection.strategy Literal) rejects other values before we get
@@ -406,15 +438,37 @@ def init_training_process_group(
     if context.device.type == "cuda":
         # ``context.device`` is the CUDA ordinal inside this rank's masked view.
         torch.cuda.set_device(context.device)
+    # Symmetric runs keep torch's default timeout and its exact call shape;
+    # only context-parallel runs lengthen it (see collective_timeout).
+    timeout_kwargs = {"timeout": collective_timeout(context)} if context.cp_size > 1 else {}
     dist.init_process_group(
         backend=backend,
         rank=context.rank,
         world_size=context.world_size,
+        **timeout_kwargs,
     )
     if backend == "nccl":
         # Collective creation: every rank reaches this line inside the same
         # init call, so the subgroup handshake cannot mismatch.
-        _CPU_COORDINATION_GROUP = dist.new_group(backend="gloo")
+        _CPU_COORDINATION_GROUP = dist.new_group(backend="gloo", **timeout_kwargs)
+
+
+def collective_timeout(context: DistributedTrainingContext) -> timedelta:
+    """How long a rank may wait in a collective before the group gives up.
+
+    Symmetric ranks reach every collective together, so torch's default is
+    fine. Context-parallel followers wait in the batch broadcast for the whole
+    of the leader's rollout collection (Wan 1.3B: ~35 min for six groups plus
+    reward scoring), which exceeds the 30-minute default and killed the first
+    cp=2 run; a run-length timeout keeps a genuinely dead peer detectable while
+    never racing a healthy rollout.
+    """
+
+    if context.cp_size > 1:
+        return timedelta(hours=12)
+    from torch.distributed import default_pg_timeout
+
+    return default_pg_timeout
 
 
 def shutdown_training_process_group() -> None:
@@ -426,6 +480,50 @@ def shutdown_training_process_group() -> None:
     _CPU_COORDINATION_GROUP = None
     if dist.is_initialized():
         dist.destroy_process_group()
+
+
+@dataclass(frozen=True, slots=True)
+class ContextParallelGroups:
+    """This rank's context-parallel group for CPU-side coordination.
+
+    ``object_group`` is CPU-capable (gloo): it carries the peers' pickled
+    rollout batches without a GPU kernel, so the exchange is safe while a peer
+    may still be inside a park/wake window.
+    Gradients need no CP collective: parameters shard over the whole world and
+    FSDP's reduce-scatter already sums the CP peers (see ``FSDPStrategy.backward``).
+    """
+
+    object_group: Any
+    cp_size: int
+    cp_rank: int
+
+
+def create_context_parallel_groups(context: DistributedTrainingContext) -> ContextParallelGroups:
+    """Collectively create every CP group; return this rank's.
+
+    Every rank must call this in the same order (``dist.new_group`` is
+    collective). CP groups are contiguous, matching the row-major rank layout of
+    the ``("dp_shard", "ring", "ulysses")`` device mesh.
+    """
+
+    import torch.distributed as dist
+
+    if context.cp_size < 2:
+        raise ValueError("context-parallel groups require cp_size >= 2")
+    if not dist.is_initialized():
+        raise RuntimeError("context-parallel groups require an initialized process group")
+    mine: Any = None
+    for dp_rank in range(context.dp_size):
+        members = list(range(dp_rank * context.cp_size, (dp_rank + 1) * context.cp_size))
+        group = dist.new_group(members, backend="gloo", timeout=collective_timeout(context))
+        if context.rank in members:
+            mine = group
+    assert mine is not None
+    return ContextParallelGroups(
+        object_group=mine,
+        cp_size=context.cp_size,
+        cp_rank=context.cp_rank,
+    )
 
 
 def run_on_primary_rank(

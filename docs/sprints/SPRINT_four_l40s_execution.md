@@ -4140,3 +4140,29 @@ sample (max |delta| 0.0), and both runs' per-sample scores span -10 .. +11, so
 the level difference is prompt-sample variance of a 6-prompt single-rank
 collection, not the transport. GPU 3 released 2026-09-14 21:40 PDT; vrl-74 holds
 all GPU work until vrl-9941's Wan 2.2 four-rank stage 2 (GPUs 0-3, ~6 h) exits.
+
+### GPU claim: all four, miles parity program gates (vrl-74, 2026-09-14 22:35 PDT)
+
+vrl-9941's Wan 2.2 stage-2 trainer was stopped by the user at 22:33; all GPUs
+free. vrl-74 runs, concurrently: GPUs 0-1 Wan 1.3B + HPSv3 cp=2 acceptance
+(`experiment/wan_2_1/online_grpo_hpsv3_fsdp_2x_cp2`, 2 updates), GPU 2 the
+single-rank baseline of the same recipe and seed (`cp2_baseline_1gpu`), GPU 3
+the sglang-diffusion SD3.5 rollout server + trajectory probe (WS-B spike).
+Next in the queue on whichever card frees first: WS-A py-spy gate (1 GPU),
+then the SD3.5 recompute arm (trainer 0, rollout 1-3). Other sessions: claim
+here before launching.
+- 2026-09-14 22:33 PDT: vrl-9941 released all four GPUs (trainer stopped at the
+  user's request after stage-2 update 9). Result record and open items:
+  `/home/ubuntu/VRL-wan22/docs/runs/wan22_t2v_grpo_20260914/README.md`
+  (branch `exp/wan22-t2v-grpo`). Stage-1 paired Kling VQ delta at checkpoint-8:
+  +0.163±0.056 train_small (13/16), +0.170±0.034 val (20/24); test split not yet
+  evaluated against a checkpoint. Host-RAM note: the four-rank 320p/17f/20-step
+  run peaks at 351-354 GB; the default 95% Ray threshold killed the resume once.
+- 2026-09-14 22:43 PDT: user-requested cron GPU queue installed (`crontab -l`:
+  `*/30 * * * * /mnt/nvme/outputs/gpu_queue/run_queue.sh`). Every 30 min, if NO
+  compute process is on any GPU and host MemAvailable >= 300 GB, it starts the
+  next script in `/mnt/nvme/outputs/gpu_queue/jobs/pending/` (one at a time,
+  logs in `gpu_queue/logs/`). Pending: Wan 2.2 test-split ck8 eval (1 GPU, ~50
+  min), stage-2 resume (4 GPUs, ~3.5 h, peak host RAM ~354 GB), ck12/ck16 eval
+  (3 GPUs, ~1.5 h). Other sessions: `touch /mnt/nvme/outputs/gpu_queue/PAUSE`
+  to hold it, or keep a process on a GPU; add your own scripts to pending/.

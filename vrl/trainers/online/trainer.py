@@ -534,6 +534,7 @@ class OnlineTrainer:
         # (importance-ratio algorithms hold a `precision_correction` slot).
         if hasattr(algorithm, "precision_correction"):
             algorithm.precision_correction = config.precision_correction
+            self._validate_recompute_old_logprob(config)
         # Clean fine-tuning latents ({target artifact -> [C,T,H,W]}) for the GRPO
         # diffusion-loss regularizer; the recipe loads data.sft_latents and the
         # config layer already rejected sft_weight>0 without it.
@@ -602,11 +603,50 @@ class OnlineTrainer:
                 self.algorithm.tolerates_off_policy_staleness
             ),
         )
+        cp_groups = getattr(self._strategy, "context_parallel_groups", None)
+        if cp_groups is not None:
+            from vrl.rollouts.orchestration.context_parallel import (
+                ContextParallelRolloutSchedule,
+            )
+
+            self.rollout_schedule = ContextParallelRolloutSchedule(
+                self.rollout_schedule, groups=cp_groups
+            )
         self._validate_trust_region_engages()
 
         # The backend setting is process-global, so every trainer construction
         # projects both the IEEE and TF32 paths instead of inheriting stale state.
         apply_float32_precision(self.precision.float32_precision)
+
+    @staticmethod
+    def _validate_recompute_old_logprob(config: Any) -> None:
+        """``recompute_old_logprob=on`` needs behavior policy == pre-update target.
+
+        The replay forward that provides the recomputed "old" is the loss forward
+        itself, which holds only on the single pass over a freshly collected
+        rollout: later PPO epochs would need the epoch-1 values, and continuous
+        staleness makes the recorded log-prob a real off-policy correction that
+        recomputation would erase.
+        """
+
+        correction = config.precision_correction
+        if correction is None or correction.recompute_old_logprob != "on":
+            return
+        orchestration = config.rollout_orchestration
+        max_stale = (
+            int(orchestration.continuous.max_stale_policy_versions)
+            if orchestration.schedule_mode == "continuous"
+            else 0
+        )
+        if int(config.ppo_epochs) > 1 or max_stale > 0:
+            raise ValueError(
+                "precision_correction.recompute_old_logprob='on' replaces the rollout "
+                "log-prob with the trainer's pre-update replay log-prob, which is only "
+                "the behavior policy under actor.ppo_epochs=1 and no continuous "
+                f"staleness; got ppo_epochs={int(config.ppo_epochs)}, "
+                f"max_stale_policy_versions={max_stale}. Use 'off' (bypass) with the "
+                "drift guard + TIS/RS for off-policy replay.",
+            )
 
     def _validate_trust_region_engages(self) -> None:
         """Refuse configs where a trust-region algorithm's ratio term is inert.

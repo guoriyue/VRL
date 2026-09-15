@@ -1,0 +1,16 @@
+# FSDP2 with 2-way context parallelism inside each pair of ranks. Ranks 2k and
+# 2k+1 replay the same rollout samples and split every sample's token axis
+# (diffusers Ulysses attention over the transformer's _cp_plan); parameters
+# still shard over all ranks. Both ranks generate their share of the prompts. Needs a
+# family whose transformer declares _cp_plan (Wan, Flux, Qwen-Image, LTX).
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 2
+    fsdp:
+      mesh: [dp_shard, cp]
+      context_parallel:
+        ulysses_degree: 2
+        ring_degree: 1
+      precision_policy: none

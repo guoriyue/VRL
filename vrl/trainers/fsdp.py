@@ -35,24 +35,57 @@ def build_fsdp_mesh(context: DistributedTrainingContext, mesh_dims: list[str]) -
     """Build the 1D DeviceMesh FSDP2 shards over.
 
     ``["dp_shard"]`` is plain ZeRO-3 across the whole world — the single-node
-    start point (sprint §3). 2D HSDP (``["dp_replicate", "dp_shard"]``, replicate
-    across nodes / shard within one) needs ``num_nodes`` * ``gpus_per_node`` from
-    config, which the single-process-shaped context here does not carry; it is the
-    multi-node follow-on and fail-fasts rather than half-working.
+    start point (sprint §3). ``["dp_shard", "cp"]`` shards parameters over the
+    same whole world: context-parallel peers are *inside* the shard axis, so
+    parameter memory keeps scaling with every rank
+    and FSDP's reduce-scatter is the only gradient collective; the CP mesh is a
+    separate object (``build_context_parallel_mesh``). 2D HSDP
+    (``["dp_replicate", "dp_shard"]``) needs ``num_nodes`` * ``gpus_per_node``
+    from config, which the single-process-shaped context here does not carry; it
+    is the multi-node follow-on and fail-fasts rather than half-working.
     """
 
     from torch.distributed.device_mesh import init_device_mesh
 
-    if mesh_dims != ["dp_shard"]:
+    if mesh_dims not in (["dp_shard"], ["dp_shard", "cp"]):
         raise ValueError(
-            f"distributed.training.fsdp.mesh only supports 1D ['dp_shard'] for now, "
-            f"got {mesh_dims!r}; 2D HSDP is the multi-node follow-on "
-            "(SPRINT_multi_gpu_training.md §3).",
+            f"distributed.training.fsdp.mesh only supports 1D ['dp_shard'] (optionally "
+            f"with a 'cp' axis) for now, got {mesh_dims!r}; 2D HSDP is the multi-node "
+            "follow-on (SPRINT_multi_gpu_training.md §3).",
         )
     return init_device_mesh(
         context.device.type,
         (context.world_size,),
         mesh_dim_names=("dp_shard",),
+    )
+
+
+def build_context_parallel_mesh(
+    context: DistributedTrainingContext,
+    *,
+    ulysses_degree: int,
+    ring_degree: int,
+) -> Any:
+    """The 3D ``("dp_shard", "ring", "ulysses")`` mesh diffusers' CP hooks slice.
+
+    diffusers' ``ContextParallelConfig.setup`` indexes exactly the names
+    ``"ring"`` and ``"ulysses"``; the leading axis only keeps the row-major rank
+    layout contiguous per CP group (ranks ``k*cp .. k*cp+cp-1``), matching
+    ``DistributedTrainingContext.cp_rank``.
+    """
+
+    from torch.distributed.device_mesh import init_device_mesh
+
+    cp_size = int(ulysses_degree) * int(ring_degree)
+    if cp_size != context.cp_size or cp_size < 2:
+        raise ValueError(
+            f"context-parallel degrees {ulysses_degree}x{ring_degree} disagree with "
+            f"the training context cp_size={context.cp_size}",
+        )
+    return init_device_mesh(
+        context.device.type,
+        (context.dp_size, int(ring_degree), int(ulysses_degree)),
+        mesh_dim_names=("dp_shard", "ring", "ulysses"),
     )
 
 

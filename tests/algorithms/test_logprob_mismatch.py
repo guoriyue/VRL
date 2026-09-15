@@ -11,6 +11,7 @@ from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
     PrecisionCorrectionConfig,
     apply_rejection_sample_mask,
+    behavior_log_prob,
     combine_keep_masks,
 )
 
@@ -130,9 +131,13 @@ class TestRejectSampleConfig:
                 rs_mode="seq_mean_k1", rs_log_ratio_low=1.0, rs_log_ratio_high=0.0
             )
 
-    def test_recompute_on_is_not_implemented_not_silent_noop(self) -> None:
-        with pytest.raises(NotImplementedError, match="recompute_old_logprob"):
-            PrecisionCorrectionConfig(recompute_old_logprob="on")
+    def test_recompute_on_uses_the_detached_replay_log_prob_as_behavior(self) -> None:
+        new = torch.tensor([0.5, -1.0], requires_grad=True)
+        old = torch.tensor([0.0, 0.0])
+        on = behavior_log_prob(new, old, PrecisionCorrectionConfig(recompute_old_logprob="on"))
+        assert torch.equal(on, new.detach()) and not on.requires_grad
+        off = behavior_log_prob(new, old, PrecisionCorrectionConfig())
+        assert off is old
 
     def test_invalid_recompute_value_rejected(self) -> None:
         with pytest.raises(ValueError, match="recompute_old_logprob"):

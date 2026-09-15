@@ -23,9 +23,11 @@ from torch import nn
 
 from vrl.models.parking import ModelParking, TrainingMemoryState, TrainingStateParking
 from vrl.trainers.distributed import (
+    ContextParallelGroups,
     DistributedTrainingContext,
     TrainingCollectives,
     cpu_coordination_group,
+    create_context_parallel_groups,
     init_training_process_group,
     shutdown_training_process_group,
 )
@@ -463,6 +465,8 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         reshard_after_forward: bool,
         cpu_offload: bool,
         shard_trainable_only: bool = False,
+        ulysses_degree: int = 1,
+        ring_degree: int = 1,
     ) -> None:
         self.context = context
         self.collectives = collectives if collectives is not None else TrainingCollectives(context)
@@ -473,7 +477,19 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         self._shard_trainable_only = shard_trainable_only
         if shard_trainable_only and precision_policy != "none":
             raise ValueError("shard_trainable_only requires precision_policy='none'")
+        self._ulysses_degree = int(ulysses_degree)
+        self._ring_degree = int(ring_degree)
         self._mesh: Any | None = None  # built on first prepare_model (needs a live PG)
+        self._context_parallel_groups: ContextParallelGroups | None = None
+
+    @property
+    def context_parallel(self) -> bool:
+        return self._ulysses_degree * self._ring_degree > 1
+
+    @property
+    def context_parallel_groups(self) -> ContextParallelGroups | None:
+        """This rank's CP groups once ``prepare_model`` has created them."""
+        return self._context_parallel_groups
 
     def _ensure_mesh(self) -> Any:
         if self._mesh is None:
@@ -536,6 +552,23 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         backend = "gloo" if self.context.device.type == "cpu" else "nccl"
         init_training_process_group(self.context, backend=backend)
         mesh = self._ensure_mesh()
+        if self.context_parallel:
+            from vrl.trainers.context_parallel import enable_context_parallel
+            from vrl.trainers.fsdp import build_context_parallel_mesh, unwrap_module
+
+            self._context_parallel_groups = create_context_parallel_groups(self.context)
+            cp_mesh = build_context_parallel_mesh(
+                self.context,
+                ulysses_degree=self._ulysses_degree,
+                ring_degree=self._ring_degree,
+            )
+            for _name, handle, _writer, _dtype in prepared_handles:
+                enable_context_parallel(
+                    unwrap_module(handle),
+                    mesh=cp_mesh,
+                    ulysses_degree=self._ulysses_degree,
+                    ring_degree=self._ring_degree,
+                )
         for _name, handle, writer, parameter_dtype in prepared_handles:
             if self._shard_trainable_only:
                 # fully_shard does not place ignored frozen parameters. The
@@ -563,6 +596,13 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         # FSDP2 reduce-scatters gradients inside the backward hooks; the bf16 actor
         # recipe runs without a GradScaler, but keep the seam identical to single
         # process so the trainer loop is backend-agnostic.
+        if self.context.cp_size > 1:
+            # Every CP peer computes the same full-sequence loss but backpropagates
+            # only its own token shard, so the peers' gradients are partial sums
+            # of ONE loss. FSDP shards over the whole world and averages over
+            # dp*cp ranks; scaling by cp turns that into the (1/dp)-mean of the
+            # summed shards, i.e. the gradient a single rank would have computed.
+            loss = loss * float(self.context.cp_size)
         if grad_scaler is not None:
             grad_scaler.scale(loss).backward()
         else:
@@ -1020,6 +1060,8 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
             context,
             collectives=collectives,
             mesh_dims=fsdp.mesh,
+            ulysses_degree=fsdp.context_parallel.ulysses_degree,
+            ring_degree=fsdp.context_parallel.ring_degree,
             precision_policy=fsdp.precision_policy,
             reshard_after_forward=fsdp.reshard_after_forward,
             cpu_offload=fsdp.cpu_offload,

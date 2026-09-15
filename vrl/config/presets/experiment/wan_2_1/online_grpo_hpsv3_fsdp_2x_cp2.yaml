@@ -1,0 +1,32 @@
+# Context-parallel acceptance of the Wan 2.1 1.3B + HPSv3 Flash-GRPO recipe:
+# two torchrun ranks form ONE data-parallel replica. Each rank generates and
+# scores half of the 6-prompt group on its own rollout engine; the peers gather
+# the union over the CP group and split every sample's 32,760 latent tokens
+# through diffusers' Ulysses attention (WanTransformer3DModel._cp_plan). Gate: loss and
+# grad-norm of update 1 agree with the single-GPU run of the same seed within
+# bf16 tolerance, and peak trainer memory per rank drops.
+#
+#   VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB=512 HF_HOME=/mnt/nvme/hf/huggingface \
+#   torchrun --standalone --nproc_per_node=2 -m vrl.scripts.train \
+#     --config experiment/wan_2_1/online_grpo_hpsv3_fsdp_2x_cp2 \
+#     trainer.output_dir=outputs/wan_hpsv3_flash_grpo/cp2_smoke
+defaults:
+  - /experiment/wan_2_1/online_grpo_hpsv3_fsdp_4x_l40s
+
+distributed:
+  training:
+    gpus_per_node: 2
+    fsdp:
+      mesh: [dp_shard, cp]
+      # Trainable parameters keep their fp32 master storage and compute runs in
+      # bf16 under the trainer's autocast; the context-parallel attention
+      # recompute then sees the dtypes the forward saw (see
+      # vrl/trainers/context_parallel.py). Accepted on the 2-GPU gate.
+      precision_policy: none
+      context_parallel:
+        ulysses_degree: 2
+        ring_degree: 1
+
+trainer:
+  output_dir: outputs/wan_hpsv3_flash_grpo/cp2_smoke
+  total_epochs: 2

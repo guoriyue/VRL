@@ -18,6 +18,7 @@ from vrl.algorithms.grpo.continuous import GRPO, ClippedPolicyConfig
 from vrl.algorithms.logprob_mismatch import (
     apply_rejection_sample_mask,
     apply_truncated_importance_weight,
+    behavior_log_prob,
     combine_keep_masks,
 )
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -80,6 +81,7 @@ class TokenGRPO(GRPO):
         else:
             adv_bL = advantages
 
+        old_lp = behavior_log_prob(new_lp, old_lp, self.precision_correction)
         raw_ratio = torch.exp(new_lp - old_lp)
         # TIS on the rollout->replay weight (old_lp is the rollout behavior logprob),
         # folded into the per-token mask so 'mask' mode drops drift-rejected tokens.
