@@ -302,7 +302,7 @@ def test_generate_persists_canonical_identity_for_component_overrides(
         "transformers",
     }
     assert run_config["generation_policy"] == {
-        "diffusion_math_dtype": "fp32",
+        "denoise_math_dtype": "fp32",
         "family": "cosmos-predict2-anima",
         "generation_memory": None,
         "parameter_dtype": "float32",

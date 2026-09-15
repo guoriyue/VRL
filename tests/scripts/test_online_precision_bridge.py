@@ -66,7 +66,7 @@ def test_fp16_precision_block_drives_trainer_and_rollout():
 
     assert trainer_config.train_precision == "fp16"
     assert trainer_config.rollout_precision == "fp16"
-    assert built.precision.diffusion_math == "fp32"
+    assert built.precision.denoise_math == "fp32"
     assert resolve_torch_dtype(trainer_config.train_precision) is torch.float16
 
 
@@ -187,15 +187,13 @@ def test_math_axis_resolves_to_dtype(math, expected):
     from vrl.models.dtypes import resolve_torch_dtype
 
     block = _plain_policy("fp32")
-    block["diffusion_math"] = {"dtype": math}
+    block["denoise_math"] = {"dtype": math}
     cfg = _with_precision("sd3_5/online_grpo_ocr", block)
     assert (
-        resolve_torch_dtype(
-            PrecisionPolicy.from_section(parse_config(cfg).precision).diffusion_math
-        )
+        resolve_torch_dtype(PrecisionPolicy.from_section(parse_config(cfg).precision).denoise_math)
         is expected
     )
-    assert build_configs(cfg).precision.diffusion_math == math
+    assert build_configs(cfg).precision.denoise_math == math
 
 
 def test_precision_drift_guard_config_is_bridged_from_yaml():

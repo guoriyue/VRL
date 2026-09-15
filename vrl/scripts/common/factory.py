@@ -83,9 +83,9 @@ class AlgorithmEvaluatorPair:
             raise ValueError("online recipe requires reward configuration")
         diffusion_logprob_kinds = {"grpo", "dance_grpo", "flash_grpo", "flow_dppo", "grpo_guard"}
         precision = built.precision
-        if precision.diffusion_math != "fp32" and kind not in diffusion_logprob_kinds:
+        if precision.denoise_math != "fp32" and kind not in diffusion_logprob_kinds:
             raise ValueError(
-                "precision.diffusion_math.dtype overrides are supported only by "
+                "precision.denoise_math.dtype overrides are supported only by "
                 "diffusion log-prob "
                 f"objectives; algorithm.kind={kind!r} keeps its protected math in fp32",
             )
@@ -123,10 +123,10 @@ class AlgorithmEvaluatorPair:
                 advantage_estimator=advantage_estimator,
             )
             if is_chunk_autoregressive:
-                if precision.diffusion_math != "fp32":
+                if precision.denoise_math != "fp32":
                     raise ValueError(
                         f"{family_entry.family} uses an exact fp32 Gaussian re-noise "
-                        "policy; precision.diffusion_math.dtype overrides are not "
+                        "policy; precision.denoise_math.dtype overrides are not "
                         "implemented for grouped causal-chunk replay",
                     )
                 if kind == "dance_grpo":
@@ -150,7 +150,7 @@ class AlgorithmEvaluatorPair:
                     evaluator=ChunkAutoregressiveDenoiseLogProbEvaluator(),
                 )
 
-            math_dtype = resolve_torch_dtype(precision.diffusion_math)
+            math_dtype = resolve_torch_dtype(precision.denoise_math)
             denoise = collector_config.denoise or DenoiseRequestOptions()
             from vrl.rollouts.evaluators.denoise.sde_logprob import (
                 DenoiseSDELogProbEvaluator,

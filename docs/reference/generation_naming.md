@@ -38,6 +38,7 @@ Driver and workers must run the same code revision when exchanging Python object
 
 This rename does not change YAML keys, task identifiers such as `ar_t2i`,
 generation regime values, checkpoint state keys, or algorithm names such as
-`DiffusionNFT`. The public `precision.diffusion_math` section and its
-`DiffusionMathPrecisionConfig` retain their matching names. Historical audit and
-sprint documents retain the names used at the time.
+`DiffusionNFT`. One YAML key did follow: `precision.diffusion_math` is now
+`precision.denoise_math` (`DenoiseMathPrecisionConfig`), and a config that still
+spells the old key is rejected as unknown. Historical audit and sprint documents
+retain the names used at the time.

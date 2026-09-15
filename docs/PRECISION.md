@@ -20,7 +20,7 @@ precision:
     prompt_encoders:
       dtype: fp16
 
-  diffusion_math:
+  denoise_math:
     dtype: fp32
 ```
 
@@ -29,7 +29,7 @@ precision:
 training dtype, `training.outer_autocast` defaults to true, and
 `rollout.outer_autocast` inherits the training value.
 `rollout.prompt_encoders.dtype` inherits the resolved rollout dtype, and
-`diffusion_math.dtype` defaults to FP32. Set prompt encoders to FP16 explicitly
+`denoise_math.dtype` defaults to FP32. Set prompt encoders to FP16 explicitly
 when that memory/accuracy trade-off is desired; quantization never changes their
 dtype implicitly.
 
@@ -186,7 +186,7 @@ precision:
   float32_precision: tf32
   training:
     dtype: bf16
-  diffusion_math:
+  denoise_math:
     dtype: fp32
 ```
 
@@ -220,7 +220,7 @@ actor:
 precision:
   train: bf16                 # use training.dtype
   rollout: fp8                # use rollout.dtype + rollout.quantization
-  math: fp32                  # use diffusion_math.dtype
+  math: fp32                  # use denoise_math.dtype
   frozen: fp16                # use rollout.prompt_encoders.dtype
   frozen_components: fp16     # removed misleading name
   rollout_recipe: rowwise     # move under rollout.quantization for FP8

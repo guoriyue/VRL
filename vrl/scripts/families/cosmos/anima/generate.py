@@ -430,7 +430,7 @@ def _generation_policy(build: ModelBuild, precision: PrecisionPolicy) -> dict[st
         "family": str(build.family),
         "parameter_dtype": str(build.parameter_dtype).removeprefix("torch."),
         "role_precision": asdict(build.precision),
-        "diffusion_math_dtype": str(precision.diffusion_math),
+        "denoise_math_dtype": str(precision.denoise_math),
         "prompt_encoder_dtype": str(rollout.prompt_encoder_dtype).removeprefix("torch."),
         "generation_memory": (
             asdict(build.generation_memory) if build.generation_memory is not None else None

@@ -202,16 +202,16 @@ class PrecisionPolicy:
 
     training: RolePrecision
     rollout: RolePrecision
-    diffusion_math: str
+    denoise_math: str
     prompt_encoder_dtype: str
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
-            "diffusion_math",
+            "denoise_math",
             _normalize_plain_dtype(
-                self.diffusion_math,
-                path="precision.diffusion_math.dtype",
+                self.denoise_math,
+                path="precision.denoise_math.dtype",
             ),
         )
         object.__setattr__(
@@ -267,7 +267,7 @@ class PrecisionPolicy:
         return cls(
             training=training,
             rollout=rollout,
-            diffusion_math=section.diffusion_math.dtype if section.diffusion_math else "fp32",
+            denoise_math=section.denoise_math.dtype if section.denoise_math else "fp32",
             prompt_encoder_dtype=prompt_encoders.dtype if prompt_encoders else rollout.dtype,
         )
 
@@ -325,13 +325,13 @@ class RolloutPrecisionConfig(ConfigBase):
         return _normalize_plain_dtype(value, path="precision.rollout.dtype")
 
 
-class DiffusionMathPrecisionConfig(ConfigBase):
+class DenoiseMathPrecisionConfig(ConfigBase):
     dtype: str
 
     @field_validator("dtype", mode="before")
     @classmethod
     def _normalize_dtype(cls, value: Any) -> str:
-        return _normalize_plain_dtype(value, path="precision.diffusion_math.dtype")
+        return _normalize_plain_dtype(value, path="precision.denoise_math.dtype")
 
 
 class PrecisionConfig(ConfigBase):
@@ -340,7 +340,7 @@ class PrecisionConfig(ConfigBase):
     float32_precision: Float32Precision
     training: TrainingPrecisionConfig
     rollout: RolloutPrecisionConfig | None = None
-    diffusion_math: DiffusionMathPrecisionConfig | None = None
+    denoise_math: DenoiseMathPrecisionConfig | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -360,7 +360,7 @@ class PrecisionConfig(ConfigBase):
 
 
 __all__ = [
-    "DiffusionMathPrecisionConfig",
+    "DenoiseMathPrecisionConfig",
     "Float32Precision",
     "PrecisionConfig",
     "PrecisionPolicy",

@@ -153,7 +153,7 @@ def test_chunk_autoregressive_factory_rejects_undefined_algorithm_semantics(
 def test_chunk_autoregressive_factory_rejects_non_fp32_transition_math() -> None:
     cfg = load_config(
         "experiment/sd3_5/online_grpo_ocr",
-        overrides=["precision.diffusion_math.dtype=bf16"],
+        overrides=["precision.denoise_math.dtype=bf16"],
     )
 
     with pytest.raises(ValueError, match="exact fp32 Gaussian re-noise"):
