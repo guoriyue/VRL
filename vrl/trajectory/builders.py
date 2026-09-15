@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import torch
@@ -21,6 +22,8 @@ from vrl.trajectory.validation import (
     validate_shape_prefix,
 )
 from vrl.trajectory.views import RewardInputSpec
+
+logger = logging.getLogger(__name__)
 
 # Sentinel marking a context value that cannot be serialized into a trajectory
 # record; it is dropped rather than stored.
@@ -82,13 +85,25 @@ def build_diffusion_trajectory(
         ),
     }
     replay_tensor_names: list[str] = []
+    dropped: list[str] = []
     for name, value in replay_tensors.items():
         if name in tensors:
             continue
         if not _sample_aligned(value, batch_size):
+            dropped.append(name)
             continue
         tensors[name] = TrajectoryTensor(name, value, ("sample",), "replay_input")
         replay_tensor_names.append(name)
+    if dropped:
+        # Scalars and static tables are legitimately exported alongside the
+        # per-sample tensors and live in the batch context instead; record
+        # what was left out so a family's mis-shaped export is diagnosable.
+        logger.debug(
+            "build_diffusion_trajectory: replay tensors %s are not sample-aligned "
+            "(leading dim != %d) and were left out of the trajectory",
+            sorted(dropped),
+            batch_size,
+        )
     replay_tensor_refs = (
         tensor_ref("denoise", "observations"),
         tensor_ref("denoise", "actions"),

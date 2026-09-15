@@ -51,7 +51,10 @@ def test_builder_rejects_tensor_rows_that_disagree_with_sample_rows() -> None:
         )
 
 
-def test_diffusion_replay_extras_only_declare_sample_axis_when_sample_aligned() -> None:
+def test_diffusion_replay_extras_only_declare_sample_axis_when_sample_aligned(caplog) -> None:
+    import logging
+
+    caplog.set_level(logging.DEBUG, logger="vrl.trajectory.builders")
     request = GenerationRequest(
         request_id="builder-sample-alignment",
         family="test",
@@ -82,6 +85,7 @@ def test_diffusion_replay_extras_only_declare_sample_axis_when_sample_aligned() 
     assert tensors["per_sample"].axes == ("sample",)
     assert "scalar_tensor" not in tensors
     assert "python_scalar" not in tensors
+    assert "['python_scalar', 'scalar_tensor']" in caplog.text  # left-out names are diagnosable
 
 
 def test_multisegment_primary_is_typed_and_not_mirrored_in_context() -> None:
