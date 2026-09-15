@@ -10,6 +10,23 @@ from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.distributed import ContextParallelGroups
 
 
+def batch_fingerprint(batches: list[Any]) -> list[tuple[int, list[int], float]]:
+    """A cheap identity of a batch list: per batch, sample count, group ids, reward sum.
+
+    Enough to catch a peer holding a different or reordered sample set; not a
+    checksum of the trajectory tensors (those ride on the same pickle).
+    """
+
+    return [
+        (
+            int(batch.rewards.shape[0]),
+            [int(g) for g in batch.group_ids.reshape(-1).tolist()],
+            round(float(batch.rewards.double().sum()), 6),
+        )
+        for batch in batches
+    ]
+
+
 class ContextParallelRolloutSchedule:
     """Wrap a rank-local schedule so one rank of each CP group collects for all.
 
@@ -46,9 +63,23 @@ class ContextParallelRolloutSchedule:
         dist.broadcast_object_list(
             payload, src=self.groups.leader_rank, group=self.groups.object_group
         )
+        batches = iteration.batches if leader else list(payload[0])
+        # Token sharding assumes every CP peer replays the same samples in the
+        # same order; a divergence would not hang (slot counts stay balanced)
+        # but would train on garbage silently, so agree on the batch identity
+        # before anything downstream can consume it.
+        fingerprints: list[Any] = [None] * self.groups.cp_size
+        dist.all_gather_object(
+            fingerprints, batch_fingerprint(batches), group=self.groups.object_group
+        )
+        if any(fingerprint != fingerprints[0] for fingerprint in fingerprints[1:]):
+            raise RuntimeError(
+                "context-parallel peers disagree on the rollout batches after the leader "
+                f"broadcast; per-rank fingerprints: {fingerprints}",
+            )
         if leader:
             return iteration
-        return RolloutIteration(batches=list(payload[0]), stats=iteration.stats)
+        return RolloutIteration(batches=batches, stats=iteration.stats)
 
     async def after_train_step(self) -> RolloutStats:
         return await self.inner.after_train_step()
@@ -60,4 +91,4 @@ class ContextParallelRolloutSchedule:
         await self.inner.shutdown()
 
 
-__all__ = ["ContextParallelRolloutSchedule"]
+__all__ = ["ContextParallelRolloutSchedule", "batch_fingerprint"]

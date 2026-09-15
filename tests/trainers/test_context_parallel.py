@@ -19,7 +19,10 @@ from torch import nn
 
 from vrl.config.schema import FSDPConfig, parse_config
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.orchestration.context_parallel import ContextParallelRolloutSchedule
+from vrl.rollouts.orchestration.context_parallel import (
+    ContextParallelRolloutSchedule,
+    batch_fingerprint,
+)
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.context_parallel import enable_context_parallel
@@ -159,7 +162,18 @@ def test_enable_context_parallel_refuses_models_without_a_plan() -> None:
         enable_context_parallel(_NoPlan(), mesh=None, ulysses_degree=2, ring_degree=1)
 
 
-# ── two-rank gloo: groups, gradient reduction, batch sharing ─────────────────
+def test_batch_fingerprint_separates_reordered_and_rescored_batches() -> None:
+    def _batch(rewards, groups):
+        return RolloutBatch(rewards=torch.tensor(rewards), group_ids=torch.tensor(groups))
+
+    same = batch_fingerprint([_batch([1.0, 2.0], [0, 0]), _batch([3.0], [1])])
+    assert same == batch_fingerprint([_batch([1.0, 2.0], [0, 0]), _batch([3.0], [1])])
+    assert same != batch_fingerprint([_batch([3.0], [1]), _batch([1.0, 2.0], [0, 0])])
+    assert same != batch_fingerprint([_batch([1.0, 2.5], [0, 0]), _batch([3.0], [1])])
+    assert same != batch_fingerprint([_batch([1.0, 2.0], [0, 1]), _batch([3.0], [1])])
+
+
+# ── two-rank gloo: groups, batch sharing ─────────────────────────────────────
 
 
 class _LeaderOnlyInner:
