@@ -1,0 +1,153 @@
+# Wan 2.2 T2V-A14B GRPO learning experiment, stage 1 (small training set).
+#
+# Numerical configuration is the accepted four-rank native FP32-LoRA pilot
+# (/mnt/nvme/outputs/wan22_i2v_cache/wan22_rebased_gpu_checkpoint_four.yaml):
+# both experts trainable, FSDP precision none + CPU offload, FP32 LoRA r32,
+# generation batch == replay microbatch == 2, native rollout with CPS SDE,
+# nine replay steps, real Kling reward with reload parking, replay-parity gate
+# 1e-8. Deliberate changes for the learning experiment, each recorded:
+#   data      -> 16-prompt VideoPhy train_small split (val/test held out)
+#   n_samples -> 8 per prompt (GRPO group of 8; 4 prompts = 32 samples/update)
+#   lr        -> 1e-4 (the repo's Wan LoRA reference value; pilot used 5e-5)
+#   seed      -> no fixed sampling.seed: each request draws a driver-RNG seed
+#   fps       -> 16 so reward mp4s and the fixed eval share Wan native rate
+#   steps     -> 20: at 10 steps the first frame is mosaic garbage (quality_probe)
+#   score_key -> visual_quality: reward probe on 32 base clips shows MQ inverted
+#                (noise raises it), VQ/TA correctly signed; overall carries MQ
+algorithm:
+  kind: grpo
+  clip_ratio: 0.0001
+  kl_coef: 0
+  eps: 1.0e-08
+  adv_clip_max: 5
+  global_std: false
+  flow_kl_use_dt: false
+precision:
+  float32_precision: ieee
+  training:
+    dtype: bf16
+    outer_autocast: true
+actor:
+  optim:
+    lr: 1.0e-04
+  drop_zero_advantage: true
+  timestep_fraction: 0.99
+  ema:
+    enable: true
+    decay: 0.9
+    update_interval: 1
+  ppo_epochs: 1
+  host_memory_budget_fraction: 0.95
+  gradient_checkpointing: full
+  prompts_per_collection: 1
+  training_microbatch_size: 2
+rollout:
+  n_samples_per_prompt: 8
+  prompts_per_batch: 1
+  denoise_mode: native
+  noise_level: 1
+  samples_per_generation_batch: 2
+  sde:
+    type: cps
+    window_size: 0
+    window_range: [0, 20]
+distributed:
+  resources:
+    rollout:
+      num_gpus: 1
+      gpu_pool: trainer
+    reward:
+      device: gpu
+      gpu_pool: rollout
+    visible_devices: [0, 1, 2, 3]
+  rollout:
+    cpus_per_worker: 4
+    worker_rpc_timeout_s: 1800
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 4
+    fsdp:
+      mesh: [dp_shard]
+      precision_policy: none
+      reshard_after_forward: true
+      cpu_offload: true
+trainer:
+  rollout_orchestration:
+    schedule_mode: strict_on_policy
+  entrypoint: vrl.scripts.train:train_online
+  seed: 20260914
+  total_epochs: 8
+  output_dir: /mnt/nvme/outputs/wan22_t2v_grpo/stage1
+  save_freq: 2
+  profile: true
+  debug:
+    first_step: true
+  deterministic: true
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-08
+model:
+  family: wan
+  executor:
+    max_sequence_length: 256
+  path: Wan-AI/Wan2.2-T2V-A14B-Diffusers
+  revision: 5be7df9619b54f4e2667b2755bc6a756675b5cd7
+  trainable_transformers: both
+  memory:
+    vae_decode:
+      tiling: true
+      slicing: true
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 64
+    target_modules:
+      - add_k_proj
+      - add_q_proj
+      - add_v_proj
+      - to_add_out
+      - to_k
+      - to_out.0
+      - to_q
+      - to_v
+  torch_compile:
+    enable: false
+    mode: default
+  offload_mode: sequential
+  expert_lifecycle_profiling: true
+  local_files_only: true
+  lora_parameter_dtype: float32
+sampling:
+  width: 320
+  height: 320
+  num_frames: 17
+  num_steps: 20
+  guidance_scale: 4.5
+  fps: 16
+reward:
+  components:
+    kling_video_reward: 1
+  kwargs:
+    kling_video_reward:
+      reward_name: kling_video_reward
+      score_key: visual_quality
+      media_type: video
+      artifact_format: mp4
+      artifact_dir: /mnt/nvme/outputs/wan22_t2v_grpo/stage1/reward_artifacts
+      debug_dir: /mnt/nvme/outputs/wan22_t2v_grpo/stage1/reward_debug
+      worker_config:
+        reward_model_name: KlingTeam/VideoReward@4f26600130683e6f1de9f5d463887f28e8ef995c
+        dtype: bfloat16
+        local_files_only: true
+        min_frame_pixels: 200704
+        memory_parking_mode: reload
+data:
+  loader: prompt_manifest
+  manifest: /home/ubuntu/VRL-wan22/datasets/videophy_wan22_grpo/train_small.txt
+  eval_manifest: /home/ubuntu/VRL-wan22/datasets/videophy_wan22_grpo/val.txt
+  source_report: /home/ubuntu/VRL-wan22/datasets/videophy_wan22_grpo/report.json
+  task_type: text_to_video
+  preprocessing:
+    format: text
+  sampler:
+    type: random_without_replacement
