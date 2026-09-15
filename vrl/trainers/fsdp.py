@@ -329,7 +329,7 @@ def gather_checkpoint_state_dict(module: nn.Module) -> dict[str, Any]:
     )
 
 
-def _full_cpu_tensor(value: torch.Tensor, *, keep: bool) -> torch.Tensor | None:
+def full_cpu_tensor(value: torch.Tensor, *, keep: bool) -> torch.Tensor | None:
     """Gather one (D)Tensor to a full CPU clone; ``keep=False`` releases it at once.
 
     Every rank must call this for a DTensor (the all-gather is collective) even
@@ -375,7 +375,7 @@ def _gather_named_full_cpu(
         value = sharded_state[name]
         if not isinstance(value, torch.Tensor):
             raise TypeError(f"{what} entry {name!r} must be a tensor")
-        full = _full_cpu_tensor(value, keep=keep)
+        full = full_cpu_tensor(value, keep=keep)
         if keep:
             gathered[name] = full
     return gathered
@@ -392,7 +392,6 @@ def load_checkpoint_state_dict(
     from torch.distributed.checkpoint.state_dict import (
         StateDictOptions,
         get_model_state_dict,
-        set_model_state_dict,
     )
 
     if not isinstance(state, Mapping):
@@ -420,18 +419,9 @@ def load_checkpoint_state_dict(
     }
     if not compatible:
         return
-    # DCP performs the layout-aware full-tensor -> DTensor scatter. Its own
-    # strict=False is intentional: strictness above applies to exact owned state,
-    # while absent immutable base keys are valid in schema v2.
-    set_model_state_dict(
-        module,
-        compatible,
-        options=StateDictOptions(
-            full_state_dict=True,
-            broadcast_from_rank0=True,
-            strict=False,
-        ),
-    )
+    # DCP's own strict=False is intentional: strictness above applies to exact
+    # owned state, while absent immutable base keys are valid in schema v2.
+    load_full_state_dict(module, compatible, strict=False)
 
 
 def load_full_state_dict(
@@ -475,7 +465,7 @@ def _materialize_full_cpu(value: Any, *, keep: bool = True) -> Any:
     """
 
     if isinstance(value, torch.Tensor):
-        return _full_cpu_tensor(value, keep=keep)
+        return full_cpu_tensor(value, keep=keep)
     if isinstance(value, dict):
         if keep:
             return {key: _materialize_full_cpu(inner, keep=True) for key, inner in value.items()}

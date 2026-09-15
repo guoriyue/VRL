@@ -135,19 +135,15 @@ class EMAWeights:
         self.temp_stored_parameters = None
 
     def _snapshot(self, parameter: torch.Tensor, *, keep: bool) -> torch.Tensor | None:
-        """Gather one shadow, and keep it as a tensor that cannot alias it.
+        """Gather one shadow as a full CPU clone that cannot alias it.
 
-        Mirrors ``_full_cpu_tensor`` in ``vrl/trainers/fsdp.py``, including why
-        the clone is not optional: ``.cpu()`` aliases storage when the shadow
-        already lives on CPU, and a written checkpoint must not change when the
-        next optimizer step moves the shadow. The gather runs whether or not
-        the result is kept, because it is a collective every rank must enter.
+        The gather runs whether or not the result is kept, because it is a
+        collective every rank must enter.
         """
 
-        from torch.distributed.tensor import DTensor
+        from vrl.trainers.fsdp import full_cpu_tensor
 
-        full = parameter.full_tensor() if isinstance(parameter, DTensor) else parameter
-        return full.detach().cpu().clone() if keep else None
+        return full_cpu_tensor(parameter, keep=keep)
 
     def state_dict(self) -> dict[str, Any]:
         """Checkpoint-facing state; always plain full tensors.
