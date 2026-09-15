@@ -212,3 +212,9 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   验证 run `cp2_allpeers` 已在 GPU 2-3 启动。附：2 卡复现里 actor 策略的 CheckpointError 来自复现脚本
   对 block 用了默认 `cast_forward_inputs=True`（RoPE 张量前向 bf16、重算 fp32），VRL 的
   `apply_fsdp` 对 block 显式关闭该转型，故 actor 策略在 VRL 内不受此影响。
+- 2026-09-15 05:00：`cp2_allpeers`（两 rank 各生成 3 组）epoch 0：采集阶段 3 次生成/rank
+  （约 16.5 分钟）而非 6 次（33 分钟），组生成墙钟如预期减半；parity 0.0020、clip 0、reward
+  −1.877±5.23、grad_norm 9.8e-3、loss −3.0e-4。指标与单卡基线不再逐位可比：rank 1 的引擎用自己的
+  driver RNG 抽采样种子，并集的样本集合与单 rank 生成的不同（合法的随机样本，只是不同的一组）。
+  等价性已由 leader 布局的 C 门证明；本 run 验证的是全员生成布局能跑通且指标量级合理。
+  若日后需要跨布局逐位可比，采样种子应由全局 prompt 序号派生而非各 rank 的 RNG 流。
