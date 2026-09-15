@@ -197,3 +197,9 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   forward op 加转型垫片（保存前把 q/k/v 统一到 autocast dtype），前向数值不变、backward 看到与
   前向一致的 dtype（`vrl/trainers/context_parallel.py`）。单卡基线（none）epoch 0：loss −9.5e-5、
   reward −4.5297、parity 0.002158、grad_norm 7.08e-4。
+- 2026-09-15 03:40：**C 门通过（epoch 0）**：cp=2（GPU 2-3，`precision_policy=none`，attention dtype
+  垫片）与单卡基线（同配置、同种子）逐指标对比（full precision）：loss −9.5033e-5 vs −9.50328e-5
+  （rel 2.7e-6）、reward_mean/std 完全相同、parity 0.00215822 相同、grad_norm 7.07975e-4 vs
+  7.08056e-4（rel 1.1e-4，bf16 量级）、clip 0。即 token 分片 + loss×cp 的梯度与单卡等价。
+  时间：每次 24 视频生成 325 s（leader 单独生成，与基线相同——follower 引擎空转是已知待办）。
+  epoch 1 进行中；基线 epoch 1：loss 1.50e-4、reward −5.6918、parity 0.001893、grad_norm 4.87e-3。
