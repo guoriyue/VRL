@@ -54,7 +54,6 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.countgd import CountGDReward
     from vrl.rewards.functions.geneval import GenEvalReward
     from vrl.rewards.functions.geneval_owl import GenEvalOwlReward
-    from vrl.rewards.functions.grounded_ocr import GroundedOCRReward
     from vrl.rewards.functions.hpsv3 import HPSv3Reward
     from vrl.rewards.functions.idm_action_following import ActionFollowingReward
     from vrl.rewards.functions.image_sharpness import ImageSharpnessReward
@@ -81,7 +80,6 @@ def _register_builtins() -> None:
             "countgd": CountGDReward,
             "geneval": GenEvalReward,
             "geneval_owl": GenEvalOwlReward,
-            "grounded_ocr": GroundedOCRReward,
             "nsfw_safety": NSFWSafetyReward,
             "ocr": OCRReward,
             "pickscore": PickScoreReward,

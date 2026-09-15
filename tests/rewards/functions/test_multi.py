@@ -651,7 +651,7 @@ def test_service_ocr_reward_gets_a_managed_scorer_with_its_knobs(tmp_path) -> No
         reward_kwargs={
             "ocr": {
                 "artifact_dir": str(tmp_path / "reward_artifacts"),
-                "substring_full_credit": False,
+                "debug_dir": str(tmp_path / "ocr_debug"),
                 "score_key": "ocr_match",
             }
         },
@@ -662,7 +662,7 @@ def test_service_ocr_reward_gets_a_managed_scorer_with_its_knobs(tmp_path) -> No
     scorer = component.scorer
     assert isinstance(scorer, ManagedRewardScorer)
     assert scorer.worker_config["model_factory"] == "vrl.rewards.models.ocr:OCRRewardModel"
-    assert scorer.worker_config["substring_full_credit"] is False
+    assert scorer.worker_config["debug_dir"] == str(tmp_path / "ocr_debug")
     assert scorer.worker_config["device"] == "cpu"
     assert scorer.pid is None  # launched lazily by preflight/scoring
 
@@ -707,7 +707,6 @@ def test_service_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:
         ("geneval_owl", "cuda:0", {}),
         ("motion_dynamics", "cuda:0", {"worker_config": {"num_frames": 4}}),
         ("target_dino_similarity", "cuda:0", {"worker_config": {"num_frames": 4}}),
-        ("grounded_ocr", "cpu", {"ocr": {}, "guard": {}}),
     ],
 )
 def test_every_former_in_process_reward_can_run_as_a_managed_service(

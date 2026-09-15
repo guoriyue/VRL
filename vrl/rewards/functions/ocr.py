@@ -16,13 +16,14 @@ class OCRReward(DiskArtifactRewardFunction):
 
     Uses ``paddleocr`` (matches flow_grpo's engine choice) to detect text in
     sampled frames and computes reward = mean over frames with reward > 0, per
-    the flow_grpo ``OcrScorer_video_or_image`` implementation.
+    the flow_grpo ``OcrScorer_video_or_image`` implementation; ``score_key``
+    selects that edit similarity (``ocr``) or the exact whole-text match
+    fraction (``ocr_match``).
 
     Transports: in-process (model built eagerly, media in memory, image or
     video tensors alike); ``kind=service`` (the driver launches a PaddleOCR
-    service and hands it every knob below); ``kind=http`` (an operator-run
-    service owns the knobs). ``debug_dir`` dumps the best-scoring frame and
-    the OCR decision.
+    service); ``kind=http`` (an operator-run service). ``debug_dir`` dumps the
+    best-scoring frame and the recognized lines.
     """
 
     model_factory = "vrl.rewards.models.ocr:OCRRewardModel"
@@ -45,12 +46,6 @@ class OCRReward(DiskArtifactRewardFunction):
         device: str = "cuda",
         *,
         debug_dir: str | None = None,
-        engine_profile: str = "flow_grpo_compat",
-        text_selection: str = "all_text",
-        substring_full_credit: bool = True,
-        exclusive_alphanumeric_lines: bool = False,
-        extra_line_min_confidence: float = 0.5,
-        near_duplicate_min_similarity: float | None = None,
         score_key: str = "ocr",
         scorer: RewardScorer | None = None,
         inference: RewardInferenceConfig | None = None,
@@ -61,19 +56,10 @@ class OCRReward(DiskArtifactRewardFunction):
     ) -> None:
         if score_key not in {"ocr", "ocr_match"}:
             raise ValueError("OCR score_key must be 'ocr' or 'ocr_match'")
-        model_config = {
-            "debug_dir": debug_dir,
-            "engine_profile": engine_profile,
-            "text_selection": text_selection,
-            "substring_full_credit": substring_full_credit,
-            "exclusive_alphanumeric_lines": exclusive_alphanumeric_lines,
-            "extra_line_min_confidence": extra_line_min_confidence,
-            "near_duplicate_min_similarity": near_duplicate_min_similarity,
-        }
         super().__init__(
             reward_name="ocr",
             score_key=score_key,
-            worker_config=model_config,
+            worker_config={"debug_dir": debug_dir},
             device=device,
             scorer=scorer,
             inference=inference,

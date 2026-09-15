@@ -30,11 +30,4 @@ worker_config:
   model_factory: vrl.rewards.models.ocr:OCRRewardModel
   reward_model_version: paddleocr@flow_grpo_compat
   device: cpu
-  # Scoring policy: identical to presets/reward/ocr.yaml's in-process defaults.
-  engine_profile: flow_grpo_compat
-  text_selection: all_text
-  substring_full_credit: true
-  exclusive_alphanumeric_lines: false
-  extra_line_min_confidence: 0.5
-  near_duplicate_min_similarity: null
   debug_dir: null

@@ -1,17 +1,14 @@
 """OCR text-matching reward as a model-backed RewardModel.
 
-The compatibility policy mirrors Flow-GRPO: detect text in sampled frames with
-``paddleocr`` and score the concatenated result by normalized Levenshtein
-distance to rollout metadata. Exact-text curricula may instead score the best
-complete detected line, preserving line boundaries that the compatibility path
-intentionally discards.
+Mirrors Flow-GRPO's ``OcrScorer_video_or_image``: detect text in sampled
+frames with ``paddleocr``, concatenate the recognized lines, and score by
+normalized Levenshtein distance to the ``target_text`` rollout metadata (a
+single image whose text contains the target gets full credit, as upstream).
 
 The PaddleOCR engine is lazy-loaded and injectable via ``worker_config["engine"]``
 (or by assigning ``model._engine`` directly) so tests can supply a fake engine.
-Returns edit similarity under ``ocr`` and the fraction of sampled frames with
-an exact selected-text match under ``ocr_match``, plus raw/duplicate audit values.
-Exact matching uses the same lowercase/ASCII-space normalization and configured
-extra-line/duplicate guards, but never grants substring credit.
+Returns edit similarity under ``ocr`` and the fraction of sampled frames whose
+whole recognized text equals the target under ``ocr_match``.
 """
 
 from __future__ import annotations
@@ -19,23 +16,18 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from vrl.rewards.ocr_text import (
-    OcrEngineProfile,
-    OcrScoringPolicy,
-    OcrTextSelection,
-    normalize_ocr_text,
-)
+from vrl.rewards.ocr_text import normalize_ocr_text
 from vrl.utils.media import to_uint8
 
 logger = logging.getLogger(__name__)
 
 # Persisted sidecar protocol used to audit the exact OCR decision behind a reward.
-OCR_DEBUG_SCHEMA = "vrl.ocr-debug/v5"
+OCR_DEBUG_SCHEMA = "vrl.ocr-debug/v6"
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,26 +36,6 @@ class _OcrLine:
 
     text: str
     confidence: float
-
-
-@dataclass(frozen=True, slots=True)
-class _OcrCandidate:
-    """One target-comparison candidate and the detected lines that formed it."""
-
-    line_indices: tuple[int, ...] | None
-    text: str
-
-
-@dataclass(frozen=True, slots=True)
-class _OcrDecision:
-    """Resolved score and the line-level evidence that produced it."""
-
-    raw_reward: float
-    reward: float
-    selected_line_indices: tuple[int, ...] | None
-    selected_text: str
-    rejected_extra_line_indices: tuple[int, ...]
-    near_duplicate_line_indices: tuple[int, ...]
 
 
 def _safe_filename_fragment(text: str, max_len: int = 24) -> str:
@@ -85,26 +57,6 @@ class OCRRewardModel:
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         cfg = dict(worker_config)
         self._engine: Any = cfg.get("engine")
-        self.engine_profile = OcrEngineProfile.parse(
-            cfg.get("engine_profile", OcrEngineProfile.FLOW_GRPO_COMPAT.value),
-            what="OCR reward engine_profile",
-        )
-        self.scoring_policy = OcrScoringPolicy.from_mapping(
-            {
-                "text_selection": cfg.get(
-                    "text_selection",
-                    OcrTextSelection.ALL_TEXT.value,
-                ),
-                "substring_full_credit": cfg.get("substring_full_credit", True),
-                "exclusive_alphanumeric_lines": cfg.get(
-                    "exclusive_alphanumeric_lines",
-                    False,
-                ),
-                "extra_line_min_confidence": cfg.get("extra_line_min_confidence", 0.5),
-                "near_duplicate_min_similarity": cfg.get("near_duplicate_min_similarity"),
-            },
-            what="OCR reward configuration",
-        )
         debug_dir = cfg.get("debug_dir")
         self._debug_dir = Path(debug_dir) if debug_dir else None
         self._debug_counter = 0
@@ -128,7 +80,7 @@ class OCRRewardModel:
     def _ensure_loaded(self) -> None:
         if self._engine is not None:
             return
-        self._engine = _build_paddle_ocr(self.engine_profile)
+        self._engine = _build_paddle_ocr()
 
     def __call__(self, artifact: Any) -> dict[str, float]:
         import numpy as np
@@ -136,11 +88,11 @@ class OCRRewardModel:
 
         target_text_raw = str(artifact.metadata.get("target_text", ""))
         if not target_text_raw:
-            return {"ocr": 0.0, "ocr_match": 0.0, "ocr_raw": 0.0, "ocr_near_duplicate_count": 0.0}
+            return {"ocr": 0.0, "ocr_match": 0.0}
 
         target_text = normalize_ocr_text(target_text_raw)
         if not target_text:
-            return {"ocr": 0.0, "ocr_match": 0.0, "ocr_raw": 0.0, "ocr_near_duplicate_count": 0.0}
+            return {"ocr": 0.0, "ocr_match": 0.0}
 
         self._ensure_loaded()
         output = artifact.as_media()
@@ -182,57 +134,35 @@ class OCRRewardModel:
 
         target_len = len(target_text)
         frame_rewards: list[float] = []
-        frame_raw_rewards: list[float] = []
         match_frame_count = 0
         # Start below the valid reward range so an all-zero sample still keeps
         # its first frame for reward-hacking audits.
         best_reward: float = -1.0
         best_frame: np.ndarray | None = None
         best_lines: tuple[_OcrLine, ...] = ()
-        best_selected_line_indices: tuple[int, ...] | None = None
-        best_selected_text = ""
-        best_rejected_extra_line_indices: tuple[int, ...] = ()
-        best_near_duplicate_line_indices: tuple[int, ...] = ()
-        best_raw_reward = 0.0
 
         for frame in frames:
             lines = _extract_ocr_lines(_run_paddle_ocr(self._engine, frame))
-            candidates = _scoring_candidates(lines, self.scoring_policy.text_selection)
-            decision = _best_candidate_score(
-                candidates,
-                lines=lines,
-                target_text=target_text,
-                target_len=target_len,
-                single_image=single_image,
-                policy=self.scoring_policy,
-                distance=distance,
+            recognized = normalize_ocr_text("".join(line.text for line in lines))
+            # flow_grpo: the substring shortcut is image-only; video frames are
+            # scored by edit distance alone.
+            dist = (
+                0
+                if single_image and target_text in recognized
+                else distance(recognized, target_text)
             )
-            if decision.reward > 0:
-                frame_rewards.append(decision.reward)
-            if decision.raw_reward > 0:
-                frame_raw_rewards.append(decision.raw_reward)
-            # Unlike the compatibility mean over positive frames, exact-match
-            # success includes failed frames in its denominator. One readable
-            # frame must not give an otherwise incorrect video full credit.
-            match_frame_count += (
-                normalize_ocr_text(decision.selected_text) == target_text
-                and not decision.rejected_extra_line_indices
-                and not decision.near_duplicate_line_indices
-            )
-            if decision.reward > best_reward:
-                best_reward = decision.reward
+            reward = 1.0 - min(dist, target_len) / target_len
+            if reward > 0:
+                frame_rewards.append(reward)
+            # Exact-match success includes failed frames in its denominator: one
+            # readable frame must not give an otherwise incorrect video full credit.
+            match_frame_count += recognized == target_text
+            if reward > best_reward:
+                best_reward = reward
                 best_frame = frame
                 best_lines = lines
-                best_selected_line_indices = decision.selected_line_indices
-                best_selected_text = decision.selected_text
-                best_rejected_extra_line_indices = decision.rejected_extra_line_indices
-                best_near_duplicate_line_indices = decision.near_duplicate_line_indices
-                best_raw_reward = decision.raw_reward
 
         score_value = sum(frame_rewards) / len(frame_rewards) if frame_rewards else 0.0
-        raw_score_value = (
-            sum(frame_raw_rewards) / len(frame_raw_rewards) if frame_raw_rewards else 0.0
-        )
         match_score_value = match_frame_count / len(frames) if frames else 0.0
 
         if self._debug_dir is not None and best_frame is not None:
@@ -241,23 +171,12 @@ class OCRRewardModel:
                 sample_id=artifact.sample_id,
                 target=target_text_raw,
                 recognized_lines=best_lines,
-                selected_line_indices=best_selected_line_indices,
-                selected_text=best_selected_text,
-                rejected_extra_line_indices=best_rejected_extra_line_indices,
-                near_duplicate_line_indices=best_near_duplicate_line_indices,
-                best_frame_raw_score=best_raw_reward,
                 best_frame_score=max(best_reward, 0.0),
-                aggregate_raw_score=raw_score_value,
                 aggregate_score=score_value,
                 aggregate_match_score=match_score_value,
             )
 
-        return {
-            "ocr": float(score_value),
-            "ocr_match": float(match_score_value),
-            "ocr_raw": float(raw_score_value),
-            "ocr_near_duplicate_count": float(len(best_near_duplicate_line_indices)),
-        }
+        return {"ocr": float(score_value), "ocr_match": float(match_score_value)}
 
     def _dump_debug_frame(
         self,
@@ -266,13 +185,7 @@ class OCRRewardModel:
         sample_id: str,
         target: str,
         recognized_lines: tuple[_OcrLine, ...],
-        selected_line_indices: tuple[int, ...] | None,
-        selected_text: str,
-        rejected_extra_line_indices: tuple[int, ...],
-        near_duplicate_line_indices: tuple[int, ...],
-        best_frame_raw_score: float,
         best_frame_score: float,
-        aggregate_raw_score: float,
         aggregate_score: float,
         aggregate_match_score: float,
     ) -> None:
@@ -298,24 +211,12 @@ class OCRRewardModel:
                         "sample_id": sample_id,
                         "target_text": target,
                         "normalized_target_text": normalize_ocr_text(target),
-                        "engine_profile": self.engine_profile.value,
-                        "scoring_policy": self.scoring_policy.to_record(),
                         "recognized_lines": [
                             {"text": line.text, "confidence": line.confidence}
                             for line in recognized_lines
                         ],
                         "all_recognized_text": "".join(line.text for line in recognized_lines),
-                        "selected_line_indices": (
-                            list(selected_line_indices)
-                            if selected_line_indices is not None
-                            else None
-                        ),
-                        "selected_recognized_text": selected_text,
-                        "rejected_extra_line_indices": list(rejected_extra_line_indices),
-                        "near_duplicate_line_indices": list(near_duplicate_line_indices),
-                        "best_frame_raw_score": best_frame_raw_score,
                         "best_frame_score": best_frame_score,
-                        "aggregate_raw_score": aggregate_raw_score,
                         "aggregate_score": aggregate_score,
                         "aggregate_match_score": aggregate_match_score,
                     },
@@ -335,10 +236,8 @@ class OCRRewardModel:
             )
 
 
-def _build_paddle_ocr(
-    profile: OcrEngineProfile = OcrEngineProfile.FLOW_GRPO_COMPAT,
-) -> Any:
-    """Build one pinned PaddleOCR profile across supported public APIs."""
+def _build_paddle_ocr() -> Any:
+    """Build the flow_grpo-compatible PaddleOCR engine across supported public APIs."""
 
     import inspect
 
@@ -347,32 +246,16 @@ def _build_paddle_ocr(
     params = inspect.signature(PaddleOCR).parameters
     if "use_textline_orientation" in params:
         # Paddle 3.3.1's oneDNN executor cannot load the PP-OCRv6 static graph
-        # ArrayAttribute. The OCR extra pins the locally qualified 3.2.1 stack,
-        # where oneDNN is both stable and materially faster. Keep compatibility
-        # mode on its pre-existing plain CPU path.
-        common = {
-            "device": "cpu",
-            "use_doc_orientation_classify": False,
-            "use_doc_unwarping": False,
-            "use_textline_orientation": False,
-        }
-        if profile is OcrEngineProfile.PP_OCRV6_MEDIUM:
-            return PaddleOCR(
-                enable_mkldnn=True,
-                text_detection_model_name="PP-OCRv6_medium_det",
-                text_recognition_model_name="PP-OCRv6_medium_rec",
-                **common,
-            )
+        # ArrayAttribute; compatibility mode stays on its pre-existing plain
+        # CPU path.
         return PaddleOCR(
             enable_mkldnn=False,
             lang="en",
             ocr_version="PP-OCRv4",
-            **common,
-        )
-    if profile is not OcrEngineProfile.FLOW_GRPO_COMPAT:
-        raise RuntimeError(
-            "ppocrv6_medium requires the pinned OCR extra: "
-            "paddleocr==3.7.0 and paddlepaddle==3.2.1",
+            device="cpu",
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
         )
     return PaddleOCR(
         use_angle_cls=False,
@@ -447,172 +330,6 @@ def _lines_from_columns(texts: Any, scores: Any) -> tuple[_OcrLine, ...]:
         if isinstance(text, str) and text and confidence > 0.0:
             lines.append(_OcrLine(text=text, confidence=confidence))
     return tuple(lines)
-
-
-def _scoring_candidates(
-    lines: tuple[_OcrLine, ...],
-    selection: OcrTextSelection,
-) -> tuple[_OcrCandidate, ...]:
-    if selection is OcrTextSelection.ALL_TEXT:
-        return (_OcrCandidate(None, "".join(line.text for line in lines)),)
-    if selection is OcrTextSelection.BEST_COMPLETE_LINE:
-        return tuple(_OcrCandidate((index,), line.text) for index, line in enumerate(lines))
-    return tuple(
-        _OcrCandidate(
-            tuple(range(start, start + width)),
-            "".join(line.text for line in lines[start : start + width]),
-        )
-        for width in range(1, len(lines) + 1)
-        for start in range(0, len(lines) - width + 1)
-    )
-
-
-def _best_candidate_score(
-    candidates: tuple[_OcrCandidate, ...],
-    *,
-    lines: tuple[_OcrLine, ...],
-    target_text: str,
-    target_len: int,
-    single_image: bool,
-    policy: OcrScoringPolicy,
-    distance: Callable[[str, str], int],
-) -> _OcrDecision:
-    best_reward = -1.0
-    best_indices: tuple[int, ...] | None = None
-    best_text = ""
-    for candidate in candidates:
-        normalized_candidate = normalize_ocr_text(candidate.text)
-        dist = (
-            0
-            if single_image
-            and policy.substring_full_credit
-            and target_text in normalized_candidate
-            else distance(normalized_candidate, target_text)
-        )
-        reward = 1.0 - min(dist, target_len) / target_len
-        if reward > best_reward:
-            best_reward = reward
-            best_indices = candidate.line_indices
-            best_text = candidate.text
-    rejected_extra_line_indices = _rejected_extra_line_indices(
-        lines,
-        selected_line_indices=best_indices,
-        policy=policy,
-    )
-    near_duplicate_line_indices = _near_duplicate_line_indices(
-        lines,
-        selected_line_indices=best_indices,
-        target_text=target_text,
-        target_len=target_len,
-        policy=policy,
-        distance=distance,
-    )
-    raw_reward = max(best_reward, 0.0)
-    if rejected_extra_line_indices:
-        reward = 0.0
-    else:
-        reward = raw_reward / (1 + len(near_duplicate_line_indices))
-    return _OcrDecision(
-        raw_reward=raw_reward,
-        reward=reward,
-        selected_line_indices=best_indices,
-        selected_text=best_text,
-        rejected_extra_line_indices=rejected_extra_line_indices,
-        near_duplicate_line_indices=near_duplicate_line_indices,
-    )
-
-
-def _rejected_extra_line_indices(
-    lines: tuple[_OcrLine, ...],
-    *,
-    selected_line_indices: tuple[int, ...] | None,
-    policy: OcrScoringPolicy,
-) -> tuple[int, ...]:
-    if not policy.exclusive_alphanumeric_lines:
-        return ()
-    selected = frozenset(selected_line_indices or ())
-    return tuple(
-        index
-        for index, line in enumerate(lines)
-        if index not in selected
-        and line.confidence >= policy.extra_line_min_confidence
-        and any(character.isalnum() for character in line.text)
-    )
-
-
-def _near_duplicate_line_indices(
-    lines: tuple[_OcrLine, ...],
-    *,
-    selected_line_indices: tuple[int, ...] | None,
-    target_text: str,
-    target_len: int,
-    policy: OcrScoringPolicy,
-    distance: Callable[[str, str], int],
-) -> tuple[int, ...]:
-    """Find confident unselected lines that look like another target attempt."""
-
-    threshold = policy.near_duplicate_min_similarity
-    if threshold is None:
-        return ()
-    selected = frozenset(selected_line_indices or ())
-    from Levenshtein import opcodes
-
-    # Align the selected span to the target before recovering wrapped lines:
-    # an OCR misspelling must not itself become a reference for duplicates.
-    normalized_selected = [normalize_ocr_text(lines[index].text) for index in sorted(selected)]
-    selected_text = "".join(normalized_selected)
-    alignment = opcodes(selected_text, target_text)
-    fragments: set[str] = set()
-    start = 0
-    for normalized in normalized_selected:
-        end = start + len(normalized)
-        target_parts: list[str] = []
-        has_match = False
-        for operation, source_start, source_end, target_start, target_end in alignment:
-            left, right = max(start, source_start), min(end, source_end)
-            if operation == "equal" and left < right:
-                has_match = True
-                target_parts.append(
-                    target_text[
-                        target_start + left - source_start : target_start + right - source_start
-                    ]
-                )
-            elif operation == "replace" and left < right:
-                source_width = source_end - source_start
-                target_width = target_end - target_start
-                target_parts.append(
-                    target_text[
-                        target_start
-                        + (left - source_start) * target_width // source_width : target_start
-                        + (right - source_start) * target_width // source_width
-                    ]
-                )
-            elif operation == "insert" and (
-                start <= source_start < end or (start < end == source_start == len(selected_text))
-            ):
-                target_parts.append(target_text[target_start:target_end])
-        fragment = "".join(target_parts)
-        if has_match and fragment and fragment != target_text:
-            fragments.add(fragment)
-        start = end
-    duplicates: list[int] = []
-    for index, line in enumerate(lines):
-        if (
-            index in selected
-            or line.confidence < policy.extra_line_min_confidence
-            or not any(character.isalnum() for character in line.text)
-        ):
-            continue
-        normalized_line = normalize_ocr_text(line.text)
-        similarity = 1.0 - min(distance(normalized_line, target_text), target_len) / target_len
-        for fragment in fragments:
-            similarity = max(
-                similarity,
-                1.0 - distance(normalized_line, fragment) / len(fragment),
-            )
-        if similarity >= threshold:
-            duplicates.append(index)
-    return tuple(duplicates)
 
 
 __all__ = ["OCRRewardModel"]

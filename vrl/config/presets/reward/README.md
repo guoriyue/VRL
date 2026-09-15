@@ -192,8 +192,8 @@ OCR under continuous scheduling cost 61 s per epoch of launch-bound replay):
   launches `vrl-reward-service` itself for this component, hands it the
   recipe's `reward.kwargs.ocr`, and scores over loopback HTTP. Nothing to
   start by hand; the service config and log land in the run's output dir.
-- `/reward=ocr_http` (self-contained preset): an operator-run service owns the
-  scoring knobs (`vrl/config/reward_service/ocr_paddle.yaml`):
+- `/reward=ocr_http` (self-contained preset): an operator-run service
+  (`vrl/config/reward_service/ocr_paddle.yaml`):
 
 ```bash
 .venv/bin/python -m vrl.rewards.service.server \
