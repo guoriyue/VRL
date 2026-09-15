@@ -189,3 +189,11 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   无检查点的 cp=2 在 81 帧上 OOM（44 GB），所以检查点必须开。
   处置：cp=2 与单卡基线都改用 `precision_policy=none`（trainable 组决定 dtype，即原生 FP32 LoRA
   路径）重跑，两者同配置可比；`actor` 策略在多 rank + 检查点下的修复另立项。
+- 2026-09-15 02:40：**C 门根因（第二层）**：`precision_policy=none` 下同样在 attention backward
+  报 q/k fp32、v bf16。原因：该策略的 replay 前向跑在外层 autocast(bf16) 里，norm_q/norm_k 在
+  autocast 下升 fp32，v 投影是 bf16；前向的 SDPA 受 autocast 转型所以通过，而 CP 的注意力是自定义
+  autograd.Function，backward 在 autocast 之外用**保存的原始张量**重算 SDPA，拿到混合 dtype。
+  2 卡最小复现没有外层 autocast 所以没复现。修法：VRL 在启用 CP 时给 native attention 的
+  forward op 加转型垫片（保存前把 q/k/v 统一到 autocast dtype），前向数值不变、backward 看到与
+  前向一致的 dtype（`vrl/trainers/context_parallel.py`）。单卡基线（none）epoch 0：loss −9.5e-5、
+  reward −4.5297、parity 0.002158、grad_norm 7.08e-4。

@@ -25,7 +25,11 @@ from vrl.rollouts.orchestration.context_parallel import (
 )
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.rollouts.stats import RolloutStats
-from vrl.trainers.context_parallel import enable_context_parallel
+from vrl.trainers.context_parallel import (
+    autocast_safe_attention_forward_op,
+    enable_context_parallel,
+    install_autocast_safe_attention_ops,
+)
 from vrl.trainers.distributed import (
     DistributedTrainingContext,
     collective_timeout,
@@ -171,6 +175,38 @@ def test_batch_fingerprint_separates_reordered_and_rescored_batches() -> None:
     assert same != batch_fingerprint([_batch([3.0], [1]), _batch([1.0, 2.0], [0, 0])])
     assert same != batch_fingerprint([_batch([1.0, 2.5], [0, 0]), _batch([3.0], [1])])
     assert same != batch_fingerprint([_batch([1.0, 2.0], [0, 1]), _batch([3.0], [1])])
+
+
+def test_attention_forward_op_saves_one_dtype_for_the_backward_recompute() -> None:
+    """Autocast leaves q/k in fp32 and v in bf16 at the kernel boundary; the
+    wrapped op casts them to one dtype before the original saves them."""
+    seen: dict[str, tuple] = {}
+
+    def original(ctx, query, key, value, *args, **kwargs):
+        seen["dtypes"] = (query.dtype, key.dtype, value.dtype)
+        return value
+
+    wrapped = autocast_safe_attention_forward_op(original)
+    q = torch.zeros(1, 2, 2, 4)
+    k = torch.zeros(1, 2, 2, 4)
+    v = torch.zeros(1, 2, 2, 4, dtype=torch.bfloat16)
+    wrapped(None, q, k, v)
+    assert seen["dtypes"] == (torch.bfloat16,) * 3  # lowest precision without autocast
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        wrapped(None, q, k, v.to(torch.float16))
+    assert seen["dtypes"] == (torch.bfloat16,) * 3  # the autocast dtype wins under autocast
+    wrapped(None, q, k, v.float())
+    assert seen["dtypes"] == (torch.float32,) * 3  # already uniform: untouched
+
+
+def test_install_is_idempotent_and_targets_the_native_op() -> None:
+    from diffusers.models import attention_dispatch
+
+    install_autocast_safe_attention_ops()
+    first = attention_dispatch._native_attention_forward_op
+    install_autocast_safe_attention_ops()
+    assert attention_dispatch._native_attention_forward_op is first
+    assert getattr(first, "_vrl_autocast_safe", False)
 
 
 # ── two-rank gloo: groups, batch sharing ─────────────────────────────────────
