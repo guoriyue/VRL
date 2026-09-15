@@ -157,6 +157,14 @@ class ModelSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
+    # Add each LoRA site's delta into the base output in place instead of
+    # materializing the fp32 sum and casting it back. Rollout only; bit-identical
+    # to the peft forward, so replay needs no mirror. Kernel choice, same
+    # weights, so identity-excluded.
+    fused_lora_branch: bool | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
     use_lora: Any = Field(
         default=None,
         json_schema_extra=checkpoint_identity_metadata("value", default=False),
