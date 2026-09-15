@@ -249,3 +249,12 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
 | 训练并行 | Wan FSDP2 + Ulysses CP 落地：等价性门通过、全员生成、fp32 master + bf16 计算 | C 门三次 run |
 | 权重同步 | LoRA 配方 sync 0.68 s/epoch，非瓶颈；全参 IPC 留作全参配方的门 | rollout_stats |
 | 多节点 | 放置探测规则已写进报错；2 节点验证等硬件 | — |
+- 2026-09-15 09:55：**WS-A 回归与修复**：recompute arm 前 26 epoch 的 reward（0.14–0.16）远低于 strict arm
+  （0.43–0.47），且 epoch 0 就低（0.12 vs 0.41），排除 compile（旧 compile 批 1 run epoch 0 为 0.32–0.36）
+  与 batch 后定位到 WS-A：worker 侧 `.pt` artifact 保存的是线上的 uint8，而 driver 原路径先还原成
+  float k/255；reward 模型的 `to_uint8` 只接受 [0,1] 浮点，uint8 输入被 ×255 饱和成白图。
+  影响：WS-A（cb92c573）之后所有 **图像 `.pt`** artifact 的 reward（SD3.5 OCR 的 continuous 测量 run
+  与 recompute arm 前 26 epoch）；mp4 路径（Wan HPSv3）不受影响，cp=2 等结论仍然成立。
+  修复 91c73a5b：materialize 时还原 k/255，`to_uint8` 对 uint8 透传。recompute arm 09:55 重启，
+  之前的 wall（254–285 s）与 clip=0 结论不受影响（与 reward 无关）。教训：artifact 的
+  数值表示是 reward 契约的一部分，应由一处定义（后续把"uint8 存盘 + as_media 还原"作为显式契约）。
