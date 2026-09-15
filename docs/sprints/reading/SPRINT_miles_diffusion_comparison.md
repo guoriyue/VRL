@@ -123,6 +123,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 11:45 — 零优势组的处理：采集期动态过滤/补采 vs 训练期丢弃
 - 2026-09-15 12:45 — reward 吞吐：actor 池（多副本、分数 GPU、轮询）vs 每组件单服务
 - 2026-09-15 13:45 — 运行证据与可复现性：源码/环境/数据快照 vs 实验跟踪服务
+- 2026-09-15 14:45 — 引擎健康与恢复：死 worker 是终止 run 还是原位重建
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -456,3 +457,26 @@ N+1 重叠。缺的是**横向副本**：CPU OCR 完全可以并行 N 份，GPU 
 **VRL 可补的两项（后续）**：(1) 证据里加"每个 reward 服务子进程的 launch_token、pid、
 `/info` 回执"（今天的端口串号若有它可秒判）；(2) 加"放置探测结果"（每 bundle 的节点/GPU id，
 见 06:45 笔记）。风险：只增字段；门：`verify_artifacts` 对这些字段做存在性校验。本小时不改代码。
+
+### hourly note 2026-09-15 14:45 — rollout worker 死了：终止 run，还是原位重建
+
+**问题**：长跑里一个 rollout 引擎进程死掉（OOM、驱动错误、Ray actor 被杀）是常态；系统的选择是
+让整个 run 失败（靠 checkpoint 重启），还是在 update 边界原位重建引擎并重推权重。
+
+**参照实现**（`miles/ray/rollout.py:261-290`）：健康监视器把死引擎标记为 `None`；每个 rollout 前
+`recover_rollout_engines` 暂停监视、按空位重新 `init_rollout_engines`（同一放置组 bundle）、对新
+引擎做 offload/仅权重 onload，并记录 `num_new_engines` 让下一次 `update_weights` 知道要给这些
+引擎全量推权重；端口分配有已知 TODO（重启会重排同节点后续引擎的端口）。
+
+**VRL 今天**（`vrl/generation/ray/health_monitor.py:36-205`）：`RolloutWorkerHealthMonitor` 用有界
+`ray.get(actor.health.remote(), timeout)` 探测每个 worker，探测失败即 `_terminalize`：关闭准入、
+销毁 actor，让进行中的与下一次前台调用以 `RolloutWorkerUnreachable`（终态错误）失败；parking
+切换期间暂停探测。即 VRL 选择**fail-stop + 从 checkpoint 恢复**，不做原位重建。
+
+**判断**：VRL 的选择在 4 卡单机是对的——重建一个 20 GB 的 Wan pipeline 与从 checkpoint 重启
+成本相近，而 fail-stop 的语义（版本屏障、指纹、集合通信计数）不会被"部分引擎是新的"打破。
+多节点/多引擎（8+ 引擎）时原位重建才划算。**后续（多节点前）**：在 `RayGenerationRuntime` 增加
+"update 边界重建"路径：死 worker 的 bundle 重新拉起 → `load_policy` → 用 versioned slot 全量安装
+当前版本 → 才重新进入准入；期间健康探测暂停，`run_evidence` 记录重建事件。风险：与 continuous
+的 staleness 记账交互（新引擎没有旧版本）；门：人为 kill 一个 worker，run 在下一个 update 前
+恢复且 parity/版本回执不变。本小时不改代码。
