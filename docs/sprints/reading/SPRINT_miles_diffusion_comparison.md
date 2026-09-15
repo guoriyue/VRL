@@ -111,6 +111,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-14 23:40 — 并行状态记账：dp×sp 全体 rank 的微批计数守卫 / CP 同组样本一致性
 - 2026-09-15 00:50 — 生命周期握手与失败处理：子进程就绪等待、死亡检测、身份核对
 - 2026-09-15 01:55 — 指标归约范围：dp 组 vs world，CP 副本的重复计数
+- 2026-09-15 02:45 — 权重更新事务与版本门：版本回执、内容核对、LoRA 合并时机
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -182,3 +183,24 @@ CP 下的实际影响：均值/方差与比值类指标**不变**（副本让分
 `grad_norm` 天然 REPLICATED（DTensor 裁剪已在整个 world 上算出同一个数）。风险：所有调用点
 都在 rank 对称路径上，换组不改变调用次数；门：cp=2 下 `pre_update_clip_fraction` 的分子分母
 日志与基线一致，绝对计数减半。
+
+### hourly note 2026-09-15 02:45 — 权重更新：版本回执之外还要"内容回读"
+
+**问题**：训练侧把新权重推给 rollout 引擎后，怎么知道引擎真的在用它们？错误的表现不是崩溃，
+而是 rollout 用旧策略生成、ratio 悄悄偏离；诊断漂移时它和 kernel 差异混在一起。
+
+**参照实现**：更新按 bucket 推送、LoRA 逐层即时合并（`diffusion_update_weight_utils.py:337-360`），
+并有一个环境变量门控的**回读核对**：推送后把引擎侧权重读回与训练侧比较
+（`MILES_VERIFY_WEIGHT_SYNC`，`:338-339`），只在诊断时开。
+
+**VRL 今天**：`RayGenerationWeightSync.push_to_rollout_engines`（`vrl/generation/ray/weight_sync.py:68-98`）
+把 `policy_version` 随 payload 一起推，要求每个引擎所有 rank **回执同一版本**才算成功；
+worker 侧 `update_weights(..., verify_content=)`（`vrl/generation/execution/worker.py:188-250`）
+支持内容核对，且有 `begin/receive/commit/abort_weight_transfer` 的分段事务和
+`verify_active_weights`。即版本门与内容核对 VRL 都有，且核对是请求参数而非环境变量。
+
+**差异与可做的事**：(1) VRL 的 `verify_content` 默认关，与参照一致；建议在 `trainer.debug.first_step`
+的首个 update 自动打开一次（首次 sync 后核对一次，之后关闭），把"权重没到位"从 parity 诊断里
+排除，成本一次读回；(2) LoRA 路径：VRL 传扁平化的可训练状态、引擎侧 `install_trainable_state`，
+不做合并，合并 dtype 问题不存在；参照的即时合并只在引擎不支持 adapter 时才需要。
+风险：仅 debug 首步多一次核对；门：首步日志出现一次 `verify_content=True` 的通过记录。
