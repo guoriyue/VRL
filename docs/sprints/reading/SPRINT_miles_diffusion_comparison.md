@@ -114,6 +114,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 02:45 — 权重更新事务与版本门：版本回执、内容核对、LoRA 合并时机
 - 2026-09-15 03:45 — checkpoint/resume 身份：tracker 文件、RNG 与进度恢复、身份校验
 - 2026-09-15 04:45 — staleness / off-policy 记账：过期样本是断言还是策略
+- 2026-09-15 05:40 — 进程/GIL 隔离：训练进程里到底跑了什么（两次 py-spy 的证据）
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -252,3 +253,27 @@ staleness 视为违规）。这在 max_stale=1、单槽的形状下等价于断�
 
 **顺带**：本小时发现合并跑 CP 的 2 rank spawn 测试与 orchestration 测试时，pytest 在解释器退出
 的 `multiprocessing._exit_function` 上挂住（join 存活子进程）；测试改为 join 超时后 kill。
+
+### hourly note 2026-09-15 05:40 — 训练进程里到底跑了什么：用采样数据回答"要不要拆 driver"
+
+**参照实现的形状**：driver 是纯控制平面——`actor_group.py:78-116` 用 `ray.remote(num_gpus=1)` 起
+训练 actor，driver 只 `ray.get([actor.train.remote(...)])`、`update_weights.remote()`、
+`wake_up.remote()`；rollout manager（`ray/rollout.py:47`）和引擎也是 actor。训练进程里除了训练
+没有别的 Python 工作，GIL 争用在结构上不可能发生。
+
+**VRL 今天**：torchrun 的 rank 进程既是训练进程，也是 rollout 采集的 driver（Ray RPC、pickle
+反序列化、batch 构建、reward 客户端、continuous 模式的 producer 线程）。这正是 SD3.5 上进程内
+CPU reward 与训练争 GIL（+61 s/epoch）的结构根源，已由"reward 一律独立服务"解决。
+
+**这次的证据（Wan 1.3B + HPSv3 服务，严格模式，单 rank）**：生成阶段 25 分钟里 driver 的 Python
+线程只活跃 3.5 s（0.2%），其中 81% 是 Ray pickle/torch.load；训练阶段 20 分钟里 driver 活跃 30%，
+其中 49% 是 FSDP `wait_for_unshard`（等 GPU，无争用）、**17.5% 是训练 batch 上设备的同步 H2D 拷贝**
+（`vrl/rollouts/batch/ops.py:80-100` → `vrl/trajectory/device.py:55-75`，`leaf.to(device)`），
+pickle 只有 1.6%。
+
+**结论**：严格模式下 VRL 的 rank 进程没有可观的 GIL 争用来源，拆 driver（D）在此没有收益；
+driver 侧唯一值得动的是训练 batch 的 H2D 拷贝——但它是 CUDA 拷贝而非 GIL 问题，且 Ray 反序列化
+后的张量不在 pinned 内存里，`non_blocking` 要先付一次 pin 拷贝，收益要先测再改（门：单 rank
+训练阶段 `move_training_batch_to_device` 的 py-spy 占比从 17.5% 降到 <5% 且 epoch 墙钟不劣化）。
+D 的最终判定等 continuous 模式（producer 线程与 backward 同进程）的 py-spy：那是 GIL 争用唯一还
+可能出现的形状。

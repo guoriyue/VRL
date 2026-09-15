@@ -218,3 +218,7 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   driver RNG 抽采样种子，并集的样本集合与单 rank 生成的不同（合法的随机样本，只是不同的一组）。
   等价性已由 leader 布局的 C 门证明；本 run 验证的是全员生成布局能跑通且指标量级合理。
   若日后需要跨布局逐位可比，采样种子应由全局 prompt 序号派生而非各 rank 的 RNG 流。
+- 2026-09-15 05:40：`cp2_allpeers` 两个 update 完成（05:19）：epoch 1 loss 1.8e-4、reward −3.04±3.42、
+  parity 0.00197、clip 0、grad_norm 3.76e-3，无指纹错误；全员生成布局成为 CP 预设默认。
+  D（driver 控制平面）按两次严格模式 py-spy 的证据判定"暂不做"（见 reading 附录 C 05:40 笔记），
+  待 continuous 模式测量后终判。GPU 0 仍被 vrl-9941 的 eval 占用，continuous 测量等其释放。
