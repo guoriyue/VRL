@@ -4110,3 +4110,34 @@ Conclusions:
 4. The in-process-vs-HTTP rule is conditional: it matters only when reward is
    CPU-bound, scheduling is continuous, and training is launch-bound. Strict
    video recipes with GPU rewards (Wan + HPSv3) are unaffected.
+
+## Coordination (session vrl-9941, 2026-09-14 12:30 PDT): Wan 2.2 T2V-A14B GRPO learning experiment
+
+- Claim: GPUs 0-1 for the two-rank native FP32-LoRA Wan 2.2 T2V trainer
+  (the accepted `wan22_fp32_native_baseline` configuration), GPU 2 for the
+  fixed-prompt baseline/checkpoint evaluation and the Kling reward probes,
+  starting now. GPU 3 is left free. Host RAM budget is the constraint: the
+  two-rank trainer alone reached ~228 GiB; do not start another 14B pipeline.
+- Code: isolated worktree `/home/ubuntu/VRL-wan22`, branch `exp/wan22-t2v-grpo`
+  from `feat/cosmos-cp-runtime@9145b2af`. No edits to this checkout's Python.
+- Outputs: `/mnt/nvme/outputs/wan22_t2v_grpo/` (NVMe, not root).
+- Not touched: the paused Wan 2.1 heavy queue, the SD3.5 queue, the Codex I2V
+  work. Message session vrl-9941 (socket 9941.sock) before claiming GPUs 0-2.
+
+### GPU claim: GPU 3 only, reward-service park/wake acceptance (vrl-74, 2026-09-14)
+
+Single-rank phase-cycled Wan 2.1 1.3B + HPSv3 (`online_grpo_hpsv3_fsdp_4x_l40s`
+with `gpus_per_node=1`, `reward.inference.hpsv3.kind=service`), 2 updates on
+GPU 3 while vrl-9941 holds GPUs 0-2. Output
+`outputs/wan_hpsv3_flash_grpo/service_park_smoke_1gpu`. Validates P2 of
+`planned/SPRINT_reward_service_isolation.md`: the HPSv3 model lives in a child
+process that time-shares the card through POST /park and /wake.
+
+Result (2026-09-14): status success, 2 updates, replay parity 0.00197 / 0.00204,
+clip 0, no Xid, HPSv3 child parked/woke every phase. `reward_mean` was -4.5 /
+-5.7 versus +3.0 / +3.5 in `fsdp_smoke_main`; scoring the smoke's own mp4s with
+the in-process HPSv3 and the managed service gave identical numbers on every
+sample (max |delta| 0.0), and both runs' per-sample scores span -10 .. +11, so
+the level difference is prompt-sample variance of a 6-prompt single-rank
+collection, not the transport. GPU 3 released 2026-09-14 21:40 PDT; vrl-74 holds
+all GPU work until vrl-9941's Wan 2.2 four-rank stage 2 (GPUs 0-3, ~6 h) exits.

@@ -69,7 +69,7 @@ GPU 验收（3x1 preset + `reward.inference.ocr.kind=service`，期望 ≈398 s/
 实现 `MemoryParkingScorer`，`requires_memory_parking` 在 preflight 从 `/info` 学到，不假设。残留
 字节由 `/park` 返回并记日志（driver 侧本来就不再对 reward 做门控）。物理卡号无需重映射：子
 进程继承 rank-local `CUDA_VISIBLE_DEVICES`。GPU 验收：单 rank Wan 1.3B + HPSv3 服务时分 GPU3
-正在跑（`outputs/wan_hpsv3_flash_grpo/service_park_smoke_1gpu`）。
+通过（`outputs/wan_hpsv3_flash_grpo/service_park_smoke_1gpu`：parity 0.002、clip 0、无 Xid；服务与进程内 HPSv3 对同一批 mp4 逐样本打分完全一致）。
 - 服务端：解除 `sleep_offload` 禁令（仅 `kind: service`），新增 `/park`（sleep 池 +
   释放缓存 + 用 `validate_parking_residual` 自检，返回残留字节）和 `/wake`；
   `/park` 幂等，失败返回 5xx 且保留可重试语义（对齐 `core.py` 的 phase-final gate）。

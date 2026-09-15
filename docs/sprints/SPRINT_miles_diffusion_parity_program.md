@@ -103,3 +103,8 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
 
 - 2026-09-14：程序立项；B 的 spike 安装启动（`/mnt/nvme/venvs/sglang-diff`）；
   A 的设计阅读开始。
+- 2026-09-14：A 第 1 步落地（cb92c573）：`RewardArtifactSpec` 随 GenerationRequest 下发，
+  rollout worker 在前向后直接写 `.pt`/mp4（uuid 名 + sha256 + size），driver 只收
+  `MaterializedArtifact` 引用，`GenerationOutput.video` 对磁盘型 reward 置空；driver 侧
+  store `_adopt` 接管文件并保留 release 归属。A 的门（py-spy < 2% driver 侧 pickle/mp4）
+  等 GPU 空出后测。托管服务的文件名 bug（hub id 含 `/`）修于 986b5c25。
