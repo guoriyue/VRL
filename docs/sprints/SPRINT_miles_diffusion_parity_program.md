@@ -258,3 +258,6 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   修复 91c73a5b：materialize 时还原 k/255，`to_uint8` 对 uint8 透传。recompute arm 09:55 重启，
   之前的 wall（254–285 s）与 clip=0 结论不受影响（与 reward 无关）。教训：artifact 的
   数值表示是 reward 契约的一部分，应由一处定义（后续把"uint8 存盘 + as_media 还原"作为显式契约）。
+- 2026-09-15 10:40：**修复验证**：重启后的 recompute arm epoch 0 reward 0.4253（strict arm epoch 0
+  0.4124），epoch 0–9 均值 0.40（strict 0.47，样本方差内），clip 全 0，parity 0.018–0.021，
+  epoch 墙钟 ~255–305 s。artifact dtype 回归确认已修。

@@ -119,6 +119,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 07:45 — 反序列化与 batch 构建出事件循环（parser actor 池）：按三次 py-spy 判定不做
 - 2026-09-15 08:45 — 时分租约的相位切换：sleep/offload/onload/wake 的顺序、失败组合与健康探测
 - 2026-09-15 09:50 — reward 的媒体契约：生成输出到 reward 模型之间只允许一处归一化
+- 2026-09-15 10:45 — 训练样本的构造：扁平 (sample, step) 对 vs 带轴的轨迹 + 重放时切片
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -364,3 +365,23 @@ WS-A 后的 worker 路径曾是 uint8）。契约分散在写入方、accessor �
 （4× 更小），reward 模型只面对一种表示；`to_uint8` 对 uint8 透传作纵深防御（91c73a5b）。
 风险：无（浮点 `.pt` 与内存路径行为不变）；门：SD3.5 recompute arm 重跑的 epoch 0 reward 回到
 0.3–0.4 区间，`tests/rewards` 全绿。后续：materialize 改回 uint8 存盘以省 4× 磁盘与 IO。
+
+### hourly note 2026-09-15 10:45 — 训练样本怎么切：扁平对，还是带轴的轨迹
+
+**参照实现**（`miles/ray/data_conversion_hub/flow_grpo.py:11-63, 94-115`）：采样结束后立刻把每个
+样本展开成扁平的 (sample, timestep) 训练对列表（sample-major），每个对是一个 dict，携带该步的
+latent/next latent/log-prob/timestep 以及每样本共享的条件字段；随后按 dp 切分、按
+sample×tstep tile 组微批。优点：切分与微批极其简单；代价：每样本的条件张量被复制到每个对里，
+且"哪些步是 SDE 步"要靠 `latent_step_indices` 一路带着。
+
+**VRL 今天**（`vrl/trajectory/builders.py:30-135`，`vrl/trajectory/reader.py:81-136`，
+`vrl/trainers/online/trainer.py:1176-1231`）：轨迹是带类型轴的批（`sample × denoise`），每样本的
+条件张量只存一份（`("sample",)` 轴），评估器在重放时按 `axis_index` 切当前 step；SDE 窗口作为
+每样本的 `sde_window` 张量记录，trainer 校验同组一致后决定训练哪些步。这是更强的表示（无复制、
+可校验），微批划分则由 `_TrainingMicrobatch` 按样本切。
+
+**本小时的小改动**：builder 对首维不等于 batch 的 replay 张量原本静默丢弃（`builders.py:88`，
+标量与静态表是合法情形）；现在以 debug 日志列出被留在轨迹外的名字，家族导出形状错误时可诊断
+（测试用 caplog 断言）。风险：无。门：无（日志级别 debug）。
+**结论**：VRL 的表示法优于扁平对，不改；参照的可借鉴处只有"训练对粒度 = sample×tstep 的
+微批 tile"这一个调度自由度，VRL 的 `training_microbatch_size` 目前只按样本切，需要时再加 step 维。
