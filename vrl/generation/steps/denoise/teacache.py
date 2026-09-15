@@ -36,16 +36,22 @@ def relative_l1_change(cur: torch.Tensor, prev: torch.Tensor) -> float:
     reimplement it: a drifting private copy would silently measure something
     other than the signal the runtime actually skips on.
 
-    Reduced to a scalar in fp32. The ``.item()`` requires the host to wait for
-    the reduction, so this metric introduces synchronization on CUDA.
+    Reduced to a scalar in fp32 and read back to the host exactly once per
+    call. The skip decision is host-side control flow, so one device->host read
+    per step is unavoidable; the degenerate-``prev`` guard therefore stays on
+    the device (``torch.where``) instead of costing a second synchronization
+    before the ratio is even launched.
     """
+
+    import torch
 
     cur = cur.float()
     prev = prev.float()
     denom = prev.abs().sum()
-    if float(denom) <= 0.0:
-        return float("inf")  # degenerate prev -> never skip
-    return float((cur - prev).abs().sum().div(denom).item())
+    change = (cur - prev).abs().sum()
+    # degenerate prev (all-zero or non-finite denominator) -> inf -> never skip
+    ratio = torch.where(denom > 0, change / denom, torch.full_like(denom, float("inf")))
+    return float(ratio.item())
 
 
 @dataclass(frozen=True, slots=True)
