@@ -1,0 +1,1437 @@
+{
+  "degradation_scored_lower_rate": {
+    "frozen": {
+      "motion_quality": 0.21875,
+      "overall_reward": 0.90625,
+      "text_alignment": 0.9375,
+      "visual_quality": 0.78125
+    },
+    "noise_20": {
+      "motion_quality": 0.25,
+      "overall_reward": 0.78125,
+      "text_alignment": 0.875,
+      "visual_quality": 0.78125
+    },
+    "noise_60": {
+      "motion_quality": 0.09375,
+      "overall_reward": 0.90625,
+      "text_alignment": 0.96875,
+      "visual_quality": 0.84375
+    },
+    "shuffle": {
+      "motion_quality": 0.40625,
+      "overall_reward": 0.125,
+      "text_alignment": 0.15625,
+      "visual_quality": 0.09375
+    }
+  },
+  "original_spread": {
+    "motion_quality": {
+      "max": 0.03355115487654762,
+      "min": -1.14446138947216,
+      "std": 0.31103782179977046
+    },
+    "overall_reward": {
+      "max": -0.500149902938037,
+      "min": -4.152913966078067,
+      "std": 0.8353255418058353
+    },
+    "text_alignment": {
+      "max": 0.8715815453206479,
+      "min": -2.3254448469408064,
+      "std": 0.7134163249020258
+    },
+    "visual_quality": {
+      "max": -0.6621284926143443,
+      "min": -1.5532700157946255,
+      "std": 0.24052056653099324
+    }
+  },
+  "records": [
+    {
+      "cell": "p0000-s00",
+      "prompt": "Wooden pencil rolls around on a flat desk.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.5109084244442836,
+          "overall_reward": -4.208216874862465,
+          "text_alignment": -2.157507662911508,
+          "visual_quality": -1.539800787506674
+        },
+        "noise_20": {
+          "motion_quality": -0.6919235573093911,
+          "overall_reward": -1.7890271760792933,
+          "text_alignment": -0.017863540464153584,
+          "visual_quality": -1.0792400783057485
+        },
+        "noise_60": {
+          "motion_quality": -0.667882484975744,
+          "overall_reward": -2.6373345708408262,
+          "text_alignment": -0.6243033716810636,
+          "visual_quality": -1.3451487141840186
+        },
+        "original": {
+          "motion_quality": -1.14446138947216,
+          "overall_reward": -1.7608013300540308,
+          "text_alignment": 0.38642968034711983,
+          "visual_quality": -1.002769620928991
+        },
+        "repeat": {
+          "motion_quality": -1.14446138947216,
+          "overall_reward": -1.7608013300540308,
+          "text_alignment": 0.38642968034711983,
+          "visual_quality": -1.002769620928991
+        },
+        "shuffle": {
+          "motion_quality": -0.3595910868148578,
+          "overall_reward": -0.9799442382665832,
+          "text_alignment": 0.007016042355001703,
+          "visual_quality": -0.6273691938067272
+        }
+      }
+    },
+    {
+      "cell": "p0000-s01",
+      "prompt": "Wooden pencil rolls around on a flat desk.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.16726250814568103,
+          "overall_reward": -4.660995243158654,
+          "text_alignment": -2.8479160861430675,
+          "visual_quality": -1.6458166488699058
+        },
+        "noise_20": {
+          "motion_quality": -0.7484907863297372,
+          "overall_reward": -3.5606827044654668,
+          "text_alignment": -1.1774853459257195,
+          "visual_quality": -1.6347065722100103
+        },
+        "noise_60": {
+          "motion_quality": -0.5985876294258201,
+          "overall_reward": -4.1828382122952465,
+          "text_alignment": -2.1139683929779864,
+          "visual_quality": -1.4702821898914398
+        },
+        "original": {
+          "motion_quality": -0.8305132684092391,
+          "overall_reward": -2.5894065535486024,
+          "text_alignment": -0.316418534294017,
+          "visual_quality": -1.4424747508453462
+        },
+        "repeat": {
+          "motion_quality": -0.8305132684092391,
+          "overall_reward": -2.5894065535486024,
+          "text_alignment": -0.316418534294017,
+          "visual_quality": -1.4424747508453462
+        },
+        "shuffle": {
+          "motion_quality": -0.7428340634277026,
+          "overall_reward": -2.2379280559899093,
+          "text_alignment": -0.1360415588551412,
+          "visual_quality": -1.3590524337070653
+        }
+      }
+    },
+    {
+      "cell": "p0001-s00",
+      "prompt": "Book slides across the glass table.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.22382973716602714,
+          "overall_reward": -3.884594051846756,
+          "text_alignment": -2.194827037140241,
+          "visual_quality": -1.4659372775404877
+        },
+        "noise_20": {
+          "motion_quality": -0.18988939975381947,
+          "overall_reward": -2.832456808315743,
+          "text_alignment": -1.4764290832371323,
+          "visual_quality": -1.166138325324791
+        },
+        "noise_60": {
+          "motion_quality": -0.11352364057635224,
+          "overall_reward": -3.338751042398587,
+          "text_alignment": -1.98957047888221,
+          "visual_quality": -1.235656922940025
+        },
+        "original": {
+          "motion_quality": -0.5406062196799652,
+          "overall_reward": -2.788440935548448,
+          "text_alignment": -1.1095038295897854,
+          "visual_quality": -1.1383308862786974
+        },
+        "repeat": {
+          "motion_quality": -0.5406062196799652,
+          "overall_reward": -2.788440935548448,
+          "text_alignment": -1.1095038295897854,
+          "visual_quality": -1.1383308862786974
+        },
+        "shuffle": {
+          "motion_quality": -0.29736713489247707,
+          "overall_reward": -1.7426303566369097,
+          "text_alignment": -0.9360756438836033,
+          "visual_quality": -0.5091875778608294
+        }
+      }
+    },
+    {
+      "cell": "p0001-s01",
+      "prompt": "Book slides across the glass table.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.29171041199044245,
+          "overall_reward": -3.188661620091976,
+          "text_alignment": -1.4562144221965685,
+          "visual_quality": -1.4407367859049653
+        },
+        "noise_20": {
+          "motion_quality": -0.3454492795597713,
+          "overall_reward": -2.8439794450359974,
+          "text_alignment": -1.2124722592651567,
+          "visual_quality": -1.2860579062110697
+        },
+        "noise_60": {
+          "motion_quality": -0.12200872492940415,
+          "overall_reward": -4.290491170953864,
+          "text_alignment": -2.543141196608415,
+          "visual_quality": -1.625341249416044
+        },
+        "original": {
+          "motion_quality": -0.45292701469842883,
+          "overall_reward": -1.8582796541062896,
+          "text_alignment": -0.38172743919429963,
+          "visual_quality": -1.0236252002135613
+        },
+        "repeat": {
+          "motion_quality": -0.45292701469842883,
+          "overall_reward": -1.8582796541062896,
+          "text_alignment": -0.38172743919429963,
+          "visual_quality": -1.0236252002135613
+        },
+        "shuffle": {
+          "motion_quality": -0.39353142422706544,
+          "overall_reward": -1.029976992262221,
+          "text_alignment": -0.21068030731260706,
+          "visual_quality": -0.4257652607225485
+        }
+      }
+    },
+    {
+      "cell": "p0002-s00",
+      "prompt": "Loose sneaker swings on dangling foot.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -1.012235491637101,
+          "overall_reward": -3.1970924922432222,
+          "text_alignment": -0.9943871661159985,
+          "visual_quality": -1.1904698344901228
+        },
+        "noise_20": {
+          "motion_quality": -0.6141436174064152,
+          "overall_reward": -2.7251848794245337,
+          "text_alignment": -0.9275232872895187,
+          "visual_quality": -1.1835179747285995
+        },
+        "noise_60": {
+          "motion_quality": -0.5222218702483529,
+          "overall_reward": -3.253294318382973,
+          "text_alignment": -1.2781699076469886,
+          "visual_quality": -1.4529025404876315
+        },
+        "original": {
+          "motion_quality": -0.9988007747447687,
+          "overall_reward": -3.149128789241276,
+          "text_alignment": -0.940740565662195,
+          "visual_quality": -1.2095874488343121
+        },
+        "repeat": {
+          "motion_quality": -0.9988007747447687,
+          "overall_reward": -3.149128789241276,
+          "text_alignment": -0.940740565662195,
+          "visual_quality": -1.2095874488343121
+        },
+        "shuffle": {
+          "motion_quality": -0.7131362681920209,
+          "overall_reward": -2.338190063924962,
+          "text_alignment": -0.8482196170534613,
+          "visual_quality": -0.7768341786794803
+        }
+      }
+    },
+    {
+      "cell": "p0002-s01",
+      "prompt": "Loose sneaker swings on dangling foot.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.7322277079863877,
+          "overall_reward": -2.9283810310106206,
+          "text_alignment": -1.009159418414872,
+          "visual_quality": -1.1869939046093612
+        },
+        "noise_20": {
+          "motion_quality": -0.5561622076605605,
+          "overall_reward": -2.9241979525512676,
+          "text_alignment": -1.1601862609967757,
+          "visual_quality": -1.2078494838939313
+        },
+        "noise_60": {
+          "motion_quality": -0.24079990587213096,
+          "overall_reward": -3.154124762493827,
+          "text_alignment": -1.4499945264917797,
+          "visual_quality": -1.4633303301299165
+        },
+        "original": {
+          "motion_quality": -0.6622257620737094,
+          "overall_reward": -2.8645061362125483,
+          "text_alignment": -1.0604735579793798,
+          "visual_quality": -1.141806816159459
+        },
+        "repeat": {
+          "motion_quality": -0.6622257620737094,
+          "overall_reward": -2.8645061362125483,
+          "text_alignment": -1.0604735579793798,
+          "visual_quality": -1.141806816159459
+        },
+        "shuffle": {
+          "motion_quality": -0.739298611613931,
+          "overall_reward": -2.306725527487393,
+          "text_alignment": -0.8357798256438836,
+          "visual_quality": -0.7316470902295783
+        }
+      }
+    },
+    {
+      "cell": "p0003-s00",
+      "prompt": "Ink combining with clear water.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.011702628339729258,
+          "overall_reward": -2.8735754275947345,
+          "text_alignment": -1.42200499582023,
+          "visual_quality": -1.439867803434775
+        },
+        "noise_20": {
+          "motion_quality": -0.039986242849902306,
+          "overall_reward": -2.856261797803365,
+          "text_alignment": -1.3738008041081167,
+          "visual_quality": -1.4424747508453462
+        },
+        "noise_60": {
+          "motion_quality": -0.06261313445804075,
+          "overall_reward": -3.597515606929524,
+          "text_alignment": -2.082868914454042,
+          "visual_quality": -1.4520335580174408
+        },
+        "original": {
+          "motion_quality": -0.0003891825356600388,
+          "overall_reward": -2.4956623501025366,
+          "text_alignment": -1.157076313144381,
+          "visual_quality": -1.3381968544224951
+        },
+        "repeat": {
+          "motion_quality": -0.0003891825356600388,
+          "overall_reward": -2.4956623501025366,
+          "text_alignment": -1.157076313144381,
+          "visual_quality": -1.3381968544224951
+        },
+        "shuffle": {
+          "motion_quality": -0.10786691767431764,
+          "overall_reward": -2.0933194749213744,
+          "text_alignment": -0.8575494606106445,
+          "visual_quality": -1.1279030966364123
+        }
+      }
+    },
+    {
+      "cell": "p0003-s01",
+      "prompt": "Ink combining with clear water.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.204031207008906,
+          "overall_reward": -3.5232926060146186,
+          "text_alignment": -1.958471000358266,
+          "visual_quality": -1.3607903986474463
+        },
+        "noise_20": {
+          "motion_quality": -0.2634267974802694,
+          "overall_reward": -3.854351605729397,
+          "text_alignment": -2.219706619959396,
+          "visual_quality": -1.3712181882897314
+        },
+        "noise_60": {
+          "motion_quality": -0.2945387734414598,
+          "overall_reward": -4.256739066189535,
+          "text_alignment": -2.505821822379682,
+          "visual_quality": -1.456378470368393
+        },
+        "original": {
+          "motion_quality": -0.18706103830280219,
+          "overall_reward": -3.1652323756513203,
+          "text_alignment": -1.6816856414951633,
+          "visual_quality": -1.2964856958533548
+        },
+        "repeat": {
+          "motion_quality": -0.18706103830280219,
+          "overall_reward": -3.1652323756513203,
+          "text_alignment": -1.6816856414951633,
+          "visual_quality": -1.2964856958533548
+        },
+        "shuffle": {
+          "motion_quality": -0.3313074723046847,
+          "overall_reward": -2.9225634394682825,
+          "text_alignment": -1.3364814298793837,
+          "visual_quality": -1.2547745372842143
+        }
+      }
+    },
+    {
+      "cell": "p0004-s00",
+      "prompt": "Plastic lotion bottle nudges against bathroom mirror.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.7124291778292666,
+          "overall_reward": -3.352056138722066,
+          "text_alignment": -1.9149317304247442,
+          "visual_quality": -0.7246952304680548
+        },
+        "noise_20": {
+          "motion_quality": -0.4387852074433423,
+          "overall_reward": -3.053896768767898,
+          "text_alignment": -1.9460312089486882,
+          "visual_quality": -0.6690803523758676
+        },
+        "noise_60": {
+          "motion_quality": -0.29171041199044245,
+          "overall_reward": -3.65687287572824,
+          "text_alignment": -2.543141196608415,
+          "visual_quality": -0.8220212671293825
+        },
+        "original": {
+          "motion_quality": -1.007992949460575,
+          "overall_reward": -3.269580953439452,
+          "text_alignment": -1.4499945264917797,
+          "visual_quality": -0.8115934774870974
+        },
+        "repeat": {
+          "motion_quality": -1.007992949460575,
+          "overall_reward": -3.269580953439452,
+          "text_alignment": -1.4499945264917797,
+          "visual_quality": -0.8115934774870974
+        },
+        "shuffle": {
+          "motion_quality": -0.7944516599087684,
+          "overall_reward": -2.1256974355158906,
+          "text_alignment": -0.8637693563154333,
+          "visual_quality": -0.4674764192916889
+        }
+      }
+    },
+    {
+      "cell": "p0004-s01",
+      "prompt": "Plastic lotion bottle nudges against bathroom mirror.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.739298611613931,
+          "overall_reward": -4.373387713880938,
+          "text_alignment": -2.5618008837227815,
+          "visual_quality": -1.072288218544225
+        },
+        "noise_20": {
+          "motion_quality": -0.8805399115741076,
+          "overall_reward": -4.288873864439605,
+          "text_alignment": -2.648879423589825,
+          "visual_quality": -0.7594545292756719
+        },
+        "noise_60": {
+          "motion_quality": -0.15594906234161182,
+          "overall_reward": -3.736254995435723,
+          "text_alignment": -2.487162135265316,
+          "visual_quality": -1.0931437978287952
+        },
+        "original": {
+          "motion_quality": -0.9394051842734054,
+          "overall_reward": -4.152913966078067,
+          "text_alignment": -2.3254448469408064,
+          "visual_quality": -0.8880639348638548
+        },
+        "repeat": {
+          "motion_quality": -0.9394051842734054,
+          "overall_reward": -4.152913966078067,
+          "text_alignment": -2.3254448469408064,
+          "visual_quality": -0.8880639348638548
+        },
+        "shuffle": {
+          "motion_quality": -0.33696419520671933,
+          "overall_reward": -2.9553641984542156,
+          "text_alignment": -2.09530870586362,
+          "visual_quality": -0.5230912973838762
+        }
+      }
+    },
+    {
+      "cell": "p0005-s00",
+      "prompt": "Rainwater flowing through a rain gutter.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.49535243646368843,
+          "overall_reward": -3.3768034754588885,
+          "text_alignment": -1.3147117949126228,
+          "visual_quality": -1.5667392440825771
+        },
+        "noise_20": {
+          "motion_quality": -0.6551548584461662,
+          "overall_reward": -3.104436728377271,
+          "text_alignment": -0.907308626248955,
+          "visual_quality": -1.54197324368215
+        },
+        "noise_60": {
+          "motion_quality": -0.3737328940699443,
+          "overall_reward": -3.6996775123426335,
+          "text_alignment": -1.7687641813622068,
+          "visual_quality": -1.5571804369104825
+        },
+        "original": {
+          "motion_quality": -0.7948052050901456,
+          "overall_reward": -3.119298843513652,
+          "text_alignment": -0.8342248517176865,
+          "visual_quality": -1.4902687867058197
+        },
+        "repeat": {
+          "motion_quality": -0.7948052050901456,
+          "overall_reward": -3.119298843513652,
+          "text_alignment": -0.8342248517176865,
+          "visual_quality": -1.4902687867058197
+        },
+        "shuffle": {
+          "motion_quality": -0.9860731482151909,
+          "overall_reward": -3.084405978329185,
+          "text_alignment": -0.7253766768838821,
+          "visual_quality": -1.3729561532301122
+        }
+      }
+    },
+    {
+      "cell": "p0005-s01",
+      "prompt": "Rainwater flowing through a rain gutter.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.39353142422706544,
+          "overall_reward": -3.420874176680436,
+          "text_alignment": -1.5075285617610763,
+          "visual_quality": -1.5198141906922942
+        },
+        "noise_20": {
+          "motion_quality": -0.7693499520309899,
+          "overall_reward": -3.2005972748731444,
+          "text_alignment": -0.823340034234306,
+          "visual_quality": -1.6079072886078485
+        },
+        "noise_60": {
+          "motion_quality": -0.4995949786402144,
+          "overall_reward": -4.609745858603208,
+          "text_alignment": -2.6737590064089805,
+          "visual_quality": -1.4363918735540133
+        },
+        "original": {
+          "motion_quality": -0.9164247474838897,
+          "overall_reward": -2.548814372781273,
+          "text_alignment": -0.2542195772461288,
+          "visual_quality": -1.3781700480512549
+        },
+        "repeat": {
+          "motion_quality": -0.9164247474838897,
+          "overall_reward": -2.548814372781273,
+          "text_alignment": -0.2542195772461288,
+          "visual_quality": -1.3781700480512549
+        },
+        "shuffle": {
+          "motion_quality": -0.8547311133335748,
+          "overall_reward": -2.273808978193937,
+          "text_alignment": -0.23555989013176235,
+          "visual_quality": -1.1835179747285995
+        }
+      }
+    },
+    {
+      "cell": "p0006-s00",
+      "prompt": "Water gushes from a green garden hose.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.8717012820396786,
+          "overall_reward": -2.890267118355427,
+          "text_alignment": -0.8419997213486724,
+          "visual_quality": -1.176566114967076
+        },
+        "noise_20": {
+          "motion_quality": -0.9698100698718414,
+          "overall_reward": -1.5932821630632368,
+          "text_alignment": 0.2993511404800763,
+          "visual_quality": -0.9228232336714719
+        },
+        "noise_60": {
+          "motion_quality": -0.8491185835792123,
+          "overall_reward": -2.2916121031452605,
+          "text_alignment": -0.27287926436049526,
+          "visual_quality": -1.1696142552055526
+        },
+        "original": {
+          "motion_quality": -0.9280917384693361,
+          "overall_reward": -2.002331373742286,
+          "text_alignment": 0.11275426933641167,
+          "visual_quality": -1.1869939046093612
+        },
+        "repeat": {
+          "motion_quality": -0.9280917384693361,
+          "overall_reward": -2.002331373742286,
+          "text_alignment": 0.11275426933641167,
+          "visual_quality": -1.1869939046093612
+        },
+        "shuffle": {
+          "motion_quality": -1.1147635942364782,
+          "overall_reward": -2.121132450410574,
+          "text_alignment": 0.15629353926993342,
+          "visual_quality": -1.1626623954440292
+        }
+      }
+    },
+    {
+      "cell": "p0006-s01",
+      "prompt": "Water gushes from a green garden hose.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.2012028455578887,
+          "overall_reward": -2.505066270756826,
+          "text_alignment": -0.9430730265514908,
+          "visual_quality": -1.3607903986474463
+        },
+        "noise_20": {
+          "motion_quality": -0.7166717200057925,
+          "overall_reward": -2.439067741397158,
+          "text_alignment": -0.316418534294017,
+          "visual_quality": -1.4059774870973485
+        },
+        "noise_60": {
+          "motion_quality": -0.4331284845413077,
+          "overall_reward": -3.329613670914471,
+          "text_alignment": -1.7407746506906572,
+          "visual_quality": -1.155710535682506
+        },
+        "original": {
+          "motion_quality": -0.7555616899572805,
+          "overall_reward": -2.1826911594417227,
+          "text_alignment": -0.1671410373790853,
+          "visual_quality": -1.259988432105357
+        },
+        "repeat": {
+          "motion_quality": -0.7555616899572805,
+          "overall_reward": -2.1826911594417227,
+          "text_alignment": -0.1671410373790853,
+          "visual_quality": -1.259988432105357
+        },
+        "shuffle": {
+          "motion_quality": -0.7484907863297372,
+          "overall_reward": -2.0053068867666766,
+          "text_alignment": 0.06921499940288992,
+          "visual_quality": -1.3260310998398293
+        }
+      }
+    },
+    {
+      "cell": "p0007-s00",
+      "prompt": "A sponge soaks up water in a bath.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.5688898341901384,
+          "overall_reward": -3.1753250616437034,
+          "text_alignment": -1.5028636399824846,
+          "visual_quality": -1.1035715874710803
+        },
+        "noise_20": {
+          "motion_quality": 0.010924263268409182,
+          "overall_reward": -3.4358396013531083,
+          "text_alignment": -2.263245889892918,
+          "visual_quality": -1.1835179747285995
+        },
+        "noise_60": {
+          "motion_quality": -0.17857595394975026,
+          "overall_reward": -3.485668000817886,
+          "text_alignment": -2.0766490187492535,
+          "visual_quality": -1.2304430281188825
+        },
+        "original": {
+          "motion_quality": -0.4331284845413077,
+          "overall_reward": -1.969279226597735,
+          "text_alignment": -0.5994237888619084,
+          "visual_quality": -0.9367269531945187
+        },
+        "repeat": {
+          "motion_quality": -0.4331284845413077,
+          "overall_reward": -1.969279226597735,
+          "text_alignment": -0.5994237888619084,
+          "visual_quality": -0.9367269531945187
+        },
+        "shuffle": {
+          "motion_quality": -0.3878747013250308,
+          "overall_reward": -1.2650788831472999,
+          "text_alignment": -0.05518291469288651,
+          "visual_quality": -0.8220212671293825
+        }
+      }
+    },
+    {
+      "cell": "p0007-s01",
+      "prompt": "A sponge soaks up water in a bath.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.30019549634349435,
+          "overall_reward": -2.8729565028973654,
+          "text_alignment": -1.1650455545161418,
+          "visual_quality": -1.4077154520377293
+        },
+        "noise_20": {
+          "motion_quality": -0.5080800629932662,
+          "overall_reward": -2.7205615116312973,
+          "text_alignment": -0.9959421400421957,
+          "visual_quality": -1.2165393085958356
+        },
+        "noise_60": {
+          "motion_quality": -0.05695641155600614,
+          "overall_reward": -3.342192274588291,
+          "text_alignment": -1.8931620954579833,
+          "visual_quality": -1.3920737675743016
+        },
+        "original": {
+          "motion_quality": -0.8254752495746145,
+          "overall_reward": -1.8150053348889048,
+          "text_alignment": -0.10494208033119709,
+          "visual_quality": -0.8845880049830931
+        },
+        "repeat": {
+          "motion_quality": -0.8254752495746145,
+          "overall_reward": -1.8150053348889048,
+          "text_alignment": -0.10494208033119709,
+          "visual_quality": -0.8845880049830931
+        },
+        "shuffle": {
+          "motion_quality": -0.8851359989320108,
+          "overall_reward": -1.7967316987560742,
+          "text_alignment": -0.11738187174077473,
+          "visual_quality": -0.7942138280832889
+        }
+      }
+    },
+    {
+      "cell": "p0008-s00",
+      "prompt": "The winter boot resists slipping on an icy surface.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.5038375208167404,
+          "overall_reward": -2.6687529978204827,
+          "text_alignment": -1.0161568010827595,
+          "visual_quality": -1.1487586759209825
+        },
+        "noise_20": {
+          "motion_quality": -0.674246298240533,
+          "overall_reward": -2.393341286266772,
+          "text_alignment": -0.5807641017475419,
+          "visual_quality": -1.1383308862786974
+        },
+        "noise_60": {
+          "motion_quality": -0.4925240750126711,
+          "overall_reward": -2.540175589307616,
+          "text_alignment": -0.9197484176585327,
+          "visual_quality": -1.1279030966364123
+        },
+        "original": {
+          "motion_quality": -0.7484907863297372,
+          "overall_reward": -1.9740073288427251,
+          "text_alignment": -0.4625860833565543,
+          "visual_quality": -0.7629304591564335
+        },
+        "repeat": {
+          "motion_quality": -0.7484907863297372,
+          "overall_reward": -1.9740073288427251,
+          "text_alignment": -0.4625860833565543,
+          "visual_quality": -0.7629304591564335
+        },
+        "shuffle": {
+          "motion_quality": -0.20968792991094062,
+          "overall_reward": -0.970899192847695,
+          "text_alignment": -0.27287926436049526,
+          "visual_quality": -0.48833199857625914
+        }
+      }
+    },
+    {
+      "cell": "p0008-s01",
+      "prompt": "The winter boot resists slipping on an icy surface.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.0343295199478677,
+          "overall_reward": -1.6088903872083091,
+          "text_alignment": -0.8637693563154333,
+          "visual_quality": -0.710791510945008
+        },
+        "noise_20": {
+          "motion_quality": -0.26908352038230404,
+          "overall_reward": -1.5504006301678455,
+          "text_alignment": -0.3723975956371164,
+          "visual_quality": -0.9089195141484251
+        },
+        "noise_60": {
+          "motion_quality": -0.04564296575193692,
+          "overall_reward": -1.3800094818761843,
+          "text_alignment": -0.5123452489948649,
+          "visual_quality": -0.8220212671293825
+        },
+        "original": {
+          "motion_quality": -0.05695641155600614,
+          "overall_reward": -1.4202229164790836,
+          "text_alignment": -0.680282433024163,
+          "visual_quality": -0.6829840718989144
+        },
+        "repeat": {
+          "motion_quality": -0.05695641155600614,
+          "overall_reward": -1.4202229164790836,
+          "text_alignment": -0.680282433024163,
+          "visual_quality": -0.6829840718989144
+        },
+        "shuffle": {
+          "motion_quality": -0.20968792991094062,
+          "overall_reward": -1.3303713072374337,
+          "text_alignment": -0.6740625373193743,
+          "visual_quality": -0.4466208400071187
+        }
+      }
+    },
+    {
+      "cell": "p0009-s00",
+      "prompt": "Water streams into fresh juice.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.31999402650061554,
+          "overall_reward": -2.593900387114913,
+          "text_alignment": -1.1320995444548385,
+          "visual_quality": -1.141806816159459
+        },
+        "noise_20": {
+          "motion_quality": -0.6169719788574325,
+          "overall_reward": -2.718280436576548,
+          "text_alignment": -0.6336332152382469,
+          "visual_quality": -1.4676752424808686
+        },
+        "noise_60": {
+          "motion_quality": -0.46424046050249806,
+          "overall_reward": -3.320945337537088,
+          "text_alignment": -1.414230126189244,
+          "visual_quality": -1.4424747508453462
+        },
+        "original": {
+          "motion_quality": -0.7237426236333359,
+          "overall_reward": -2.389600717363048,
+          "text_alignment": -0.5900939453047251,
+          "visual_quality": -1.0757641484249867
+        },
+        "repeat": {
+          "motion_quality": -0.7237426236333359,
+          "overall_reward": -2.389600717363048,
+          "text_alignment": -0.5900939453047251,
+          "visual_quality": -1.0757641484249867
+        },
+        "shuffle": {
+          "motion_quality": -0.67212502715227,
+          "overall_reward": -2.4174733796871335,
+          "text_alignment": -0.5496646232235979,
+          "visual_quality": -1.1956837293112654
+        }
+      }
+    },
+    {
+      "cell": "p0009-s01",
+      "prompt": "Water streams into fresh juice.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.5349494967779307,
+          "overall_reward": -3.127585766199272,
+          "text_alignment": -1.0663047102026193,
+          "visual_quality": -1.5263315592187223
+        },
+        "noise_20": {
+          "motion_quality": -0.1983744841068714,
+          "overall_reward": -2.7090773744284022,
+          "text_alignment": -0.9835023486326181,
+          "visual_quality": -1.5272005416889127
+        },
+        "noise_60": {
+          "motion_quality": -0.11918036347838686,
+          "overall_reward": -4.556703274755894,
+          "text_alignment": -2.860355877552645,
+          "visual_quality": -1.5771670337248622
+        },
+        "original": {
+          "motion_quality": -0.5872741836217509,
+          "overall_reward": -2.7306381447211017,
+          "text_alignment": -0.5900939453047251,
+          "visual_quality": -1.5532700157946255
+        },
+        "repeat": {
+          "motion_quality": -0.5872741836217509,
+          "overall_reward": -2.7306381447211017,
+          "text_alignment": -0.5900939453047251,
+          "visual_quality": -1.5532700157946255
+        },
+        "shuffle": {
+          "motion_quality": -0.5844458221707335,
+          "overall_reward": -2.194425793646077,
+          "text_alignment": -0.2231200987221847,
+          "visual_quality": -1.386859872753159
+        }
+      }
+    },
+    {
+      "cell": "p0010-s00",
+      "prompt": "A plastic bottle slides down a water slide.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.4755539063065673,
+          "overall_reward": -3.6704173912165032,
+          "text_alignment": -1.8340730862624894,
+          "visual_quality": -1.3607903986474463
+        },
+        "noise_20": {
+          "motion_quality": -0.6424272319165882,
+          "overall_reward": -3.7582583852511955,
+          "text_alignment": -1.8558427212292503,
+          "visual_quality": -1.259988432105357
+        },
+        "noise_60": {
+          "motion_quality": -0.4698971834045327,
+          "overall_reward": -4.148077226813795,
+          "text_alignment": -2.512041718084471,
+          "visual_quality": -1.166138325324791
+        },
+        "original": {
+          "motion_quality": -0.9478902686264572,
+          "overall_reward": -3.6873266860086127,
+          "text_alignment": -1.4655442657537519,
+          "visual_quality": -1.2738921516284036
+        },
+        "repeat": {
+          "motion_quality": -0.9478902686264572,
+          "overall_reward": -3.6873266860086127,
+          "text_alignment": -1.4655442657537519,
+          "visual_quality": -1.2738921516284036
+        },
+        "shuffle": {
+          "motion_quality": -1.0299127507059591,
+          "overall_reward": -3.523381156423497,
+          "text_alignment": -1.473319135384738,
+          "visual_quality": -1.0201492703327995
+        }
+      }
+    },
+    {
+      "cell": "p0010-s01",
+      "prompt": "A plastic bottle slides down a water slide.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.21817301426399252,
+          "overall_reward": -3.6329756130011965,
+          "text_alignment": -1.995790374586999,
+          "visual_quality": -1.4190122241502048
+        },
+        "noise_20": {
+          "motion_quality": -0.570304014915647,
+          "overall_reward": -3.7436719016857336,
+          "text_alignment": -1.8247432427053063,
+          "visual_quality": -1.3486246440647802
+        },
+        "noise_60": {
+          "motion_quality": -0.06261313445804075,
+          "overall_reward": -3.3467510514052234,
+          "text_alignment": -1.9024919390151664,
+          "visual_quality": -1.3816459779320165
+        },
+        "original": {
+          "motion_quality": -0.8743528709000074,
+          "overall_reward": -3.181605677110616,
+          "text_alignment": -0.7813557382269815,
+          "visual_quality": -1.525897067983627
+        },
+        "repeat": {
+          "motion_quality": -0.8743528709000074,
+          "overall_reward": -3.181605677110616,
+          "text_alignment": -0.7813557382269815,
+          "visual_quality": -1.525897067983627
+        },
+        "shuffle": {
+          "motion_quality": -1.14446138947216,
+          "overall_reward": -2.2232802970433387,
+          "text_alignment": 0.2993511404800763,
+          "visual_quality": -1.3781700480512549
+        }
+      }
+    },
+    {
+      "cell": "p0011-s00",
+      "prompt": "Wooden swing dangles over the sand in the sandpit.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.3624194482658751,
+          "overall_reward": -2.119663116111403,
+          "text_alignment": -0.41904681342303257,
+          "visual_quality": -1.3381968544224951
+        },
+        "noise_20": {
+          "motion_quality": -0.8631278113912824,
+          "overall_reward": -2.0352956240786586,
+          "text_alignment": 0.3615500975279645,
+          "visual_quality": -1.5337179102153409
+        },
+        "noise_60": {
+          "motion_quality": -0.505251701542249,
+          "overall_reward": -1.610958596144965,
+          "text_alignment": 0.1438537478603558,
+          "visual_quality": -1.2495606424630719
+        },
+        "original": {
+          "motion_quality": -0.8080631493917892,
+          "overall_reward": -1.4533138714372211,
+          "text_alignment": 0.5730265514907845,
+          "visual_quality": -1.2182772735362164
+        },
+        "repeat": {
+          "motion_quality": -0.8080631493917892,
+          "overall_reward": -1.4533138714372211,
+          "text_alignment": 0.5730265514907845,
+          "visual_quality": -1.2182772735362164
+        },
+        "shuffle": {
+          "motion_quality": -0.702529912750706,
+          "overall_reward": -0.5691795366153374,
+          "text_alignment": 0.8093825882727597,
+          "visual_quality": -0.6760322121373911
+        }
+      }
+    },
+    {
+      "cell": "p0011-s01",
+      "prompt": "Wooden swing dangles over the sand in the sandpit.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.4189866772862212,
+          "overall_reward": -1.5951208288539966,
+          "text_alignment": -0.05518291469288651,
+          "visual_quality": -1.1209512368748888
+        },
+        "noise_20": {
+          "motion_quality": -0.6989944609369344,
+          "overall_reward": -1.9514151794785561,
+          "text_alignment": -0.08628239321683062,
+          "visual_quality": -1.166138325324791
+        },
+        "noise_60": {
+          "motion_quality": -0.29171041199044245,
+          "overall_reward": -1.4083859747794465,
+          "text_alignment": -0.11738187174077473,
+          "visual_quality": -0.9992936910482293
+        },
+        "original": {
+          "motion_quality": -1.1430472087466512,
+          "overall_reward": -2.2588105146309196,
+          "text_alignment": -0.03652322757852005,
+          "visual_quality": -1.0792400783057485
+        },
+        "repeat": {
+          "motion_quality": -1.1430472087466512,
+          "overall_reward": -2.2588105146309196,
+          "text_alignment": -0.03652322757852005,
+          "visual_quality": -1.0792400783057485
+        },
+        "shuffle": {
+          "motion_quality": -0.9047577564984434,
+          "overall_reward": -1.9257551011425,
+          "text_alignment": -0.07384260180725298,
+          "visual_quality": -0.9471547428368038
+        }
+      }
+    },
+    {
+      "cell": "p0012-s00",
+      "prompt": "A ball rolls on the surface of the water.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.011702628339729258,
+          "overall_reward": -3.9446585874778797,
+          "text_alignment": -2.3814239082839057,
+          "visual_quality": -1.5515320508542447
+        },
+        "noise_20": {
+          "motion_quality": 0.09577510679892834,
+          "overall_reward": -1.9545320256734984,
+          "text_alignment": -0.823340034234306,
+          "visual_quality": -1.2269670982381207
+        },
+        "noise_60": {
+          "motion_quality": -0.505251701542249,
+          "overall_reward": -2.6856312683276,
+          "text_alignment": -0.8404447474224752,
+          "visual_quality": -1.339934819362876
+        },
+        "original": {
+          "motion_quality": 0.03355115487654762,
+          "overall_reward": -1.6593860113974335,
+          "text_alignment": -0.4781358226185264,
+          "visual_quality": -1.2148013436554548
+        },
+        "repeat": {
+          "motion_quality": 0.03355115487654762,
+          "overall_reward": -1.6593860113974335,
+          "text_alignment": -0.4781358226185264,
+          "visual_quality": -1.2148013436554548
+        },
+        "shuffle": {
+          "motion_quality": 0.16365578162334365,
+          "overall_reward": -1.759304678386421,
+          "text_alignment": -1.1287466319264758,
+          "visual_quality": -0.7942138280832889
+        }
+      }
+    },
+    {
+      "cell": "p0012-s01",
+      "prompt": "A ball rolls on the surface of the water.",
+      "variants": {
+        "frozen": {
+          "motion_quality": 0.2824469625660705,
+          "overall_reward": -1.8084580927820264,
+          "text_alignment": -1.3349264559531866,
+          "visual_quality": -0.7559785993949102
+        },
+        "noise_20": {
+          "motion_quality": -0.6339421475635364,
+          "overall_reward": -1.5234094255022923,
+          "text_alignment": 0.13763385215556695,
+          "visual_quality": -1.027101130094323
+        },
+        "noise_60": {
+          "motion_quality": -0.18706103830280219,
+          "overall_reward": -2.1633748375054074,
+          "text_alignment": -0.5807641017475419,
+          "visual_quality": -1.3955496974550632
+        },
+        "original": {
+          "motion_quality": -0.5929309065237854,
+          "overall_reward": -1.1000530926885748,
+          "text_alignment": 0.37398988893754215,
+          "visual_quality": -0.8811120751023315
+        },
+        "repeat": {
+          "motion_quality": -0.5929309065237854,
+          "overall_reward": -1.1000530926885748,
+          "text_alignment": 0.37398988893754215,
+          "visual_quality": -0.8811120751023315
+        },
+        "shuffle": {
+          "motion_quality": -0.4896957135616538,
+          "overall_reward": -0.40976792090317893,
+          "text_alignment": 0.9089009195493808,
+          "visual_quality": -0.8289731268909059
+        }
+      }
+    },
+    {
+      "cell": "p0013-s00",
+      "prompt": "A wheel continually rolling along the asphalt road.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.44444193034537693,
+          "overall_reward": -2.3874459686341933,
+          "text_alignment": -1.0410363839019148,
+          "visual_quality": -0.9019676543869016
+        },
+        "noise_20": {
+          "motion_quality": -0.3822179784229962,
+          "overall_reward": -1.965389316626072,
+          "text_alignment": -0.46569603120894876,
+          "visual_quality": -1.1174753069941272
+        },
+        "noise_60": {
+          "motion_quality": -0.33979255665773667,
+          "overall_reward": -2.401532580267367,
+          "text_alignment": -0.8591044345368417,
+          "visual_quality": -1.202635589072789
+        },
+        "original": {
+          "motion_quality": -0.566061472739121,
+          "overall_reward": -1.6029745386735172,
+          "text_alignment": -0.08628239321683062,
+          "visual_quality": -0.9506306727175655
+        },
+        "repeat": {
+          "motion_quality": -0.566061472739121,
+          "overall_reward": -1.6029745386735172,
+          "text_alignment": -0.08628239321683062,
+          "visual_quality": -0.9506306727175655
+        },
+        "shuffle": {
+          "motion_quality": -0.3030238577945117,
+          "overall_reward": -0.8930166898888481,
+          "text_alignment": 0.28069145336570983,
+          "visual_quality": -0.8706842854600463
+        }
+      }
+    },
+    {
+      "cell": "p0013-s01",
+      "prompt": "A wheel continually rolling along the asphalt road.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.2605984360292521,
+          "overall_reward": -2.6790657088158665,
+          "text_alignment": -1.2836123163886788,
+          "visual_quality": -1.1348549563979355
+        },
+        "noise_20": {
+          "motion_quality": -0.08524002606617918,
+          "overall_reward": -1.7381066571775798,
+          "text_alignment": -0.6709525894669799,
+          "visual_quality": -0.9819140416444208
+        },
+        "noise_60": {
+          "motion_quality": 0.1353721671131706,
+          "overall_reward": -2.436391209790595,
+          "text_alignment": -1.6350364237092472,
+          "visual_quality": -0.9367269531945187
+        },
+        "original": {
+          "motion_quality": -0.2662551589312867,
+          "overall_reward": -1.41969842474029,
+          "text_alignment": -0.24799968154133997,
+          "visual_quality": -0.9054435842676634
+        },
+        "repeat": {
+          "motion_quality": -0.2662551589312867,
+          "overall_reward": -1.41969842474029,
+          "text_alignment": -0.24799968154133997,
+          "visual_quality": -0.9054435842676634
+        },
+        "shuffle": {
+          "motion_quality": -0.4048448700311347,
+          "overall_reward": -0.9401386784929296,
+          "text_alignment": 0.31801082759444277,
+          "visual_quality": -0.8533046360562379
+        }
+      }
+    },
+    {
+      "cell": "p0014-s00",
+      "prompt": "Brush strokes paint on canvas.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.05129968865397153,
+          "overall_reward": -2.157027915539671,
+          "text_alignment": -1.179429063333466,
+          "visual_quality": -0.9262991635522335
+        },
+        "noise_20": {
+          "motion_quality": -0.22100137571500983,
+          "overall_reward": -2.252314871120153,
+          "text_alignment": -1.2579552466064248,
+          "visual_quality": -0.7733582487987187
+        },
+        "noise_60": {
+          "motion_quality": -0.21817301426399252,
+          "overall_reward": -2.6803580510546747,
+          "text_alignment": -1.473319135384738,
+          "visual_quality": -0.9888659014059442
+        },
+        "original": {
+          "motion_quality": -0.5830316414452249,
+          "overall_reward": -2.5225525547434593,
+          "text_alignment": -1.27739242068389,
+          "visual_quality": -0.6621284926143443
+        },
+        "repeat": {
+          "motion_quality": -0.5830316414452249,
+          "overall_reward": -2.5225525547434593,
+          "text_alignment": -1.27739242068389,
+          "visual_quality": -0.6621284926143443
+        },
+        "shuffle": {
+          "motion_quality": -0.7559152351386577,
+          "overall_reward": -2.5573897596093556,
+          "text_alignment": -1.1254423123333068,
+          "visual_quality": -0.6760322121373911
+        }
+      }
+    },
+    {
+      "cell": "p0014-s01",
+      "prompt": "Brush strokes paint on canvas.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.09655347187024842,
+          "overall_reward": -1.784361493414722,
+          "text_alignment": -0.6989421201385295,
+          "visual_quality": -0.9888659014059442
+        },
+        "noise_20": {
+          "motion_quality": -0.8176088692889726,
+          "overall_reward": -2.2161953381156763,
+          "text_alignment": -0.29153895147486175,
+          "visual_quality": -1.1070475173518421
+        },
+        "noise_60": {
+          "motion_quality": -0.5674756534646297,
+          "overall_reward": -3.7376362508485013,
+          "text_alignment": -2.0144500617013654,
+          "visual_quality": -1.155710535682506
+        },
+        "original": {
+          "motion_quality": -0.674246298240533,
+          "overall_reward": -1.583829996297304,
+          "text_alignment": -0.10494208033119709,
+          "visual_quality": -0.804641617725574
+        },
+        "repeat": {
+          "motion_quality": -0.674246298240533,
+          "overall_reward": -1.583829996297304,
+          "text_alignment": -0.10494208033119709,
+          "visual_quality": -0.804641617725574
+        },
+        "shuffle": {
+          "motion_quality": -0.6155577981319239,
+          "overall_reward": -0.8575898613442678,
+          "text_alignment": 0.21849249631782164,
+          "visual_quality": -0.4605245595301655
+        }
+      }
+    },
+    {
+      "cell": "p0015-s00",
+      "prompt": "A mixer spins, thoroughly blending the batter in the bowl.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.34262091810875395,
+          "overall_reward": -1.1903806350332797,
+          "text_alignment": 0.2558118705465546,
+          "visual_quality": -1.1035715874710803
+        },
+        "noise_20": {
+          "motion_quality": -0.6113152559553979,
+          "overall_reward": -1.5345430269279454,
+          "text_alignment": 0.380209784642331,
+          "visual_quality": -1.3034375556148783
+        },
+        "noise_60": {
+          "motion_quality": -0.12766544783143877,
+          "overall_reward": -4.526565511174927,
+          "text_alignment": -2.823036503323912,
+          "visual_quality": -1.5758635600195765
+        },
+        "original": {
+          "motion_quality": -0.3793896169719789,
+          "overall_reward": -0.500149902938037,
+          "text_alignment": 0.8715815453206479,
+          "visual_quality": -0.9923418312867058
+        },
+        "repeat": {
+          "motion_quality": -0.3793896169719789,
+          "overall_reward": -0.500149902938037,
+          "text_alignment": 0.8715815453206479,
+          "visual_quality": -0.9923418312867058
+        },
+        "shuffle": {
+          "motion_quality": -0.40201650858011734,
+          "overall_reward": -0.3200767141543499,
+          "text_alignment": 0.9213407109589584,
+          "visual_quality": -0.839400916533191
+        }
+      }
+    },
+    {
+      "cell": "p0015-s01",
+      "prompt": "A mixer spins, thoroughly blending the batter in the bowl.",
+      "variants": {
+        "frozen": {
+          "motion_quality": -0.5547480269350519,
+          "overall_reward": -1.7191382718252597,
+          "text_alignment": 0.28069145336570983,
+          "visual_quality": -1.4450816982559176
+        },
+        "noise_20": {
+          "motion_quality": -0.35110600246180584,
+          "overall_reward": -1.1952094966575688,
+          "text_alignment": 0.3428904104135981,
+          "visual_quality": -1.1869939046093612
+        },
+        "noise_60": {
+          "motion_quality": -0.2719118818333213,
+          "overall_reward": -3.339721834469999,
+          "text_alignment": -1.8060835555909398,
+          "visual_quality": -1.2617263970457377
+        },
+        "original": {
+          "motion_quality": -0.40767323148215195,
+          "overall_reward": -0.6175240590825458,
+          "text_alignment": 0.7720632140440268,
+          "visual_quality": -0.9819140416444208
+        },
+        "repeat": {
+          "motion_quality": -0.40767323148215195,
+          "overall_reward": -0.6175240590825458,
+          "text_alignment": 0.7720632140440268,
+          "visual_quality": -0.9819140416444208
+        },
+        "shuffle": {
+          "motion_quality": -0.5094942437187749,
+          "overall_reward": -0.5303684176023894,
+          "text_alignment": 0.9089009195493808,
+          "visual_quality": -0.9297750934329952
+        }
+      }
+    }
+  ],
+  "repeat_max_abs_diff": 0.0,
+  "schema": "vrl.wan22_kling_checkpoint_eval/v1/probe",
+  "variant_means": {
+    "frozen": {
+      "motion_quality": -0.3682584679020573,
+      "overall_reward": -2.909980905195865,
+      "text_alignment": -1.2986791633571637,
+      "visual_quality": -1.2430432739366437
+    },
+    "noise_20": {
+      "motion_quality": -0.4974101799021727,
+      "overall_reward": -2.5769418437200713,
+      "text_alignment": -0.8684889451461177,
+      "visual_quality": -1.211042718671781
+    },
+    "noise_60": {
+      "motion_quality": -0.312311323984986,
+      "overall_reward": -3.2233107536912304,
+      "text_alignment": -1.6303472054630588,
+      "visual_quality": -1.280652224243186
+    },
+    "original": {
+      "motion_quality": -0.648241392907205,
+      "overall_reward": -2.2447833685032075,
+      "text_alignment": -0.5029501086810152,
+      "visual_quality": -1.093591866914987
+    },
+    "repeat": {
+      "motion_quality": -0.648241392907205,
+      "overall_reward": -2.2447833685032075,
+      "text_alignment": -0.5029501086810152,
+      "visual_quality": -1.093591866914987
+    },
+    "shuffle": {
+      "motion_quality": -0.5802474731418797,
+      "overall_reward": -1.7719132232361325,
+      "text_alignment": -0.3086527758383798,
+      "visual_quality": -0.883012974255873
+    }
+  },
+  "videos": 32
+}
