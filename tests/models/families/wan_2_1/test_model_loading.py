@@ -475,6 +475,156 @@ def test_wan_sequential_offload_weight_sync_changes_forward() -> None:
     assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
 
 
+class _BlockOffloadPipeline:
+    """Pipeline double for ``offload_mode: block``: real hooks, tiny modules."""
+
+    def __init__(self, transformer: torch.nn.Module) -> None:
+        self.transformer = transformer
+        self.transformer_2 = None
+        self.vae = torch.nn.Linear(2, 2)
+        self.config = SimpleNamespace(boundary_ratio=None, expand_timesteps=False)
+
+    @property
+    def components(self) -> dict[str, Any]:
+        return {
+            "transformer": self.transformer,
+            "transformer_2": self.transformer_2,
+            "vae": self.vae,
+            "scheduler": object(),
+        }
+
+    def remove_all_hooks(self) -> None:
+        raise AssertionError("block offload must not rely on the Accelerate hook removal")
+
+
+def test_wan_block_offload_weight_sync_changes_forward() -> None:
+    """Block offload cycles its own hook registry around weight sync and reset."""
+
+    from diffusers.hooks.group_offloading import _get_top_level_group_offload_hook
+    from torch import nn
+
+    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
+    from vrl.models.peft_adapter import peel_peft
+
+    class _Block(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.proj = nn.Linear(3, 3, bias=False)
+            self.fail_forward = False
+
+        def forward(self, value: torch.Tensor) -> torch.Tensor:
+            if self.fail_forward:
+                raise RuntimeError("injected block failure")
+            return self.proj(value)
+
+    class _TinyTransformer(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.blocks = nn.ModuleList([_Block(), _Block()])
+            self.out = nn.Linear(3, 2, bias=False)
+
+        def forward(self, value: torch.Tensor) -> torch.Tensor:
+            for block in self.blocks:
+                value = block(value)
+            return self.out(value)
+
+    def hooked(module: nn.Module) -> bool:
+        return _get_top_level_group_offload_hook(peel_peft(module)) is not None
+
+    pipeline = _BlockOffloadPipeline(_TinyTransformer())
+    build = SimpleNamespace(
+        device=torch.device("cpu"),
+        parameter_dtype=torch.float32,
+        defer_trainable_device_move=False,
+        model_config=_canonical_model_config(),
+        rollout=_rollout_build_options("block"),
+        lora_path=None,
+        lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},
+    )
+    model = WanI2VDiffusersModel(pipeline=pipeline, device=build.device)
+    model.apply_lora(build)
+    model.apply_generation_offload(build)
+    assert model.uses_pipeline_cpu_offload
+    # Hooks sit on the adapted transformer's own block list, behind the PEFT
+    # wrapper: grouping the wrapper's single child would stream the whole model.
+    inner = peel_peft(model.transformer)
+    assert inner is not model.transformer
+    assert hooked(inner) and hooked(inner.blocks[0]) and hooked(pipeline.vae)
+
+    sample = torch.tensor([[0.25, -0.5, 1.0]])
+    before = model.transformer(sample).detach().clone()
+    payload = {
+        f"transformer.{name}": torch.full(parameter.shape, 0.5, dtype=parameter.dtype)
+        for name, parameter in model.transformer.named_parameters()
+        if parameter.requires_grad
+    }
+    model.load_trainable_state(payload)
+    after = model.transformer(sample).detach()
+
+    assert not torch.equal(after, before)
+    assert model.pipeline_cpu_offload_healthy
+    assert hooked(inner) and hooked(inner.blocks[1])
+    # The reinstalled groups own the synced weights: a forward after the sync
+    # reads the same values the verification pass reads.
+    model.verify_trainable_state(payload)
+    assert torch.equal(model.transformer(sample).detach(), after)
+
+    # A block that raises skips its post-forward offload. The public reset must
+    # re-arm every registry so the next forward starts from a clean hook chain.
+    block = inner.blocks[0]
+    block.fail_forward = True
+    with pytest.raises(RuntimeError, match="injected block failure"):
+        model.transformer(sample)
+    block.fail_forward = False
+    model.reset_pipeline_cpu_offload()
+    assert model.pipeline_cpu_offload_healthy
+    assert hooked(inner) and hooked(block)
+    assert torch.equal(model.transformer(sample).detach(), after)
+
+
+def test_wan_block_offload_streams_only_the_transformers(monkeypatch) -> None:
+    """Experts prefetch on a copy stream; the VAE and encoders move synchronously.
+
+    The VAE's tiled decode runs its modules in a data-dependent order, so a
+    traced prefetch chain would not match the next call; the transformers run
+    the same block order on every step.
+    """
+
+    import diffusers.hooks
+
+    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
+
+    calls: dict[str, dict[str, Any]] = {}
+
+    def record(component: torch.nn.Module, **kwargs: Any) -> None:
+        calls[kwargs["name"]] = kwargs
+
+    def fake_apply_group_offloading(component: torch.nn.Module, **kwargs: Any) -> None:
+        for name, candidate in pipeline.components.items():
+            if candidate is component:
+                record(component, name=name, **kwargs)
+
+    monkeypatch.setattr(diffusers.hooks, "apply_group_offloading", fake_apply_group_offloading)
+
+    pipeline = _BlockOffloadPipeline(torch.nn.Linear(3, 2))
+    pipeline.transformer_2 = torch.nn.Linear(3, 2)
+    build = SimpleNamespace(
+        device=torch.device("cuda:1"),
+        model_config=_canonical_model_config(),
+        rollout=_rollout_build_options("block"),
+    )
+    model = WanI2VDiffusersModel(pipeline=pipeline, device=build.device)
+    model.apply_generation_offload(build)
+
+    assert set(calls) == {"transformer", "transformer_2", "vae"}
+    assert {name for name, call in calls.items() if call["use_stream"]} == {
+        "transformer",
+        "transformer_2",
+    }
+    assert {call["onload_device"] for call in calls.values()} == {torch.device("cuda:1")}
+    assert {call["num_blocks_per_group"] for call in calls.values()} == {1}
+
+
 def test_wan_pipeline_offload_remove_failure_is_permanently_broken() -> None:
     from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
 

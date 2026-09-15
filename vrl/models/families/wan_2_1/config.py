@@ -38,7 +38,7 @@ class WanModelSection(ModelSection):
         default=False,
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
-    offload_mode: Literal["none", "model", "sequential"] = Field(
+    offload_mode: Literal["none", "model", "sequential", "block"] = Field(
         default="none",
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
@@ -157,7 +157,7 @@ def normalize_wan_model_build(build: ModelBuild) -> ModelBuild:
     if legacy:
         raise ValueError(
             f"removed Wan model config key(s): {', '.join('model.' + key for key in legacy)}; "
-            "use model.offload_mode='none', 'model', or 'sequential'",
+            "use model.offload_mode='none', 'model', 'sequential', or 'block'",
         )
     mode = model_config.get("offload_mode")
     if "offload_mode" not in model_config and build.rollout is not None:
