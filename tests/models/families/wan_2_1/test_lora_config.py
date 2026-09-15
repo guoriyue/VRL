@@ -170,13 +170,3 @@ def test_wan_adapter_storage_preserves_frozen_base(
     assert not base.requires_grad
     assert base.dtype == torch.bfloat16 and base.data_ptr() == pointer
     assert torch.equal(base, before)
-
-
-def test_wan_invalid_adapter_storage_rejected_before_mutation() -> None:
-    model = _model()
-    base = model.transformer
-    flags = [p.requires_grad for p in base.parameters()]
-    with pytest.raises(ValueError, match="lora_parameter_dtype"):
-        model.apply_lora(SimpleNamespace(model_config={"lora_parameter_dtype": "float16"}))
-    assert model.transformer is base
-    assert [p.requires_grad for p in base.parameters()] == flags

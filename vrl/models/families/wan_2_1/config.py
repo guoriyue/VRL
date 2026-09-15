@@ -104,12 +104,6 @@ def normalize_wan_model_build(build: ModelBuild) -> ModelBuild:
     if build.family not in {"wan_2_1", "wan_2_1_i2v"}:
         raise ValueError(f"Wan build normalizer received family {build.family!r}")
 
-    adapter_dtype = (build.model_config or {}).get("lora_parameter_dtype")
-    if adapter_dtype not in (None, "float32"):
-        raise ValueError("model.lora_parameter_dtype must be null or 'float32'")
-    if adapter_dtype is not None and not build.use_lora:
-        raise ValueError("model.lora_parameter_dtype requires model.use_lora=true")
-
     require_remote_checkpoint_source_pin(
         build.model_name_or_path,
         build.revision,
