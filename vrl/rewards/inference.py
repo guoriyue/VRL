@@ -69,14 +69,23 @@ class RewardInferenceArtifact:
             )
 
     def as_media(self) -> Any:
-        """Return in-memory media, loading a ``.pt`` tensor from ``path`` if needed."""
+        """Return the media as a unit-range float tensor (or the in-memory media).
+
+        This is the one place the on-disk representation is normalized: a
+        ``.pt`` file may hold the wire's uint8 frames or unit-range floats, and
+        every reward model reads unit-range floats from here. In-memory media
+        from an in-process scorer is handed over unchanged.
+        """
 
         if self.media is not None:
             return self.media
         if self.path.endswith(".pt"):
             import torch
 
-            return torch.load(self.path, map_location="cpu", weights_only=True)
+            tensor = torch.load(self.path, map_location="cpu", weights_only=True)
+            if isinstance(tensor, torch.Tensor) and not tensor.is_floating_point():
+                return tensor.float() / 255.0
+            return tensor
         raise ValueError(
             f"reward artifact {self.artifact_id!r} has no in-memory media and "
             f"path is not a loadable tensor: {self.path!r}",
