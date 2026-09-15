@@ -115,6 +115,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 03:45 — checkpoint/resume 身份：tracker 文件、RNG 与进度恢复、身份校验
 - 2026-09-15 04:45 — staleness / off-policy 记账：过期样本是断言还是策略
 - 2026-09-15 05:40 — 进程/GIL 隔离：训练进程里到底跑了什么（两次 py-spy 的证据）
+- 2026-09-15 06:45 — 多节点放置：bundle → 物理卡的确定性映射，跨集群占用不可见
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -277,3 +278,26 @@ driver 侧唯一值得动的是训练 batch 的 H2D 拷贝——但它是 CUDA �
 训练阶段 `move_training_batch_to_device` 的 py-spy 占比从 17.5% 降到 <5% 且 epoch 墙钟不劣化）。
 D 的最终判定等 continuous 模式（producer 线程与 backward 同进程）的 py-spy：那是 GIL 争用唯一还
 可能出现的形状。
+
+### hourly note 2026-09-15 06:45 — 放置：谁决定"rank i 在哪张卡"，以及别人占着的卡
+
+**参照实现**（`miles/ray/placement_group.py:11-55`）：一个 PACK 的 placement group，每 bundle
+1 GPU；用探针 actor（`InfoActor.get_ip_and_gpu_id`）读出每个 bundle 实际落在的节点 IP 与 GPU id，
+再按（IP 数值, GPU id）排序，得到 rank → (节点, 卡) 的**确定性**映射；多节点脚本在此之上配
+引擎 sp_degree 与训练 dp×sp（17 卡脚本 `:114-121` 把 reward 单独放一张卡）。
+
+**VRL 今天**（`vrl/ray/placement.py:200-300, 397, 473-494, 540-560`）：同样是"探针 + bundle
+匹配"的形状：`GlobalRayPlacementOwner` 探测 bundle 的 GPU id，按 role 的设备计划
+（`resources.rollout.devices` 等）匹配 bundle；跨节点用 `SPREAD` 与 `cross_node_preflight`
+（校验非 driver 节点的 GPU 数），并校验 actor 实际拿到的 GPU id。差别在**匹配方向**：参照实现
+接受 Ray 给的卡再排序命名，VRL 要求 Ray 给的卡覆盖配置点名的物理卡——当同一台机器上还有
+别的 Ray 集群占着卡时，Ray 的调度器看不见那份占用，把 bundle 放到了 0-1，而配置点名 2-3，
+于是 fail-closed（今天 05:5x 连续踩到两次）。正确的启动方式是 `CUDA_VISIBLE_DEVICES` 窄化到
+`visible_devices`，让 Ray 只能探到这些卡；`_local_torch_ordinal`（`vrl/ray/resources.py:343-365`）
+再把计划序号按位置翻译成 torch 序号。**这条规则此前只在记忆和一次 4 rank smoke 的注释里**，
+本小时把它写进了报错信息（`placement.py:556`）。
+
+**后续（多节点前必做）**：把"每个 bundle 的 (节点 IP, GPU id)"写进 `run_evidence`，多节点时按
+(IP, id) 排序生成 rank 映射并与 `num_nodes × gpus_per_node` 对账；单机上则允许一个
+"接受 Ray 所给的卡"的模式（配置只写数量不写卡号），避免与其他集群的占用打架。
+风险：只改错误文案与文档；门：多节点 2×4 冒烟时 `run_evidence` 记录的映射与实际 nvidia-smi 一致。

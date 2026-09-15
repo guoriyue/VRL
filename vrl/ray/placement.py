@@ -552,9 +552,16 @@ class GlobalRayPlacementOwner:
         for gpu_id in devices:
             bundle_index = gpu_to_bundle.get(gpu_id)
             if bundle_index is None:
+                # Ray hands the placement group whichever cards its scheduler
+                # picked; another Ray cluster's occupancy is invisible to it, so
+                # a plan that names specific physical GPUs can only be honored
+                # when the process is narrowed to exactly those cards.
                 raise RuntimeError(
                     f"{role} device GPU {gpu_id} has no bundle in the probed "
-                    f"placement group (probed GPUs={sorted(gpu_to_bundle)})",
+                    f"placement group (probed GPUs={sorted(gpu_to_bundle)}). Launch "
+                    "with CUDA_VISIBLE_DEVICES set to exactly "
+                    "distributed.resources.visible_devices so Ray probes those cards "
+                    "(torch ordinals are then translated by position).",
                 )
             matched.append(bundle_index)
         return tuple(matched)
