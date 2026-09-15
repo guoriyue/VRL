@@ -118,6 +118,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 06:45 — 多节点放置：bundle → 物理卡的确定性映射，跨集群占用不可见
 - 2026-09-15 07:45 — 反序列化与 batch 构建出事件循环（parser actor 池）：按三次 py-spy 判定不做
 - 2026-09-15 08:45 — 时分租约的相位切换：sleep/offload/onload/wake 的顺序、失败组合与健康探测
+- 2026-09-15 09:50 — reward 的媒体契约：生成输出到 reward 模型之间只允许一处归一化
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -342,3 +343,24 @@ cleanup 失败合并成 `RolloutPhaseCleanupError`，release 失败时 trainer �
 和 parked 期间暂停探测（`vrl/generation/ray/health_monitor.py:39,59-89`，启动即暂停直到 fleet 激活）；
 (2) 分标签部分唤醒——VRL 的权重同步走 versioned slot，不需要唤醒引擎即可安装，没有"只恢复
 权重"的需求。结论：相位切换这一项 VRL 不缺东西，不改代码。
+
+### hourly note 2026-09-15 09:50 — 媒体契约：生成到 reward 之间只能有一处归一化
+
+**问题**：生成侧为了传输把媒体量化成 uint8，reward 模型各自假设一种输入（[0,1] 浮点、uint8 HWC、
+PIL……）。表示法在两者之间被"顺手"转换的次数越多，越容易出现今天这种静默错误：worker 侧直接
+落盘 uint8，`to_uint8` 再乘 255 饱和成白图，OCR reward 掉到 1/3 却不报任何错。
+
+**参照实现**（`miles/rollout/rm_hub/ocr.py:90-94`、`hps.py`、`pickscore.py`）：所有 reward 池都经过
+**同一个**转换函数 `generated_output_to_rgb_hwc_uint8_frames(..., round_normalized=True)`，把
+引擎输出统一成 RGB HWC uint8 帧，并写明"与参考实现逐位一致"的舍入方式；reward 模型不再各自
+处理 dtype。
+
+**VRL 今天**：reward 模型通过 `artifact.as_media()` 取媒体（`vrl/rewards/models/*.py` 十余处），
+各自再做 `to_uint8` / `_extract_images` 等转换；磁盘表示由写入方决定（driver 路径 float k/255，
+WS-A 后的 worker 路径曾是 uint8）。契约分散在写入方、accessor 和每个模型三处。
+
+**改动（已实现）**：把归一化收口到 accessor——`RewardInferenceArtifact.as_media()` 对 `.pt` 里的
+整数张量统一还原成 [0,1] 浮点（`vrl/rewards/inference.py`），写入方可自由选择 uint8 存盘
+（4× 更小），reward 模型只面对一种表示；`to_uint8` 对 uint8 透传作纵深防御（91c73a5b）。
+风险：无（浮点 `.pt` 与内存路径行为不变）；门：SD3.5 recompute arm 重跑的 epoch 0 reward 回到
+0.3–0.4 区间，`tests/rewards` 全绿。后续：materialize 改回 uint8 存盘以省 4× 磁盘与 IO。
