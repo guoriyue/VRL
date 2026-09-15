@@ -1019,8 +1019,9 @@ async def run_online_recipe(
             generator=rng,
             num_examples=len(examples),
             prompts_per_rank=rank_batch,
-            num_replicas=training_context.world_size,
-            rank=training_context.rank,
+            # CP peers must draw identical prompts: they replay one sample set.
+            num_replicas=training_context.dp_size,
+            rank=training_context.dp_rank,
             strategy=str(data_config.sampler.type),
         )
         for epoch in range(start_epoch, run_config.total_epochs):

@@ -560,6 +560,30 @@ class TrainerSection(ConfigBase):
     max_train_steps: StrictInt | None = None
 
 
+class ContextParallelConfig(ConfigBase):
+    """distributed.training.fsdp.context_parallel: sequence sharding inside a CP group.
+
+    Read by ``build_strategy``: the trainer builds a ``("dp_shard", "ring",
+    "ulysses")`` device mesh and enables diffusers' context parallelism on each
+    trainable transformer (its ``_cp_plan`` says where the token axis is split
+    and gathered). Ranks of one CP group replay the same rollout samples; FSDP
+    shards parameters over ``dp_shard`` only.
+    """
+
+    ulysses_degree: int = 1
+    ring_degree: int = 1
+
+    @property
+    def size(self) -> int:
+        return int(self.ulysses_degree) * int(self.ring_degree)
+
+    @model_validator(mode="after")
+    def _positive_degrees(self) -> ContextParallelConfig:
+        if self.ulysses_degree < 1 or self.ring_degree < 1:
+            raise ValueError("context_parallel degrees must be >= 1")
+        return self
+
+
 class FSDPConfig(ConfigBase):
     """distributed.training.fsdp: the FSDP2 knobs ``build_strategy`` reads.
 
@@ -572,8 +596,11 @@ class FSDPConfig(ConfigBase):
     declaring an unread knob is a user-facing no-op footgun.
     """
 
-    # 1D ZeRO-3 over the whole world; 2D HSDP is the multi-node follow-on.
+    # ["dp_shard"]: 1D ZeRO-3 over the whole world. ["dp_shard", "cp"]: the
+    # world is dp groups of context_parallel.size ranks that share one sample's
+    # sequence. 2D HSDP is the multi-node follow-on.
     mesh: list[str] = Field(default_factory=lambda: ["dp_shard"])
+    context_parallel: ContextParallelConfig = Field(default_factory=ContextParallelConfig)
     # actor -> MixedPrecisionPolicy(param=bf16, reduce=fp32); none -> full precision.
     # Named precision_policy (not mixed_precision) to avoid colliding with the
     # training-forward dtype `train_precision` (fp32/bf16/fp16); this is a
@@ -584,6 +611,22 @@ class FSDPConfig(ConfigBase):
     # Keep parameter/gradient shards on CPU between forwards. This is slower but
     # lets timestep-routed multi-root models materialize only the active expert.
     cpu_offload: bool = False
+
+    @model_validator(mode="after")
+    def _mesh_matches_context_parallel(self) -> FSDPConfig:
+        if self.mesh not in (["dp_shard"], ["dp_shard", "cp"]):
+            raise ValueError(
+                "distributed.training.fsdp.mesh must be ['dp_shard'] or "
+                f"['dp_shard', 'cp']; got {self.mesh!r}",
+            )
+        if ("cp" in self.mesh) != (self.context_parallel.size > 1):
+            raise ValueError(
+                "distributed.training.fsdp.mesh includes 'cp' exactly when "
+                "context_parallel.ulysses_degree * ring_degree > 1; got "
+                f"mesh={self.mesh!r}, ulysses_degree={self.context_parallel.ulysses_degree}, "
+                f"ring_degree={self.context_parallel.ring_degree}",
+            )
+        return self
 
 
 class DDPConfig(ConfigBase):
