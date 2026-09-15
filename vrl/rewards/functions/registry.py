@@ -228,11 +228,29 @@ class MultiReward(RewardFunction):
                     "Drop the key; shared-GPU parking is derived from distributed "
                     "resource topology.",
                 )
-            if inference.kind == "http":
-                if not issubclass(reward_cls, DiskArtifactRewardFunction):
+            if inference.kind in {"http", "service"} and not issubclass(
+                reward_cls, DiskArtifactRewardFunction
+            ):
+                raise ValueError(
+                    f"reward {name!r} uses in-memory artifacts and cannot use "
+                    f"{inference.kind} inference",
+                )
+            if inference.kind == "service":
+                # The managed subprocess receives the component's resolved device
+                # and worker_config; only the transport differs from in-process.
+                component_device = reward_cls.resolve_execution_device(
+                    device=device,
+                    kwargs=extra,
+                )
+                if memory_parking_required is True and component_device.startswith("cuda"):
                     raise ValueError(
-                        f"reward {name!r} uses in-memory artifacts and cannot use HTTP inference",
+                        f"reward {name!r}: a managed reward service cannot yet share "
+                        "a GPU with the trainer or rollout (park/wake over HTTP is "
+                        "not implemented). Give it a dedicated GPU "
+                        "(distributed.resources.reward.device=gpu) or run it on CPU.",
                     )
+                extra["inference"] = inference
+            elif inference.kind == "http":
                 local_only = sorted(
                     set(extra)
                     & {
@@ -258,7 +276,11 @@ class MultiReward(RewardFunction):
             # device argument; remove a component override after it has served as
             # the CPU-downgrade input.
             extra.pop("device", None)
-            if memory_parking_required is True and component_device.startswith("cuda"):
+            if (
+                inference.kind == "in_process"
+                and memory_parking_required is True
+                and component_device.startswith("cuda")
+            ):
                 # GPU ownership comes from topology. A shared reward cannot rely
                 # on every preset remembering an independent parking knob.
                 if not issubclass(reward_cls, CumemRewardFunction):
@@ -341,10 +363,11 @@ def validate_reward_memory_parking_components(
     kwargs_by_name = reward_kwargs or {}
     if inference_configs is None:
         inference_configs = {name: RewardInferenceConfig() for name in names}
+    local_kinds = {"in_process", "service"}
     gpu_components = [
         name
         for name in names
-        if inference_configs[name].kind == "in_process"
+        if inference_configs[name].kind in local_kinds
         if get_reward(name)
         .resolve_execution_device(
             device=device,
@@ -352,6 +375,13 @@ def validate_reward_memory_parking_components(
         )
         .startswith("cuda")
     ]
+    managed = [name for name in gpu_components if inference_configs[name].kind == "service"]
+    if managed:
+        raise ValueError(
+            f"managed reward services {managed} cannot share a GPU with the trainer or "
+            "rollout (park/wake over HTTP is not implemented); give them a dedicated "
+            "GPU (distributed.resources.reward.device=gpu) or run them on CPU",
+        )
     if not gpu_components:
         raise ValueError(
             "shared reward GPU topology has no configured GPU reward "

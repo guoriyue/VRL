@@ -227,10 +227,27 @@ def build_reward_function(reward: ResolvedReward) -> RewardFunction:
             inference_configs=config.inference_configs,
         )
 
+    reward_kwargs = config.kwargs
+    if reward.artifact_root:
+        from vrl.rewards.base import DiskArtifactRewardFunction
+        from vrl.rewards.functions.registry import get_reward
+
+        # Disk artifacts belong to the run, not to a repo-relative default:
+        # they must survive the run for audits and a managed service is only
+        # allowed to read this run's directory.
+        reward_kwargs = {
+            name: (
+                {**kwargs, "artifact_dir": f"{reward.artifact_root}/{name}"}
+                if issubclass(get_reward(name), DiskArtifactRewardFunction)
+                and not str(kwargs.get("artifact_dir") or "").strip()
+                else dict(kwargs)
+            )
+            for name, kwargs in config.kwargs.items()
+        }
     return MultiReward.from_dict(
         config.weights,
         device=reward.device,
-        reward_kwargs=config.kwargs,
+        reward_kwargs=reward_kwargs,
         memory_parking_required=reward.memory_parking_required,
         inference_configs=config.inference_configs,
     )

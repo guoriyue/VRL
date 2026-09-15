@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.artifacts import InMemoryRewardArtifactStore, MediaType, RewardArtifactStore
 from vrl.rewards.base import DiskArtifactRewardFunction
 from vrl.rewards.models.ocr import OCRRewardModel
@@ -37,6 +38,9 @@ class OCRReward(DiskArtifactRewardFunction):
     - in-process (default): the PaddleOCR model is built eagerly here, scores
       in the driver, and media rides the request in memory (image or video
       tensors alike, exactly as before);
+    - ``reward.inference.ocr.kind=service``: the driver launches a PaddleOCR
+      service subprocess itself and hands it every knob below, so a recipe
+      keeps its ``reward.kwargs.ocr`` unchanged;
     - ``reward.inference.ocr.kind=http``: the registry injects the HTTP client,
       media is written to ``artifact_dir`` as ``.pt`` tensors and scored by a
       standalone ``vrl-reward-service`` running ``OCRRewardModel`` on its own
@@ -75,6 +79,7 @@ class OCRReward(DiskArtifactRewardFunction):
         near_duplicate_min_similarity: float | None = None,
         score_key: str = "ocr",
         scorer: RewardScorer | None = None,
+        inference: RewardInferenceConfig | None = None,
         artifact_format: str | None = None,
         media_type: MediaType | None = None,
         artifact_dir: str = "outputs/reward_artifacts",
@@ -83,8 +88,8 @@ class OCRReward(DiskArtifactRewardFunction):
         if score_key not in {"ocr", "ocr_match"}:
             raise ValueError("OCR score_key must be 'ocr' or 'ocr_match'")
         # ``device`` stays in the RewardFunction constructor contract, while
-        # resolve_execution_device above is the sole CPU placement owner.
-        del device
+        # resolve_execution_device above is the sole CPU placement owner; only
+        # the managed-service path forwards it (as the service's device).
         model_config = {
             "debug_dir": debug_dir,
             "engine_profile": engine_profile,
@@ -95,11 +100,17 @@ class OCRReward(DiskArtifactRewardFunction):
             "near_duplicate_min_similarity": near_duplicate_min_similarity,
         }
         artifact_store: RewardArtifactStore | None
-        if scorer is None:
+        worker_config: dict[str, Any] | None = None
+        if inference is not None and inference.kind == "service":
+            # The managed subprocess builds OCRRewardModel from this bag.
+            self._model: OCRRewardModel | None = None
+            worker_config = dict(model_config)
+            artifact_store = None
+        elif scorer is None:
             # Build eagerly so debug_dir creation fires now and tests can inject
             # a fake engine via ``reward._engine`` (proxied to the model below).
             model = OCRRewardModel(model_config)
-            self._model: OCRRewardModel | None = model
+            self._model = model
             scorer = InProcessRewardScorer(model=model)
             artifact_store = InMemoryRewardArtifactStore()
         else:
@@ -126,6 +137,9 @@ class OCRReward(DiskArtifactRewardFunction):
             retain_artifacts=retain_artifacts,
             scorer=scorer,
             artifact_store=artifact_store,
+            worker_config=worker_config,
+            inference=inference,
+            device=device if worker_config is not None else None,
         )
 
     @property

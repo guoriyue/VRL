@@ -654,3 +654,44 @@ def test_http_reward_rejects_local_worker_config() -> None:
                 ),
             },
         )
+
+
+def test_service_ocr_reward_gets_a_managed_scorer_with_its_knobs(tmp_path) -> None:
+    from vrl.rewards.service.managed import ManagedRewardScorer
+
+    reward = MultiReward.from_dict(
+        {"ocr": 1.0},
+        device="cpu",
+        reward_kwargs={
+            "ocr": {
+                "artifact_dir": str(tmp_path / "reward_artifacts"),
+                "substring_full_credit": False,
+                "score_key": "ocr_match",
+            }
+        },
+        inference_configs={"ocr": RewardInferenceConfig(kind="service")},
+    )
+    component = reward.rewards[0][2]
+    assert isinstance(component, DiskArtifactRewardFunction)
+    scorer = component.scorer
+    assert isinstance(scorer, ManagedRewardScorer)
+    assert scorer.worker_config["model_factory"] == "vrl.rewards.models.ocr:OCRRewardModel"
+    assert scorer.worker_config["substring_full_credit"] is False
+    assert scorer.worker_config["device"] == "cpu"
+    assert scorer.pid is None  # launched lazily by preflight/scoring
+
+
+def test_service_kind_rejects_inmemory_rewards_and_shared_gpus() -> None:
+    with pytest.raises(ValueError, match="in-memory artifacts"):
+        MultiReward.from_dict(
+            {"aesthetic": 1.0},
+            device="cpu",
+            inference_configs={"aesthetic": RewardInferenceConfig(kind="service")},
+        )
+    with pytest.raises(ValueError, match="park/wake over HTTP"):
+        MultiReward.from_dict(
+            {"videoscore2": 1.0},
+            device="cuda:0",
+            memory_parking_required=True,
+            inference_configs={"videoscore2": RewardInferenceConfig(kind="service")},
+        )

@@ -67,9 +67,14 @@ class HttpRewardScorer:
         )
 
         if isinstance(service, RewardInferenceConfig):
-            if service.kind != "http":
+            if service.kind not in {"http", "service"}:
                 raise ValueError(
-                    "HttpRewardScorer requires inference.kind=http",
+                    "HttpRewardScorer requires inference.kind=http or service",
+                )
+            if not service.endpoint:
+                raise ValueError(
+                    "HttpRewardScorer requires a resolved endpoint; a managed service "
+                    "resolves its loopback endpoint before constructing the client",
                 )
             if (
                 timeout_s is not None

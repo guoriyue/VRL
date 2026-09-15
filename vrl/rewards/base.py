@@ -24,6 +24,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
+from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.artifacts import (
     ArtifactFormat,
     DiskRewardArtifactStore,
@@ -539,6 +540,7 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
         worker_config: Mapping[str, Any] | None = None,
         scorer: RewardScorer | None = None,
         artifact_store: RewardArtifactStore | None = None,
+        inference: RewardInferenceConfig | None = None,
     ) -> None:
         # Deferred: runtime.py imports this module (cycle guard).
         from vrl.rewards.runtime import build_reward_scorer
@@ -598,7 +600,16 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
                 )
             if sleep_offload:
                 worker_cfg["sleep_offload"] = True
-            scorer = build_reward_scorer(worker_cfg)
+            # ``inference`` selects in-process (None/default) or a managed
+            # service subprocess that receives this same worker_cfg. External
+            # HTTP components never reach here: the registry injects their
+            # ready client as ``scorer``.
+            scorer = build_reward_scorer(
+                worker_cfg,
+                inference=inference,
+                artifact_dir=str(artifact_dir),
+                component_name=str(reward_name),
+            )
 
         super().__init__(
             reward_name=str(reward_name),

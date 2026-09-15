@@ -498,8 +498,15 @@ def build_reward_scorer(
     worker_config: Mapping[str, Any] | None = None,
     *,
     inference: Mapping[str, Any] | RewardInferenceConfig | None = None,
+    artifact_dir: str | None = None,
+    component_name: str = "",
 ) -> RewardScorer:
-    """Build the runtime selected by the typed inference deployment config."""
+    """Build the runtime selected by the typed inference deployment config.
+
+    ``artifact_dir`` and ``component_name`` matter only to ``kind=service``: the
+    managed subprocess must be allowed to read the artifacts this reward writes,
+    and its config/log files are named after the component.
+    """
 
     if worker_config is not None and not isinstance(worker_config, Mapping):
         raise TypeError("reward worker_config must be a mapping or None")
@@ -515,6 +522,20 @@ def build_reward_scorer(
     )
     if deployment.kind == "in_process":
         return InProcessRewardScorer(cfg)
+    if deployment.kind == "service":
+        from vrl.rewards.service.managed import ManagedRewardScorer
+
+        if artifact_dir is None:
+            raise ValueError(
+                "a managed reward service needs the reward's artifact_dir so the "
+                "subprocess may read the artifacts written for it",
+            )
+        return ManagedRewardScorer(
+            deployment,
+            worker_config=cfg,
+            artifact_dir=artifact_dir,
+            component_name=component_name,
+        )
     if cfg:
         raise ValueError(
             "HTTP reward runtime cannot consume local worker_config; model and "

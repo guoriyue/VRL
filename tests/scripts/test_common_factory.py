@@ -474,3 +474,32 @@ def test_multi_gpu_engine_gate_requires_family_capability() -> None:
     # Single-GPU engines never consult the capability; a capable family passes.
     wan.validate_gpus_per_engine(1)
     get_model_family_entry("sd3_5").validate_gpus_per_engine(2)
+
+
+def test_disk_rewards_default_their_artifact_dir_to_the_run_output(tmp_path) -> None:
+    """A disk reward without an explicit artifact_dir writes under the run's
+    output tree, and a managed service scorer is scoped to that directory."""
+    from vrl.rewards.service.managed import ManagedRewardScorer
+
+    cfg = load_config(
+        "experiment/sd3_5/online_grpo_ocr",
+        overrides=[
+            f"trainer.output_dir={tmp_path}/run",
+            "reward.inference.ocr.kind=service",
+        ],
+    )
+    cfg.distributed.resources.visible_devices = [0]
+    built = build_configs(cfg)
+    resolved = resolve_reward_inputs(
+        built,
+        ResolvedDistributedResources.from_root(parse_config(cfg)),
+        trainer_device="cuda:0",
+    )
+    assert resolved.artifact_root == f"{tmp_path}/run/reward_artifacts"
+
+    reward = build_reward_function(resolved)
+    component = reward.rewards[0][2]
+    assert isinstance(component.scorer, ManagedRewardScorer)
+    assert component.scorer.artifact_dir == (tmp_path / "run" / "reward_artifacts" / "ocr")
+    assert component.scorer.state_dir == (tmp_path / "run" / "reward_artifacts")
+    assert component.artifact_store.root == tmp_path / "run" / "reward_artifacts" / "ocr"
