@@ -117,6 +117,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 05:40 — 进程/GIL 隔离：训练进程里到底跑了什么（两次 py-spy 的证据）
 - 2026-09-15 06:45 — 多节点放置：bundle → 物理卡的确定性映射，跨集群占用不可见
 - 2026-09-15 07:45 — 反序列化与 batch 构建出事件循环（parser actor 池）：按三次 py-spy 判定不做
+- 2026-09-15 08:45 — 时分租约的相位切换：sleep/offload/onload/wake 的顺序、失败组合与健康探测
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -320,3 +321,24 @@ VRL 的 rank 进程并不是单线程控制平面：反序列化发生在训练�
 **判定**：不做 parser actor 池；A 工作流关闭。保留的观察：训练 batch 的 H2D 拷贝
 （`vrl/trajectory/device.py:66`）在两次训练期测量里占 7–17%，是 driver 侧唯一剩余的可优化项，
 门是先测 pinned+non_blocking 的净收益。
+
+### hourly note 2026-09-15 08:45 — 相位切换：谁拥有顺序，失败时谁先回来
+
+**参照实现**（`miles/backends/fsdp_utils/actor.py:261-280`，`miles/ray/rollout.py:241-262`）：
+训练 actor 的 `sleep`/`wake_up` 是把模型和优化器整体 `.cpu()/.cuda()` 加一个 gloo barrier；rollout
+manager 的 `offload`/`onload` 逐引擎调 `release/resume_memory_occupation`，`onload(tags=[weights])`
+可以只恢复权重（更新权重前不必唤醒全部显存）；`offload` 前 `health_monitoring_pause()`——
+卸载窗口内不做健康探测。顺序由 driver 脚本逐行写出，失败没有组合语义。
+
+**VRL 今天**（`vrl/rollouts/orchestration/rollout_runtime.py:196-260`）：`rollout_phase` 上下文
+管理器**拥有整个握手的顺序**：park trainer（仅拓扑要求时）→ activate 生成 runtime → 采样+打分 →
+release 生成侧显存（含 reward 服务的 `/park`）→ 只有 release 成功才 restore trainer；body 失败与
+cleanup 失败合并成 `RolloutPhaseCleanupError`，release 失败时 trainer 保持 parked 让终态 shutdown
+先回收 rollout 的卡。park 本身在所有 rank 上用 CPU 协调组统一成败（`FSDPStrategy.park_training_state`），
+并在 unmap 前 `cuda.synchronize` + 协调 barrier，避免在别的 rank 还在 unmap 时发 NCCL kernel
+（2026-08-16 Xid 79 事故的对策）。VRL 的租约在顺序和失败语义上更完整。
+
+**参照里值得核对的两点**：(1) 卸载窗口内的健康探测——VRL 的 `RayGenerationWorker.health()`
+跑在独立并发组，须确认它不触碰 CUDA（否则 park 窗口内的探测就是 Xid 模式）；(2) 分标签部分
+唤醒——VRL 的权重同步走 versioned slot，不需要唤醒引擎即可安装，因此没有"只恢复权重"的需求。
+风险：本条只记录、不改代码；门：(1) 用 park 期间持续调 `/health` 的 smoke 验证零 CUDA 调用。
