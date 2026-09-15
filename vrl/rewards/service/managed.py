@@ -148,7 +148,10 @@ class ManagedRewardScorer(HttpRewardScorer):
 
     @property
     def _file_tag(self) -> str:
-        return self.component_name or "reward"
+        # reward_name may be a hub id (MizzenAI/HPSv3@main); keep file names flat.
+        import re
+
+        return re.sub(r"[^A-Za-z0-9_.-]+", "_", self.component_name) or "reward"
 
     # -- lifecycle -------------------------------------------------------------
 
