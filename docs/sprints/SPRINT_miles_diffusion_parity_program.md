@@ -149,3 +149,11 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   下一步：按 `parked/SPRINT_sglang_diffusion_execution_provider.md` 的设计落地 provider
   （chunk executor 持有引擎子进程，响应转 native trajectory），先做 SD3.5，再对 Wan 做 norm/RoPE
   舍入位置对齐（F）。
+- 2026-09-14 23:05：**范围校正（用户）**：VRL 本身已经成熟；本程序的目标是学习这些系统在
+  架构层面的解法（进程/GIL 隔离、driver 作为控制平面、事件循环外反序列化、生命周期握手、
+  权重更新事务），并用 VRL 自己的设计和词汇落地，**不是**把引擎或框架换成它们的。
+  据此调整：B 的引擎只作为参照与测量工具（已给出 compile 路径 1.7× 的证据），不再做
+  "provider 替换"；B 的后续改为把同样的收益在 VRL 自己的 rollout 循环里实现
+  （rollout 侧 compile/CUDA-graph 路径、batch 不变 kernel、轨迹序列化出事件循环），归入
+  rollout 性能那条 cron 与 A/D 两条工作流。E（IPC 权重同步）改为"VRL 自己的 colocated
+  worker 间 IPC"，仍以全参配方的 sync 时长为门。
