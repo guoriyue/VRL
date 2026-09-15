@@ -110,6 +110,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 ### 已研究主题（避免重复）
 - 2026-09-14 23:40 — 并行状态记账：dp×sp 全体 rank 的微批计数守卫 / CP 同组样本一致性
 - 2026-09-15 00:50 — 生命周期握手与失败处理：子进程就绪等待、死亡检测、身份核对
+- 2026-09-15 01:55 — 指标归约范围：dp 组 vs world，CP 副本的重复计数
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -158,3 +159,26 @@ all_gather_object，字节量为 KB 级。风险：无（同组指纹恒等时�
 
 **推广**：任何 driver 拥有的子进程（未来的引擎 provider、并行 reward 池）都应遵循同一三元组：
 死亡检测 + deadline + 每次启动的身份令牌；`/ready` 只回答"能服务"，"是谁"由 `/info` 回答。
+
+### hourly note 2026-09-15 01:55 — 指标归约的范围：谁该被算一次
+
+**问题**：训练指标（reward 均值/方差、clip 比例、parity 最大值、loss）需要跨 rank 归约；
+一旦 world 里出现"同一份样本的副本"（CP 同组的两个 rank 持有相同 batch），按 world 求和的
+指标会把副本重复计数。
+
+**参照实现**：每个指标声明归约类型（`MetricReduce.MEAN / SUM / REPLICATED`），归约只在
+**dp 组**上做（`miles/backends/fsdp_utils/metrics.py:20-60`；`actor.py:455-460` 用
+`parallel_state.dp_group` 建 metric buffer），`grad_norm` 标为 REPLICATED（各 rank 相同，不归约）。
+
+**VRL 今天**：`_global_reward_stats`（`vrl/trainers/online/trainer.py:74-99`）在 world 上
+all-reduce (Σx, Σx², n)；parity/clip 用 `collectives.all_true / max_float / sum`
+（`trainer.py:406-448`）；`TrainingCollectives` 没有组的概念（`vrl/trainers/distributed.py`）。
+CP 下的实际影响：均值/方差与比值类指标**不变**（副本让分子分母同倍放大），max/all_true 幂等，
+只有绝对计数（`clip_total`、`total_weight` 等）翻倍——目前这些只用于比值。因此现有 cp=2 门
+用"reward_mean 与单卡基线相等"就能验证这一点（基线 epoch 0：−4.5297）。
+
+**VRL 该改什么（后续，非本小时）**：给 `TrainingCollectives` 一个可选的归约组，CP 下由策略在
+`prepare_model` 后把它设为 dp 组（world 按 cp 步长取 rank），绝对计数指标就一次都不多算；
+`grad_norm` 天然 REPLICATED（DTensor 裁剪已在整个 world 上算出同一个数）。风险：所有调用点
+都在 rank 对称路径上，换组不改变调用次数；门：cp=2 下 `pre_update_clip_fraction` 的分子分母
+日志与基线一致，绝对计数减半。

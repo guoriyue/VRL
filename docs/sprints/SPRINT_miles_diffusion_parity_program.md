@@ -168,3 +168,24 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   reward −4.5297±5.2703、parity 0.001973、clip 0、grad_norm 7.07e-4，与 P2 smoke 逐位一致（同种子
   可复现）。cp=2 第一次启动因 CP follower 在广播里等 leader 采样超过 gloo 30 分钟默认超时而失败
   （fe3fc019 改为 12 小时），23:28 重启，epoch 0 约 00:10。
+- 2026-09-15 00:40：**A 门第二次测量（严格模式，reward+训练阶段 20 分钟）**：driver 活跃 361 s
+  （30%），其中 pickle/torch.load 只有 5.9 s（活跃的 1.6%）；活跃时间的 49% 是 FSDP
+  `wait_for_unshard`（等 GPU），**17.5% 是 `move_training_batch_to_device` + trajectory 逐张量
+  `.to(device)`（约 63 s/20 min）**——这是一个真实的 driver 侧成本，且与 GIL 无关（主线程同步
+  H2D 拷贝）。结论：严格模式下 A 第 2 步（parser actor 池）无收益；更值得做的是训练 batch 上
+  设备的拷贝（pinned + non_blocking、或只搬当前 timestep 的切片），归入 D 之前的"driver 瘦身"
+  小项。单 rank 两个 update 的 metrics 与基线 epoch 0 逐位一致。
+- 2026-09-15 00:40：**C 门**：cp=2 第二次启动通过了采样、reward、组内广播与指纹校验、前向，
+  在 backward 失败：Ulysses attention 的 backward 重算 SDPA 时 q/k 为 fp32、v 为 bf16
+  （`attention_dispatch.py:869`）。单卡基线两个 update 正常（epoch 1：loss 1.41e-4、reward
+  −5.69、parity 0.00204）。假设：激活检查点重算路径与 CP hook 的组合让 norm_q/norm_k 在重算
+  时以 fp32 权重执行；正用 `actor.gradient_checkpointing=off` 复跑 cp=2 一个 update 验证
+  （cp=2 每卡一半 token，无检查点可能已放得下，本身也是 CP 的内存收益证据）。
+- 2026-09-15 01:50：**C 门定位**：2 卡最小复现（Wan 1.3B transformer，随机小 latent）四种组合：
+  `gc=on×mp=actor×cp=on` 失败（CheckpointError：重算张量元数据不同）、`gc=off×actor×cp=on` 通过、
+  `gc=on×mp=none×cp=on` 通过、`gc=on×actor×cp=off` **也失败**。即问题是 FSDP2 `MixedPrecisionPolicy
+  (param_dtype=bf16)` × 非重入激活检查点在多 rank 下的已知冲突（记忆项：双节点 FSDP 第 4 条，解法
+  `fsdp.precision_policy=none`），CP 只是把它暴露成 attention backward 的 dtype 不一致。
+  无检查点的 cp=2 在 81 帧上 OOM（44 GB），所以检查点必须开。
+  处置：cp=2 与单卡基线都改用 `precision_policy=none`（trainable 组决定 dtype，即原生 FP32 LoRA
+  路径）重跑，两者同配置可比；`actor` 策略在多 rank + 检查点下的修复另立项。
