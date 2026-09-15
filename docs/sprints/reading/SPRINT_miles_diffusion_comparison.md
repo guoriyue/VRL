@@ -124,6 +124,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 12:45 — reward 吞吐：actor 池（多副本、分数 GPU、轮询）vs 每组件单服务
 - 2026-09-15 13:45 — 运行证据与可复现性：源码/环境/数据快照 vs 实验跟踪服务
 - 2026-09-15 14:45 — 引擎健康与恢复：死 worker 是终止 run 还是原位重建
+- 2026-09-15 15:45 — 训练中的固定 prompt 评估：低方差的学习信号
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -480,3 +481,25 @@ N+1 重叠。缺的是**横向副本**：CPU OCR 完全可以并行 N 份，GPU 
 当前版本 → 才重新进入准入；期间健康探测暂停，`run_evidence` 记录重建事件。风险：与 continuous
 的 staleness 记账交互（新引擎没有旧版本）；门：人为 kill 一个 worker，run 在下一个 update 前
 恢复且 parity/版本回执不变。本小时不改代码。
+
+### hourly note 2026-09-15 15:45 — 训练里没有固定评估，就只能用 16 个随机 prompt 的 reward 猜
+
+**问题**：今天判断"recompute arm 是否在退化"用的是训练 reward——每 epoch 16 个随机 prompt，
+方差 0.27–0.50，要 20+ epoch 才能看出趋势，而且训练 reward 混合了采样随机性与策略变化。
+一个固定 prompt 集、固定种子的周期性评估，能在几个 update 内给出低方差的学习信号。
+
+**参照实现**（`miles/ray/rollout.py:209-232`；参数 `--eval-interval`、`--eval-prompt-data`、
+`--eval-config`、`--eval-function-path`，`arguments.py:736-780`）：rollout manager 有独立的
+`eval(rollout_id)`：按间隔用评估专用的生成函数在固定 prompt 集上生成、打分、记 `eval/*` 指标与
+样例媒体，并可交给 `metric_checker` 做门控（CI 用）。
+
+**VRL 今天**：`data.eval_manifest` 是必填字段（`vrl/config/schema.py:249-291`），但只被离线
+评估脚本消费（`vrl/scripts/eval/*`、cosmos `generate.py:347-353`）；在线训练循环里没有周期性
+固定评估——`trainer.total_epochs` 内的曲线全是训练 reward。
+
+**VRL 该改什么（后续）**：`trainer.eval: {every_n_updates, prompts: <manifest>, samples_per_prompt,
+seed}`，在 update 边界用当前策略对固定 prompt 做**固定种子**生成（同一 rollout runtime、同一 reward
+服务），写 `eval/reward_mean|std` 到 metrics.csv 并落一组样例图；strict 与 continuous 都在
+`after_train_step` 之后插入。风险：每次评估占一次生成时间（可设 every_n 大一些）；门：eval 曲线
+的逐 update 标准差 < 训练 reward 标准差的 1/3，且今天 recompute vs strict 的差异在 5 个评估点
+内可判。本小时不改代码。
