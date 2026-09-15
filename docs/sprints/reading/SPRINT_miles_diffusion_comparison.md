@@ -112,6 +112,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 00:50 — 生命周期握手与失败处理：子进程就绪等待、死亡检测、身份核对
 - 2026-09-15 01:55 — 指标归约范围：dp 组 vs world，CP 副本的重复计数
 - 2026-09-15 02:45 — 权重更新事务与版本门：版本回执、内容核对、LoRA 合并时机
+- 2026-09-15 03:45 — checkpoint/resume 身份：tracker 文件、RNG 与进度恢复、身份校验
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -204,3 +205,22 @@ worker 侧 `update_weights(..., verify_content=)`（`vrl/generation/execution/wo
 排除，成本一次读回；(2) LoRA 路径：VRL 传扁平化的可训练状态、引擎侧 `install_trainable_state`，
 不做合并，合并 dtype 问题不存在；参照的即时合并只在引擎不支持 adapter 时才需要。
 风险：仅 debug 首步多一次核对；门：首步日志出现一次 `verify_content=True` 的通过记录。
+
+### hourly note 2026-09-15 03:45 — resume 的三件事：找到最新、恢复"从哪继续"、确认"是同一个实验"
+
+**参照实现**（LLM RL 的 FSDP 后端，`miles/backends/fsdp_utils/checkpoint.py:85-200`）：
+`latest_checkpointed_iteration.txt` tracker 指向最新 step；分别 `dcp.load` 模型/优化器/LR 调度器；
+`rng.pt` 恢复 torch/cuda RNG（可用 `no_load_rng` 跳过）；`iteration` / `next_rollout_id` 决定从哪个
+rollout 继续。**没有身份校验**：换了配置或模型指向同一目录也会静默加载。
+
+**VRL 今天**（`vrl/trainers/checkpointing.py:180-232, 387-400`；`vrl/scripts/common/online.py:638-726`）：
+schema-v2 checkpoint 携带 `family` 与 `model.identity`（构建期的模型身份字典），`strict` 模式下
+家族不符或身份不符直接 `ValueError`，缺身份也拒绝；进度（epoch/step）和 RNG（含 prompt 采样器的
+generator）随 checkpoint 捕获与恢复，`resume_epoch` 由 `build_configs` 解析。VRL 在"是同一个实验"
+这一项上比参照严格得多；tracker 文件的"最新"语义 VRL 用 `checkpoint-final` 与显式路径承担。
+
+**可做的事（后续，非本小时）**：(1) 把 rollout 编排状态也纳入身份/进度——continuous 模式的
+`policy_version` 与 staleness 窗口在 resume 后应从 checkpoint 恢复而不是从 0 开始，否则第一批
+rollout 的 staleness 记账错位；(2) `strict=False` 路径只 warning，多 rank 下应至少 `all_true`
+统一所有 rank 的判定，避免一个 rank 拒绝、其余 rank 继续导致集合通信挂死。风险：只加校验；
+门：resume 单元测试覆盖身份不符 + 多 rank 判定一致。
