@@ -20,18 +20,24 @@ Families opt in by naming their installer in the registry
 (``GenerationRuntimeCapabilities.sequence_parallel_installer``); the rank
 program resolves it by dotted path at model build.
 
-The Ulysses exchange is one ``all_to_all_single`` per tensor: every rank
-sends each peer exactly the (head group, sequence shard) block that peer
-keeps, so the wire carries ``(P-1)/P`` of the local tensor instead of the
-``P-1`` local tensors an all-gather-then-narrow moves (P-fold fewer bytes
-and no P-way scratch copy per exchange). The replicated text stream and the
-block-entry/exit shard/gather stay ``all_gather`` + ``narrow``: there every
-rank needs every peer's chunk. Both collectives run identically on gloo
-(CPU tests) and nccl, one code path everywhere.
+The Ulysses exchange is one ``all_to_all_single``: every rank sends each
+peer exactly the (head group, sequence shard) block that peer keeps, so the
+wire carries ``(P-1)/P`` of the local tensor instead of the ``P-1`` local
+tensors an all-gather-then-narrow moves (P-fold fewer bytes and no P-way
+scratch copy per exchange). Query, key and value travel packed in a single
+collective per attention: the three tensors have one shape and one
+destination map, so stacking their per-peer blocks costs the same copies
+the exchange already makes and cuts the collective launches per block from
+four to two — at image token counts the exchange is latency-bound, so the
+launch count is what the wire time follows. The replicated text stream and
+the block-entry/exit shard/gather stay ``all_gather`` + ``narrow``: there
+every rank needs every peer's chunk. Both collectives run identically on
+gloo (CPU tests) and nccl, one code path everywhere.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import torch
@@ -73,26 +79,35 @@ def _exchange_blocks(blocks: torch.Tensor, *, group: Any) -> torch.Tensor:
     return received
 
 
-def _shards_to_heads(tensor: torch.Tensor, *, group: Any) -> torch.Tensor:
-    """[B, H, s_local, hd] -> [B, H/P, S, hd]: trade sequence shard for heads.
+def _shards_to_heads(tensors: Sequence[torch.Tensor], *, group: Any) -> tuple[torch.Tensor, ...]:
+    """[B, H, s_local, hd] each -> [B, H/P, S, hd] each, in one collective.
 
     Rank ``p`` receives our shard of its head group; the received blocks are
     indexed by source rank, i.e. by sequence shard, so laying them out along
-    the sequence axis in rank order rebuilds the full sequence.
+    the sequence axis in rank order rebuilds the full sequence. The tensors
+    share one shape, so their per-peer blocks stack into one payload and
+    unstack after the exchange; each output is contiguous.
     """
 
     world = dist.get_world_size(group)
-    batch, heads, shard_len, head_dim = tensor.shape
+    batch, heads, shard_len, head_dim = tensors[0].shape
     if heads % world:
         raise ValueError(
             f"{heads} attention heads are not divisible across {world} ranks",
         )
     head_group = heads // world
-    # [B, P, H/P, s, hd] -> [P, B, H/P, s, hd]: one block per destination rank.
-    blocks = tensor.unflatten(1, (world, head_group)).transpose(0, 1)
+    # [B, P, H/P, s, hd] -> [P, B, H/P, s, hd] per tensor, stacked to
+    # [P, n, B, H/P, s, hd]: one block per destination rank holding all n.
+    blocks = torch.stack(
+        [tensor.unflatten(1, (world, head_group)).transpose(0, 1) for tensor in tensors],
+        dim=1,
+    )
     received = _exchange_blocks(blocks, group=group)
-    # [P, B, H/P, s, hd] -> [B, H/P, P, s, hd] -> [B, H/P, S, hd].
-    return received.permute(1, 2, 0, 3, 4).reshape(batch, head_group, world * shard_len, head_dim)
+    # [P, n, B, H/P, s, hd] -> [n, B, H/P, P, s, hd] -> [n, B, H/P, S, hd].
+    heads_major = received.permute(1, 2, 3, 0, 4, 5).reshape(
+        len(tensors), batch, head_group, world * shard_len, head_dim
+    )
+    return heads_major.unbind(0)
 
 
 def _heads_to_shards(tensor: torch.Tensor, *, group: Any) -> torch.Tensor:
@@ -166,9 +181,7 @@ class UlyssesJointAttnProcessor:
 
         # The Ulysses exchange: local sequence shard with all heads becomes the
         # full sequence with this rank's head group.
-        query = _shards_to_heads(query, group=self.group)
-        key = _shards_to_heads(key, group=self.group)
-        value = _shards_to_heads(value, group=self.group)
+        query, key, value = _shards_to_heads((query, key, value), group=self.group)
 
         text_length = 0
         if encoder_hidden_states is not None:
