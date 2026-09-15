@@ -63,7 +63,13 @@ def materialize_reward_artifacts(
 
                 write_mp4(sample, path, fps=float(spec.fps) if spec.fps is not None else 8.0)
             else:
-                torch.save(sample.cpu(), path)
+                # Reward models take unit-range floats (their to_uint8 multiplies
+                # by 255); media crosses the wire as uint8, so restore k/255
+                # here exactly as the driver did before it handed samples over.
+                tensor = sample.cpu()
+                if tensor.dtype == torch.uint8:
+                    tensor = tensor.float() / 255.0
+                torch.save(tensor, path)
             files.append(
                 MaterializedArtifact(
                     path=str(path.resolve()),

@@ -52,7 +52,11 @@ def test_materialize_writes_one_tensor_file_per_sample_per_spec(tmp_path: Path) 
             path = Path(ref.path)
             assert path.parent == (tmp_path / name).resolve() and path.suffix == ".pt"
             assert ref.size_bytes == path.stat().st_size
-            assert torch.equal(torch.load(path, weights_only=True), media[index])
+            # Reward models take unit-range floats; the wire's uint8 is restored
+            # as k/255, the representation the driver used to hand over.
+            saved = torch.load(path, weights_only=True)
+            assert saved.dtype == torch.float32
+            assert torch.equal(saved, media[index].float() / 255.0)
     with pytest.raises(ValueError, match="expects image media"):
         materialize_reward_artifacts(media, [_spec(tmp_path, "img", media_type="image")])
     assert materialize_reward_artifacts(media, []) == {}
