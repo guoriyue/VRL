@@ -33,6 +33,9 @@ def to_uint8(media: torch.Tensor) -> torch.Tensor:
     ``[0, 255]`` avoids 256 overflow on values at the top of the range.
     """
 
+    if media.dtype == torch.uint8:
+        # Already quantized: scaling again would saturate every pixel to 255.
+        return media
     return (media * 255).round().clamp(0, 255).to(torch.uint8)
 
 

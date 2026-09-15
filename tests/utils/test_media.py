@@ -112,3 +112,12 @@ def test_image_conversion_rejects_multiple_images(as_tensor: bool) -> None:
     source = torch.from_numpy(images) if as_tensor else images
     with pytest.raises(ValueError, match="expected one image"):
         image_to_uint8_hwc(source)
+
+
+def test_to_uint8_passes_quantized_media_through() -> None:
+    """A uint8 tensor is already quantized; rescaling would saturate it to white."""
+    from vrl.utils.media import to_uint8
+
+    quantized = torch.tensor([[0, 128, 255]], dtype=torch.uint8)
+    assert to_uint8(quantized) is quantized
+    assert torch.equal(to_uint8(quantized.float() / 255.0), quantized)
