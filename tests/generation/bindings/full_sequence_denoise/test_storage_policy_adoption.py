@@ -57,8 +57,7 @@ def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
 def _chunk() -> DiffusionBatchResult:
     return DiffusionBatchResult(
         batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1),
-        observations=torch.ones(1, 2, 3, dtype=torch.float32),
-        actions=torch.ones(1, 2, 3, dtype=torch.float32) * 2,
+        latents=torch.ones(1, 3, 3, dtype=torch.float32),
         log_probs=torch.ones(1, 2, dtype=torch.float32) * 3,
         timesteps=torch.arange(2, dtype=torch.float32).view(1, 2),
         kl=torch.ones(1, 2, dtype=torch.float32) * 4,
