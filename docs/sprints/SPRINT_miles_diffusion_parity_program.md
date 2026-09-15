@@ -266,3 +266,9 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   epoch 0 两者接近（0.425 vs 0.412）。目前的差距在样本方差内但方向一致偏低，40 epoch 跑完再看；
   若持续偏低，候选原因是 batch-16 生成的 bf16 数值与 batch-1 不同（此前测得 log-prob 漂移 0.015），
   而不是 recompute 本身（它只改 ratio 的 old 侧）。clip 持续 0，墙钟 255–305 s。
+- 2026-09-15 12:40：recompute arm 35/40 epoch：reward 0–19 均值 0.378、20–35 **0.312（下降）**，
+  strict arm 0.446 / 0.461（平坦）。差距已超出样本方差且趋势相反：该 arm 的三个变量（batch-16 生成、
+  compile(all)、recompute）中至少一个在损害学习。计划三组 20 epoch 消融（脚本
+  `run_recompute_ablations.sh`）：A batch16+recompute 无 compile；B batch1+compile+recompute；
+  C batch16+compile、recompute 关（bypass，parity 门放宽到 0.05）。GPU 在本 arm 结束后先按约定
+  交还 vrl-9941（其 stage-2 任务约 3.5 h），消融排在其后。
