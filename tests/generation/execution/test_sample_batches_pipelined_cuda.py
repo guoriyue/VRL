@@ -82,8 +82,7 @@ def test_pipelined_moves_real_slots_chunk_result_to_cpu() -> None:
         tensors = _produce(batch)
         return DiffusionBatchResult(
             batch=GenerationSampleBatch(prompt_index=0, sample_start=batch, sample_count=1),
-            observations=tensors["obs"],
-            actions=None,
+            latents=tensors["obs"],
             log_probs=None,
             timesteps=None,
             kl=None,
@@ -99,7 +98,7 @@ def test_pipelined_moves_real_slots_chunk_result_to_cpu() -> None:
     )
 
     assert all(isinstance(result, DiffusionBatchResult) for result in results)
-    assert all(result.observations.device.type == "cpu" for result in results)
+    assert all(result.latents.device.type == "cpu" for result in results)
     assert all(result.video.device.type == "cpu" for result in results)
     assert [result.context["batch"] for result in results] == [0, 1]
 

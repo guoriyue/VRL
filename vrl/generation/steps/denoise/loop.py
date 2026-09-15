@@ -24,8 +24,10 @@ class DenoiseLoopResult:
     """Denoise-loop output before decode and artifact packing."""
 
     state: Any
-    observations: Any
-    actions: Any
+    # The whole denoise path, ``(batch, num_steps + 1, *latent)``; see
+    # ``DenoiseTrajectoryBuffers.latents``. Carried as one storage so the
+    # observation/action pair is never materialized twice downstream.
+    latents: Any
     log_probs: Any
     timesteps: Any
     kl: Any
@@ -38,6 +40,14 @@ class DenoiseLoopResult:
     # display/provenance-only: denoise-engine counters forwarded to optional
     # runtime-debug telemetry.
     engine_counters: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def observations(self) -> Any:
+        return self.latents[:, :-1]
+
+    @property
+    def actions(self) -> Any:
+        return self.latents[:, 1:]
 
 
 @dataclass(slots=True)
@@ -301,8 +311,7 @@ def run_denoise_loop(
 
     return DenoiseLoopResult(
         state=state,
-        observations=buffers.observations,
-        actions=buffers.actions,
+        latents=buffers.latents,
         log_probs=buffers.log_probs,
         timesteps=buffers.timesteps,
         kl=buffers.kl,

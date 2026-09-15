@@ -472,7 +472,7 @@ def test_decode_denoise_result_packs_video_as_uint8() -> None:
     # One byte per element on the wire.
     assert batch.engine_counters["diffusion_video_bytes"] == batch.video.numel()
     # Training tensors keep their dtype.
-    assert batch.observations.is_floating_point()
+    assert batch.latents.is_floating_point()
     assert batch.log_probs.dtype == torch.float32
 
 
@@ -504,8 +504,7 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
     )
     out = executor.apply_wire_storage_policy(request, batch)
 
-    assert out.observations.dtype == torch.float16
-    assert out.actions.dtype == torch.float16
+    assert out.latents.dtype == torch.float16
     assert out.replay_tensors["prompt_embeds"].dtype == torch.float16
 
     # Default policy is a strict identity: same tensor objects, no copies.
@@ -524,9 +523,9 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
         inputs=["p"],
         samples_per_prompt=2,
     )
-    before = chunk2.observations
+    before = chunk2.latents
     untouched = executor.apply_wire_storage_policy(plain_request, chunk2)
-    assert untouched.observations is before
+    assert untouched.latents is before
 
 
 @pytest.mark.parametrize("timesteps", [[0.9, 0.5], [torch.tensor(0.9)], None])

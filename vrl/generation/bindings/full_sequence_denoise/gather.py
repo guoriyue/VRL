@@ -45,18 +45,25 @@ class DiffusionBatchGatherer:
             cast("Sequence[DiffusionBatchResult]", batches),
             # "video" is validated below: it is None on every batch once the
             # worker materialized the reward artifacts instead of shipping media.
-            row_fields=("observations", "actions", "log_probs", "timesteps", "kl"),
+            row_fields=("latents", "log_probs", "timesteps", "kl"),
         )
 
-        observations = concatenate_sample_values(
-            [batch.observations for batch in ordered_batches], name="observations"
-        )
-        actions = concatenate_sample_values(
-            [batch.actions for batch in ordered_batches], name="actions"
+        # One storage for the denoise path: concatenate it once and hand the
+        # trajectory its two step-aligned views. Splitting per batch would
+        # materialize every intermediate latent twice on the driver.
+        latents = concatenate_sample_values(
+            [batch.latents for batch in ordered_batches], name="latents"
         )
         log_probs = concatenate_sample_values(
             [batch.log_probs for batch in ordered_batches], name="log_probs"
         )
+        if latents.shape[1] != log_probs.shape[1] + 1:
+            raise ValueError(
+                f"latents path has {latents.shape[1]} rows per sample, expected "
+                f"{log_probs.shape[1] + 1} (one more than the log_probs steps)",
+            )
+        observations = latents[:, :-1]
+        actions = latents[:, 1:]
         timesteps_tensor = concatenate_sample_values(
             [batch.timesteps for batch in ordered_batches], name="timesteps"
         )

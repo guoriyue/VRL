@@ -272,16 +272,15 @@ def test_async_tree_move_preserves_slots_dataclass_and_records_source_stream(
         cuda=SimpleNamespace(stream=lambda _stream: nullcontext()),
     )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    sources = [_CudaTensor(name) for name in ("obs", "actions", "steps", "video", "replay")]
+    sources = [_CudaTensor(name) for name in ("latents", "steps", "video", "replay")]
     batch = DiffusionBatchResult(
         batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1),
-        observations=sources[0],
-        actions=sources[1],
+        latents=sources[0],
         log_probs=None,
-        timesteps=sources[2],
+        timesteps=sources[1],
         kl=None,
-        video=sources[3],
-        replay_tensors={"latents": sources[4]},
+        video=sources[2],
+        replay_tensors={"latents": sources[3]},
         context={"prompt": "p"},
     )
 
@@ -290,11 +289,10 @@ def test_async_tree_move_preserves_slots_dataclass_and_records_source_stream(
     assert not hasattr(batch, "__dict__")
     assert isinstance(moved, DiffusionBatchResult)
     assert moved is not batch
-    assert moved.observations.source is sources[0]
-    assert moved.actions.source is sources[1]
-    assert moved.timesteps.source is sources[2]
-    assert moved.video.source is sources[3]
-    assert moved.replay_tensors["latents"].source is sources[4]
+    assert moved.latents.source is sources[0]
+    assert moved.timesteps.source is sources[1]
+    assert moved.video.source is sources[2]
+    assert moved.replay_tensors["latents"].source is sources[3]
     assert moved.context == {"prompt": "p"}
     assert len(hosts) == len(sources)
     assert all(host.non_blocking is True for host in hosts)

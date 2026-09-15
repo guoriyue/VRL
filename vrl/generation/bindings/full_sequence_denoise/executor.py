@@ -55,8 +55,11 @@ class DiffusionBatchResult:
     """Output of one fused diffusion sample batch."""
 
     batch: GenerationSampleBatch
-    observations: Any
-    actions: Any
+    # The denoise path once, ``(sample, num_steps + 1, *latent)``: observations
+    # are ``latents[:, :-1]`` and actions ``latents[:, 1:]``. The gatherer
+    # slices the two views after concatenation, so one storage crosses the
+    # worker->driver wire and one lives on the driver instead of two.
+    latents: Any
     log_probs: Any
     timesteps: Any
     kl: Any
@@ -345,8 +348,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         policy = request.trajectory_storage
         if policy is None or policy == TrajectoryStoragePolicy():
             return batch_result
-        batch_result.observations = policy.apply_to_value(batch_result.observations)
-        batch_result.actions = policy.apply_to_value(batch_result.actions)
+        batch_result.latents = policy.apply_to_value(batch_result.latents)
         batch_result.log_probs = policy.apply_to_value(batch_result.log_probs)
         batch_result.timesteps = policy.apply_to_value(batch_result.timesteps)
         batch_result.kl = policy.apply_to_value(batch_result.kl)
@@ -467,8 +469,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
 
         return DiffusionBatchResult(
             batch=batch,
-            observations=denoise_result.observations,
-            actions=denoise_result.actions,
+            latents=denoise_result.latents,
             log_probs=denoise_result.log_probs,
             timesteps=denoise_result.timesteps,
             kl=denoise_result.kl,

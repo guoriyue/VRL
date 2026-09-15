@@ -307,8 +307,7 @@ def _diffusion_chunk(
             sample_start=sample_start,
             sample_count=1,
         ),
-        observations=torch.full((1, 2, 1), value),
-        actions=torch.full((1, 2, 1), value + 1),
+        latents=torch.full((1, 3, 1), value),
         log_probs=torch.full((1, 2), value + 2),
         timesteps=torch.arange(2).view(1, 2),
         kl=torch.full((1, 2), value + 3),
@@ -357,9 +356,7 @@ def test_replay_gather_rejects_dtype_promotion_that_changes_integer_values() -> 
         )
 
 
-@pytest.mark.parametrize(
-    "field", ["observations", "actions", "log_probs", "timesteps", "kl", "video"]
-)
+@pytest.mark.parametrize("field", ["latents", "log_probs", "timesteps", "kl", "video"])
 def test_diffusion_gather_rejects_mixed_field_dtypes(field) -> None:
     request = _request(cfg=False)
     batches = _diffusion_batches({"model_family": "sd3_5"})
@@ -375,3 +372,37 @@ def test_ar_field_gather_rejects_lossy_dtype_promotion() -> None:
     ]
     with pytest.raises(ValueError, match=r"token_ids.*dtypes must match"):
         ARRequestLayout().cat_batch_fields(batches, ("token_ids",))
+
+
+def test_diffusion_gather_slices_observations_and_actions_from_one_latent_path() -> None:
+    """The gathered trajectory stores the denoise path once: ``observations`` and
+    ``actions`` are the two step-aligned views of a single concatenated storage,
+    so a request never holds its intermediate latents twice on the driver.
+    """
+    request = _request(cfg=False)
+    batches = _diffusion_batches({"model_family": "sd3_5"})
+    for batch in batches:
+        batch.latents = batch.latents + torch.arange(3.0).view(1, 3, 1)
+
+    output = DiffusionBatchGatherer().merge_generation_batches(
+        request, request.sample_rows(), batches
+    )
+
+    segment = output.trajectory.segments["denoise"]
+    observations = segment.role_tensor("observation").value
+    actions = segment.role_tensor("action").value
+    assert observations.shape == (2, 2, 1)
+    assert actions.shape == (2, 2, 1)
+    assert observations.untyped_storage().data_ptr() == actions.untyped_storage().data_ptr()
+    assert torch.equal(observations[:, 1:], actions[:, :-1])
+    assert torch.equal(observations[:, 0, 0], torch.tensor([1.0, 2.0]))
+    assert torch.equal(actions[:, -1, 0], torch.tensor([3.0, 4.0]))
+
+
+def test_diffusion_gather_rejects_latent_path_shorter_than_steps() -> None:
+    request = _request(cfg=False)
+    batches = _diffusion_batches({"model_family": "sd3_5"})
+    for batch in batches:
+        batch.latents = batch.latents[:, :2]
+    with pytest.raises(ValueError, match="latents path has 2 rows per sample, expected 3"):
+        DiffusionBatchGatherer().merge_generation_batches(request, request.sample_rows(), batches)
