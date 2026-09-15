@@ -42,10 +42,19 @@ class DenoiseLoopResult:
 
 @dataclass(slots=True)
 class DenoiseTrajectoryBuffers:
-    """Preallocated replay tensors written once per denoise step."""
+    """Preallocated replay tensors written once per denoise step.
 
-    observations: torch.Tensor
-    actions: torch.Tensor
+    ``latents`` holds the whole denoise path, ``(batch, num_steps + 1, *latent)``:
+    row ``t`` is the sample the step-``t`` forward consumed and row ``t + 1`` the
+    sample the step produced. ``observations`` and ``actions`` are the two
+    step-aligned views ``latents[:, :-1]`` and ``latents[:, 1:]``. The
+    observation of step ``t + 1`` is the action of step ``t`` by construction
+    (the loop assigns, never mutates, ``state.latents``), so keeping two buffers
+    would hold every intermediate latent twice on the device and copy it twice
+    per step.
+    """
+
+    latents: torch.Tensor
     log_probs: torch.Tensor
     timesteps: torch.Tensor
     kl: torch.Tensor
@@ -77,13 +86,8 @@ class DenoiseTrajectoryBuffers:
         timestep_dtype = state.timesteps.dtype
 
         return cls(
-            observations=torch.empty(
-                (batch_rows, num_steps, *latent_shape),
-                dtype=latents.dtype,
-                device=device,
-            ),
-            actions=torch.empty(
-                (batch_rows, num_steps, *latent_shape),
+            latents=torch.empty(
+                (batch_rows, num_steps + 1, *latent_shape),
                 dtype=latents.dtype,
                 device=device,
             ),
@@ -114,11 +118,22 @@ class DenoiseTrajectoryBuffers:
             ),
         )
 
+    @property
+    def observations(self) -> torch.Tensor:
+        return self.latents[:, :-1]
+
+    @property
+    def actions(self) -> torch.Tensor:
+        return self.latents[:, 1:]
+
+    def record_initial_latents(self, latents: torch.Tensor) -> None:
+        """Write the observation of step 0; every later observation is a recorded action."""
+        self.latents[:, 0].copy_(latents.detach())
+
     def record_step(
         self,
         step_idx: int,
         *,
-        observation: torch.Tensor,
         action: torch.Tensor,
         timestep: torch.Tensor,
         sde_result: SDEStepResult,
@@ -126,10 +141,7 @@ class DenoiseTrajectoryBuffers:
         ref_noise_pred: torch.Tensor | None = None,
     ) -> None:
         """Write detached values; copy_ casts into each buffer's allocated dtype."""
-        self.observations[:, step_idx].copy_(observation.detach())
-        self.actions[:, step_idx].copy_(
-            action.detach(),
-        )
+        self.latents[:, step_idx + 1].copy_(action.detach())
         self.log_probs[:, step_idx].copy_(
             sde_result.log_prob.detach(),
         )
@@ -200,14 +212,14 @@ def run_denoise_loop(
     if config.execute_steps is not None:
         num_steps_to_run = min(num_steps_to_run, config.execute_steps)
     with torch.no_grad():
+        with profile_range("generation.latent_snapshot"):
+            buffers.record_initial_latents(state.latents)
         for step_idx in range(num_steps_to_run):
             with profile_range("generation.denoise_step"):
-                with profile_range("generation.latent_snapshot"):
-                    latents_before_step = state.latents.clone()
-                    timestep = state.timesteps[step_idx]
+                timestep = state.timesteps[step_idx]
 
                 if teacache is not None and not teacache.should_run(
-                    latents_before_step,
+                    state.latents,
                     step_idx,
                 ):
                     noise_pred = teacache.cached_noise_pred
@@ -270,7 +282,6 @@ def run_denoise_loop(
             with profile_range("generation.trajectory_buffer_write"):
                 buffers.record_step(
                     step_idx,
-                    observation=latents_before_step,
                     action=next_latents,
                     timestep=timestep,
                     sde_result=sde_result,

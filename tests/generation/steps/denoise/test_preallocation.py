@@ -26,6 +26,7 @@ def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> 
 
     buffers = DenoiseTrajectoryBuffers.allocate(state=state, config=_config(sample_count=2))
 
+    assert buffers.latents.shape == (2, 4, 4, 5)
     assert buffers.observations.shape == (2, 3, 4, 5)
     assert buffers.actions.shape == (2, 3, 4, 5)
     assert buffers.observations.dtype == torch.float16
@@ -57,9 +58,9 @@ def test_record_step_casts_into_allocated_buffers_without_gradients(dtype, devic
         [[0.1234, -0.5678], [1.2345, -2.3456]], device=device, requires_grad=True
     )
     log_prob = values[:, 0]
+    buffers.record_initial_latents(values)
     buffers.record_step(
         0,
-        observation=values,
         action=values,
         timestep=state.timesteps[0],
         sde_result=SDEStepResult(values, log_prob, values, None),
@@ -79,6 +80,47 @@ def test_record_step_casts_into_allocated_buffers_without_gradients(dtype, devic
     torch.testing.assert_close(buffers.kl[:, 0], log_prob.detach().abs())
     assert not buffers.log_probs.requires_grad
     assert not buffers.kl.requires_grad
+
+
+def test_observations_and_actions_are_adjacent_views_of_one_latent_path() -> None:
+    """Step ``t`` consumes what step ``t - 1`` produced, so the replay pair is stored
+    once: ``observations[:, t + 1]`` aliases ``actions[:, t]`` and only the initial
+    latent and each step's action are ever written.
+    """
+    state = _state(batch=2, steps=3, latent_shape=(4,))
+    buffers = DenoiseTrajectoryBuffers.allocate(state=state, config=_config(sample_count=2))
+
+    buffers.record_initial_latents(state.latents)
+    for step_idx in range(3):
+        action = torch.full_like(state.latents, float(step_idx + 1))
+        buffers.record_step(
+            step_idx,
+            action=action,
+            timestep=state.timesteps[step_idx],
+            sde_result=SDEStepResult(action, action[:, 0], action, None),
+            return_kl=False,
+        )
+
+    assert buffers.observations.data_ptr() == buffers.latents.data_ptr()
+    assert buffers.actions.data_ptr() == buffers.latents[:, 1].data_ptr()
+    assert torch.equal(buffers.observations[:, 0], state.latents)
+    assert torch.equal(buffers.observations[:, 1:], buffers.actions[:, :-1])
+    assert torch.equal(buffers.actions[:, -1], torch.full_like(state.latents, 3.0))
+
+
+def test_run_denoise_loop_observation_is_previous_action() -> None:
+    """The loop's trajectory obeys the same aliasing end to end: the sample each
+    forward consumed is the sample the previous step produced, and the first
+    observation is the prepared noise.
+    """
+    state = _state(batch=2, steps=3, latent_shape=(3,))
+    initial = state.latents.clone()
+
+    result = _Executor().run_denoise_steps(state=state, config=_config(sample_count=2))
+
+    assert torch.equal(result.observations[:, 0], initial)
+    assert torch.equal(result.observations[:, 1:], result.actions[:, :-1])
+    assert torch.equal(result.actions[:, -1], result.state.latents.to(result.actions.dtype))
 
 
 def test_preallocate_denoise_buffers_rejects_sample_count_mismatch() -> None:
