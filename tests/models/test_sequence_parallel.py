@@ -149,17 +149,21 @@ def _exchange_rank_main(rank: int, world: int, port: int, queue: multiprocessing
             torch.manual_seed(rank)
             batch, heads, shard_len, head_dim = 2, 6, 5, 4
             # Transposed like the processor's heads_view output: not contiguous.
+            # Two tensors travel packed, as q/k/v do; each must come back as
+            # its own exchange, untouched by its packing neighbour.
             local = torch.randn(batch, shard_len, heads, head_dim).transpose(1, 2)
-            exchanged = _shards_to_heads(local, group=group)
+            other = torch.randn(batch, shard_len, heads, head_dim).transpose(1, 2)
+            exchanged, other_exchanged = _shards_to_heads((local, other), group=group)
             # The gather-then-narrow form defines the layout the exchange must keep.
             layout = _local_chunk(_gather_dim(local, dim=2, group=group), dim=1, group=group)
+            other_layout = _local_chunk(_gather_dim(other, dim=2, group=group), dim=1, group=group)
             # A sequence-dim slice, as the image part of the joint attention output.
             text = torch.randn(batch, heads // world, 3, head_dim)
             image = torch.cat([exchanged, text], dim=2)[:, :, : world * shard_len]
             round_trip = _heads_to_shards(image, group=group)
         finally:
             dist.destroy_process_group()
-        queue.put((rank, (exchanged, layout, round_trip, local)))
+        queue.put((rank, (exchanged, layout, other_exchanged, other_layout, round_trip, local)))
     except BaseException as error:  # pragma: no cover - transported to parent
         queue.put((rank, f"error: {error!r}"))
 
@@ -194,8 +198,9 @@ def test_three_rank_exchange_matches_gather_layout_and_round_trips() -> None:
     errors = {rank: payload for rank, payload in results.items() if isinstance(payload, str)}
     assert not errors, errors
     for rank in range(world):
-        exchanged, layout, round_trip, local = results[rank]
+        exchanged, layout, other_exchanged, other_layout, round_trip, local = results[rank]
         assert torch.equal(exchanged, layout)
+        assert torch.equal(other_exchanged, other_layout)
         assert torch.equal(round_trip, local)
 
 
