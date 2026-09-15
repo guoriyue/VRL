@@ -28,19 +28,28 @@ def batch_fingerprint(batches: list[Any]) -> list[tuple[int, list[int], float]]:
 
 
 class ContextParallelRolloutSchedule:
-    """Wrap a rank-local schedule so one rank of each CP group collects for all.
+    """Wrap a rank-local schedule so a CP group collects one sample set together.
 
-    Every rank still drives the wrapped schedule (its rollout phase parks and
-    restores the trainer shards, exports weights, and syncs its rollout engine,
-    all of which are FSDP collectives every rank must join); followers merely
-    pass no prompts, so they generate nothing. The leader's batches are then
-    broadcast over the CP group's CPU-capable group, and each rank returns the
-    same iteration, which is what sequence sharding inside the model assumes.
+    Every peer generates its own slice of the group's prompts on its own
+    rollout engine (no card idles), scores it, and the peers all-gather the
+    resulting batches over the CP group's CPU-capable group; each rank then
+    trains on the same union in the same order, which is what sequence
+    sharding inside the model assumes. Every rank drives the wrapped schedule
+    (its rollout phase parks and restores the trainer shards, exports weights
+    and syncs its engine, all of which are collectives every rank must join).
     """
 
     def __init__(self, inner: RolloutSchedule, *, groups: ContextParallelGroups) -> None:
         self.inner = inner
         self.groups = groups
+
+    def local_prompts(self, prompts: list[Any]) -> list[Any]:
+        """This peer's contiguous slice of the group's prompts (last peer takes the remainder)."""
+
+        per_peer, extra = divmod(len(prompts), self.groups.cp_size)
+        start = self.groups.cp_rank * per_peer
+        stop = start + per_peer + (extra if self.groups.cp_rank == self.groups.cp_size - 1 else 0)
+        return list(prompts[start:stop])
 
     async def next_iteration(
         self,
@@ -52,18 +61,15 @@ class ContextParallelRolloutSchedule:
     ) -> RolloutIteration:
         import torch.distributed as dist
 
-        leader = self.groups.cp_rank == 0
         iteration = await self.inner.next_iteration(
-            list(prompts) if leader else [],
+            self.local_prompts(list(prompts)),
             group_size=group_size,
             runtime_debug=runtime_debug,
-            next_prompts=next_prompts if leader else None,
+            next_prompts=None if next_prompts is None else self.local_prompts(list(next_prompts)),
         )
-        payload: list[Any] = [iteration.batches if leader else None]
-        dist.broadcast_object_list(
-            payload, src=self.groups.leader_rank, group=self.groups.object_group
-        )
-        batches = iteration.batches if leader else list(payload[0])
+        gathered: list[Any] = [None] * self.groups.cp_size
+        dist.all_gather_object(gathered, iteration.batches, group=self.groups.object_group)
+        batches = [batch for peer_batches in gathered for batch in peer_batches]
         # Token sharding assumes every CP peer replays the same samples in the
         # same order; a divergence would not hang (slot counts stay balanced)
         # but would train on garbage silently, so agree on the batch identity
@@ -74,11 +80,9 @@ class ContextParallelRolloutSchedule:
         )
         if any(fingerprint != fingerprints[0] for fingerprint in fingerprints[1:]):
             raise RuntimeError(
-                "context-parallel peers disagree on the rollout batches after the leader "
-                f"broadcast; per-rank fingerprints: {fingerprints}",
+                "context-parallel peers disagree on the gathered rollout batches; "
+                f"per-rank fingerprints: {fingerprints}",
             )
-        if leader:
-            return iteration
         return RolloutIteration(batches=batches, stats=iteration.stats)
 
     async def after_train_step(self) -> RolloutStats:

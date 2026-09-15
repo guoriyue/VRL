@@ -47,11 +47,10 @@ def test_context_splits_the_world_into_contiguous_cp_groups() -> None:
         strategy="fsdp", rank=3, world_size=4, device=torch.device("cpu"), cp_size=2
     )
     assert (ctx.dp_size, ctx.dp_rank, ctx.cp_rank) == (2, 1, 1)
-    assert ctx.is_context_parallel_leader is False
-    leader = DistributedTrainingContext(
+    first = DistributedTrainingContext(
         strategy="fsdp", rank=2, world_size=4, device=torch.device("cpu"), cp_size=2
     )
-    assert leader.is_context_parallel_leader is True
+    assert (first.dp_rank, first.cp_rank) == (1, 0)
 
 
 def test_cp_followers_get_a_rollout_length_collective_timeout() -> None:
@@ -166,6 +165,21 @@ def test_enable_context_parallel_refuses_models_without_a_plan() -> None:
         enable_context_parallel(_NoPlan(), mesh=None, ulysses_degree=2, ring_degree=1)
 
 
+def test_local_prompts_partitions_contiguously_with_the_remainder_on_the_last_peer() -> None:
+    from types import SimpleNamespace
+
+    def _schedule(cp_rank: int, cp_size: int = 3):
+        groups = SimpleNamespace(
+            cp_rank=cp_rank, cp_size=cp_size, object_group=None, leader_rank=0
+        )
+        return ContextParallelRolloutSchedule(inner=None, groups=groups)
+
+    prompts = list("abcdefg")
+    slices = [_schedule(r).local_prompts(prompts) for r in range(3)]
+    assert slices == [["a", "b"], ["c", "d"], ["e", "f", "g"]]
+    assert [p for s in slices for p in s] == prompts
+
+
 def test_batch_fingerprint_separates_reordered_and_rescored_batches() -> None:
     def _batch(rewards, groups):
         return RolloutBatch(rewards=torch.tensor(rewards), group_ids=torch.tensor(groups))
@@ -262,14 +276,14 @@ def _run_rank(rank: int, port: int, q: mp.Queue) -> None:
 
         inner = _LeaderOnlyInner()
         schedule = ContextParallelRolloutSchedule(inner, groups=groups)
-        iteration = asyncio.run(schedule.next_iteration(["a", "b"], group_size=2))
+        iteration = asyncio.run(schedule.next_iteration(["a", "b", "c"], group_size=2))
         prompts = [batch.context["prompt"] for batch in iteration.batches]
         q.put((rank, mesh_ok, inner.prompts_seen, prompts))
     finally:
         dist.destroy_process_group()
 
 
-def test_two_rank_cp_group_shares_the_leader_rollout() -> None:
+def test_two_rank_cp_group_generates_slices_and_gathers_the_union() -> None:
     ctx = mp.get_context("spawn")
     q: mp.Queue = ctx.Queue()
     port = free_port()
@@ -287,6 +301,6 @@ def test_two_rank_cp_group_shares_the_leader_rollout() -> None:
     for rank in (0, 1):
         mesh_ok, _seen, prompts = results[rank]
         assert mesh_ok, f"rank{rank} mesh shape/names"
-        assert prompts == ["a", "b"], f"rank{rank} did not receive the leader's batches"
-    assert results[0][1] == [["a", "b"]]  # the leader collected
-    assert results[1][1] == [[]]  # the follower drove the lifecycle with no prompts
+        assert prompts == ["a", "b", "c"], f"rank{rank} does not hold the gathered union in order"
+    assert results[0][1] == [["a"]]  # peer 0 generated its slice
+    assert results[1][1] == [["b", "c"]]  # the last peer took the remainder

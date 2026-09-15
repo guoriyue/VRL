@@ -80,11 +80,6 @@ class DistributedTrainingContext:
     def cp_rank(self) -> int:
         return self.rank % self.cp_size
 
-    @property
-    def is_context_parallel_leader(self) -> bool:
-        """The one rank of a CP group that collects rollouts for its peers."""
-        return self.cp_rank == 0
-
     @staticmethod
     def _require_env_int(env: Mapping[str, str], key: str) -> int:
         raw = env.get(key)
@@ -301,9 +296,9 @@ def shutdown_training_process_group() -> None:
 class ContextParallelGroups:
     """This rank's context-parallel group for CPU-side coordination.
 
-    ``object_group`` is CPU-capable (gloo): it carries the pickled rollout
-    batches from the CP leader to its peers without a GPU kernel, so the
-    transfer is safe while peers may still be inside a park/wake window.
+    ``object_group`` is CPU-capable (gloo): it carries the peers' pickled
+    rollout batches without a GPU kernel, so the exchange is safe while a peer
+    may still be inside a park/wake window.
     Gradients need no CP collective: parameters shard over the whole world and
     FSDP's reduce-scatter already sums the CP peers (see ``FSDPStrategy.backward``).
     """
@@ -311,7 +306,6 @@ class ContextParallelGroups:
     object_group: Any
     cp_size: int
     cp_rank: int
-    leader_rank: int
 
 
 def create_context_parallel_groups(context: DistributedTrainingContext) -> ContextParallelGroups:
@@ -339,7 +333,6 @@ def create_context_parallel_groups(context: DistributedTrainingContext) -> Conte
         object_group=mine,
         cp_size=context.cp_size,
         cp_rank=context.cp_rank,
-        leader_rank=context.dp_rank * context.cp_size,
     )
 
 

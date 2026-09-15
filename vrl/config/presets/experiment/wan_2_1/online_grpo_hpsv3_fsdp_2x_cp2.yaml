@@ -1,8 +1,8 @@
 # Context-parallel acceptance of the Wan 2.1 1.3B + HPSv3 Flash-GRPO recipe:
-# two torchrun ranks form ONE data-parallel replica. Rank 0 generates and
-# scores the 6-prompt group; rank 1 receives the same batches over the CP
-# group and the two ranks split every sample's 32,760 latent tokens through
-# diffusers' Ulysses attention (WanTransformer3DModel._cp_plan). Gate: loss and
+# two torchrun ranks form ONE data-parallel replica. Each rank generates and
+# scores half of the 6-prompt group on its own rollout engine; the peers gather
+# the union over the CP group and split every sample's 32,760 latent tokens
+# through diffusers' Ulysses attention (WanTransformer3DModel._cp_plan). Gate: loss and
 # grad-norm of update 1 agree with the single-GPU run of the same seed within
 # bf16 tolerance, and peak trainer memory per rank drops.
 #
@@ -18,6 +18,11 @@ distributed:
     gpus_per_node: 2
     fsdp:
       mesh: [dp_shard, cp]
+      # Trainable parameters keep their fp32 master storage and compute runs in
+      # bf16 under the trainer's autocast; the context-parallel attention
+      # recompute then sees the dtypes the forward saw (see
+      # vrl/trainers/context_parallel.py). Accepted on the 2-GPU gate.
+      precision_policy: none
       context_parallel:
         ulysses_degree: 2
         ring_degree: 1
