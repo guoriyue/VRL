@@ -43,7 +43,11 @@ from vrl.models.families.wan_2_1.config import (
     wan_topology_from_build,
 )
 from vrl.models.interfaces.runtime import ModelBuild
-from vrl.models.peft_adapter import disable_adapter_on, load_trainable_lora_adapter
+from vrl.models.peft_adapter import (
+    disable_adapter_on,
+    load_trainable_lora_adapter,
+    peel_peft,
+)
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
@@ -72,6 +76,7 @@ class _PipelineOffloadState(Enum):
 
     MODEL = "model"
     SEQUENTIAL = "sequential"
+    BLOCK = "block"
     BROKEN = "broken"
 
 
@@ -447,14 +452,8 @@ class WanT2VDiffusersModel(
         # reinstall, or weight mutation must leave one terminal state.
         self._pipeline_offload = _PipelineOffloadState.BROKEN
 
-        remove_hooks = getattr(self.pipeline, "remove_all_hooks", None)
-        if not callable(remove_hooks):
-            raise RuntimeError(
-                f"Wan pipeline CPU offload requires pipeline.remove_all_hooks() for {operation}",
-            )
-
         try:
-            remove_hooks()
+            _disable_wan_pipeline_offload(self.pipeline, mode=mode, operation=operation)
         except BaseException as remove_error:
             raise RuntimeError(
                 f"Wan pipeline CPU offload hook removal failed during {operation}; "
@@ -1308,7 +1307,7 @@ def _resolve_wan_offload_mode(build: ModelBuild) -> str:
     if legacy:
         raise ValueError(
             f"removed Wan model config key(s): {', '.join('model.' + key for key in legacy)}; "
-            "use model.offload_mode='none', 'model', or 'sequential'",
+            "use model.offload_mode='none', 'model', 'sequential', or 'block'",
         )
     rollout = getattr(build, "rollout", None)
     return str(getattr(rollout, "pipeline_offload_mode", "none"))
@@ -1346,13 +1345,20 @@ def _stage_eager_wan_modules(
                 module.to(dtype=dtype)
 
 
+# Components whose weights are streamed one transformer block at a time under
+# ``offload_mode: block``. Every other pipeline component is offloaded at block
+# granularity too, but synchronously: the VAE runs its modules in a data-dependent
+# order under tiling, so its execution order cannot be traced once and prefetched.
+_WAN_BLOCK_STREAMED_COMPONENTS = frozenset({"transformer", "transformer_2"})
+
+
 def _enable_wan_pipeline_offload(
     pipeline: Any,
     device: Any,
     *,
     mode: str,
 ) -> None:
-    """Install Accelerate hooks after adapters and wrappers are final."""
+    """Install residency hooks after adapters and wrappers are final."""
 
     # Diffusers exposes two mutually exclusive accelerate hooks here:
     # sequential streams per layer and is the 32 GB Wan I2V escape hatch; model
@@ -1363,6 +1369,89 @@ def _enable_wan_pipeline_offload(
         return
     if mode == "model":
         pipeline.enable_model_cpu_offload(gpu_id=gpu_id)
+        return
+    if mode == "block":
+        _enable_wan_block_offload(pipeline, device)
+
+
+def _enable_wan_block_offload(pipeline: Any, device: Any) -> None:
+    """Stream each transformer one block at a time with the next block prefetched.
+
+    Sequential offload moves every leaf's weights on the compute stream right
+    before that leaf runs, so a 14B expert pays its full host->device copy per
+    denoise step with the GPU idle. Block offload keeps one block resident and
+    issues block ``i + 1``'s copy on a side stream while block ``i`` computes;
+    the copy is hidden as long as a block's compute outlasts its transfer. Host
+    copies stay pageable (the same footprint as sequential offload); each block
+    is pinned only for the duration of its own transfer.
+    """
+
+    from diffusers.hooks import apply_group_offloading
+
+    device = torch.device(device)
+    for name, component in _wan_offload_components(pipeline):
+        # Copy streams exist only on CUDA; elsewhere the block-level path
+        # degrades to a synchronous per-block move.
+        streamed = name in _WAN_BLOCK_STREAMED_COMPONENTS and device.type == "cuda"
+        apply_group_offloading(
+            component,
+            onload_device=device,
+            offload_device=torch.device("cpu"),
+            offload_type="block_level",
+            num_blocks_per_group=1,
+            use_stream=streamed,
+            # Without record_stream every block's release would synchronize the
+            # compute stream, serializing the host against each block's kernels.
+            record_stream=streamed,
+            low_cpu_mem_usage=True,
+        )
+
+
+def _wan_offload_components(pipeline: Any) -> list[tuple[str, torch.nn.Module]]:
+    """Pipeline modules by component name, behind any LoRA wrapper.
+
+    Block-level offload groups the direct children of the module it is applied
+    to, so it must see the transformer's ``blocks`` list, not the ``PeftModel``
+    whose only child is the whole adapted model.
+    """
+
+    return [
+        (name, peel_peft(component))
+        for name, component in pipeline.components.items()
+        if isinstance(component, torch.nn.Module)
+    ]
+
+
+def _disable_wan_pipeline_offload(pipeline: Any, *, mode: str, operation: str) -> None:
+    """Strip the residency hooks ``_enable_wan_pipeline_offload`` installed."""
+
+    if mode == "block":
+        from diffusers.hooks.group_offloading import (
+            _GROUP_OFFLOADING,
+            _LAYER_EXECUTION_TRACKER,
+            _LAZY_PREFETCH_GROUP_OFFLOADING,
+        )
+        from diffusers.hooks.hooks import HookRegistry
+
+        # The pipeline's own remove_all_hooks() only strips Accelerate hooks;
+        # block offload registers under the model hook registry instead. A
+        # partially traced prefetch chain must go too, or the reinstalled
+        # groups would inherit a stale execution order.
+        for _name, component in _wan_offload_components(pipeline):
+            registry = HookRegistry.check_if_exists_or_initialize(component)
+            for hook_name in (
+                _GROUP_OFFLOADING,
+                _LAYER_EXECUTION_TRACKER,
+                _LAZY_PREFETCH_GROUP_OFFLOADING,
+            ):
+                registry.remove_hook(hook_name, recurse=True)
+        return
+    remove_hooks = getattr(pipeline, "remove_all_hooks", None)
+    if not callable(remove_hooks):
+        raise RuntimeError(
+            f"Wan pipeline CPU offload requires pipeline.remove_all_hooks() for {operation}",
+        )
+    remove_hooks()
 
 
 def _resolve_guidance_scale_2(

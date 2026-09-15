@@ -59,6 +59,9 @@ class PipelineOffloadMode(StrEnum):
     NONE = "none"
     MODEL = "model"
     SEQUENTIAL = "sequential"
+    # One transformer block resident at a time, the next block's weights
+    # prefetched on a copy stream while the current block computes.
+    BLOCK = "block"
 
     @classmethod
     def _missing_(cls, value: object) -> None:
