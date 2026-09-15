@@ -179,6 +179,32 @@ class FusedGeluProjectionPass:
 
 
 @dataclass(frozen=True, slots=True)
+class FusedLoraBranchPass:
+    """Add each LoRA site's delta into the base output in place, no fp32 round trips.
+
+    Rollout only: the fast path runs with gradients disabled and is bit-identical
+    to peft's forward, so the replay bundle needs no mirror. Re-classes the peft
+    ``lora.Linear`` modules in place (same objects, same registry), so it runs
+    beside the other module swaps, before quantization (which replaces the
+    ``base_layer`` child the fused forward still calls) and before compile.
+    """
+
+    name: str = "fused_lora_branch"
+    # Re-classes LoRA modules inside the existing tree; the root object is unchanged.
+    replaces_modules: bool = False
+
+    def enabled(self, build: Any) -> bool:
+        return bool(getattr(build, "fused_lora_branch", False))
+
+    def apply(self, model: Any, build: Any) -> PassResult:
+        from vrl.nn.optimization.fused_lora_branch import fuse_lora_branches
+
+        del build
+        count = sum(fuse_lora_branches(core) for core in model.policy_cores.values())
+        return PassResult(name=self.name, applied=count > 0, detail=f"{count} LoRA sites")
+
+
+@dataclass(frozen=True, slots=True)
 class CompilePass:
     """torch.compile every policy core.
 
@@ -331,6 +357,7 @@ class VaeDecodeMemoryPass:
 ROLLOUT_PASSES: tuple[OptimizationPass, ...] = (
     FusedRmsNormPass(),
     FusedGeluProjectionPass(),
+    FusedLoraBranchPass(),
     QuantizationPass(),
     CompilePass(),
     OffloadPass(),
@@ -422,6 +449,7 @@ __all__ = [
     "ROLLOUT_PASSES",
     "CompilePass",
     "FusedGeluProjectionPass",
+    "FusedLoraBranchPass",
     "FusedRmsNormPass",
     "OptimizationPass",
     "PassResult",

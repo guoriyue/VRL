@@ -417,6 +417,11 @@ class ModelBuild:
         return bool((self.model_config or {}).get("fused_gelu_projection", False))
 
     @property
+    def fused_lora_branch(self) -> bool:
+        """``model.fused_lora_branch``: only the rollout pass consumes it."""
+        return bool((self.model_config or {}).get("fused_lora_branch", False))
+
+    @property
     def revision_kwargs(self) -> dict[str, str]:
         """The immutable model snapshot argument for every upstream loader."""
         return {"revision": str(self.revision)} if self.revision else {}
