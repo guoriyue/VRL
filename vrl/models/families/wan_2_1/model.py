@@ -170,15 +170,36 @@ class WanT2VDiffusersModel(
         expert_lifecycle_profiling: bool = False,
     ) -> None:
         super().__init__(pipeline=pipeline, device=device)
-        self._pipeline_offload: _PipelineOffloadState | None = None
         self.transformer_2 = getattr(pipeline, "transformer_2", None)
-        self._boundary_ratio = normalize_wan_boundary_ratio(
-            _config_value(getattr(pipeline, "config", None), "boundary_ratio"),
-            field_name="pipeline boundary_ratio",
+        self._init_wan_state(
+            boundary_ratio=normalize_wan_boundary_ratio(
+                _config_value(getattr(pipeline, "config", None), "boundary_ratio"),
+                field_name="pipeline boundary_ratio",
+            ),
+            trainable_transformers=trainable_transformers,
+            expert_lifecycle_profiling=expert_lifecycle_profiling,
         )
+
+    def _init_wan_state(
+        self,
+        *,
+        boundary_ratio: float | None,
+        trainable_transformers: Any,
+        expert_lifecycle_profiling: bool,
+    ) -> None:
+        """The Wan-owned state every constructor must establish.
+
+        The pipeline-backed and the replay-only constructors set up different
+        module roots, but the expert topology, offload lifecycle and profiling
+        state are the same object graph; one initializer keeps a field added
+        here from being missed by the other constructor.
+        """
+
+        self._pipeline_offload: _PipelineOffloadState | None = None
+        self._boundary_ratio = boundary_ratio
         self._trainable_transformer_names = normalize_wan_trainable_transformers(
             trainable_transformers,
-            dual_stage=self._boundary_ratio is not None,
+            dual_stage=boundary_ratio is not None,
         )
         self._expert_lifecycle_profiling = bool(expert_lifecycle_profiling)
         self._last_expert_name: str | None = None
@@ -263,9 +284,8 @@ class WanT2VDiffusersModel(
 
         from peft import LoraConfig, get_peft_model
 
+        # Validated by WanModelSection; only the fp32 cast below reads it.
         adapter_dtype = (build.model_config or {}).get("lora_parameter_dtype")
-        if adapter_dtype not in (None, "float32"):
-            raise ValueError("model.lora_parameter_dtype must be null or 'float32'")
         lora_path = build.lora_path
         names = self._trainable_transformer_names
         if lora_path and len(names) != 1:
@@ -893,16 +913,11 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
         self.transformer_2 = transformer_2
         self._scheduler = scheduler
         self._device = device
-        self._pipeline_offload = None
-        self._boundary_ratio = boundary_ratio
-        self._trainable_transformer_names = normalize_wan_trainable_transformers(
-            trainable_transformers,
-            dual_stage=boundary_ratio is not None,
+        self._init_wan_state(
+            boundary_ratio=boundary_ratio,
+            trainable_transformers=trainable_transformers,
+            expert_lifecycle_profiling=False,
         )
-        self._expert_lifecycle_profiling = False
-        self._last_expert_name = None
-        for module in self._wan_transformers().values():
-            module.requires_grad_(False)
 
     def prepare_replay(self, build: ModelBuild) -> None:
         """Finish the multi-transformer replay setup with the build in hand.
