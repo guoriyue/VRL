@@ -425,12 +425,17 @@ class RolloutCollector:
         pending_prompts: list[str] = []
         pending_indices: list[int] = []
 
+        # Disk-artifact rewards ask the rollout worker to materialize their
+        # inputs; the driver then only relays paths (see RewardArtifactSpec).
+        reward_artifacts = tuple(self.reward_runtime.artifact_specs())
+
         def build(inputs: list[Any], indices: list[int], **kwargs: Any):
             request = self.request_builder.build(
                 inputs,
                 group_size=group_size,
                 runtime_debug=runtime_debug,
                 policy_version=policy_version,
+                reward_artifacts=reward_artifacts,
                 **kwargs,
             )
             return request, indices

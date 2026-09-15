@@ -747,3 +747,38 @@ def test_every_former_in_process_reward_can_run_as_a_managed_service(
     )
     assert scorer.artifact_dir == (tmp_path / name).resolve()
     assert scorer.pid is None
+
+
+def test_disk_rewards_project_artifact_specs_and_the_builder_fills_fps(tmp_path) -> None:
+    from vrl.generation.types import RewardArtifactSpec
+    from vrl.models.families.registry import get_model_family_entry
+    from vrl.rollouts.collector.config import RolloutCollectorConfig
+    from vrl.rollouts.collector.requests import GenerationRequestBuilder
+
+    reward = MultiReward.from_dict(
+        {"hpsv3": 1.0, "geneval": 0.0},
+        device="cpu",
+        reward_kwargs={
+            "hpsv3": {"artifact_dir": str(tmp_path / "hpsv3"), "artifact_format": "mp4"},
+            "geneval": {"import_path": "tests.rewards.functions.test_multi:_never"},
+        },
+    )
+    specs = reward.artifact_specs()
+    assert [spec.name for spec in specs] == ["hpsv3"]
+    assert specs[0] == RewardArtifactSpec(
+        name="hpsv3",
+        root=str((tmp_path / "hpsv3").resolve()),
+        media_type="video",
+        artifact_format="mp4",
+    )
+    builder = GenerationRequestBuilder(
+        entry=get_model_family_entry("wan_2_1"),
+        config=RolloutCollectorConfig(request_sampling={"fps": 16, "num_steps": 2}),
+    )
+    request = builder.build(["a prompt"], 2, reward_artifacts=specs).request
+    assert request.reward_artifacts[0].fps == 16.0
+    assert request.reward_artifacts[0].root == specs[0].root
+
+
+def _never(**kwargs):  # pragma: no cover - geneval score_fn placeholder
+    raise AssertionError("not scored")

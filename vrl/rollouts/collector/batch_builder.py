@@ -56,8 +56,17 @@ class TrajectoryRolloutBatchBuilder:
     def reward_samples(self) -> tuple[RewardSample, ...]:
         """Build reward-owned samples from this generation output."""
 
-        reward_outputs = self.reward_outputs()
-        batch_size = self._batch_size(reward_outputs)
+        artifacts = self.output.artifacts or {}
+        if artifacts:
+            # Worker-materialized media: the tensor never crossed the wire.
+            reward_outputs = None
+            sizes = {name: len(files) for name, files in artifacts.items()}
+            if len(set(sizes.values())) != 1:
+                raise ValueError(f"reward artifacts disagree on batch size: {sizes}")
+            batch_size = next(iter(sizes.values()))
+        else:
+            reward_outputs = self.reward_outputs()
+            batch_size = self._batch_size(reward_outputs)
         if len(self.output.sample_rows) != batch_size:
             raise ValueError(
                 "reward sample-row/output batch mismatch: "
@@ -76,9 +85,10 @@ class TrajectoryRolloutBatchBuilder:
             samples.append(
                 RewardSample(
                     prompt=row.prompt,
-                    output=reward_outputs[index],
+                    output=None if reward_outputs is None else reward_outputs[index],
                     sample_id=row.sample_id,
                     metadata=metadata,
+                    artifacts={name: files[index] for name, files in artifacts.items()},
                 ),
             )
         return tuple(samples)

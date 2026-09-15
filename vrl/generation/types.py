@@ -19,6 +19,7 @@ import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from vrl.rewards.types import MaterializedArtifact
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
@@ -73,6 +74,39 @@ class DenoiseRequest:
             require_int(self.seed, path="DenoiseRequest.seed")
 
 
+@dataclass(frozen=True, slots=True)
+class RewardArtifactSpec:
+    """One reward component's request that the worker write its media to disk.
+
+    Projected by the collector from the reward function's disk artifact
+    stores. The worker writes one file per sample under ``root`` in the
+    component's format and returns ``MaterializedArtifact`` references; the
+    decoded media then never crosses the worker->driver wire and the driver
+    never encodes video. ``fps`` is the mp4 encode rate, filled from the
+    request's sampling when the store did not pin one.
+    """
+
+    name: str
+    root: str
+    media_type: Literal["image", "video"]
+    artifact_format: Literal["tensor", "mp4"]
+    fps: float | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name or not self.root:
+            raise ValueError("RewardArtifactSpec needs a component name and a root directory")
+        if self.media_type not in ("image", "video"):
+            raise ValueError(
+                f"RewardArtifactSpec.media_type must be image or video, got {self.media_type!r}",
+            )
+        if self.artifact_format not in ("tensor", "mp4"):
+            raise ValueError(
+                f"RewardArtifactSpec.artifact_format must be tensor or mp4, got {self.artifact_format!r}",
+            )
+        if self.artifact_format == "mp4" and self.media_type != "video":
+            raise ValueError("RewardArtifactSpec: artifact_format=mp4 requires media_type=video")
+
+
 @dataclass(slots=True, init=False)
 class GenerationRequest:
     """One generation request submitted to the engine."""
@@ -103,6 +137,10 @@ class GenerationRequest:
     sde_window_seed: int | None = None
     runtime_debug: bool = False
     policy_version: int | None = None
+    # Disk-reward media the worker materializes itself (see RewardArtifactSpec).
+    # Non-empty means the decoded media stays on the worker: GenerationOutput
+    # .output is None and every sample carries MaterializedArtifact references.
+    reward_artifacts: tuple[RewardArtifactSpec, ...] = ()
 
     def __init__(
         self,
@@ -120,6 +158,7 @@ class GenerationRequest:
         runtime_debug: bool = False,
         policy_version: int | None = None,
         sde_window_seed: int | None = None,
+        reward_artifacts: tuple[RewardArtifactSpec, ...] | list[RewardArtifactSpec] = (),
     ) -> None:
         normalized_inputs: list[GenerationInput] = []
         for value in inputs:
@@ -142,6 +181,10 @@ class GenerationRequest:
         self.trajectory_storage = trajectory_storage
         self.denoise = denoise
         self.sde_window_seed = sde_window_seed
+        specs = tuple(reward_artifacts)
+        if len({spec.name for spec in specs}) != len(specs):
+            raise ValueError("GenerationRequest.reward_artifacts names must be unique")
+        self.reward_artifacts = specs
         self.runtime_debug = runtime_debug
         self.policy_version = policy_version
         self.__post_init__()
@@ -262,11 +305,15 @@ class GenerationOutput:
     Reward, advantage, and GRPO group semantics stay outside this type.
     """
 
+    # Decoded media, or None when the request asked the worker to materialize
+    # reward artifacts instead (then ``artifacts`` carries one file reference
+    # per sample per reward component, in sample-row order).
     output: Any
     trajectory: TrajectoryBatch
     # Display/provenance-only: optional scheduler/worker diagnostics requested
     # explicitly by GenerationRequest.runtime_debug.
     runtime_debug: dict[str, Any] | None = None
+    artifacts: dict[str, list[MaterializedArtifact]] | None = None
 
     def __post_init__(self) -> None:
         from vrl.trajectory.types import TrajectoryBatch
@@ -293,4 +340,5 @@ __all__ = [
     "GenerationOutput",
     "GenerationRequest",
     "GenerationSampleRow",
+    "RewardArtifactSpec",
 ]

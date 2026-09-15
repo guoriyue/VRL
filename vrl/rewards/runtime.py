@@ -74,6 +74,12 @@ class RewardFunctionRuntime:
         reward_function = self._reward_function
         return bool(reward_function is not None and reward_function.scoring_is_nonblocking)
 
+    def artifact_specs(self) -> tuple[Any, ...]:
+        """Reward files the rollout worker writes for the configured components."""
+
+        reward_function = self._reward_function
+        return () if reward_function is None else tuple(reward_function.artifact_specs())
+
     @property
     def external_accelerator_isolation_verified(self) -> bool:
         """Whether out-of-plan reward accelerator work is isolated."""

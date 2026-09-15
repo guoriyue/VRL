@@ -141,6 +141,20 @@ class MultiReward(RewardFunction):
             reward.scoring_is_nonblocking for _, _, reward in self.rewards
         )
 
+    def artifact_specs(self) -> tuple[Any, ...]:
+        """Every component's worker-materialized artifact request, name-unique."""
+
+        specs: list[Any] = []
+        for name, _, reward in self.rewards:
+            for spec in reward.artifact_specs():
+                if spec.name != name:
+                    raise ValueError(
+                        f"reward component {name!r} declares an artifact spec named "
+                        f"{spec.name!r}; specs are keyed by component name",
+                    )
+                specs.append(spec)
+        return tuple(specs)
+
     @property
     def external_accelerator_isolation_verified(self) -> bool:
         """Whether every external component proved accelerator isolation."""
@@ -289,13 +303,9 @@ class MultiReward(RewardFunction):
                 # an inherited reward preset carried the old shared-phase knob.
                 # CPU-only components also never receive a GPU parking knob.
                 extra.pop("sleep_offload", None)
-            triples.append(
-                (
-                    name,
-                    weight,
-                    reward_cls(device=component_device, **extra),
-                ),
-            )
+            component = reward_cls(device=component_device, **extra)
+            component.bind_component(name)
+            triples.append((name, weight, component))
         return cls(triples)
 
     async def score(self, sample: RewardSample) -> float:

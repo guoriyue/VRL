@@ -9,12 +9,13 @@ import; the parent package's public exports still import the executor module.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from vrl.generation.execution.sample_batches import (
     concatenate_sample_values,
     gather_batch_context,
     gather_replay_tensors,
+    require_sample_rows,
     sort_and_validate_batch_coverage,
 )
 from vrl.generation.protocols import BatchPayload
@@ -42,7 +43,9 @@ class DiffusionBatchGatherer:
             request,
             sample_rows,
             cast("Sequence[DiffusionBatchResult]", batches),
-            row_fields=("observations", "actions", "log_probs", "timesteps", "kl", "video"),
+            # "video" is validated below: it is None on every batch once the
+            # worker materialized the reward artifacts instead of shipping media.
+            row_fields=("observations", "actions", "log_probs", "timesteps", "kl"),
         )
 
         observations = concatenate_sample_values(
@@ -58,7 +61,30 @@ class DiffusionBatchGatherer:
             [batch.timesteps for batch in ordered_batches], name="timesteps"
         )
         kl_tensor = concatenate_sample_values([batch.kl for batch in ordered_batches], name="kl")
-        video = concatenate_sample_values([batch.video for batch in ordered_batches], name="video")
+        videos = [batch.video for batch in ordered_batches]
+        if all(v is None for v in videos):
+            video = None
+        elif any(v is None for v in videos):
+            raise ValueError("generation batches disagree on whether media crossed the wire")
+        else:
+            for batch in ordered_batches:
+                require_sample_rows("video", batch.video, batch.batch.sample_count)
+            video = concatenate_sample_values(videos, name="video")
+        artifacts: dict[str, list[Any]] | None = None
+        if any(batch.artifacts for batch in ordered_batches):
+            names = {name for batch in ordered_batches for name in batch.artifacts}
+            artifacts = {}
+            for name in sorted(names):
+                files: list[Any] = []
+                for batch in ordered_batches:
+                    batch_files = batch.artifacts.get(name)
+                    if batch_files is None or len(batch_files) != batch.batch.sample_count:
+                        raise ValueError(
+                            f"reward artifact {name!r} missing or misaligned for batch "
+                            f"{batch.batch.batch_key}",
+                        )
+                    files.extend(batch_files)
+                artifacts[name] = files
         replay_tensors = gather_replay_tensors(
             [batch.replay_tensors for batch in ordered_batches],
             sample_counts=[batch.batch.sample_count for batch in ordered_batches],
@@ -85,6 +111,7 @@ class DiffusionBatchGatherer:
         return GenerationOutput(
             output=video,
             trajectory=trajectory,
+            artifacts=artifacts,
         )
 
 

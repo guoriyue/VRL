@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import fields, replace
 from typing import Any, NamedTuple
 
@@ -51,6 +51,7 @@ class GenerationRequestBuilder:
         request_overrides: Mapping[str, Any] | None = None,
         runtime_debug: bool = False,
         policy_version: int | None = None,
+        reward_artifacts: Sequence[Any] = (),
     ) -> CollectorRequest:
         sampling = {
             str(field_name): list(value) if isinstance(value, tuple) else value
@@ -109,6 +110,14 @@ class GenerationRequestBuilder:
             train_segments=self.config.train_segments,
             trajectory_storage=self.config.trajectory_storage,
             denoise=denoise,
+            # mp4 encoding needs the request's frame rate; an image store or a
+            # store that pinned its own fps is left alone.
+            reward_artifacts=tuple(
+                replace(spec, fps=float(sampling["fps"]))
+                if spec.fps is None and spec.artifact_format == "mp4" and "fps" in sampling
+                else spec
+                for spec in reward_artifacts
+            ),
             runtime_debug=runtime_debug,
             policy_version=policy_version,
         )

@@ -51,6 +51,7 @@ class _RequestBuilder:
         request_overrides: dict[str, Any] | None = None,
         runtime_debug: bool = False,
         policy_version: int | None = None,
+        reward_artifacts: tuple[Any, ...] = (),
     ) -> CollectorRequest:
         request_id = f"unit-request-{self._request_index}"
         self._request_index += 1
@@ -63,6 +64,7 @@ class _RequestBuilder:
             sampling=dict(request_overrides or {}),
             runtime_debug=runtime_debug,
             policy_version=policy_version,
+            reward_artifacts=tuple(reward_artifacts),
         )
         return CollectorRequest(
             request=request,
@@ -142,6 +144,9 @@ class _RewardRuntime:
         self.shutdown_failures = 0
         self.shutdown_calls = 0
         self.memory_parked = False
+
+    def artifact_specs(self) -> tuple[Any, ...]:
+        return ()
 
     async def preflight(self) -> None:
         return None

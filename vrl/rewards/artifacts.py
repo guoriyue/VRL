@@ -94,6 +94,7 @@ class DiskRewardArtifactStore:
         *,
         media_type: MediaType = "video",
         artifact_format: ArtifactFormat = "tensor",
+        name: str = "",
     ) -> None:
         if media_type not in get_args(MediaType):
             raise ValueError(
@@ -108,14 +109,32 @@ class DiskRewardArtifactStore:
         self.root = Path(root)
         self.media_type = media_type
         self.artifact_format = artifact_format
+        # Reward component this store serves: the key under which the rollout
+        # worker delivers pre-written files (RewardSample.artifacts).
+        self.name = str(name)
         self._owned_paths: set[Path] = set()
         self.root.mkdir(parents=True, exist_ok=True)
+
+    def spec(self) -> dict[str, Any]:
+        """What a rollout worker needs to write this store's files itself."""
+
+        return {
+            "name": self.name,
+            "root": str(self.root.resolve()),
+            "media_type": self.media_type,
+            "artifact_format": self.artifact_format,
+        }
 
     def materialize(self, samples: list[RewardSample]) -> list[RewardInferenceArtifact]:
         artifacts: list[RewardInferenceArtifact] = []
         try:
             for sample in samples:
-                artifacts.append(self._write_one(sample))
+                delivered = sample.artifacts.get(self.name) if self.name else None
+                artifacts.append(
+                    self._write_one(sample)
+                    if delivered is None
+                    else self._adopt(sample, delivered)
+                )
         except BaseException:
             self.release(artifacts)
             raise
@@ -148,6 +167,31 @@ class DiskRewardArtifactStore:
         for artifact in artifacts:
             if artifact.path:
                 self._owned_paths.discard(Path(artifact.path))
+
+    def _adopt(self, sample: RewardSample, delivered: Any) -> RewardInferenceArtifact:
+        """Take ownership of a file the rollout worker wrote for this store."""
+
+        path = Path(delivered.path)
+        if not path.is_absolute() or not path.exists():
+            raise FileNotFoundError(
+                f"worker-materialized reward artifact for {self.name!r} is missing: {path}",
+            )
+        expected_root = self.root.resolve()
+        if expected_root not in path.resolve().parents:
+            raise ValueError(
+                f"worker-materialized reward artifact {path} lies outside this store's "
+                f"root {expected_root}",
+            )
+        self._owned_paths.add(path.resolve())
+        return RewardInferenceArtifact(
+            artifact_id=f"{sample.sample_id}:{path.stem}",
+            sample_id=sample.sample_id,
+            path=str(path.resolve()),
+            prompt=str(sample.prompt),
+            size_bytes=int(delivered.size_bytes),
+            sha256=str(delivered.sha256),
+            metadata=_artifact_provenance(dict(sample.metadata or {})),
+        )
 
     def _write_one(self, sample: RewardSample) -> RewardInferenceArtifact:
         import torch

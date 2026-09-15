@@ -20,7 +20,7 @@ layer, with two implementations: ``InProcessRewardScorer`` (runtime.py) and
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from vrl.rewards.inference import RewardInferenceRequest, RewardInferenceResult
 from vrl.rewards.types import RewardOutput, RewardSample
@@ -42,6 +42,10 @@ class RewardRuntime(Protocol):
 
     async def preflight(self) -> None:
         """Validate external scoring dependencies before generation starts."""
+        ...
+
+    def artifact_specs(self) -> tuple[Any, ...]:
+        """Reward files the rollout worker should materialize per sample."""
         ...
 
     async def activate(self) -> None:

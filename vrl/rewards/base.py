@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from vrl.config.reward_inference import RewardInferenceConfig
+from vrl.generation.types import RewardArtifactSpec
 from vrl.rewards.artifacts import (
     ArtifactFormat,
     DiskRewardArtifactStore,
@@ -208,6 +209,33 @@ class RewardFunction:
         """Whether this scorer yields while scoring runs elsewhere."""
 
         return False
+
+    def bind_component(self, name: str) -> None:
+        """Tell this reward its registry component name.
+
+        Called by ``MultiReward`` after construction. A disk store keyed by that
+        name can then be served by the rollout worker (``artifact_specs``);
+        directly constructed rewards (tests, evaluation scripts) stay unbound
+        and keep materializing media themselves.
+        """
+
+        store = getattr(self, "artifact_store", None)
+        if isinstance(store, DiskRewardArtifactStore):
+            store.name = str(name)
+
+    def artifact_specs(self) -> tuple[RewardArtifactSpec, ...]:
+        """Reward files the rollout worker should write for this reward.
+
+        Empty for rewards that read media in memory or were never bound to a
+        component; a bound disk store returns its (name, root, media_type,
+        format) so the worker materializes the file and the driver never
+        touches the media (see ``vrl/generation/execution/reward_artifacts.py``).
+        """
+
+        store = getattr(self, "artifact_store", None)
+        if isinstance(store, DiskRewardArtifactStore) and store.name:
+            return (RewardArtifactSpec(**store.spec()),)
+        return ()
 
     @property
     def external_accelerator_isolation_verified(self) -> bool:
@@ -572,6 +600,9 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
             artifact_store = DiskRewardArtifactStore(
                 artifact_dir,
                 media_type=str(media_type),
+                # Unnamed until MultiReward binds the registry component name
+                # (reward_name is not it: presets reuse reward_name as the hub
+                # model id, e.g. MizzenAI/HPSv3@main).
                 artifact_format=str(artifact_format),
             )
 
