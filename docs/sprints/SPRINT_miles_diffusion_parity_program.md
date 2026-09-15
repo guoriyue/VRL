@@ -222,3 +222,14 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   parity 0.00197、clip 0、grad_norm 3.76e-3，无指纹错误；全员生成布局成为 CP 预设默认。
   D（driver 控制平面）按两次严格模式 py-spy 的证据判定"暂不做"（见 reading 附录 C 05:40 笔记），
   待 continuous 模式测量后终判。GPU 0 仍被 vrl-9941 的 eval 占用，continuous 测量等其释放。
+- 2026-09-15 07:40：**A 门第三次测量（continuous 模式，SD3.5 3x1 变体：trainer GPU 1、rollout GPU 2、
+  OCR 托管 CPU 服务，max_stale=1，8 epoch，383–447 s/epoch）**：py-spy 17 分钟（跨 epoch 5–7），
+  driver 活跃 46%，其中 autograd/前向的 Python 发射开销 75.5%（launch-bound replay 本身）、
+  H2D batch 拷贝 7.4%（35 s）、pickle/反序列化 **0.2%（1 s）**、producer 线程其余帧 0.1%。
+  结论：**A 第 2 步（parser actor 池）与 D（driver 控制平面）都不做**——三次测量（严格生成期、
+  严格训练期、continuous）里 driver 侧反序列化都 <2%，没有 GIL 争用来源；continuous 下 producer
+  线程几乎不占 Python 时间。driver 侧真正值得动的是 (1) replay 的 Python 发射开销（compile，
+  由 recompute 解锁，属 rollout/replay 性能线）和 (2) 训练 batch 的 H2D 拷贝（7–17%）。
+  该 run 的 pre-update clip 11–20%、parity 0.009–0.026 是 stale=1 的真实 off-policy 差异。
+- 2026-09-15 07:38：recompute arm（batch 16 + compile(all) + `recompute_old_logprob=on`，trainer 0、
+  rollout 1-3，40 epoch）启动；对照 strict arm 的 reward 曲线、clip、epoch 墙钟。

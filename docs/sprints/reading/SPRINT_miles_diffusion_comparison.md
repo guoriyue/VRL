@@ -116,6 +116,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 04:45 — staleness / off-policy 记账：过期样本是断言还是策略
 - 2026-09-15 05:40 — 进程/GIL 隔离：训练进程里到底跑了什么（两次 py-spy 的证据）
 - 2026-09-15 06:45 — 多节点放置：bundle → 物理卡的确定性映射，跨集群占用不可见
+- 2026-09-15 07:45 — 反序列化与 batch 构建出事件循环（parser actor 池）：按三次 py-spy 判定不做
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -301,3 +302,21 @@ D 的最终判定等 continuous 模式（producer 线程与 backward 同进程�
 (IP, id) 排序生成 rank 映射并与 `num_nodes × gpus_per_node` 对账；单机上则允许一个
 "接受 Ray 所给的卡"的模式（配置只写数量不写卡号），避免与其他集群的占用打架。
 风险：只改错误文案与文档；门：多节点 2×4 冒烟时 `run_evidence` 记录的映射与实际 nvidia-smi 一致。
+
+### hourly note 2026-09-15 07:45 — 反序列化出事件循环：证据说不需要
+
+**参照实现**：引擎响应是 msgpack，交给 `RolloutImageResponseParserActor` 池在事件循环外解码并
+切成训练样本，driver 只 `ray.get` 结果——原因是它们的 driver 是单线程 asyncio 控制平面，
+几百 MB 的解码会卡住事件循环。
+
+**VRL 今天**：Ray worker 返回 `GenerationBatchResult`，driver 在 `ray.get` 处 pickle 反序列化，
+随后 gather/轨迹构建/batch 组装都在 rank 进程（附录 B 清单）。
+
+**证据**（三次 py-spy，Wan 严格生成期 / Wan 严格训练期 / SD3.5 continuous）：driver 侧 pickle +
+torch.load 分别占活跃时间 81%（但绝对值 3.5 s/25 min）、1.6%（6 s/20 min）、0.2%（1 s/17 min）。
+VRL 的 rank 进程并不是单线程控制平面：反序列化发生在训练循环的间隙，且 WS-A 第 1 步已把
+最大的负载（视频 artifact）搬到 worker 侧落盘。
+
+**判定**：不做 parser actor 池；A 工作流关闭。保留的观察：训练 batch 的 H2D 拷贝
+（`vrl/trajectory/device.py:66`）在两次训练期测量里占 7–17%，是 driver 侧唯一剩余的可优化项，
+门是先测 pinned+non_blocking 的净收益。
