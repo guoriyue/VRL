@@ -9,11 +9,12 @@ samples each) the trained objective, Kling VideoReward `visual_quality`,
 improved by +0.163 ± 0.056 on the 16 training prompts and +0.170 ± 0.034 on
 24 never-trained validation prompts (prompt-level paired deltas against the
 untrained base model on a fixed prompt/seed grid; win rates 13/16 and 20/24;
-bootstrap 95% CIs exclude zero). Checkpoints 2 and 4 showed no effect, 6 and
-8 a monotone rise. Every update passed the exact replay-parity gate. The
-independent test split was baselined but NOT evaluated against a checkpoint:
-training was stopped at the user's request during stage 2 (see "What is not
-verified").
+bootstrap 95% CIs exclude zero). On the independent 35-prompt test split
+(official VideoPhy eval captions, never used for any decision) checkpoint-8
+scored +0.174 ± 0.044 (27/35 prompts). Checkpoints 2 and 4 showed no effect,
+6 and 8 a monotone rise. Every update passed the exact replay-parity gate.
+Stage 2 (updates 9-16) was stopped at the user's request after update 9 and
+is queued to resume (see "What is not verified").
 
 Everything below is reproducible from this worktree (`exp/wan22-t2v-grpo`,
 commit `80175a2d`, branched from `feat/reward-reload-handoff@81415f9c`) and the
@@ -61,8 +62,13 @@ one prompt averaged first). `eval_train_small/report.json`, `eval_val/report.jso
 | 6 | +0.097 ± 0.053 | 0.62 | +0.138 ± 0.037 | 0.83 |
 | 8 | **+0.163 ± 0.056** (CI +0.06..+0.27) | 0.81 | **+0.170 ± 0.034** (CI +0.11..+0.24) | 0.83 |
 
+Test split (n=35, `eval_test/report.json`, scored 2026-09-15 05:10): VQ
++0.174 ± 0.044 (win 0.77), MQ +0.105 ± 0.033, TA +0.135 ± 0.043, overall
++0.413 ± 0.085. The effect size matches train_small and val, so the 8-update
+gain generalizes beyond the trained prompts.
+
 Diagnostic keys at checkpoint-8 (not optimized): val MQ +0.127 ± 0.040,
-overall +0.354 ± 0.109, TA +0.057 ± 0.087 (flat). Absolute VQ moved from −1.09
+overall +0.354 ± 0.109, TA +0.057 ± 0.087 (flat on val, positive on test). Absolute VQ moved from −1.09
 to −0.92: still below the reward's normalized zero, i.e. far from "good video".
 
 What changed in the videos (`eval_val`, base -> ck8): the fraction of clips with
@@ -78,9 +84,8 @@ comparable across updates; only the parity and gradient panels carry signal).
 
 ## 4. What is not verified / limitations
 
-- **Test split**: base arm generated and scored (`eval_test`, VQ −0.951) but no
-  checkpoint arm was generated before the stop, so generalization is shown on
-  `val` only. Command to finish it: section 6.
+- **Test split**: evaluated for checkpoint-8 only (above); checkpoints 12/16
+  will be added by the queued stage-2 evaluation job.
 - **Stage 2** (updates 9-16): attempt 1 was killed by Ray's 95% host-memory
   monitor in its first generation phase (354.1/372.7 GB: four rollout workers
   56-62 GB each + four trainer ranks 28 GB each; stage 1 had the same peak and
