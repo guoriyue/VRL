@@ -15,7 +15,7 @@ from vrl.models.steps.denoise.common.cfg import (
     split_batched_cfg_output,
 )
 
-DiffusionCFGMode = Literal["batched_cfg", "separate_cfg", "single_branch"]
+DenoiseCFGMode = Literal["batched_cfg", "separate_cfg", "single_branch"]
 
 
 @dataclass(slots=True)
@@ -69,7 +69,7 @@ class DenoiseBackboneOutput:
 class DenoiseBackboneRunner(Protocol):
     """Family-owned backbone call runner."""
 
-    cfg_mode: DiffusionCFGMode
+    cfg_mode: DenoiseCFGMode
     cfg_base: DenoiseCFGBase
     cfg_normalization: bool
 
