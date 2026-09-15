@@ -172,12 +172,19 @@ def test_wan_i2v_dual_stage_routes_by_diffusers_boundary() -> None:
     )
 
     high_out = model.forward_step(state, 0)
+    routing_schedule = state.host_timesteps
     low_out = model.forward_step(state, 1)
 
     assert len(high_calls) == 1
     assert len(low_calls) == 1
     torch.testing.assert_close(high_calls[0]["timestep"], torch.full((2,), 750.0))
     torch.testing.assert_close(low_calls[0]["timestep"], torch.full((2,), 250.0))
+    # Routing reads one host copy of the schedule, made on the first step and
+    # reused by every later step; the device schedule itself is never read back.
+    assert routing_schedule is not None
+    assert routing_schedule.device.type == "cpu"
+    assert state.host_timesteps is routing_schedule
+    torch.testing.assert_close(routing_schedule, torch.tensor([750.0, 250.0]))
     assert set(model.trainable_modules) == {"transformer_2"}
     assert not torch.allclose(high_out["noise_pred"], low_out["noise_pred"])
 

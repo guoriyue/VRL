@@ -70,6 +70,9 @@ def test_cosmos_predict25_forward_step_runs_real_unbatched_cfg() -> None:
     out = model.forward_step(state, 0)
 
     assert len(calls) == 2
+    # The step's sigma reaches the transformer as the (unconditioned) timestep.
+    for call in calls:
+        torch.testing.assert_close(call["timestep"], torch.full_like(call["timestep"], 0.75))
     uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
     torch.testing.assert_close(out["noise_pred"], cond + _GUIDANCE * (cond - uncond))
     assert out["noise_pred"].shape == TINY_COSMOS_LATENT_SHAPE
