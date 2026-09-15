@@ -137,3 +137,15 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   `rollout.weight_sync_s` = 0.68 s/epoch（epoch ≈ 500 s，<0.2%），bucket 传输对 LoRA 配方不是瓶颈；
   CUDA IPC 只对全参同步（SD3.5 2B bf16 ≈ 4 GB、Wan 14B）有意义，且依赖 B 的 colocated 引擎。
   E 排在 B 之后不变，但门改为"全参配方的 sync 时长"，LoRA 配方不作为目标。
+- 2026-09-14 22:55：**B spike 过门**（GPU 3，SD3.5-medium 512px、10 步、CFG 4.5、bf16 DiT）。
+  引擎装上并服务 `/rollout/generate`；`[T+1]` 轨迹（fp32）+ 每步 log-prob 可被 VRL 的 SD3.5
+  transformer（同 revision）重放：用 VRL 前向重算的 log-prob 与引擎值之差，步 0–7 ≤ 4e-3、步 8
+  0.010、终端步（sigma 0.009）0.056；用引擎自己的 model_output 套 VRL 公式，差 ≤ 2e-4（终端步 0.053，
+  来源是引擎循环内 bf16 latents 与 fp32 log-prob 的舍入，VRL bf16 trajectory 存储同样会有）。
+  模型输出相对差 3.5–6.8%（两侧都是 bf16 核，属预期 kernel 级差异）。吞吐（每 16 样本，单卡）：
+  引擎 eager 12.3–13.0 s ≈ VRL eager 13.1 s；引擎 `--enable-torch-compile` 7.8 s（wall 9.3 s 含
+  96 MB msgpack 轨迹）。结论：引擎的收益来自 compile/CUDA graph 路径而非 eager 循环本身；
+  parity 量级与我们现有的 batch-shape 漂移同级，`recompute_old_logprob=on` 下不进梯度。
+  下一步：按 `parked/SPRINT_sglang_diffusion_execution_provider.md` 的设计落地 provider
+  （chunk executor 持有引擎子进程，响应转 native trajectory），先做 SD3.5，再对 Wan 做 norm/RoPE
+  舍入位置对齐（F）。
