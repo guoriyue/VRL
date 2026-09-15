@@ -104,3 +104,31 @@ Ray worker 返回后、trainer 拿到 `RolloutBatch` 前，driver 进程要做�
 worker 侧对应的是 `worker.py:910-948` `_copy_output_to_cpu`（pinned 异步拷贝）。
 A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（每个 rank 一个池），driver 只
 `ray.get` 一个已构建好的 `RolloutBatch` 引用；门是 py-spy 里 driver 侧这些帧的占比。
+
+## 附录 C：每小时架构笔记
+
+### 已研究主题（避免重复）
+- 2026-09-14 23:40 — 并行状态记账：dp×sp 全体 rank 的微批计数守卫 / CP 同组样本一致性
+
+### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
+
+**它们解决的问题**：FSDP 的 forward/backward 是集合通信；若某个 rank 的微批数不同，其余 rank
+会在 all-gather 上无限等待，错误表现为"挂死"而非报错。miles_diffusion 在训练前把每个 rank 的
+微批计划在 dp×sp 的 gloo 组上 all_gather 一次，不一致直接抛错
+（`miles/utils/train_data_utils.py:316-333`，调用点 `miles/backends/fsdp_utils/actor.py:394`）。
+
+**VRL 今天怎么做**：更强——不是校验而是修复。`_TrainingMicrobatch.plan_balanced`
+（`vrl/trainers/online/trainer.py:353-396`）用 `collectives.max_int` 取全体 rank 的最大槽数，
+本地不足的用零权重 dummy 槽补齐，因此本地零优势过滤造成的不均衡不会挂死；跳过决策也用
+`all_true` 统一（`trainer.py:1302,1452`）。
+
+**CP 引入的新缺口**：CP 同组两 rank 的槽数由 leader 广播保证相等，但 token 分片前向假设两边
+喂的是**同一批样本、同一顺序**；若内容不同（广播异常、leader 重试后返回不同列表、未来的
+非广播共享路径），不会挂死，而是静默训练垃圾。这类"计数相等但身份不同"的失败是 VRL 现有守卫
+覆盖不到的。
+
+**改动（已实现）**：`ContextParallelRolloutSchedule.next_iteration` 在广播后于 CP 对象组
+all_gather 一个便宜的批身份指纹（每批样本数、group_ids、reward 和），不一致即抛
+`RuntimeError`（`vrl/rollouts/orchestration/context_parallel.py`）。成本：每次迭代一次 gloo
+all_gather_object，字节量为 KB 级。风险：无（同组指纹恒等时零副作用）。门：cp=2 验收 run
+的两个 update 通过且日志无 fingerprint 错误。

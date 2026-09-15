@@ -157,3 +157,14 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   （rollout 侧 compile/CUDA-graph 路径、batch 不变 kernel、轨迹序列化出事件循环），归入
   rollout 性能那条 cron 与 A/D 两条工作流。E（IPC 权重同步）改为"VRL 自己的 colocated
   worker 间 IPC"，仍以全参配方的 sync 时长为门。
+- 2026-09-14 23:25：**A 门第一次测量（严格模式，Wan 1.3B + HPSv3 服务，单 rank GPU 3）**：
+  py-spy 20 Hz 采 25 分钟（覆盖 6 次生成），driver 的 Python 线程只活跃 69 个采样 ≈ 3.5 s（0.2%），
+  其中 81% 是 Ray pickle 反序列化 + `torch.load`（GenerationBatchResult 里的轨迹张量），其余是
+  `catenate_sample_values` 和 Ray 日志转发。结论：严格模式下 driver 侧反序列化在墙钟上可忽略，
+  不构成做 parser actor 池的理由；它只在 continuous 模式（反序列化与 backward 同进程争 GIL）
+  才可能成为问题，下一次测量在 continuous Wan（trainer + rollout 分卡）上做。同一 run 的
+  reward+训练阶段另录 20 分钟（`pyspy_train.raw`）看训练期 driver 的非 GPU 帧。
+- 2026-09-14 23:40：C 门进行中。单卡基线（`cp2_baseline_1gpu`，同种子）epoch 0：loss −9.6e-5、
+  reward −4.5297±5.2703、parity 0.001973、clip 0、grad_norm 7.07e-4，与 P2 smoke 逐位一致（同种子
+  可复现）。cp=2 第一次启动因 CP follower 在广播里等 leader 采样超过 gloo 30 分钟默认超时而失败
+  （fe3fc019 改为 12 小时），23:28 重启，epoch 0 约 00:10。
