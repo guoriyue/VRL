@@ -69,6 +69,19 @@ def test_service_files_are_per_torchrun_rank(
     assert scorer.log_path.name == "reward_service.fake.rank1.log"
 
 
+def test_launch_token_is_per_scorer_and_verified(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from vrl.rewards.service.managed import LaunchTokenMismatch
+
+    a, b = _scorer(tmp_path), _scorer(tmp_path)
+    assert a.launch_token and a.launch_token != b.launch_token
+    assert a.service_config()["launch_token"] == a.launch_token
+    a._verify_launch_token(SimpleNamespace(launch_token=a.launch_token))
+    with pytest.raises(LaunchTokenMismatch, match="another service"):
+        a._verify_launch_token(SimpleNamespace(launch_token=b.launch_token))
+
+
 @pytest.mark.slow_test
 @pytest.mark.asyncio
 async def test_managed_scorer_launches_scores_and_terminates_the_subprocess(

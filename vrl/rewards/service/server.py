@@ -93,6 +93,8 @@ class RewardServiceConfig(ConfigBase):
     # Operator attestation for GPU services. CPU services are inferred safe by
     # RewardService.from_yaml because they execute no accelerator work beside generation.
     generation_overlap_safe: StrictBool = False
+    # Written by a driver-managed launch and echoed on /info (see RewardServiceInfo).
+    launch_token: str = ""
 
     @field_validator("artifact_roots", mode="before")
     @classmethod
@@ -158,6 +160,7 @@ class RewardService:
             max_cached_requests=int(cfg.max_cached_requests),
             max_request_bytes=int(cfg.max_request_bytes),
             generation_overlap_safe=bool(cfg.generation_overlap_safe or runs_on_cpu),
+            launch_token=str(cfg.launch_token),
         )
 
     def __init__(
@@ -174,6 +177,7 @@ class RewardService:
         max_cached_requests: int = 1024,
         max_request_bytes: int = 16 * 1024 * 1024,
         generation_overlap_safe: bool = False,
+        launch_token: str = "",
     ) -> None:
         if not host:
             raise ValueError("reward service host is required")
@@ -220,6 +224,7 @@ class RewardService:
             max_concurrency=max_concurrency,
             max_pending_requests=max_pending_requests,
             memory_parking=memory_parking,
+            launch_token=str(launch_token),
         )
         self._runtime_device = str(getattr(getattr(runtime, "_launch", None), "device", "") or "")
         self._max_cached_requests = max_cached_requests

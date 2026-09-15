@@ -26,6 +26,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import secrets
 import signal
 import socket
 import subprocess
@@ -69,6 +70,10 @@ def _service_identity(worker_config: Mapping[str, Any], component_name: str) -> 
     return f"{component_name}:{model_name}" if component_name else model_name, version
 
 
+class LaunchTokenMismatch(RuntimeError):
+    """A service answered on the managed port but was not launched by this scorer."""
+
+
 class ManagedRewardScorer(HttpRewardScorer):
     """An :class:`HttpRewardScorer` that owns the service process it talks to."""
 
@@ -106,6 +111,9 @@ class ManagedRewardScorer(HttpRewardScorer):
         # tree, so a failed launch leaves its evidence with the run.
         self.state_dir = self.artifact_dir.parent
         self.python = python or sys.executable
+        # Fresh per scorer: readiness is only accepted from the child that read
+        # this exact config, never from another service answering on the port.
+        self.launch_token = secrets.token_hex(16)
         self._process: subprocess.Popen[bytes] | None = None
         self._start_lock = asyncio.Lock()
 
@@ -135,6 +143,7 @@ class ManagedRewardScorer(HttpRewardScorer):
             # dedicated-GPU one is not proven disjoint, and the CPU case is
             # inferred safe by the server itself.
             "generation_overlap_safe": False,
+            "launch_token": self.launch_token,
             "worker_config": self.worker_config,
         }
 
@@ -227,7 +236,11 @@ class ManagedRewardScorer(HttpRewardScorer):
                 )
             try:
                 if await self.ready():
+                    self._verify_launch_token(await self.info())
                     return
+            except LaunchTokenMismatch:
+                self._terminate()
+                raise
             except Exception:
                 pass
             if time.monotonic() >= deadline:
@@ -237,6 +250,23 @@ class ManagedRewardScorer(HttpRewardScorer):
                     f"{self.deployment.timeout_s:.0f}s; see {self.log_path}",
                 )
             await asyncio.sleep(_READY_POLL_S)
+
+    def _verify_launch_token(self, info: Any) -> None:
+        """The ready answer must come from the child launched with this config.
+
+        Two ranks writing one YAML path once let a child come up healthy on
+        the other rank's port; model name and version matched, so only the
+        per-launch token tells the services apart.
+        """
+
+        actual = str(getattr(info, "launch_token", "") or "")
+        if actual != self.launch_token:
+            raise LaunchTokenMismatch(
+                f"managed reward service {self.model_name!r} at {self.deployment.endpoint} "
+                f"answered with launch_token={actual!r}, expected {self.launch_token!r}: "
+                "another service is listening on this port; see "
+                f"{self.log_path}",
+            )
 
     async def shutdown(self) -> None:
         try:
@@ -270,4 +300,4 @@ class ManagedRewardScorer(HttpRewardScorer):
         return None if process is None else process.pid
 
 
-__all__ = ["ManagedRewardScorer"]
+__all__ = ["LaunchTokenMismatch", "ManagedRewardScorer"]

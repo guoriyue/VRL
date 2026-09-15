@@ -61,6 +61,10 @@ class RewardServiceInfo:
     # trainer/rollout own the card, POST /wake restores them. A service that
     # parks is by construction NOT generation_overlap_safe.
     memory_parking: bool = False
+    # Per-launch identity the launcher wrote into the service config; a client
+    # that started this child compares it so a healthy answer from *another*
+    # service on the same port (a config-path race, a stale process) is refused.
+    launch_token: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.memory_parking, bool):
