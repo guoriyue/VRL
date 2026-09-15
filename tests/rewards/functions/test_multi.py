@@ -465,24 +465,9 @@ def test_http_ocr_reward_uses_disk_tensors_and_the_remote_scorer(tmp_path) -> No
     assert isinstance(component.scorer, HttpRewardScorer)
     assert isinstance(component.artifact_store, DiskRewardArtifactStore)
     assert component.score_key == "ocr_match"
-    with pytest.raises(AttributeError, match="remote reward service"):
+    # No in-process engine exists behind a remote scorer.
+    with pytest.raises(AttributeError):
         component._engine = object()
-
-
-def test_http_ocr_reward_refuses_locally_set_engine_knobs() -> None:
-    with pytest.raises(ValueError, match="worker_config"):
-        MultiReward.from_dict(
-            {"ocr": 1.0},
-            device="cpu",
-            reward_kwargs={"ocr": {"substring_full_credit": False}},
-            inference_configs={
-                "ocr": RewardInferenceConfig(
-                    kind="http",
-                    endpoint="http://reward:8312",
-                    expected_model="ocr-paddle",
-                ),
-            },
-        )
 
 
 def test_in_process_ocr_reward_keeps_media_in_memory() -> None:

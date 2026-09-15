@@ -8,7 +8,6 @@ from typing import Any
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.artifacts import MediaType
 from vrl.rewards.base import DiskArtifactRewardFunction
-from vrl.rewards.models.ocr import OCRRewardModel
 from vrl.rewards.protocols import RewardScorer
 
 
@@ -21,9 +20,9 @@ class OCRReward(DiskArtifactRewardFunction):
 
     Transports: in-process (model built eagerly, media in memory, image or
     video tensors alike); ``kind=service`` (the driver launches a PaddleOCR
-    service and hands it every knob below); ``kind=http`` (operator-run
-    service owns the knobs, so a non-default value here is refused).
-    ``debug_dir`` dumps the best-scoring frame and the OCR decision.
+    service and hands it every knob below); ``kind=http`` (an operator-run
+    service owns the knobs). ``debug_dir`` dumps the best-scoring frame and
+    the OCR decision.
     """
 
     model_factory = "vrl.rewards.models.ocr:OCRRewardModel"
@@ -71,20 +70,6 @@ class OCRReward(DiskArtifactRewardFunction):
             "extra_line_min_confidence": extra_line_min_confidence,
             "near_duplicate_min_similarity": near_duplicate_min_similarity,
         }
-        self._model: OCRRewardModel | None = None
-        if scorer is not None:
-            remote_owned = sorted(
-                name
-                for name, value in model_config.items()
-                if value != _MODEL_CONFIG_DEFAULTS[name]
-            )
-            if remote_owned:
-                raise ValueError(
-                    "OCR reward over HTTP inference scores in the standalone reward "
-                    f"service; move {remote_owned} into that service's worker_config "
-                    "(vrl/config/reward_service/ocr_paddle.yaml) instead of "
-                    "reward.kwargs.ocr",
-                )
         super().__init__(
             reward_name="ocr",
             score_key=score_key,
@@ -98,30 +83,15 @@ class OCRReward(DiskArtifactRewardFunction):
             retain_artifacts=retain_artifacts,
         )
 
+    # Test seam onto the eagerly built in-process engine; a remote transport
+    # builds no model here, so the attribute is simply absent.
     @property
     def _engine(self) -> Any:
-        if self._model is None:
-            raise AttributeError("OCR engine lives in the remote reward service")
         return self._model._engine
 
     @_engine.setter
     def _engine(self, value: Any) -> None:
-        if self._model is None:
-            raise AttributeError("OCR engine lives in the remote reward service")
         self._model._engine = value
-
-
-# The in-process defaults double as the "nothing to forward" check for the
-# external HTTP transport, where the operator's service owns these knobs.
-_MODEL_CONFIG_DEFAULTS: dict[str, Any] = {
-    "debug_dir": None,
-    "engine_profile": "flow_grpo_compat",
-    "text_selection": "all_text",
-    "substring_full_credit": True,
-    "exclusive_alphanumeric_lines": False,
-    "extra_line_min_confidence": 0.5,
-    "near_duplicate_min_similarity": None,
-}
 
 
 __all__ = ["OCRReward"]
