@@ -111,12 +111,29 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
 - 2026-09-14：C 实现完成（未提交，等主机空闲跑测试）：`fsdp.mesh: [dp_shard, cp]` +
   `fsdp.context_parallel.{ulysses_degree, ring_degree}`；trainer 建 3D mesh
   `("dp_shard","ring","ulysses")`（diffusers `ContextParallelConfig.setup` 只认这两个名字），
-  `fully_shard` 只用 `dp_shard` 子 mesh；`vrl/trainers/context_parallel.py` 在 `fully_shard`
+  `fully_shard` 仍用 1D world mesh；`vrl/trainers/context_parallel.py` 在 `fully_shard`
   之前对解包后的 diffusers 模型调 `enable_parallelism`（无 `_cp_plan` 的家族按类名报错）。
-  输出在 `proj_out` 已 all-gather，log-prob / loss 数学在完整序列上不变；每个 CP rank 的梯度是
-  同一 loss 的分片贡献，`clip_grad_norm` 前在 CP 组 SUM（`reduce_context_parallel_gradients`）。
+  输出在 `proj_out` 已 all-gather，log-prob / loss 数学在完整序列上不变。参数按 miles_diffusion
+  的布局在整个 world 上分片（CP 同组在 FSDP 分片轴内），每个 CP rank 的梯度是同一 loss 的分片
+  贡献，`FSDPStrategy.backward` 把 loss 乘以 cp 抵消 FSDP 的 1/(dp·cp) 平均，无需额外集合通信。
   Rollout：`ContextParallelRolloutSchedule` 让 CP leader 采样、组内 gloo 广播 batches，follower
   以空 prompt 走同一 lifecycle（FSDP 权重导出/同步是全 rank 集合通信）；prompt sampler 身份改为
   `dp_rank/dp_size`。预设 `base/distributed/training_fsdp_cp2.yaml`。
   待办：2 GPU Wan 1.3B cp=2 vs 1 GPU 的 loss/grad-norm 门；follower 的 rollout 引擎目前空转，
   与 rollout SP（`gpus_per_engine == cp`）配对是后续项。
+- 2026-09-14：F 的第一步（miles 做法）实现：`precision_correction.recompute_old_logprob=on` 从
+  "构造即 NotImplementedError" 变为真实模式——old log-prob 取训练侧 replay 前向的 detach 值，
+  ppo_epochs=1 下 ratio 恒 1、零额外前向；trainer 拒绝 ppo_epochs>1 与 continuous staleness>0
+  的组合；parity 指标仍量 rollout 记录值，漂移可见但不再进梯度。待 GPU：SD3.5 batch-16 +
+  compile 配方开此开关，验证 pre-update clip 归零、epoch 1.89–2.48× 提速兑现。
+- 2026-09-14：B 第 2 步的脚本就绪（scratchpad `sglang_diff_serve_sd35.sh` 起服务、
+  `sglang_rollout_probe.py` 做对比）：POST `/rollout/generate`（sde、noise_level 0.7、debug 张量、
+  denoising_env、dit_trajectory），解 msgpack+safetensors，用 VRL 的 SD3.5 transformer（同 revision，
+  bf16）在同一 `[T+1]` 轨迹上重算 CFG 噪声预测和 flow_grpo log-prob，分别报告"前向漂移"和
+  "公式漂移"（后者用引擎自己的 model_output 算，隔离 SDE 公式差异）。注意 VRL 在 noise_level=1.0
+  时 std_dev_t 用 `sigma_min + (sigma_max-sigma_min)*sigma`，引擎恒用 `sqrt(sigma/(1-sigma))*level`，
+  对比时必须用 level≠1（这也是引擎 provider 落地时要对齐的一个公式点）。等 GPU。
+- 2026-09-14：E（权重同步）按实测重排优先级：SD3.5 LoRA 专用 3x1 配方的
+  `rollout.weight_sync_s` = 0.68 s/epoch（epoch ≈ 500 s，<0.2%），bucket 传输对 LoRA 配方不是瓶颈；
+  CUDA IPC 只对全参同步（SD3.5 2B bf16 ≈ 4 GB、Wan 14B）有意义，且依赖 B 的 colocated 引擎。
+  E 排在 B 之后不变，但门改为"全参配方的 sync 时长"，LoRA 配方不作为目标。
