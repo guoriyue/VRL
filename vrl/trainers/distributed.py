@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -252,15 +253,35 @@ def init_training_process_group(
     if context.device.type == "cuda":
         # ``context.device`` is the CUDA ordinal inside this rank's masked view.
         torch.cuda.set_device(context.device)
+    timeout = collective_timeout(context)
     dist.init_process_group(
         backend=backend,
         rank=context.rank,
         world_size=context.world_size,
+        timeout=timeout,
     )
     if backend == "nccl":
         # Collective creation: every rank reaches this line inside the same
         # init call, so the subgroup handshake cannot mismatch.
-        _CPU_COORDINATION_GROUP = dist.new_group(backend="gloo")
+        _CPU_COORDINATION_GROUP = dist.new_group(backend="gloo", timeout=timeout)
+
+
+def collective_timeout(context: DistributedTrainingContext) -> timedelta:
+    """How long a rank may wait in a collective before the group gives up.
+
+    Symmetric ranks reach every collective together, so torch's default is
+    fine. Context-parallel followers wait in the batch broadcast for the whole
+    of the leader's rollout collection (Wan 1.3B: ~35 min for six groups plus
+    reward scoring), which exceeds the 30-minute default and killed the first
+    cp=2 run; a run-length timeout keeps a genuinely dead peer detectable while
+    never racing a healthy rollout.
+    """
+
+    if context.cp_size > 1:
+        return timedelta(hours=12)
+    from torch.distributed import default_pg_timeout
+
+    return default_pg_timeout
 
 
 def shutdown_training_process_group() -> None:
@@ -308,7 +329,7 @@ def create_context_parallel_groups(context: DistributedTrainingContext) -> Conte
     mine: Any = None
     for dp_rank in range(context.dp_size):
         members = list(range(dp_rank * context.cp_size, (dp_rank + 1) * context.cp_size))
-        group = dist.new_group(members, backend="gloo")
+        group = dist.new_group(members, backend="gloo", timeout=collective_timeout(context))
         if context.rank in members:
             mine = group
     assert mine is not None

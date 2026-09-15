@@ -25,6 +25,7 @@ from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.context_parallel import enable_context_parallel
 from vrl.trainers.distributed import (
     DistributedTrainingContext,
+    collective_timeout,
     create_context_parallel_groups,
 )
 from vrl.trainers.fsdp import build_context_parallel_mesh, build_fsdp_mesh
@@ -44,6 +45,22 @@ def test_context_splits_the_world_into_contiguous_cp_groups() -> None:
         strategy="fsdp", rank=2, world_size=4, device=torch.device("cpu"), cp_size=2
     )
     assert leader.is_context_parallel_leader is True
+
+
+def test_cp_followers_get_a_rollout_length_collective_timeout() -> None:
+    """A follower waits in the batch broadcast for the leader's whole rollout."""
+    from datetime import timedelta
+
+    from torch.distributed import default_pg_timeout
+
+    plain = DistributedTrainingContext(
+        strategy="fsdp", rank=0, world_size=2, device=torch.device("cpu")
+    )
+    assert collective_timeout(plain) == default_pg_timeout
+    cp = DistributedTrainingContext(
+        strategy="fsdp", rank=0, world_size=2, device=torch.device("cpu"), cp_size=2
+    )
+    assert collective_timeout(cp) >= timedelta(hours=6)
 
 
 def test_context_rejects_cp_size_that_does_not_divide_the_world() -> None:
