@@ -1,38 +1,60 @@
-"""RAFT motion-dynamics quality-guard reward (local, CPU/GPU).
-
-Thin function-layer binding registered as ``motion_dynamics`` (Future Reward
-suite, SPRINT_future_reward): the registry builds it from YAML; the model is
-constructed eagerly here and driven through the in-process scorer. The scoring
-rationale — VBench "Dynamic Degree" via RAFT-small optical flow as an
-anti-static-collapse floor — is documented in
-``vrl.rewards.models.motion_dynamics``.
-"""
+"""Optical-flow motion-dynamics reward over a video."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
-from vrl.rewards.base import InferenceRewardFunction
-from vrl.rewards.models.motion_dynamics import MotionDynamicsModel
-from vrl.rewards.runtime import InProcessRewardScorer
+from vrl.config.reward_inference import RewardInferenceConfig
+from vrl.rewards.artifacts import MediaType
+from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.protocols import RewardScorer
 
 
-class MotionDynamicsReward(InferenceRewardFunction):
-    """Local reward scoring generated-video motion magnitude via RAFT optical flow."""
+class MotionDynamicsReward(DiskArtifactRewardFunction):
+    """Optical-flow motion-dynamics reward over a video.
+
+    ``worker_config`` is the model's own vocabulary; the resolved device is
+    stamped through the ceiling check. In-process the model is built eagerly
+    and media rides the request in memory; ``inference.kind=service`` hands
+    the same worker_config to a driver-launched service.
+    """
+
+    model_factory = "vrl.rewards.models.motion_dynamics:MotionDynamicsModel"
+    request_prefix = "motion_dynamics"
+    debug_basename = "motion_dynamics"
+    default_reward_name = "motion_dynamics"
+    default_score_key = "motion_dynamics"
+    default_artifact_format = "tensor"
+    default_media_type = "video"
+    in_process_media = "memory"
+    eager_model = True
 
     def __init__(
         self,
         device: str = "",
+        *,
         reward_name: str = "motion_dynamics",
         score_key: str = "motion_dynamics",
-        worker_config: dict[str, Any] | None = None,
+        worker_config: Mapping[str, Any] | None = None,
+        scorer: RewardScorer | None = None,
+        inference: RewardInferenceConfig | None = None,
+        artifact_format: str | None = None,
+        media_type: MediaType | None = None,
+        artifact_dir: str = "outputs/reward_artifacts",
+        retain_artifacts: bool = False,
     ) -> None:
-        cfg = self.worker_config_with_device(worker_config, device=str(device))
-        model = MotionDynamicsModel(cfg)
         super().__init__(
             reward_name=reward_name,
             score_key=score_key,
-            scorer=InProcessRewardScorer(model=model),
+            worker_config=dict(worker_config or {}),
+            device=device or None,
+            scorer=scorer,
+            inference=inference,
+            artifact_format=artifact_format,
+            media_type=media_type,
+            artifact_dir=artifact_dir,
+            retain_artifacts=retain_artifacts,
         )
 
 

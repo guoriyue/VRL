@@ -524,6 +524,15 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
     default_score_key: ClassVar[str]
     default_artifact_format: ClassVar[str] = "mp4"
     default_media_type: ClassVar[MediaType] = "video"
+    # In-process transport only (a remote scorer always reads disk artifacts):
+    # "memory" keeps media on the request exactly as the former in-memory
+    # rewards did (any tensor layout, no file IO); "disk" materializes it.
+    in_process_media: ClassVar[str] = "disk"
+    # In-process transport only: build the model in the constructor so config
+    # validation fails at construction and tests can reach ``self._model``
+    # (e.g. to inject a fake engine). Skipped under sleep_offload, whose pooled
+    # model must be factory-built by the runtime itself.
+    eager_model: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -553,6 +562,12 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
         )
         media_type = self.default_media_type if media_type is None else media_type
 
+        # In-process transport keeps media on the request when the reward says
+        # so (the former in-memory rewards: any tensor layout, no file IO);
+        # every remote scorer reads disk artifacts.
+        in_process = scorer is None and (inference is None or inference.kind == "in_process")
+        if artifact_store is None and in_process and self.in_process_media == "memory":
+            artifact_store = InMemoryRewardArtifactStore()
         if artifact_store is None:
             artifact_store = DiskRewardArtifactStore(
                 artifact_dir,
@@ -604,12 +619,19 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
             # service subprocess that receives this same worker_cfg. External
             # HTTP components never reach here: the registry injects their
             # ready client as ``scorer``.
-            scorer = build_reward_scorer(
-                worker_cfg,
-                inference=inference,
-                artifact_dir=str(artifact_dir),
-                component_name=str(reward_name),
-            )
+            if in_process and self.eager_model and not worker_cfg.get("sleep_offload"):
+                from vrl.rewards.runtime import InProcessRewardScorer
+                from vrl.utils.config import import_from_path
+
+                self._model = import_from_path(str(worker_cfg["model_factory"]))(worker_cfg)
+                scorer = InProcessRewardScorer(model=self._model)
+            else:
+                scorer = build_reward_scorer(
+                    worker_cfg,
+                    inference=inference,
+                    artifact_dir=str(artifact_dir),
+                    component_name=str(reward_name),
+                )
 
         super().__init__(
             reward_name=str(reward_name),

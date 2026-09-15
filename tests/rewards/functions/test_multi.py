@@ -495,12 +495,13 @@ def test_in_process_ocr_reward_keeps_media_in_memory() -> None:
 
 
 def test_http_reward_rejects_inmemory_artifact_component() -> None:
+    # geneval delegates to an external callable and has no artifact transport.
     with pytest.raises(ValueError, match="in-memory artifacts"):
         MultiReward.from_dict(
-            {"aesthetic": 1.0},
+            {"geneval": 1.0},
             device="cpu",
             inference_configs={
-                "aesthetic": RewardInferenceConfig(
+                "geneval": RewardInferenceConfig(
                     kind="http",
                     endpoint="http://reward:8300",
                     expected_model="aesthetic-v1",
@@ -684,9 +685,9 @@ def test_service_ocr_reward_gets_a_managed_scorer_with_its_knobs(tmp_path) -> No
 def test_service_kind_rejects_inmemory_rewards() -> None:
     with pytest.raises(ValueError, match="in-memory artifacts"):
         MultiReward.from_dict(
-            {"aesthetic": 1.0},
+            {"geneval": 1.0},
             device="cpu",
-            inference_configs={"aesthetic": RewardInferenceConfig(kind="service")},
+            inference_configs={"geneval": RewardInferenceConfig(kind="service")},
         )
 
 
@@ -706,3 +707,43 @@ def test_service_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:
     assert scorer.worker_config["device"] == "cuda:0"
     # Not advertised until the launched service reports it at preflight.
     assert scorer.requires_memory_parking is False
+
+
+@pytest.mark.parametrize(
+    ("name", "device", "kwargs"),
+    [
+        ("ocr", "cpu", {}),
+        ("nsfw_safety", "cuda:0", {"model_name": "test"}),
+        ("wd_tagger", "cpu", {"tagger": None}),
+        ("image_sharpness", "cpu", {}),
+        ("codex_image_qa", "cpu", {}),
+        ("aesthetic", "cuda:0", {}),
+        ("pickscore", "cuda:0", {}),
+        ("geneval_owl", "cuda:0", {}),
+        ("motion_dynamics", "cuda:0", {"worker_config": {"num_frames": 4}}),
+        ("target_dino_similarity", "cuda:0", {"worker_config": {"num_frames": 4}}),
+        ("grounded_ocr", "cpu", {"ocr": {}, "guard": {}}),
+    ],
+)
+def test_every_former_in_process_reward_can_run_as_a_managed_service(
+    tmp_path, name, device, kwargs
+) -> None:
+    """P3 of reward isolation: each binding forwards its config to a service."""
+    from vrl.rewards.service.managed import ManagedRewardScorer
+
+    reward = MultiReward.from_dict(
+        {name: 1.0},
+        device=device,
+        reward_kwargs={name: {"artifact_dir": str(tmp_path / name), **kwargs}},
+        inference_configs={name: RewardInferenceConfig(kind="service")},
+    )
+    component = reward.rewards[0][2]
+    assert isinstance(component, DiskArtifactRewardFunction)
+    scorer = component.scorer
+    assert isinstance(scorer, ManagedRewardScorer)
+    assert scorer.worker_config["model_factory"] == type(component).model_factory
+    assert scorer.worker_config["device"] == type(component).resolve_execution_device(
+        device=device, kwargs=kwargs
+    )
+    assert scorer.artifact_dir == (tmp_path / name).resolve()
+    assert scorer.pid is None

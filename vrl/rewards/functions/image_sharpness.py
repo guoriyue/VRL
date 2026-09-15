@@ -1,33 +1,63 @@
-"""Line-art sharpness reward (model-free, scored in-process on CPU).
-
-Thin function-layer binding registered as ``image_sharpness``. The scoring is a
-normalized Laplacian energy over frame luma — no network, no GPU — and lives in
-``vrl.rewards.models.image_sharpness``. It defends crisp cel-shaded line art,
-which every learned quality model tried on this policy failed to capture; pair
-it with a coherence reward (PickScore) so high-frequency noise cannot game it.
-"""
+"""Model-free image sharpness (Laplacian variance) reward on CPU."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
-from vrl.rewards.base import InferenceRewardFunction
-from vrl.rewards.models.image_sharpness import ImageSharpnessRewardModel
-from vrl.rewards.runtime import InProcessRewardScorer
+from vrl.config.reward_inference import RewardInferenceConfig
+from vrl.rewards.artifacts import MediaType
+from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.protocols import RewardScorer
 
 
-class ImageSharpnessReward(InferenceRewardFunction):
-    """Crisp line-art score in ``[0, 1]`` from Laplacian edge energy."""
+class ImageSharpnessReward(DiskArtifactRewardFunction):
+    """Model-free image sharpness (Laplacian variance) reward on CPU.
 
-    def __init__(self, **kwargs: Any) -> None:
-        # Model-free CPU compute; ``device`` is accepted for a uniform factory
-        # signature but never used.
-        kwargs.pop("device", None)
-        model = ImageSharpnessRewardModel(kwargs)
+    In-process the model is built here and media rides the request in memory;
+    ``inference.kind=service`` hands the same kwargs to a driver-launched
+    service that scores this reward's ``.pt`` artifacts.
+    """
+
+    model_factory = "vrl.rewards.models.image_sharpness:ImageSharpnessRewardModel"
+    request_prefix = "image_sharpness"
+    debug_basename = "image_sharpness"
+    default_reward_name = "image_sharpness"
+    default_score_key = "image_sharpness"
+    default_artifact_format = "tensor"
+    default_media_type = "image"
+    in_process_media = "memory"
+    eager_model = True
+
+    @classmethod
+    def resolve_execution_device(cls, *, device: str, kwargs: Mapping[str, Any]) -> str:
+        """CPU-only compute; never claim the resource-resolved GPU."""
+        return "cpu"
+
+    def __init__(
+        self,
+        device: str = "cpu",
+        *,
+        score_key: str = "image_sharpness",
+        scorer: RewardScorer | None = None,
+        inference: RewardInferenceConfig | None = None,
+        artifact_format: str | None = None,
+        media_type: MediaType | None = None,
+        artifact_dir: str = "outputs/reward_artifacts",
+        retain_artifacts: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(
             reward_name="image_sharpness",
-            score_key="image_sharpness",
-            scorer=InProcessRewardScorer(model=model),
+            score_key=score_key,
+            worker_config=kwargs,
+            device=device,
+            scorer=scorer,
+            inference=inference,
+            artifact_format=artifact_format,
+            media_type=media_type,
+            artifact_dir=artifact_dir,
+            retain_artifacts=retain_artifacts,
         )
 
 

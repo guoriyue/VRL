@@ -1,17 +1,4 @@
-"""OCR reward function, behavior mirrors flow_grpo OCR scorers.
-
-Scores generated image/video outputs by how well OCR-detected text matches a
-target string provided in sample metadata. The default policy mirrors the
-Flow-GRPO scorers; exact-text curricula may preserve and rank complete OCR lines.
-
-This is a thin ``RewardFunction`` wrapper over ``OCRRewardModel`` driven by the
-local (in-process) transport. The substantive scoring logic lives in
-``vrl.rewards.models.ocr``.
-
-flow_grpo references:
-- ``flow_grpo/ocr.py::OcrScorer``
-- ``flow_grpo/ocr.py::OcrScorer_video_or_image``
-"""
+"""OCR text-matching reward (flow_grpo-compatible) over the selected transport."""
 
 from __future__ import annotations
 
@@ -19,11 +6,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from vrl.config.reward_inference import RewardInferenceConfig
-from vrl.rewards.artifacts import InMemoryRewardArtifactStore, MediaType, RewardArtifactStore
+from vrl.rewards.artifacts import MediaType
 from vrl.rewards.base import DiskArtifactRewardFunction
 from vrl.rewards.models.ocr import OCRRewardModel
 from vrl.rewards.protocols import RewardScorer
-from vrl.rewards.runtime import InProcessRewardScorer
 
 
 class OCRReward(DiskArtifactRewardFunction):
@@ -33,24 +19,11 @@ class OCRReward(DiskArtifactRewardFunction):
     sampled frames and computes reward = mean over frames with reward > 0, per
     the flow_grpo ``OcrScorer_video_or_image`` implementation.
 
-    Two transports, one scorer contract:
-
-    - in-process (default): the PaddleOCR model is built eagerly here, scores
-      in the driver, and media rides the request in memory (image or video
-      tensors alike, exactly as before);
-    - ``reward.inference.ocr.kind=service``: the driver launches a PaddleOCR
-      service subprocess itself and hands it every knob below, so a recipe
-      keeps its ``reward.kwargs.ocr`` unchanged;
-    - ``reward.inference.ocr.kind=http``: the registry injects the HTTP client,
-      media is written to ``artifact_dir`` as ``.pt`` tensors and scored by a
-      standalone ``vrl-reward-service`` running ``OCRRewardModel`` on its own
-      CPU (``vrl/config/reward_service/ocr_paddle.yaml``), which keeps the
-      OCR work off the trainer's launch-bound event loop. The engine/scoring
-      knobs then belong to the service's ``worker_config``; setting one here to
-      a non-default value is refused rather than silently ignored.
-
-    When ``debug_dir`` is set, dumps the best-scoring frame along with the
-    OCR-detected text and target to disk for reward-hacking audit.
+    Transports: in-process (model built eagerly, media in memory, image or
+    video tensors alike); ``kind=service`` (the driver launches a PaddleOCR
+    service and hands it every knob below); ``kind=http`` (operator-run
+    service owns the knobs, so a non-default value here is refused).
+    ``debug_dir`` dumps the best-scoring frame and the OCR decision.
     """
 
     model_factory = "vrl.rewards.models.ocr:OCRRewardModel"
@@ -60,6 +33,8 @@ class OCRReward(DiskArtifactRewardFunction):
     default_score_key = "ocr"
     default_artifact_format = "tensor"
     default_media_type = "image"
+    in_process_media = "memory"
+    eager_model = True
 
     @classmethod
     def resolve_execution_device(cls, *, device: str, kwargs: Mapping[str, Any]) -> str:
@@ -87,9 +62,6 @@ class OCRReward(DiskArtifactRewardFunction):
     ) -> None:
         if score_key not in {"ocr", "ocr_match"}:
             raise ValueError("OCR score_key must be 'ocr' or 'ocr_match'")
-        # ``device`` stays in the RewardFunction constructor contract, while
-        # resolve_execution_device above is the sole CPU placement owner; only
-        # the managed-service path forwards it (as the service's device).
         model_config = {
             "debug_dir": debug_dir,
             "engine_profile": engine_profile,
@@ -99,21 +71,8 @@ class OCRReward(DiskArtifactRewardFunction):
             "extra_line_min_confidence": extra_line_min_confidence,
             "near_duplicate_min_similarity": near_duplicate_min_similarity,
         }
-        artifact_store: RewardArtifactStore | None
-        worker_config: dict[str, Any] | None = None
-        if inference is not None and inference.kind == "service":
-            # The managed subprocess builds OCRRewardModel from this bag.
-            self._model: OCRRewardModel | None = None
-            worker_config = dict(model_config)
-            artifact_store = None
-        elif scorer is None:
-            # Build eagerly so debug_dir creation fires now and tests can inject
-            # a fake engine via ``reward._engine`` (proxied to the model below).
-            model = OCRRewardModel(model_config)
-            self._model = model
-            scorer = InProcessRewardScorer(model=model)
-            artifact_store = InMemoryRewardArtifactStore()
-        else:
+        self._model: OCRRewardModel | None = None
+        if scorer is not None:
             remote_owned = sorted(
                 name
                 for name, value in model_config.items()
@@ -126,20 +85,17 @@ class OCRReward(DiskArtifactRewardFunction):
                     "(vrl/config/reward_service/ocr_paddle.yaml) instead of "
                     "reward.kwargs.ocr",
                 )
-            self._model = None
-            artifact_store = None
         super().__init__(
             reward_name="ocr",
             score_key=score_key,
+            worker_config=model_config,
+            device=device,
+            scorer=scorer,
+            inference=inference,
             artifact_format=artifact_format,
             media_type=media_type,
             artifact_dir=artifact_dir,
             retain_artifacts=retain_artifacts,
-            scorer=scorer,
-            artifact_store=artifact_store,
-            worker_config=worker_config,
-            inference=inference,
-            device=device if worker_config is not None else None,
         )
 
     @property
@@ -156,7 +112,7 @@ class OCRReward(DiskArtifactRewardFunction):
 
 
 # The in-process defaults double as the "nothing to forward" check for the
-# HTTP transport, where the service owns these knobs.
+# external HTTP transport, where the operator's service owns these knobs.
 _MODEL_CONFIG_DEFAULTS: dict[str, Any] = {
     "debug_dir": None,
     "engine_profile": "flow_grpo_compat",

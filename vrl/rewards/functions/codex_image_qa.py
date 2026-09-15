@@ -1,39 +1,68 @@
-"""Codex-CLI image-QA reward (rubric-driven LLM judge, scored in-process).
-
-Thin function-layer binding registered as ``codex_image_qa``. The judging logic
-(render prompt/command, run ``codex exec`` on a temp PNG, parse the score) lives
-in ``vrl.rewards.models.codex_image_qa``. The rubric in ``prompt_template`` is
-the reward definition — point it at whatever axis you need (alignment, anatomy
-plausibility, crisp cel-shading). Each score is a subprocess call, so it runs on
-CPU; keep ``max_concurrency`` in line with your CLI rate limits.
-"""
+"""Codex CLI subprocess judge scoring an image against its prompt."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
-from vrl.rewards.base import InferenceRewardFunction
+from vrl.config.reward_inference import RewardInferenceConfig
+from vrl.rewards.artifacts import MediaType
+from vrl.rewards.base import DiskArtifactRewardFunction
 from vrl.rewards.models.codex_image_qa import (
     DEFAULT_PROMPT_TEMPLATE,
-    CodexImageQARewardModel,
     _extract_score_from_text,
     _render_prompt_template,
 )
-from vrl.rewards.runtime import InProcessRewardScorer
+from vrl.rewards.protocols import RewardScorer
 
 
-class CodexImageQAReward(InferenceRewardFunction):
-    """Score an image against a rubric by calling the Codex (or compatible) CLI."""
+class CodexImageQAReward(DiskArtifactRewardFunction):
+    """Codex CLI subprocess judge scoring an image against its prompt.
 
-    def __init__(self, **kwargs: Any) -> None:
-        # CLI subprocess judge; ``device`` is accepted for a uniform factory
-        # signature but never used.
-        kwargs.pop("device", None)
-        model = CodexImageQARewardModel(kwargs)
+    In-process the model is built here and media rides the request in memory;
+    ``inference.kind=service`` hands the same kwargs to a driver-launched
+    service that scores this reward's ``.pt`` artifacts.
+    """
+
+    model_factory = "vrl.rewards.models.codex_image_qa:CodexImageQARewardModel"
+    request_prefix = "codex_image_qa"
+    debug_basename = "codex_image_qa"
+    default_reward_name = "codex_image_qa"
+    default_score_key = "codex_image_qa"
+    default_artifact_format = "tensor"
+    default_media_type = "image"
+    in_process_media = "memory"
+    eager_model = True
+
+    @classmethod
+    def resolve_execution_device(cls, *, device: str, kwargs: Mapping[str, Any]) -> str:
+        """CPU-only compute; never claim the resource-resolved GPU."""
+        return "cpu"
+
+    def __init__(
+        self,
+        device: str = "cpu",
+        *,
+        score_key: str = "codex_image_qa",
+        scorer: RewardScorer | None = None,
+        inference: RewardInferenceConfig | None = None,
+        artifact_format: str | None = None,
+        media_type: MediaType | None = None,
+        artifact_dir: str = "outputs/reward_artifacts",
+        retain_artifacts: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(
             reward_name="codex_image_qa",
-            score_key="codex_image_qa",
-            scorer=InProcessRewardScorer(model=model),
+            score_key=score_key,
+            worker_config=kwargs,
+            device=device,
+            scorer=scorer,
+            inference=inference,
+            artifact_format=artifact_format,
+            media_type=media_type,
+            artifact_dir=artifact_dir,
+            retain_artifacts=retain_artifacts,
         )
 
 

@@ -1,17 +1,33 @@
-"""Framework binding for the atomic grounded-OCR reward."""
+"""Grounded OCR: PP-OCR text match guarded by a Codex CLI judge (both CPU-side)."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
 
-from vrl.rewards.base import InferenceRewardFunction
-from vrl.rewards.models.grounded_ocr import GroundedOCRRewardModel
-from vrl.rewards.runtime import InProcessRewardScorer
+from vrl.config.reward_inference import RewardInferenceConfig
+from vrl.rewards.artifacts import MediaType
+from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.protocols import RewardScorer
 
 
-class GroundedOCRReward(InferenceRewardFunction):
-    """Score one text rendering only when its requested carrier is valid."""
+class GroundedOCRReward(DiskArtifactRewardFunction):
+    """PP-OCR text match plus a Codex CLI judge guard; both execute off-GPU.
+
+    In-process the model is built eagerly and media rides the request in
+    memory; ``inference.kind=service`` hands ``ocr``/``guard`` to a
+    driver-launched service.
+    """
+
+    model_factory = "vrl.rewards.models.grounded_ocr:GroundedOCRRewardModel"
+    request_prefix = "grounded-ocr"
+    debug_basename = "grounded_ocr"
+    default_reward_name = "grounded_ocr"
+    default_score_key = "grounded_ocr"
+    default_artifact_format = "tensor"
+    default_media_type = "image"
+    in_process_media = "memory"
+    eager_model = True
 
     @classmethod
     def resolve_execution_device(cls, *, device: str, kwargs: Mapping[str, Any]) -> str:
@@ -25,16 +41,25 @@ class GroundedOCRReward(InferenceRewardFunction):
         guard: Mapping[str, Any],
         debug_dir: str = "",
         device: str = "cpu",
+        scorer: RewardScorer | None = None,
+        inference: RewardInferenceConfig | None = None,
+        artifact_format: str | None = None,
+        media_type: MediaType | None = None,
+        artifact_dir: str = "outputs/reward_artifacts",
+        retain_artifacts: bool = False,
     ) -> None:
-        del device
-        model = GroundedOCRRewardModel({"ocr": ocr, "guard": guard})
         super().__init__(
             reward_name="grounded_ocr",
             score_key="grounded_ocr",
-            scorer=InProcessRewardScorer(model=model),
+            worker_config={"ocr": dict(ocr), "guard": dict(guard)},
+            device=device,
             debug_dir=debug_dir,
-            request_prefix="grounded-ocr",
-            debug_basename="grounded_ocr",
+            scorer=scorer,
+            inference=inference,
+            artifact_format=artifact_format,
+            media_type=media_type,
+            artifact_dir=artifact_dir,
+            retain_artifacts=retain_artifacts,
         )
 
 

@@ -1,23 +1,32 @@
-"""PickScore preference reward (model-backed, scored in-process).
-
-Thin function-layer binding registered as ``pickscore``: the registry builds it
-from YAML, and this file only pins the model factory plus the checkpoint
-defaults (``yuvalkirstain/PickScore_v1``, a CLIP ViT-H/14 human-preference
-model, with its matching LAION processor). The scoring logic lives in
-``vrl.rewards.models.pickscore`` and is built lazily by the scorer from the
-``model_factory`` dotted path.
-"""
+"""PickScore (CLIP-H) prompt-image preference reward."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from vrl.rewards.base import CumemRewardFunction
-from vrl.rewards.runtime import build_reward_scorer
+from vrl.config.reward_inference import RewardInferenceConfig
+from vrl.rewards.artifacts import MediaType
+from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.protocols import RewardScorer
 
 
-class PickScoreReward(CumemRewardFunction):
-    """PickScore v1 (CLIP ViT-H/14), normalised by /26 to roughly [0, 1]."""
+class PickScoreReward(DiskArtifactRewardFunction):
+    """PickScore (CLIP-H) prompt-image preference reward.
+
+    Model paths and dtype come from YAML; this binding pins the factory and
+    the transport: in-process the runtime builds the model on the resolved
+    device (CuMem-pooled under a shared GPU), ``inference.kind=service`` hands
+    the same worker_config to a driver-launched service.
+    """
+
+    model_factory = "vrl.rewards.models.pickscore:PickScoreRewardModel"
+    request_prefix = "pickscore"
+    debug_basename = "pickscore"
+    default_reward_name = "pickscore"
+    default_score_key = "pickscore"
+    default_artifact_format = "tensor"
+    default_media_type = "image"
+    in_process_media = "memory"
 
     def __init__(
         self,
@@ -25,10 +34,16 @@ class PickScoreReward(CumemRewardFunction):
         dtype: str = "float32",
         processor_name: str = "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
         model_name: str = "yuvalkirstain/PickScore_v1",
+        score_key: str = "pickscore",
+        scorer: RewardScorer | None = None,
+        inference: RewardInferenceConfig | None = None,
+        artifact_format: str | None = None,
+        media_type: MediaType | None = None,
+        artifact_dir: str = "outputs/reward_artifacts",
+        retain_artifacts: bool = False,
         **kwargs: Any,
     ) -> None:
         worker_config = {
-            "device": device,
             "dtype": dtype,
             "processor_name": processor_name,
             "model_name": model_name,
@@ -36,13 +51,15 @@ class PickScoreReward(CumemRewardFunction):
         }
         super().__init__(
             reward_name="pickscore",
-            score_key="pickscore",
-            scorer=build_reward_scorer(
-                {
-                    **worker_config,
-                    "model_factory": "vrl.rewards.models.pickscore:PickScoreRewardModel",
-                },
-            ),
+            score_key=score_key,
+            worker_config=worker_config,
+            device=device,
+            scorer=scorer,
+            inference=inference,
+            artifact_format=artifact_format,
+            media_type=media_type,
+            artifact_dir=artifact_dir,
+            retain_artifacts=retain_artifacts,
         )
 
 

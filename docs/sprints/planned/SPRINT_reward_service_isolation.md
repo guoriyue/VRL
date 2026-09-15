@@ -1,6 +1,6 @@
 # SPRINT：reward 全部走独立服务进程（GIL 隔离）
 
-状态：**P1 已落地（7f21d66d，2026-09-14）；P2–P5 planned**。用户决策：不论难度，reward 一律与 trainer 进程隔离。
+状态：**P1（7f21d66d）、P2（fde9474b）、P3 已落地，2026-09-14；P4–P5 planned**。用户决策：不论难度，reward 一律与 trainer 进程隔离。
 来源实验：`docs/sprints/SPRINT_four_l40s_execution.md` "Prefetch / reward placement /
 compile: final five-arm table"。
 
@@ -64,7 +64,12 @@ GPU 验收（3x1 preset + `reward.inference.ocr.kind=service`，期望 ≈398 s/
 - 验收：SD3.5 3x1 preset 不写任何 `+reward=ocr_http`，默认即走托管 OCR 服务；
   epoch 墙钟 ≈ 398 s（复现五 arm 表第三行）。
 
-### P2 服务参与 GPU 时分租约
+### P2 服务参与 GPU 时分租约 — 已落地 fde9474b
+实际形状：`/park` `/wake` 端点 + `RewardServiceInfo.memory_parking`；客户端 `HttpRewardScorer`
+实现 `MemoryParkingScorer`，`requires_memory_parking` 在 preflight 从 `/info` 学到，不假设。残留
+字节由 `/park` 返回并记日志（driver 侧本来就不再对 reward 做门控）。物理卡号无需重映射：子
+进程继承 rank-local `CUDA_VISIBLE_DEVICES`。GPU 验收：单 rank Wan 1.3B + HPSv3 服务时分 GPU3
+正在跑（`outputs/wan_hpsv3_flash_grpo/service_park_smoke_1gpu`）。
 - 服务端：解除 `sleep_offload` 禁令（仅 `kind: service`），新增 `/park`（sleep 池 +
   释放缓存 + 用 `validate_parking_residual` 自检，返回残留字节）和 `/wake`；
   `/park` 幂等，失败返回 5xx 且保留可重试语义（对齐 `core.py` 的 phase-final gate）。
@@ -79,7 +84,11 @@ GPU 验收（3x1 preset + `reward.inference.ocr.kind=service`，期望 ≈398 s/
 - 验收（最难的一条）：`online_grpo_hpsv3_fsdp_4x_l40s` 2 个 update，HPSv3 作为托管
   服务与每个 rank 时分同一张卡，metrics 与 2026-09-11 的 smoke 一致，无 Xid、无残留超限。
 
-### P3 剩余 11 个 reward 变为服务可用
+### P3 剩余 11 个 reward 变为服务可用 — 已落地
+实际形状：`DiskArtifactRewardFunction` 新增 `in_process_media="memory"`（进程内保持内存张量，
+零 IO，行为与改前完全一致）和 `eager_model`（进程内构造期建模，配置错误立即暴露；sleep_offload
+下改为 runtime 工厂建模）两个声明位；11 个绑定全部改成声明块。geneval 保留为 `RewardFunction`：
+它委托外部可调用对象、无模型无 artifact 传输，不存在 GIL 争用，在注册表里仍被 http/service 拒绝。
 - 7 个 `InferenceRewardFunction`（nsfw_safety、wd_tagger、motion_dynamics、
   image_sharpness、target_dino_similarity、grounded_ocr、codex_image_qa）和 3 个
   `CumemRewardFunction`（aesthetic、pickscore、geneval_owl）改为
