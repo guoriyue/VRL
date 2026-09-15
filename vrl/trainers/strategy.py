@@ -22,10 +22,10 @@ from torch import nn
 
 from vrl.models.parking import ModelParking, TrainingMemoryState, TrainingStateParking
 from vrl.trainers.distributed import (
-    ContextParallelGroups,
+    ContextParallelPeerGroup,
     DistributedTrainingContext,
     TrainingCollectives,
-    create_context_parallel_groups,
+    create_context_parallel_peer_group,
     init_training_process_group,
     shutdown_training_process_group,
 )
@@ -457,14 +457,14 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         self._ulysses_degree = int(ulysses_degree)
         self._ring_degree = int(ring_degree)
         self._mesh: Any | None = None  # built on first prepare_model (needs a live PG)
-        self._context_parallel_groups: ContextParallelGroups | None = None
+        self._context_parallel_groups: ContextParallelPeerGroup | None = None
 
     @property
     def context_parallel(self) -> bool:
         return self._ulysses_degree * self._ring_degree > 1
 
     @property
-    def context_parallel_groups(self) -> ContextParallelGroups | None:
+    def context_parallel_groups(self) -> ContextParallelPeerGroup | None:
         """This rank's CP groups once ``prepare_model`` has created them."""
         return self._context_parallel_groups
 
@@ -532,7 +532,7 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
             from vrl.trainers.context_parallel import enable_context_parallel
             from vrl.trainers.fsdp import build_context_parallel_mesh, unwrap_module
 
-            self._context_parallel_groups = create_context_parallel_groups(self.context)
+            self._context_parallel_groups = create_context_parallel_peer_group(self.context)
             cp_mesh = build_context_parallel_mesh(
                 self.context,
                 ulysses_degree=self._ulysses_degree,
