@@ -261,3 +261,8 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
 - 2026-09-15 10:40：**修复验证**：重启后的 recompute arm epoch 0 reward 0.4253（strict arm epoch 0
   0.4124），epoch 0–9 均值 0.40（strict 0.47，样本方差内），clip 全 0，parity 0.018–0.021，
   epoch 墙钟 ~255–305 s。artifact dtype 回归确认已修。
+- 2026-09-15 11:40：recompute arm 23/40 epoch：reward 均值 0–9 0.402、10–23 0.344（strict 0.468 / 0.431 /
+  30–40 0.441）；两条曲线在 40 epoch 内都基本平坦（每 epoch 16 prompt 的样本方差 0.27–0.50 量级），
+  epoch 0 两者接近（0.425 vs 0.412）。目前的差距在样本方差内但方向一致偏低，40 epoch 跑完再看；
+  若持续偏低，候选原因是 batch-16 生成的 bf16 数值与 batch-1 不同（此前测得 log-prob 漂移 0.015），
+  而不是 recompute 本身（它只改 ratio 的 old 侧）。clip 持续 0，墙钟 255–305 s。
