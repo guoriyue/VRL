@@ -120,6 +120,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 08:45 — 时分租约的相位切换：sleep/offload/onload/wake 的顺序、失败组合与健康探测
 - 2026-09-15 09:50 — reward 的媒体契约：生成输出到 reward 模型之间只允许一处归一化
 - 2026-09-15 10:45 — 训练样本的构造：扁平 (sample, step) 对 vs 带轴的轨迹 + 重放时切片
+- 2026-09-15 11:45 — 零优势组的处理：采集期动态过滤/补采 vs 训练期丢弃
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -385,3 +386,27 @@ sample×tstep tile 组微批。优点：切分与微批极其简单；代价：�
 （测试用 caplog 断言）。风险：无。门：无（日志级别 debug）。
 **结论**：VRL 的表示法优于扁平对，不改；参照的可借鉴处只有"训练对粒度 = sample×tstep 的
 微批 tile"这一个调度自由度，VRL 的 `training_microbatch_size` 目前只按样本切，需要时再加 step 维。
+
+### hourly note 2026-09-15 11:45 — 零优势组：在采集期补齐，还是在训练期丢弃
+
+**问题**：GRPO 里一个 prompt 组若所有样本 reward 相同（OCR 全 0 或全满分），组内优势为零，
+不产生梯度。要么训练时丢掉它（有效 batch 缩小、update 间 batch 不等），要么采集时继续采直到
+有效组数达标（batch 恒定、采集时间可变）。
+
+**参照实现**（`miles/rollout/sglang_diffusion_rollout.py:331-375`；过滤器
+`filter_hub/dynamic_sampling_filters.py:9-15`；参数 `--dynamic-sampling-filter-path`、
+`--over-sampling-batch-size`，`arguments.py:433-453`）：采集循环里对每个完成的组调用可插拔的
+过滤器（默认 `check_reward_nonzero_std`），不合格的组丢弃并记 `on_dynamic_filter_drop(reason)`，
+循环继续到 `target_data_size`；`over_sampling_batch_size` 是补采的脚手架（当前断言必须等于
+batch size，即真正的过采样尚未开放）。
+
+**VRL 今天**（`vrl/trainers/online/trainer.py:1030-1060`）：`actor.drop_zero_advantage` 在训练期
+按组/样本掩码丢弃零优势样本，`adv_zero_rate` 上报，跨 rank 用 `plan_balanced` 的 dummy 槽保持
+集合通信平衡；有效样本数随之缩小。今天 SD3.5 OCR 配方的 `adv_zero_rate` 为 12.5%，即每个
+update 少 1/8 的信号；Wan HPSv3（连续 reward）几乎为 0。
+
+**VRL 可做的事（后续）**：在 collector 层加 `rollout.dynamic_sampling`（可选的组级 keep 谓词 +
+`max_extra_groups` 上限），采集直到有效组数达到 `prompts_per_batch`；丢弃计数进 `collect.*` 统计。
+与训练期 `drop_zero_advantage` 互补而非替代（后者仍处理 rank 间不均衡）。风险：采集时间上界
+变为 (1+max_extra) 倍；门：OCR 配方下有效组数恒等于 `prompts_per_batch`，epoch 墙钟增幅
+≤ adv_zero_rate。本小时不改代码。
