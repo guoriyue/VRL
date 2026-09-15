@@ -20,10 +20,14 @@ Families opt in by naming their installer in the registry
 (``GenerationRuntimeCapabilities.sequence_parallel_installer``); the rank
 program resolves it by dotted path at model build.
 
-The collectives are composed from ``all_gather`` + ``narrow``: numerically
-identical on gloo (CPU tests) and nccl, one code path everywhere. The
-bandwidth-optimal ``all_to_all_single`` rewrite is a P6 profiling decision,
-not a correctness one (docs/sprints/SPRINT_engine_worker_vocabulary.md).
+The Ulysses exchange is one ``all_to_all_single`` per tensor: every rank
+sends each peer exactly the (head group, sequence shard) block that peer
+keeps, so the wire carries ``(P-1)/P`` of the local tensor instead of the
+``P-1`` local tensors an all-gather-then-narrow moves (P-fold fewer bytes
+and no P-way scratch copy per exchange). The replicated text stream and the
+block-entry/exit shard/gather stay ``all_gather`` + ``narrow``: there every
+rank needs every peer's chunk. Both collectives run identically on gloo
+(CPU tests) and nccl, one code path everywhere.
 """
 
 from __future__ import annotations
@@ -60,18 +64,61 @@ def _local_chunk(tensor: torch.Tensor, *, dim: int, group: Any) -> torch.Tensor:
     return tensor.narrow(dim, (size // world) * rank, size // world)
 
 
-def _shards_to_heads(tensor: torch.Tensor, *, group: Any) -> torch.Tensor:
-    """[B, H, s_local, hd] -> [B, H/P, S, hd]: trade sequence shard for heads."""
+def _exchange_blocks(blocks: torch.Tensor, *, group: Any) -> torch.Tensor:
+    """All-to-all over a leading peer axis: ``out[p]`` is what rank ``p`` sent us.
 
-    full_sequence = _gather_dim(tensor, dim=2, group=group)
-    return _local_chunk(full_sequence, dim=1, group=group)
+    ``blocks[p]`` is the block destined for rank ``p``; equal block sizes, so
+    the collective needs no split lists.
+    """
+
+    blocks = blocks.contiguous()
+    received = torch.empty_like(blocks)
+    dist.all_to_all_single(received, blocks, group=group)
+    return received
+
+
+def _shards_to_heads(tensor: torch.Tensor, *, group: Any) -> torch.Tensor:
+    """[B, H, s_local, hd] -> [B, H/P, S, hd]: trade sequence shard for heads.
+
+    Rank ``p`` receives our shard of its head group; the received blocks are
+    indexed by source rank, i.e. by sequence shard, so laying them out along
+    the sequence axis in rank order rebuilds the full sequence.
+    """
+
+    world = dist.get_world_size(group)
+    batch, heads, shard_len, head_dim = tensor.shape
+    if heads % world:
+        raise ValueError(
+            f"{heads} attention heads are not divisible across {world} ranks",
+        )
+    head_group = heads // world
+    # [B, P, H/P, s, hd] -> [P, B, H/P, s, hd]: one block per destination rank.
+    blocks = tensor.unflatten(1, (world, head_group)).transpose(0, 1)
+    received = _exchange_blocks(blocks, group=group)
+    # [P, B, H/P, s, hd] -> [B, H/P, P, s, hd] -> [B, H/P, S, hd].
+    return received.permute(1, 2, 0, 3, 4).reshape(batch, head_group, world * shard_len, head_dim)
 
 
 def _heads_to_shards(tensor: torch.Tensor, *, group: Any) -> torch.Tensor:
-    """[B, H/P, S, hd] -> [B, H, s_local, hd]: the inverse Ulysses exchange."""
+    """[B, H/P, S, hd] -> [B, H, s_local, hd]: the inverse Ulysses exchange.
 
-    full_heads = _gather_dim(tensor, dim=1, group=group)
-    return _local_chunk(full_heads, dim=2, group=group)
+    Rank ``p`` receives its sequence shard of our head group; the received
+    blocks are indexed by source rank, i.e. by head group, so laying them out
+    along the head axis in rank order rebuilds the full head set.
+    """
+
+    world = dist.get_world_size(group)
+    batch, head_group, seq_len, head_dim = tensor.shape
+    if seq_len % world:
+        raise ValueError(
+            f"sequence length {seq_len} is not divisible across {world} ranks",
+        )
+    shard_len = seq_len // world
+    # [B, H/P, P, s, hd] -> [P, B, H/P, s, hd]: one block per destination rank.
+    blocks = tensor.unflatten(2, (world, shard_len)).permute(2, 0, 1, 3, 4)
+    received = _exchange_blocks(blocks, group=group)
+    # [P, B, H/P, s, hd] -> [B, P, H/P, s, hd] -> [B, H, s, hd].
+    return received.transpose(0, 1).reshape(batch, world * head_group, shard_len, head_dim)
 
 
 class UlyssesJointAttnProcessor:
