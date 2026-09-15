@@ -108,3 +108,15 @@ deterministic 模式用于 E2E 标准。与此同时，VRL 的 parity 门和 `cl
   `MaterializedArtifact` 引用，`GenerationOutput.video` 对磁盘型 reward 置空；driver 侧
   store `_adopt` 接管文件并保留 release 归属。A 的门（py-spy < 2% driver 侧 pickle/mp4）
   等 GPU 空出后测。托管服务的文件名 bug（hub id 含 `/`）修于 986b5c25。
+- 2026-09-14：C 实现完成（未提交，等主机空闲跑测试）：`fsdp.mesh: [dp_shard, cp]` +
+  `fsdp.context_parallel.{ulysses_degree, ring_degree}`；trainer 建 3D mesh
+  `("dp_shard","ring","ulysses")`（diffusers `ContextParallelConfig.setup` 只认这两个名字），
+  `fully_shard` 只用 `dp_shard` 子 mesh；`vrl/trainers/context_parallel.py` 在 `fully_shard`
+  之前对解包后的 diffusers 模型调 `enable_parallelism`（无 `_cp_plan` 的家族按类名报错）。
+  输出在 `proj_out` 已 all-gather，log-prob / loss 数学在完整序列上不变；每个 CP rank 的梯度是
+  同一 loss 的分片贡献，`clip_grad_norm` 前在 CP 组 SUM（`reduce_context_parallel_gradients`）。
+  Rollout：`ContextParallelRolloutSchedule` 让 CP leader 采样、组内 gloo 广播 batches，follower
+  以空 prompt 走同一 lifecycle（FSDP 权重导出/同步是全 rank 集合通信）；prompt sampler 身份改为
+  `dp_rank/dp_size`。预设 `base/distributed/training_fsdp_cp2.yaml`。
+  待办：2 GPU Wan 1.3B cp=2 vs 1 GPU 的 loss/grad-norm 门；follower 的 rollout 引擎目前空转，
+  与 rollout SP（`gpus_per_engine == cp`）配对是后续项。
