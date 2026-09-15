@@ -21,6 +21,7 @@ from vrl.generation.execution.types import (
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.pipeline_protocol import PipelinedRequestProgress
+from vrl.generation.ray.tensor_wire import register_tensor_wire_serializer
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.ray.dependencies import current_gpu_ids, current_node_ip
 
@@ -44,6 +45,10 @@ class RayGenerationWorker:
                 "launch_inputs must be RayGenerationLaunchInputs, "
                 f"got {type(launch_inputs).__name__}",
             )
+        # Batch results and trajectories leave this process as byte views of
+        # their pinned host buffers instead of pickled storages, so a request's
+        # return does not stall the actor for a copy of every trajectory tensor.
+        register_tensor_wire_serializer()
         self.core = GenerationWorkerCore(
             worker_id,
             launch_inputs.launch_contract,
