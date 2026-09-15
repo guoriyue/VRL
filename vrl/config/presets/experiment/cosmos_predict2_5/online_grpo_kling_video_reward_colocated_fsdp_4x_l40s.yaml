@@ -1,0 +1,53 @@
+# Four rank-local GPU owners alternate generation, Kling reward and FSDP training.
+# Launch with torchrun --standalone --nproc-per-node=4 -m vrl.scripts.train.
+# Preserve the base recipe's global32 groups x8 samples, split across four ranks.
+defaults:
+  - /experiment/cosmos_predict2_5/online_grpo_kling_video_reward
+
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 4
+    fsdp:
+      mesh: [dp_shard]
+      precision_policy: none
+      shard_trainable_only: true
+      reshard_after_forward: true
+      cpu_offload: false
+  resources:
+    visible_devices: auto
+    trainer:
+      devices: auto
+    rollout:
+      num_gpus: 1
+      devices: auto
+      gpu_pool: trainer
+    reward:
+      device: gpu
+      devices: auto
+      gpu_pool: rollout
+  rollout:
+    cpus_per_worker: 4.0
+
+model:
+  torch_compile:
+    enable: false
+
+precision:
+  float32_precision: ieee
+
+actor:
+  # Full512p93f replay requires activation recomputation on48GB cards.
+  gradient_checkpointing: full
+
+rollout:
+  prompts_per_batch: 8
+  trajectory_storage:
+    device: cpu
+    dtype: preserve
+
+trainer:
+  output_dir: outputs/cosmos_predict2_5_grpo_colocated_fsdp_4x_l40s
+  rollout_orchestration:
+    schedule_mode: strict_on_policy

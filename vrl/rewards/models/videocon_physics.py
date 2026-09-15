@@ -30,6 +30,10 @@ from vrl.rewards.assets.video_judge_prompts import (
 )
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.hub import resolve_model_root
+from vrl.rewards.models.videocon_compat import (
+    prepare_videocon_imports,
+    prepare_videocon_model_class,
+)
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -69,8 +73,10 @@ class VideoConPhysicsModel:
             self.num_frames,
         )
 
+        prepare_videocon_imports()
         from mplug_owl_video.modeling_mplug_owl import (
             MplugOwlForConditionalGeneration,
+            MplugOwlPreTrainedModel,
         )
         from mplug_owl_video.processing_mplug_owl import (
             MplugOwlImageProcessor,
@@ -78,11 +84,40 @@ class VideoConPhysicsModel:
         )
         from transformers import LlamaTokenizer
 
+        prepare_videocon_model_class(MplugOwlPreTrainedModel)
+
+        # The pinned vendor lists a nonexistent T5-style module on every root,
+        # including the vision model. Modern Transformers validates this list.
+        # No VideoCon parameter is named wo; retain any different vendor policy.
+        if MplugOwlPreTrainedModel._keep_in_fp32_modules == ["wo"]:
+            MplugOwlPreTrainedModel._keep_in_fp32_modules = []
+
         tokenizer = LlamaTokenizer.from_pretrained(str(self.model_root))
         image_processor = MplugOwlImageProcessor.from_pretrained(str(self.model_root))
-        processor = MplugOwlProcessor(image_processor, tokenizer)
+
+        class VideoConProcessor(MplugOwlProcessor):
+            @classmethod
+            def get_attributes(cls):
+                # Preserve the vendor's attributes=[] contract. It initializes
+                # both members itself after calling ProcessorMixin with no args.
+                return []
+
+        processor = VideoConProcessor(image_processor, tokenizer)
+
+        # Modern Transformers replaced is_composition with this flag. Without
+        # it, config logging calls the vendor's broken no-argument constructor.
+        class VideoConConfig(MplugOwlForConditionalGeneration.config_class):
+            has_no_defaults_at_init = True
+
+            def __init__(self, **kwargs):
+                # Transformers 5 otherwise generates a dataclass constructor
+                # that skips the vendor's nested-config initialization.
+                super().__init__(**kwargs)
+
+        model_config = VideoConConfig.from_pretrained(str(self.model_root))
         model = MplugOwlForConditionalGeneration.from_pretrained(
             str(self.model_root),
+            config=model_config,
             torch_dtype=self.dtype,
         )
         model.eval()

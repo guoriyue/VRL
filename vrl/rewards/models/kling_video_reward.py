@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -435,7 +436,9 @@ def load_kling_video_reward_checkpoint(
     checkpoint_path, resolved_step = _resolve_checkpoint_path(checkpoint_dir)
     full_ckpt = checkpoint_path / "model.pth"
     if full_ckpt.exists():
-        state = torch.load(full_ckpt, map_location="cpu")
+        # Keep checkpoint pages file-backed during concurrent reward cold starts.
+        # Legacy Torch serialization does not support mmap.
+        state = torch.load(full_ckpt, map_location="cpu", mmap=zipfile.is_zipfile(full_ckpt))
         if isinstance(state, Mapping):
             state = relocate_checkpoint_keys(model, state)
         model.load_state_dict(state, strict=True)

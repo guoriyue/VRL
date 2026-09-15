@@ -24,6 +24,7 @@ class RewardRuntimeLaunchContract:
     model_factory: str
     device: str
     sleep_offload: bool
+    memory_parking_mode: str
     reward_model_name: str
     reward_model_version: str
     component_config: Mapping[str, Any]
@@ -39,10 +40,16 @@ class RewardRuntimeLaunchContract:
         sleep_offload = cfg.get("sleep_offload", False)
         if not isinstance(sleep_offload, bool):
             raise ValueError("reward sleep_offload must be a boolean")
+        parking_mode = cfg.get("memory_parking_mode", "cumem")
+        if parking_mode not in ("cumem", "reload"):
+            raise ValueError("reward memory_parking_mode must be 'cumem' or 'reload'")
+        if parking_mode == "reload" and not sleep_offload:
+            raise ValueError("reward memory_parking_mode='reload' requires sleep_offload")
         return cls(
             model_factory=str(cfg.get("model_factory", "")).strip(),
             device=str(cfg.get("device", "")),
             sleep_offload=sleep_offload,
+            memory_parking_mode=parking_mode,
             reward_model_name=str(cfg.get("reward_model_name", "")).strip(),
             reward_model_version=str(cfg.get("reward_model_version", "")).strip(),
             component_config=cfg,

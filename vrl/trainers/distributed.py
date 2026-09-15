@@ -16,12 +16,15 @@ layer (``fully_shard`` wrapping + DTensor full-state export) lives in
 symmetric colocated torchrun path for ``ddp`` and ``fsdp``: each rank owns its
 local rollout/training device and the strategy layer handles cross-rank gradient
 coordination. TrainingCollectives provides communication over those groups.
+
+Training-only differentiable token/head exchanges also live here. They consume
+an existing process group and do not change process identity or model wrapping.
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -33,6 +36,193 @@ if TYPE_CHECKING:
 # torchrun / env-launcher contract. Source of truth for the keys the fsdp context
 # parses; the missing-env error lists exactly these.
 _TORCHRUN_ENV_KEYS = ("RANK", "LOCAL_RANK", "WORLD_SIZE")
+
+
+def _context_parallel_layout(tensor: torch.Tensor, group: Any) -> tuple[int, int]:
+    import torch.distributed as dist
+
+    if not dist.is_initialized():
+        raise RuntimeError("context parallel exchange requires an initialized process group")
+    world, rank = dist.get_world_size(group), dist.get_rank(group)
+    if world < 2 or rank < 0:
+        raise ValueError("context parallel exchange requires membership in a group of >= 2")
+    if tensor.ndim != 4 or any(size == 0 for size in tensor.shape):
+        raise ValueError(
+            "context parallel exchange expects nonempty [batch, heads, tokens, width]"
+        )
+    return world, rank
+
+
+def _context_parallel_gather(tensor: torch.Tensor, dim: int, group: Any) -> torch.Tensor:
+    from torch.distributed._functional_collectives import all_gather_tensor_autograd
+
+    # Keep the collective's gather dimension zero; preserve head/token ordering.
+    full = all_gather_tensor_autograd(tensor.movedim(dim, 0).contiguous(), 0, group)
+    if full.requires_grad:
+        # PyTorch's reduce-scatter backward requires contiguous consumer gradients.
+        full.register_hook(lambda gradient: gradient.contiguous())
+    return full.movedim(0, dim)
+
+
+def context_parallel_gather_tokens(tensor: torch.Tensor, *, group: Any) -> torch.Tensor:
+    """Gather [B,S/P,D] outputs with summed consumer gradients.
+
+    A full-output objective replicated on every CP rank must be divided by the
+    group size before backward. Parameter-gradient reduction remains separate.
+    """
+    if tensor.ndim != 3:
+        raise ValueError("context parallel output gather expects [batch, tokens, width]")
+    _context_parallel_layout(tensor.unsqueeze(1), group)
+    return _context_parallel_gather(tensor, 1, group)
+
+
+def context_parallel_tokens_to_heads(tensor: torch.Tensor, *, group: Any) -> torch.Tensor:
+    """[B,H,S/P,D] -> [B,H/P,S,D], with gradients across equal token shards.
+
+    All group members must call with matching shapes/dtypes in the same order.
+    This gather-based baseline materializes full Q/K/V temporarily; it is not
+    the bandwidth-optimal all-to-all implementation.
+    """
+    world, rank = _context_parallel_layout(tensor, group)
+    if tensor.shape[1] % world:
+        raise ValueError("attention heads must be divisible by context parallel group size")
+    full = _context_parallel_gather(tensor, 2, group)
+    return full.chunk(world, dim=1)[rank].contiguous()
+
+
+def context_parallel_heads_to_tokens(tensor: torch.Tensor, *, group: Any) -> torch.Tensor:
+    """[B,H/P,S,D] -> [B,H,S/P,D], the differentiable inverse exchange.
+
+    Backward sums contributions from each consumer rank; callers must not
+    divide local-token losses by the CP group size unless their objective is
+    replicated. Parameter-gradient reduction remains the strategy's job.
+    """
+    world, rank = _context_parallel_layout(tensor, group)
+    if tensor.shape[2] % world:
+        raise ValueError("token count must be divisible by context parallel group size")
+    full = _context_parallel_gather(tensor, 1, group)
+    return full.chunk(world, dim=2)[rank].contiguous()
+
+
+@dataclass(frozen=True, slots=True)
+class ContextParallelGroups:
+    """A complete world arranged as contiguous CP groups and strided DP groups."""
+
+    cp_group: Any
+    dp_group: Any
+    cp_size: int
+    dp_size: int
+    cp_rank: int
+    dp_rank: int
+
+
+def create_context_parallel_groups(cp_size: int) -> ContextParallelGroups:
+    """Collectively create DP x CP groups in identical order on every world rank.
+
+    Does not initialize the default group. The process-group owner is also
+    responsible for shutdown. CP peers must receive identical replay inputs;
+    sampler identity is dp_rank/dp_size, not physical rank/world size.
+    """
+    import torch.distributed as dist
+
+    if not dist.is_initialized():
+        raise RuntimeError("CP groups require an initialized process group")
+    world, rank = dist.get_world_size(), dist.get_rank()
+    if isinstance(cp_size, bool) or not isinstance(cp_size, int) or cp_size < 2 or world % cp_size:
+        raise ValueError("CP size must be an integer >= 2 dividing world size")
+    dp_size = world // cp_size
+    cp_group = dp_group = None
+    for dp_rank in range(dp_size):
+        members = list(range(dp_rank * cp_size, (dp_rank + 1) * cp_size))
+        group = dist.new_group(members)
+        if rank in members:
+            cp_group = group
+    for cp_rank in range(cp_size):
+        members = list(range(cp_rank, world, cp_size))
+        group = dist.new_group(members)
+        if rank in members:
+            dp_group = group
+    return ContextParallelGroups(
+        cp_group, dp_group, cp_size, dp_size, rank % cp_size, rank // cp_size
+    )
+
+
+def synchronize_context_parallel_rng(
+    *, groups: ContextParallelGroups, device: torch.device
+) -> None:
+    """Copy a CP leader's process RNGs without touching other CUDA devices.
+
+    Call at the strict replay boundary after leader-only collection. Does not
+    alter explicit torch.Generator objects such as the prompt sampler. Matching
+    RNG state does not make differently shaped dropout/noise draws equivalent;
+    stochastic model operations need a separate sharding contract.
+    """
+    import random
+
+    import numpy as np
+    import torch.distributed as dist
+
+    device = torch.device(device)
+    if device.type == "cuda" and (
+        device.index is None or device.index != torch.cuda.current_device()
+    ):
+        raise ValueError("CP RNG synchronization requires the current rank-local CUDA device")
+    payload = [None]
+    if groups.cp_rank == 0:
+        payload[0] = {
+            "torch": torch.get_rng_state(),
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "cuda": torch.cuda.get_rng_state(device) if device.type == "cuda" else None,
+        }
+    dist.broadcast_object_list(
+        payload, src=dist.get_global_rank(groups.cp_group, 0), group=groups.cp_group, device=device
+    )
+    state = payload[0]
+    torch.set_rng_state(state["torch"])
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    if device.type == "cuda":
+        torch.cuda.set_rng_state(state["cuda"], device)
+
+
+def reduce_context_parallel_gradients(
+    parameters: Iterable[torch.nn.Parameter], *, groups: ContextParallelGroups
+) -> None:
+    """SUM CP contributions, then average independent DP replicas in place.
+
+    Call exactly once after local gradient accumulation, before clipping/step;
+    do not also use a DDP reducer. Replicated full-output losses must already
+    be divided by CP size, and accumulation normalized by the caller. Every
+    world rank supplies the same ordered dense parameter list on one device.
+    Globally unused gradients remain None (preserving optimizer semantics).
+    """
+    import torch.distributed as dist
+
+    parameters = list(parameters)
+    if not parameters:
+        return
+    device = parameters[0].device
+    if any(parameter.device != device for parameter in parameters):
+        raise ValueError("CP gradient reduction requires one parameter device")
+    flags = torch.tensor(
+        [0 if p.grad is None else (2 if p.grad.is_sparse else 1) for p in parameters],
+        dtype=torch.int32,
+        device=device,
+    )
+    dist.all_reduce(flags, op=dist.ReduceOp.MAX)
+    active = flags.tolist()
+    if 2 in active:
+        raise ValueError("CP gradient reduction requires dense gradients")
+    for parameter, present in zip(parameters, active, strict=True):
+        if not present:
+            continue
+        if parameter.grad is None:
+            parameter.grad = torch.zeros_like(parameter)
+        dist.all_reduce(parameter.grad, op=dist.ReduceOp.SUM, group=groups.cp_group)
+        if groups.dp_size > 1:
+            dist.all_reduce(parameter.grad, op=dist.ReduceOp.SUM, group=groups.dp_group)
+            parameter.grad.div_(groups.dp_size)
 
 
 @dataclass(frozen=True, slots=True)

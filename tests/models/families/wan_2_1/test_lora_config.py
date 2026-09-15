@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -137,3 +138,45 @@ def test_wan_warm_start_validation_failure_keeps_raw_transformer(
         )
 
     assert model.transformer is base
+
+
+@pytest.mark.parametrize("adapter_dtype", [None, "float32"])
+@pytest.mark.parametrize("warm_start", [False, True])
+def test_wan_adapter_storage_preserves_frozen_base(
+    adapter_dtype: str | None,
+    warm_start: bool,
+    tmp_path: Path,
+) -> None:
+    model = _model()
+    model.transformer.to(dtype=torch.bfloat16)
+    base = model.transformer.proj.weight
+    before = base.detach().clone()
+    pointer = base.data_ptr()
+    build = SimpleNamespace(
+        lora_path=None,
+        model_config={"lora_parameter_dtype": adapter_dtype},
+        lora=_lora_values(0.0),
+        defer_trainable_device_move=False,
+    )
+    if warm_start:
+        source = _model()
+        source.apply_lora(build)
+        source.transformer.save_pretrained(tmp_path)
+        build.lora_path = str(tmp_path)
+    model.apply_lora(build)
+    expected = torch.float32 if adapter_dtype else torch.bfloat16
+    trainable = [p for p in model.transformer.parameters() if p.requires_grad]
+    assert trainable and all(p.dtype == expected for p in trainable)
+    assert not base.requires_grad
+    assert base.dtype == torch.bfloat16 and base.data_ptr() == pointer
+    assert torch.equal(base, before)
+
+
+def test_wan_invalid_adapter_storage_rejected_before_mutation() -> None:
+    model = _model()
+    base = model.transformer
+    flags = [p.requires_grad for p in base.parameters()]
+    with pytest.raises(ValueError, match="lora_parameter_dtype"):
+        model.apply_lora(SimpleNamespace(model_config={"lora_parameter_dtype": "float16"}))
+    assert model.transformer is base
+    assert [p.requires_grad for p in base.parameters()] == flags

@@ -18,9 +18,12 @@ This module imports the CUDA parking utilities; the contract modules
 from __future__ import annotations
 
 import asyncio
+import gc
+import random
 import time
 import traceback
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager, nullcontext
 from typing import Any
 
 from vrl.config.reward_inference import (
@@ -221,12 +224,54 @@ class RewardFunctionRuntime:
             self.lifecycle.finish_shutdown()
 
 
+@contextmanager
+def _preserve_driver_rng_during_model_build():
+    """Keep synchronous cold construction from changing trainer resume streams."""
+    import numpy as np
+    import torch
+
+    python_state = random.getstate()
+    numpy_state = np.random.get_state()
+    devices = list(range(torch.cuda.device_count())) if torch.cuda.is_initialized() else []
+    try:
+        with torch.random.fork_rng(devices=devices):
+            yield
+    finally:
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
+
+
+def _reward_device_scope(worker_config: Mapping[str, Any]) -> Any:
+    import torch
+
+    configured_device = worker_config.get("device")
+    device = torch.device(configured_device) if configured_device is not None else None
+    return (
+        torch.cuda.device(device)
+        if device is not None and device.type == "cuda"
+        else nullcontext()
+    )
+
+
+def _host_memory_trim() -> Any:
+    """Resolve the measured glibc release operation before a reload-mode build."""
+    import ctypes
+
+    libc = ctypes.CDLL(None)
+    trim = getattr(libc, "malloc_trim", None)
+    if trim is None:
+        raise RuntimeError("reward reload parking requires glibc malloc_trim")
+    trim.argtypes = [ctypes.c_size_t]
+    trim.restype = ctypes.c_int
+    return lambda: trim(0)
+
+
 def _build_prepared_model_in_pool(
-    pool: CumemPool,
+    pool: CumemPool | None,
     factory: Any,
     worker_config: Mapping[str, Any],
 ) -> Any:
-    """Build and prepare one reward model in an isolated CuMem-owned frame.
+    """Build and prepare in an isolated frame, optionally owned by a CuMem pool.
 
     The separate frame is a failure-ownership boundary: if lazy preparation
     allocates partial CUDA state and raises, the caller can clear this frame
@@ -234,7 +279,8 @@ def _build_prepared_model_in_pool(
     in the caller or traceback would leave its tensors live during cleanup.
     """
 
-    with pool.building():
+    # PyTorch's pool scope captures the current device, not arbitrary .to() targets.
+    with _reward_device_scope(worker_config), pool.building() if pool else nullcontext():
         model = factory(worker_config)
         prepare = getattr(model, "prepare_for_inference", None)
         if callable(prepare):
@@ -252,11 +298,13 @@ class InProcessRewardScorer:
     before rewards score) already guarantees the card is free at that point.
     Small in-memory rewards (CLIP-class) leave the knob off and stay resident.
 
-    Parking is CuMem-only. The model is built under a backup tag, so process-wide
+    Default parking uses CuMem. The model is built under a backup tag, so process-wide
     ``sleep`` releases physical pages while preserving this reward's contents in
     pinned host RAM; the runtime requires vLLM's CuMemAllocator and fails loud
     without it rather than degrading to a CPU round trip, which measured 6.2x
     slower per wake/score/sleep cycle and only appears to park.
+    Opt-in ``memory_parking_mode='reload'`` instead destroys the model and trims
+    released host allocations at each handoff, paying checkpoint reload latency.
     CuMem tags do not isolate sleep operations; the shared-topology preflight
     therefore permits at most one configured GPU reward component per process;
     zero-weight observation-only scorers still execute and therefore count.
@@ -273,6 +321,9 @@ class InProcessRewardScorer:
     ) -> None:
         # Typed runtime contract; the verbatim bag still feeds the factory.
         self._launch = RewardRuntimeLaunchContract.from_component_config(worker_config)
+        self._trim_host_memory = (
+            _host_memory_trim() if self._launch.memory_parking_mode == "reload" else None
+        )
         if model is not None and self._launch.sleep_offload:
             raise ValueError(
                 "sleep_offload requires the runtime to build the model itself "
@@ -298,7 +349,8 @@ class InProcessRewardScorer:
 
         self._ensure_model()
         if self._pool is not None:
-            self._pool.wake()
+            with _reward_device_scope(self._launch.component_config):
+                self._pool.wake()
 
     async def park_memory(self) -> None:
         """Park reward pages and release cached CUDA memory; safe to retry."""
@@ -307,6 +359,9 @@ class InProcessRewardScorer:
             raise RuntimeError(
                 "reward runtime was not configured for complete memory parking",
             )
+        if self._launch.memory_parking_mode == "reload":
+            await self.shutdown()
+            return
         pool = self._pool
         if pool is None:
             raise RuntimeError(
@@ -315,47 +370,62 @@ class InProcessRewardScorer:
         if not pool.asleep:
             # CumemPool marks itself asleep only after allocator.sleep returns.
             # A failure therefore leaves this branch retryable on the next call.
-            pool.sleep()
+            with _reward_device_scope(self._launch.component_config):
+                pool.sleep()
         self._release_cuda_memory_for_parking()
 
     def _ensure_model(self) -> Any:
         if self._model is None:
-            factory_path = self._launch.model_factory
-            if not factory_path:
-                raise ValueError(
-                    "InProcessRewardScorer requires worker_config.model_factory "
-                    "(import path to a RewardModel factory) or an explicit model",
-                )
-            factory = import_from_path(factory_path)
-            if self._launch.sleep_offload:
-                pool = CumemPool.require()
-                # Build inside the pool so every CUDA allocation the factory
-                # makes (from_pretrained, .to(device), buffers) is tagged and
-                # sleep/wake can release/restore it wholesale.
-                try:
-                    model = _build_prepared_model_in_pool(
-                        pool,
-                        factory,
-                        self._launch.component_config,
+            with _preserve_driver_rng_during_model_build():
+                factory_path = self._launch.model_factory
+                if not factory_path:
+                    raise ValueError(
+                        "InProcessRewardScorer requires worker_config.model_factory "
+                        "(import path to a RewardModel factory) or an explicit model",
                     )
-                except BaseException as load_error:
-                    # Commit neither half of a failed model/pool build. Dropping
-                    # traceback-held helper locals first lets terminal pool close
-                    # release partial CUDA allocations before a future retry.
-                    traceback.clear_frames(load_error.__traceback__)
+                factory = import_from_path(factory_path)
+                if self._trim_host_memory is not None:
+                    # Training and checkpoint export can retain freed host pages
+                    # between reward activations in this shared process.
+                    gc.collect()
+                    self._trim_host_memory()
+                if self._launch.sleep_offload:
+                    pool = (
+                        CumemPool.require()
+                        if self._launch.memory_parking_mode == "cumem"
+                        else None
+                    )
+                    # Build inside the pool so every CUDA allocation the factory
+                    # makes (from_pretrained, .to(device), buffers) is tagged and
+                    # sleep/wake can release/restore it wholesale.
                     try:
-                        self._release_cuda_memory_for_parking()
-                        pool.close()
-                    except BaseException as cleanup_error:
-                        raise RuntimeError(
-                            "reward model preparation and CuMem cleanup both failed: "
-                            f"load={load_error!r}; cleanup={cleanup_error!r}",
-                        ) from cleanup_error
-                    raise
-                self._pool = pool
-                self._model = model
-            else:
-                self._model = factory(self._launch.component_config)
+                        model = _build_prepared_model_in_pool(
+                            pool,
+                            factory,
+                            self._launch.component_config,
+                        )
+                    except BaseException as load_error:
+                        # Commit neither half of a failed model/pool build. Dropping
+                        # traceback-held helper locals first lets terminal pool close
+                        # release partial CUDA allocations before a future retry.
+                        traceback.clear_frames(load_error.__traceback__)
+                        try:
+                            self._release_cuda_memory_for_parking()
+                            if pool is not None:
+                                with _reward_device_scope(self._launch.component_config):
+                                    pool.close()
+                            if self._trim_host_memory is not None:
+                                self._trim_host_memory()
+                        except BaseException as cleanup_error:
+                            raise RuntimeError(
+                                "reward model preparation and parking cleanup both failed: "
+                                f"load={load_error!r}; cleanup={cleanup_error!r}",
+                            ) from cleanup_error
+                        raise
+                    self._pool = pool
+                    self._model = model
+                else:
+                    self._model = factory(self._launch.component_config)
         return self._model
 
     async def score_batch(
@@ -366,7 +436,8 @@ class InProcessRewardScorer:
             return []
         model = self._ensure_model()
         if self._pool is not None:
-            self._pool.wake()
+            with _reward_device_scope(self._launch.component_config):
+                self._pool.wake()
         # CuMem's model-building scope is one-shot. Execution uses the normal
         # allocator; park_memory's physical baseline gate rejects any lazy
         # long-lived CUDA allocation that survives scoring.
@@ -426,16 +497,23 @@ class InProcessRewardScorer:
         # dropping the model so freeing the tensors actually returns the
         # pool's memory instead of leaking offloaded copies.
         pool = self._pool
-        if pool is not None:
-            pool.wake()
-        self._model = None
-        if pool is not None:
-            pool.close()
+        with (
+            _reward_device_scope(self._launch.component_config)
+            if pool is not None
+            else nullcontext()
+        ):
+            if pool is not None:
+                pool.wake()
+            self._model = None
+            if pool is not None:
+                pool.close()
         # Dedicated CUDA rewards use torch's caching allocator rather than a
         # CuMem pool. Dropping the model alone leaves those physical pages
         # reserved in this long-lived driver process, so terminal cleanup must
         # release the configured device cache for every runtime.
         self._release_cuda_memory_for_parking()
+        if self._trim_host_memory is not None:
+            self._trim_host_memory()
         self._pool = None
 
     def _release_cuda_memory_for_parking(self) -> None:

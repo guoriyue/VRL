@@ -713,7 +713,9 @@ class MiniMaxH3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModel
 
         components = self.pipeline
         vae = components.vae
-        device = latents.device
+        output_device = latents.device
+        device = vae.device
+        latents = latents.to(device)
         latents_mean = torch.tensor(vae.config.latents_mean, device=device).view(1, -1, 1, 1, 1)
         latents_std = torch.tensor(vae.config.latents_std, device=device).view(1, -1, 1, 1, 1)
         pixel_mean = torch.tensor((0.485, 0.456, 0.406), device=device).view(1, -1, 1, 1, 1)
@@ -736,7 +738,7 @@ class MiniMaxH3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModel
                 output_layout="video_btchw",
             ),
         )
-        return decoder(latents)
+        return decoder(latents).to(output_device)
 
     def decode_audio(self, audio_rows: torch.Tensor) -> tuple[torch.Tensor, int]:
         """Final audio rows ``[1, rows, C]`` -> ``(waveform [channels, samples], sample_rate)``.
@@ -752,14 +754,17 @@ class MiniMaxH3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModel
             raise ValueError(
                 f"audio rows must be [1, rows, channels], got {tuple(audio_rows.shape)}"
             )
-        rows = audio_rows[0]
+        output_device = audio_rows.device
+        rows = audio_rows[0].to(audio_vae.device)
         num_latents = rows.shape[0] // _AUDIO_CHANNELS
         latents = rows.reshape(_AUDIO_CHANNELS, num_latents, rows.shape[-1]).permute(0, 2, 1)
         device = latents.device
         mean = torch.tensor(audio_vae.config.latents_mean, device=device).view(1, -1, 1)
         std = torch.tensor(audio_vae.config.latents_std, device=device).view(1, -1, 1)
         audio = audio_vae.decode(latents.float() * std + mean, return_dict=False)[0]
-        return audio.float().permute(1, 0, 2)[0], int(audio_vae.config.sampling_rate)
+        return audio.float().permute(1, 0, 2)[0].to(output_device), int(
+            audio_vae.config.sampling_rate
+        )
 
     def _video_processor(self) -> Any:
         from diffusers.video_processor import VideoProcessor

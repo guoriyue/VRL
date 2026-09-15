@@ -151,6 +151,7 @@ def apply_fsdp(
     mp_policy: Any,
     reshard_after_forward: bool = True,
     cpu_offload: bool = False,
+    ignored_params: set[nn.Parameter] | None = None,
 ) -> nn.Module:
     """Shard ``handle`` in place with FSDP2 and return it.
 
@@ -166,6 +167,8 @@ def apply_fsdp(
     from torch.distributed.fsdp import CPUOffloadPolicy, fully_shard
 
     offload_kwargs = {"offload_policy": CPUOffloadPolicy()} if cpu_offload else {}
+    if ignored_params is not None:
+        offload_kwargs["ignored_params"] = ignored_params
 
     # Only the root module casts forward inputs to the compute dtype; inner blocks
     # receive already-cast activations, so re-casting them is wasted work.
@@ -305,6 +308,10 @@ def _full_cpu_tensor(value: torch.Tensor, *, keep: bool) -> torch.Tensor | None:
     from torch.distributed.tensor import DTensor
 
     if isinstance(value, DTensor):
+        if value.device.type == "cpu" and value.device_mesh.device_type == "cuda":
+            # CPU-offloaded shards still belong to the CUDA/NCCL mesh. Stage
+            # only this selected tensor for its collective, not the frozen model.
+            value = value.detach().to(device=torch.device("cuda", torch.cuda.current_device()))
         value = value.full_tensor()
     return value.detach().cpu().clone() if keep else None
 
@@ -631,15 +638,16 @@ def normalize_fsdp_parameter_dtype(
     *,
     allow_cast: bool,
 ) -> None:
-    """Make an FSDP parameter group uniform without hiding dtype provenance.
+    """Validate native trainable dtypes or normalize the explicit actor policy.
 
-    FSDP2 validates original parameter dtypes before its mixed-precision cast.
+    FSDP2 requires uniform trainable original/reduction dtypes, but permits
+    frozen floating parameters to retain their own storage dtype.
     Diffusers deliberately leaves a small set of normalization/conditioning
     parameters in FP32 even when the resolved model dtype is BF16. The actor
     policy stores all model parameters in its resolved low precision and relies
     on the FP32-master optimizer for update precision, so normalize those source
-    tensors before sharding. A ``none`` policy promises native dtype semantics
-    and therefore fails instead of silently changing them.
+    tensors before sharding. A ``none`` policy preserves frozen floating
+    parameters and rejects mismatched trainable dtypes instead of casting them.
     """
 
     if not target_dtype.is_floating_point:
@@ -648,6 +656,7 @@ def normalize_fsdp_parameter_dtype(
         (name, parameter)
         for name, parameter in module.named_parameters()
         if parameter.dtype != target_dtype
+        and (allow_cast or parameter.requires_grad or not parameter.is_floating_point())
     ]
     if not mismatched:
         return

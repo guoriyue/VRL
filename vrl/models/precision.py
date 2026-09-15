@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Iterable, Iterator
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any
 
@@ -10,6 +11,73 @@ from vrl.config.precision import Float32Precision, RolePrecision
 
 if TYPE_CHECKING:
     import torch
+
+
+@contextlib.contextmanager
+def fixed_row_linear_compute(
+    model: Any, *, rows: int = 64, fp32_modules: Iterable[Any] = ()
+) -> Iterator[None]:
+    """Use equal GEMM row counts on full and token-sharded model executions.
+
+    Padding is private to each Linear and is removed before returning; no
+    attention tokens are added. Explicit FP32 modules (e.g. LoRA A/B linears)
+    must already have FP32 parameters. Parameters and state keys are unchanged.
+    Apply identically to rollout/replay and keep active through backward and
+    checkpoint recomputation. Install after model copying/loading; copying an
+    actively wrapped model is unsupported. Installation is not concurrent-safe.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    if isinstance(rows, bool) or not isinstance(rows, int) or rows <= 0:
+        raise ValueError("fixed Linear row count must be a positive integer")
+    linears = [module for module in model.modules() if isinstance(module, torch.nn.Linear)]
+    fp32 = set(fp32_modules)
+    if not fp32.issubset(set(linears)):
+        raise ValueError("FP32 Linear modules must belong to the model")
+    for module in linears:
+        if getattr(module.forward, "_vrl_fixed_rows", False):
+            raise ValueError("fixed-row Linear compute is already installed")
+        if module in fp32 and any(p.dtype != torch.float32 for p in module.parameters()):
+            raise ValueError("FP32 Linear compute requires FP32 parameters")
+
+    def wrap(original, force_fp32):
+        def forward(input):
+            precision = (
+                torch.autocast(input.device.type, enabled=False)
+                if force_fp32
+                else contextlib.nullcontext()
+            )
+            with precision:
+                value = input.float() if force_fp32 else input
+                if value.numel() == 0:
+                    return original(value)
+                flat = value.reshape(-1, value.shape[-1])
+                outputs = []
+                for part in flat.split(rows, dim=0):
+                    count = part.shape[0]
+                    if count < rows:
+                        part = F.pad(part, (0, 0, 0, rows - count))
+                    outputs.append(original(part)[:count])
+                output = torch.cat(outputs, dim=0)
+                return output.reshape(*value.shape[:-1], output.shape[-1])
+
+        forward._vrl_fixed_rows = True
+        return forward
+
+    missing = object()
+    originals = []
+    try:
+        for module in linears:
+            originals.append((module, module.__dict__.get("forward", missing)))
+            module.forward = wrap(module.forward, module in fp32)
+        yield
+    finally:
+        for module, original in originals:
+            if original is missing:
+                del module.forward
+            else:
+                module.forward = original
 
 
 def model_precision(model: Any) -> RolePrecision:
@@ -83,6 +151,7 @@ def float32_precision_state() -> dict[str, str]:
 __all__ = [
     "ModulePrecisionTrace",
     "apply_float32_precision",
+    "fixed_row_linear_compute",
     "float32_precision_state",
     "model_autocast",
     "model_precision",

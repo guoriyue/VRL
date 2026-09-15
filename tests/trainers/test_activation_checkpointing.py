@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import copy
 import logging
 from types import SimpleNamespace
 
 import pytest
+import torch
 from omegaconf import OmegaConf
 
 from vrl.config.schema import parse_config
 from vrl.trainers.activation_checkpointing import (
+    cpu_checkpoint_func,
     enable_transformer_gradient_checkpointing,
 )
 
@@ -35,6 +38,49 @@ def test_absent_gradient_checkpointing_defaults_to_off() -> None:
     bundle = type("_Bundle", (), {"trainable_modules": {"transformer": _Transformer()}})()
 
     enable_transformer_gradient_checkpointing(bundle, parse_config(cfg))
+
+
+def test_cpu_checkpoint_installs_explicit_function_and_rejects_fallback():
+    calls = []
+    module = SimpleNamespace(enable_gradient_checkpointing=lambda **kwargs: calls.append(kwargs))
+    enable_transformer_gradient_checkpointing(
+        SimpleNamespace(trainable_modules={"transformer": module}),
+        parse_config(_config("full_cpu")),
+    )
+    assert calls == [{"gradient_checkpointing_func": cpu_checkpoint_func}]
+    module = SimpleNamespace(enable_gradient_checkpointing=lambda: None)
+    with pytest.raises(ValueError, match="cannot install full_cpu"):
+        enable_transformer_gradient_checkpointing(
+            SimpleNamespace(trainable_modules={"transformer": module}),
+            parse_config(_config("full_cpu")),
+        )
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_cpu_checkpoint_preserves_output_input_and_parameter_gradients(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is unavailable")
+    torch.manual_seed(19)
+    direct = (
+        torch.nn.Sequential(
+            torch.nn.Linear(8, 16), torch.nn.Dropout(0.2), torch.nn.SiLU(), torch.nn.Linear(16, 4)
+        )
+        .double()
+        .to(device)
+    )
+    checkpointed = copy.deepcopy(direct)
+    x = torch.randn(3, 8, dtype=torch.float64, device=device, requires_grad=True)
+    y = x.detach().clone().requires_grad_(True)
+    torch.manual_seed(27)
+    expected = direct(x)
+    expected.square().sum().backward()
+    torch.manual_seed(27)
+    actual = cpu_checkpoint_func(checkpointed, y)
+    actual.square().sum().backward()
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    torch.testing.assert_close(y.grad, x.grad, rtol=0, atol=0)
+    for left, right in zip(direct.parameters(), checkpointed.parameters(), strict=True):
+        torch.testing.assert_close(left.grad, right.grad, rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("mode", ["off", False])

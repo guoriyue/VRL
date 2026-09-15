@@ -400,9 +400,9 @@ class ModelFamilyEntry:
             )
 
             checkpointing = resolve_gradient_checkpointing_mode(root)
-            if checkpointing == "selective" and not for_rollout:
+            if checkpointing not in {"off", "full"} and not for_rollout:
                 raise ValueError(
-                    "nextstep_1 replay does not support selective gradient "
+                    f"nextstep_1 replay does not support {checkpointing} gradient "
                     "checkpointing; use actor.gradient_checkpointing=full or off",
                 )
             if build.model_config is not None:

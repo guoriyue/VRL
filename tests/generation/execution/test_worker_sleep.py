@@ -35,7 +35,7 @@ def _isolate_cuda_parking_probes(monkeypatch: pytest.MonkeyPatch) -> None:
     import vrl.generation.execution.memory_parking as parking_module
 
     monkeypatch.setattr(parking_module, "gpu_process_used_bytes", lambda: 0)
-    monkeypatch.setattr(parking_module, "release_cuda_memory_for_parking", lambda: None)
+    monkeypatch.setattr(parking_module, "release_cuda_memory_for_parking", lambda **_: None)
 
 
 class _SleepModel:
@@ -346,7 +346,7 @@ def test_failed_physical_proof_quarantines_already_moved_model(
     monkeypatch.setattr(
         parking_module,
         "release_cuda_memory_for_parking",
-        lambda: (_ for _ in ()).throw(RuntimeError("CUDA synchronize failed")),
+        lambda **_: (_ for _ in ()).throw(RuntimeError("CUDA synchronize failed")),
     )
 
     with pytest.raises(RuntimeError, match="CUDA synchronize failed"):
@@ -422,6 +422,28 @@ def test_pipeline_offload_reset_failure_quarantines_worker() -> None:
         core.wake()
 
     assert model.reset_calls == 1
+
+
+def test_parking_diagnostics_reports_components(monkeypatch, caplog) -> None:
+    from vrl.generation.execution.memory_parking import _log_parking_diagnostics
+
+    monkeypatch.setattr(torch.cuda, "memory_allocated", lambda: 123)
+    monkeypatch.setattr(torch.cuda, "memory_reserved", lambda: 456)
+    model = SimpleNamespace(pipeline=SimpleNamespace(components={"text": torch.nn.Linear(2, 2)}))
+    _log_parking_diagnostics(model, worker_id="probe")
+    assert "allocated=123 reserved=456" in caplog.text
+    assert "'text': 0" in caplog.text
+
+
+def test_parking_diagnostics_failure_is_nonfatal(monkeypatch, caplog) -> None:
+    from vrl.generation.execution.memory_parking import _log_parking_diagnostics
+
+    def fail():
+        raise RuntimeError("diagnostic failure")
+
+    monkeypatch.setattr(torch.cuda, "memory_allocated", fail)
+    _log_parking_diagnostics(torch.nn.Linear(2, 2), worker_id="probe")
+    assert "parking diagnostics unavailable" in caplog.text
 
 
 def test_pipeline_offload_residual_failure_does_not_commit_parked_state(

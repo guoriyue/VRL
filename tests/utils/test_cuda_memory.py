@@ -62,6 +62,38 @@ def test_cpu_does_not_require_nvml(monkeypatch):
 
 
 @pytest.mark.gpu
+def test_cpu_offload_parking_releases_segment_pinned_by_blas_workspace():
+    code = textwrap.dedent("""
+        import torch
+        from vrl.utils.cuda_memory import release_cuda_memory_for_parking
+        large = torch.empty(2 * 1024**3, dtype=torch.uint8, device='cuda')
+        del large
+        x = torch.ones(64, 64, device='cuda')
+        y = x @ x
+        del x, y
+        release_cuda_memory_for_parking()
+        assert torch.cuda.memory_reserved() >= 2 * 1024**3
+        assert 0 < torch.cuda.memory_allocated() < 32 * 1024**2
+        release_cuda_memory_for_parking(clear_blas_workspaces=True)
+        assert torch.cuda.memory_allocated() == 0
+        assert torch.cuda.memory_reserved() == 0
+        x = torch.ones(64, 64, device='cuda')
+        torch.testing.assert_close(x @ x, torch.full_like(x, 64))
+    """)
+    environment = dict(os.environ)
+    environment.pop("PYTORCH_CUDA_ALLOC_CONF", None)
+    environment["PYTORCH_ALLOC_CONF"] = "backend:native,expandable_segments:False"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=environment,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.gpu
 def test_real_cumem_parking_with_another_process_allocation():
     if not torch.cuda.is_available():
         pytest.skip("CUDA is unavailable")

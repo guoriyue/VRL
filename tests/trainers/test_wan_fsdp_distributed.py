@@ -9,8 +9,10 @@ linear model.
 
 from __future__ import annotations
 
+import io
 import os
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -39,6 +41,99 @@ from vrl.models.families.wan_2_1.model import (
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.strategy import FSDPStrategy
+
+
+def _run_wan_master_resume(rank, port, checkpointing):
+    from tests.trainers.test_fsdp_fp32_master import _assert_state_equal
+    from vrl.trainers.optimizer import FP32MasterWeightOptimizer
+    from vrl.trainers.strategy import TrainingMemoryState
+
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    os.environ["MASTER_PORT"] = str(port)
+    device = torch.device("cuda", rank)
+    context = DistributedTrainingContext(strategy="fsdp", rank=rank, world_size=2, device=device)
+    strategy = _fsdp_strategy(context, precision_policy="none", cpu_offload=True)
+
+    def build():
+        torch.manual_seed(11)
+        policy = _build_policy()
+        # Preserve the complex rotary buffers while matching production parameter dtype.
+        for parameter in policy.parameters():
+            parameter.data = parameter.data.to(torch.bfloat16)
+        policy.precision = RolePrecision("bf16", "ieee", outer_autocast=True)
+        policy._device = device
+        if checkpointing:
+            policy.transformer.enable_gradient_checkpointing()
+        policy = strategy.prepare_model(policy)
+        optimizer = FP32MasterWeightOptimizer(
+            (parameter for parameter in policy.parameters() if parameter.requires_grad),
+            lambda parameters: torch.optim.AdamW(parameters, lr=5e-5, weight_decay=1e-4),
+        )
+        return policy, optimizer
+
+    def step(policy, optimizer, *, zero=False):
+        optimizer.zero_grad()
+        residency = {name: buffer.device for name, buffer in policy.named_buffers()}
+        memory = TrainingMemoryState(policy, None, optimizer, None, None, device)
+        strategy.park_training_state(memory)
+        strategy.restore_training_state(memory)
+        assert {name: buffer.device for name, buffer in policy.named_buffers()} == residency
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            prediction = policy.forward_step(_input_state(device=device, seed=7 + rank), 0)[
+                "noise_pred"
+            ]
+            loss = prediction.float().square().mean()
+        strategy.backward(loss * 0 if zero else loss)
+        optimizer.prepare_gradients()
+        gradients = [
+            parameter.grad.to_local().cpu().clone() for parameter in optimizer.parameters()
+        ]
+        assert all(torch.isfinite(gradient).all() for gradient in gradients)
+        assert any(bool(gradient.count_nonzero()) for gradient in gradients) is not zero
+        strategy.clip_grad_norm(optimizer.parameters(), max_norm=1.0)
+        optimizer.step()
+        return prediction.detach().cpu(), gradients
+
+    try:
+        policy, optimizer = build()
+        step(policy, optimizer, zero=True)
+        saved = {
+            "model": strategy.export_checkpoint_state(_bundle(policy)),
+            "optimizer": strategy.export_optimizer_state(policy, optimizer),
+        }
+        stream = io.BytesIO()
+        torch.save(saved, stream)
+        stream.seek(0)
+        loaded = torch.load(stream, map_location="cpu", weights_only=False)
+        restored, restored_optimizer = build()
+        strategy.load_checkpoint_state(_bundle(restored), loaded["model"], strict=True)
+        strategy.load_optimizer_state(restored, restored_optimizer, loaded["optimizer"])
+        _assert_state_equal(strategy.export_checkpoint_state(_bundle(restored)), saved["model"])
+        _assert_state_equal(
+            strategy.export_optimizer_state(restored, restored_optimizer), saved["optimizer"]
+        )
+        expected = step(policy, optimizer)
+        actual = step(restored, restored_optimizer)
+        _assert_state_equal(actual, expected)
+        _assert_state_equal(
+            strategy.export_checkpoint_state(_bundle(restored)),
+            strategy.export_checkpoint_state(_bundle(policy)),
+        )
+        _assert_state_equal(
+            strategy.export_optimizer_state(restored, restored_optimizer),
+            strategy.export_optimizer_state(policy, optimizer),
+        )
+    finally:
+        strategy.shutdown()
+
+
+@pytest.mark.gpu
+@pytest.mark.distributed
+@pytest.mark.parametrize("checkpointing", [False, True])
+def test_wan_bf16_master_resume_after_zero_step_and_parking(checkpointing):
+    if torch.cuda.device_count() < 2:
+        pytest.skip("requires two CUDA devices")
+    mp.spawn(_run_wan_master_resume, args=(free_port(), checkpointing), nprocs=2, join=True)
 
 
 def _fsdp_strategy(
@@ -506,6 +601,7 @@ def _run_dual_cuda_offload_rank(
     world_size: int,
     port: int,
     queue: mp.Queue,
+    mixed_dtype: bool = False,
 ) -> None:
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
@@ -527,7 +623,56 @@ def _run_dual_cuda_offload_rank(
         policy = _build_dual_policy()
         policy._device = device
         policy._expert_lifecycle_profiling = True
+        frozen_fp32 = {}
+        reference_predictions = {}
+        if mixed_dtype:
+            from diffusers import WanTransformer3DModel
+
+            keep_fp32 = set(WanTransformer3DModel._keep_in_fp32_modules)
+            for name, parameter in policy.named_parameters():
+                keep = not parameter.requires_grad and bool(
+                    keep_fp32.intersection(name.split("."))
+                )
+                parameter.data = parameter.data.to(torch.float32 if keep else torch.bfloat16)
+                if keep:
+                    parameter.data.add_(0.000123)
+                    frozen_fp32[name] = parameter.detach().clone()
+            assert frozen_fp32
+            policy.precision = RolePrecision("bf16", "ieee", outer_autocast=True)
+            reference = deepcopy(policy).to(device)
+            reference._expert_lifecycle_profiling = False
+            with torch.no_grad():
+                for timestep in (750.0, 250.0):
+                    reference_predictions[timestep] = reference.forward_step(
+                        _input_state(device=device, timestep=timestep, boundary_ratio=0.5), 0
+                    )["noise_pred"].cpu()
+            del reference
         policy = strategy.prepare_model(policy)
+        if mixed_dtype:
+            for name, parameter in policy.named_parameters():
+                if name in frozen_fp32:
+                    assert parameter.dtype == torch.float32
+                    full = parameter.detach().to(device).full_tensor().cpu()
+                    assert torch.equal(full, frozen_fp32[name])
+            with torch.no_grad():
+                for timestep, expected in reference_predictions.items():
+                    actual = policy.forward_step(
+                        _input_state(device=device, timestep=timestep, boundary_ratio=0.5), 0
+                    )["noise_pred"].cpu()
+                    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+        initial_sync = strategy.export_rollout_state(_bundle(policy))
+        assert initial_sync and all(value.device.type == "cpu" for value in initial_sync.values())
+        before = strategy.export_checkpoint_state(_bundle(policy))
+        from vrl.trainers.strategy import TrainingMemoryState
+
+        residency = {name: buffer.device for name, buffer in policy.named_buffers()}
+        assert any(target.type == "cuda" for target in residency.values())
+        memory_state = TrainingMemoryState(policy, None, None, None, None, device)
+        strategy.park_training_state(memory_state)
+        assert all(buffer.device.type == "cpu" for buffer in policy.buffers())
+        strategy.restore_training_state(memory_state)
+        assert {name: buffer.device for name, buffer in policy.named_buffers()} == residency
+        assert all(parameter.to_local().device.type == "cpu" for parameter in policy.parameters())
         optimizer = torch.optim.AdamW(
             [parameter for parameter in policy.parameters() if parameter.requires_grad],
             lr=1e-2,
@@ -552,6 +697,15 @@ def _run_dual_cuda_offload_rank(
             getattr(parameter, "_local_tensor", parameter).device.type == "cpu"
             for parameter in policy.parameters()
         )
+        after = strategy.export_checkpoint_state(_bundle(policy))
+        assert _module_changed(before, after, "transformer")
+        assert _module_changed(before, after, "transformer_2")
+        for name, parameter in policy.named_parameters():
+            if name in frozen_fp32:
+                assert parameter.dtype == torch.float32
+                full = parameter.detach().to(device).full_tensor().cpu()
+                assert torch.equal(full, frozen_fp32[name])
+        assert strategy.export_optimizer_state(policy, optimizer)
         queue.put(
             (
                 rank,
@@ -569,7 +723,8 @@ def _run_dual_cuda_offload_rank(
 @pytest.mark.gpu
 @pytest.mark.distributed
 @pytest.mark.parametrize("world_size", [1, 2])
-def test_wan_dual_expert_fsdp_cuda_cpu_offload(world_size: int) -> None:
+@pytest.mark.parametrize("mixed_dtype", [False, True])
+def test_wan_dual_expert_fsdp_cuda_cpu_offload(world_size: int, mixed_dtype: bool) -> None:
     if torch.cuda.device_count() < world_size:
         pytest.skip(f"requires {world_size} CUDA device(s)")
 
@@ -579,7 +734,7 @@ def test_wan_dual_expert_fsdp_cuda_cpu_offload(world_size: int) -> None:
     processes = [
         context.Process(
             target=_run_dual_cuda_offload_rank,
-            args=(rank, world_size, port, queue),
+            args=(rank, world_size, port, queue, mixed_dtype),
         )
         for rank in range(world_size)
     ]

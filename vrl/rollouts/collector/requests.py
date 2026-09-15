@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import uuid
 from collections.abc import Mapping
 from dataclasses import fields, replace
@@ -27,7 +28,8 @@ class GenerationRequestBuilder:
 
     Callers hand over ready ``GenerationInput`` conditioning (or bare prompt
     strings) plus one opaque reward-metadata dict; this builder only applies
-    family defaults and sampling config. It never picks example fields out of
+    family defaults, sampling config and a driver-owned seed when unspecified.
+    It never picks example fields out of
     an untyped kwargs dict — ``PromptExample.generation_input()`` /
     ``reward_metadata()`` own that mapping.
     """
@@ -69,6 +71,10 @@ class GenerationRequestBuilder:
             sampling.update(
                 sampling_section_class_for_family(self.entry.family).require_overrides(overrides)
             )
+        if sampling.get("seed") is None:
+            # The online checkpoint captures the driver's Python RNG, not remote
+            # worker RNGs. Carry the draw so fresh workers reproduce the request.
+            sampling["seed"] = random.getrandbits(63)
 
         group_metadata = dict(metadata or {})
         if "fps" in sampling:

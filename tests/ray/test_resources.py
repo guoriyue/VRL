@@ -506,6 +506,56 @@ def test_reward_torch_device_translates_narrowed_rank_plan_ordinals(monkeypatch)
     assert resolved.plan_device_ordinal(0) == 2
 
 
+@pytest.mark.parametrize("devices", [(3,), (3, 1), (2, 0, 3)])
+def test_auto_resources_preserve_cuda_mask_ids_and_order(monkeypatch, devices) -> None:
+    from types import SimpleNamespace
+
+    import torch
+
+    from vrl.ray.placement import GlobalRayPlacementOwner
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", ",".join(map(str, devices)))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: len(devices))
+    resolved = ResolvedDistributedResources.from_root(
+        parse_config(_cfg({"rollout": {"devices": list(devices[1:] or devices)}})),
+    )
+    assert resolved.visible_devices == devices
+    assert resolved.trainer_devices == (devices[0],)
+    assert resolved.trainer_torch_device == "cuda:0"
+    for local, physical in enumerate(devices):
+        assert resolved.plan_device_ordinal(local) == physical
+        assert resolved._local_torch_ordinal(physical) == local
+    owner = GlobalRayPlacementOwner(resolved, SimpleNamespace(cpus_per_worker=1))
+    probed = {i: gpu for i, gpu in enumerate(reversed(owner.layout.bundle_gpu_ids))}
+    roles = owner.assign_roles(probed)
+    assert tuple(probed[i] for i in roles["rollout"]) == resolved.rollout_devices
+
+
+@pytest.mark.parametrize("mask", ["3,3", "3,", "GPU-abc", "3,1,2"])
+def test_auto_resources_reject_ambiguous_cuda_mask(monkeypatch, mask) -> None:
+    import torch
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", mask)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    with pytest.raises(ValueError, match="CUDA_VISIBLE_DEVICES"):
+        ResolvedDistributedResources.from_root(parse_config(_cfg({})))
+
+
+@pytest.mark.parametrize("inherited_mask", ["", "3,1", "GPU-external"])
+@pytest.mark.parametrize("count", [1, 3])
+def test_mock_topology_replaces_inherited_cuda_mask(
+    cuda_devices, monkeypatch, inherited_mask, count
+):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", inherited_mask)
+    cuda_devices(count)
+    resolved = ResolvedDistributedResources.from_root(
+        parse_config(_cfg({"rollout": {"gpu_pool": "trainer"}})),
+    )
+    assert resolved.visible_devices == tuple(range(count))
+
+
 def test_reward_torch_device_without_a_reservation_follows_the_rank_local_trainer() -> None:
     """An unreserved in-process reward shares the caller's actual trainer device."""
     resolved = ResolvedDistributedResources.from_root(

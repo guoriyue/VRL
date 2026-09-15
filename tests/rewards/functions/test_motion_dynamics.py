@@ -23,6 +23,35 @@ _FLOW_SIZE = 8
 _BAND_PIXELS = 5.0  # a (3, 4) flow vector on the top quarter of rows
 
 
+@pytest.mark.parametrize("fail", [False, True])
+def test_lazy_raft_construction_preserves_training_rng(monkeypatch, fail):
+    import torchvision.models.optical_flow as optical_flow
+
+    calls = []
+
+    def construct(**kwargs):
+        calls.append(kwargs)
+        module = torch.nn.Linear(3, 2)
+        if fail:
+            raise RuntimeError("injected construction failure")
+        return module
+
+    monkeypatch.setattr(optical_flow, "raft_small", construct)
+    model = MotionDynamicsModel({"device": "cpu"})
+    before = torch.get_rng_state().clone()
+    if fail:
+        with pytest.raises(RuntimeError, match="injected construction failure"):
+            model.prepare_for_inference()
+        assert model._module is None
+    else:
+        model.prepare_for_inference()
+        model.prepare_for_inference()
+        assert not model._module.training
+        assert all(not parameter.requires_grad for parameter in model._module.parameters())
+    assert len(calls) == 1
+    assert torch.equal(before, torch.get_rng_state())
+
+
 class _BandFlow:
     """Stand-in for the RAFT module: top 25% of rows move (3, 4) px, the rest 0."""
 

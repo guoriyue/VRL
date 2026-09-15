@@ -1000,12 +1000,14 @@ def save_training_checkpoint(
     is_primary = True if strategy is None else strategy.context.is_primary
     all_ranks_succeeded = bool if strategy is None else strategy.collectives.succeeded
     adapter_sources: dict[str, _AdapterCheckpointSource] = {}
+    local_rng: dict[str, Any] = {}
     ema_has_updates = False
     setup_failure: BaseException | None = None
     try:
         adapter_sources = _AdapterCheckpointSource.from_exports(bundle, adapter_exports)
         if adapter_sources and export_ema is not None:
             ema_has_updates = export_ema.has_updates
+        local_rng = rng_state or capture_rng_state()
     except BaseException as error:
         setup_failure = error
     if not all_ranks_succeeded(setup_failure is None):
@@ -1139,6 +1141,14 @@ def save_training_checkpoint(
         )
     published_meta: dict[str, Any] = {}
     publish_failure: BaseException | None = None
+    world_size = 1 if strategy is None else strategy.context.world_size
+    if world_size > 1:
+        rank_states = strategy.gather_rng_states(local_rng)
+        if len(rank_states) != world_size:
+            raise ValueError("checkpoint RNG gather disagrees with training world size")
+        saved_rng = {"world_size": world_size, "by_rank": rank_states}
+    else:
+        saved_rng = local_rng
     if is_primary:
         try:
             payload = {
@@ -1150,7 +1160,7 @@ def save_training_checkpoint(
                     "identity": dict(model_identity),
                 },
                 "progress": dict(progress),
-                "rng": rng_state or capture_rng_state(),
+                "rng": saved_rng,
             }
             with _CheckpointSaveTransaction(Path(checkpoint_dir)) as transaction:
                 published_meta = transaction.write(
@@ -1540,9 +1550,73 @@ def capture_rng_state(**generators: torch.Generator) -> dict[str, Any]:
     return state
 
 
-def restore_rng_state(state: dict[str, Any] | None, **generators: torch.Generator) -> None:
-    """Restore process RNG state and named torch.Generator states when present."""
+def validate_rng_state(
+    state: dict[str, Any] | None,
+    *,
+    rank: int = 0,
+    world_size: int = 1,
+    strict: bool = True,
+    generator_names: Sequence[str] = (),
+) -> dict[str, Any] | None:
+    """Check topology and requested stream names without changing any RNG state.
 
+    Legacy single-process trees remain readable. Multi-rank strict resume
+    requires every rank's tree and the same topology; non-strict legacy resume
+    warns because the missing streams cannot be reconstructed. Requested named
+    generators must also be present for strict resume.
+    """
+
+    if type(rank) is not int or type(world_size) is not int or not 0 <= rank < world_size:
+        raise ValueError("RNG restore requires a valid rank and positive world_size")
+    if state is not None and "by_rank" in state:
+        states = state["by_rank"]
+        saved_world = state.get("world_size")
+        if (
+            type(saved_world) is not int
+            or saved_world != world_size
+            or not isinstance(states, list)
+            or len(states) != world_size
+            or not all(isinstance(item, dict) and item for item in states)
+        ):
+            raise ValueError("checkpoint per-rank RNG states disagree with training world_size")
+        state = states[rank]
+    elif world_size > 1:
+        message = (
+            "legacy checkpoint has no per-rank RNG states; multi-rank resume is not equivalent"
+        )
+        if strict:
+            raise ValueError(message)
+        logger.warning(message)
+    # Reject missing data-sampler streams before mutating any process RNG.
+    named = state.get("generators", {}) if state else {}
+    missing = sorted(
+        name for name in generator_names if not isinstance(named, dict) or name not in named
+    )
+    if missing:
+        message = "checkpoint RNG state missing requested generators: " + ", ".join(missing)
+        if strict:
+            raise ValueError(message)
+        logger.warning("%s; retaining current streams, resume is not equivalent", message)
+    return state
+
+
+def restore_rng_state(
+    state: dict[str, Any] | None,
+    *,
+    rank: int = 0,
+    world_size: int = 1,
+    strict: bool = True,
+    **generators: torch.Generator,
+) -> None:
+    """Restore this rank's process and requested named RNG streams after validation."""
+
+    state = validate_rng_state(
+        state,
+        rank=rank,
+        world_size=world_size,
+        strict=strict,
+        generator_names=tuple(generators),
+    )
     if not state:
         return
     if "torch" in state:
@@ -1753,5 +1827,6 @@ __all__ = [
     "save_training_checkpoint",
     "validate_checkpoint_compatibility",
     "validate_checkpoint_meta_compatibility",
+    "validate_rng_state",
     "write_checkpoint_meta",
 ]

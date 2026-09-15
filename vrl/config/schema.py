@@ -515,7 +515,9 @@ class ActorSection(ConfigBase):
     training_microbatch_size: StrictInt | None = None
     host_memory_budget_fraction: float | None = None
     # reader: vrl/trainers/activation_checkpointing.py (bool: true=full, false=off)
-    gradient_checkpointing: Literal["off", "full", "selective"] | StrictBool | None = None
+    gradient_checkpointing: Literal["off", "full", "full_cpu", "selective"] | StrictBool | None = (
+        None
+    )
     # Offline DPO counts actual training batches per optimizer update.
     gradient_accumulation_steps: StrictInt | None = None
     # offline DPO entrypoint (vrl/scripts/families/wan_2_1/train_dpo.py)
@@ -573,6 +575,10 @@ class FSDPConfig(ConfigBase):
     # Keep parameter/gradient shards on CPU between forwards. This is slower but
     # lets timestep-routed multi-root models materialize only the active expert.
     cpu_offload: bool = False
+
+    # Replicate frozen parameters in their native dtype; shard only adapters.
+    # Requires precision_policy=none to retain the original training arithmetic.
+    shard_trainable_only: bool = False
 
 
 class DDPConfig(ConfigBase):

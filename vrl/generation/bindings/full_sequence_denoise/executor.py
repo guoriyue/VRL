@@ -361,6 +361,10 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         from vrl.utils.profiling import profile_range
 
         model = self.model
+        if request.seed is not None:
+            # Match the denoise generator's batch offset. Reusing the request
+            # seed makes every one-sample native batch start from identical noise.
+            request = replace(request, seed=request.seed + config.sample_start)
         with profile_range("generation.prepare_sampling"):
             state = model.prepare_sampling(request, encoded, **(prepare_kwargs or {}))
         batch_rows = state.latents.shape[0]

@@ -28,6 +28,34 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 
 
+def _log_parking_diagnostics(model: Any, *, worker_id: str) -> None:
+    """Report tensor residency without replacing the original handoff failure."""
+    try:
+        import torch
+
+        components = getattr(getattr(model, "pipeline", None), "components", None)
+        if not isinstance(components, Mapping):
+            components = {"model": model}
+        residency = {}
+        for name, component in components.items():
+            if isinstance(component, torch.nn.Module):
+                tensors = (*component.parameters(), *component.buffers())
+                residency[name] = sum(
+                    tensor.numel() * tensor.element_size()
+                    for tensor in tensors
+                    if tensor.device.type == "cuda"
+                )
+        logger.error(
+            "parking diagnostics: worker=%s allocated=%d reserved=%d component_cuda_bytes=%s",
+            worker_id,
+            torch.cuda.memory_allocated(),
+            torch.cuda.memory_reserved(),
+            residency,
+        )
+    except Exception:
+        logger.exception("parking diagnostics unavailable: worker=%s", worker_id)
+
+
 class _ParkingPhase(Enum):
     ACTIVE = "active"
     PARKED = "parked"
@@ -299,7 +327,11 @@ class WorkerMemoryParking:
             )
 
         try:
-            release_cuda_memory_for_parking()
+            # An idle BLAS workspace can pin a multi-GiB allocator segment.
+            # CPU-offload invalidates device residency; CuMem keeps its pools.
+            release_cuda_memory_for_parking(
+                clear_blas_workspaces=snapshot_backend == "cpu_offload",
+            )
             residual_bytes = gpu_process_used_bytes()
             baseline_bytes = session.baseline_gpu_used_bytes
             if baseline_bytes is None:
@@ -319,6 +351,7 @@ class WorkerMemoryParking:
             )
             snapshot.validate()
         except BaseException as validation_error:
+            _log_parking_diagnostics(model, worker_id=self.worker_id)
             self._quarantine(
                 "physical GPU parking validation failed after backend "
                 f"{snapshot_backend!r} completed: {validation_error!r}",

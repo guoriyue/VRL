@@ -317,7 +317,12 @@ def _legacy_layout(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
     }
 
 
-def test_checkpoint_loader_strict_loads_a_live_model_in_either_key_layout(tmp_path: Path) -> None:
+@pytest.mark.parametrize("zip_format", [True, False])
+def test_checkpoint_loader_strict_loads_a_live_model_in_either_key_layout(
+    tmp_path: Path,
+    zip_format: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """``relocate_checkpoint_keys`` compares against the LIVE model's keys and the
     loader then ``strict=True``-loads; both the current and the legacy layout must
     land on a fresh model bit-for-bit."""
@@ -325,9 +330,19 @@ def test_checkpoint_loader_strict_loads_a_live_model_in_either_key_layout(tmp_pa
     from vrl.rewards.models.kling_video_reward import load_kling_video_reward_checkpoint
 
     source = _lora_wrapped(seed=0)
+    original_load = torch.load
+    mmap_calls = []
+
+    def record_load(*args, **kwargs):
+        mmap_calls.append(kwargs.get("mmap"))
+        return original_load(*args, **kwargs)
+
+    monkeypatch.setattr(torch, "load", record_load)
     checkpoint = tmp_path / "checkpoint-11352"
     checkpoint.mkdir()
-    torch.save(source.state_dict(), checkpoint / "model.pth")
+    torch.save(
+        source.state_dict(), checkpoint / "model.pth", _use_new_zipfile_serialization=zip_format
+    )
 
     loaded, step = load_kling_video_reward_checkpoint(_lora_wrapped(seed=1), tmp_path)
     assert step == "11352"
@@ -337,10 +352,11 @@ def test_checkpoint_loader_strict_loads_a_live_model_in_either_key_layout(tmp_pa
     legacy = _legacy_layout(source.state_dict())
     assert legacy.keys() != source.state_dict().keys()
     assert set(relocate_checkpoint_keys(source, legacy)) == set(source.state_dict())
-    torch.save(legacy, checkpoint / "model.pth")
+    torch.save(legacy, checkpoint / "model.pth", _use_new_zipfile_serialization=zip_format)
     relocated, _ = load_kling_video_reward_checkpoint(_lora_wrapped(seed=2), tmp_path)
     for key, value in source.state_dict().items():
         assert torch.equal(relocated.state_dict()[key], value), key
+    assert mmap_calls == [zip_format, zip_format]
 
 
 def test_create_model_and_processor_runs_offline_on_a_tiny_repo(tmp_path: Path) -> None:

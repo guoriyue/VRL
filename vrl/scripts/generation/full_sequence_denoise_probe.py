@@ -22,13 +22,32 @@ trainer):
 from __future__ import annotations
 
 import argparse
+import json
+import math
+import time
+from pathlib import Path
 from typing import Any
+
+
+def _nonnegative_finite(value: str) -> float:
+    result = float(value)
+    if not math.isfinite(result) or result < 0:
+        raise argparse.ArgumentTypeError("must be finite and nonnegative")
+    return result
+
+
+def _check_replay_errors(pred_err: float, lp_err: float, *, pred_atol: float, lp_atol: float):
+    if not all(math.isfinite(value) for value in (pred_err, lp_err)):
+        raise SystemExit("[probe] FAIL: replay errors are not finite")
+    if pred_err > pred_atol or lp_err > lp_atol:
+        raise SystemExit("[probe] FAIL: replay parity out of tolerance")
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--family", required=True)
     parser.add_argument("--path", required=True, help="checkpoint repo or local dir")
+    parser.add_argument("--model-preset", default=None, help="optional existing model YAML preset")
     parser.add_argument("--prompt", default="a photo of a red fox sitting in fresh snow")
     parser.add_argument("--negative-prompt", default="")
     parser.add_argument("--steps", type=int, default=8)
@@ -75,6 +94,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="selective rollout GEMM quantization",
     )
     parser.add_argument("--check-replay", action="store_true")
+    parser.add_argument("--replay-noise-atol", type=_nonnegative_finite, default=5e-2)
+    parser.add_argument("--replay-logprob-atol", type=_nonnegative_finite, default=5e-1)
+    parser.add_argument(
+        "--artifact-dir",
+        default=None,
+        help="new directory for conditioning, decoded video/image and result JSON",
+    )
     parser.add_argument(
         "--deterministic",
         action="store_true",
@@ -128,6 +154,15 @@ def _resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any
             "precision": precision,
         },
     )
+    if args.model_preset:
+        preset = OmegaConf.load(args.model_preset)
+        if not OmegaConf.is_dict(preset) or not OmegaConf.is_dict(preset.get("model")):
+            raise ValueError("model preset must contain a model mapping")
+        if preset.model.get("family", entry.family) != entry.family:
+            raise ValueError("model preset family must match --family")
+        cfg.model = OmegaConf.merge(
+            cfg.model, preset.model, {"family": entry.family, "path": args.path}
+        )
     root = parse_config(cfg)
     precision_policy = PrecisionPolicy.from_section(root.precision)
     build = entry.resolve_model_build(
@@ -141,6 +176,10 @@ def _resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any
 
 def main() -> None:
     args = _build_arg_parser().parse_args()
+    started = time.perf_counter()
+    artifact_dir = Path(args.artifact_dir) if args.artifact_dir else None
+    if artifact_dir is not None:
+        artifact_dir.mkdir(parents=True, exist_ok=False)
 
     import torch
 
@@ -174,6 +213,19 @@ def main() -> None:
         [args.negative_prompt] if args.guidance_scale > 1.0 else None,
         **encode_kwargs,
     )
+    if artifact_dir is not None:
+        from vrl.trainers.weight_sync import to_cpu_snapshot
+
+        torch.save(
+            {
+                "family": family,
+                "model_path": args.path,
+                "prompt": args.prompt,
+                "negative_prompt": args.negative_prompt,
+                "encoded": to_cpu_snapshot(encoded),
+            },
+            artifact_dir / "conditioning.pt",
+        )
     if args.offload:
         enc = getattr(model.pipeline, "text_encoder", None)
         if enc is not None:
@@ -199,6 +251,7 @@ def main() -> None:
     ctx = torch.inference_mode()
     ctx.__enter__()
     first_step: dict[str, Any] = {}
+    step_records = []
     for step_idx in range(args.steps):
         out = model.forward_step(state, step_idx)
         timestep = state.timesteps[step_idx]
@@ -221,6 +274,17 @@ def main() -> None:
                 "timestep": timestep.detach().clone(),
             }
         state.latents = sde.prev_sample
+        if not bool(torch.isfinite(state.latents).all()) or not bool(
+            torch.isfinite(sde.log_prob).all()
+        ):
+            raise SystemExit(f"[probe] FAIL: nonfinite latents/log-probs at step {step_idx}")
+        step_records.append(
+            {
+                "step": step_idx + 1,
+                "logprob": sde.log_prob.mean().item(),
+                "latent_std": state.latents.std().item(),
+            }
+        )
         print(
             f"[probe] step {step_idx + 1}/{args.steps} "
             f"logprob={sde.log_prob.mean().item():.2f} "
@@ -246,6 +310,7 @@ def main() -> None:
         save_image(frame[0].float().cpu().clamp(0, 1), args.out)
         print(f"[probe] saved {args.out}")
 
+    replay_result = None
     if args.check_replay:
         # Embeds are step-invariant, so exporting from the final state gives
         # the same replay tensors step 0 saw.
@@ -275,8 +340,39 @@ def main() -> None:
             f"[probe] replay parity: noise_pred max_err={pred_err.item():.3e} "
             f"logprob max_err={lp_err.item():.3e}",
         )
-        if pred_err.item() > 5e-2 or lp_err.item() > 5e-1:
-            raise SystemExit("[probe] FAIL: replay parity out of tolerance")
+        _check_replay_errors(
+            pred_err.item(),
+            lp_err.item(),
+            pred_atol=args.replay_noise_atol,
+            lp_atol=args.replay_logprob_atol,
+        )
+        replay_result = {"noise_max_abs": pred_err.item(), "logprob_max_abs": lp_err.item()}
+
+    if artifact_dir is not None:
+        from vrl.utils.media import write_mp4, write_png
+
+        if image.ndim == 5:
+            write_mp4(
+                image[0].float().cpu(),
+                artifact_dir / "video.mp4",
+                fps=getattr(state, "fps", None) or 16,
+            )
+        else:
+            write_png(image[0].float().cpu(), artifact_dir / "image.png")
+        result = {
+            "passed": True,
+            "arguments": vars(args),
+            "steps": step_records,
+            "decoded_shape": list(image.shape),
+            "decoded_finite": finite,
+            "decoded_std": image.std().item(),
+            "replay": replay_result,
+            "seconds_including_load": time.perf_counter() - started,
+            "peak_allocated_bytes": torch.cuda.max_memory_allocated(device)
+            if device.type == "cuda"
+            else None,
+        }
+        (artifact_dir / "result.json").write_text(json.dumps(result, indent=2) + "\n")
 
     print(f"[probe] PASS: {family} rollout verified")
 

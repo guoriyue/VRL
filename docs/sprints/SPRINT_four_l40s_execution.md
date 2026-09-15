@@ -1,5 +1,54 @@
 # Four L40S hardware execution
 
+## Current Handoff (2026-09-13)
+
+This section supersedes historical live claims below. The rebased Wan 2.2
+320x320/17-frame native full-checkpoint comparison is complete: two updates,
+eight global samples per update, single-card 2185.404s versus four-card 727.229s
+whole-process elapsed (3.0051x). Both checkpoint audits and runtime health passed;
+all sixteen score maps match, with maximum cross-arm model difference 4.6566e-10.
+The initial full_cpu memory failures and their diagnostic claims are terminal,
+not jobs to resume. The old continuous queue remains disabled.
+
+Authoritative evidence is in the review-all worktree on
+feat/reward-reload-handoff, docs/research/reward_reload_handoff_20260913.md,
+through 2e46a5b1. The preserved review/all-mgpu-main-6b723075 branch remains
+at 4e2c1163; follow-up runtime work has not been pushed.
+
+Cold four-rank strict resume is now terminal and numerically verified. From
+checkpoint-1 it executed only update 2, eight samples, in 485.419s. All model,
+Adam, EMA and four-rank RNG values exactly match uninterrupted checkpoint-2;
+the only Python representation difference is Adam betas tuple versus list.
+All eight score maps match; final checkpoint matches resumed checkpoint-2.
+No Ray memory-kill or threshold report occurred. Supervisor session 87314 and
+torchrun 895679 exited 0, GPUs released. Output:
+/mnt/nvme/outputs/wan22_i2v_cache/wan22_rebased_gpu_checkpoint_resume_four.
+Full-size I2V prerequisites now pass on the locked runtime: real three-rank
+14B full-shape forward/backward with full_cpu, and both real HTTP physics rewards
+on GPU 3 with exact repeated scores. The initial missing VideoCon vendor import
+was resolved using the pinned clean source and an explicit experiment import
+path; original dirty submodules are untouched. No full native update has yet
+completed on this candidate. Prepared launcher and evidence:
+docs/research/wan_full_physics_rebased_20260913.md.
+Full native attempt d2d01db8, supervisor PID 910531/session 21086, is terminal
+exit 1 after 1705.464s. All six full-size videos and both rewards completed,
+but every rollout worker failed the unchanged physical parking gate before
+training. No optimizer update or checkpoint; artifacts and failure audit:
+/mnt/nvme/outputs/wan_i2v_full_physics_rebased_local. All native processes exited.
+All parking diagnostics are terminal. The batch-local scheduler fix passes a
+real full-shape native one-step probe (session 49430): 542 MiB parked physical
+usage, 116 MiB over baseline, below the unchanged 256 MiB allowance. Its ten
+initialized output/conditioning tensors match the old probe exactly, including
+video; unwritten probe trajectory slots are explicitly excluded. Expanded CPU
+regression: 141 passed, two GPU deselections. No full update is claimed.
+Output: wan22_i2v_cache/wan_i2v_parking_batch_local_scheduler. GPUs are released.
+Next: original six-sample full-geometry native update, then replay/checkpoint/
+resume gates. Preserve failed roots; use a new output directory.
+Previous supervisor 909502/session 40899 exited 1 before policy weight loading:
+Diffusers requested shard metadata despite HF_HUB_OFFLINE. The new launch adds
+model.local_files_only=true without changing the pinned revision or workload.
+This does not close full-geometry, Cosmos/H3 requirements or the overall goal.
+
 ## Released claim: corrected four-GPU strict timing
 
 User explicitly requested the missing synchronous arm after the two-arm short
@@ -3841,3 +3890,29 @@ terminated with exit 1 after 198.739 seconds following the requested SIGTERM;
 fresh compute inventory is empty. No completed update or accepted timing is
 claimed for this interrupted retry. Existing output and monitoring receipts
 are retained. Do not resume the experiment queue until requested by the user.
+
+User explicitly resumed hardware work after the review-branch push. Claim GPUs
+0-3 for the interrupted equal-work Wan mmap trial on clean candidate 9145b2af.
+Fresh inventory has no compute processes; host available memory is 367 GiB.
+New output four_mmap_resumed restarts from the original initialization (not a
+checkpoint), with only artifact paths changed: 2 updates x 8 global samples.
+Keep both previous failed/interrupted outputs. Acceptance still requires
+completed updates, checkpoint audit and the matched single-card comparison.
+
+Release GPUs 0-3. four_mmap_resumed exited 1 after 295.623 seconds. All eight
+initial samples were generated and scored, but the trainer's host budget gate
+rejected the collected batch at 97.1% used (95% limit, about 11 GiB available).
+No optimizer update or accepted timing. Fresh compute inventory is empty;
+retain complete logs/monitoring. mmap loading alone does not establish capacity.
+Claim GPU 0 for a bounded real Kling load/score/park host-memory diagnostic,
+including explicit allocator trim and identical-score validation after wake.
+
+Release GPU 0. Production-contract Kling host and pinned-host probes exited 0,
+with exact repeat scores across park/wake. libc trim recovered only ~110 MiB;
+pinned cache clearing during live parking recovered only 15 bytes. After model
+shutdown, pinned cache clearing recovered ~5.83 GiB. Two initial isolated
+attempts omitted the registry residual allowance and failed zero-limit checks;
+the corrected probes use the declared production allowance. Candidate unchanged.
+Fresh compute inventory empty. Details and receipts are in the Wan report.
+Next reduce cross-phase resident copies/owner lifetime, not memory thresholds
+or workload. Four-rank update capacity and fair speedup remain unaccepted.

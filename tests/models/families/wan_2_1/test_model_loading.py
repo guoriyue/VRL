@@ -301,6 +301,35 @@ def test_wan_full_finetune_defers_dtype_normalization_to_fsdp() -> None:
     assert all(parameter.device.type == "cpu" for parameter in pipeline.transformer.parameters())
 
 
+@pytest.mark.parametrize("family", ["WanT2VReplayModel", "WanI2VReplayModel"])
+@pytest.mark.parametrize("dual", [False, True])
+def test_wan_replay_loads_trainable_state_without_pipeline(family, dual) -> None:
+    from vrl.models.families.wan_2_1 import model as wan
+
+    model = getattr(wan, family)(
+        transformer=torch.nn.Linear(2, 2),
+        transformer_2=torch.nn.Linear(2, 2) if dual else None,
+        scheduler=object(),
+        device=torch.device("cpu"),
+        boundary_ratio=0.875 if dual else None,
+        trainable_transformers="both" if dual else "transformer",
+    )
+    payload = {}
+    for root, module in model.trainable_modules.items():
+        module.requires_grad_(True)
+        payload.update(
+            {
+                f"{root}.{name}": torch.full_like(value, 0.25)
+                for name, value in module.named_parameters()
+            }
+        )
+    model.load_trainable_state(payload)
+    model.verify_trainable_state(payload)
+    assert not model.uses_pipeline_cpu_offload
+    assert model.pipeline_cpu_offload_healthy
+    model.reset_pipeline_cpu_offload()
+
+
 def test_wan_replay_full_finetune_ignores_rollout_pipeline_offload() -> None:
     """A normalized replay build moves its transformer through the trainer path."""
     from vrl.models.families.wan_2_1.model import WanT2VReplayModel
@@ -346,10 +375,11 @@ def test_wan_sequential_offload_weight_sync_changes_forward() -> None:
     class _TinyTransformer(nn.Module):
         def __init__(self) -> None:
             super().__init__()
+            self.scale_shift_table = nn.Parameter(torch.ones(2))
             self.proj = _FailingLinear()
 
         def forward(self, value: torch.Tensor) -> torch.Tensor:
-            return self.proj(value)
+            return self.proj(value) * self.scale_shift_table
 
     class _HookedPipeline:
         def __init__(self) -> None:
@@ -430,6 +460,19 @@ def test_wan_sequential_offload_weight_sync_changes_forward() -> None:
     assert model.pipeline_cpu_offload_healthy
     assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
     assert model.transformer(sample).shape == (1, 2)
+
+    model.verify_trainable_state(payload)
+    assert model.pipeline_cpu_offload_healthy
+    assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
+    assert torch.equal(model.transformer(sample).detach(), after)
+    wrong = {name: value + 1 for name, value in payload.items()}
+    with pytest.raises(RuntimeError, match="trainable weight verification failed") as error:
+        model.verify_trainable_state(wrong)
+    assert "installed weight content differs" in str(error.value.__cause__)
+    assert pipeline.remove_calls == 4
+    assert pipeline.enable_calls == 5
+    assert not model.pipeline_cpu_offload_healthy
+    assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
 
 
 def test_wan_pipeline_offload_remove_failure_is_permanently_broken() -> None:

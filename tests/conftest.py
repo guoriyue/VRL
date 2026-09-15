@@ -256,6 +256,8 @@ def cuda_devices(monkeypatch) -> Callable[[int], None]:
 
     def pin(count: int) -> None:
         torch = pytest.importorskip("torch")
+        # A mocked topology must not inherit the host's empty or remapped mask.
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", ",".join(map(str, range(count))))
         monkeypatch.setattr(torch.cuda, "is_available", lambda: count > 0)
         monkeypatch.setattr(torch.cuda, "device_count", lambda: count)
 

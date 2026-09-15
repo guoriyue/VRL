@@ -13,6 +13,7 @@ the flow-convention subclass. The generic recipe loads exactly one scheduler.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from vrl.generation.bindings.full_sequence_denoise import (
@@ -33,7 +34,9 @@ DEFAULT_FPS = 24
 DEFAULT_MAX_SEQUENCE_LENGTH = 512
 
 
-def load_h3_replay_components(build: ModelBuild) -> dict[str, Any]:
+def load_h3_replay_components(
+    build: ModelBuild, *, block_devices: tuple[int, ...] | None = None
+) -> dict[str, Any]:
     """Transformer + the two H3 schedulers as ``MiniMaxH3ReplayModel`` kwargs.
 
     Shared with VDN-H3, whose replay model is the same construction plus the
@@ -45,9 +48,15 @@ def load_h3_replay_components(build: ModelBuild) -> dict[str, Any]:
     from vrl.models.families.minimax_h3.model import build_flow_scheduler_class
     from vrl.models.loader import load_diffusers_transformer
 
+    if block_devices is None:
+        transformer = load_diffusers_transformer(build, "MiniMaxH3Transformer3DModel")
+    else:
+        from vrl.models.families.minimax_h3.placement import load_partitioned_transformer
+
+        transformer = load_partitioned_transformer(build, block_devices)
     load_kwargs = build.pretrained_kwargs
     return {
-        "transformer": load_diffusers_transformer(build, "MiniMaxH3Transformer3DModel"),
+        "transformer": transformer,
         "scheduler": build_flow_scheduler_class().from_pretrained(
             build.model_name_or_path,
             subfolder="scheduler",
@@ -62,14 +71,21 @@ def load_h3_replay_components(build: ModelBuild) -> dict[str, Any]:
     }
 
 
-def build_minimax_h3_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
+def build_minimax_h3_replay_runtime_bundle(
+    build: ModelBuild, *, block_devices: tuple[int, ...] | None = None
+) -> RuntimeBundle:
     """Transformer + the two H3 schedulers; no VAE, no conditioner."""
 
     from vrl.models.families.minimax_h3.model import MiniMaxH3ReplayModel
     from vrl.models.steps.denoise.build import assemble_replay_bundle
 
     logger.info("Building minimax_h3 replay runtime bundle from %s", build.model_name_or_path)
-    model = MiniMaxH3ReplayModel(**load_h3_replay_components(build))
+    components = load_h3_replay_components(build, block_devices=block_devices)
+    if block_devices is not None:
+        # Native PEFT preparation must not collapse the dispatched base onto
+        # the root device. This build is private to the explicit caller.
+        build = replace(build, defer_trainable_device_move=True)
+    model = MiniMaxH3ReplayModel(**components)
     num_steps = build.num_steps
     if num_steps is not None:
         model.set_num_steps(num_steps)

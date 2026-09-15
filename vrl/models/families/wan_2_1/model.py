@@ -233,6 +233,9 @@ class WanT2VDiffusersModel(
 
         from peft import LoraConfig, get_peft_model
 
+        adapter_dtype = (build.model_config or {}).get("lora_parameter_dtype")
+        if adapter_dtype not in (None, "float32"):
+            raise ValueError("model.lora_parameter_dtype must be null or 'float32'")
         lora_path = build.lora_path
         names = self._trainable_transformer_names
         if lora_path and len(names) != 1:
@@ -289,6 +292,10 @@ class WanT2VDiffusersModel(
                 # One construction dtype keeps single-process, FSDP, and worker
                 # replicas byte-compatible at weight sync.
                 wrapped = get_peft_model(transformer, cfg, autocast_adapter_dtype=False)
+            if adapter_dtype == "float32":
+                for parameter in wrapped.parameters():
+                    if parameter.requires_grad:
+                        parameter.data = parameter.data.to(dtype=torch.float32)
             self._set_wan_transformer(name, wrapped)
 
     @property
@@ -370,6 +377,18 @@ class WanT2VDiffusersModel(
             operation="trainable weight sync",
         )
 
+    def verify_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
+        """Read actual adapter bytes with offloaded parameters materialized."""
+
+        verify = super().verify_trainable_state
+        if not self.uses_pipeline_cpu_offload:
+            verify(state_dict)
+            return
+        self._with_pipeline_cpu_offload_suspended(
+            lambda: verify(state_dict),
+            operation="trainable weight verification",
+        )
+
     def reset_pipeline_cpu_offload(self) -> None:
         """Return every component to CPU and reinstall fresh streaming hooks.
 
@@ -415,6 +434,16 @@ class WanT2VDiffusersModel(
             )
 
         try:
+            from accelerate.hooks import remove_hook_from_module
+
+            # PEFT delegates attributes to its child, so Accelerate's hasattr
+            # traversal can detach a child's hook against the wrong owner.
+            # Remove explicitly owned hooks child-first before pipeline cleanup.
+            for transformer in self._wan_transformers().values():
+                if isinstance(transformer, torch.nn.Module):
+                    for module in reversed(list(transformer.modules())):
+                        if "_hf_hook" in vars(module) or "_old_forward" in vars(module):
+                            remove_hook_from_module(module, recurse=False)
             remove_hooks()
         except BaseException as remove_error:
             raise RuntimeError(
@@ -657,8 +686,10 @@ class WanT2VDiffusersModel(
         guidance_scale_2 = _resolve_guidance_scale_2(guidance_scale, self._boundary_ratio)
         do_cfg = _uses_cfg(guidance_scale, guidance_scale_2)
 
-        pipe.scheduler.set_timesteps(request.num_steps, device=device)
-        timesteps = pipe.scheduler.timesteps
+        # Multistep history belongs to this batch, not the resident pipeline.
+        scheduler = type(pipe.scheduler).from_config(pipe.scheduler.config)
+        scheduler.set_timesteps(request.num_steps, device=device)
+        timesteps = scheduler.timesteps
 
         num_channels_latents = pipe.transformer.config.in_channels
         batch_size = prompt_embeds.shape[0]
@@ -684,14 +715,14 @@ class WanT2VDiffusersModel(
         return WanT2VSamplingState(
             latents=latents,
             timesteps=timesteps,
-            scheduler=pipe.scheduler,
+            scheduler=scheduler,
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
             guidance_scale=guidance_scale,
             do_cfg=do_cfg,
             guidance_scale_2=guidance_scale_2,
             boundary_ratio=self._boundary_ratio,
-            num_train_timesteps=_scheduler_num_train_timesteps(pipe.scheduler),
+            num_train_timesteps=_scheduler_num_train_timesteps(scheduler),
         )
 
     # -- forward_step --------------------------------------------------
@@ -848,6 +879,7 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
         self.transformer_2 = transformer_2
         self._scheduler = scheduler
         self._device = device
+        self._pipeline_offload = None
         self._boundary_ratio = boundary_ratio
         self._trainable_transformer_names = normalize_wan_trainable_transformers(
             trainable_transformers,
@@ -1061,8 +1093,10 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         guidance_scale_2 = _resolve_guidance_scale_2(guidance_scale, self._boundary_ratio)
         do_cfg = _uses_cfg(guidance_scale, guidance_scale_2)
 
-        pipe.scheduler.set_timesteps(request.num_steps, device=device)
-        timesteps = pipe.scheduler.timesteps
+        # Multistep history belongs to this batch, not the resident pipeline.
+        scheduler = type(pipe.scheduler).from_config(pipe.scheduler.config)
+        scheduler.set_timesteps(request.num_steps, device=device)
+        timesteps = scheduler.timesteps
 
         batch_size = prompt_embeds.shape[0]
         seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
@@ -1099,7 +1133,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         return WanI2VSamplingState(
             latents=latents,
             timesteps=timesteps,
-            scheduler=pipe.scheduler,
+            scheduler=scheduler,
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
             image_embeds=image_embeds,
@@ -1108,7 +1142,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             do_cfg=do_cfg,
             guidance_scale_2=guidance_scale_2,
             boundary_ratio=self._boundary_ratio,
-            num_train_timesteps=_scheduler_num_train_timesteps(pipe.scheduler),
+            num_train_timesteps=_scheduler_num_train_timesteps(scheduler),
         )
 
     def forward_step(
