@@ -34,6 +34,7 @@ from vrl.models.weight_utils import (
     require_weights_for,
     verify_trainable_modules,
 )
+from vrl.nn.optimization.regional_compile import compile_repeated_blocks
 from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE
 from vrl.utils.validation import require_int
 
@@ -425,16 +426,22 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
 
         self.transformer = transformer
 
-    def torch_compile_transformer(self, mode: str) -> None:
+    def torch_compile_transformer(self, mode: str, *, regional: bool = False) -> None:
         """Compile every rollout policy core in place.
 
         Walks ``policy_cores`` rather than ``self.transformer`` so a multi-expert
         family compiles each expert it samples through, with no per-family
-        override.
+        override. ``regional`` compiles each repeated transformer block instead
+        of the root (one trace shared by every block, so cold compile and
+        recompiles cost one block rather than the whole graph); the root keeps
+        its type, so no handle needs writing back.
         """
 
         for name, module in self.policy_cores.items():
-            self.set_module_root(name, torch.compile(module, mode=mode, fullgraph=False))
+            if regional:
+                compile_repeated_blocks(module, mode=mode)
+            else:
+                self.set_module_root(name, torch.compile(module, mode=mode, fullgraph=False))
 
     def set_module_root(self, name: str, module: Any) -> None:
         """Write a replaced module root back to EVERY handle that references it.

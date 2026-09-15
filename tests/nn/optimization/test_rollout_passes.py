@@ -38,12 +38,13 @@ class _Policy:
     def policy_cores(self) -> dict[str, nn.Module]:
         return self._cores
 
-    def torch_compile_transformer(self, mode: str) -> None:
+    def torch_compile_transformer(self, mode: str, *, regional: bool = False) -> None:
         # Really compile: the pass verifies the EFFECT on the modules, so a fake
         # that only records the call would (correctly) be rejected as a
         # half-covering pass.
         import torch
 
+        assert regional is False
         self.compiled = [f"{name}:{mode}" for name in self._cores]
         for name, core in list(self._cores.items()):
             self._cores[name] = torch.compile(core, mode=mode)
@@ -135,9 +136,9 @@ def test_quantization_runs_before_compile() -> None:
         def policy_cores(self) -> dict[str, nn.Module]:
             return self._cores
 
-        def torch_compile_transformer(self, mode: str) -> None:
+        def torch_compile_transformer(self, mode: str, *, regional: bool = False) -> None:
             order.append("compile")
-            super().torch_compile_transformer(mode)
+            super().torch_compile_transformer(mode, regional=regional)
 
     model = _OrderPolicy("transformer")
     import vrl.nn.quantization as quantization
@@ -167,9 +168,9 @@ def test_device_move_seam_runs_between_quantize_and_compile() -> None:
     order: list[str] = []
 
     class _SeamPolicy(_Policy):
-        def torch_compile_transformer(self, mode: str) -> None:
+        def torch_compile_transformer(self, mode: str, *, regional: bool = False) -> None:
             order.append("compile")
-            super().torch_compile_transformer(mode)
+            super().torch_compile_transformer(mode, regional=regional)
 
     model = _SeamPolicy("transformer")
 
@@ -209,7 +210,8 @@ def test_a_half_covering_compile_is_caught() -> None:
     import torch
 
     class _HalfCompiling(_Policy):
-        def torch_compile_transformer(self, mode: str) -> None:
+        def torch_compile_transformer(self, mode: str, *, regional: bool = False) -> None:
+            del regional
             first = next(iter(self._cores))
             self._cores[first] = torch.compile(self._cores[first], mode=mode)
 

@@ -108,7 +108,7 @@ def test_torch_compile_property_resolves_scope_per_role(
     rollout_build = _compile_scope_build(scope, rollout=True)
     replay_build = _compile_scope_build(scope, rollout=False)
 
-    expected = {"enable": True, "mode": "default"}
+    expected = {"enable": True, "mode": "default", "regional": False}
     assert rollout_build.torch_compile == (expected if rollout_compiles else None)
     assert replay_build.torch_compile == (expected if replay_compiles else None)
 
