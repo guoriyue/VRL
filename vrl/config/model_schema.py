@@ -149,6 +149,14 @@ class ModelSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
+    # Run each feed-forward up-projection and its tanh-GELU (diffusers ``GELU``
+    # in SD3.5, Wan, Flux, Qwen-Image) as one GEMM with the activation in the
+    # epilogue. Rollout only: the fused op has no backward, so replay keeps the
+    # reference kernel. Kernel choice, same weights, so identity-excluded.
+    fused_gelu_projection: bool | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
     use_lora: Any = Field(
         default=None,
         json_schema_extra=checkpoint_identity_metadata("value", default=False),
