@@ -113,6 +113,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 01:55 — 指标归约范围：dp 组 vs world，CP 副本的重复计数
 - 2026-09-15 02:45 — 权重更新事务与版本门：版本回执、内容核对、LoRA 合并时机
 - 2026-09-15 03:45 — checkpoint/resume 身份：tracker 文件、RNG 与进度恢复、身份校验
+- 2026-09-15 04:45 — staleness / off-policy 记账：过期样本是断言还是策略
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -224,3 +225,30 @@ generator）随 checkpoint 捕获与恢复，`resume_epoch` 由 `build_configs` 
 rollout 的 staleness 记账错位；(2) `strict=False` 路径只 warning，多 rank 下应至少 `all_true`
 统一所有 rank 的判定，避免一个 rank 拒绝、其余 rank 继续导致集合通信挂死。风险：只加校验；
 门：resume 单元测试覆盖身份不符 + 多 rank 判定一致。
+
+### hourly note 2026-09-15 04:45 — 过期样本：断言、丢弃还是回炉
+
+**问题**：异步/连续采样下，一个 prompt 组从生成到进训练之间策略可能已经更新了 k 次；k 超过
+允许窗口时怎么办，决定了系统在"reward 慢了一拍"这类抖动下是继续还是崩溃。
+
+**参照实现**（LLM RL 的全异步模式，`miles/utils/arguments.py:717-775`）：`--max-weight-staleness`
+是**过滤器**而不是断言——超窗的组按 `--async-unused-samples-handler` 处理：`drop`（默认丢弃）或
+`retry`（prompt 回炉重生成）；同时 `--async-data-buffer-capacity-factor` 给成品缓冲区设上限，
+缓冲满时生产者阻塞，保证生成不会无限领先训练；`--async-max-concurrent-samples` 把并发生成量与
+训练 batch 解耦。
+
+**VRL 今天**（`vrl/rollouts/orchestration/continuous/staleness.py:14-42`，
+`producer.py:536-552, 736-752`）：`StalenessPolicy.too_stale` 是一个**不变量**：组在 reward 前或
+完成时超窗直接 `RuntimeError`，经槽位失败预算（3 次）后整个 run 失败。VRL 的连续调度只有
+`max_stale_policy_versions` 一个窗口（默认要求 ≥1），单槽生产者，版本屏障由消费者校验（负
+staleness 视为违规）。这在 max_stale=1、单槽的形状下等价于断言"生产者永远不会落后超过一个
+版本"，正常运行确实成立；但一次 reward 服务超时或 HTTP 重试就会把它变成 run 级失败。
+
+**VRL 该改什么（后续）**：把"超窗"从断言改成策略：`continuous.stale_policy: raise | drop | retry`
+（默认保持 `raise` 以不改变现有语义），`drop` 记一个 `continuous.dropped_stale_groups` 计数并
+释放槽位，`retry` 把 prompt 批放回生产队列头部。风险：`drop` 会让一次 update 的样本数少于
+计划（需要与 `plan_balanced` 的跨 rank 对齐配合，本已支持不等槽数）；门：人为拖慢 reward
+服务（sleep）时 `drop` 模式的 run 继续且计数递增，`raise` 模式行为不变。
+
+**顺带**：本小时发现合并跑 CP 的 2 rank spawn 测试与 orchestration 测试时，pytest 在解释器退出
+的 `multiprocessing._exit_function` 上挂住（join 存活子进程）；测试改为 join 超时后 kill。

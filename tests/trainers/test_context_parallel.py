@@ -296,6 +296,11 @@ def test_two_rank_cp_group_generates_slices_and_gathers_the_union() -> None:
         results[rank] = rest
     for p in procs:
         p.join(timeout=10)
+        if p.is_alive():
+            # Never leave a rank behind: multiprocessing joins live children at
+            # interpreter exit and a wedged rank would hang the whole session.
+            p.kill()
+            p.join(timeout=10)
         assert p.exitcode == 0
 
     for rank in (0, 1):
