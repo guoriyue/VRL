@@ -52,7 +52,7 @@ grep -rhno 'profile_range("[a-z_.]*"' vrl/ --include=*.py \
 | `generation.denoise_forward` | Policy transformer forward inside a step |
 | `generation.ref_denoise_forward` | Reference-model forward (KL / ratio terms) |
 | `generation.scheduler_step` | Scheduler update from model output to next latent |
-| `generation.latent_snapshot` | Capturing latents for the trajectory |
+| `generation.latent_snapshot` | Writing the initial latent into the trajectory buffer (once per batch; later observations are the recorded actions) |
 | `generation.latent_write` | Writing latents out |
 | `generation.trajectory_buffer_write` | Appending the step to the trajectory buffer |
 | `generation.decode_latents` | VAE decode to pixels |
