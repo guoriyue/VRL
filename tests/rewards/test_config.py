@@ -73,7 +73,7 @@ def test_component_inference_configs_resolve_independently() -> None:
         RewardConfig.model_validate(cfg["reward"])
     ).inference_configs
 
-    assert resolved["ocr"].kind == "in_process"
+    assert resolved["ocr"].kind == "service"
     assert resolved["videoscore2"] == RewardInferenceConfig(
         kind="http",
         endpoint="http://reward:8300",

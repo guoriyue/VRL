@@ -188,15 +188,16 @@ class MultiReward(RewardFunction):
         ``reward_kwargs`` allows passing per-reward init kwargs, keyed by name,
         e.g. ``{"ocr": {"debug_dir": "out/ocr_debug"}}``.
 
-        Config-driven callers pass their already-resolved ``inference_configs``.
-        Direct callers may omit it; every component then executes in-process.
+        Config-driven callers pass their already-resolved ``inference_configs``
+        (YAML defaults to a managed service). Direct callers may omit it; every
+        component then executes in-process, the evaluation/test shape.
         """
         _register_builtins()
         reward_kwargs = reward_kwargs or {}
         configured_weights = {name: float(weight) for name, weight in score_dict.items()}
         reward_classes = {name: get_reward(name) for name in configured_weights}
         resolved_inference_configs: Mapping[str, RewardInferenceConfig] = (
-            {name: RewardInferenceConfig() for name in configured_weights}
+            {name: RewardInferenceConfig(kind="in_process") for name in configured_weights}
             if inference_configs is None
             else inference_configs
         )
@@ -357,7 +358,7 @@ def validate_reward_memory_parking_components(
     _register_builtins()
     kwargs_by_name = reward_kwargs or {}
     if inference_configs is None:
-        inference_configs = {name: RewardInferenceConfig() for name in names}
+        inference_configs = {name: RewardInferenceConfig(kind="in_process") for name in names}
     local_kinds = {"in_process", "service"}
     gpu_components = [
         name

@@ -1,6 +1,6 @@
 # SPRINT：reward 全部走独立服务进程（GIL 隔离）
 
-状态：**P1（7f21d66d）、P2（fde9474b）、P3 已落地，2026-09-14；P4–P5 planned**。用户决策：不论难度，reward 一律与 trainer 进程隔离。
+状态：**P1–P4 已落地（2026-09-14）；P5 全量验收进行中**。用户决策：不论难度，reward 一律与 trainer 进程隔离。
 来源实验：`docs/sprints/SPRINT_four_l40s_execution.md` "Prefetch / reward placement /
 compile: final five-arm table"。
 
@@ -99,7 +99,11 @@ GPU 验收（3x1 preset + `reward.inference.ocr.kind=service`，期望 ≈398 s/
 - 每个加一份 `vrl/config/reward_service/<name>.yaml` 模板（托管模式不需要它，但外部
   `http` 模式和运维排查需要）。
 
-### P4 删除在线训练的进程内传输
+### P4 删除在线训练的进程内传输 — 已落地
+实际形状：`RewardInferenceConfig.kind` 默认值改为 `service`（YAML 未声明即托管服务）；在线
+工厂 `build_reward_function` 对显式 `kind: in_process` 报错；直接构造（`MultiReward.from_dict`
+不带 inference_configs、`build_reward_scorer(inference=None)`）保持进程内，供评测脚本和测试。
+31 个 reward preset 一个都没改：它们的 kwargs 现在整体成为服务的 `worker_config`。
 - 注册表：在线 recipe 中 `kind: in_process` 报错，提示改 `service`；默认值改为
   `service`；31 个 reward preset 去掉 `device`/`sleep_offload` 之类进程内键（它们进
   `worker_config` 转交服务）。

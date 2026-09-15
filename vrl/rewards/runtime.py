@@ -516,6 +516,10 @@ def build_reward_scorer(
             "worker_config.service_url was removed; configure "
             "reward.inference.<component>.kind=http and its endpoint",
         )
+    if inference is None:
+        # Direct construction (evaluation scripts, tests): no deployment was
+        # resolved from YAML, so the model scores in this process.
+        return InProcessRewardScorer(cfg)
     deployment = RewardInferenceConfig.from_mapping(
         inference,
         context="reward inference",

@@ -12,9 +12,15 @@ signal than the base reward default.
 
 ## Inference Deployment
 
-Reward execution is selected per component. `in_process` is the default and is
-the only supported heavy-reward mode when trainer, rollout, and reward share one
-GPU. An operator-owned service uses typed transport config in the
+Reward execution is selected per component and always runs outside the
+trainer process: a reward scoring in the driver competes with the launch-bound
+replay for the interpreter (measured +61 s per epoch on SD3.5 under continuous
+scheduling). The default, `service`, makes the trainer launch
+`vrl-reward-service` itself for each component: the component's
+`reward.kwargs` become the service's `worker_config`, config and log land under
+`${trainer.output_dir}/reward_artifacts/`, and a shared-GPU topology hands the
+service the phase lease (`POST /park`, `POST /wake`). `kind: http` connects to
+an operator-owned service instead, with typed transport config in the
 `reward.inference` section, keyed by component name:
 
 ```yaml

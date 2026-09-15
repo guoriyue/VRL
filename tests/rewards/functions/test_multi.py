@@ -629,7 +629,7 @@ def test_mixed_runtime_components_fail_closed_for_generation_overlap(tmp_path) -
                 endpoint="http://reward:8300",
                 expected_model="videoscore2-v1",
             ),
-            "ocr": RewardInferenceConfig(),
+            "ocr": RewardInferenceConfig(kind="in_process"),
         },
     )
 
