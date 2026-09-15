@@ -87,3 +87,20 @@
 - 其次：replay 批形状 = rollout 批形状（内存允许时 `training_microbatch_size` 对齐 16），已知等形状漂移为 0。
 - 再次：Wan 家族对齐 norm/residual/RoPE 舍入位置，作为 B spike 引擎 provider 的 patch 组。
 - 长期：frozen-weight 诊断模式 + `model_output_*` 指标 + 确定性模式下的逐位 CI 标准。
+
+## 附录 B（2026-09-14）：VRL driver 进程里的 rollout 后处理清单（A 第 2 步 / D 的输入）
+
+Ray worker 返回后、trainer 拿到 `RolloutBatch` 前，driver 进程要做的事（都在 rank 进程的
+事件循环线程或 collector 线程里）：
+
+| 步骤 | 位置 | 性质 |
+|---|---|---|
+| Ray object 反序列化（GenerationBatchResult，含 `[B,T,*latent]` 轨迹张量） | `vrl/generation/ray/executor.py` `ray.get` | pickle，持 GIL |
+| 多 batch 拼接、覆盖校验、replay 张量对齐、轨迹构建 | `vrl/generation/bindings/full_sequence_denoise/gather.py:36-115` → `vrl/trajectory/builders.py:30-135` | 纯 CPU 张量 cat/校验 |
+| 存储策略再应用（dtype/device） | `vrl/trajectory/storage.py` | 张量拷贝 |
+| reward 样本构建、artifact 采纳 | `vrl/rollouts/collector/batch_builder.py`、`vrl/rewards/artifacts.py` | 已在 WS-A 第 1 步瘦身 |
+| 训练 batch 组装（rewards/group_ids/extras） | `vrl/rollouts/collector/core.py` `prepare_training_batches` | 小 |
+
+worker 侧对应的是 `worker.py:910-948` `_copy_output_to_cpu`（pinned 异步拷贝）。
+A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（每个 rank 一个池），driver 只
+`ray.get` 一个已构建好的 `RolloutBatch` 引用；门是 py-spy 里 driver 侧这些帧的占比。
