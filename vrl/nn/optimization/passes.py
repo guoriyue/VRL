@@ -149,6 +149,33 @@ class FusedRmsNormPass:
 
 
 @dataclass(frozen=True, slots=True)
+class FrameSharedAdaLNPass:
+    """Run each Cosmos AdaLN's conditioning chain once per frame, not per token.
+
+    Re-classes the norm modules in place and hooks the transformer root, so it
+    has no ordering relation to the GEMM swap; it runs beside the norm swap so
+    quantization (which may wrap ``linear_1`` / ``linear_2``) and inductor see
+    the final modules. The replay bundle applies the same swap from the same
+    flag, which keeps the two roles on one path -- the reason this is not a
+    drift source.
+    """
+
+    name: str = "frame_shared_adaln"
+    # Re-classes norm modules inside the existing tree; the root object is unchanged.
+    replaces_modules: bool = False
+
+    def enabled(self, build: Any) -> bool:
+        return bool(getattr(build, "frame_shared_adaln", False))
+
+    def apply(self, model: Any, build: Any) -> PassResult:
+        from vrl.nn.optimization.frame_shared_adaln import share_adaln_across_frames
+
+        del build
+        count = sum(share_adaln_across_frames(core) for core in model.policy_cores.values())
+        return PassResult(name=self.name, applied=count > 0, detail=f"{count} AdaLN sites")
+
+
+@dataclass(frozen=True, slots=True)
 class FusedGeluProjectionPass:
     """Run each policy core's feed-forward up-projection and tanh-GELU as one GEMM.
 
@@ -356,6 +383,7 @@ class VaeDecodeMemoryPass:
 # sits last only because nothing requires it earlier.
 ROLLOUT_PASSES: tuple[OptimizationPass, ...] = (
     FusedRmsNormPass(),
+    FrameSharedAdaLNPass(),
     FusedGeluProjectionPass(),
     FusedLoraBranchPass(),
     QuantizationPass(),
@@ -448,6 +476,7 @@ __all__ = [
     "REQUEST_SCOPED_DRIFT_SOURCES",
     "ROLLOUT_PASSES",
     "CompilePass",
+    "FrameSharedAdaLNPass",
     "FusedGeluProjectionPass",
     "FusedLoraBranchPass",
     "FusedRmsNormPass",
