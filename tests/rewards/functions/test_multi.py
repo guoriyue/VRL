@@ -734,10 +734,10 @@ def test_every_former_in_process_reward_can_run_as_a_managed_service(
 
 
 def test_disk_rewards_project_artifact_specs_and_the_builder_fills_fps(tmp_path) -> None:
-    from vrl.generation.types import RewardArtifactSpec
     from vrl.models.families.registry import get_model_family_entry
     from vrl.rollouts.collector.config import RolloutCollectorConfig
     from vrl.rollouts.collector.requests import GenerationRequestBuilder
+    from vrl.utils.artifacts import RewardArtifactSpec
 
     reward = MultiReward.from_dict(
         {"hpsv3": 1.0, "geneval": 0.0},

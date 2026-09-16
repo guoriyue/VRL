@@ -15,9 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from vrl.generation.types import RewardArtifactSpec
-from vrl.rewards.types import MaterializedArtifact
-from vrl.utils.artifacts import sha256_file
+from vrl.utils.artifacts import MaterializedArtifact, RewardArtifactSpec, sha256_file
 
 # Files of one batch are written concurrently. A single mp4 write is bound by
 # the frame-by-frame pipe into the encoder process plus the digest pass, both

@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from vrl.config.reward_inference import RewardInferenceConfig
-from vrl.generation.types import RewardArtifactSpec
 from vrl.rewards.artifacts import (
     ArtifactFormat,
     DiskRewardArtifactStore,
@@ -44,6 +43,7 @@ from vrl.rewards.protocols import (
     RewardScorer,
 )
 from vrl.rewards.types import RewardOutput, RewardSample
+from vrl.utils.artifacts import RewardArtifactSpec
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)

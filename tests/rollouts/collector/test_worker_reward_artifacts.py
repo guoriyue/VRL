@@ -10,9 +10,10 @@ import torch
 
 from vrl.generation.execution.reward_artifacts import materialize_reward_artifacts
 from vrl.generation.execution.worker import GenerationWorkerCore
-from vrl.generation.types import GenerationRequest, RewardArtifactSpec
+from vrl.generation.types import GenerationRequest
 from vrl.rewards.artifacts import DiskRewardArtifactStore
-from vrl.rewards.types import MaterializedArtifact, RewardSample
+from vrl.rewards.types import RewardSample
+from vrl.utils.artifacts import MaterializedArtifact, RewardArtifactSpec
 
 
 def _spec(tmp_path: Path, name: str = "hpsv3", **overrides) -> RewardArtifactSpec:

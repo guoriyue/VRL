@@ -19,7 +19,7 @@ import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from vrl.rewards.types import MaterializedArtifact
+from vrl.utils.artifacts import MaterializedArtifact, RewardArtifactSpec
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
@@ -72,39 +72,6 @@ class DenoiseRequest:
             require_int(self.fps, path="DenoiseRequest.fps", minimum=1)
         if self.seed is not None:
             require_int(self.seed, path="DenoiseRequest.seed")
-
-
-@dataclass(frozen=True, slots=True)
-class RewardArtifactSpec:
-    """One reward component's request that the worker write its media to disk.
-
-    Projected by the collector from the reward function's disk artifact
-    stores. The worker writes one file per sample under ``root`` in the
-    component's format and returns ``MaterializedArtifact`` references; the
-    decoded media then never crosses the worker->driver wire and the driver
-    never encodes video. ``fps`` is the mp4 encode rate, filled from the
-    request's sampling when the store did not pin one.
-    """
-
-    name: str
-    root: str
-    media_type: Literal["image", "video"]
-    artifact_format: Literal["tensor", "mp4"]
-    fps: float | None = None
-
-    def __post_init__(self) -> None:
-        if not self.name or not self.root:
-            raise ValueError("RewardArtifactSpec needs a component name and a root directory")
-        if self.media_type not in ("image", "video"):
-            raise ValueError(
-                f"RewardArtifactSpec.media_type must be image or video, got {self.media_type!r}",
-            )
-        if self.artifact_format not in ("tensor", "mp4"):
-            raise ValueError(
-                f"RewardArtifactSpec.artifact_format must be tensor or mp4, got {self.artifact_format!r}",
-            )
-        if self.artifact_format == "mp4" and self.media_type != "video":
-            raise ValueError("RewardArtifactSpec: artifact_format=mp4 requires media_type=video")
 
 
 @dataclass(slots=True, init=False)
@@ -340,5 +307,4 @@ __all__ = [
     "GenerationOutput",
     "GenerationRequest",
     "GenerationSampleRow",
-    "RewardArtifactSpec",
 ]
