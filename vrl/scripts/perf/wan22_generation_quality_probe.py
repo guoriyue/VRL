@@ -13,6 +13,7 @@ step count, sampler, VAE tiling, resolution or the missing negative prompt.
         --prompt "..." --prompt "..." --device cuda:0
 """
 
+# ruff: noqa: RUF001 -- the Wan negative prompt is Chinese text with full-width punctuation.
 from __future__ import annotations
 
 import argparse
@@ -42,7 +43,7 @@ from vrl.utils.media import video_tensor_to_uint8_frames, write_mp4
 logger = logging.getLogger(__name__)
 
 # The negative prompt every official Wan example passes (WanPipeline docs).
-WAN_NEGATIVE_PROMPT = (  # noqa: RUF001
+WAN_NEGATIVE_PROMPT = (
     "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，"
     "最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，"
     "畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"
