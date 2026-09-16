@@ -126,6 +126,7 @@ A 第 2 步的形状：把 gather + builders + storage 三步放进 CPU actor（
 - 2026-09-15 14:45 — 引擎健康与恢复：死 worker 是终止 run 还是原位重建
 - 2026-09-15 15:45 — 训练中的固定 prompt 评估：低方差的学习信号
 - 2026-09-15 16:45 — rollout 请求的准入与背压：全局信号量 vs 按调度模式的槽位/字节上限
+- 2026-09-15 17:45 — 数据源与采样确定性：游标式一遍一洗 vs 每 epoch 独立随机抽样
 
 ### hourly note 2026-09-14 23:40 — 集合通信计数守卫与 CP 同组一致性
 
@@ -526,3 +527,26 @@ pipelined worker 单飞锁）；continuous 模式下生产者有固定槽位（`
 的 8 个 batch-16 请求在 3 张 rollout 卡上轮询，`engine_generate` 55 s ≈ 3 轮 × 13 s，说明请求粒度
 的分发已把三张卡用满；若把 `samples_per_generation_batch` 设为组大小以上不会更快。门：无需改动；
 若将来加 reward 副本池（12:45 笔记），背压字节上限需把 reward 在飞的 artifact 一并计入（现已计入）。
+
+### hourly note 2026-09-15 17:45 — prompt 采样：一遍一洗的游标，还是每 epoch 独立抽样
+
+**问题**：在线 RL 的 prompt 供给要同时满足三件事：多 rank 一致、resume 后从同一位置继续、以及
+"每个 prompt 在一遍里被看一次"（避免 19.7k prompt 的数据集里少数 prompt 被反复抽到）。
+
+**参照实现**（`miles/rollout/data_source.py:41-120`）：游标式数据源——数据集按 `rollout_seed` 一次性
+加载，每遍开始 `shuffle(epoch_id)`，`get_samples` 按 `sample_offset` 顺序切片、跨遍边界时自动
+再洗；`save/load` 把 `sample_offset / epoch_id / sample_index` 写进 checkpoint，resume 精确。
+
+**VRL 今天**（`vrl/trainers/data/prompt_sampler.py:26-110`）：`PromptBatchSampler` 由一个 torch
+generator 驱动，`random_without_replacement` 每个 epoch 用 `randperm(num_examples)[:global]`
+抽一个全局 batch 再按 rank 切片，`sequential` 用 epoch 算术；generator 状态随 checkpoint 捕获
+（`capture_rng_state(prompt_generator)`），`preview` 让 continuous 预取不消耗 generator。多 rank
+一致与 resume 都成立。差别在采样语义：VRL 的"无放回"只在**一个 batch 内**无放回，跨 epoch 是
+独立抽样——一遍 19.7k prompt 的数据集要 1230 个 epoch 才覆盖，实际是有放回的；今天 SD3.5 arm
+40 epoch × 16 prompt 只触及 640 个 prompt，且允许重复。
+
+**VRL 该改什么（后续，小改动）**：新增 `PromptSamplingStrategy.SHUFFLED_PASS`：第 p 遍的排列由
+`(generator.initial_seed(), p)` 派生（无需额外状态，resume 仍只靠 epoch 与 generator），
+`sample(epoch)` 取该遍排列的 `[offset : offset+global]`，跨遍边界拼接下一遍的开头。风险：无
+（新策略，默认不变）；门：单测覆盖"一遍内无重复、遍与遍之间不同排列、两 rank 切片互补、
+resume 后同 epoch 同索引"。本小时不改代码（主机 hold，测试不能跑）。
