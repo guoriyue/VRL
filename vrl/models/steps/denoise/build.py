@@ -21,6 +21,7 @@ from vrl.models.loader import (
 )
 from vrl.models.precision import apply_float32_precision
 from vrl.nn.optimization import apply_rollout_optimizations
+from vrl.nn.optimization.frame_shared_adaln import share_adaln_across_frames
 from vrl.nn.optimization.fused_rms_norm import fuse_rms_norms
 from vrl.utils.logging import init_logger
 
@@ -105,6 +106,10 @@ def assemble_replay_bundle(
     if build.fused_rms_norm:
         for core in model.policy_cores.values():
             fuse_rms_norms(core)
+    # Mirror of the rollout FrameSharedAdaLNPass, for the same reason.
+    if build.frame_shared_adaln:
+        for core in model.policy_cores.values():
+            share_adaln_across_frames(core)
 
     compile_cfg = build.torch_compile
     if compile_cfg is not None:

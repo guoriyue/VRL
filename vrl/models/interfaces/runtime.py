@@ -412,6 +412,11 @@ class ModelBuild:
         return bool((self.model_config or {}).get("fused_rms_norm", False))
 
     @property
+    def frame_shared_adaln(self) -> bool:
+        """``model.frame_shared_adaln``: both roles read it, so no scope."""
+        return bool((self.model_config or {}).get("frame_shared_adaln", False))
+
+    @property
     def fused_gelu_projection(self) -> bool:
         """``model.fused_gelu_projection``: only the rollout pass consumes it."""
         return bool((self.model_config or {}).get("fused_gelu_projection", False))

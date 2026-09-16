@@ -149,6 +149,15 @@ class ModelSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
+    # Run each Cosmos AdaLN's conditioning chain (SiLU, two small GEMMs, the
+    # ``temb`` add) once per latent frame and broadcast the shift/scale over
+    # the frame's tokens, instead of once per token. Applied to rollout AND
+    # replay so both roles share one path; kernel choice only, same weights,
+    # so identity-excluded like torch_compile.
+    frame_shared_adaln: bool | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("exclude"),
+    )
     # Run each feed-forward up-projection and its tanh-GELU (diffusers ``GELU``
     # in SD3.5, Wan, Flux, Qwen-Image) as one GEMM with the activation in the
     # epilogue. Rollout only: the fused op has no backward, so replay keeps the
