@@ -1,6 +1,6 @@
 # SPRINT：reward 层的传输归属——按 miles 的分工收拢
 
-状态：plan（2026-09-15），在 `review/all-gpu-main-20260914` 上写；执行等这条分支 review 收尾后单独提交。
+状态：**done（2026-09-15）**，在 `review/all-gpu-main-20260914` 上落地。实际形状比下面的方案更简单：不需要 `RewardTransport` 值对象，基类的显式传输关键字已经是那个唯一的定义处，缺的只是让模型旋钮不再逼子类重抄签名。见文末的落地记录。
 
 ## 问题
 
@@ -60,3 +60,20 @@ Scorer（模型）/ Actor（薄壳）/ Pool 子类（7 行把 args 映射给池�
   `MaterializedArtifact`），两个架构分层测试红；两个 dataclass 应搬到 `vrl/utils/artifacts.py`。
 - continuous 队列里 `attempt`、`backpressure_seconds/entries` 只进日志，按派生字段规则删或标 display-only。
 - `787d703c` 用生成 batch=1 过 replay-parity 门，是绕过不是修根因（4 对 4 仍 0.0111）。
+
+## 落地记录（2026-09-15）
+
+- `DiskArtifactRewardFunction.__init__` 增加 `**model_kwargs`：传输关键字仍是显式参数，其余关键字并入
+  `worker_config`。新增两个类属性：`score_keys`（可选的 score_key 白名单，基类校验）和
+  `worker_config_only`（模型词汇必须嵌套在 `worker_config:` 下，顶层多余关键字报 TypeError，
+  保住 `test_future_reward_rejects_unknown_kwargs` 那条闭合键集定理）。
+- 删掉转发 `__init__` 的 8 个 reward：aesthetic、pickscore（模型侧已有同样的默认值）、codex_image_qa、
+  image_sharpness、geneval_owl、wd_tagger（`score_keys` 取代各自的校验）、motion_dynamics、
+  target_dino_similarity（`worker_config_only = True`）。
+- 只留几行 `__init__` 的：OCR（`debug_dir` 路由到模型的帧转储目录）、nsfw_safety（模型自带的
+  `scorer` 可调用对象与传输 `scorer` 同名消歧）。
+- 顺手发现 `idm_action_following` 根本构造不了：它把 `model_factory=` 当关键字传给基类（基类只认类属性），
+  任何 `ActionFollowingReward(...)` 都是 TypeError，仓库里没有一个测试构造过它。改成声明块，并加进
+  `test_every_former_in_process_reward_can_run_as_a_managed_service` 的表。
+- 结果：`retain_artifacts: bool = False` 在 functions/ 下从 10 处到 0 处；目录 1493 → 1159 行；
+  `tests/rewards`、`tests/config`、online entrypoint / lifecycle 全绿。

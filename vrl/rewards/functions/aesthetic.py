@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from vrl.config.reward_inference import RewardInferenceConfig
-from vrl.rewards.artifacts import MediaType
 from vrl.rewards.base import DiskArtifactRewardFunction
-from vrl.rewards.protocols import RewardScorer
 
 
 class AestheticReward(DiskArtifactRewardFunction):
@@ -27,38 +22,6 @@ class AestheticReward(DiskArtifactRewardFunction):
     default_artifact_format = "tensor"
     default_media_type = "image"
     in_process_media = "memory"
-
-    def __init__(
-        self,
-        device: str = "cuda",
-        dtype: str = "float32",
-        model_name: str = "openai/clip-vit-large-patch14",
-        score_key: str = "aesthetic",
-        scorer: RewardScorer | None = None,
-        inference: RewardInferenceConfig | None = None,
-        artifact_format: str | None = None,
-        media_type: MediaType | None = None,
-        artifact_dir: str = "outputs/reward_artifacts",
-        retain_artifacts: bool = False,
-        **kwargs: Any,
-    ) -> None:
-        worker_config = {
-            "dtype": dtype,
-            "model_name": model_name,
-            **kwargs,
-        }
-        super().__init__(
-            reward_name="aesthetic",
-            score_key=score_key,
-            worker_config=worker_config,
-            device=device,
-            scorer=scorer,
-            inference=inference,
-            artifact_format=artifact_format,
-            media_type=media_type,
-            artifact_dir=artifact_dir,
-            retain_artifacts=retain_artifacts,
-        )
 
 
 __all__ = ["AestheticReward"]

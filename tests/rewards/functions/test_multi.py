@@ -707,6 +707,7 @@ def test_service_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:
         ("geneval_owl", "cuda:0", {}),
         ("motion_dynamics", "cuda:0", {"worker_config": {"num_frames": 4}}),
         ("target_dino_similarity", "cuda:0", {"worker_config": {"num_frames": 4}}),
+        ("idm_action_following", "cuda:0", {}),
     ],
 )
 def test_every_former_in_process_reward_can_run_as_a_managed_service(

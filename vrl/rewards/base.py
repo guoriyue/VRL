@@ -561,6 +561,13 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
     # (e.g. to inject a fake engine). Skipped under sleep_offload, whose pooled
     # model must be factory-built by the runtime itself.
     eager_model: ClassVar[bool] = False
+    # The score keys this reward can select; empty means any non-empty key.
+    score_keys: ClassVar[tuple[str, ...]] = ()
+    # Model knobs arrive as top-level keywords (``reward.kwargs.<name>.dtype``)
+    # and travel to the model in ``worker_config``. A reward whose model
+    # vocabulary is nested under ``worker_config:`` in YAML sets this so a stray
+    # top-level keyword is a typo, not a silent model knob.
+    worker_config_only: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -578,13 +585,30 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
         scorer: RewardScorer | None = None,
         artifact_store: RewardArtifactStore | None = None,
         inference: RewardInferenceConfig | None = None,
+        **model_kwargs: Any,
     ) -> None:
+        """Transport keywords are the explicit parameters; every other keyword
+        is a model knob and joins ``worker_config``. Subclasses therefore
+        declare only what they score (class attributes) and keep an
+        ``__init__`` only for a check the base cannot express."""
+
         # Deferred: runtime.py imports this module (cycle guard).
         from vrl.rewards.runtime import build_reward_scorer
 
+        if model_kwargs and self.worker_config_only:
+            raise TypeError(
+                f"{type(self).__name__} takes model knobs under worker_config; "
+                f"unexpected keyword(s) {sorted(model_kwargs)}",
+            )
+        worker_config = {**dict(worker_config or {}), **model_kwargs}
         model_factory = self.model_factory
         reward_name = self.default_reward_name if reward_name is None else reward_name
         score_key = self.default_score_key if score_key is None else score_key
+        if self.score_keys and score_key not in self.score_keys:
+            raise ValueError(
+                f"{reward_name} score_key must be one of {list(self.score_keys)}, "
+                f"got {score_key!r}",
+            )
         artifact_format = (
             self.default_artifact_format if artifact_format is None else artifact_format
         )

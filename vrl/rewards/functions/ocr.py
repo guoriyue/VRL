@@ -5,10 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from vrl.config.reward_inference import RewardInferenceConfig
-from vrl.rewards.artifacts import MediaType
 from vrl.rewards.base import DiskArtifactRewardFunction
-from vrl.rewards.protocols import RewardScorer
 
 
 class OCRReward(DiskArtifactRewardFunction):
@@ -35,39 +32,17 @@ class OCRReward(DiskArtifactRewardFunction):
     default_media_type = "image"
     in_process_media = "memory"
     eager_model = True
+    score_keys = ("ocr", "ocr_match")
 
     @classmethod
     def resolve_execution_device(cls, *, device: str, kwargs: Mapping[str, Any]) -> str:
         """PaddleOCR runs CPU-only; never claim the resource-resolved GPU."""
         return "cpu"
 
-    def __init__(
-        self,
-        device: str = "cuda",
-        *,
-        debug_dir: str | None = None,
-        score_key: str = "ocr",
-        scorer: RewardScorer | None = None,
-        inference: RewardInferenceConfig | None = None,
-        artifact_format: str | None = None,
-        media_type: MediaType | None = None,
-        artifact_dir: str = "outputs/reward_artifacts",
-        retain_artifacts: bool = False,
-    ) -> None:
-        if score_key not in {"ocr", "ocr_match"}:
-            raise ValueError("OCR score_key must be 'ocr' or 'ocr_match'")
-        super().__init__(
-            reward_name="ocr",
-            score_key=score_key,
-            worker_config={"debug_dir": debug_dir},
-            device=device,
-            scorer=scorer,
-            inference=inference,
-            artifact_format=artifact_format,
-            media_type=media_type,
-            artifact_dir=artifact_dir,
-            retain_artifacts=retain_artifacts,
-        )
+    def __init__(self, *, debug_dir: str | None = None, **kwargs: Any) -> None:
+        # ``debug_dir`` here is the model's frame dump directory, not the
+        # reward-level debug sidecar the base owns.
+        super().__init__(worker_config={"debug_dir": debug_dir}, **kwargs)
 
     # Test seam onto the eagerly built in-process engine; a remote transport
     # builds no model here, so the attribute is simply absent.

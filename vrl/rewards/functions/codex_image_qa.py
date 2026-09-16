@@ -5,15 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from vrl.config.reward_inference import RewardInferenceConfig
-from vrl.rewards.artifacts import MediaType
 from vrl.rewards.base import DiskArtifactRewardFunction
 from vrl.rewards.models.codex_image_qa import (
     DEFAULT_PROMPT_TEMPLATE,
     _extract_score_from_text,
     _render_prompt_template,
 )
-from vrl.rewards.protocols import RewardScorer
 
 
 class CodexImageQAReward(DiskArtifactRewardFunction):
@@ -38,32 +35,6 @@ class CodexImageQAReward(DiskArtifactRewardFunction):
     def resolve_execution_device(cls, *, device: str, kwargs: Mapping[str, Any]) -> str:
         """CPU-only compute; never claim the resource-resolved GPU."""
         return "cpu"
-
-    def __init__(
-        self,
-        device: str = "cpu",
-        *,
-        score_key: str = "codex_image_qa",
-        scorer: RewardScorer | None = None,
-        inference: RewardInferenceConfig | None = None,
-        artifact_format: str | None = None,
-        media_type: MediaType | None = None,
-        artifact_dir: str = "outputs/reward_artifacts",
-        retain_artifacts: bool = False,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(
-            reward_name="codex_image_qa",
-            score_key=score_key,
-            worker_config=kwargs,
-            device=device,
-            scorer=scorer,
-            inference=inference,
-            artifact_format=artifact_format,
-            media_type=media_type,
-            artifact_dir=artifact_dir,
-            retain_artifacts=retain_artifacts,
-        )
 
 
 __all__ = [
