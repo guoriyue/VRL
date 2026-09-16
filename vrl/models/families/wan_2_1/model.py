@@ -29,7 +29,7 @@ import json
 import logging
 import random
 import sys
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -478,7 +478,12 @@ class WanT2VDiffusersModel(
         self._pipeline_offload = _PipelineOffloadState.BROKEN
 
         try:
-            _disable_wan_pipeline_offload(self.pipeline, mode=mode, operation=operation)
+            _disable_wan_pipeline_offload(
+                self.pipeline,
+                mode=mode,
+                operation=operation,
+                owned_modules=self._wan_transformers().values(),
+            )
         except BaseException as remove_error:
             raise RuntimeError(
                 f"Wan pipeline CPU offload hook removal failed during {operation}; "
@@ -1437,8 +1442,19 @@ def _wan_offload_components(pipeline: Any) -> list[tuple[str, torch.nn.Module]]:
     ]
 
 
-def _disable_wan_pipeline_offload(pipeline: Any, *, mode: str, operation: str) -> None:
-    """Strip the residency hooks ``_enable_wan_pipeline_offload`` installed."""
+def _disable_wan_pipeline_offload(
+    pipeline: Any,
+    *,
+    mode: str,
+    operation: str,
+    owned_modules: Iterable[Any] = (),
+) -> None:
+    """Strip the residency hooks ``_enable_wan_pipeline_offload`` installed.
+
+    ``owned_modules`` are the model's own transformer roots (possibly PEFT
+    wrapped); their Accelerate hooks are detached child-first before the
+    pipeline's own cleanup runs.
+    """
 
     if mode == "block":
         from diffusers.hooks.group_offloading import (
@@ -1471,10 +1487,11 @@ def _disable_wan_pipeline_offload(pipeline: Any, *, mode: str, operation: str) -
     # PEFT delegates attributes to its child, so Accelerate's hasattr
     # traversal can detach a child's hook against the wrong owner. Remove
     # explicitly owned hooks child-first before pipeline cleanup.
-    for _name, component in _wan_offload_components(pipeline):
-        for module in reversed(list(component.modules())):
-            if "_hf_hook" in vars(module) or "_old_forward" in vars(module):
-                remove_hook_from_module(module, recurse=False)
+    for owned in owned_modules:
+        if isinstance(owned, torch.nn.Module):
+            for module in reversed(list(owned.modules())):
+                if "_hf_hook" in vars(module) or "_old_forward" in vars(module):
+                    remove_hook_from_module(module, recurse=False)
     remove_hooks()
 
 

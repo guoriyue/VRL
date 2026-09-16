@@ -81,6 +81,16 @@ class DiffusionBatchResult:
     # Display/provenance-only: emitted through per-batch runtime debug metrics.
     engine_counters: dict[str, Any] = field(default_factory=dict)
 
+    # The two trajectory views the loop result also exposes; readers outside
+    # the wire (probes, family tests) keep naming them by role.
+    @property
+    def observations(self) -> Any:
+        return self.latents[:, :-1]
+
+    @property
+    def actions(self) -> Any:
+        return self.latents[:, 1:]
+
 
 class ReferenceConditionedBatches:
     """Reference-image threading for per-batch encode/prepare.
