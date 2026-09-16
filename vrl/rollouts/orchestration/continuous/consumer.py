@@ -249,7 +249,6 @@ class ContinuousRolloutConsumer:
         version = items[0].rollout_policy_version
         staleness = self.staleness.staleness(version, current_policy_version)
         item_age_s = max(item.age_s for item in items)
-        max_attempt = max(item.attempt for item in items)
         stats = RolloutStats()
         stats.add_phase("continuous.queue_wait_s", float(queue_wait_s))
         # Merge the per-item collect stats (each collect call attached its
@@ -269,9 +268,6 @@ class ContinuousRolloutConsumer:
                 "continuous.ready_groups_at_demand": float(ready_groups_at_demand),
                 # Report the same batch identity used to select this iteration.
                 "continuous.batch_id": float(items[0].batch_id),
-                # >1 means this update contains retried work (provenance for
-                # correlating reward/gradient anomalies with retries).
-                "continuous.max_attempt": float(max_attempt),
             },
         )
         return RolloutIteration(batches=batches, stats=stats)

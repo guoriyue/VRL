@@ -417,18 +417,6 @@ class _ContinuousRolloutController:
                 "continuous.producer_errors": float(state.error_count),
             },
         )
-        # Cumulative-since-start snapshots, like producer_submitted above:
-        # per-update deltas are computed offline from consecutive rows.
-        for reason, seconds in state.backpressure_seconds.items():
-            iteration.stats.observe_gauge(
-                f"continuous.backpressure_{reason}_s",
-                float(seconds),
-            )
-        for reason, entries in state.backpressure_entries.items():
-            iteration.stats.observe_gauge(
-                f"continuous.backpressure_{reason}_count",
-                float(entries),
-            )
 
 
 class ContinuousRolloutThread:

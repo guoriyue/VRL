@@ -51,10 +51,6 @@ class ScoredRollout:
     batch_id: int
     group_slot: int
     rollout_policy_version: int | None
-    # 1-based collection attempt from this batch slot's failure count. Retries
-    # keep the same batch_id/group_slot. The consumer exports the maximum as
-    # continuous.max_attempt; this receipt field does not drive reward retries.
-    attempt: int
     batch: RolloutBatch
     # display/provenance-only: receipt time on this process's monotonic clock
     # (never wall time), exported as a queue-health age gauge. Computing age
@@ -94,17 +90,6 @@ class ContinuousRolloutProducerState:
     error_count: int = 0
     # display/provenance-only: most recent retry cause included in wait failures.
     last_error: str | None = None
-    # display/provenance-only: cumulative seconds the admission loop spent
-    # blocked, keyed by reason. The key set derives from ``_admit()`` return
-    # values plus the two loop states ("paused_for_weight_sync",
-    # "no_pending_slots"); exported as continuous.backpressure_<reason>_s
-    # gauges. Kept as a string-keyed map because metric reasons are a dynamic
-    # namespace (same convention as RolloutStats keys), and the exporter
-    # iterates instead of probing fixed keys.
-    backpressure_seconds: dict[str, float] = field(default_factory=dict)
-    # display/provenance-only: number of times the loop entered each blocked
-    # reason (count twin of backpressure_seconds).
-    backpressure_entries: dict[str, float] = field(default_factory=dict)
     # Behavior-consumed terminal failure from the producer control loop itself.
     # Per-slot collect failures remain retryable counters; this field means
     # cadence has stopped and the consumer must fail immediately.

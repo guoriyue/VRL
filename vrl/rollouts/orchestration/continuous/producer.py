@@ -113,11 +113,6 @@ class ContinuousRolloutProducer:
         self._reward_lock = asyncio.Lock()
         self.state = ContinuousRolloutProducerState()
         self._next_batch_id = 0
-        # Backpressure accrual: the reason observed at the previous tick and
-        # the monotonic instant of that tick; each tick charges the elapsed
-        # interval to the previous tick's reason.
-        self._blocked_reason: str | None = None
-        self._blocked_since: float | None = None
         self._loop_task: asyncio.Task[None] | None = None
         self._running_tasks: dict[
             asyncio.Task[tuple[list[RolloutBatch], RolloutStats]],
@@ -395,38 +390,15 @@ class ContinuousRolloutProducer:
         prompt_batch = self._active_batch
         return prompt_batch is not None and not self._has_pending_work
 
-    def _accrue_backpressure(self, reason: str | None) -> None:
-        """Charge the interval since the previous tick to that tick's reason.
-
-        Accruing every tick (not on reason exit) keeps a long steady block
-        visible in the owner's metric exports while it is still happening.
-        """
-
-        now = time.monotonic()
-        previous = self._blocked_reason
-        since = self._blocked_since
-        if previous is not None and since is not None:
-            seconds = self.state.backpressure_seconds
-            seconds[previous] = seconds.get(previous, 0.0) + max(0.0, now - since)
-        if reason is not None and reason != previous:
-            entries = self.state.backpressure_entries
-            entries[reason] = entries.get(reason, 0.0) + 1.0
-        self._blocked_reason = reason
-        self._blocked_since = now
-
     async def _run(self) -> None:
         try:
             while self.state.running:
                 self._record_tick()
                 if self.state.paused_for_weight_sync:
-                    self._accrue_backpressure("paused_for_weight_sync")
                     await asyncio.sleep(self.poll_interval_s)
                     continue
                 self._harvest_done()
-                blocked = self._admit()
-                if blocked is None and self._starved():
-                    blocked = "no_pending_slots"
-                self._accrue_backpressure(blocked)
+                self._admit()
                 await asyncio.sleep(self.poll_interval_s)
         except asyncio.CancelledError:  # pragma: no cover - cooperative shutdown
             raise
@@ -775,7 +747,6 @@ class ContinuousRolloutProducer:
             batch_id=prompt_batch.batch_id,
             group_slot=slot,
             rollout_policy_version=prompt_batch.policy_version,
-            attempt=prompt_batch.failure_counts.get(slot, 0) + 1,
             batch=stored,
             completed_at=time.monotonic(),
             nbytes=stored.estimated_payload_bytes(),

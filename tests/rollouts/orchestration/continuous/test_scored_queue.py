@@ -33,7 +33,6 @@ def _item(
         batch_id=batch_id,
         group_slot=group_slot,
         rollout_policy_version=version,
-        attempt=1,
         batch=batch,
         nbytes=nbytes,
     )

@@ -478,65 +478,6 @@ async def test_finite_prompt_batch_completes_each_slot_once_then_idles() -> None
 
 
 @pytest.mark.asyncio
-async def test_backpressure_accrues_paused_then_starved_durations() -> None:
-    """The loop charges blocked time to the observed reason, with entry counts."""
-    collector = _FiniteCollector()
-    queue = ScoredRolloutQueue(max_items=4)
-    producer = _producer(collector, queue, prompts=["p0"], max_inflight=2)
-
-    await producer.start()
-    try:
-        producer.pause_admission()
-        await _wait_until(
-            lambda: producer.state.backpressure_seconds.get("paused_for_weight_sync", 0.0) > 0.0,
-        )
-        assert producer.state.backpressure_entries["paused_for_weight_sync"] == 1.0
-
-        producer.resume_admission()
-        await producer.drain_prompt_batch(wait_timeout_s=5.0)
-        # Batch fully generated, nothing in flight, ready item unconsumed:
-        # the producer idles in the no_pending_slots starvation state.
-        await _wait_until(
-            lambda: producer.state.backpressure_seconds.get("no_pending_slots", 0.0) > 0.0,
-        )
-        assert producer.state.backpressure_entries["no_pending_slots"] >= 1.0
-    finally:
-        await producer.stop()
-
-
-@pytest.mark.asyncio
-async def test_backpressure_accrues_inflight_full_while_slots_wait() -> None:
-    collector = _GatedCollector()
-    collector.allow_generate.clear()
-    queue = ScoredRolloutQueue(max_items=4)
-    producer = _producer(
-        collector,
-        queue,
-        prompts=["p0", "p1"],
-        max_inflight=1,
-    )
-
-    await producer.start()
-    try:
-        await asyncio.wait_for(collector.generation_started.wait(), 5.0)
-        # p0 occupies the single in-flight slot while p1 stays pending.
-        await _wait_until(
-            lambda: producer.state.backpressure_seconds.get("inflight_full", 0.0) > 0.0,
-        )
-        assert producer.state.backpressure_entries["inflight_full"] >= 1.0
-        collector.allow_generate.set()
-        await producer.drain_prompt_batch(wait_timeout_s=5.0)
-        # p1 waited for p0's slot: its admission wait covers that blocked span.
-        waits = {
-            item.group_slot: item.stats.gauges["continuous.generation_queue_wait_s"]
-            for item in queue.snapshot()
-        }
-        assert waits[1] >= waits[0] >= 0.0
-    finally:
-        await producer.stop()
-
-
-@pytest.mark.asyncio
 async def test_prompt_batch_freezes_version_and_options_across_serial_retry() -> None:
     collector = _FiniteCollector(fail_once={"p0"})
     queue = ScoredRolloutQueue(max_items=4)
@@ -567,11 +508,8 @@ async def test_prompt_batch_freezes_version_and_options_across_serial_retry() ->
         assert producer.state.completed_count == 2
         items = {item.group_slot: item for item in queue.snapshot()}
         assert set(items) == {0, 1}
-        # Identity contract: a retry increments attempt but keeps the same
-        # batch_id + group_slot; the fresh slot stays at attempt 1.
+        # Identity contract: a retry keeps the same batch_id + group_slot.
         assert {item.batch_id for item in items.values()} == {0}
-        assert items[0].attempt == 2
-        assert items[1].attempt == 1
         # Each item carries its own admission-wait/service gauges (max-on-merge
         # views of the per-slot intervals).
         for item in items.values():
@@ -981,13 +919,11 @@ def _item(
     phase_times: dict[str, float] | None = None,
     *,
     batch_id: int = 0,
-    attempt: int = 1,
 ) -> ScoredRollout:
     return ScoredRollout(
         batch_id=batch_id,
         group_slot=group_slot,
         rollout_policy_version=version,
-        attempt=attempt,
         batch=_batch(f"p{group_slot}"),
         stats=RolloutStats(phase_seconds=dict(phase_times or {})),
     )
@@ -1123,10 +1059,10 @@ async def test_consumer_waits_instead_of_combining_distinct_batches() -> None:
 
 @pytest.mark.asyncio
 async def test_iteration_carries_batch_identity_gauges() -> None:
-    """batch_id/max_attempt thread from the ready items into the metric row."""
+    """batch_id threads from the ready items into the metric row."""
     queue = ScoredRolloutQueue(max_items=8)
     queue.put(_item(group_slot=0, version=1, batch_id=3))
-    queue.put(_item(group_slot=1, version=1, batch_id=3, attempt=2))
+    queue.put(_item(group_slot=1, version=1, batch_id=3))
 
     iteration = await _collect_iteration(
         _consumer(queue, max_stale=0),
@@ -1137,7 +1073,6 @@ async def test_iteration_carries_batch_identity_gauges() -> None:
 
     phases = iteration.stats.as_metrics_dict()
     assert phases["continuous.batch_id"] == pytest.approx(3.0)
-    assert phases["continuous.max_attempt"] == pytest.approx(2.0)
 
 
 def test_item_ages_never_go_negative_under_a_skewed_clock(

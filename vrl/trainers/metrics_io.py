@@ -100,7 +100,6 @@ class OnlineMetricRow:
     # Stage-contract columns (SPRINT_continuous_stage_contracts_and_baseline).
     # Identity of the consumed iteration plus per-stage worst-observed
     # intervals (gauge reduction; busy totals stay in collect.*_wall phases)
-    # and cumulative backpressure reason durations/entries.
     continuous_batch_id: float = _csv_field(".1f", phase_key="continuous.batch_id")
     continuous_generation_queue_wait_s: float = _csv_field(
         ".4f", phase_key="continuous.generation_queue_wait_s"
@@ -112,24 +111,6 @@ class OnlineMetricRow:
         ".4f", phase_key="continuous.reward_queue_wait_s"
     )
     continuous_reward_service_s: float = _csv_field(".4f", phase_key="continuous.reward_service_s")
-    continuous_backpressure_inflight_full_s: float = _csv_field(
-        ".4f", phase_key="continuous.backpressure_inflight_full_s"
-    )
-    continuous_backpressure_inflight_full_count: float = _csv_field(
-        ".1f", phase_key="continuous.backpressure_inflight_full_count"
-    )
-    continuous_backpressure_paused_s: float = _csv_field(
-        ".4f", phase_key="continuous.backpressure_paused_for_weight_sync_s"
-    )
-    continuous_backpressure_paused_count: float = _csv_field(
-        ".1f", phase_key="continuous.backpressure_paused_for_weight_sync_count"
-    )
-    continuous_backpressure_no_pending_s: float = _csv_field(
-        ".4f", phase_key="continuous.backpressure_no_pending_slots_s"
-    )
-    continuous_backpressure_no_pending_count: float = _csv_field(
-        ".1f", phase_key="continuous.backpressure_no_pending_slots_count"
-    )
     component_names: tuple[str, ...] = field(
         default=(),
         metadata={"csv_extension": True},
