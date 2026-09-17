@@ -137,49 +137,6 @@ class AlgorithmEvaluatorPair:
                 ),
             )
 
-        if kind == "token_grpo":
-            from vrl.algorithms.grpo.token import TokenGRPO
-
-            if family_entry.policy_semantics.action_distribution == "continuous":
-                from vrl.rollouts.evaluators.token import ContinuousTokenLogProbEvaluator
-
-                evaluator = ContinuousTokenLogProbEvaluator()
-            else:
-                from vrl.rollouts.evaluators.token import TokenLogProbEvaluator
-
-                evaluator = TokenLogProbEvaluator()
-            return cls(
-                algorithm=TokenGRPO(
-                    algorithm_config,
-                    advantage_estimator=algorithm_config.build_estimator(
-                        component_weights=reward.weights,
-                    ),
-                ),
-                evaluator=evaluator,
-            )
-
-        if kind == "token_grpo_multisegment":
-            from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPO
-            from vrl.rollouts.evaluators.token import MultiSegmentTokenLogProbEvaluator
-
-            if family_entry.family != "janus_pro_r1":
-                raise ValueError(
-                    "token_grpo_multisegment currently requires model family janus_pro_r1",
-                )
-            segment_flags = dict(algorithm_config.train_segments or {})
-            enabled_segments = tuple(
-                name for name, enabled in segment_flags.items() if bool(enabled)
-            )
-            return cls(
-                algorithm=MultiSegmentTokenGRPO(
-                    algorithm_config,
-                    advantage_estimator=algorithm_config.build_estimator(
-                        component_weights=reward.weights,
-                    ),
-                ),
-                evaluator=MultiSegmentTokenLogProbEvaluator(enabled_segments=enabled_segments),
-            )
-
         if kind == "diffusion_nft":
             from vrl.algorithms.diffusion_nft import DiffusionNFT
 

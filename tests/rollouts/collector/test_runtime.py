@@ -7,10 +7,8 @@ from typing import Any
 
 import pytest
 import torch
-from omegaconf import OmegaConf
 
 from tests.rollouts.collector._helpers import collect_scored
-from vrl.config.schema import parse_config
 from vrl.generation import (
     GenerationInput,
     GenerationOutput,
@@ -304,20 +302,6 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert batch.trajectory is not None
     assert batch.group_ids.tolist() == [0, 0, 1, 1]
     assert [row.prompt_index for row in batch.trajectory.sample_rows] == [0, 0, 1, 1]
-
-
-def test_nextstep_noise_level_reaches_generation_request_from_rollout_owner() -> None:
-    cfg = OmegaConf.create({"rollout": {"noise_level": 0.37}})
-    builder = GenerationRequestBuilder(
-        entry=get_model_family_entry("nextstep_1"),
-        config=RolloutCollectorConfig.from_root(parse_config(cfg)),
-    )
-
-    request = builder.build(["draw text"], group_size=1).request
-
-    assert request.denoise is not None
-    assert request.denoise.noise_level == pytest.approx(0.37)
-    assert "noise_level" not in request.sampling
 
 
 @pytest.mark.asyncio
@@ -1026,9 +1010,7 @@ def test_collector_forwards_reference_metadata_to_request() -> None:
     """A ``GenerationInput.reference_image`` reaches both the request input (for the executor) and
     the collector metadata (for the reward side).
     """
-    from vrl.models.families.registry import get_model_family_entry
     from vrl.rollouts.collector.config import RolloutCollectorConfig
-    from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
     builder = GenerationRequestBuilder(
         entry=get_model_family_entry("cosmos-predict2"),
@@ -1046,9 +1028,7 @@ def test_collector_forwards_reference_metadata_to_request() -> None:
 
 def test_collector_forwards_target_metadata_to_request() -> None:
     """Checks collector forwards target artifact metadata to rewards."""
-    from vrl.models.families.registry import get_model_family_entry
     from vrl.rollouts.collector.config import RolloutCollectorConfig
-    from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
     builder = GenerationRequestBuilder(
         entry=get_model_family_entry("cosmos-predict2"),

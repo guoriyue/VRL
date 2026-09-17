@@ -19,7 +19,6 @@ from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
 from vrl.models.interfaces.runtime import RuntimeBundle
 from vrl.models.steps.denoise.base import DiffusionModelBase
-from vrl.models.steps.token.base import ARModelBase
 from vrl.trainers.checkpointing import (
     CHECKPOINT_META_NAME,
     CHECKPOINT_SCHEMA_VERSION,
@@ -270,16 +269,16 @@ def test_restore_training_checkpoint_rejects_family_mismatch(tmp_path) -> None:
     trainer = _Trainer()
     source = _Bundle()
     save_training_checkpoint(
-        tmp_path / "checkpoint-janus",
+        tmp_path / "checkpoint-sd3",
         trainer=trainer,
         bundle=source,
-        family="janus_pro",
+        family="sd3_5",
         model_identity=UNIT_IDENTITY,
         progress={"next_epoch": 1, "global_step": 1},
         rng_state={},
     )
 
-    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-janus")
+    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-sd3")
     with pytest.raises(ValueError, match="family mismatch"):
         restore_training_checkpoint(
             checkpoint,
@@ -740,19 +739,6 @@ class _DenoisePolicy(DiffusionModelBase):
 
     def decode_latents(self, latents):  # pragma: no cover
         raise NotImplementedError
-
-
-class _TokenPolicy(ARModelBase):
-    """Minimal real AR policy: LoRA lives on ``language_model``, one hop in."""
-
-    def __init__(self, language_model: nn.Module) -> None:
-        super().__init__()
-        self.language_model = language_model
-
-    @property
-    def trainable_modules(self) -> dict[str, nn.Module]:
-        # What ``build_token_family_bundle`` registers: the whole wrapper.
-        return {"model": self}
 
 
 def _export_bundle(model) -> RuntimeBundle:

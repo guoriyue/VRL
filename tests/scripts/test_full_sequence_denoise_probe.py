@@ -65,7 +65,7 @@ def test_generate_rejects_non_full_sequence_denoise_family_before_build(
         [
             "generate",
             "--family",
-            "emu3",
+            "magi_1",
             "--path",
             "unused",
             "--dtype",

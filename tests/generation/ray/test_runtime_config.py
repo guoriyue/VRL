@@ -786,7 +786,7 @@ def test_generation_launch_inputs_mark_lora_as_adapter_only_sync() -> None:
     assert rollout["base_weight_sync"] is False
 
 
-def test_generation_launch_inputs_reject_model_compile_for_ar_family() -> None:
+def test_generation_launch_inputs_reject_model_compile_for_uncompilable_family() -> None:
     """Checks model.torch_compile fails fast on rollout families that cannot compile."""
     cfg = _launch_cfg(
         model_torch_compile={
@@ -794,10 +794,10 @@ def test_generation_launch_inputs_reject_model_compile_for_ar_family() -> None:
             "mode": "default",
         },
     )
-    cfg.model.family = "janus_pro"
+    cfg.model.family = "magi_1"
 
     with pytest.raises(ValueError, match="does not support torch compile"):
-        _capture_launch_inputs(cfg, get_model_family_entry("janus_pro"))
+        _capture_launch_inputs(cfg, get_model_family_entry("magi_1"))
 
 
 def _runtime_factory_inputs(

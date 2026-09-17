@@ -28,11 +28,8 @@ from vrl.models.families.cosmos.predict2_5.config import (
 )
 from vrl.models.families.echo.config import EchoModelSection
 from vrl.models.families.flux.config import FluxModelSection
-from vrl.models.families.janus_pro.config import JanusProModelSection
-from vrl.models.families.llamagen.config import LlamaGenModelSection
 from vrl.models.families.magi_1.config import Magi1ModelSection
 from vrl.models.families.names import _FAMILY_BY_ALIAS
-from vrl.models.families.nextstep_1.config import NextStep1ModelSection
 from vrl.models.families.registry import (
     FAMILY_REGISTRY,
     GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
@@ -73,12 +70,6 @@ _MODEL_RUNTIME_CAPABILITY_MATRIX = {
     "vdn_h3": (False, True),
     "cosmos-predict2-anima": (True, True),
     "echo": (False, False),
-    "janus_pro": (False, False),
-    "janus_pro_r1": (False, False),
-    "nextstep_1": (False, False),
-    "emu3": (False, False),
-    "glm_image": (False, False),
-    "llamagen": (False, False),
 }
 
 
@@ -147,35 +138,9 @@ def test_wan_boundary_ratio_is_source_derived_not_public_config() -> None:
     assert unknown_keys(cfg) == ["model.boundary_ratio"]
 
 
-@pytest.mark.parametrize("family", ["janus_pro", "janus_pro_r1"])
-def test_janus_families_select_the_shared_family_section(family: str) -> None:
-    cfg_data: dict[str, object] = {
-        "model": {
-            "family": family,
-            "trust_remote_code": True,
-            "vq_latent_channels": 8,
-        },
-    }
-    if family == "janus_pro_r1":
-        cfg_data.update(
-            {
-                "algorithm": {"kind": "token_grpo_multisegment"},
-                "rollout": {"final_image_policy": "always_generate"},
-            },
-        )
-    cfg = OmegaConf.create(cfg_data)
-
-    assert unknown_keys(cfg) == []
-    parsed = parse_config(cfg)
-    assert isinstance(parsed.model, JanusProModelSection)
-    assert parsed.model.trust_remote_code is True
-    assert parsed.model.vq_latent_channels == 8
-
-
 @pytest.mark.parametrize(
     ("family", "field"),
     [
-        ("emu3", "vq_latent_channels"),
         ("sana", "nft_previous_adapter"),
         ("cosmos-predict2", "skip_text_encoder"),
     ],
@@ -186,22 +151,6 @@ def test_family_owned_keys_are_unknown_for_sibling_families(family: str, field: 
     cfg = OmegaConf.create({"model": {"family": family, field: True}})
 
     assert unknown_keys(cfg) == [f"model.{field}"]
-
-
-def test_nextstep_keys_select_family_section() -> None:
-    payload = {
-        "freeze_vae": True,
-        "vae_path": "stepfun-ai/NextStep-1-f8ch16-Tokenizer",
-        "vae_revision": "immutable",
-    }
-    cfg = OmegaConf.create({"model": {"family": "nextstep_1", **payload}})
-
-    assert unknown_keys(cfg) == []
-    parsed = parse_config(cfg)
-    assert isinstance(parsed.model, NextStep1ModelSection)
-    assert parsed.model.freeze_vae is True
-    assert parsed.model.vae_path == payload["vae_path"]
-    assert parsed.model.vae_revision == payload["vae_revision"]
 
 
 def test_unknown_wan_offload_mode_raises() -> None:
@@ -266,25 +215,6 @@ def test_cosmos_anima_keys_select_family_section() -> None:
     assert isinstance(parsed.model, CosmosAnimaModelSection)
     assert parsed.model.scheduler_shift == 3.0
     assert parsed.model.transformer_file == "split_files/diffusion_models/anima.safetensors"
-
-
-def test_llamagen_keys_select_family_section() -> None:
-    payload = {
-        "gpt_ckpt": "custom-gpt.pt",
-        "gpt_model": "GPT-XL",
-        "image_token_num": 256,
-        "t5_path": "org/t5",
-        "t5_revision": "immutable",
-        "vq_ckpt": "custom-vq.pt",
-    }
-    cfg = OmegaConf.create({"model": {"family": "llamagen", **payload}})
-
-    assert unknown_keys(cfg) == []
-    parsed = parse_config(cfg)
-    assert isinstance(parsed.model, LlamaGenModelSection)
-    assert parsed.model is not None
-    parsed_payload = parsed.model.model_dump()
-    assert {key: parsed_payload[key] for key in payload} == payload
 
 
 @pytest.mark.parametrize(

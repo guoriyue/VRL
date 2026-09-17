@@ -185,7 +185,6 @@ def test_trajectory_layer_stays_family_neutral() -> None:
         forbidden=(
             "vrl.algorithms",
             "vrl.generation.bindings.chunk_autoregressive_denoise",
-            "vrl.generation.bindings.token_autoregressive",
             "vrl.generation.bindings.full_sequence_denoise",
             "vrl.generation.ray",
             "vrl.rewards",

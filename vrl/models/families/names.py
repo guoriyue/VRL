@@ -31,12 +31,6 @@ _ALIASES_BY_FAMILY: dict[str, tuple[str, ...]] = {
     "minimax_h3": ("minimax-h3", "hailuo_3", "hailuo3"),
     "vdn_h3": ("vdn-h3", "vdn_minimax_h3", "videodeltanet_h3"),
     "echo": ("joyai_echo",),
-    "janus_pro": ("janus",),
-    "janus_pro_r1": ("janus_r1",),
-    "nextstep_1": ("nextstep",),
-    "emu3": ("emu3_gen",),
-    "glm_image": ("glm_image_t2i",),
-    "llamagen": ("llamagen_t2i",),
     "causvid": ("caus_vid",),
     "magi_1": ("magi-1", "magi1"),
 }

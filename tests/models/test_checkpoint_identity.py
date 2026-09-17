@@ -9,15 +9,13 @@ from types import SimpleNamespace
 import pytest
 
 from vrl.config.model_schema import LoraSection, ModelSection
-from vrl.config.precision import RolePrecision
 from vrl.models.checkpoint_identity import (
     MODEL_IDENTITY_SCHEMA,
     LocalCheckpointContent,
     resolve_checkpoint_model_identity,
     validate_checkpoint_identity_schema,
 )
-from vrl.models.families.registry import FAMILY_REGISTRY, TokenFamilyBuild, get_model_family_entry
-from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.families.registry import FAMILY_REGISTRY
 from vrl.utils.config import import_from_path
 
 _COMMIT = "a" * 40
@@ -36,26 +34,6 @@ def _build(
         model_name_or_path=path,
         revision=revision,
         model_config=model_config,
-    )
-
-
-def _token_build(
-    family: str,
-    *,
-    sampling_config: dict[str, object] | None = None,
-    **model_config: object,
-) -> ModelBuild:
-    recipe = get_model_family_entry(family).family_build
-    assert isinstance(recipe, TokenFamilyBuild)
-    return ModelBuild(
-        model_name_or_path=recipe.default_model_path,
-        revision=_COMMIT,
-        device="cpu",
-        parameter_dtype="fp32",
-        family=family,
-        precision=RolePrecision(dtype="fp32", float32_precision="tf32"),
-        model_config=dict(model_config),
-        sampling_config=dict(sampling_config or {}),
     )
 
 
@@ -209,25 +187,6 @@ def test_remote_source_requires_valid_huggingface_repo_id() -> None:
     with pytest.raises(ValueError, match="valid Hugging Face repo id"):
         resolve_checkpoint_model_identity(
             _build(path="../missing-local-checkpoint"),
-        )
-
-
-@pytest.mark.parametrize(
-    "member",
-    [
-        "../outside.pt",
-        "/outside.pt",
-        r"weights\model.pt",
-    ],
-)
-def test_checkpoint_source_member_cannot_escape_source(member: str) -> None:
-    with pytest.raises(ValueError, match=r"checkpoint source|POSIX"):
-        resolve_checkpoint_model_identity(
-            _token_build(
-                "llamagen",
-                gpt_ckpt=member,
-                t5_revision=_OTHER_COMMIT,
-            ),
         )
 
 
@@ -462,69 +421,6 @@ def test_causvid_local_checkpoint_file_ignores_unused_member(
     assert "location-only" not in repr(identity)
 
 
-def test_llamagen_members_model_choice_and_t5_source_are_identity() -> None:
-    identity = resolve_checkpoint_model_identity(
-        _token_build(
-            "llamagen",
-            gpt_ckpt="gpt.pt",
-            vq_ckpt="vq.pt",
-            gpt_model="GPT-XL",
-            t5_path="example/t5",
-            t5_revision=_OTHER_COMMIT,
-        ),
-    )
-
-    assert set(identity["sources"]) == {"main", "t5"}
-    assert identity["build"] == {
-        "gpt_ckpt": "gpt.pt",
-        "gpt_model": "GPT-XL",
-        "image_token_num": 256,
-        "use_lora": False,
-        "vq_ckpt": "vq.pt",
-    }
-
-
-def test_llamagen_construction_grid_is_model_owned_identity() -> None:
-    shared = {"t5_revision": _OTHER_COMMIT}
-    omitted_request_value = resolve_checkpoint_model_identity(
-        _token_build("llamagen", **shared),
-    )
-    matching_request_value = resolve_checkpoint_model_identity(
-        _token_build(
-            "llamagen",
-            **shared,
-            image_token_num=256,
-            sampling_config={"image_token_num": 256},
-        ),
-    )
-    changed_construction = resolve_checkpoint_model_identity(
-        _token_build(
-            "llamagen",
-            **shared,
-            image_token_num=1024,
-            sampling_config={"image_token_num": 1024},
-        ),
-    )
-
-    assert omitted_request_value == matching_request_value
-    assert omitted_request_value["build"]["image_token_num"] == 256
-    assert changed_construction["build"]["image_token_num"] == 1024
-    assert changed_construction != omitted_request_value
-
-    with pytest.raises(
-        ValueError,
-        match=r"sampling\.image_token_num=1024.*model\.image_token_num=256",
-    ):
-        resolve_checkpoint_model_identity(
-            _token_build(
-                "llamagen",
-                **shared,
-                image_token_num=256,
-                sampling_config={"image_token_num": 1024},
-            ),
-        )
-
-
 def test_echo_construction_dimensions_change_identity() -> None:
     shared = {
         "family": "echo",
@@ -552,7 +448,6 @@ def test_echo_construction_dimensions_change_identity() -> None:
     [
         ("flux", "nft_previous_adapter", False, True),
         ("cosmos-predict2.5", "skip_text_encoder", False, True),
-        ("janus_pro", "vq_latent_channels", 8, 16),
     ],
 )
 def test_family_behavior_value_changes_identity(
@@ -561,12 +456,8 @@ def test_family_behavior_value_changes_identity(
     first: object,
     second: object,
 ) -> None:
-    if isinstance(get_model_family_entry(family).family_build, TokenFamilyBuild):
-        left_build = _token_build(family, **{included: first})
-        right_build = _token_build(family, **{included: second})
-    else:
-        left_build = _build(family=family, **{included: first})
-        right_build = _build(family=family, **{included: second})
+    left_build = _build(family=family, **{included: first})
+    right_build = _build(family=family, **{included: second})
     left = resolve_checkpoint_model_identity(left_build)
     right = resolve_checkpoint_model_identity(right_build)
 
@@ -660,88 +551,6 @@ def test_wan_trainable_transformer_topology_changes_identity() -> None:
         "transformer_2",
     ]
     assert low_noise_only != both_experts
-
-
-@pytest.mark.parametrize(
-    ("family", "expected_targets", "source_pins"),
-    [
-        ("janus_pro", ["q_proj", "k_proj", "v_proj", "o_proj"], {}),
-        (
-            "llamagen",
-            ["wqkv", "wo"],
-            {"t5_revision": _OTHER_COMMIT},
-        ),
-    ],
-)
-def test_token_partial_lora_override_resolves_family_defaults(
-    family: str,
-    expected_targets: list[str],
-    source_pins: dict[str, object],
-) -> None:
-    partial = resolve_checkpoint_model_identity(
-        _token_build(
-            family,
-            **source_pins,
-            use_lora=True,
-            lora={"rank": 8},
-        ),
-    )
-    explicit = resolve_checkpoint_model_identity(
-        _token_build(
-            family,
-            **source_pins,
-            use_lora=True,
-            lora={
-                "rank": 8,
-                "alpha": 64,
-                "target_modules": expected_targets,
-                "dropout": 0.0,
-            },
-        ),
-    )
-
-    assert partial == explicit
-    assert partial["build"]["lora"] == {
-        "rank": 8,
-        "alpha": 64,
-        "target_modules": sorted(set(expected_targets)),
-        "dropout": 0.0,
-    }
-
-
-def test_token_family_source_and_member_defaults_match_explicit_values() -> None:
-    from vrl.models.families.llamagen.config import LlamaGenConfig
-    from vrl.models.families.nextstep_1.config import NextStep1Config
-
-    llamagen_defaults = LlamaGenConfig()
-    llamagen_omitted = resolve_checkpoint_model_identity(
-        _token_build("llamagen", t5_revision=_OTHER_COMMIT),
-    )
-    llamagen_explicit = resolve_checkpoint_model_identity(
-        _token_build(
-            "llamagen",
-            gpt_ckpt=llamagen_defaults.gpt_ckpt,
-            gpt_model=llamagen_defaults.gpt_model,
-            image_token_num=llamagen_defaults.image_token_num,
-            t5_path=llamagen_defaults.t5_path,
-            t5_revision=_OTHER_COMMIT,
-            vq_ckpt=llamagen_defaults.vq_ckpt,
-        ),
-    )
-    assert llamagen_omitted == llamagen_explicit
-
-    nextstep_defaults = NextStep1Config()
-    nextstep_omitted = resolve_checkpoint_model_identity(
-        _token_build("nextstep_1", vae_revision=_OTHER_COMMIT),
-    )
-    nextstep_explicit = resolve_checkpoint_model_identity(
-        _token_build(
-            "nextstep_1",
-            vae_path=nextstep_defaults.vae_path,
-            vae_revision=_OTHER_COMMIT,
-        ),
-    )
-    assert nextstep_omitted == nextstep_explicit
 
 
 def test_causvid_protocol_defaults_match_explicit_values() -> None:

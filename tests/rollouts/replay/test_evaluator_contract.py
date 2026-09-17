@@ -9,13 +9,6 @@ from vrl.rollouts.evaluators.denoise.chunk_autoregressive_logprob import (
     ChunkAutoregressiveDenoiseLogProbEvaluator,
 )
 from vrl.rollouts.evaluators.denoise.sde_logprob import DiffusionSDELogProbEvaluator
-from vrl.rollouts.evaluators.token.continuous_token_logprob import (
-    ContinuousTokenLogProbEvaluator,
-)
-from vrl.rollouts.evaluators.token.multi_segment_token_logprob import (
-    MultiSegmentTokenLogProbEvaluator,
-)
-from vrl.rollouts.evaluators.token.token_logprob import TokenLogProbEvaluator
 
 
 class _IncompleteReplayEvaluator(ReplayEvaluatorBase):
@@ -24,9 +17,6 @@ class _IncompleteReplayEvaluator(ReplayEvaluatorBase):
 
 def _evaluators() -> tuple[ReplayEvaluatorBase, ...]:
     return (
-        TokenLogProbEvaluator(),
-        ContinuousTokenLogProbEvaluator(),
-        MultiSegmentTokenLogProbEvaluator(enabled_segments=()),
         ChunkAutoregressiveDenoiseLogProbEvaluator(),
         DiffusionSDELogProbEvaluator(scheduler=object()),
     )

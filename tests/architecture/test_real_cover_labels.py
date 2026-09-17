@@ -44,8 +44,8 @@ _MODULE_LANE_TARGET = (
     "tests/ray/test_ray_actor_pool.py::test_actor_dispatcher_awaits_real_object_refs"
 )
 _CPU_TARGET = (
-    "tests/nn/layers/test_paged_attention_contract.py"
-    "::test_paged_attention_prefill_validates_batch_shape"
+    "tests/rewards/service/test_service.py"
+    "::test_client_scores_through_async_server_and_validates_identity"
 )
 
 

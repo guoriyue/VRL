@@ -60,8 +60,8 @@ class _TinyGatherer:
 
 class _TinyChunkExecutor:
     build_count = 0
-    family = "janus_pro"
-    task = "ar_t2i"
+    family = "sd3_5"
+    task = "t2i"
 
     def __init__(
         self,
@@ -109,10 +109,10 @@ def _install_tiny_family(monkeypatch: pytest.MonkeyPatch) -> None:
     import vrl.models.checkpoint_identity as checkpoint_identity
     import vrl.models.families.registry as registry
 
-    entry = registry.FAMILY_REGISTRY["janus_pro"]
+    entry = registry.FAMILY_REGISTRY["sd3_5"]
     monkeypatch.setitem(
         registry.FAMILY_REGISTRY,
-        "janus_pro",
+        "sd3_5",
         replace(
             entry,
             executor_cls=("tests.generation.ray.test_ray_resident_session:_TinyChunkExecutor"),
@@ -132,7 +132,7 @@ def _install_tiny_family(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _launch_contract() -> GenerationRuntimeLaunchContract:
     return GenerationRuntimeLaunchContract(
-        family="janus_pro",
+        family="sd3_5",
         model_build={
             "model_name_or_path": "unit-test",
             "revision": None,

@@ -9,7 +9,6 @@ from torch import nn
 from vrl.config.precision import RolePrecision
 from vrl.models.interfaces.runtime import RuntimeBundle, register_checkpoint_owned_state
 from vrl.models.steps.denoise.base import DiffusionModelBase
-from vrl.models.steps.token.base import ARModelBase
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
     TrainingCheckpoint,
@@ -57,19 +56,6 @@ class _DenoisePolicy(DiffusionModelBase):
 
     def decode_latents(self, latents):  # pragma: no cover
         raise NotImplementedError
-
-
-class _TokenPolicy(ARModelBase):
-    """Minimal real AR policy: LoRA lives on ``language_model``, one hop in."""
-
-    def __init__(self, language_model: nn.Module) -> None:
-        super().__init__()
-        self.language_model = language_model
-
-    @property
-    def trainable_modules(self) -> dict[str, nn.Module]:
-        # What ``build_token_family_bundle`` registers: the whole wrapper.
-        return {"model": self}
 
 
 def _export_bundle(model) -> RuntimeBundle:

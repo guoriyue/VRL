@@ -46,7 +46,7 @@ class _Gatherer:
 def _launch_inputs() -> RayGenerationLaunchInputs:
     return RayGenerationLaunchInputs(
         launch_contract=GenerationRuntimeLaunchContract(
-            family="janus_pro",
+            family="sd3_5",
             model_build={
                 "model_name_or_path": "unit-test",
                 "revision": None,

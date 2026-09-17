@@ -45,8 +45,8 @@ def _distributed_cfg(
 @pytest.mark.parametrize(
     ("family", "algorithm_kind"),
     [
-        ("janus_pro_r1", "token_grpo_multisegment"),
-        ("janus_pro", "token_grpo"),
+        ("sd3_5", "grpo"),
+        ("wan_2_1_i2v", "flow_dppo"),
     ],
 )
 def test_train_online_keeps_family_owned_by_config(

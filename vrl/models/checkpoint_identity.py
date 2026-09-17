@@ -605,37 +605,6 @@ def _value_for(
     return _MISSING
 
 
-def _resolve_token_lora_values(
-    resolved_config: Any,
-    *,
-    lora_schema: type[Any],
-) -> dict[str, Any]:
-    """Resolve partial public LoRA overrides through the token family's config.
-
-    Token-family config dataclasses own their LoRA defaults. Calling the same
-    registry-backed projection used by model construction keeps checkpoint
-    identity equal for an omitted default and the same value written explicitly.
-    """
-
-    values: dict[str, Any] = {}
-    for field_name, field in lora_schema.model_fields.items():
-        metadata = _field_metadata(
-            field,
-            schema_name=lora_schema.__name__,
-            field_name=field_name,
-        )
-        if metadata["kind"] != "value":
-            continue
-        attribute = f"lora_{field_name}"
-        if not hasattr(resolved_config, attribute):
-            raise TypeError(
-                f"{type(resolved_config).__name__} must expose {attribute!r} for "
-                "checkpoint identity",
-            )
-        values[field_name] = getattr(resolved_config, attribute)
-    return values
-
-
 def resolve_checkpoint_model_identity(
     build: ModelBuild,
     *,
@@ -643,7 +612,7 @@ def resolve_checkpoint_model_identity(
 ) -> dict[str, Any]:
     """Resolve one path-independent identity from a validated ``ModelBuild``."""
 
-    from vrl.models.families.registry import TokenFamilyBuild, get_model_family_entry
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.utils.config import import_from_path
 
     entry = get_model_family_entry(str(build.family))
@@ -668,20 +637,6 @@ def resolve_checkpoint_model_identity(
         )
         for name, field in schema_cls.model_fields.items()
     }
-    recipe = entry.family_build
-    resolved_token_config = None
-    if isinstance(recipe, TokenFamilyBuild):
-        # Project through the registry-declared builder model construction uses,
-        # so identity sees the family's effective config, not the raw build.
-        projected = import_from_path(recipe.config_builder)(build)
-        resolved_token_config = import_from_path(recipe.config_cls)(**projected)
-        # Family config dataclasses own effective defaults for their public
-        # source/member/value fields. The public field name is deliberately the
-        # same attribute name, so this remains registry-driven and table-free.
-        for field_name in schema_cls.model_fields:
-            if hasattr(resolved_token_config, field_name):
-                values[field_name] = getattr(resolved_token_config, field_name)
-
     active_members: dict[str, list[tuple[str, Any, dict[str, Any]]]] = {}
     for field_name, field in schema_cls.model_fields.items():
         metadata = metadata_by_field[field_name]
@@ -767,16 +722,9 @@ def resolve_checkpoint_model_identity(
             )
             if enabled is _MISSING or not bool(enabled):
                 continue
-            if isinstance(recipe, TokenFamilyBuild):
-                assert resolved_token_config is not None
-                raw_lora = _resolve_token_lora_values(
-                    resolved_token_config,
-                    lora_schema=LoraSection,
-                )
-            else:
-                raw_lora = values.get(field_name)
-                if not isinstance(raw_lora, Mapping):
-                    raise ValueError("model.use_lora=true requires a model.lora mapping")
+            raw_lora = values.get(field_name)
+            if not isinstance(raw_lora, Mapping):
+                raise ValueError("model.use_lora=true requires a model.lora mapping")
             lora_values: dict[str, Any] = {}
             for lora_name, lora_field in LoraSection.model_fields.items():
                 lora_metadata = _field_metadata(

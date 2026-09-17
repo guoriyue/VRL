@@ -313,24 +313,6 @@ def test_sana_direct_tool_override_changes_storage_only() -> None:
     )
 
 
-def test_token_objective_rejects_unused_math_precision_override() -> None:
-    cfg = load_config("experiment/emu3/online_grpo_pickscore_validation")
-    cfg.precision = {
-        "float32_precision": "tf32",
-        "training": {"dtype": "bf16", "outer_autocast": False},
-        "rollout": {"dtype": "bf16", "outer_autocast": False},
-        "diffusion_math": {"dtype": "bf16"},
-    }
-    built = build_configs(cfg)
-
-    with pytest.raises(ValueError, match=r"precision\.diffusion_math\.dtype.*diffusion log-prob"):
-        AlgorithmEvaluatorPair.from_configs(
-            built=built,
-            family_entry=get_model_family_entry("emu3"),
-            collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
-        )
-
-
 def test_reward_factory_rejects_an_all_zero_objective() -> None:
     """Checks observation-only components cannot replace the training objective."""
     with pytest.raises(ValueError, match="At least one reward component"):

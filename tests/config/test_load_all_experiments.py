@@ -18,8 +18,6 @@ from omegaconf import OmegaConf
 from vrl.algorithms.diffusion_nft import DiffusionNFTConfig
 from vrl.algorithms.dpo import DiffusionDPOConfig
 from vrl.algorithms.grpo.continuous import GRPOConfig
-from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
-from vrl.algorithms.grpo.token import TokenGRPOConfig
 from vrl.algorithms.v_grpo import VGRPOConfig
 from vrl.config.builders import (
     RewardRuntimeConfig,
@@ -614,12 +612,10 @@ def test_masked_physical_ordinal_comes_from_the_config_knob_not_the_auto_path() 
 
 def test_algorithm_config_dispatches_representative_kinds() -> None:
     """``algorithm.kind`` dispatches to the matching hyperparameter dataclass across
-    representative experiments (GRPO, token GRPO, multi-segment token GRPO, DPO, NFT, V-GRPO).
+    representative experiments (GRPO, DPO, NFT, V-GRPO).
     """
     examples = {
         "sd3_5/online_grpo_ocr": GRPOConfig,
-        "janus_pro/online_grpo_ocr": TokenGRPOConfig,
-        "janus_pro/online_r1_grpo_ocr": MultiSegmentTokenGRPOConfig,
         "wan_2_1/offline_dpo_pickapic": DiffusionDPOConfig,
         "cosmos_predict2_5/online_nft_kling_video_reward": DiffusionNFTConfig,
         "sd3_5/online_v_grpo_pickscore": VGRPOConfig,

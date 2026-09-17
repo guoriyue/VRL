@@ -155,8 +155,6 @@ class AlgorithmConfig(ConfigBase):
         "flash_grpo",
         "flow_dppo",
         "grpo_guard",
-        "token_grpo",
-        "token_grpo_multisegment",
         "diffusion_dpo",
         "diffusion_nft",
         "v_grpo",

@@ -1,6 +1,0 @@
-# LlamaGen request behavior matching the upstream demo. GPT token-grid, decoded
-# size, and caption-prefix length are model topology and are derived at runtime.
-sampling:
-  guidance_scale: 7.5
-  temperature: 1.0
-  top_k: 1000

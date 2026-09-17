@@ -71,8 +71,8 @@ def _worker_setup_hook(repo_root: str) -> Any:
                 self.loaded_state = dict(state_dict)
 
         class TinyChunkExecutor:
-            family = "janus_pro"
-            task = "ar_t2i"
+            family = "sd3_5"
+            task = "t2i"
 
             def __init__(
                 self,
@@ -107,8 +107,8 @@ def _worker_setup_hook(repo_root: str) -> Any:
         # the test executor on an importable production module lets canonical
         # registry dispatch stay intact without any compatibility fields.
         registry._RayLauncherTestExecutor = TinyChunkExecutor
-        entry = registry.FAMILY_REGISTRY["janus_pro"]
-        registry.FAMILY_REGISTRY["janus_pro"] = replace(
+        entry = registry.FAMILY_REGISTRY["sd3_5"]
+        registry.FAMILY_REGISTRY["sd3_5"] = replace(
             entry,
             executor_cls="vrl.models.families.registry:_RayLauncherTestExecutor",
         )

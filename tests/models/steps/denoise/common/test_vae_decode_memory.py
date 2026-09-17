@@ -395,13 +395,8 @@ def test_targetless_in_process_runtime_rejects_direct_model_build_memory(
         )
 
 
-@pytest.mark.parametrize(
-    "family",
-    ["magi_1", "janus_pro"],
-)
-def test_non_vae_runtime_families_keep_memory_at_the_registered_boundary(
-    family: str,
-) -> None:
+def test_non_vae_runtime_families_keep_memory_at_the_registered_boundary() -> None:
+    family = "magi_1"
     from vrl.models.families.registry import get_model_family_entry
 
     entry = get_model_family_entry(family)

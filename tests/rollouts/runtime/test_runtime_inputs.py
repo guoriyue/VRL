@@ -13,12 +13,9 @@ from tests.generation.execution._helpers import launch_contract
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
 from vrl.generation.bindings.full_sequence_denoise import DiffusionBatchGatherer
-from vrl.generation.bindings.token_autoregressive.executor import ARDiscreteBatchGatherer
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationBatchExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.models.families.janus_pro.runtime import JanusProR1GenerationBatchGatherer
-from vrl.models.families.nextstep_1.runtime import NextStep1GenerationBatchGatherer
 from vrl.models.families.registry import (
     FAMILY_REGISTRY,
     ModelFamilyEntry,
@@ -124,24 +121,6 @@ def test_every_registry_entry_has_pickle_safe_ray_launch_inputs(
                 "actor.optim.lr=1.0e-5",
                 "trainer.output_dir=outputs/test_anima_launch_inputs",
             ),
-        ),
-        (
-            "janus_pro/online_grpo_ocr",
-            "janus_pro",
-            ARDiscreteBatchGatherer,
-            (),
-        ),
-        (
-            "janus_pro/online_r1_grpo_ocr",
-            "janus_pro_r1",
-            JanusProR1GenerationBatchGatherer,
-            (),
-        ),
-        (
-            "nextstep_1/online_grpo_ocr",
-            "nextstep_1",
-            NextStep1GenerationBatchGatherer,
-            (),
         ),
     ],
 )

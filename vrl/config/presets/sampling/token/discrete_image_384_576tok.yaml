@@ -1,7 +1,0 @@
-# Discrete AR image-token sampling preset: 384 px output from a 24x24 grid.
-sampling:
-  image_token_num: 576
-  image_size: 384
-  guidance_scale: 5.0
-  temperature: 1.0
-  max_text_length: 256

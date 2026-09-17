@@ -25,14 +25,6 @@ def algorithm_config_class(kind: str) -> type[Any]:
         from vrl.algorithms.grpo.continuous import GRPOGuardConfig
 
         return GRPOGuardConfig
-    if kind == "token_grpo":
-        from vrl.algorithms.grpo.token import TokenGRPOConfig
-
-        return TokenGRPOConfig
-    if kind == "token_grpo_multisegment":
-        from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
-
-        return MultiSegmentTokenGRPOConfig
     if kind == "diffusion_dpo":
         from vrl.algorithms.dpo import DiffusionDPOConfig
 

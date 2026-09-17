@@ -294,42 +294,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
             ("grpo_guard", "grpo_guard"),
         )
     ),
-    RealCheckpointCase(
-        case_id="janus_pro",
-        config="experiment/janus_pro/online_grpo_ocr",
-        family="janus_pro",
-        prompt="Text RL on a small label",
-        checkpoints=(
-            CheckpointField(
-                cfg_path="model.path",
-                repo_id="deepseek-ai/Janus-Pro-1B",
-                required_files=(
-                    "config.json",
-                    "preprocessor_config.json",
-                    "processor_config.json",
-                    "tokenizer.json",
-                ),
-            ),
-        ),
-        overrides=(
-            "algorithm.kl_coef=0.0",
-            "algorithm.kl_reward_coef=0.0",
-            "actor.drop_zero_advantage=false",
-            "rollout.n_samples_per_prompt=2",
-            "rollout.prompts_per_batch=1",
-            "sampling.max_text_length=64",
-            "sampling.image_token_num=4",
-            "sampling.image_size=32",
-            "sampling.guidance_scale=1.0",
-            "sampling.temperature=1.0",
-            "sampling.attention_backend=torch_native",
-            # bf16 rollout vs replay log-probs differ by ~0.04 on this 1B model
-            # (limit 0.01); fp32 keeps the parity gate meaningful for one step.
-            "precision.training.dtype=fp32",
-            "precision.rollout.dtype=fp32",
-        ),
-        min_cuda_memory_gib=16.0,
-    ),
     _COSMOS_PREDICT2_KLING_TRANSPORT,
     _COSMOS_PREDICT2_KLING_REAL_REWARD,
     RealCheckpointCase(
@@ -459,40 +423,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
         ),
         min_cuda_memory_gib=28.0,
         synthetic_replay_rollout=True,
-    ),
-    RealCheckpointCase(
-        case_id="nextstep_1",
-        config="experiment/nextstep_1/online_grpo_ocr",
-        family="nextstep_1",
-        prompt="Text RL on a small label",
-        checkpoints=(
-            CheckpointField(
-                cfg_path="model.path",
-                repo_id="stepfun-ai/NextStep-1.1",
-                required_files=("config.json",),
-            ),
-            CheckpointField(
-                cfg_path="model.vae_path",
-                repo_id="stepfun-ai/NextStep-1-f8ch16-Tokenizer",
-                required_files=("config.json",),
-            ),
-        ),
-        overrides=(
-            "algorithm.kl_coef=0.0",
-            "algorithm.kl_reward_coef=0.0",
-            "actor.drop_zero_advantage=false",
-            "rollout.n_samples_per_prompt=2",
-            "rollout.prompts_per_batch=1",
-            "sampling.max_text_length=64",
-            "rollout.noise_level=1.0",
-            "sampling.image_token_num=4",
-            "sampling.image_size=32",
-            "sampling.num_steps=1",
-            "rollout.noise_level=1.0",
-            "sampling.guidance_scale=1.0",
-            "sampling.attention_backend=torch_native",
-        ),
-        min_cuda_memory_gib=64.0,
     ),
 )
 

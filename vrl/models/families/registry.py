@@ -13,9 +13,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from vrl.config.model_schema import MODEL_MEMORY_SECTIONS
 from vrl.models.families.names import (
     normalize_model_family,
-    validate_model_family_aliases,
 )
-from vrl.models.families.semantics import PolicySemantics, Task, TrajectoryLayout
+from vrl.models.families.semantics import PolicySemantics, Task
 
 if TYPE_CHECKING:
     from vrl.config.precision import PrecisionPolicy
@@ -92,8 +91,8 @@ class DenoiseFamilyBuild:
 
     A family whose runtime construction is pure data records its build inputs
     here. ``ModelFamilyEntry`` derives the shared resolver and worker builder
-    from whether this descriptor or a ``TokenFamilyBuild`` is present. Only real
-    family-specific replay assembly remains as an explicit override.
+    from this descriptor. Only real family-specific replay assembly remains as an
+    explicit override.
     """
 
     model_cls: str
@@ -145,23 +144,6 @@ class DenoiseFamilyBuild:
 
 
 @dataclass(frozen=True, slots=True)
-class TokenFamilyBuild:
-    """Declarative model construction for a descriptor-driven token policy."""
-
-    model_cls: str
-    replay_cls: str
-    config_cls: str
-    config_builder: str
-    default_model_path: str
-    # Positive, mandatory capability: new token families must explicitly state
-    # whether replay with use_lora=false leaves a trainable policy.
-    supports_full_parameter_training: bool
-    # NextStep's upstream loader accepts checkpointing only during construction;
-    # ordinary token families do not project the trainer knob into ModelBuild.
-    gradient_checkpointing_at_load: bool = False
-
-
-@dataclass(frozen=True, slots=True)
 class ModelFamilyEntry:
     """Declarative runtime binding for one canonical model family."""
 
@@ -170,20 +152,21 @@ class ModelFamilyEntry:
     policy_semantics: PolicySemantics
     executor_cls: str
     gatherer_cls: str
-    # Lazy public-YAML schema boundary. This is deliberately distinct from a
-    # TokenFamilyBuild.config_cls, which constructs the resolved model wrapper.
+    # Lazy public-YAML schema boundary.
     model_section_cls: str
     # Lazy request-vocabulary boundary selected by model.family. This remains
     # separate from mutable runtime sampling state and wire request protocols.
     sampling_section_cls: str
-    family_build: DenoiseFamilyBuild | TokenFamilyBuild
+    family_build: DenoiseFamilyBuild
     runtime_capabilities: GenerationRuntimeCapabilities = field(
         default_factory=GenerationRuntimeCapabilities,
     )
 
     def __post_init__(self) -> None:
-        denoise_build = isinstance(self.family_build, DenoiseFamilyBuild)
-        if denoise_build != (self.policy_semantics.step_kind == "denoise"):
+        if (
+            not isinstance(self.family_build, DenoiseFamilyBuild)
+            or self.policy_semantics.step_kind != "denoise"
+        ):
             raise ValueError(
                 f"model family {self.family!r} policy semantics "
                 f"{self.policy_semantics!r} does not match its family build",
@@ -195,8 +178,6 @@ class ModelFamilyEntry:
     def supports_policy_replay(self) -> bool:
         """Whether this entry declares a concrete trainer replay recipe."""
 
-        if isinstance(self.family_build, TokenFamilyBuild):
-            return True
         return (
             self.family_build.replay_cls is not None
             or self.family_build.replay_runtime_builder is not None
@@ -316,8 +297,6 @@ class ModelFamilyEntry:
         model_config.pop("family", None)
         model_config.pop("executor", None)
         model_config.pop("memory", None)
-        if isinstance(self.family_build, TokenFamilyBuild) and model_path is None:
-            model_path = self.family_build.default_model_path
         if model_path is None or not str(model_path).strip():
             raise ValueError("config missing required field: model.path")
 
@@ -389,27 +368,6 @@ class ModelFamilyEntry:
         )
 
         if (
-            isinstance(self.family_build, TokenFamilyBuild)
-            and self.family_build.gradient_checkpointing_at_load
-        ):
-            # NextStep's upstream loader accepts this only during construction.
-            # Rollout inference never checkpoints, and its bool-only API cannot
-            # represent the trainer's selective checkpointing policy.
-            from vrl.trainers.activation_checkpointing import (
-                resolve_gradient_checkpointing_mode,
-            )
-
-            checkpointing = resolve_gradient_checkpointing_mode(root)
-            if checkpointing not in {"off", "full"} and not for_rollout:
-                raise ValueError(
-                    f"nextstep_1 replay does not support {checkpointing} gradient "
-                    "checkpointing; use actor.gradient_checkpointing=full or off",
-                )
-            if build.model_config is not None:
-                build.model_config["gradient_checkpointing"] = (
-                    not for_rollout and checkpointing == "full"
-                )
-        if (
             isinstance(self.family_build, DenoiseFamilyBuild)
             and self.family_build.model_build_normalizer is not None
         ):
@@ -430,17 +388,13 @@ class ModelFamilyEntry:
                 f"{self.family} is generation-only: {self.family_build.replay_unavailable_reason}",
             )
 
-        if isinstance(self.family_build, DenoiseFamilyBuild):
-            if self.family_build.replay_runtime_builder is not None:
-                from vrl.utils.config import import_from_path
+        if self.family_build.replay_runtime_builder is not None:
+            from vrl.utils.config import import_from_path
 
-                return import_from_path(self.family_build.replay_runtime_builder)(build)
-            from vrl.models.steps.denoise.build import build_family_replay_runtime_bundle
+            return import_from_path(self.family_build.replay_runtime_builder)(build)
+        from vrl.models.steps.denoise.build import build_family_replay_runtime_bundle
 
-            return build_family_replay_runtime_bundle(build, entry=self)
-        from vrl.models.steps.token.build import build_token_family_bundle
-
-        return build_token_family_bundle(build, entry=self, replay=True)
+        return build_family_replay_runtime_bundle(build, entry=self)
 
     def build_rollout(self, build: Any) -> Any:
         """Construct a rollout bundle from this entry's resolved model build."""
@@ -449,17 +403,13 @@ class ModelFamilyEntry:
             raise ValueError(
                 f"rollout build family {build.family!r} does not match entry {self.family!r}",
             )
-        if isinstance(self.family_build, DenoiseFamilyBuild):
-            if self.family_build.rollout_runtime_builder is not None:
-                from vrl.utils.config import import_from_path
+        if self.family_build.rollout_runtime_builder is not None:
+            from vrl.utils.config import import_from_path
 
-                return import_from_path(self.family_build.rollout_runtime_builder)(build)
-            from vrl.models.steps.denoise.build import build_family_runtime_bundle
+            return import_from_path(self.family_build.rollout_runtime_builder)(build)
+        from vrl.models.steps.denoise.build import build_family_runtime_bundle
 
-            return build_family_runtime_bundle(build, entry=self)
-        from vrl.models.steps.token.build import build_token_family_bundle
-
-        return build_token_family_bundle(build, entry=self, replay=False)
+        return build_family_runtime_bundle(build, entry=self)
 
     def new_gatherer(self) -> Any:
         """Construct the explicitly bound driver-side gatherer lazily."""
@@ -530,37 +480,6 @@ def _full_sequence_denoise_entry(
         sampling_section_cls=sampling_section_cls,
         family_build=build,
         runtime_capabilities=runtime_capabilities,
-    )
-
-
-def _token_autoregressive_entry(
-    *,
-    family: str,
-    action_distribution: Literal["categorical", "continuous"],
-    model_section_cls: str,
-    sampling_section_cls: str,
-    executor_cls: str,
-    build: TokenFamilyBuild,
-    task: str = "ar_t2i",
-    trajectory_layout: TrajectoryLayout = "token",
-    gatherer_cls: str = "vrl.generation.bindings.token_autoregressive.executor:ARDiscreteBatchGatherer",
-) -> ModelFamilyEntry:
-    """Construct common wiring for current token-autoregressive policy variants."""
-
-    return ModelFamilyEntry(
-        family=family,
-        task=task,
-        policy_semantics=PolicySemantics(
-            generation_regime="token_autoregressive",
-            step_kind="token",
-            action_distribution=action_distribution,
-            trajectory_layout=trajectory_layout,
-        ),
-        executor_cls=executor_cls,
-        gatherer_cls=gatherer_cls,
-        model_section_cls=model_section_cls,
-        sampling_section_cls=sampling_section_cls,
-        family_build=build,
     )
 
 
@@ -971,117 +890,6 @@ _register_model_family(
     ),
 )
 
-_JANUS_PRO_BUILD = TokenFamilyBuild(
-    model_cls="vrl.models.families.janus_pro.model:JanusProModel",
-    replay_cls="vrl.models.families.janus_pro.model:JanusProReplayModel",
-    config_cls="vrl.models.families.janus_pro.config:JanusProConfig",
-    config_builder="vrl.models.families.janus_pro.runtime:janus_config_from_build",
-    default_model_path="deepseek-ai/Janus-Pro-1B",
-    supports_full_parameter_training=False,
-)
-
-_register_model_family(
-    _token_autoregressive_entry(
-        family="janus_pro",
-        action_distribution="categorical",
-        model_section_cls="vrl.models.families.janus_pro.config:JanusProModelSection",
-        sampling_section_cls="vrl.config.sampling_schema:JanusProSamplingSection",
-        executor_cls="vrl.models.families.janus_pro.runtime:JanusProBatchExecutor",
-        build=_JANUS_PRO_BUILD,
-    ),
-)
-
-_register_model_family(
-    _token_autoregressive_entry(
-        family="janus_pro_r1",
-        action_distribution="categorical",
-        model_section_cls="vrl.models.families.janus_pro.config:JanusProModelSection",
-        sampling_section_cls="vrl.config.sampling_schema:JanusProR1SamplingSection",
-        task="ar_t2i_r1",
-        executor_cls="vrl.models.families.janus_pro.runtime:JanusProR1BatchExecutor",
-        gatherer_cls="vrl.models.families.janus_pro.runtime:JanusProR1GenerationBatchGatherer",
-        build=_JANUS_PRO_BUILD,
-        trajectory_layout="multisegment_token",
-    ),
-)
-
-_register_model_family(
-    _token_autoregressive_entry(
-        family="nextstep_1",
-        action_distribution="continuous",
-        model_section_cls="vrl.models.families.nextstep_1.config:NextStep1ModelSection",
-        sampling_section_cls="vrl.config.sampling_schema:NextStepSamplingSection",
-        executor_cls="vrl.models.families.nextstep_1.runtime:NextStep1BatchExecutor",
-        gatherer_cls="vrl.models.families.nextstep_1.runtime:NextStep1GenerationBatchGatherer",
-        build=TokenFamilyBuild(
-            model_cls="vrl.models.families.nextstep_1.model:NextStep1Model",
-            replay_cls="vrl.models.families.nextstep_1.model:NextStep1ReplayModel",
-            config_cls="vrl.models.families.nextstep_1.config:NextStep1Config",
-            config_builder=("vrl.models.families.nextstep_1.runtime:nextstep_config_from_build"),
-            default_model_path="stepfun-ai/NextStep-1.1",
-            supports_full_parameter_training=True,
-            gradient_checkpointing_at_load=True,
-        ),
-    ),
-)
-
-_register_model_family(
-    _token_autoregressive_entry(
-        family="emu3",
-        action_distribution="categorical",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
-        sampling_section_cls="vrl.config.sampling_schema:Emu3SamplingSection",
-        executor_cls="vrl.models.families.emu3.runtime:Emu3BatchExecutor",
-        build=TokenFamilyBuild(
-            model_cls="vrl.models.families.emu3.model:Emu3Model",
-            replay_cls="vrl.models.families.emu3.model:Emu3ReplayModel",
-            config_cls="vrl.models.families.emu3.config:Emu3Config",
-            config_builder="vrl.models.families.emu3.runtime:emu3_config_from_build",
-            default_model_path="BAAI/Emu3-Gen-hf",
-            supports_full_parameter_training=False,
-        ),
-    ),
-)
-
-_register_model_family(
-    _token_autoregressive_entry(
-        family="glm_image",
-        action_distribution="categorical",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
-        sampling_section_cls="vrl.config.sampling_schema:GlmImageSamplingSection",
-        executor_cls="vrl.models.families.glm_image.runtime:GlmImageBatchExecutor",
-        build=TokenFamilyBuild(
-            model_cls="vrl.models.families.glm_image.model:GlmImageModel",
-            replay_cls="vrl.models.families.glm_image.model:GlmImageReplayModel",
-            config_cls="vrl.models.families.glm_image.config:GlmImageConfig",
-            config_builder="vrl.models.families.glm_image.runtime:glm_image_config_from_build",
-            default_model_path="zai-org/GLM-Image",
-            supports_full_parameter_training=False,
-        ),
-    ),
-)
-
-_register_model_family(
-    _token_autoregressive_entry(
-        family="llamagen",
-        action_distribution="categorical",
-        model_section_cls="vrl.models.families.llamagen.config:LlamaGenModelSection",
-        sampling_section_cls="vrl.config.sampling_schema:LlamaGenSamplingSection",
-        executor_cls="vrl.models.families.llamagen.runtime:LlamaGenBatchExecutor",
-        build=TokenFamilyBuild(
-            model_cls="vrl.models.families.llamagen.model:LlamaGenModel",
-            replay_cls="vrl.models.families.llamagen.model:LlamaGenReplayModel",
-            config_cls="vrl.models.families.llamagen.config:LlamaGenConfig",
-            config_builder="vrl.models.families.llamagen.runtime:llamagen_config_from_build",
-            default_model_path="peizesun/llamagen_t2i",
-            supports_full_parameter_training=False,
-        ),
-    ),
-)
-
-
-validate_model_family_aliases(FAMILY_REGISTRY)
-
 
 def get_model_family_entry(family: str) -> ModelFamilyEntry:
     """Return the canonical model-family entry for ``family``."""
@@ -1103,6 +911,5 @@ __all__ = [
     "GenerationRuntimeCapabilities",
     "ModelFamilyEntry",
     "PolicySemantics",
-    "TokenFamilyBuild",
     "get_model_family_entry",
 ]

@@ -13,7 +13,6 @@ from vrl.generation.bindings.full_sequence_denoise import (
     DiffusionBatchGatherer,
     DiffusionBatchResult,
 )
-from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout
 from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
@@ -363,15 +362,6 @@ def test_diffusion_gather_rejects_mixed_field_dtypes(field) -> None:
     setattr(batches[1], field, getattr(batches[1], field).double())
     with pytest.raises(ValueError, match=rf"{field!r}.*index 1.*dtypes must match"):
         DiffusionBatchGatherer().merge_generation_batches(request, request.sample_rows(), batches)
-
-
-def test_ar_field_gather_rejects_lossy_dtype_promotion() -> None:
-    batches = [
-        SimpleNamespace(token_ids=torch.tensor([[2**53 + 1]], dtype=torch.int64)),
-        SimpleNamespace(token_ids=torch.tensor([[1.0]], dtype=torch.float64)),
-    ]
-    with pytest.raises(ValueError, match=r"token_ids.*dtypes must match"):
-        ARRequestLayout().cat_batch_fields(batches, ("token_ids",))
 
 
 def test_diffusion_gather_slices_observations_and_actions_from_one_latent_path() -> None:

@@ -49,52 +49,6 @@ class ReplaySegmentResult:
             )
         return self.values[key]
 
-    def logprobs(self, token_ids: Any | None = None, *, temperature: float = 1.0) -> Any:
-        """Per-token log-probs for this segment.
-
-        Families provide precomputed ``log_probs``, materialized ``logits``, or
-        a fused vocab-head payload (``head_hidden`` and ``head_weight`` with
-        optional ``head_bias``). That field-name knowledge lives here with the
-        payload contract, so consumers (evaluators) do not switch on payload
-        keys and a new modality only touches this method.
-
-        ``temperature`` is the rollout sampling temperature (recorded in the
-        rollout context). It applies to both logits and fused-head paths: rollout scoring
-        divides logits by temperature, so replay must renormalize with the
-        same temperature to keep old/new log-prob parity. Directly stored
-        ``log_probs`` must already use that temperature in the family's replay
-        computation; this accessor does not rescale precomputed log-probs.
-        """
-        direct = self.values.get("log_probs")
-        if direct is not None:
-            return direct.float()
-
-        if "head_hidden" in self.values:
-            # Fused vocab-head payload: the family hands over the final
-            # projection's input and weight instead of materialized logits,
-            # and the chunked kernel never builds the [.., V] tensor.
-            if token_ids is None:
-                token_ids = self.require_value("token_ids")
-
-            from vrl.nn.kernels.fused_linear_logprob import fused_linear_logprob
-
-            return fused_linear_logprob(
-                self.values["head_hidden"],
-                self.require_value("head_weight"),
-                token_ids,
-                bias=self.values.get("head_bias"),
-                temperature=temperature,
-            )
-
-        logits = self.require_value("logits")  # raises with available keys
-
-        if token_ids is None:
-            token_ids = self.require_value("token_ids")
-
-        from vrl.math.token.logprob import gather_categorical_log_probs
-
-        return gather_categorical_log_probs(logits, token_ids, temperature=temperature)
-
 
 @dataclass(slots=True)
 class ReplayResult:

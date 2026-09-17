@@ -20,9 +20,9 @@ from vrl.config.schema import RootConfig, parse_config
 def test_cross_section_rules_fire_on_direct_root_construction() -> None:
     """A caller that bypasses ``parse_config`` still gets tier 2."""
 
-    with pytest.raises(ValueError, match="token_grpo_multisegment"):
+    with pytest.raises(ValueError, match=r"data\.sft_latents"):
         RootConfig.model_validate(
-            {"model": {"family": "janus_pro_r1"}, "algorithm": {"kind": "token_grpo"}}
+            {"model": {"family": "sd3_5"}, "algorithm": {"kind": "grpo", "sft_weight": 0.1}}
         )
 
 

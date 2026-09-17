@@ -20,13 +20,6 @@ from tests.trainers.online._helpers import (
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.token.continuous_token_logprob import (
-    ContinuousTokenLogProbEvaluator,
-)
-from vrl.rollouts.evaluators.token.multi_segment_token_logprob import (
-    MultiSegmentTokenLogProbEvaluator,
-)
-from vrl.rollouts.evaluators.token.token_logprob import TokenLogProbEvaluator
 from vrl.scripts.common.online import _run_streaming_optimizer_update
 from vrl.trainers.core.types import (
     DebugConfig,
@@ -189,20 +182,6 @@ def test_unknown_replay_granularity_fails_fast() -> None:
 
     with pytest.raises(ValueError, match="replay_granularity"):
         trainer._train_replay_indices(batch, 1.0, "strided")
-
-
-@pytest.mark.parametrize(
-    "evaluator",
-    [
-        TokenLogProbEvaluator(),
-        ContinuousTokenLogProbEvaluator(),
-        MultiSegmentTokenLogProbEvaluator(enabled_segments=()),
-    ],
-)
-def test_token_evaluators_replay_multi_token_trajectories_once(evaluator: object) -> None:
-    trainer = bare_trainer(evaluator=evaluator)
-
-    assert trainer._train_replay_indices(_chunk_denoise_batch(), 0.5, "strided") == [0]
 
 
 def test_step_evaluator_uses_primary_action_axis_for_fractional_selection() -> None:

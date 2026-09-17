@@ -1,5 +1,5 @@
 """The algorithm section: kind-scoped keys, KL reward coefficients, SDE types,
-multi-segment token GRPO pairing, and the sft_weight x sft_latents channel."""
+and the sft_weight x sft_latents channel."""
 
 from __future__ import annotations
 
@@ -31,8 +31,6 @@ def test_unknown_algorithm_keys_are_rejected_together() -> None:
         ("dance_grpo", "sft_weight", 0.1),
         ("flow_dppo", "add_kl_coefficient", False),
         ("grpo_guard", "clip_ratio", 0.2),
-        ("token_grpo", "kl_estimator", "k1"),
-        ("token_grpo_multisegment", "segment_weights", {"a": 1.0}),
         ("diffusion_dpo", "beta", 5000.0),
         ("diffusion_nft", "nft_beta", 0.1),
         ("v_grpo", "adv_soft_clip", 2.0),
@@ -75,12 +73,9 @@ def test_positive_kl_reward_coef_is_accepted_for_diffusion_rollouts() -> None:
     assert parse_config(cfg).algorithm.kl_reward_coef == 0.25
 
 
-@pytest.mark.parametrize("kind", ["token_grpo", "diffusion_dpo"])
-def test_positive_kl_reward_coef_rejects_trajectories_without_step_kl(
-    kind: str,
-) -> None:
+def test_positive_kl_reward_coef_rejects_trajectories_without_step_kl() -> None:
     cfg = OmegaConf.create(
-        {"algorithm": {"kind": kind, "kl_reward_coef": 0.25}},
+        {"algorithm": {"kind": "diffusion_dpo", "kl_reward_coef": 0.25}},
     )
 
     with pytest.raises(
@@ -88,14 +83,6 @@ def test_positive_kl_reward_coef_rejects_trajectories_without_step_kl(
         match=r"algorithm\.kl_reward_coef > 0 requires a diffusion rollout trajectory",
     ):
         parse_config(cfg)
-
-
-def test_zero_kl_reward_coef_remains_valid_for_token_rollouts() -> None:
-    cfg = OmegaConf.create(
-        {"algorithm": {"kind": "token_grpo", "kl_reward_coef": 0.0}},
-    )
-
-    assert parse_config(cfg).algorithm.kl_reward_coef == 0.0
 
 
 @pytest.mark.parametrize("value", [-0.1, float("nan")])
@@ -123,44 +110,6 @@ def test_grpo_accepts_cps_sde_type() -> None:
     cfg.rollout.sde.type = "cps"
     parsed = parse_config(cfg)
     assert parsed.algorithm.kind == "grpo"
-
-
-def test_token_grpo_multisegment_requires_explicit_janus_r1_family() -> None:
-    """The algorithm cannot silently turn base Janus into the R1 protocol."""
-    cfg = OmegaConf.create(
-        {
-            "algorithm": {"kind": "token_grpo_multisegment"},
-            "data": {
-                "loader": "prompt_manifest",
-                "manifest": "x",
-                "preprocessing": {},
-                "sampler": {"type": "random_without_replacement"},
-            },
-            "model": {"family": "janus_pro"},
-            "rollout": {"final_image_policy": "always_generate"},
-        }
-    )
-    with pytest.raises(ValueError, match="janus_pro_r1"):
-        parse_config(cfg)
-
-
-def test_janus_r1_family_requires_multisegment_algorithm() -> None:
-    cfg = OmegaConf.create(
-        {
-            "algorithm": {"kind": "token_grpo"},
-            "data": {
-                "loader": "prompt_manifest",
-                "manifest": "x",
-                "preprocessing": {},
-                "sampler": {"type": "random_without_replacement"},
-            },
-            "model": {"family": "janus_r1"},
-            "rollout": {},
-        }
-    )
-
-    with pytest.raises(ValueError, match="token_grpo_multisegment"):
-        parse_config(cfg)
 
 
 # ── algorithm.sft_weight x data.sft_latents (regularizer data channel) ───────

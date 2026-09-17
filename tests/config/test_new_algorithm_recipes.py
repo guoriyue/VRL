@@ -12,7 +12,6 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.algorithms.grpo.continuous import FlowDPPOConfig, GRPOConfig, GRPOGuardConfig
-from vrl.algorithms.grpo.token import TokenGRPOConfig
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
@@ -58,7 +57,6 @@ def test_trust_region_recipes_resolve_and_enable_proposal_mean_storage(
     [
         ("flow_dppo", "clip_ratio", 0.2),
         ("grpo_guard", "kl_coef", 0.1),
-        ("token_grpo", "flow_kl_use_dt", True),
     ],
 )
 def test_algorithm_configs_reject_unconsumed_knobs(
@@ -70,26 +68,6 @@ def test_algorithm_configs_reject_unconsumed_knobs(
 
     with pytest.raises(ValueError, match=rf"algorithm\.{field}"):
         parse_config(cfg)
-
-
-def test_token_grpo_keeps_its_clipping_and_reference_kl_config() -> None:
-    cfg = OmegaConf.create(
-        {
-            "algorithm": {
-                "kind": "token_grpo",
-                "clip_ratio": 0.3,
-                "kl_coef": 0.2,
-                "kl_estimator": "k2",
-            },
-        },
-    )
-
-    built = parse_config(cfg).algorithm.hyperparameters
-
-    assert isinstance(built, TokenGRPOConfig)
-    assert built.clip_ratio == pytest.approx(0.3)
-    assert built.kl_coef == pytest.approx(0.2)
-    assert built.kl_estimator == "k2"
 
 
 def test_v_grpo_recipe_has_no_unknown_config_keys() -> None:

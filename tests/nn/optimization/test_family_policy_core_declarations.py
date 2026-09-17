@@ -17,11 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.models.families.registry import (
-    FAMILY_REGISTRY,
-    DenoiseFamilyBuild,
-    TokenFamilyBuild,
-)
+from vrl.models.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild
 from vrl.utils.config import import_from_path
 
 
@@ -31,7 +27,7 @@ def _model_classes() -> list[tuple[str, type]]:
     resolved: list[tuple[str, type]] = []
     for family, entry in sorted(FAMILY_REGISTRY.items()):
         recipe = entry.family_build
-        if not isinstance(recipe, DenoiseFamilyBuild | TokenFamilyBuild):
+        if not isinstance(recipe, DenoiseFamilyBuild):
             continue
         try:
             resolved.append((family, import_from_path(recipe.model_cls)))

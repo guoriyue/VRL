@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from vrl.models.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild, TokenFamilyBuild
+from vrl.models.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild
 from vrl.utils.config import import_from_path
 
 # Custom replay construction is the only place the registry cannot derive the
@@ -34,15 +34,12 @@ def registered_replay_model_classes() -> dict[str, type]:
         if not entry.supports_policy_replay:
             continue
         build = entry.family_build
-        if isinstance(build, TokenFamilyBuild):
-            replay_path = build.replay_cls
-        else:
-            assert isinstance(build, DenoiseFamilyBuild)
-            replay_path = build.replay_cls or _CUSTOM_REPLAY_MODEL_CLASSES.get(family)
-            if replay_path is None:
-                raise AssertionError(
-                    f"custom replay family {family!r} lacks a contract-test model class",
-                )
+        assert isinstance(build, DenoiseFamilyBuild)
+        replay_path = build.replay_cls or _CUSTOM_REPLAY_MODEL_CLASSES.get(family)
+        if replay_path is None:
+            raise AssertionError(
+                f"custom replay family {family!r} lacks a contract-test model class",
+            )
         resolved[family] = import_from_path(replay_path)
     return resolved
 

@@ -945,10 +945,10 @@ def test_load_policy_does_not_pool_without_sleep_offload(
     assert called == []
 
 
-def test_ar_model_parking_does_not_enter_cumem_pool(
+def test_model_parking_does_not_enter_cumem_pool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AR decode may call empty_cache, which is incompatible with the pool scope."""
+    """A MODEL-profile family parks by moving weights; it never claims the pool scope."""
     import vrl.generation.execution.memory_parking as parking_module
 
     called: list[bool] = []
@@ -957,7 +957,7 @@ def test_ar_model_parking_does_not_enter_cumem_pool(
         "try_create",
         classmethod(lambda _cls, tag=None: called.append(True)),
     )
-    core = _core(None, sleep_offload=True, family="janus_pro")
+    core = _core(None, sleep_offload=True, family="magi_1")
     model = _SleepModel()
     core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
 
@@ -969,7 +969,7 @@ def test_ar_model_parking_does_not_enter_cumem_pool(
 
 
 def test_model_parking_rejects_executor_without_movable_model() -> None:
-    core = _core(None, sleep_offload=True, family="janus_pro")  # declares MODEL profile
+    core = _core(None, sleep_offload=True, family="magi_1")  # declares MODEL profile
     core._build_executor = lambda: _build_executor(core, object())  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError, match=r"requires executor\.model\.to"):
@@ -979,7 +979,7 @@ def test_model_parking_rejects_executor_without_movable_model() -> None:
 
 
 def test_executor_identity_failure_rolls_back_loaded_policy() -> None:
-    core = _core(None, sleep_offload=True, family="janus_pro")
+    core = _core(None, sleep_offload=True, family="magi_1")
     core._build_executor = lambda: _Executor(  # type: ignore[method-assign]
         _SleepModel(),
         family="wrong",
@@ -1093,7 +1093,7 @@ def test_cpu_offload_bounds_lazy_cuda_runtime_residual(
     readings = iter((baseline, 10 * 1024**3, residual))
     monkeypatch.setattr(parking_module, "gpu_process_used_bytes", lambda: next(readings))
     model = _SleepModel()
-    core = _core(None, sleep_offload=True, family="janus_pro")  # declares MODEL profile
+    core = _core(None, sleep_offload=True, family="magi_1")  # declares MODEL profile
     core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
     core.load_policy()
 
@@ -1125,7 +1125,7 @@ def test_cuda_model_parking_returns_to_preload_process_baseline(monkeypatch) -> 
         def move_frozen_components(self, device: Any) -> None:
             del device
 
-    core = _core(None, sleep_offload=True, family="janus_pro")  # declares MODEL profile
+    core = _core(None, sleep_offload=True, family="magi_1")  # declares MODEL profile
     # The production proof intentionally measures the whole device and fails
     # closed if any process grows during handoff. This real-CUDA mechanism test
     # isolates the pytest process because desktop GPU clients can legitimately
@@ -1167,7 +1167,7 @@ def test_module_parking_release_then_reload_has_fresh_restore_state(
     first_model = _SleepModel()
     first_model_ref = weakref.ref(first_model)
     second_model = _SleepModel()
-    core = _core(None, sleep_offload=True, family="janus_pro")
+    core = _core(None, sleep_offload=True, family="magi_1")
     core._build_executor = lambda: _build_executor(  # type: ignore[method-assign]
         core,
         first_model_ref(),

@@ -23,7 +23,6 @@ from vrl.models.families.registry import (
     FAMILY_REGISTRY,
     DenoiseFamilyBuild,
     GenerationRuntimeCapabilities,
-    TokenFamilyBuild,
     get_model_family_entry,
 )
 from vrl.models.families.semantics import PolicySemantics
@@ -165,51 +164,6 @@ def test_denoise_model_build_requires_a_nonempty_path(path) -> None:
         )
 
 
-@pytest.mark.parametrize("model_payload", [{"family": "emu3"}, {"family": "emu3", "path": None}])
-def test_token_model_build_derives_only_an_omitted_or_null_default_path(
-    model_payload,
-) -> None:
-    _, root, precision = _typed_model_build_inputs(
-        {
-            "model": model_payload,
-            "precision": {
-                "float32_precision": "ieee",
-                "training": {"dtype": "fp32"},
-            },
-        },
-    )
-
-    build = get_model_family_entry("emu3").resolve_model_build(
-        root,
-        "cpu",
-        precision=precision,
-    )
-
-    assert build.model_name_or_path == "BAAI/Emu3-Gen-hf"
-
-
-def test_token_model_build_rejects_an_explicit_empty_path() -> None:
-    _, root, precision = _typed_model_build_inputs(
-        {
-            "model": {"family": "emu3", "path": ""},
-            "precision": {
-                "float32_precision": "ieee",
-                "training": {"dtype": "fp32"},
-            },
-        },
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=r"^config missing required field: model\.path$",
-    ):
-        get_model_family_entry("emu3").resolve_model_build(
-            root,
-            "cpu",
-            precision=precision,
-        )
-
-
 def test_family_entry_rejects_a_policy_step_build_mismatch() -> None:
     entry = get_model_family_entry("sana")
 
@@ -250,19 +204,14 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
             "token_autoregressive",
             "chunk_autoregressive",
         }
-        if entry.policy_semantics.step_kind == "denoise":
-            assert isinstance(entry.family_build, DenoiseFamilyBuild)
-            assert entry.executor_cls.startswith(
-                (
-                    "vrl.models.families.",
-                    "vrl.generation.bindings.full_sequence_denoise.",
-                ),
-            )
-        else:
-            assert isinstance(entry.family_build, TokenFamilyBuild)
-            assert entry.executor_cls.startswith(
-                ("vrl.models.families.", "vrl.generation.bindings.token_autoregressive."),
-            )
+        assert entry.policy_semantics.step_kind == "denoise"
+        assert isinstance(entry.family_build, DenoiseFamilyBuild)
+        assert entry.executor_cls.startswith(
+            (
+                "vrl.models.families.",
+                "vrl.generation.bindings.full_sequence_denoise.",
+            ),
+        )
 
 
 def test_family_registry_entries_own_importable_model_sections() -> None:
@@ -332,12 +281,10 @@ def test_policy_replay_support_is_derived_from_family_recipes() -> None:
     causvid = get_model_family_entry("causvid")
     magi = get_model_family_entry("magi_1")
     sana = get_model_family_entry("sana")
-    llamagen = get_model_family_entry("llamagen")
 
     assert causvid.supports_policy_replay is True
     assert magi.supports_policy_replay is False
     assert sana.supports_policy_replay is True
-    assert llamagen.supports_policy_replay is True
 
 
 @pytest.mark.parametrize(
@@ -431,51 +378,6 @@ def test_rollout_config_is_projected_from_yaml() -> None:
     )
 
 
-def test_typed_collector_projects_only_the_selected_sampling_schema() -> None:
-    root = parse_config(
-        OmegaConf.create(
-            {
-                "model": {"family": "janus_pro"},
-                "sampling": {
-                    "attention_backend": "torch_native",
-                    "image_token_num": 16,
-                },
-            },
-        ),
-    )
-
-    rollout = RolloutCollectorConfig.from_root(root)
-
-    assert rollout.request_sampling == {
-        "attention_backend": "torch_native",
-        "image_token_num": 16,
-    }
-
-
-def test_request_sampling_is_the_family_section_vocabulary() -> None:
-    """The request keys are exactly the family's sampling fields: a key another
-    family owns is rejected at parse, not silently dropped by the projection."""
-    with pytest.raises(ValueError, match=r"unknown sampling\.attention_backend"):
-        parse_config(
-            OmegaConf.create(
-                {
-                    "model": {"family": "glm_image"},
-                    "sampling": {"attention_backend": "torch_native", "image_height": 256},
-                },
-            ),
-        )
-
-    rollout = RolloutCollectorConfig.from_root(
-        parse_config(
-            OmegaConf.create(
-                {"model": {"family": "glm_image"}, "sampling": {"image_height": 256}}
-            ),
-        ),
-    )
-
-    assert rollout.request_sampling == {"image_height": 256}
-
-
 def test_cosmos_predict2_recipe_keeps_request_and_reward_fps_at_16() -> None:
     cfg = load_config("experiment/cosmos_predict2/online_grpo_v2w_reference_480p")
     root = parse_config(cfg)
@@ -549,25 +451,6 @@ def test_all_registry_entries_build_collectors_from_the_same_entry() -> None:
 def test_unknown_family_raises_clear_error() -> None:
     with pytest.raises(ValueError, match="unsupported model family"):
         get_model_family_entry("not_a_family")
-
-
-def test_token_family_build_descriptors_are_importable() -> None:
-    token_entries = [
-        entry
-        for entry in FAMILY_REGISTRY.values()
-        if isinstance(entry.family_build, TokenFamilyBuild)
-    ]
-    assert len(token_entries) >= 6
-    for entry in token_entries:
-        build = entry.family_build
-        assert isinstance(build, TokenFamilyBuild)
-        for path in (
-            build.model_cls,
-            build.replay_cls,
-            build.config_cls,
-            build.config_builder,
-        ):
-            assert callable(import_from_path(path))
 
 
 def test_denoise_family_build_descriptors_have_one_explicit_replay_mode() -> None:

@@ -13,7 +13,6 @@ from tests.trainers._checkpoint_helpers import (
     _export_bundle,
     _exported_adapter_weight,
     _PublishableModule,
-    _TokenPolicy,
     _Trainer,
 )
 from vrl.trainers.checkpointing import (
@@ -171,27 +170,6 @@ def test_build_adapter_exports_is_none_for_a_full_finetune() -> None:
     bundle = _export_bundle(_DenoisePolicy({"transformer": _PublishableModule()}))
 
     assert build_adapter_exports(bundle, use_lora=False) is None
-
-
-def test_build_adapter_exports_reaches_the_token_language_model() -> None:
-    """The AR root is the wrapper, but the exported adapter is one hop inside it."""
-
-    language_model = _PublishableModule()
-    bundle = _export_bundle(_TokenPolicy(language_model))
-
-    assert bundle.trainable_modules == {"model": bundle.model}
-    assert build_adapter_exports(bundle, use_lora=True) == {
-        LORA_WEIGHTS_NAME: AdapterExport(language_model),
-    }
-
-
-def test_build_adapter_exports_raises_for_an_unexportable_token_trunk() -> None:
-    """Red line: the AR side must fail loudly, never publish silently nothing."""
-
-    bundle = _export_bundle(_TokenPolicy(nn.Linear(1, 1)))
-
-    with pytest.raises(TypeError, match="save_pretrained"):
-        build_adapter_exports(bundle, use_lora=True)
 
 
 @pytest.mark.parametrize(
