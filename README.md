@@ -3,17 +3,19 @@
 RL post-training for visual generative models.
 
 `visual-rl` trains visual generative policies with one layered-config trainer and
-one Collector -> Evaluator -> Algorithm loop. Policies are classified by generation
-regime (`full_sequence`, `token_autoregressive`, or `chunk_autoregressive`) and
-policy step (`denoise` or `token`), rather than forcing every model into an
-AR-or-diffusion bucket.
+one Collector -> Evaluator -> Algorithm loop. Every policy is a denoise step;
+policies are classified by generation regime (`full_sequence` or
+`chunk_autoregressive`), which fixes the trajectory schema and per-batch control
+flow. Token-autoregressive image families were removed in 2026-09 (archived at
+tag `archive/token-ar-20260916`).
 Recipes are marked as validated only after real training runs show optimizer
 updates, non-flat rewards, generated artifacts, and changed weights.
 
 ## Why It Exists
 
-- **One training loop.** The same online RL loop drives full-sequence denoise and
-  token-autoregressive policies instead of keeping a separate training script per model.
+- **One training loop.** The same online RL loop drives full-sequence and
+  chunk-autoregressive denoise policies instead of keeping a separate training
+  script per model.
 - **Layered configs.** Model, sampling, reward, dataset, algorithm, rollout, and
   distributed choices are composed from bundled YAML layers under
   `vrl/config/presets/`.
@@ -28,13 +30,11 @@ RL frameworks built for text LLMs (slime, verl, OpenRLHF, TRL) assume one causal
 categorical-token shape. Visual policies span several shapes, so forcing all of
 them through that abstraction fights the core contracts:
 
-- **Generation regime varies** — policies update a full latent sequence, emit
-  one token from a prefix, or advance one causal temporal chunk while denoising
-  inside that chunk. These are distinct time organizations, not AR/diffusion
-  synonyms.
-- **The policy step varies** — denoise policies record continuous flow/Gaussian
-  transitions, while token policies record categorical or continuous token
-  actions.
+- **Generation regime varies** — policies update a full latent sequence or
+  advance one causal temporal chunk while denoising inside that chunk. These
+  are distinct time organizations, not AR/diffusion synonyms.
+- **The policy step is a denoise transition** — policies record continuous
+  flow/Gaussian transitions over latents, not categorical token actions.
 - **The reward is on decoded pixels/video** (VAE decode → image/video reward
   model), not on text.
 - **Conditioning is world-model-shaped** (reference image/video, I2V, V2W), not a
@@ -74,11 +74,6 @@ positioning and roadmap.
 | **Cosmos-Predict2.5** | text -> world | full_sequence / denoise | GRPO, DiffusionNFT | 🧪 Runnable |
 | **Cosmos-Anima** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Echo** | text -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
-| **Janus-Pro** | text -> image | token_autoregressive / token (R1: multisegment) | GRPO, R1-GRPO | 🧪 Runnable |
-| **NextStep-1** | text -> image | token_autoregressive / token (continuous action) | GRPO | 🧪 Runnable |
-| **Emu3** | text -> image | token_autoregressive / token | Token-GRPO | 🔌 Integrated |
-| **GLM-Image** | text -> image | token_autoregressive / token | Token-GRPO | 🔌 Integrated |
-| **LlamaGen** | text -> image | token_autoregressive / token | Token-GRPO | 🔌 Integrated |
 | **Cosmos3** | text -> video | full_sequence / denoise | — | 🔌 Integrated |
 | **MiniMax-H3** (Hailuo 3.0) | text -> video (+ audio side stream) | full_sequence / denoise | GRPO (recipe only) | 🔌 Integrated (33B + 32B conditioner, ~144 GB: needs multi-GPU FSDP; CPU tiny-real parity only; diffusers>=0.40) |
 | **VDN-H3** (VideoDeltaNet on MiniMax-H3) | text -> video (+ audio side stream) | full_sequence / denoise | GRPO (recipe only) | 🔌 Integrated (hybrid window-softmax + linear attention grafted on the H3 backbone; 8-NFE distilled artifact; vendored submodule; CPU tiny-real only) |
@@ -99,7 +94,6 @@ experiment config and its dependency contract are committed.
 | DiffusionNFT | `vrl/config/presets/base/algorithm/diffusion_nft.yaml` |
 | V-GRPO | `vrl/config/presets/base/algorithm/v_grpo.yaml` |
 | Flow-DPPO | `vrl/config/presets/base/algorithm/flow_dppo.yaml` |
-| Token-GRPO | `vrl/config/presets/base/algorithm/token_grpo{,_multisegment}.yaml` |
 | DPO | `vrl/config/presets/base/algorithm/dpo.yaml` |
 
 ## Architecture
@@ -124,11 +118,10 @@ Core contracts:
 vrl/
   models/
     families/  family-owned checkpoints, backbones, and replay projections
-    steps/     shared denoise/token model contracts and builders
+    steps/     shared denoise model contracts and builders
   generation/
-    steps/        denoise loop and token-step protocol
-    composition/  reusable generation-regime state machines
-    bindings/     full-sequence, token-AR, and temporal-chunk denoise assemblies
+    steps/        denoise loop
+    bindings/     full-sequence and temporal-chunk denoise assemblies
     execution/ ray/  step-neutral execution and distributed lifecycle
   families/    policy semantics and canonical runtime registry
   rollouts/    collector, orchestration, and replay evaluation
@@ -180,7 +173,7 @@ stack at fetch time (`tools/dependencies/uv_exports.bzl`) and builds the same
 | Target | Stack (`uv.lock` extras) | Used by |
 |---|---|---|
 | `//:vrl` | core + cosmos, reward, reward-service, data, ocr, detection, optim8bit + test/lint | trainer, reward service, all CPU/GPU lanes |
-| `//:vrl_vllm` | core + ar-vllm + test | vLLM paged attention and CuMem memory parking (`//tests:gpu_vllm_tests`) |
+| `//:vrl_vllm` | core + ar-vllm + test | vLLM CuMem memory parking and blockwise-fp8 kernels (`//tests:gpu_vllm_tests`) |
 | `//:vrl_shared_gpu` | both of the above (identical shared pins) | shared-GPU topologies: model stack plus vLLM's allocator (real-weight lane) |
 | `//:vrl_countgd` | `third_party/countgd/requirements.txt` (transformers 4.48, numpy 1.26, torch cu128) | CountGD counting reward service |
 | `//:vrl_videoeval` | core + videoeval + test (tokenizers 0.13.3 built from source with a pinned Rust toolchain) | `//:video_reward_suite` (VBench) |
@@ -268,7 +261,6 @@ recipe lives under `vrl/config/presets/experiment/` — browse it to see what ru
 ## Current Focus
 
 - Promote video recipes only after real training validation.
-- Add training recipes for the runtime-verified Emu3, GLM-Image, and LlamaGen families.
 - Validate DiffusionNFT and DanceGRPO on more model families.
 - Expand multi-card and cross-node online training coverage.
 

@@ -29,7 +29,7 @@ dependencies = [
     # small dependency must remain in the core environment explicitly.
     "pyzmq>=25.0.0",
     "nvidia-ml-py>=12.0.0",  # process-attributed physical CUDA parking evidence
-    "safetensors>=0.4.0",  # weight loading (cosmos/anima, janus, FSDP save)
+    "safetensors>=0.4.0",  # weight loading (cosmos/anima, FSDP save)
 ]
 
 [dependency-groups]
@@ -48,12 +48,12 @@ test = [
 cosmos = [
     # Cosmos3OmniPipeline first ships in Diffusers 0.39.
     "diffusers>=0.40.0,<0.41",
-    # GLM-Image first ships in Transformers 5.13; tiny-real CPU parity tests
-    # exercise the upstream implementation rather than a local stand-in.
+    # 5.13 is the floor the model stack and its tiny-real CPU parity tests are
+    # qualified against (first required by a since-removed family; kept as-is).
     "transformers>=5.13.0,<6",
     "accelerate>=0.30.0",
     "sentencepiece>=0.2.0",
-    "peft>=0.11.0",          # LoRA adapters for denoise- and token-step model families
+    "peft>=0.11.0",          # LoRA adapters for the denoise model families
     "torchvision>=0.20.0",   # CausVid/Wan and diffusers video/image transforms
     "easydict>=1.13",         # pinned CausVid/Wan config objects
     "ftfy>=6.2.0",            # pinned CausVid/Wan tokenizer cleanup
@@ -103,21 +103,19 @@ ocr = [
     "paddlepaddle==3.2.1",
     "python-Levenshtein>=0.27.0",
 ]
-# OPTIONAL token-image accelerator (Janus-Pro, NextStep). Token families run in the
-# main env without this via sampling.attention_backend=torch_native; the extra
-# adds vLLM's internal KV/paged-attention kernels
-# (vrl/nn/kernels/attention/vllm_paged.py) and the blockwise-fp8 path
-# (vrl/nn/quantization/fp8.py). vLLM pins its own Torch ABI, so keep this
-# accelerator in a dedicated environment instead of co-installing it with the
-# diffusers model/reward stack. The public extra keeps its historical ar-vllm name.
-# NOTE: the kernels are optional, but vLLM's CuMemAllocator is a hard requirement
-# for shared-GPU memory parking (sleep_offload) in both the rollout worker and the
-# in-process reward runtime — those paths fail loud without it. The conflicts below
-# keep the ABI isolated, so shared-GPU run envs install vllm directly (--no-deps)
-# plus the additional dependencies its imported entry points need and the core
-# closure lacks (cbor2, gguf, mistral-common[image], openai, openai-harmony,
-# cloudpickle, py-cpuinfo, uvloop) rather than through this extra. See README
-# "Shared-GPU topologies".
+# OPTIONAL vLLM stack. Two diffusion-side consumers remain: vLLM's CuMemAllocator
+# is a hard requirement for shared-GPU memory parking (sleep_offload) in both the
+# rollout worker and the in-process reward runtime (vrl/models/parking.py; those
+# paths fail loud without it), and the blockwise-fp8 rollout path
+# (vrl/nn/quantization/fp8.py) uses its quantization kernels. vLLM pins its own
+# Torch ABI, so keep it in a dedicated environment instead of co-installing it
+# with the diffusers model/reward stack; the public extra keeps its historical
+# ar-vllm name from the removed token-autoregressive families. The conflicts
+# below keep the ABI isolated, so shared-GPU run envs install vllm directly
+# (--no-deps) plus the additional dependencies its imported entry points need and
+# the core closure lacks (cbor2, gguf, mistral-common[image], openai,
+# openai-harmony, cloudpickle, py-cpuinfo, uvloop) rather than through this
+# extra. See README "Shared-GPU topologies".
 ar-vllm = [
     "vllm>=0.21.0,<0.22",
 ]
@@ -127,14 +125,6 @@ ar-vllm = [
 # third_party/ — run their CLIs and fold results in via --merge-json.
 videoeval = [
     "vbench==0.1.5",
-]
-# Janus-Pro token-image family runtime. deepseek-ai/Janus ships no PyPI package
-# and its configs need a one-line patch for transformers 5, so the source is a
-# pinned, patched archive in MODULE.bazel (//third_party/janus); these are the
-# runtime dependencies that archive declares and the main stack lacks.
-janus = [
-    "attrdict>=2.0.1",
-    "timm>=0.9.16",
 ]
 # Full-param 8-bit Adam optimizer states (actor.optim.optim_8bit). int8 Adam state
 # via bitsandbytes lets a full-param 2B DiT fit a single 32GB card where fp32 Adam

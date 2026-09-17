@@ -114,7 +114,6 @@ vrl_pytest(
     srcs = glob([
         "utils/**/*.py",
         "generation/execution/**/*.py",
-        "generation/bindings/token_autoregressive/**/*.py",
         "nn/**/*.py",
     ]),
     args = ["-m", "gpu"],

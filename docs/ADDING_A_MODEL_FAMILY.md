@@ -16,9 +16,7 @@ The `vrl/models/families/` package root owns the import-light registry, names,
 and policy semantics; its `<family>/` subdirectories own concrete implementations.
 
 Every registry entry classifies the trainable policy with `PolicySemantics`:
-generation regime (`full_sequence`, `token_autoregressive`, or
-`chunk_autoregressive`), policy step (`denoise` or `token`), action distribution,
-and trajectory layout. See
+its generation regime (`full_sequence` or `chunk_autoregressive`). See
 [`MODEL_TAXONOMY.md`](MODEL_TAXONOMY.md).
 
 The existing `sd3_5` family is the smallest complete example.
@@ -42,13 +40,6 @@ Keep a family-specific `runtime.py` only when it provides a real execution
 boundary, such as reference-conditioning payload preparation or a custom staged
 executor. Wan I2V and the Cosmos families are examples. Do not add thin wrapper
 builders that only forward constants to `vrl.models.steps.denoise.build`.
-
-Token-autoregressive families have a different execution shape. They keep `model.py`,
-`runner.py`, and `runtime.py` when token-loop state, executor behavior, and
-model-config projection are family-specific. Bundle assembly and model-build
-resolution are shared through `TokenFamilyBuild` and
-`vrl.models.steps.token.build`; mirror the nearest token-autoregressive descriptor
-instead of adding forwarding builders.
 
 ## 2. Implement the denoise model contract
 
@@ -106,20 +97,18 @@ an existing public spelling must remain accepted; do not copy aliases onto the
 runtime entry.
 
 If one checkpoint supports multiple runtime protocols, each experiment must
-still name the exact registry entry (for example, `janus_pro_r1`, not
-`janus_pro` plus an algorithm-based inference rule). The algorithm validates
-compatibility; it never rewrites the configured family.
+still name the exact registry entry rather than relying on an algorithm-based
+inference rule. The algorithm validates compatibility; it never rewrites the
+configured family.
 
 `executor_cls` is intentionally absent above, so `_full_sequence_denoise_entry` selects
 `vrl.generation.bindings.full_sequence_denoise.executor:GenericDiffusionBatchExecutor`. Add a
 family executor only when its body performs family-specific work; a renamed
 pass-through executor is not an extension point.
 
-For a token-autoregressive policy, use `_token_autoregressive_entry` with
-`TokenFamilyBuild`, an explicit family executor under
-`vrl.models.families.<family>.runtime`, and the correct categorical or continuous
-action distribution. Do not infer the generation regime from the checkpoint or
-selected algorithm.
+For a temporal-chunk policy, use `_chunk_autoregressive_denoise_entry` with an
+explicit family executor under `vrl.models.families.<family>.runtime`. Do not
+infer the generation regime from the checkpoint or selected algorithm.
 
 ## 4. Add bundled config layers
 
@@ -200,8 +189,8 @@ status.
 
 - [ ] `model.py` implements generation and replay state projection.
 - [ ] the replay class owns no generation-only modules.
-- [ ] one registry entry uses `DenoiseFamilyBuild` or `TokenFamilyBuild` and the
-      matching shared builders.
+- [ ] one registry entry uses `DenoiseFamilyBuild` and the matching shared
+      builders.
 - [ ] registry `PolicySemantics` describes the trainable policy rather than the
       whole checkpoint (especially for hybrid or staged models).
 - [ ] the real experiment YAML generates individual images through the shared

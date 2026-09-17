@@ -87,7 +87,7 @@ uv_exports(
         "main": [
             "--extra", "cosmos", "--extra", "reward", "--extra", "reward-service",
             "--extra", "data", "--extra", "ocr", "--extra", "detection",
-            "--extra", "optim8bit", "--extra", "janus", "--group", "test", "--group", "lint",
+            "--extra", "optim8bit", "--group", "test", "--group", "lint",
         ],
         # Conflicting stacks each carry the test group so their lanes need no
         # second hub for pytest.
@@ -166,28 +166,6 @@ pip.parse(
     target_platforms = ["linux_x86_64"],
 )
 use_repo(pip, "vrl_pypi_countgd")
-
-# Janus-Pro model code (deepseek-ai/Janus ships no PyPI package). Pinned commit,
-# patched so its PretrainedConfig subclasses survive transformers 5's dataclass
-# conversion; runtime dependencies come from the `janus` extra in uv.lock.
-http_archive(
-    name = "janus_src",
-    urls = ["https://codeload.github.com/deepseek-ai/Janus/tar.gz/1daa72fa409002d40931bd7b36a9280362469ead"],
-    sha256 = "3725fde8817c50ad61828401c598a2a7ee314c8b7d211920c593b1a667f3813c",
-    strip_prefix = "Janus-1daa72fa409002d40931bd7b36a9280362469ead",
-    type = "tar.gz",
-    patches = ["//third_party/janus:transformers5_dataclass_defaults.patch"],
-    patch_args = ["-p1"],
-    build_file_content = """
-load("@rules_python//python:defs.bzl", "py_library")
-py_library(
-    name = "janus",
-    srcs = glob(["janus/**/*.py"]),
-    imports = ["."],
-    visibility = ["//visibility:public"],
-)
-""",
-)
 
 # MAGI-1's official stack (torch 2.4.0/cu124, transformers 4.42.3, flashinfer)
 # from third_party/magi_1/requirements.txt, with flash-attn 2.4.2 built from

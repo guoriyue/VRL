@@ -1,6 +1,6 @@
 # SPRINT：主线只保留 diffusion，移除 token-autoregressive 家族
 
-状态：**executing（2026-09-16）**，在 `review/combined-20260916` 上按四个提交落地。
+状态：**done（2026-09-16）**，在 `review/combined-20260916` 上按四个提交落地（见文末「结果」）。
 
 ## 决定与边界
 
@@ -49,3 +49,16 @@
 4. 依赖、Bazel、CI 与文档。
 
 每步跑受影响目录；结束跑全套。不做原 sprint 里"逐个重构 AR 家族"的部分。
+
+## 结果（2026-09-16）
+
+| 提交 | 内容 | 规模 |
+|---|---|---|
+| `354b218a` | 本文档 + tag `archive/token-ar-20260916` | — |
+| `3e340ed2` | 删 token-AR 家族/binding/composition/steps/nn/math/算法/评估器/preset/测试；registry、`algorithm.kind`、别名表、checkpoint identity、`ReplaySegmentResult.logprobs`、online factory 收口 | 195 文件，-23991 行 |
+| `82f98b49` | 共享死分支：`PolicySemantics` 只剩 `generation_regime`；轨迹 AR builder / token 轴 / categorical 分布；`batch_builder._pack_ar` 与 `trajectory_layout` 穿线；`train_segments`；AR sampling 各节、`final_image_policy`、janus/nextstep 规则、3 个 token rollout preset；`TrajectorySignalBuilder` 按 role 取 mask。用 AR builder 当夹具的测试改成两步 denoise 轨迹 | 43 文件，-1139 行 |
+| 第 4 个 | pyproject（删 `janus` extra，`ar-vllm` 注释改为 CuMem/fp8 消费者）、`uv lock`、MODULE.bazel（`janus_src`、main profile 的 `janus` extra）、`tools/python/defs.bzl`、`third_party/janus`、`tests/BUILD.bazel`、README 与 4 篇活文档 | — |
+
+保留且已核对的共享消费者：`vrl/models/parking.py` 的 CuMemAllocator、`vrl/nn/quantization/fp8.py`、`geneval` reward、chunk-AR（causvid、magi_1）。
+
+验证：每步跑受影响目录（config/models/generation/rollouts/algorithms/trainers/scripts/trajectory/nn/architecture/math）；上游原有 3 个红测继续 deselect。历史 sprint 文档（`docs/sprints/done|parked|planned|info|reading`、`docs/research`、`RECIPE_EVIDENCE_INVENTORY`）是当时的观察记录，未改写。

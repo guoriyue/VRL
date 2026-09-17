@@ -111,14 +111,10 @@ classDiagram
     class DiffusionBatchExecutorBase
     class GenericDiffusionBatchExecutor
     class ChunkAutoregressiveDenoiseExecutorBase
-    class ARBatchExecutorBase
-    class ARDiscreteBatchExecutorBase
     GenerationBatchExecutor <|.. BatchExecutorBase : satisfies
     BatchExecutorBase <|-- DiffusionBatchExecutorBase
     BatchExecutorBase <|-- ChunkAutoregressiveDenoiseExecutorBase
-    BatchExecutorBase <|-- ARBatchExecutorBase
     DiffusionBatchExecutorBase <|-- GenericDiffusionBatchExecutor
-    ARBatchExecutorBase <|-- ARDiscreteBatchExecutorBase
     DiffusionBatchExecutorBase <|-- CosmosBatchExecutor
     DiffusionBatchExecutorBase <|-- Wan_2_1I2VBatchExecutor
     DiffusionBatchExecutorBase <|-- CosmosPredict25BatchExecutor
@@ -126,25 +122,16 @@ classDiagram
     DiffusionBatchExecutorBase <|-- EchoBatchExecutor
     ChunkAutoregressiveDenoiseExecutorBase <|-- Magi1BatchExecutor
     ChunkAutoregressiveDenoiseExecutorBase <|-- CausVidBatchExecutor
-    ARBatchExecutorBase <|-- NextStep1BatchExecutor
-    ARDiscreteBatchExecutorBase <|-- JanusProBatchExecutor
-    JanusProBatchExecutor <|-- JanusProR1BatchExecutor
-    ARDiscreteBatchExecutorBase <|-- LlamaGenBatchExecutor
-    ARDiscreteBatchExecutorBase <|-- Emu3BatchExecutor
-    ARDiscreteBatchExecutorBase <|-- GlmImageBatchExecutor
 ```
 
 | Binding | Base / generic | Gatherer | Data types | Families |
 |---|---|---|---|---|
 | `full_sequence_denoise` | `DiffusionBatchExecutorBase`; families with no custom per-batch logic get `GenericDiffusionBatchExecutor` via the registry default | `DiffusionBatchGatherer` | `DiffusionSamplingParams`, `DiffusionRequestLayout`, `DiffusionBatchResult`, `ReferenceConditionedBatches` (mixin for i2v reference conditioning) | cosmos predict2/2.5/3, wan 2.1 i2v, echo; every other diffusion family (sana, flux, sd3.5, qwen-image, pixart-sigma, lumina2, mochi, hunyuan image/video, cogvideox, …) uses the generic executor via the registry default |
 | `chunk_autoregressive_denoise` | `ChunkAutoregressiveDenoiseExecutorBase` | `ChunkAutoregressiveDenoiseGatherer` | `ChunkAutoregressiveDenoiseResult` | magi-1, causvid. Here "chunk" means a **temporal chunk** of the video (causal-chunk generation) — a different concept from sample batches. |
-| `token_autoregressive` | `ARBatchExecutorBase` → `ARDiscreteBatchExecutorBase` (discrete-token specialization) | `ARDiscreteBatchGatherer` | `ARBatchPayload` (protocol), `ARSamplingParams`, `ARRequestLayout`, `ARBatchInputs`, `ARDiscreteBatchResult` | janus-pro (+R1), llamagen, emu3, glm-image; nextstep-1 sits on `ARBatchExecutorBase` directly (continuous AR). |
 
-Below the executors, `steps/` holds the paradigm-neutral inner loops:
-denoise (`DenoiseLoopConfig`, `DenoiseSDEParams`, `DenoiseLoopResult`,
-`DenoiseTrajectoryBuffers`, TeaCache classes) and token
-(`TokenLoopInit`, `TokenStepBatch`, `TokenStepOutput`,
-`TokenAutoregressiveLoop`/`Envelope` in `composition/`).
+Below the executors, `steps/denoise/` holds the family-neutral inner loop
+(`DenoiseLoopConfig`, `DenoiseSDEParams`, `DenoiseLoopResult`,
+`DenoiseTrajectoryBuffers`, TeaCache classes).
 
 ### 2.5 Request/output types (`types.py`)
 
@@ -282,7 +269,7 @@ prescribes.
 | `TrajectoryRolloutBatchBuilder`, `RolloutBatchBuildContext`, `RolloutBatch` | Scored outputs → training batches. |
 | `RolloutSchedule` (protocol) → `StrictOnPolicyRolloutSchedule`, `ContinuousRolloutSchedule` | When to generate vs train. Strict drains everything per iteration; continuous keeps a producer/consumer pipeline running (`ContinuousRolloutOwner` / `Producer` / `Consumer` / `Queue`, `StalenessPolicy`, `ContinuousRolloutSettings/Item/ProducerState`). |
 | `RolloutRuntimeCoordinator`, `RolloutCollectorControl` (protocol) | Wires schedule ↔ collector ↔ trainer phases (`RolloutIteration`, `RolloutScheduleMode`, `RewardCollectionMode`). |
-| `Evaluator` (protocol) → `ReplayEvaluatorBase` (ABC) → `TokenLogProbEvaluator`, `ContinuousTokenLogProbEvaluator`, `MultiSegmentTokenLogProbEvaluator`, `DiffusionSDELogProbEvaluator`, `ChunkAutoregressiveDenoiseLogProbEvaluator` | Replay-side log-prob evaluation per generation paradigm; produce `SegmentSignal` / `TrajectorySignalBatch` via `TrajectorySignalBuilder`. |
+| `Evaluator` (protocol) → `ReplayEvaluatorBase` (ABC) → `DiffusionSDELogProbEvaluator`, `ChunkAutoregressiveDenoiseLogProbEvaluator` | Replay-side log-prob evaluation per generation paradigm; produce `SegmentSignal` / `TrajectorySignalBatch` via `TrajectorySignalBuilder`. |
 | `RolloutStats`, `StatsSink` (protocol) → `LoggingStatsSink` / `JsonlStatsSink` / `MultiStatsSink` | Phase timing and throughput reporting. |
 
 ---
