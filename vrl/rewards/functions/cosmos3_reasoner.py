@@ -21,8 +21,7 @@ class Cosmos3ReasonerReward(ModelRewardFunction):
     """Cosmos3-reasoner reward scored through the configured runtime."""
 
     model_factory = "vrl.rewards.models.cosmos3_reasoner:Cosmos3ReasonerRewardModel"
-    request_prefix = "cosmos3_reasoner"
-    debug_basename = "cosmos3_reasoner"
+    name = "cosmos3_reasoner"
     default_reward_name = "nvidia/Cosmos3-Nano"
     default_score_key = "task_success"
 

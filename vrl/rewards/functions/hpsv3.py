@@ -17,8 +17,7 @@ class HPSv3Reward(ModelRewardFunction):
     """HPSv3 per-frame preference reward scored through the configured runtime."""
 
     model_factory = "vrl.rewards.models.hpsv3:HPSv3Model"
-    request_prefix = "hpsv3"
-    debug_basename = "hpsv3"
+    name = "hpsv3"
     default_reward_name = "MizzenAI/HPSv3@main"
     default_score_key = "top_frame_mean"
 

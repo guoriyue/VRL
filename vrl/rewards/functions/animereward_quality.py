@@ -19,9 +19,7 @@ class AnimeRewardQualityReward(ModelRewardFunction):
     """AnimeReward visual quality (Idefics2-8B regression head), roughly [0, 1]."""
 
     model_factory = "vrl.rewards.models.animereward_quality:AnimeRewardQualityModel"
-    request_prefix = "animereward-quality"
-    debug_basename = "animereward_quality"
-    default_reward_name = "animereward_quality"
+    name = "animereward_quality"
     default_score_key = "animereward_quality"
     default_artifact_format = "tensor"
     default_media_type = "image"

@@ -19,8 +19,7 @@ class VideoConPhysicsReward(ModelRewardFunction):
     """VideoCon-Physics reward scored through the configured runtime."""
 
     model_factory = "vrl.rewards.models.videocon_physics:VideoConPhysicsModel"
-    request_prefix = "videocon-physics"
-    debug_basename = "videocon_physics"
+    name = "videocon_physics"
     default_reward_name = "videophysics/videocon_physics@main"
     default_score_key = "physical_commonsense"
 

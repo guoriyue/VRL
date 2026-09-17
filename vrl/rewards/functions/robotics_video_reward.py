@@ -19,9 +19,7 @@ class RoboticsVideoReward(ModelRewardFunction):
     """Robotics blend scored from integrity-checked video artifacts."""
 
     model_factory = "vrl.rewards.models.robotics_video_reward:RoboticsVideoRewardModel"
-    request_prefix = "robotics-video-reward"
-    debug_basename = "robotics_video_reward"
-    default_reward_name = "robotics_video_reward"
+    name = "robotics_video_reward"
     default_score_key = "robotics_blend"
 
 

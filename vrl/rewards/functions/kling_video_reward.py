@@ -15,9 +15,7 @@ class KlingVideoReward(ModelRewardFunction):
     """Kling VideoReward scored through the configured runtime."""
 
     model_factory = "vrl.rewards.models.kling_video_reward:KlingVideoRewardModel"
-    request_prefix = "kling-video-reward"
-    debug_basename = "kling_video_reward"
-    default_reward_name = "kling_video_reward"
+    name = "kling_video_reward"
     default_score_key = "overall_reward"
     production = ProductionContract(
         task_types=frozenset({"text_to_video", "image_to_video", "video2world"}),

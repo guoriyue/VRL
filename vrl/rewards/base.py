@@ -506,15 +506,16 @@ class ModelRewardFunction(CumemRewardFunction):
     the scorer release its model's GPU memory between scoring phases.
     """
 
-    # Concrete model rewards differ in these declarations,
-    # so each subclass is a declaration block instead of a forwarding
-    # __init__. model_factory/request_prefix/debug_basename have no class
-    # default on purpose — a subclass that forgets them fails loudly at
-    # construction (AttributeError), not silently.
+    # Concrete model rewards differ in these declarations, so each subclass is
+    # a declaration block instead of a forwarding __init__. model_factory /
+    # name / default_score_key have no class default on purpose — a subclass
+    # that forgets them fails loudly at construction (AttributeError).
     model_factory: ClassVar[str]
-    request_prefix: ClassVar[str]
-    debug_basename: ClassVar[str]
-    default_reward_name: ClassVar[str]
+    # The registry component name. It is also the request-id prefix, the debug
+    # sidecar basename and the default ``reward_name``; a reward whose
+    # ``reward_name`` is a hub model id sets ``default_reward_name`` instead.
+    name: ClassVar[str]
+    default_reward_name: ClassVar[str | None] = None
     default_score_key: ClassVar[str]
     # Explicit archive encoding only; scorer input format belongs to its model.
     default_artifact_format: ClassVar[str] = "mp4"
@@ -574,7 +575,8 @@ class ModelRewardFunction(CumemRewardFunction):
             )
         worker_config = {**dict(worker_config or {}), **model_kwargs}
         model_factory = self.model_factory
-        reward_name = self.default_reward_name if reward_name is None else reward_name
+        if reward_name is None:
+            reward_name = self.default_reward_name or self.name
         score_key = self.default_score_key if score_key is None else score_key
         if self.score_keys and score_key not in self.score_keys:
             raise ValueError(
@@ -656,8 +658,8 @@ class ModelRewardFunction(CumemRewardFunction):
             artifact_store=artifact_store,
             archive_store=archive_store,
             debug_dir=debug_dir,
-            request_prefix=self.request_prefix,
-            debug_basename=self.debug_basename,
+            request_prefix=self.name,
+            debug_basename=self.name,
         )
 
 

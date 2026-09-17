@@ -8,17 +8,10 @@ from vrl.rewards.base import ModelRewardFunction
 
 
 class NSFWSafetyReward(ModelRewardFunction):
-    """NSFW safety penalty from a Falconsai image classifier over sampled frames.
-
-    In-process the model is built here and media rides the request in memory;
-    ``inference.kind=ray`` hands the same kwargs and media to a placement-owned
-    Ray actor.
-    """
+    """NSFW safety penalty from a Falconsai image classifier over sampled frames."""
 
     model_factory = "vrl.rewards.models.nsfw_safety:NSFWSafetyRewardModel"
-    request_prefix = "nsfw_safety"
-    debug_basename = "nsfw_safety"
-    default_reward_name = "nsfw_safety"
+    name = "nsfw_safety"
     default_score_key = "nsfw_safety"
     default_artifact_format = "tensor"
     default_media_type = "image"

@@ -14,17 +14,10 @@ from vrl.rewards.models.codex_image_qa import (
 
 
 class CodexImageQAReward(ModelRewardFunction):
-    """Codex CLI subprocess judge scoring an image against its prompt.
-
-    In-process the model is built here and media rides the request in memory;
-    ``inference.kind=ray`` hands the same kwargs and media to a placement-owned
-    Ray actor.
-    """
+    """Codex CLI subprocess judge scoring an image against its prompt."""
 
     model_factory = "vrl.rewards.models.codex_image_qa:CodexImageQARewardModel"
-    request_prefix = "codex_image_qa"
-    debug_basename = "codex_image_qa"
-    default_reward_name = "codex_image_qa"
+    name = "codex_image_qa"
     default_score_key = "codex_image_qa"
     default_artifact_format = "tensor"
     default_media_type = "image"

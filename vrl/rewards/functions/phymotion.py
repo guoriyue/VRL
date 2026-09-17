@@ -20,9 +20,7 @@ class PhyMotionReward(ModelRewardFunction):
     """PhyMotion human-dynamics reward via an external scorer."""
 
     model_factory = "vrl.rewards.models.phymotion:PhyMotionModel"
-    request_prefix = "phymotion"
-    debug_basename = "phymotion"
-    default_reward_name = "phymotion"
+    name = "phymotion"
     default_score_key = "overall"
 
 

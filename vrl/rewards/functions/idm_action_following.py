@@ -17,9 +17,7 @@ class ActionFollowingReward(ModelRewardFunction):
     """Commanded-action agreement scored from video media."""
 
     model_factory = "vrl.rewards.models.idm_action_following:ActionFollowingIDMModel"
-    request_prefix = "idm-action-following"
-    debug_basename = "idm_action_following"
-    default_reward_name = "idm_action_following"
+    name = "idm_action_following"
     default_score_key = "action_match"
     default_artifact_format = "mp4"
     default_media_type = "video"

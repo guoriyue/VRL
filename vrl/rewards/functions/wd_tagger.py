@@ -9,17 +9,10 @@ from vrl.rewards.base import ModelRewardFunction
 
 
 class WDTaggerReward(ModelRewardFunction):
-    """WD tagger (onnxruntime, CPU) tag-adherence reward.
-
-    In-process the model is built here and media rides the request in memory;
-    ``inference.kind=ray`` hands the same kwargs and media to a placement-owned
-    Ray actor.
-    """
+    """WD tagger (onnxruntime, CPU) tag-adherence reward."""
 
     model_factory = "vrl.rewards.models.wd_tagger:WDTaggerRewardModel"
-    request_prefix = "wd_tagger"
-    debug_basename = "wd_tagger"
-    default_reward_name = "wd_tagger"
+    name = "wd_tagger"
     default_score_key = "wd_tagger_dense"
     score_keys = ("wd_tagger_dense", "wd_tagger_recall")
     default_artifact_format = "tensor"

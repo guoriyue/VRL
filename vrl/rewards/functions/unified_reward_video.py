@@ -19,8 +19,7 @@ class UnifiedRewardVideoReward(ModelRewardFunction):
     """UnifiedReward-2.0 video judge scored through the configured runtime."""
 
     model_factory = "vrl.rewards.models.unified_reward_video:UnifiedRewardVideoModel"
-    request_prefix = "unified-reward-video"
-    debug_basename = "unified_reward_video"
+    name = "unified_reward_video"
     default_reward_name = "CodeGoat24/UnifiedReward-2.0-qwen-7b@main"
     default_score_key = "overall"
 

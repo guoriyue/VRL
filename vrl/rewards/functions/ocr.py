@@ -24,9 +24,7 @@ class OCRReward(ModelRewardFunction):
     """
 
     model_factory = "vrl.rewards.models.ocr:OCRRewardModel"
-    request_prefix = "ocr"
-    debug_basename = "ocr"
-    default_reward_name = "ocr"
+    name = "ocr"
     default_score_key = "ocr"
     default_artifact_format = "tensor"
     default_media_type = "image"

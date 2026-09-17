@@ -19,8 +19,7 @@ class VideoScore2Reward(ModelRewardFunction):
     """VideoScore2 reward scored through the configured runtime."""
 
     model_factory = "vrl.rewards.models.videoscore2:VideoScore2Model"
-    request_prefix = "videoscore2"
-    debug_basename = "videoscore2"
+    name = "videoscore2"
     default_reward_name = "TIGER-Lab/VideoScore2@main"
     default_score_key = "physical_common_sense"
 
