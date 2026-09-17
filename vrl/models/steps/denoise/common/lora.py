@@ -63,18 +63,14 @@ def attach_lora_adapter(
         wrapped.set_adapter(adapter_name)
         return wrapped
 
-    from peft import LoraConfig, get_peft_model
+    from peft import get_peft_model
 
-    cfg = LoraConfig(
-        r=lora_config["rank"],
-        lora_alpha=lora_config["alpha"],
-        lora_dropout=lora_config.get("dropout", 0.0),
-        init_lora_weights=lora_config.get("init_lora_weights", init_weights_default),
-        target_modules=lora_config["target_modules"],
-    )
     return get_peft_model(
         module,
-        cfg,
+        build_lora_config(
+            lora_config,
+            init_lora_weights=lora_config.get("init_lora_weights", init_weights_default),
+        ),
         adapter_name=adapter_name,
         autocast_adapter_dtype=autocast_adapter_dtype,
     )
@@ -113,13 +109,13 @@ def require_lora_for_previous_policy_adapter(build: ModelBuild) -> None:
         )
 
 
-def build_lora_config(lora_config: Any) -> Any:
-    """Build the LoRA config for a family's adapters from one ``model.lora`` block.
+def build_lora_config(lora_config: Any, *, init_lora_weights: Any = "gaussian") -> Any:
+    """Build one PEFT ``LoraConfig`` from a ``model.lora`` block.
 
-    The ``default`` and the frozen ``previous`` mirror use identical settings, so
-    this names that single shape instead of repeating the literal. Init does not
-    matter for ``previous`` (it is overwritten by ``copy_adapter_weights`` right
-    after creation), so ``gaussian`` matches the fresh-default init.
+    The ``default`` adapter and its frozen ``previous`` mirror share this
+    shape. Init only matters for a fresh ``default`` (``attach_lora_adapter``
+    passes the resolved value); ``previous`` is overwritten by
+    ``copy_adapter_weights`` right after creation, so the default suffices.
     """
 
     from peft import LoraConfig
@@ -128,7 +124,7 @@ def build_lora_config(lora_config: Any) -> Any:
         r=lora_config["rank"],
         lora_alpha=lora_config["alpha"],
         lora_dropout=lora_config.get("dropout", 0.0),
-        init_lora_weights="gaussian",
+        init_lora_weights=init_lora_weights,
         target_modules=lora_config["target_modules"],
     )
 

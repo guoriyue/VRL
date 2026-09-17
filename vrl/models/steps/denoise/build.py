@@ -126,12 +126,18 @@ def assemble_replay_bundle(
     )
 
 
-def _check_requires_lora(entry, build: ModelBuild) -> None:
-    """Fail a LoRA-only family before paying the transformer load."""
+def _check_lora_only(entry, model_cls: type, build: ModelBuild) -> None:
+    """Fail a LoRA-only family before paying the transformer load.
 
-    if entry.family_build.requires_lora and not build.use_lora:
+    A recipe that always builds the frozen ``previous`` PEFT mirror
+    (``DiffusionModelBase.lora_previous_policy_adapter``) cannot run as a full
+    finetune; the model class declares that fact, so no registry flag repeats it.
+    """
+
+    if getattr(model_cls, "lora_previous_policy_adapter", False) and not build.use_lora:
         raise RuntimeError(
-            f"model family {entry.family!r} is LoRA-only; set model.use_lora=true.",
+            f"model family {entry.family!r} is LoRA-only (its recipe builds the "
+            "previous-policy adapter); set model.use_lora=true.",
         )
 
 
@@ -159,12 +165,10 @@ def build_family_runtime_bundle(
         raise ValueError(
             f"rollout build family {build.family!r} does not match entry {entry.family!r}",
         )
-    _check_requires_lora(entry, build)
+    model_cls = import_from_path(recipe.model_cls)
+    _check_lora_only(entry, model_cls, build)
     logger.info("Building %s runtime bundle (registry descriptor)", entry.family)
-    return build_denoise_runtime_bundle(
-        build,
-        model_cls=import_from_path(recipe.model_cls),
-    )
+    return build_denoise_runtime_bundle(build, model_cls=model_cls)
 
 
 def build_family_replay_runtime_bundle(
@@ -185,18 +189,19 @@ def build_family_replay_runtime_bundle(
         raise ValueError(
             f"replay build family {build.family!r} does not match entry {entry.family!r}",
         )
-    _check_requires_lora(entry, build)
     if recipe.replay_cls is None or recipe.transformer_classname is None:
         raise ValueError(
             f"model family {entry.family!r} has no generic replay recipe; "
             "invoke its registered replay_runtime_builder instead",
         )
+    replay_cls = import_from_path(recipe.replay_cls)
+    _check_lora_only(entry, replay_cls, build)
     logger.info(
         "Building %s replay runtime bundle (registry descriptor) from %s",
         entry.family,
         build.model_name_or_path,
     )
-    model = import_from_path(recipe.replay_cls)(
+    model = replay_cls(
         transformer=load_diffusers_transformer(build, recipe.transformer_classname),
         scheduler=(
             load_diffusers_scheduler(build, recipe.scheduler_classname)

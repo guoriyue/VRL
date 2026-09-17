@@ -326,7 +326,7 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
             sampling_config={"num_steps": 2},
             model_config={
                 # LoRA path so LoRA-only descriptor families (predict2_5) pass
-                # their requires_lora guard; the fake's apply_lora is a no-op.
+                # their LoRA-only guard; the fake's apply_lora is a no-op.
                 "use_lora": True,
                 "lora": {"rank": 1, "alpha": 1, "target_modules": ["to_q"]},
             },

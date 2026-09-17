@@ -111,10 +111,6 @@ class DenoiseFamilyBuild:
     # Driver-side normalization for deployment inputs that must be resolved
     # before ModelBuild is serialized into a Ray launch contract.
     model_build_normalizer: str | None = None
-    # LoRA-only family: the generic builders fail loud BEFORE paying the
-    # transformer load. The per-family WHY belongs in a comment on the entry
-    # (and in the model's own apply_full_finetune error), not in runtime data.
-    requires_lora: bool = False
     # Generation-only denoise families retain their concrete reason so trainer
     # construction can fail before importing an upstream runtime or weights.
     replay_unavailable_reason: str | None = None
@@ -787,9 +783,6 @@ _register_model_family(
             # Upstream ships UniPC; replay must recompute log-probs under the
             # same schedule the rollout sampled with.
             scheduler_classname="UniPCMultistepScheduler",
-            # DiffusionNFT needs the trainable default + frozen previous
-            # adapters, which only exist on the LoRA path.
-            requires_lora=True,
         ),
     ),
 )

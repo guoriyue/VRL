@@ -89,8 +89,9 @@ Use the canonical family name in `cfg.model.family`. Functional conditioning
 such as a reference image or video belongs on each `GenerationInput`; it is not
 registry metadata or an executor-constructor setting. Set `scheduler_classname`
 when replay must load a scheduler other than the shared flow-match scheduler.
-Set `requires_lora=True` only when the model implementation genuinely rejects
-full-parameter training.
+Set `lora_previous_policy_adapter = True` on the model class only when its
+recipe always builds the frozen previous-policy adapter; the shared builders
+then reject a full-parameter build before loading weights.
 
 External aliases live only in `vrl/models/families/names.py`. Add one there when
 an existing public spelling must remain accepted; do not copy aliases onto the
