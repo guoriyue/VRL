@@ -1428,15 +1428,27 @@ def _enable_wan_block_offload(pipeline: Any, device: Any) -> None:
 
 
 def _wan_offload_components(pipeline: Any) -> list[tuple[str, torch.nn.Module]]:
-    """Pipeline modules by component name, behind any LoRA wrapper.
+    """Pipeline modules by component name, behind any LoRA or compile wrapper.
 
     Block-level offload groups the direct children of the module it is applied
-    to, so it must see the transformer's ``blocks`` list, not the ``PeftModel``
-    whose only child is the whole adapted model.
+    to, so it must see the transformer's ``blocks`` list: neither the
+    ``PeftModel`` whose only child is the whole adapted model, nor the
+    ``OptimizedModule`` ``torch.compile`` wraps it in (which would degrade
+    per-block streaming into one whole-model group). The wrappers nest in
+    either order, so peel until nothing changes.
     """
 
+    from vrl.models.weight_utils import unwrap_compile_and_ddp
+
+    def peel(module: torch.nn.Module) -> torch.nn.Module:
+        while True:
+            inner = peel_peft(unwrap_compile_and_ddp(module))
+            if inner is module:
+                return module
+            module = inner
+
     return [
-        (name, peel_peft(component))
+        (name, peel(component))
         for name, component in pipeline.components.items()
         if isinstance(component, torch.nn.Module)
     ]

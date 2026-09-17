@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
 
 from vrl.generation.bindings.token_autoregressive.layout import ARRequestLayout
 from vrl.generation.execution.executor_base import BatchExecutorBase
+from vrl.generation.execution.reward_artifacts import gather_reward_artifacts
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
     gather_batch_context,
@@ -169,8 +170,21 @@ class ARDiscreteBatchResult:
     uncond_input_ids: torch.Tensor
     uncond_attention_mask: torch.Tensor
     context: dict[str, Any]
+    # Worker-written reward files per component, sample order (see
+    # vrl/generation/execution/reward_artifacts.py).
+    artifacts: dict[str, list[Any]] = field(default_factory=dict)
     # Display/provenance-only: emitted through per-batch runtime debug metrics.
     peak_memory_mb: float | None = None
+
+    # The decoded images are the reward media; the worker's artifact
+    # materialization reads and clears them by this one name.
+    @property
+    def reward_media(self) -> Any:
+        return self.output
+
+    @reward_media.setter
+    def reward_media(self, value: Any) -> None:
+        self.output = value
 
 
 class ARDiscreteBatchExecutorBase(ARBatchExecutorBase):
@@ -320,6 +334,7 @@ class ARDiscreteBatchGatherer:
         return GenerationOutput(
             output=cat["output"],
             trajectory=trajectory,
+            artifacts=gather_reward_artifacts(ordered_batches),
         )
 
 

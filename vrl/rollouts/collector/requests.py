@@ -53,6 +53,7 @@ class GenerationRequestBuilder:
         runtime_debug: bool = False,
         policy_version: int | None = None,
         reward_artifacts: Sequence[Any] = (),
+        media_off_wire: bool = False,
     ) -> CollectorRequest:
         sampling = {
             str(field_name): list(value) if isinstance(value, tuple) else value
@@ -123,6 +124,7 @@ class GenerationRequestBuilder:
                 else spec
                 for spec in reward_artifacts
             ),
+            media_off_wire=media_off_wire,
             runtime_debug=runtime_debug,
             policy_version=policy_version,
         )

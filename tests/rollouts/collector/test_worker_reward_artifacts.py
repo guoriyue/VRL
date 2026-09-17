@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import torch
@@ -72,27 +73,131 @@ def test_materialize_encodes_mp4_when_the_store_wants_video_files(tmp_path: Path
     assert all(f.size_bytes > 0 and len(f.sha256) == 64 for f in files)
 
 
-def test_worker_hook_drops_media_from_the_wire_once_materialized(tmp_path: Path) -> None:
-    request = GenerationRequest(
+class _DiffusionShaped:
+    """The diffusion result's media contract: ``video`` behind ``reward_media``."""
+
+    def __init__(self, video: Any) -> None:
+        self.video = video
+        self.artifacts: dict[str, list[Any]] = {}
+
+    @property
+    def reward_media(self) -> Any:
+        return self.video
+
+    @reward_media.setter
+    def reward_media(self, value: Any) -> None:
+        self.video = value
+
+
+class _ARShaped:
+    """The token-AR result's media contract: decoded ``output`` behind ``reward_media``."""
+
+    def __init__(self, output: Any) -> None:
+        self.output = output
+        self.artifacts: dict[str, list[Any]] = {}
+
+    @property
+    def reward_media(self) -> Any:
+        return self.output
+
+    @reward_media.setter
+    def reward_media(self, value: Any) -> None:
+        self.output = value
+
+
+def _request(tmp_path: Path, *, media_off_wire: bool) -> GenerationRequest:
+    return GenerationRequest(
         request_id="r",
         family="sd3_5",
         task="t2i",
         inputs=["p"],
         samples_per_prompt=1,
         reward_artifacts=[_spec(tmp_path, media_type="image")],
+        media_off_wire=media_off_wire,
     )
-    output = SimpleNamespace(video=torch.zeros(1, 3, 4, 4), artifacts={})
-    GenerationWorkerCore._materialize_reward_artifacts(output, request)
-    assert output.video is None
-    assert list(output.artifacts) == ["hpsv3"] and len(output.artifacts["hpsv3"]) == 1
-    # Without specs nothing changes (evaluation scripts keep receiving media).
-    plain = SimpleNamespace(video=torch.zeros(1, 3, 4, 4), artifacts={})
+
+
+def test_worker_hook_drops_media_only_when_every_reward_reads_files(tmp_path: Path) -> None:
+    off_wire = _DiffusionShaped(torch.zeros(1, 3, 4, 4))
     GenerationWorkerCore._materialize_reward_artifacts(
-        plain, GenerationRequest("r", "sd3_5", "t2i", ["p"], 1)
+        off_wire, _request(tmp_path, media_off_wire=True), primary=True
+    )
+    assert off_wire.video is None
+    assert list(off_wire.artifacts) == ["hpsv3"] and len(off_wire.artifacts["hpsv3"]) == 1
+
+    # An in-memory reward in the same run: files are written AND the media stays.
+    mixed = _DiffusionShaped(torch.zeros(1, 3, 4, 4))
+    GenerationWorkerCore._materialize_reward_artifacts(
+        mixed, _request(tmp_path, media_off_wire=False), primary=True
+    )
+    assert mixed.video is not None
+    assert len(mixed.artifacts["hpsv3"]) == 1
+
+    # Without specs nothing changes (evaluation scripts keep receiving media).
+    plain = _DiffusionShaped(torch.zeros(1, 3, 4, 4))
+    GenerationWorkerCore._materialize_reward_artifacts(
+        plain, GenerationRequest("r", "sd3_5", "t2i", ["p"], 1), primary=True
     )
     assert plain.video is not None and plain.artifacts == {}
-    with pytest.raises(TypeError, match="expose decoded media"):
-        GenerationWorkerCore._materialize_reward_artifacts(SimpleNamespace(), request)
+    with pytest.raises(TypeError, match="reward_media"):
+        GenerationWorkerCore._materialize_reward_artifacts(
+            SimpleNamespace(video=torch.zeros(1, 3, 4, 4)),
+            _request(tmp_path, media_off_wire=True),
+            primary=True,
+        )
+
+
+def test_worker_hook_materializes_token_ar_outputs_by_the_same_contract(tmp_path: Path) -> None:
+    """An AR family's decoded images are its reward media; the hook must not
+    assume the diffusion field name."""
+
+    result = _ARShaped(torch.zeros(1, 3, 4, 4))
+    GenerationWorkerCore._materialize_reward_artifacts(
+        result, _request(tmp_path, media_off_wire=True), primary=True
+    )
+    assert result.output is None
+    assert len(result.artifacts["hpsv3"]) == 1
+    assert Path(result.artifacts["hpsv3"][0].path).is_file()
+
+
+def test_only_the_primary_rank_of_an_engine_writes_reward_files(tmp_path: Path) -> None:
+    """Every rank of a multi-rank engine runs the batch; the driver keeps rank 0's
+    result, so a file written by another rank would have no owner to release it."""
+
+    secondary = _DiffusionShaped(torch.zeros(1, 3, 4, 4))
+    GenerationWorkerCore._materialize_reward_artifacts(
+        secondary, _request(tmp_path, media_off_wire=True), primary=False
+    )
+    assert secondary.artifacts == {}
+    assert secondary.video is not None
+    assert not any(tmp_path.rglob("*.pt"))
+
+
+def test_media_off_wire_requires_artifact_specs() -> None:
+    with pytest.raises(ValueError, match="media_off_wire requires reward_artifacts"):
+        GenerationRequest("r", "sd3_5", "t2i", ["p"], 1, media_off_wire=True)
+
+
+def test_gather_reward_artifacts_concatenates_in_batch_order(tmp_path: Path) -> None:
+    from vrl.generation.execution.reward_artifacts import gather_reward_artifacts
+    from vrl.utils.artifacts import MaterializedArtifact
+
+    def files(n: int) -> list[MaterializedArtifact]:
+        return [
+            MaterializedArtifact(path=f"/x/{i}.pt", size_bytes=1, sha256="a" * 64)
+            for i in range(n)
+        ]
+
+    first = SimpleNamespace(
+        batch=SimpleNamespace(sample_count=2, batch_key="b0"), artifacts={"hpsv3": files(2)}
+    )
+    second = SimpleNamespace(
+        batch=SimpleNamespace(sample_count=1, batch_key="b1"), artifacts={"hpsv3": files(1)}
+    )
+    assert gather_reward_artifacts([first, second]) == {"hpsv3": files(2) + files(1)}
+    assert gather_reward_artifacts([SimpleNamespace(batch=first.batch, artifacts={})]) is None
+    with pytest.raises(ValueError, match="missing or misaligned"):
+        gather_reward_artifacts([first, SimpleNamespace(batch=second.batch, artifacts={})])
 
 
 def test_disk_store_adopts_worker_files_and_still_writes_tensors(tmp_path: Path) -> None:

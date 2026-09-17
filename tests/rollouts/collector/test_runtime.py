@@ -52,6 +52,7 @@ class _RequestBuilder:
         runtime_debug: bool = False,
         policy_version: int | None = None,
         reward_artifacts: tuple[Any, ...] = (),
+        media_off_wire: bool = False,
     ) -> CollectorRequest:
         request_id = f"unit-request-{self._request_index}"
         self._request_index += 1
@@ -65,6 +66,7 @@ class _RequestBuilder:
             runtime_debug=runtime_debug,
             policy_version=policy_version,
             reward_artifacts=tuple(reward_artifacts),
+            media_off_wire=media_off_wire,
         )
         return CollectorRequest(
             request=request,
@@ -147,6 +149,8 @@ class _RewardRuntime:
 
     def artifact_specs(self) -> tuple[Any, ...]:
         return ()
+
+    media_off_wire = False
 
     async def preflight(self) -> None:
         return None
@@ -629,6 +633,36 @@ def _reward_sample_builder(
         output,
         RolloutBatchBuildContext(metadata=dict(metadata or {}), device="cpu"),
     )
+
+
+def test_reward_samples_carry_media_and_worker_files_side_by_side() -> None:
+    """A reward set mixing in-memory and disk components: the worker wrote the
+    disk components' files and kept the media on the wire; each sample gets both."""
+
+    from vrl.utils.artifacts import MaterializedArtifact
+
+    builder = _reward_sample_builder("request-0", ["p0", "p1"], outputs=torch.ones(2, 3))
+    files = [
+        MaterializedArtifact(path=f"/tmp/{i}.pt", size_bytes=1, sha256="a" * 64) for i in range(2)
+    ]
+    builder.output.artifacts = {"hpsv3": files}
+
+    samples = builder.reward_samples()
+
+    assert [sample.output is not None for sample in samples] == [True, True]
+    assert [sample.artifacts["hpsv3"] for sample in samples] == files
+
+
+def test_reward_samples_reject_files_disagreeing_with_media_batch_size() -> None:
+    from vrl.utils.artifacts import MaterializedArtifact
+
+    builder = _reward_sample_builder("request-0", ["p0", "p1"], outputs=torch.ones(2, 3))
+    builder.output.artifacts = {
+        "hpsv3": [MaterializedArtifact(path="/tmp/0.pt", size_bytes=1, sha256="a" * 64)],
+    }
+
+    with pytest.raises(ValueError, match="disagree on batch size"):
+        builder.reward_samples()
 
 
 def test_reward_samples_reject_sample_row_output_mismatch() -> None:

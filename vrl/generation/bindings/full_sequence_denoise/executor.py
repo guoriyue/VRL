@@ -91,6 +91,16 @@ class DiffusionBatchResult:
     def actions(self) -> Any:
         return self.latents[:, 1:]
 
+    # The media a reward scores, by one name across the family result types
+    # (the worker's artifact materialization reads and clears it).
+    @property
+    def reward_media(self) -> Any:
+        return self.video
+
+    @reward_media.setter
+    def reward_media(self, value: Any) -> None:
+        self.video = value
+
 
 class ReferenceConditionedBatches:
     """Reference-image threading for per-batch encode/prepare.

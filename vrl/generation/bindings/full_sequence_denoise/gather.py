@@ -9,8 +9,9 @@ import; the parent package's public exports still import the executor module.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
+from vrl.generation.execution.reward_artifacts import gather_reward_artifacts
 from vrl.generation.execution.sample_batches import (
     concatenate_sample_values,
     gather_batch_context,
@@ -77,21 +78,7 @@ class DiffusionBatchGatherer:
             for batch in ordered_batches:
                 require_sample_rows("video", batch.video, batch.batch.sample_count)
             video = concatenate_sample_values(videos, name="video")
-        artifacts: dict[str, list[Any]] | None = None
-        if any(batch.artifacts for batch in ordered_batches):
-            names = {name for batch in ordered_batches for name in batch.artifacts}
-            artifacts = {}
-            for name in sorted(names):
-                files: list[Any] = []
-                for batch in ordered_batches:
-                    batch_files = batch.artifacts.get(name)
-                    if batch_files is None or len(batch_files) != batch.batch.sample_count:
-                        raise ValueError(
-                            f"reward artifact {name!r} missing or misaligned for batch "
-                            f"{batch.batch.batch_key}",
-                        )
-                    files.extend(batch_files)
-                artifacts[name] = files
+        artifacts = gather_reward_artifacts(ordered_batches)
         replay_tensors = gather_replay_tensors(
             [batch.replay_tensors for batch in ordered_batches],
             sample_counts=[batch.batch.sample_count for batch in ordered_batches],

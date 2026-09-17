@@ -582,6 +582,35 @@ def test_wan_block_offload_weight_sync_changes_forward() -> None:
     assert torch.equal(model.transformer(sample).detach(), after)
 
 
+def test_wan_block_offload_sees_blocks_behind_a_compile_wrapper() -> None:
+    """``torch.compile`` wraps the transformer in an OptimizedModule whose only
+    child is the whole model; block offload must group the inner ``blocks`` or
+    per-block streaming degrades into one whole-model move."""
+
+    from torch import nn
+
+    from vrl.models.families.wan_2_1.model import _wan_offload_components
+
+    class _Transformer(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.blocks = nn.ModuleList([nn.Linear(3, 3), nn.Linear(3, 3)])
+
+        def forward(self, value: torch.Tensor) -> torch.Tensor:
+            for block in self.blocks:
+                value = block(value)
+            return value
+
+    transformer = _Transformer()
+    compiled = torch.compile(transformer)
+    pipeline = _BlockOffloadPipeline(compiled)
+
+    components = dict(_wan_offload_components(pipeline))
+
+    assert components["transformer"] is transformer
+    assert next(iter(components["transformer"].named_children()))[0] == "blocks"
+
+
 def test_wan_block_offload_streams_only_the_transformers(monkeypatch) -> None:
     """Experts prefetch on a copy stream; the VAE and encoders move synchronously.
 

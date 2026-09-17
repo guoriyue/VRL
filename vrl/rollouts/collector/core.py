@@ -427,7 +427,9 @@ class RolloutCollector:
 
         # Disk-artifact rewards ask the rollout worker to materialize their
         # inputs; the driver then only relays paths (see RewardArtifactSpec).
+        # The media leaves the wire only when no component still reads it.
         reward_artifacts = tuple(self.reward_runtime.artifact_specs())
+        media_off_wire = bool(reward_artifacts) and self.reward_runtime.media_off_wire
 
         def build(inputs: list[Any], indices: list[int], **kwargs: Any):
             request = self.request_builder.build(
@@ -436,6 +438,7 @@ class RolloutCollector:
                 runtime_debug=runtime_debug,
                 policy_version=policy_version,
                 reward_artifacts=reward_artifacts,
+                media_off_wire=media_off_wire,
                 **kwargs,
             )
             return request, indices

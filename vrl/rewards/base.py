@@ -238,6 +238,16 @@ class RewardFunction:
         return ()
 
     @property
+    def consumes_worker_artifacts(self) -> bool:
+        """Whether this reward scores from the files ``artifact_specs`` asked for.
+
+        False for a reward that reads media in memory; the collector keeps the
+        media on the wire while any component answers False.
+        """
+
+        return bool(self.artifact_specs())
+
+    @property
     def external_accelerator_isolation_verified(self) -> bool:
         """Whether out-of-plan reward accelerator work has been isolated."""
 

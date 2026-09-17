@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
+from vrl.generation.execution.reward_artifacts import gather_reward_artifacts
 from vrl.generation.execution.sample_batches import (
     concatenate_sample_values,
     gather_batch_context,
@@ -93,6 +94,7 @@ class ChunkAutoregressiveDenoiseGatherer:
         return GenerationOutput(
             output=output,
             trajectory=trajectory,
+            artifacts=gather_reward_artifacts(ordered),
         )
 
     @staticmethod

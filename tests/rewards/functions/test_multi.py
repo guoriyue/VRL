@@ -734,6 +734,29 @@ def test_every_former_in_process_reward_can_run_as_a_managed_service(
     assert scorer.pid is None
 
 
+def test_media_leaves_the_wire_only_when_every_component_reads_files(tmp_path) -> None:
+    """One in-memory reward next to a disk reward keeps the media on the wire."""
+
+    from vrl.rewards.functions.ocr import OCRReward
+
+    disk_only = MultiReward.from_dict(
+        {"hpsv3": 1.0},
+        device="cpu",
+        reward_kwargs={"hpsv3": {"artifact_dir": str(tmp_path / "hpsv3")}},
+    )
+    assert disk_only.consumes_worker_artifacts is True
+    mixed = MultiReward.from_dict(
+        {"hpsv3": 1.0, "ocr": 1.0},
+        device="cpu",
+        reward_kwargs={"hpsv3": {"artifact_dir": str(tmp_path / "hpsv3")}},
+    )
+    assert [name for name, _, _ in mixed.rewards] == ["hpsv3", "ocr"]
+    assert isinstance(mixed.rewards[1][2], OCRReward)
+    assert mixed.rewards[1][2].consumes_worker_artifacts is False
+    assert mixed.consumes_worker_artifacts is False
+    assert [spec.name for spec in mixed.artifact_specs()] == ["hpsv3"]
+
+
 def test_disk_rewards_project_artifact_specs_and_the_builder_fills_fps(tmp_path) -> None:
     from vrl.models.families.registry import get_model_family_entry
     from vrl.rollouts.collector.config import RolloutCollectorConfig

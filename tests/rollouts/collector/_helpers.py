@@ -48,7 +48,7 @@ class PromptCollectionFake:
         # These scheduling fakes use prebuilt batches as their reward result.
         return evaluated
 
-    reward_runtime = SimpleNamespace(artifact_specs=lambda: ())
+    reward_runtime = SimpleNamespace(artifact_specs=lambda: (), media_off_wire=False)
     request_builder = SimpleNamespace(
         build=lambda inputs, group_size, **kwargs: SimpleNamespace(
             inputs=inputs, options={"group_size": group_size, **kwargs}

@@ -103,4 +103,31 @@ def _write_sample_artifact(spec: RewardArtifactSpec, sample: Any) -> Materialize
     )
 
 
-__all__ = ["materialize_reward_artifacts"]
+def gather_reward_artifacts(batches: Sequence[Any]) -> dict[str, list[Any]] | None:
+    """Concatenate per-batch ``artifacts`` in batch order, one list per component.
+
+    ``None`` when no batch carried files. Every batch must carry every
+    component with exactly ``batch.batch.sample_count`` files; the three
+    family gatherers (full-sequence denoise, chunk denoise, token AR) share
+    this so a missing or misaligned file is refused the same way everywhere.
+    """
+
+    if not any(batch.artifacts for batch in batches):
+        return None
+    names = {name for batch in batches for name in batch.artifacts}
+    artifacts: dict[str, list[Any]] = {}
+    for name in sorted(names):
+        files: list[Any] = []
+        for batch in batches:
+            batch_files = batch.artifacts.get(name)
+            if batch_files is None or len(batch_files) != batch.batch.sample_count:
+                raise ValueError(
+                    f"reward artifact {name!r} missing or misaligned for batch "
+                    f"{batch.batch.batch_key}",
+                )
+            files.extend(batch_files)
+        artifacts[name] = files
+    return artifacts
+
+
+__all__ = ["gather_reward_artifacts", "materialize_reward_artifacts"]

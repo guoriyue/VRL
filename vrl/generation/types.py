@@ -108,6 +108,10 @@ class GenerationRequest:
     # Non-empty means the decoded media stays on the worker: GenerationOutput
     # .output is None and every sample carries MaterializedArtifact references.
     reward_artifacts: tuple[RewardArtifactSpec, ...] = ()
+    # True only when every reward component scores from a worker-written
+    # artifact: the worker then drops the decoded media from its result. Any
+    # in-memory reward in the set keeps the media on the wire next to the files.
+    media_off_wire: bool = False
 
     def __init__(
         self,
@@ -126,6 +130,7 @@ class GenerationRequest:
         policy_version: int | None = None,
         sde_window_seed: int | None = None,
         reward_artifacts: tuple[RewardArtifactSpec, ...] | list[RewardArtifactSpec] = (),
+        media_off_wire: bool = False,
     ) -> None:
         normalized_inputs: list[GenerationInput] = []
         for value in inputs:
@@ -152,6 +157,9 @@ class GenerationRequest:
         if len({spec.name for spec in specs}) != len(specs):
             raise ValueError("GenerationRequest.reward_artifacts names must be unique")
         self.reward_artifacts = specs
+        if media_off_wire and not specs:
+            raise ValueError("GenerationRequest.media_off_wire requires reward_artifacts")
+        self.media_off_wire = bool(media_off_wire)
         self.runtime_debug = runtime_debug
         self.policy_version = policy_version
         self.__post_init__()

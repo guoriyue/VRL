@@ -139,6 +139,14 @@ class MultiReward(RewardFunction):
             reward.scoring_is_nonblocking for _, _, reward in self.rewards
         )
 
+    @property
+    def consumes_worker_artifacts(self) -> bool:
+        """Whether every component scores from a worker-written file."""
+
+        return bool(self.rewards) and all(
+            reward.consumes_worker_artifacts for _, _, reward in self.rewards
+        )
+
     def artifact_specs(self) -> tuple[Any, ...]:
         """Every component's worker-materialized artifact request, name-unique."""
 
