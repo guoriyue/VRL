@@ -51,7 +51,6 @@ from vrl.models.steps.denoise.common import (
     pack_eval_timestep,
     set_mu_shifted_timesteps,
 )
-from vrl.models.steps.denoise.common.lora import require_lora_for_previous_policy_adapter
 
 
 @dataclass
@@ -135,7 +134,7 @@ class FluxModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
     @classmethod
     def from_build(cls, build: ModelBuild) -> FluxModel:
         """Reject the previous-adapter config before paying the pipeline load."""
-        require_lora_for_previous_policy_adapter(build)
+        build.require_lora_for_previous_policy_adapter()
         return super().from_build(build)
 
     def _set_dynamic_timesteps(self, num_steps: int, image_seq_len: int, device: Any) -> Any:
@@ -552,7 +551,7 @@ class FluxReplayModel(DiffusersReplayModelBase, FluxModel):
         asserts old==new log-prob, so any drift here surfaces immediately.)
         FLUX packs an 8x VAE + 2x2 patch grid: seq_len = (H // 16) * (W // 16).
         """
-        require_lora_for_previous_policy_adapter(build)
+        build.require_lora_for_previous_policy_adapter()
         sampling = build.sampling_config or {}
         num_steps = build.num_steps
         height, width = sampling.get("height"), sampling.get("width")

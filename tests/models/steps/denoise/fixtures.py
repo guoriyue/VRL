@@ -13,6 +13,32 @@ from typing import Any
 import torch
 
 from vrl.config.precision import RolePrecision
+from vrl.models.interfaces.runtime import ModelBuild
+
+
+def lora_test_build(
+    lora: dict[str, Any],
+    *,
+    family: str,
+    lora_path: str | None = None,
+    model_config: dict[str, Any] | None = None,
+) -> ModelBuild:
+    """A real CPU replay build for adapter tests, without checkpoint loading."""
+
+    return ModelBuild(
+        model_name_or_path="test-model",
+        revision=None,
+        device="cpu",
+        parameter_dtype=torch.float32,
+        family=family,
+        precision=RolePrecision("fp32", "ieee"),
+        model_config={
+            **(model_config or {}),
+            "use_lora": True,
+            "lora": {**lora, "path": lora_path},
+        },
+    )
+
 
 # Tiny real Wan DiT geometry (CPU, ~6.7K params): latent video [B, C, T, H, W]
 # with patch size (1, 2, 2); text embeds are [B, TEXT_LEN, TEXT_DIM].

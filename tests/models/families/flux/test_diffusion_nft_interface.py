@@ -25,8 +25,10 @@ from torch import nn
 from tests.models.steps.denoise.fixtures import (
     _TINY_WAN_LORA_TARGETS,
     build_tiny_wan_transformer,
+    lora_test_build,
 )
 from vrl.models.families.flux.model import FluxReplayModel
+from vrl.models.interfaces.runtime import ModelBuild
 
 
 class _DummyFluxTransformer(nn.Module):
@@ -184,9 +186,10 @@ def _peft_default_only_model() -> FluxReplayModel:
     return FluxReplayModel(transformer=peft_t, scheduler=None, device="cpu")
 
 
-def _build() -> SimpleNamespace:
-    return SimpleNamespace(
-        lora={"rank": 4, "alpha": 8, "target_modules": _TINY_WAN_LORA_TARGETS},
+def _build() -> ModelBuild:
+    return lora_test_build(
+        {"rank": 4, "alpha": 8, "target_modules": _TINY_WAN_LORA_TARGETS},
+        family="flux",
     )
 
 

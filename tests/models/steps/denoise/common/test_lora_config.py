@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
-import torch
 from torch import nn
 
+from tests.models.steps.denoise.fixtures import lora_test_build
 from vrl.models.steps.denoise import DiffusionModelBase
 from vrl.models.steps.denoise.common.lora import build_lora_config
 
@@ -61,12 +60,9 @@ def test_shared_fresh_adapter_preserves_effective_dropout(
 ) -> None:
     policy = _Policy()
     policy.apply_lora(
-        SimpleNamespace(
-            parameter_dtype=torch.float32,
-            rollout=None,
-            defer_trainable_device_move=False,
-            lora_path=None,
-            lora=_lora_values(configured_dropout),
+        lora_test_build(
+            _lora_values(configured_dropout),
+            family="sd3_5",
         ),
     )
 
@@ -111,12 +107,10 @@ def test_shared_warm_start_validates_effective_topology(
     base = policy.transformer
 
     policy.apply_lora(
-        SimpleNamespace(
-            parameter_dtype=torch.float32,
-            rollout=None,
-            defer_trainable_device_move=False,
+        lora_test_build(
+            _lora_values(0.35),
+            family="sd3_5",
             lora_path="/adapter",
-            lora=_lora_values(0.35),
         ),
     )
 
@@ -148,12 +142,10 @@ def test_shared_warm_start_validation_failure_keeps_raw_transformer(
 
     with pytest.raises(ValueError, match="topology mismatch"):
         policy.apply_lora(
-            SimpleNamespace(
-                parameter_dtype=torch.float32,
-                rollout=None,
-                defer_trainable_device_move=False,
+            lora_test_build(
+                _lora_values(0.35),
+                family="sd3_5",
                 lora_path="/adapter",
-                lora=_lora_values(0.35),
             ),
         )
 

@@ -8,7 +8,7 @@ FP8 and NVFP4 lifecycle contracts without loading a real checkpoint.
 from __future__ import annotations
 
 import sys
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -85,17 +85,27 @@ def _build(
     *,
     quantization_format: str | None,
     defer_trainable_device_move: bool = False,
-) -> SimpleNamespace:
+) -> ModelBuild:
     quantization = (
         None if quantization_format is None else QuantizationPolicy(format=quantization_format)
     )
-    return SimpleNamespace(
+    return ModelBuild(
+        model_name_or_path="test-model",
+        revision=None,
+        device="cpu",
+        family="sd3_5",
         precision=RolePrecision("fp16", "tf32", quantization),
-        rollout=SimpleNamespace(),
+        rollout=(
+            None
+            if defer_trainable_device_move
+            else RolloutBuildOptions(prompt_encoder_dtype=torch.float16)
+        ),
         defer_trainable_device_move=defer_trainable_device_move,
         parameter_dtype=torch.float16,
-        lora_path=None,
-        lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},
+        model_config={
+            "use_lora": True,
+            "lora": {"rank": 2, "alpha": 2, "target_modules": ["proj"]},
+        },
     )
 
 

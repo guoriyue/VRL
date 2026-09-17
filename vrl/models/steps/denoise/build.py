@@ -61,13 +61,12 @@ def build_denoise_runtime_bundle(
 
     if build.use_lora:
         model.apply_lora(build)
-        lora_config = build.lora
-        if lora_config:
-            logger.info(
-                "Applied LoRA (rank=%d, alpha=%d)",
-                lora_config["rank"],
-                lora_config["alpha"],
-            )
+        lora_config = build.require_lora_config()
+        logger.info(
+            "Applied LoRA (rank=%d, alpha=%d)",
+            lora_config["rank"],
+            lora_config["alpha"],
+        )
     # Quantize -> device move -> compile -> offload hooks -> VAE decode memory.
     # The whole sequence and its ordering constraints live in the pass layer.
     apply_rollout_optimizations(model, build, before_compile=move_to_device)

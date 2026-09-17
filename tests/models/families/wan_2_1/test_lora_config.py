@@ -8,6 +8,7 @@ import pytest
 import torch
 from torch import nn
 
+from tests.models.steps.denoise.fixtures import lora_test_build
 from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
 
 pytest.importorskip("peft")
@@ -55,11 +56,11 @@ def test_wan_fresh_adapter_preserves_base_output_and_effective_dropout(
     before = model.transformer.proj(inputs).detach()
 
     model.apply_lora(
-        SimpleNamespace(
+        lora_test_build(
+            _lora_values(configured_dropout),
+            family="wan_2_1",
             lora_path=None,
             model_config={"boundary_ratio": None, "trainable_transformers": ["transformer"]},
-            lora=_lora_values(configured_dropout),
-            defer_trainable_device_move=False,
         ),
     )
 
@@ -92,11 +93,11 @@ def test_wan_warm_start_validates_effective_topology(
     base = model.transformer
 
     model.apply_lora(
-        SimpleNamespace(
+        lora_test_build(
+            _lora_values(0.4),
+            family="wan_2_1",
             lora_path="/adapter",
             model_config={"boundary_ratio": None, "trainable_transformers": ["transformer"]},
-            lora=_lora_values(0.4),
-            defer_trainable_device_move=False,
         ),
     )
 
@@ -130,11 +131,11 @@ def test_wan_warm_start_validation_failure_keeps_raw_transformer(
 
     with pytest.raises(ValueError, match="topology mismatch"):
         model.apply_lora(
-            SimpleNamespace(
+            lora_test_build(
+                _lora_values(0.4),
+                family="wan_2_1",
                 lora_path="/adapter",
                 model_config={"boundary_ratio": None, "trainable_transformers": ["transformer"]},
-                lora=_lora_values(0.4),
-                defer_trainable_device_move=False,
             ),
         )
 
@@ -153,17 +154,17 @@ def test_wan_adapter_storage_preserves_frozen_base(
     base = model.transformer.proj.weight
     before = base.detach().clone()
     pointer = base.data_ptr()
-    build = SimpleNamespace(
+    build = lora_test_build(
+        _lora_values(0.0),
+        family="wan_2_1",
         lora_path=None,
         model_config={"lora_parameter_dtype": adapter_dtype},
-        lora=_lora_values(0.0),
-        defer_trainable_device_move=False,
     )
     if warm_start:
         source = _model()
         source.apply_lora(build)
         source.transformer.save_pretrained(tmp_path)
-        build.lora_path = str(tmp_path)
+        build.model_config["lora"]["path"] = str(tmp_path)
     model.apply_lora(build)
     expected = torch.float32 if adapter_dtype else torch.bfloat16
     trainable = [p for p in model.transformer.parameters() if p.requires_grad]

@@ -378,6 +378,29 @@ class ModelBuild:
                 config[key] = lora[key]
         return config
 
+    def require_lora_config(self) -> dict[str, Any]:
+        """Require the adapter configuration at a LoRA attach boundary."""
+
+        config = self.lora
+        if config is None:
+            raise ValueError("LoRA runtime build requires model.lora configuration")
+        return config
+
+    @property
+    def previous_policy_adapter_requested(self) -> bool:
+        """Whether the model configuration requests a frozen previous adapter."""
+
+        return bool((self.model_config or {}).get("nft_previous_adapter", False))
+
+    def require_lora_for_previous_policy_adapter(self) -> None:
+        """Reject an incompatible previous-adapter request before model loading."""
+
+        if self.previous_policy_adapter_requested and not self.use_lora:
+            raise RuntimeError(
+                "model.nft_previous_adapter requires LoRA (the frozen previous "
+                "adapter is a PEFT adapter); set model.use_lora=true.",
+            )
+
     @property
     def num_steps(self) -> int | None:
         """Diffusion scheduler step count from ``sampling.num_steps``."""

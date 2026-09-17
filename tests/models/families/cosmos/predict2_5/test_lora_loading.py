@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from torch import nn
 
+from tests.models.steps.denoise.fixtures import lora_test_build
 from vrl.models.families.cosmos.predict2_5.model import (
     CosmosPredict25ReplayModel,
 )
@@ -58,7 +58,8 @@ def test_predict25_warm_start_validates_effective_topology(
     base = model.transformer
 
     model.apply_lora(
-        SimpleNamespace(
+        lora_test_build(
+            family="cosmos_predict2_5",
             lora_path="/adapter",
             lora={
                 "rank": 2,
@@ -66,7 +67,6 @@ def test_predict25_warm_start_validates_effective_topology(
                 "dropout": 0.3,
                 "target_modules": ["proj"],
             },
-            defer_trainable_device_move=False,
         ),
     )
 
@@ -102,7 +102,8 @@ def test_predict25_warm_start_validation_failure_keeps_raw_transformer(
 
     with pytest.raises(ValueError, match="topology mismatch"):
         model.apply_lora(
-            SimpleNamespace(
+            lora_test_build(
+                family="cosmos_predict2_5",
                 lora_path="/adapter",
                 lora={
                     "rank": 2,
@@ -110,7 +111,6 @@ def test_predict25_warm_start_validation_failure_keeps_raw_transformer(
                     "dropout": 0.3,
                     "target_modules": ["proj"],
                 },
-                defer_trainable_device_move=False,
             ),
         )
 

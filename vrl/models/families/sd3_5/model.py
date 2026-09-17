@@ -51,7 +51,6 @@ from vrl.models.steps.denoise.common import (
     expand_batch_timestep,
     pack_eval_timestep,
 )
-from vrl.models.steps.denoise.common.lora import require_lora_for_previous_policy_adapter
 
 
 @dataclass
@@ -101,7 +100,7 @@ class SD3_5Model(
     @classmethod
     def from_build(cls, build: ModelBuild) -> SD3_5Model:
         """Reject the previous-adapter config before paying the pipeline load."""
-        require_lora_for_previous_policy_adapter(build)
+        build.require_lora_for_previous_policy_adapter()
         return super().from_build(build)
 
     # -- encode_prompt -------------------------------------------------

@@ -32,7 +32,7 @@ import torch
 
 from tests.models.steps.denoise.fixtures import RecordingModule
 from vrl.config.precision import RolePrecision
-from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
+from vrl.models.interfaces.runtime import ModelBuild, PipelineOffloadMode, RolloutBuildOptions
 
 
 def _rollout_build_options(offload_mode: str) -> RolloutBuildOptions:
@@ -203,6 +203,20 @@ def test_wan_i2v_offload_hooks_are_deferred_until_after_the_loader(
     _assert_frozen_and_loaded(pipeline, calls)
     assert getattr(pipeline, hooked) is None
     model.apply_generation_offload(build)
+    assert model._pipeline_offload is PipelineOffloadMode(mode)
+    # Installing the committed mode twice must not touch the hook graph again.
+    monkeypatch.setattr(
+        model,
+        "_enable_pipeline_offload",
+        lambda _mode: pytest.fail("committed hooks were installed twice"),
+    )
+    model.apply_generation_offload(build)
+    with pytest.raises(RuntimeError, match="offload mode changed"):
+        model.apply_generation_offload(
+            _i2v_build(device=build.device, rollout=_rollout_build_options("none")),
+        )
+    assert model._pipeline_offload is PipelineOffloadMode(mode)
+    assert model.pipeline_cpu_offload_healthy
     assert getattr(pipeline, hooked) == device_index
     assert getattr(pipeline, untouched) is None
     assert pipeline.vae.to_calls == [(None, torch.float32)]
@@ -328,6 +342,8 @@ def test_wan_replay_loads_trainable_state_without_pipeline(family, dual) -> None
     assert not model.uses_pipeline_cpu_offload
     assert model.pipeline_cpu_offload_healthy
     model.reset_pipeline_cpu_offload()
+    assert "_pipeline_offload" not in vars(model)
+    assert "_pipeline" not in vars(model)
 
 
 def test_wan_replay_full_finetune_ignores_rollout_pipeline_offload() -> None:
@@ -404,14 +420,19 @@ def test_wan_sequential_offload_weight_sync_changes_forward() -> None:
             remove_hook_from_module(self.transformer, recurse=True)
 
     pipeline = _HookedPipeline()
-    build = SimpleNamespace(
+    build = ModelBuild(
+        model_name_or_path="unused",
+        revision=None,
+        family="wan_2_1_i2v",
+        precision=RolePrecision("fp32", "tf32"),
         device=torch.device("cpu"),
         parameter_dtype=torch.float32,
         defer_trainable_device_move=False,
-        model_config=_canonical_model_config(),
+        model_config=_canonical_model_config(
+            use_lora=True,
+            lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},
+        ),
         rollout=_rollout_build_options("sequential"),
-        lora_path=None,
-        lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},
     )
     model = WanI2VDiffusersModel(
         pipeline=pipeline,
@@ -532,14 +553,19 @@ def test_wan_block_offload_weight_sync_changes_forward() -> None:
         return _get_top_level_group_offload_hook(peel_peft(module)) is not None
 
     pipeline = _BlockOffloadPipeline(_TinyTransformer())
-    build = SimpleNamespace(
+    build = ModelBuild(
+        model_name_or_path="unused",
+        revision=None,
+        family="wan_2_1_i2v",
+        precision=RolePrecision("fp32", "tf32"),
         device=torch.device("cpu"),
         parameter_dtype=torch.float32,
         defer_trainable_device_move=False,
-        model_config=_canonical_model_config(),
+        model_config=_canonical_model_config(
+            use_lora=True,
+            lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},
+        ),
         rollout=_rollout_build_options("block"),
-        lora_path=None,
-        lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},
     )
     model = WanI2VDiffusersModel(pipeline=pipeline, device=build.device)
     model.apply_lora(build)
@@ -589,7 +615,7 @@ def test_wan_block_offload_sees_blocks_behind_a_compile_wrapper() -> None:
 
     from torch import nn
 
-    from vrl.models.families.wan_2_1.model import _wan_offload_components
+    from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
 
     class _Transformer(nn.Module):
         def __init__(self) -> None:
@@ -605,7 +631,8 @@ def test_wan_block_offload_sees_blocks_behind_a_compile_wrapper() -> None:
     compiled = torch.compile(transformer)
     pipeline = _BlockOffloadPipeline(compiled)
 
-    components = dict(_wan_offload_components(pipeline))
+    model = WanT2VDiffusersModel(pipeline=pipeline, device=torch.device("cpu"))
+    components = dict(model._offload_components())
 
     assert components["transformer"] is transformer
     assert next(iter(components["transformer"].named_children()))[0] == "blocks"

@@ -18,17 +18,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.models.interfaces.runtime import ModelBuild, register_checkpoint_owned_state
+from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.models.peft_adapter import load_trainable_lora_adapter
-
-
-def require_lora_config(build: ModelBuild) -> dict[str, Any]:
-    """Return ``build.lora`` or fail: attach without a LoRA block is a config bug."""
-
-    lora_config = getattr(build, "lora", None)
-    if lora_config is None:
-        raise ValueError("LoRA runtime build requires model.lora configuration")
-    return lora_config
 
 
 def attach_lora_adapter(
@@ -89,24 +80,6 @@ def attach_previous_policy_adapter(transformer: Any, lora_config: dict[str, Any]
     copy_adapter_weights(transformer, src="default", dst="previous")
     freeze_checkpoint_owned_adapter_params(transformer, "previous")
     transformer.set_adapter("default")
-
-
-def previous_policy_adapter_requested(build: ModelBuild) -> bool:
-    """Whether ``model.nft_previous_adapter`` asks for the frozen mirror."""
-
-    # Bare test builds are namespaces without model_config; treat as "no".
-    model_config = getattr(build, "model_config", None) or {}
-    return bool(model_config.get("nft_previous_adapter", False))
-
-
-def require_lora_for_previous_policy_adapter(build: ModelBuild) -> None:
-    """Reject the previous-adapter switch without LoRA before paying a model load."""
-
-    if previous_policy_adapter_requested(build) and not build.use_lora:
-        raise RuntimeError(
-            "model.nft_previous_adapter requires LoRA (the frozen previous "
-            "adapter is a PEFT adapter); set model.use_lora=true.",
-        )
 
 
 def build_lora_config(lora_config: Any, *, init_lora_weights: Any = "gaussian") -> Any:
@@ -211,7 +184,4 @@ __all__ = [
     "build_lora_config",
     "copy_adapter_weights",
     "freeze_checkpoint_owned_adapter_params",
-    "previous_policy_adapter_requested",
-    "require_lora_config",
-    "require_lora_for_previous_policy_adapter",
 ]

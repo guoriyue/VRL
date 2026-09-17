@@ -429,7 +429,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         partitioned H3) override.
         """
 
-        return bool(getattr(build, "defer_trainable_device_move", False))
+        return build.defer_trainable_device_move
 
     def apply_lora(self, build: ModelBuild) -> None:
         """Wrap every trainable root with a PEFT LoRA adapter per ``model.lora``.
@@ -443,7 +443,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
 
         from vrl.models.steps.denoise.common import lora as _lora
 
-        lora_config = _lora.require_lora_config(build)
+        lora_config = build.require_lora_config()
         roots = self.trainable_modules
         if not roots:
             raise RuntimeError(f"{type(self).__name__} exposes no trainable module for LoRA")
@@ -453,13 +453,11 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
                 "model.lora.path can only resume one trainable root; "
                 f"{type(self).__name__} trains {sorted(roots)}",
             )
-        rollout = getattr(build, "rollout", None)
         defer_device_move = self._defer_trainable_device_move(build) or bool(
-            rollout is not None
-            and getattr(getattr(build, "precision", None), "quantization", None),
+            build.rollout is not None and build.precision.quantization,
         )
         # Declared by WanModelSection only; every other section rejects the key.
-        adapter_dtype = (getattr(build, "model_config", None) or {}).get("lora_parameter_dtype")
+        adapter_dtype = (build.model_config or {}).get("lora_parameter_dtype")
         for name, module in roots.items():
             module.requires_grad_(False)
             if not defer_device_move:
@@ -476,7 +474,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
                     if parameter.requires_grad:
                         parameter.data = parameter.data.to(dtype=torch.float32)
             self.set_module_root(name, wrapped)
-        if self.lora_previous_policy_adapter or _lora.previous_policy_adapter_requested(build):
+        if self.lora_previous_policy_adapter or build.previous_policy_adapter_requested:
             self.attach_previous_policy_adapter(build)
 
     # Both DiffusionNFT and V-GRPO evaluate the behaviour policy through a
@@ -489,7 +487,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
 
         from vrl.models.steps.denoise.common import lora as _lora
 
-        _lora.attach_previous_policy_adapter(self.transformer, _lora.require_lora_config(build))
+        _lora.attach_previous_policy_adapter(self.transformer, build.require_lora_config())
 
     def sync_previous_policy_adapter(self, *, decay: float = 0.0) -> None:
         """Refresh the ``previous`` adapter from the trainable ``default`` adapter.

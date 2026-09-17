@@ -7,9 +7,9 @@ without importing torch, diffusers, or upstream model packages.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from vrl.config.base import ConfigBase
 from vrl.models.checkpoint_identity import checkpoint_identity_metadata
@@ -149,15 +149,6 @@ class ModelSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
-    # Run each Cosmos AdaLN's conditioning chain (SiLU, two small GEMMs, the
-    # ``temb`` add) once per latent frame and broadcast the shift/scale over
-    # the frame's tokens, instead of once per token. Applied to rollout AND
-    # replay so both roles share one path; kernel choice only, same weights,
-    # so identity-excluded like torch_compile.
-    frame_shared_adaln: bool | None = Field(
-        default=None,
-        json_schema_extra=checkpoint_identity_metadata("exclude"),
-    )
     # Run each feed-forward up-projection and its tanh-GELU (diffusers ``GELU``
     # in SD3.5, Wan, Flux, Qwen-Image) as one GEMM with the activation in the
     # epilogue. Rollout only: the fused op has no backward, so replay keeps the
@@ -184,6 +175,13 @@ class ModelSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
+
+    @model_validator(mode="after")
+    def _validate_lora_fusion(self) -> Self:
+        # Without adapters the pass cannot replace any LoRA branch.
+        if self.fused_lora_branch and not self.use_lora:
+            raise ValueError("model.fused_lora_branch requires model.use_lora=true")
+        return self
 
 
 __all__ = [

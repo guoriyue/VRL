@@ -6,11 +6,11 @@ from typing import Any
 
 from pydantic import Field
 
-from vrl.config.model_schema import ModelSection
 from vrl.models.checkpoint_identity import checkpoint_identity_metadata
+from vrl.models.families.cosmos.config import CosmosVideoModelSection
 
 
-class CosmosPredict25ModelSection(ModelSection):
+class CosmosPredict25ModelSection(CosmosVideoModelSection):
     """Cosmos Predict2.5 public model keys."""
 
     skip_text_encoder: Any = Field(

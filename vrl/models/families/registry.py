@@ -752,7 +752,7 @@ _register_model_family(
     _full_sequence_denoise_entry(
         family="cosmos-predict2",
         task="v2w",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        model_section_cls="vrl.models.families.cosmos.config:CosmosVideoModelSection",
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosBatchExecutor",
         supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
