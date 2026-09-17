@@ -61,6 +61,21 @@ try:  # torch may be importable without a usable CUDA device
     import torch
 
     _HAS_CUDA = bool(torch.cuda.is_available())
+    # ``_no_implicit_cuda`` below pins ``torch.cuda.is_available`` / ``device_count``
+    # for every non-``gpu`` test, but torch keeps two process-wide
+    # ``functools.cache`` answers that read the real device on first use:
+    # ``has_triton()`` and ``triton_hash_with_backend()`` (inductor's autotune
+    # cache key). Left cold, whichever compile runs first caches the pinned
+    # world: a CPU compile in an unmarked test caches ``has_triton() == False``
+    # and every later ``gpu``-lane CUDA compile traces into the triton launcher;
+    # a CUDA compile in a ``gpu`` test leaves triton's nvidia driver active, and
+    # the next CPU compile under the pin asserts "Invalid device id" computing
+    # the backend hash. Warm both here, while the host's real answer is visible.
+    from torch.utils import _triton as _torch_triton
+
+    if _torch_triton.has_triton():
+        with contextlib.suppress(Exception):  # no usable triton driver
+            _torch_triton.triton_hash_with_backend()
 except Exception:  # pragma: no cover - torch import/driver failure
     _HAS_CUDA = False
 
