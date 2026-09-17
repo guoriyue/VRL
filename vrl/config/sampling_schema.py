@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import StrictBool, StrictInt, field_validator
+from pydantic import StrictBool, StrictInt
 
 from vrl.config.base import ConfigBase
 
@@ -109,107 +109,13 @@ class MagiSamplingSection(SamplingSection):
     width: Any = None
 
 
-class ARSamplingSection(SamplingSection):
-    """Request-local scheduler controls shared by autoregressive generators."""
-
-    ar_scheduler_batch_size: int | None = None
-
-    @field_validator("ar_scheduler_batch_size", mode="before")
-    @classmethod
-    def _validate_ar_scheduler_batch_size(cls, value: Any) -> Any:
-        if value is None:
-            return None
-        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-            raise ValueError(
-                "sampling.ar_scheduler_batch_size must be a positive integer or null",
-            )
-        return value
-
-
-class TextEncodedARSamplingSection(ARSamplingSection):
-    """AR sampling whose prompt encoder exposes a sequence-length knob."""
-
-    max_text_length: Any = None
-
-
-class SharedAttentionARSamplingSection(TextEncodedARSamplingSection):
-    """AR sampling for families using the shared selectable attention adapter."""
-
-    attention_backend: Literal["vllm_paged", "torch_native"] | None = None
-    # vllm_paged knobs; readers: token_autoregressive/executor.py _build_ar_runner.
-    ar_paged_block_size: StrictInt | None = None
-    ar_paged_cache_dtype: str | None = None
-
-
-class JanusProSamplingSection(SharedAttentionARSamplingSection):
-    """Janus-Pro discrete image-token sampling."""
-
-    guidance_scale: Any = None
-    image_size: Any = None
-    image_token_num: Any = None
-    temperature: Any = None
-
-
-class JanusProR1SamplingSection(JanusProSamplingSection):
-    """Janus-Pro reflective sampling additions."""
-
-    max_reflect_len: Any = None
-
-
-class NextStepSamplingSection(SharedAttentionARSamplingSection):
-    """NextStep continuous image-token sampling."""
-
-    guidance_scale: Any = None
-    image_size: Any = None
-    image_token_num: Any = None
-    num_steps: Any = None
-
-
-class Emu3SamplingSection(SharedAttentionARSamplingSection):
-    """Emu3 latent-grid-derived image sampling."""
-
-    guidance_scale: Any = None
-    image_area: Any = None
-    ratio: Any = None
-    temperature: Any = None
-
-
-class GlmImageSamplingSection(TextEncodedARSamplingSection):
-    """GLM-Image native-cache AR prior and frozen DiT decode controls."""
-
-    decode_guidance_scale: Any = None
-    decode_num_inference_steps: Any = None
-    image_height: Any = None
-    image_width: Any = None
-    temperature: Any = None
-    top_p: Any = None
-
-
-class LlamaGenSamplingSection(ARSamplingSection):
-    """LlamaGen native-cache discrete image-token sampling."""
-
-    guidance_scale: Any = None
-    temperature: Any = None
-    top_k: Any = None
-    top_p: Any = None
-
-
 __all__ = [
-    "ARSamplingSection",
     "DenoiseImageSamplingSection",
     "EchoSamplingSection",
-    "Emu3SamplingSection",
-    "GlmImageSamplingSection",
-    "JanusProR1SamplingSection",
-    "JanusProSamplingSection",
-    "LlamaGenSamplingSection",
     "MagiSamplingSection",
     "MiniMaxH3SamplingSection",
-    "NextStepSamplingSection",
     "SamplingSection",
-    "SharedAttentionARSamplingSection",
     "TeaCacheSection",
-    "TextEncodedARSamplingSection",
     "TextEncodedImageSamplingSection",
     "TextEncodedVideoSamplingSection",
     "VideoSamplingSection",

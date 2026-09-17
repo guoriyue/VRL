@@ -20,7 +20,7 @@ from vrl.rollouts.collector.core import (
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.data.prompts import PromptExample
-from vrl.trajectory.builders import build_ar_discrete_trajectory
+from vrl.trajectory.builders import build_diffusion_trajectory
 
 
 def prepare_training_batches(*, collector, stats: RolloutStats | None = None, **kwargs):
@@ -61,21 +61,20 @@ def _batch_with_trajectory(prompts: list[str], group_size: int) -> RolloutBatch:
     request = GenerationRequest(
         request_id="remap-request",
         family="fake",
-        task="ar_t2i",
+        task="t2i",
         inputs=prompts,
         samples_per_prompt=group_size,
     )
     batch_size = len(sample_rows)
-    batch.trajectory = build_ar_discrete_trajectory(
+    batch.trajectory = build_diffusion_trajectory(
         request=request,
         sample_rows=sample_rows,
-        token_ids=torch.zeros(batch_size, 1, dtype=torch.long),
-        token_log_probs=torch.zeros(batch_size, 1),
-        token_mask=torch.ones(batch_size, 1),
-        prompt_input_ids=torch.zeros(batch_size, 1, dtype=torch.long),
-        prompt_attention_mask=torch.ones(batch_size, 1, dtype=torch.long),
-        uncond_input_ids=torch.zeros(batch_size, 1, dtype=torch.long),
-        uncond_attention_mask=torch.ones(batch_size, 1, dtype=torch.long),
+        observations=torch.zeros(batch_size, 1, 1),
+        actions=torch.zeros(batch_size, 1, 1),
+        old_log_prob=torch.zeros(batch_size, 1),
+        timesteps=torch.zeros(batch_size, 1),
+        kl=torch.zeros(batch_size, 1),
+        replay_tensors={},
         context={},
     )
     return batch

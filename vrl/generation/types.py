@@ -90,11 +90,9 @@ class GenerationRequest:
     # Engine-level knobs read by family-neutral code (planner, executor,
     # trajectory builders). They are request fields, not sampling keys:
     # ``samples_per_generation_batch`` is the planner batch width (``"auto"``
-    # until the Ray runtime's startup probe rewrites it to an int),
-    # ``train_segments`` marks which multi-segment outputs are trainable, and
+    # until the Ray runtime's startup probe rewrites it to an int) and
     # ``trajectory_storage`` is applied worker-side before tensors cross the wire.
     samples_per_generation_batch: int | Literal["auto"] | None = None
-    train_segments: dict[str, bool] | None = None
     trajectory_storage: TrajectoryStoragePolicy | None = None
     # Rollout-owned denoise knobs (rollout.* / rollout.sde.*), projected once by
     # the collector. ``None`` on hand-built requests means the option defaults.
@@ -123,7 +121,6 @@ class GenerationRequest:
         *,
         sampling: dict[str, Any] | None = None,
         samples_per_generation_batch: int | Literal["auto"] | None = None,
-        train_segments: dict[str, bool] | None = None,
         trajectory_storage: TrajectoryStoragePolicy | None = None,
         denoise: DenoiseRequestOptions | None = None,
         runtime_debug: bool = False,
@@ -149,7 +146,6 @@ class GenerationRequest:
         self.samples_per_prompt = samples_per_prompt
         self.sampling = dict(sampling or {})
         self.samples_per_generation_batch = samples_per_generation_batch
-        self.train_segments = None if train_segments is None else dict(train_segments)
         self.trajectory_storage = trajectory_storage
         self.denoise = denoise
         self.sde_window_seed = sde_window_seed

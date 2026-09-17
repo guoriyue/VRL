@@ -1,10 +1,8 @@
 """Build trainer rollout batches from trajectory-backed generation outputs.
 
 Owns the trajectory-format knowledge the collector itself must not carry:
-which segment is trainable, which reward view scores, and how each
-distribution family (flow-matching diffusion vs. categorical/gaussian AR,
-single- or multi-segment) packs into the engine-neutral ``RolloutBatch``. One
-builder per ``GenerationOutput`` produces both the ``RewardSample`` inputs for
+which segment is trainable, which reward view scores, and how a denoise
+trajectory packs into the engine-neutral ``RolloutBatch``. One builder per ``GenerationOutput`` produces both the ``RewardSample`` inputs for
 ``RewardRuntime.score`` and, once scores return, the trainer batch — keeping
 ``collector.core`` purely about phase ordering and GPU handoffs.
 """
@@ -34,10 +32,6 @@ class RolloutBatchBuildContext:
     trajectory_storage_policy: TrajectoryStoragePolicy = field(
         default_factory=TrajectoryStoragePolicy,
     )
-    # Resolved family PolicySemantics.trajectory_layout, threaded from the
-    # collector's ModelFamilyEntry. "multisegment_token" selects the per-segment
-    # AR pack path; None falls back to the generic all-categorical heuristic.
-    trajectory_layout: str | None = None
 
 
 class TrajectoryRolloutBatchBuilder:
@@ -151,16 +145,10 @@ class TrajectoryRolloutBatchBuilder:
                 "no trainable policy segment or replay facts were recorded",
             )
         segment = self._primary_trainable_segment()
-        if self.context.trajectory_layout == "multisegment_token" or (
-            len(trainable) > 1 and all(item.distribution == "categorical" for item in trainable)
-        ):
-            return self._pack_ar(segment, rewards_raw)
         if segment.distribution == "flow_matching" or (
             segment.distribution == "gaussian" and segment.modality == "latent"
         ):
             return self._pack_diffusion(segment, rewards_raw)
-        if segment.distribution in ("categorical", "gaussian"):
-            return self._pack_ar(segment, rewards_raw)
         raise NotImplementedError(
             "trajectory rollout collection does not support distribution="
             f"{segment.distribution!r}",
@@ -190,27 +178,6 @@ class TrajectoryRolloutBatchBuilder:
 
         return RolloutBatch(
             rewards=rewards_adjusted,
-            group_ids=self._group_ids(device=device),
-            extras={},
-            context=rollout_context,
-            trajectory=self.trajectory,
-        )
-
-    def _pack_ar(
-        self,
-        segment: TrajectorySegment,
-        rewards_raw: torch.Tensor,
-    ) -> RolloutBatch:
-        # Single-segment AR passes the trainable segment; the multisegment path
-        # passes its primary segment. Both carry an action-role tensor co-located
-        # on the batch device, so the fallback device source is identical.
-        device = self.context.device or segment.role_tensor("action").value.device
-        rollout_context = dict(self.trajectory.context)
-        if self.output.runtime_debug is not None:
-            rollout_context["runtime_debug"] = self.output.runtime_debug
-
-        return RolloutBatch(
-            rewards=rewards_raw.to(device),
             group_ids=self._group_ids(device=device),
             extras={},
             context=rollout_context,

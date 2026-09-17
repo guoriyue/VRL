@@ -113,7 +113,6 @@ class GenerationRequestBuilder:
             samples_per_prompt=group_size,
             sampling=sampling,
             samples_per_generation_batch=self.config.samples_per_generation_batch,
-            train_segments=self.config.train_segments,
             trajectory_storage=self.config.trajectory_storage,
             denoise=denoise,
             # mp4 encoding needs the request's frame rate; an image store or a

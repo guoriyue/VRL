@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from vrl.generation.types import GenerationRequest
-from vrl.trajectory.builders import build_ar_discrete_trajectory
+from vrl.trajectory.builders import build_diffusion_trajectory
 from vrl.trajectory.types import TrajectoryBatch
 
 
@@ -20,10 +20,10 @@ def test_select_derives_sample_structure_from_selected_rows_and_axis() -> None:
     selected = trajectory.select_samples(torch.tensor([2, 0]))
 
     assert len(selected.sample_rows) == 2
-    assert _axis_lengths(selected) == {"sample": 2, "token": 2}
+    assert _axis_lengths(selected) == {"sample": 2, "denoise": 2}
     assert [row.sample_index for row in selected.sample_rows] == [2, 0]
     assert len(trajectory.sample_rows) == 3
-    assert _axis_lengths(trajectory) == {"sample": 3, "token": 2}
+    assert _axis_lengths(trajectory) == {"sample": 3, "denoise": 2}
 
 
 def test_move_preserves_derived_structure_and_provenance() -> None:
@@ -33,15 +33,15 @@ def test_move_preserves_derived_structure_and_provenance() -> None:
 
     assert moved is not trajectory
     assert len(moved.sample_rows) == 2
-    assert _axis_lengths(moved) == {"sample": 2, "token": 2}
-    for tensor in moved.segments["image_tokens"].tensors.values():
+    assert _axis_lengths(moved) == {"sample": 2, "denoise": 2}
+    for tensor in moved.segments["denoise"].tensors.values():
         assert tensor.value.device.type == "cpu"
 
 
 def _trajectory(
     *,
     samples: int,
-    token_count: int = 2,
+    step_count: int = 2,
     request_id: str = "ops",
 ) -> TrajectoryBatch:
     request = GenerationRequest(
@@ -52,24 +52,22 @@ def _trajectory(
         samples_per_prompt=samples,
     )
     sample_rows = request.sample_rows()
-    token_ids = torch.arange(samples * token_count, dtype=torch.long).reshape(
+    actions = torch.arange(samples * step_count, dtype=torch.float32).reshape(
         samples,
-        token_count,
+        step_count,
+        1,
     )
-    prompt_input_ids = torch.ones(samples, 3, dtype=torch.long)
-    trajectory = build_ar_discrete_trajectory(
+    return build_diffusion_trajectory(
         request=request,
         sample_rows=sample_rows,
-        token_ids=token_ids,
-        token_log_probs=torch.zeros(samples, token_count),
-        token_mask=torch.ones(samples, token_count),
-        prompt_input_ids=prompt_input_ids,
-        prompt_attention_mask=torch.ones_like(prompt_input_ids),
-        uncond_input_ids=torch.zeros_like(prompt_input_ids),
-        uncond_attention_mask=torch.ones_like(prompt_input_ids),
+        observations=torch.zeros_like(actions),
+        actions=actions,
+        old_log_prob=torch.zeros(samples, step_count),
+        timesteps=torch.zeros(samples, step_count),
+        kl=torch.zeros(samples, step_count),
+        replay_tensors={"prompt_ids": torch.ones(samples, 3, dtype=torch.long)},
         context={},
     )
-    return trajectory
 
 
 @pytest.mark.parametrize(
@@ -88,8 +86,8 @@ def test_select_keeps_tensor_rows_and_metadata_aligned(selector, positions) -> N
     assert [row.sample_index for row in selected.sample_rows] == positions
     assert selected.context == trajectory.context
     assert selected.context is not trajectory.context
-    for name, tensor in selected.segments["image_tokens"].tensors.items():
-        original = trajectory.segments["image_tokens"].tensors[name]
+    for name, tensor in selected.segments["denoise"].tensors.items():
+        original = trajectory.segments["denoise"].tensors[name]
         if original.axes and original.axes[0] == "sample":
             assert torch.equal(tensor.value, original.value[positions])
 
@@ -130,12 +128,12 @@ def test_selection_uses_declared_nonleading_sample_axis(positions, container) ->
         payload = values.tolist()
     elif container == "tuple":
         payload = tuple(tuple(row) for row in values.tolist())
-    trajectory.segments["image_tokens"].tensors["token_sample_cache"] = TrajectoryTensor(
-        "token_sample_cache", payload, ("token", "sample"), "replay_input"
+    trajectory.segments["denoise"].tensors["step_sample_cache"] = TrajectoryTensor(
+        "step_sample_cache", payload, ("denoise", "sample"), "replay_input"
     )
     TrajectoryValidator(trajectory).validate_batch()
     selected = trajectory.select_samples(positions)
-    actual = selected.segments["image_tokens"].tensors["token_sample_cache"].value
+    actual = selected.segments["denoise"].tensors["step_sample_cache"].value
     assert isinstance(actual, type(payload))
     assert torch.equal(torch.as_tensor(actual), values[:, positions])
     assert [row.sample_index for row in selected.sample_rows] == positions

@@ -37,8 +37,8 @@ class _MinimalRuntimeModel:
         del batch, timestep_idx, request
         return ReplayResult(
             segments={
-                "image_tokens": ReplaySegmentResult(
-                    segment="image_tokens",
+                "denoise": ReplaySegmentResult(
+                    segment="denoise",
                     values={},
                 ),
             },

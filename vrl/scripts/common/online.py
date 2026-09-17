@@ -959,8 +959,7 @@ async def run_online_recipe(
     _host_memory.log("before_trainer_bundle_build")
     bundle = resolved_model.materialize(context="replay bundle construction")
     _host_memory.log("after_trainer_bundle_build")
-    if family_entry.policy_semantics.step_kind == "denoise":
-        enable_transformer_gradient_checkpointing(bundle, built.root)
+    enable_transformer_gradient_checkpointing(bundle, built.root)
     model = require_runtime_model(
         bundle.model,
         owner=f"{family_entry.family}.bundle.model",
@@ -1033,13 +1032,10 @@ async def run_online_recipe(
         collector.set_generation_runtime(generation_runtime)
         _host_memory.log("after_rollout_backend_build")
 
-        # Only denoise evaluators consume a KL reference. With LoRA, the policy
-        # itself supplies the base-model reference through adapter disabling.
+        # Only evaluator-backed objectives consume a KL reference. With LoRA, the
+        # policy itself supplies the base-model reference through adapter disabling.
         ref_model = None
-        if (
-            family_entry.policy_semantics.step_kind == "denoise"
-            and algorithm_and_evaluator.evaluator is not None
-        ):
+        if algorithm_and_evaluator.evaluator is not None:
             # Algorithm configs without evaluator KL legitimately omit kl_coef.
             kl_coef = float(getattr(built.algorithm, "kl_coef", 0.0) or 0.0)
             if built.root.model.use_lora and kl_coef > 0:

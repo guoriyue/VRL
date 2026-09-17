@@ -13,7 +13,7 @@ from vrl.rollouts.orchestration.continuous.scored_queue import ScoredRolloutQueu
 from vrl.rollouts.orchestration.continuous.types import (
     ScoredRollout,
 )
-from vrl.trajectory.builders import build_ar_discrete_trajectory
+from vrl.trajectory.builders import build_diffusion_trajectory
 from vrl.trajectory.storage import trajectory_tensor_bytes
 
 
@@ -122,16 +122,14 @@ def test_batch_byte_estimate_counts_nested_extras_tensors() -> None:
 
 
 def test_batch_byte_estimate_counts_trajectory_without_flat_aliases_twice() -> None:
-    token_ids = torch.tensor([[1, 2]], dtype=torch.long)
-    prompt_input_ids = torch.tensor([[3, 4, 5]], dtype=torch.long)
     request = GenerationRequest(
         request_id="req",
-        family="janus_pro",
-        task="ar_t2i",
+        family="sd3_5",
+        task="t2i",
         inputs=["p"],
         samples_per_prompt=1,
     )
-    trajectory = build_ar_discrete_trajectory(
+    trajectory = build_diffusion_trajectory(
         request=request,
         sample_rows=[
             GenerationSampleRow(
@@ -141,13 +139,12 @@ def test_batch_byte_estimate_counts_trajectory_without_flat_aliases_twice() -> N
                 sample_id="s0",
             )
         ],
-        token_ids=token_ids,
-        token_log_probs=torch.zeros(1, 2),
-        token_mask=torch.ones(1, 2),
-        prompt_input_ids=prompt_input_ids,
-        prompt_attention_mask=torch.ones(1, 3, dtype=torch.long),
-        uncond_input_ids=torch.zeros(1, 3, dtype=torch.long),
-        uncond_attention_mask=torch.ones(1, 3, dtype=torch.long),
+        observations=torch.zeros(1, 2, 4),
+        actions=torch.ones(1, 2, 4),
+        old_log_prob=torch.zeros(1, 2),
+        timesteps=torch.zeros(1, 2),
+        kl=torch.zeros(1, 2),
+        replay_tensors={"prompt_ids": torch.tensor([[3, 4, 5]], dtype=torch.long)},
         context={},
     )
     rewards = torch.zeros(1)

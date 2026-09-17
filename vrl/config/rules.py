@@ -6,7 +6,7 @@ The config package validates in three tiers, one module each:
    per-section invariants. Runs inside ``parse_config``.
 2. **Cross-section rules** — this module's ``check_cross_section_rules``: the
    checks that relate two or more parsed sections (``algorithm.kind`` against
-   ``rollout``, ``model.family`` against ``algorithm``, …). No I/O, no torch,
+   ``rollout``, ``algorithm.sft_weight`` against ``data``, …). No I/O, no torch,
    no runtime modules: every entrypoint that parses a config pays for them, so
    they must stay import-light. ``RootConfig``'s ``model_validator`` calls it,
    so the checks fire on every construction path (``parse_config`` and direct
@@ -27,7 +27,6 @@ import math
 from typing import TYPE_CHECKING
 
 from vrl.config.algorithm import resolve_kl_reward_coef
-from vrl.models.families.names import normalize_model_family
 
 if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
@@ -54,11 +53,10 @@ def check_cross_section_rules(root: RootConfig) -> None:
     contract = algo.hyperparameters.config_contract
     kind = algo.kind
     rollout = root.rollout
-    family = normalize_model_family((root.model.family or "") if root.model else "")
 
     # ── algorithm.kl_reward_coef shapes rewards with the collected per-step KL.
-    # The collector applies it only when packing a diffusion trajectory, so on a
-    # token trajectory a positive coefficient would be silently ignored.
+    # An objective whose trajectory records no per-step KL would silently
+    # ignore a positive coefficient.
     if resolve_kl_reward_coef(algo.kl_reward_coef) > 0.0 and not contract.supports_step_kl_reward:
         raise ValueError(
             "algorithm.kl_reward_coef > 0 requires a diffusion rollout trajectory "
@@ -107,34 +105,6 @@ def check_cross_section_rules(root: RootConfig) -> None:
     # presence of the block is a cross-section fact.
     if contract.needs_sde_rollout and (rollout is None or rollout.sde is None):
         raise ValueError("config missing required field: rollout.sde.type")
-
-    # ── Families that train under exactly one algorithm, and the rollout field
-    # that pairing then reads. The schema Literals own each field's legal values;
-    # what lives here is which family/kind pairs exist. Both directions are
-    # checked so a family cannot be selected with an algorithm that has no
-    # protocol for it.
-    if family == "janus_pro_r1" and kind != "token_grpo_multisegment":
-        raise ValueError(
-            "model.family=janus_pro_r1 requires algorithm.kind=token_grpo_multisegment",
-        )
-    if kind == "token_grpo_multisegment":
-        if family != "janus_pro_r1":
-            raise ValueError(
-                "token_grpo_multisegment currently requires model.family=janus_pro_r1"
-            )
-        if rollout is None or rollout.final_image_policy is None:
-            raise ValueError(
-                "rollout.final_image_policy must be 'always_generate' or 'use_selfcheck'",
-            )
-
-    # NextStep-1's continuous-token sampler reads rollout.noise_level; without it
-    # the runtime silently falls back to the DenoiseRequestOptions default of 1.0.
-    if (
-        family == "nextstep_1"
-        and kind == "token_grpo"
-        and (rollout is None or rollout.noise_level is None)
-    ):
-        raise ValueError("config missing required field: rollout.noise_level")
 
 
 __all__ = ["check_cross_section_rules"]

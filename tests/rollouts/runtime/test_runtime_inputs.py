@@ -351,7 +351,6 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
         entry,
     )
 
-    assert entry.policy_semantics.step_kind == "denoise"
     assert entry.policy_semantics.generation_regime == "full_sequence"
     model_config = inputs.launch_contract.model_build["model_config"]
     assert model_config["torch_compile"] == {

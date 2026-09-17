@@ -1,6 +1,6 @@
 """Build trajectory-native evaluator signals from rollout batches.
 
-Shared by every concrete evaluator (denoise and token): resolving recorded
+Shared by every concrete evaluator: resolving recorded
 ``old_log_prob``/mask facts from the trajectory, slicing per-step values when
 the replay is step-granular, and moving them to the replay device happen here
 instead of per evaluator. Evaluators compute the fresh forward-pass values;
@@ -15,7 +15,7 @@ from typing import Any
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 from vrl.trajectory.device import move_value_to_device
-from vrl.trajectory.types import TrajectoryBatch, TrajectorySegment, TrajectoryTensor
+from vrl.trajectory.types import TrajectoryBatch, TrajectoryTensor
 
 
 @dataclass(slots=True)
@@ -49,7 +49,6 @@ class TrajectorySignalBuilder:
         std_dev_t: Any | None = None,
         dt: Any | None = None,
         sigma: Any | None = None,
-        mask_key: str = "token_mask",
     ) -> TrajectorySignalBatch:
         """Build a one-segment ``TrajectorySignalBatch`` for concrete evaluators."""
 
@@ -66,7 +65,6 @@ class TrajectorySignalBuilder:
             std_dev_t=std_dev_t,
             dt=dt,
             sigma=sigma,
-            mask_key=mask_key,
         )
         return TrajectorySignalBatch(
             segments={segment.name: segment},
@@ -90,7 +88,6 @@ class TrajectorySignalBuilder:
         std_dev_t: Any | None = None,
         dt: Any | None = None,
         sigma: Any | None = None,
-        mask_key: str = "token_mask",
     ) -> SegmentSignal:
         """Build one signal segment from first-class trajectory facts."""
 
@@ -106,10 +103,9 @@ class TrajectorySignalBuilder:
             )
         resolved_mask = mask
         if resolved_mask is None:
-            resolved_mask = self._mask_from_trajectory(
-                segment,
+            resolved_mask = self._select_denoise_step(
+                segment.role_tensor("mask"),
                 timestep_idx=timestep_idx,
-                mask_key=mask_key,
             )
         resolved_old = move_value_to_device(
             resolved_old,
@@ -145,18 +141,6 @@ class TrajectorySignalBuilder:
     @property
     def context(self) -> dict[str, Any]:
         return dict(self.trajectory.context)
-
-    def _mask_from_trajectory(
-        self,
-        segment: TrajectorySegment,
-        *,
-        timestep_idx: int | None,
-        mask_key: str,
-    ) -> Any:
-        tensor = segment.tensors.get(mask_key)
-        if tensor is None or tensor.role != "mask":
-            tensor = segment.role_tensor("mask")
-        return self._select_denoise_step(tensor, timestep_idx=timestep_idx)
 
     def _select_denoise_step(
         self,

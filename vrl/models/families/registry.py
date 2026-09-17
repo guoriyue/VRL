@@ -163,13 +163,10 @@ class ModelFamilyEntry:
     )
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.family_build, DenoiseFamilyBuild)
-            or self.policy_semantics.step_kind != "denoise"
-        ):
+        if not isinstance(self.family_build, DenoiseFamilyBuild):
             raise ValueError(
-                f"model family {self.family!r} policy semantics "
-                f"{self.policy_semantics!r} does not match its family build",
+                f"model family {self.family!r} needs a DenoiseFamilyBuild, "
+                f"got {type(self.family_build).__name__}",
             )
         if not self.gatherer_cls:
             raise ValueError(f"model family {self.family!r} requires a gatherer binding")
@@ -468,12 +465,7 @@ def _full_sequence_denoise_entry(
     return ModelFamilyEntry(
         family=family,
         task=task,
-        policy_semantics=PolicySemantics(
-            generation_regime="full_sequence",
-            step_kind="denoise",
-            action_distribution="continuous",
-            trajectory_layout="denoise",
-        ),
+        policy_semantics=PolicySemantics(generation_regime="full_sequence"),
         executor_cls=executor_cls,
         gatherer_cls="vrl.generation.bindings.full_sequence_denoise.gather:DiffusionBatchGatherer",
         model_section_cls=model_section_cls,
@@ -498,12 +490,7 @@ def _chunk_autoregressive_denoise_entry(
     return ModelFamilyEntry(
         family=family,
         task=task,
-        policy_semantics=PolicySemantics(
-            generation_regime="chunk_autoregressive",
-            step_kind="denoise",
-            action_distribution="continuous",
-            trajectory_layout="denoise",
-        ),
+        policy_semantics=PolicySemantics(generation_regime="chunk_autoregressive"),
         executor_cls=executor_cls,
         gatherer_cls=(
             "vrl.generation.bindings.chunk_autoregressive_denoise.gather:"

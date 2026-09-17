@@ -30,7 +30,6 @@ class RolloutCollectorConfig:
 
     request_sampling: dict[str, Any] = field(default_factory=dict)
     samples_per_generation_batch: int | Literal["auto"] | None = None
-    train_segments: dict[str, bool] | None = None
     denoise: DenoiseRequestOptions | None = None
     kl_reward_coef: float = 0.0
     trajectory_storage: TrajectoryStoragePolicy = field(
@@ -73,8 +72,6 @@ class RolloutCollectorConfig:
         samples_per_generation_batch = (
             rollout.samples_per_generation_batch if rollout is not None else None
         )
-        hyperparameters = algorithm.hyperparameters if algorithm is not None else None
-        train_segments = getattr(hyperparameters, "train_segments", None)
         kl_reward_coef = resolve_kl_reward_coef(
             algorithm.kl_reward_coef if algorithm is not None else None,
         )
@@ -84,7 +81,6 @@ class RolloutCollectorConfig:
         return cls(
             request_sampling=request_sampling,
             samples_per_generation_batch=samples_per_generation_batch,
-            train_segments=None if train_segments is None else dict(train_segments),
             denoise=DenoiseRequestOptions.from_sections(
                 rollout,
                 sampling,

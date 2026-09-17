@@ -159,8 +159,8 @@ class AlgorithmConfig(ConfigBase):
         "diffusion_nft",
         "v_grpo",
     ]
-    # Collector-owned diffusion reward-shaping coefficient. Token trajectories
-    # do not carry the per-step KL tensor needed to consume a positive value.
+    # Collector-owned reward-shaping coefficient over the collected per-step KL;
+    # objectives whose trajectories carry no KL tensor reject a positive value.
     kl_reward_coef: float | None = None
     # The runtime dataclass selected by ``kind`` (e.g. GRPOConfig), built from
     # the remaining keys of this section. ``build_configs`` hands it to the
@@ -352,12 +352,6 @@ class RolloutConfig(ConfigBase):
         json_schema_extra={"runtime_owner": "generation_request"},
     )
     noise_level: float | None = Field(
-        default=None,
-        json_schema_extra={"runtime_owner": "generation_request"},
-    )
-    # janus_pro R1 only; the sole source for final_image_policy. Validated for
-    # legality in RootConfig._cross_field_validate (which requires it for that kind).
-    final_image_policy: Literal["always_generate", "use_selfcheck"] | None = Field(
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )

@@ -7,9 +7,6 @@ import torch
 
 from vrl.generation.types import GenerationRequest
 from vrl.trajectory.builders import (
-    build_ar_continuous_trajectory,
-    build_ar_discrete_trajectory,
-    build_ar_multisegment_trajectory,
     build_chunk_autoregressive_denoise_trajectory,
     build_chunk_autoregressive_generation_trajectory,
     build_diffusion_trajectory,
@@ -31,22 +28,20 @@ def test_all_builders_derive_structure() -> None:
 def test_builder_rejects_tensor_rows_that_disagree_with_sample_rows() -> None:
     request = _request()
     sample_rows = request.sample_rows()
-    token_ids = torch.ones(1, 2, dtype=torch.long)
 
     with pytest.raises(
         TrajectoryValidationError,
-        match=r"token_ids axis 'sample' has shape 1, expected 2",
+        match=r"observations axis 'sample' has shape 1, expected 2",
     ):
-        build_ar_discrete_trajectory(
+        build_diffusion_trajectory(
             request=request,
             sample_rows=sample_rows,
-            token_ids=token_ids,
-            token_log_probs=torch.zeros(1, 2),
-            token_mask=torch.ones(1, 2),
-            prompt_input_ids=torch.ones(2, 3, dtype=torch.long),
-            prompt_attention_mask=torch.ones(2, 3, dtype=torch.long),
-            uncond_input_ids=torch.zeros(2, 3, dtype=torch.long),
-            uncond_attention_mask=torch.ones(2, 3, dtype=torch.long),
+            observations=torch.zeros(1, 2, 1),
+            actions=torch.zeros(2, 2, 1),
+            old_log_prob=torch.zeros(2, 2),
+            timesteps=torch.zeros(2, 2),
+            kl=torch.zeros(2, 2),
+            replay_tensors={},
             context={},
         )
 
@@ -86,84 +81,6 @@ def test_diffusion_replay_extras_only_declare_sample_axis_when_sample_aligned(ca
     assert "scalar_tensor" not in tensors
     assert "python_scalar" not in tensors
     assert "['python_scalar', 'scalar_tensor']" in caplog.text  # left-out names are diagnosable
-
-
-def test_multisegment_primary_is_typed_and_not_mirrored_in_context() -> None:
-    request = GenerationRequest(
-        request_id="primary",
-        family="janus_pro_r1",
-        task="ar_t2i_r1",
-        inputs=["draw"],
-        samples_per_prompt=1,
-    )
-
-    trajectory = build_ar_multisegment_trajectory(
-        request=request,
-        sample_rows=request.sample_rows(),
-        segments={
-            "initial_image": _segment_payload(),
-            "final_image": _segment_payload(),
-        },
-        primary_segment="final_image",
-        context={"temperature": 1.0},
-    )
-
-    assert trajectory.primary_segment == "final_image"
-    assert trajectory.context == {"temperature": 1.0}
-
-
-@pytest.mark.parametrize(
-    ("primary_segment", "final_trainable", "message"),
-    [
-        ("missing", True, "is unknown"),
-        ("final_image", False, "must reference a trainable segment"),
-    ],
-)
-def test_multisegment_primary_rejects_unknown_or_nontrainable_segment(
-    primary_segment: str,
-    final_trainable: bool,
-    message: str,
-) -> None:
-    request = GenerationRequest(
-        request_id="invalid-primary",
-        family="janus_pro_r1",
-        task="ar_t2i_r1",
-        inputs=["draw"],
-        samples_per_prompt=1,
-        train_segments={
-            "initial_image": True,
-            "final_image": final_trainable,
-        },
-    )
-
-    with pytest.raises(TrajectoryValidationError, match=message):
-        build_ar_multisegment_trajectory(
-            request=request,
-            sample_rows=request.sample_rows(),
-            segments={
-                "initial_image": _segment_payload(),
-                "final_image": _segment_payload(),
-            },
-            primary_segment=primary_segment,
-            context={},
-        )
-
-
-def _segment_payload(
-    *,
-    batch_size: int = 1,
-    token_count: int = 2,
-) -> dict[str, object]:
-    # Trainability is driven by ``request.train_segments`` (or the
-    # ``visual`` default when the request omits it), never by a payload key.
-    return {
-        "token_ids": torch.ones(batch_size, token_count, dtype=torch.long),
-        "token_log_probs": torch.zeros(batch_size, token_count),
-        "token_mask": torch.ones(batch_size, token_count),
-        "prompt_embeds": torch.zeros(batch_size, 3, 4),
-        "attention_mask": torch.ones(batch_size, 3, dtype=torch.long),
-        "visual": True,
-    }
 
 
 def _request() -> GenerationRequest:
@@ -220,57 +137,6 @@ def _structural_trajectories() -> list[tuple[str, TrajectoryBatch, dict[str, int
         context={},
     )
 
-    token_count = 3
-    token_ids = torch.ones(batch_size, token_count, dtype=torch.long)
-    prompt_input_ids = torch.ones(batch_size, 4, dtype=torch.long)
-    prompt_attention_mask = torch.ones_like(prompt_input_ids)
-    uncond_input_ids = torch.zeros_like(prompt_input_ids)
-    uncond_attention_mask = torch.ones_like(prompt_input_ids)
-    discrete = build_ar_discrete_trajectory(
-        request=request,
-        sample_rows=sample_rows,
-        token_ids=token_ids,
-        token_log_probs=torch.zeros(batch_size, token_count),
-        token_mask=torch.ones(batch_size, token_count),
-        prompt_input_ids=prompt_input_ids,
-        prompt_attention_mask=prompt_attention_mask,
-        uncond_input_ids=uncond_input_ids,
-        uncond_attention_mask=uncond_attention_mask,
-        context={},
-    )
-    continuous = build_ar_continuous_trajectory(
-        request=request,
-        sample_rows=sample_rows,
-        tokens=torch.ones(batch_size, token_count, 4),
-        saved_noise=torch.zeros(batch_size, token_count, 4),
-        token_log_probs=torch.zeros(batch_size, token_count),
-        token_mask=torch.ones(batch_size, token_count),
-        prompt_input_ids=prompt_input_ids,
-        prompt_attention_mask=prompt_attention_mask,
-        uncond_input_ids=uncond_input_ids,
-        uncond_attention_mask=uncond_attention_mask,
-        context={},
-    )
-
-    initial_token_count = 2
-    final_token_count = 3
-    multisegment = build_ar_multisegment_trajectory(
-        request=request,
-        sample_rows=sample_rows,
-        segments={
-            "initial_image": _segment_payload(
-                batch_size=batch_size,
-                token_count=initial_token_count,
-            ),
-            "final_image": _segment_payload(
-                batch_size=batch_size,
-                token_count=final_token_count,
-            ),
-        },
-        primary_segment="final_image",
-        context={},
-    )
-
     return [
         (
             "diffusion",
@@ -290,24 +156,5 @@ def _structural_trajectories() -> list[tuple[str, TrajectoryBatch, dict[str, int
             "chunk_generation",
             chunk_generation,
             {"sample": batch_size, "temporal_chunk": generation_chunk_count},
-        ),
-        (
-            "ar_discrete",
-            discrete,
-            {"sample": batch_size, "token": token_count},
-        ),
-        (
-            "ar_continuous",
-            continuous,
-            {"sample": batch_size, "token": token_count},
-        ),
-        (
-            "ar_multisegment",
-            multisegment,
-            {
-                "sample": batch_size,
-                "initial_image_token": initial_token_count,
-                "final_image_token": final_token_count,
-            },
         ),
     ]

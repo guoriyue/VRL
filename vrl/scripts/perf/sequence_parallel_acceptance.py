@@ -196,7 +196,6 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
         samples_per_prompt=args.samples_per_prompt,
         sampling=sampling,
         samples_per_generation_batch=collector.samples_per_generation_batch,
-        train_segments=collector.train_segments,
         trajectory_storage=collector.trajectory_storage,
         denoise=denoise,
         runtime_debug=True,

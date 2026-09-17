@@ -28,8 +28,8 @@ from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import CollectorRequest, GenerationRequestBuilder
 from vrl.rollouts.stats import RolloutStats
 from vrl.trajectory.builders import (
-    build_ar_discrete_trajectory,
     build_chunk_autoregressive_denoise_trajectory,
+    build_diffusion_trajectory,
 )
 from vrl.trajectory.reader import TrajectoryReader
 from vrl.trajectory.storage import TrajectoryStoragePolicy
@@ -99,16 +99,16 @@ class _Runtime:
         batch_size = len(request.prompts) * request.samples_per_prompt
         sample_rows = _sample_rows(request)
         output = torch.ones(batch_size, 3, 2, 2)
-        trajectory = build_ar_discrete_trajectory(
+        actions = torch.arange(batch_size * 2, dtype=torch.float32).reshape(batch_size, 2, 1)
+        trajectory = build_diffusion_trajectory(
             request=request,
             sample_rows=sample_rows,
-            token_ids=torch.arange(batch_size * 2, dtype=torch.long).reshape(batch_size, 2),
-            token_log_probs=torch.zeros(batch_size, 2),
-            token_mask=torch.ones(batch_size, 2),
-            prompt_input_ids=torch.ones(batch_size, 3, dtype=torch.long),
-            prompt_attention_mask=torch.ones(batch_size, 3, dtype=torch.long),
-            uncond_input_ids=torch.zeros(batch_size, 3, dtype=torch.long),
-            uncond_attention_mask=torch.ones(batch_size, 3, dtype=torch.long),
+            observations=torch.zeros_like(actions),
+            actions=actions,
+            old_log_prob=torch.zeros(batch_size, 2),
+            timesteps=torch.zeros(batch_size, 2),
+            kl=torch.zeros(batch_size, 2),
+            replay_tensors={"prompt_ids": torch.ones(batch_size, 3, dtype=torch.long)},
             context={"collector": "test"},
         )
         return GenerationOutput(
@@ -298,7 +298,11 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert torch.stack(reward_runtime.calls[0]["outputs"]).shape == (4, 3, 2, 2)
     assert runtime.events == ["generate"]
     assert batch.rewards.tolist() == [0.0, 1.0, 2.0, 3.0]
-    assert batch.context == {"collector": "test"}
+    # The denoise pack path copies the reward metadata beside the request context.
+    assert batch.context == {
+        "collector": "test",
+        "reward_metadata": {"collector": "metadata", "rollout_policy_version": 7},
+    }
     assert batch.trajectory is not None
     assert batch.group_ids.tolist() == [0, 0, 1, 1]
     assert [row.prompt_index for row in batch.trajectory.sample_rows] == [0, 0, 1, 1]
@@ -888,14 +892,11 @@ def test_reward_output_is_independent_of_trajectory_storage_dtype() -> None:
             trajectory_storage_policy=TrajectoryStoragePolicy(dtype="float16"),
         ),
     )
-    replay_log_probs = builder.trajectory.segments["image_tokens"].tensors["old_log_prob"].value
+    replay_log_probs = builder.trajectory.segments["denoise"].tensors["old_log_prob"].value
 
     assert replay_log_probs.dtype == torch.float16
     assert output.output is canonical
-    assert torch.equal(
-        builder.reward_outputs(),
-        ((canonical + 1.0) * 0.5).clamp(0.0, 1.0),
-    )
+    assert torch.equal(builder.reward_outputs(), canonical)
 
 
 @pytest.mark.parametrize(
@@ -976,34 +977,6 @@ def test_chunk_denoise_kl_reward_sums_chunk_and_transition_axes() -> None:
     assert packed.rewards.tolist() == pytest.approx([8.5, 17.0])
     assert packed.trajectory is not None
     assert packed.trajectory.primary_segment == "denoise"
-
-
-def test_nonlatent_gaussian_keeps_autoregressive_packing() -> None:
-    """Gaussian token policies do not get mistaken for latent denoise policies."""
-
-    import asyncio
-
-    request = GenerationRequest(
-        request_id="token-gaussian-request",
-        family="unit",
-        task="text_to_image",
-        inputs=["p0"],
-        samples_per_prompt=1,
-    )
-    output = asyncio.run(_Runtime().generate(request))
-    assert output.trajectory is not None
-    output.trajectory.segments["image_tokens"].distribution = "gaussian"
-
-    packed = TrajectoryRolloutBatchBuilder(
-        output,
-        RolloutBatchBuildContext(metadata={}),
-    ).build(torch.tensor([1.0]))
-
-    reader = TrajectoryReader.from_batch(packed)
-    assert reader.tensor_value("image_tokens", "prompt_input_ids").shape == (1, 3)
-    assert reader.role_value("image_tokens", "action").shape == (1, 2)
-    assert packed.trajectory is not None
-    assert packed.trajectory.primary_segment == "image_tokens"
 
 
 def test_collector_forwards_reference_metadata_to_request() -> None:

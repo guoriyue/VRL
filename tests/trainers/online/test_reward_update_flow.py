@@ -1097,12 +1097,12 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         remap_group_ids_,
         select_batch,
     )
-    from vrl.trajectory.builders import build_ar_discrete_trajectory
+    from vrl.trajectory.builders import build_diffusion_trajectory
 
     request = GenerationRequest(
         request_id="req",
-        family="janus_pro",
-        task="ar_t2i",
+        family="sd3_5",
+        task="t2i",
         inputs=["a", "b"],
         samples_per_prompt=2,
     )
@@ -1115,18 +1115,17 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         )
         for index in range(4)
     ]
-    token_ids = torch.arange(8).view(4, 2)
-    trajectory = build_ar_discrete_trajectory(
+    actions = torch.arange(8, dtype=torch.float32).view(4, 2, 1)
+    trajectory = build_diffusion_trajectory(
         request=request,
         sample_rows=sample_rows,
-        token_ids=token_ids,
-        token_log_probs=torch.zeros(4, 2),
-        token_mask=torch.ones(4, 2),
-        prompt_input_ids=torch.ones(4, 3, dtype=torch.long),
-        prompt_attention_mask=torch.ones(4, 3, dtype=torch.long),
-        uncond_input_ids=torch.zeros(4, 3, dtype=torch.long),
-        uncond_attention_mask=torch.ones(4, 3, dtype=torch.long),
-        context={"model_family": "janus_pro"},
+        observations=torch.zeros_like(actions),
+        actions=actions,
+        old_log_prob=torch.zeros(4, 2),
+        timesteps=torch.zeros(4, 2),
+        kl=torch.zeros(4, 2),
+        replay_tensors={},
+        context={"model_family": "sd3_5"},
     )
     batch = RolloutBatch(
         rewards=torch.arange(4, dtype=torch.float32),
@@ -1137,12 +1136,12 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
     selected = select_batch(batch, torch.tensor([True, False, True, False]))
 
     assert selected.trajectory is not None
-    assert selected.trajectory.primary_segment == "image_tokens"
+    assert selected.trajectory.primary_segment == "denoise"
     assert selected.trajectory.axes["sample"].length == 2
     assert [row.prompt_index for row in selected.trajectory.sample_rows] == [0, 1]
     assert torch.equal(
-        selected.trajectory.segments["image_tokens"].tensors["token_ids"].value,
-        torch.tensor([[0, 1], [4, 5]]),
+        selected.trajectory.segments["denoise"].tensors["actions"].value,
+        torch.tensor([[[0.0], [1.0]], [[4.0], [5.0]]]),
     )
 
     moved = move_training_batch_to_device(selected, torch.device("cpu"))

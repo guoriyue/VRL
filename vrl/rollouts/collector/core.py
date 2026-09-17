@@ -129,14 +129,10 @@ class RolloutCollector:
         reward_runtime: RewardRuntime,
         generation_runtime: GenerationRuntime | None = None,
         lifecycle: RayLifecyclePlan | None = None,
-        trajectory_layout: str | None = None,
     ) -> None:
         self.config = config
         self.request_builder = request_builder
         self.reward_runtime = reward_runtime
-        # Resolved family PolicySemantics.trajectory_layout (source of truth for
-        # multisegment routing), threaded into every RolloutBatchBuildContext.
-        self._trajectory_layout = trajectory_layout
         self._generation_runtime: GenerationRuntime | None = None
         if generation_runtime is not None:
             self.set_generation_runtime(generation_runtime)
@@ -165,7 +161,6 @@ class RolloutCollector:
             reward_runtime=reward_runtime,
             generation_runtime=generation_runtime,
             lifecycle=lifecycle,
-            trajectory_layout=entry.policy_semantics.trajectory_layout,
         )
 
     def set_generation_runtime(self, runtime: GenerationRuntime) -> None:
@@ -281,7 +276,6 @@ class RolloutCollector:
                 device="cpu",
                 kl_reward_coef=kl_reward_coef,
                 trajectory_storage_policy=trajectory_storage_policy,
-                trajectory_layout=self._trajectory_layout,
             )
             builders.append(TrajectoryRolloutBatchBuilder(rollout.output, context))
 

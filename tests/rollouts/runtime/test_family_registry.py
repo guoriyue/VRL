@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -25,7 +24,6 @@ from vrl.models.families.registry import (
     GenerationRuntimeCapabilities,
     get_model_family_entry,
 )
-from vrl.models.families.semantics import PolicySemantics
 from vrl.models.interfaces.generation_memory import (
     GenerationMemoryPolicy,
     VaeDecodeMemory,
@@ -164,21 +162,6 @@ def test_denoise_model_build_requires_a_nonempty_path(path) -> None:
         )
 
 
-def test_family_entry_rejects_a_policy_step_build_mismatch() -> None:
-    entry = get_model_family_entry("sana")
-
-    with pytest.raises(ValueError, match="does not match its family build"):
-        replace(
-            entry,
-            policy_semantics=PolicySemantics(
-                generation_regime="token_autoregressive",
-                step_kind="token",
-                action_distribution="categorical",
-                trajectory_layout="token",
-            ),
-        )
-
-
 def test_generation_runtime_capabilities_reject_unknown_memory_sections() -> None:
     with pytest.raises(
         ValueError,
@@ -201,10 +184,8 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
         assert callable(entry.new_gatherer().merge_generation_batches)
         assert entry.policy_semantics.generation_regime in {
             "full_sequence",
-            "token_autoregressive",
             "chunk_autoregressive",
         }
-        assert entry.policy_semantics.step_kind == "denoise"
         assert isinstance(entry.family_build, DenoiseFamilyBuild)
         assert entry.executor_cls.startswith(
             (

@@ -189,8 +189,7 @@ def main() -> None:
 
     entry = get_model_family_entry(args.family)
     family = entry.family
-    semantics = entry.policy_semantics
-    if semantics.step_kind != "denoise" or semantics.generation_regime != "full_sequence":
+    if entry.policy_semantics.generation_regime != "full_sequence":
         raise SystemExit(
             f"--family {family} does not expose a full-sequence denoise policy; this probe "
             "drives that execution shape only",

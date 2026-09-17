@@ -33,7 +33,7 @@ def test_replay_result_requires_matching_segment_key() -> None:
         ReplayResult(
             segments={
                 "wrong": ReplaySegmentResult(
-                    segment="image_tokens",
+                    segment="denoise",
                     values={},
                 ),
             },

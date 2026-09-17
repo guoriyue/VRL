@@ -19,12 +19,9 @@ if TYPE_CHECKING:
 
 AxisKind = Literal[
     "sample",
-    "discrete_token",
-    "continuous_token",
     "denoise_step",
     "temporal_chunk",
     "denoise_transition",
-    "text_token",
     "segment",
     "frame",
     "media",
@@ -39,7 +36,6 @@ TensorRole = Literal[
 ]
 SegmentModality = Literal["image", "video", "text", "latent", "mixed", "unknown"]
 DistributionKind = Literal[
-    "categorical",
     "gaussian",
     "flow_matching",
     "deterministic",

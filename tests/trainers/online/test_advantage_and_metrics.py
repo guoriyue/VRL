@@ -310,7 +310,7 @@ class TestAdvantageAndMetrics:
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
         from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
         from vrl.trainers.online.trainer import OnlineTrainer
-        from vrl.trajectory.builders import build_ar_discrete_trajectory
+        from vrl.trajectory.builders import build_diffusion_trajectory
 
         class _Algorithm(_EvaluatorAlgorithmFake):
             required_signal_keys: tuple[str, ...] = ()
@@ -349,8 +349,8 @@ class TestAdvantageAndMetrics:
                 prompts = list(prompts)
                 request = GenerationRequest(
                     request_id="zero-adv",
-                    family="janus_pro",
-                    task="ar_t2i",
+                    family="sd3_5",
+                    task="t2i",
                     inputs=prompts,
                     samples_per_prompt=group_size,
                 )
@@ -364,18 +364,17 @@ class TestAdvantageAndMetrics:
                     for index in range(len(prompts) * group_size)
                 ]
                 batch_size = len(sample_rows)
-                token_ids = torch.arange(batch_size * 2).view(batch_size, 2)
-                trajectory = build_ar_discrete_trajectory(
+                actions = torch.arange(batch_size * 2, dtype=torch.float32).view(batch_size, 2, 1)
+                trajectory = build_diffusion_trajectory(
                     request=request,
                     sample_rows=sample_rows,
-                    token_ids=token_ids,
-                    token_log_probs=torch.zeros_like(token_ids, dtype=torch.float32),
-                    token_mask=torch.ones_like(token_ids, dtype=torch.float32),
-                    prompt_input_ids=torch.ones(len(sample_rows), 3, dtype=torch.long),
-                    prompt_attention_mask=torch.ones(len(sample_rows), 3, dtype=torch.long),
-                    uncond_input_ids=torch.zeros(len(sample_rows), 3, dtype=torch.long),
-                    uncond_attention_mask=torch.ones(len(sample_rows), 3, dtype=torch.long),
-                    context={"model_family": "janus_pro"},
+                    observations=torch.zeros_like(actions),
+                    actions=actions,
+                    old_log_prob=torch.zeros(batch_size, 2),
+                    timesteps=torch.zeros(batch_size, 2),
+                    kl=torch.zeros(batch_size, 2),
+                    replay_tensors={},
+                    context={"model_family": "sd3_5"},
                 )
                 return RolloutBatch(
                     rewards=torch.ones(batch_size, dtype=torch.float32),

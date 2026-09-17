@@ -1,9 +1,8 @@
 """Compare image checkpoints with independently composed rewards and one curve.
 
 Generation uses the registered full-sequence denoise model and its native step
-scheduler. This is not the frozen SANA official-pipeline benchmark, a video
-benchmark, or an autoregressive image-token evaluator. Generated images are
-content-bound before scoring, so failed reward calls can be retried without
+scheduler. This is not the frozen SANA official-pipeline benchmark or a video
+benchmark. Generated images are content-bound before scoring, so failed reward calls can be retried without
 loading the generator. Completed reports are immutable.
 """
 
@@ -472,11 +471,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     if root.model is None:
         raise ValueError("checkpoint evaluation requires a model config")
     entry = get_model_family_entry(root.model.family)
-    if (
-        entry.task != "t2i"
-        or entry.policy_semantics.step_kind != "denoise"
-        or entry.policy_semantics.generation_regime != "full_sequence"
-    ):
+    if entry.task != "t2i" or entry.policy_semantics.generation_regime != "full_sequence":
         raise ValueError(
             "image checkpoint evaluation requires a full-sequence denoise text-to-image family"
         )

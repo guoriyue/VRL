@@ -93,7 +93,6 @@ def test_engine_request_builder_carries_the_engine_fields_off_the_sampling_dict(
         entry=get_model_family_entry("sd3_5"),
         config=RolloutCollectorConfig(
             samples_per_generation_batch="auto",
-            train_segments={"final_image": True},
             trajectory_storage=storage,
         ),
     )
@@ -101,7 +100,6 @@ def test_engine_request_builder_carries_the_engine_fields_off_the_sampling_dict(
     request = builder.build(["prompt"], 1).request
 
     assert request.samples_per_generation_batch == "auto"
-    assert request.train_segments == {"final_image": True}
     assert request.trajectory_storage == storage
     assert set(request.sampling) == {"seed"}
     assert type(request.sampling["seed"]) is int

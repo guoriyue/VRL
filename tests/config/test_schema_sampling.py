@@ -1,5 +1,4 @@
-"""Sampling and rollout knobs: the family-selected sampling schema, attention
-backend ownership, denoise modes and the scheduler batch size."""
+"""Sampling and rollout knobs: the family-selected sampling schema and denoise modes."""
 
 from __future__ import annotations
 
@@ -7,7 +6,6 @@ import pytest
 
 from tests.config.helpers import minimal_grpo_cfg
 from vrl.config.sampling_schema import (
-    ARSamplingSection,
     DenoiseImageSamplingSection,
     TextEncodedImageSamplingSection,
     VideoSamplingSection,
@@ -15,24 +13,6 @@ from vrl.config.sampling_schema import (
 from vrl.config.schema import (
     parse_config,
 )
-
-
-@pytest.mark.parametrize("value", [None, 1, 8])
-def test_sampling_scheduler_batch_size_accepts_null_or_positive_integer(
-    value: int | None,
-) -> None:
-    sampling = ARSamplingSection.model_validate({"ar_scheduler_batch_size": value})
-
-    assert sampling.ar_scheduler_batch_size == value
-
-
-@pytest.mark.parametrize("value", [True, 0])
-def test_sampling_scheduler_batch_size_rejects_coercible_or_non_positive_values(
-    value: object,
-) -> None:
-    with pytest.raises(ValueError, match="must be a positive integer or null"):
-        ARSamplingSection.model_validate({"ar_scheduler_batch_size": value})
-
 
 # ── rollout / sampling string-setting Literals ────────────────────────────────
 

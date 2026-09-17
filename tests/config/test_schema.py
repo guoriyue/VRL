@@ -20,7 +20,6 @@ from vrl.config.schema import (
     [
         ("algorithm.kind", "qpo"),
         ("rollout.denoise_mode", "bogus"),
-        ("rollout.final_image_policy", "bogus"),
         ("distributed.training.strategy", "deepspeed"),
         ("distributed.rollout.batch_placement_strategy", "work_stealing"),
         ("data.loader", "s3_loader"),
