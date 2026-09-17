@@ -48,7 +48,6 @@ from vrl.models.steps.denoise.common import (
     MaskedPromptModelMixin,
     TrainTimestepMaskedPromptSamplingState,
 )
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
 def standard_mochi_scheduler(scheduler_config: Any, num_steps: int, device: Any) -> Any:
@@ -78,7 +77,6 @@ class MochiSamplingState(TrainTimestepMaskedPromptSamplingState):
 
 class MochiModel(
     MaskedPromptModelMixin,
-    LoraModelMixin,
     DiffusersPipelineModelBase,
     EncoderAttentionMaskRunnerBase,
 ):

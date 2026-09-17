@@ -85,7 +85,7 @@ def test_wan_warm_start_validates_effective_topology(
         return _Wrapped()
 
     monkeypatch.setattr(
-        "vrl.models.families.wan_2_1.model.load_trainable_lora_adapter",
+        "vrl.models.steps.denoise.common.lora.load_trainable_lora_adapter",
         fake_load,
     )
     model = _model()
@@ -110,6 +110,7 @@ def test_wan_warm_start_validates_effective_topology(
         "expected_alpha": 4,
         "expected_dropout": 0.4,
         "expected_target_modules": ["proj"],
+        "adapter_name": "default",
         "active_adapter": "default",
     }
 
@@ -121,7 +122,7 @@ def test_wan_warm_start_validation_failure_keeps_raw_transformer(
         raise ValueError("topology mismatch")
 
     monkeypatch.setattr(
-        "vrl.models.families.wan_2_1.model.load_trainable_lora_adapter",
+        "vrl.models.steps.denoise.common.lora.load_trainable_lora_adapter",
         reject,
     )
     model = _model()

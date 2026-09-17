@@ -403,8 +403,105 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         """Load the backend from a runtime build."""
         raise NotImplementedError
 
-    def apply_lora(self, build: ModelBuild) -> None:  # pragma: no cover (default no-op)
-        raise NotImplementedError
+    # ── LoRA ──────────────────────────────────────────────────────────
+    # One attach implementation over ``trainable_modules`` + ``set_module_root``.
+    # A family declares only the three facts below; it never re-implements the
+    # PEFT call sequence (the per-family copies this replaced drifted on the
+    # adapter dtype, which is a weight-sync contract, not a family choice).
+
+    # Fresh-adapter init when ``model.lora.init_lora_weights`` is unset.
+    # ``True`` (PEFT's kaiming-uniform A / zero B) keeps the base output at
+    # step 0; the diffusers image families keep flow_grpo's gaussian init.
+    lora_init_weights_default: ClassVar[Any] = "gaussian"
+    # PEFT's fp32 adapter upcast. ``False`` constructs adapters in the
+    # transformer's resolved dtype so single-process, FSDP and rollout replicas
+    # stay byte-compatible at weight sync.
+    lora_autocast_adapter_dtype: ClassVar[bool] = True
+    # Always build the frozen ``previous`` mirror; other families opt in per run
+    # through ``model.nft_previous_adapter``.
+    lora_previous_policy_adapter: ClassVar[bool] = False
+
+    def _defer_trainable_device_move(self, build: ModelBuild) -> bool:
+        """Whether attach leaves the trainable roots where they were loaded.
+
+        FSDP replay defers so ``fully_shard`` can move and shard one block at
+        a time. Families that own residency themselves (Wan pipeline offload,
+        partitioned H3) override.
+        """
+
+        return bool(getattr(build, "defer_trainable_device_move", False))
+
+    def apply_lora(self, build: ModelBuild) -> None:
+        """Wrap every trainable root with a PEFT LoRA adapter per ``model.lora``.
+
+        The parameter dtype is fixed at load; attach only places the module.
+        Quantized rollouts keep the checkpoint on CPU until base-weight
+        compaction: LoRA must attach before the quantization swap (which only
+        wraps plain ``nn.Linear``), and moving first would materialize the full
+        base model on one GPU before its memory-saving transform owns it.
+        """
+
+        from vrl.models.steps.denoise.common import lora as _lora
+
+        lora_config = _lora.require_lora_config(build)
+        roots = self.trainable_modules
+        if not roots:
+            raise RuntimeError(f"{type(self).__name__} exposes no trainable module for LoRA")
+        lora_path = build.lora_path
+        if lora_path and len(roots) != 1:
+            raise ValueError(
+                "model.lora.path can only resume one trainable root; "
+                f"{type(self).__name__} trains {sorted(roots)}",
+            )
+        rollout = getattr(build, "rollout", None)
+        defer_device_move = self._defer_trainable_device_move(build) or bool(
+            rollout is not None
+            and getattr(getattr(build, "precision", None), "quantization", None),
+        )
+        # Declared by WanModelSection only; every other section rejects the key.
+        adapter_dtype = (getattr(build, "model_config", None) or {}).get("lora_parameter_dtype")
+        for name, module in roots.items():
+            module.requires_grad_(False)
+            if not defer_device_move:
+                module.to(self.device)
+            wrapped = _lora.attach_lora_adapter(
+                module,
+                lora_config,
+                lora_path=lora_path,
+                init_weights_default=self.lora_init_weights_default,
+                autocast_adapter_dtype=self.lora_autocast_adapter_dtype,
+            )
+            if adapter_dtype == "float32":
+                for parameter in wrapped.parameters():
+                    if parameter.requires_grad:
+                        parameter.data = parameter.data.to(dtype=torch.float32)
+            self.set_module_root(name, wrapped)
+        if self.lora_previous_policy_adapter or _lora.previous_policy_adapter_requested(build):
+            self.attach_previous_policy_adapter(build)
+
+    # Both DiffusionNFT and V-GRPO evaluate the behaviour policy through a
+    # frozen ``previous`` copy of the trainable adapter: forward-only under
+    # no_grad, refreshed by weight copy after each optimizer step, never
+    # optimized. Attach runs right after the normal LoRA attach.
+
+    def attach_previous_policy_adapter(self, build: ModelBuild) -> None:
+        """Build the frozen ``previous`` adapter on ``self.transformer``."""
+
+        from vrl.models.steps.denoise.common import lora as _lora
+
+        _lora.attach_previous_policy_adapter(self.transformer, _lora.require_lora_config(build))
+
+    def sync_previous_policy_adapter(self, *, decay: float = 0.0) -> None:
+        """Refresh the ``previous`` adapter from the trainable ``default`` adapter.
+
+        Reached via getattr dispatch from the objectives' ``after_optimizer_step``
+        (vrl/algorithms/diffusion_nft.py, vrl/algorithms/v_grpo.py), not a
+        direct call — keep even though textual call-site searches miss it.
+        """
+
+        from vrl.models.steps.denoise.common import lora as _lora
+
+        _lora.copy_adapter_weights(self.transformer, src="default", dst="previous", decay=decay)
 
     def apply_full_finetune(self, build: ModelBuild) -> None:
         """Mark the transformer fully trainable (no-LoRA path)."""

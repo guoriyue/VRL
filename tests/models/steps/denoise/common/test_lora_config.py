@@ -7,10 +7,8 @@ import pytest
 import torch
 from torch import nn
 
-from vrl.models.steps.denoise.common.lora import (
-    LoraModelMixin,
-    build_lora_config,
-)
+from vrl.models.steps.denoise import DiffusionModelBase
+from vrl.models.steps.denoise.common.lora import build_lora_config
 
 pytest.importorskip("peft")
 
@@ -21,13 +19,25 @@ class _TinyTransformer(nn.Module):
         self.proj = nn.Linear(2, 2, bias=False)
 
 
-class _Policy(LoraModelMixin):
+class _Policy(DiffusionModelBase):
+    """Smallest real base subclass: the attach path is the base's own."""
+
     def __init__(self) -> None:
+        super().__init__()
         self.transformer = _TinyTransformer()
         self.device = "cpu"
 
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
+    def encode_prompt(self, prompt, negative_prompt=None, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    def prepare_sampling(self, request, encoded, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    def forward_step(self, state, step_idx):  # pragma: no cover
+        raise NotImplementedError
+
+    def decode_latents(self, latents):  # pragma: no cover
+        raise NotImplementedError
 
 
 def _lora_values(dropout: float | None) -> dict[str, Any]:
@@ -117,6 +127,8 @@ def test_shared_warm_start_validates_effective_topology(
         "expected_alpha": 4,
         "expected_dropout": 0.35,
         "expected_target_modules": ["proj"],
+        "adapter_name": "default",
+        "autocast_adapter_dtype": True,
         "active_adapter": "default",
     }
 

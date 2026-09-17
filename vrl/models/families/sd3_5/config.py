@@ -14,7 +14,7 @@ class SD3_5ModelSection(ModelSection):
     """SD 3.5 public model keys."""
 
     # The frozen ``previous`` LoRA mirror DiffusionNFT and V-GRPO evaluate the
-    # behaviour policy through (``LoraModelMixin.attach_previous_policy_adapter``).
+    # behaviour policy through (``DiffusionModelBase.attach_previous_policy_adapter``).
     nft_previous_adapter: Any = Field(
         default=None,
         json_schema_extra=checkpoint_identity_metadata("value", default=False),

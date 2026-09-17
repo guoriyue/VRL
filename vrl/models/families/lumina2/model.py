@@ -46,7 +46,6 @@ from vrl.models.steps.denoise.common import (
     TrainTimestepMaskedPromptSamplingState,
     VaeDecodeMixin,
 )
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
 @dataclass
@@ -57,7 +56,6 @@ class Lumina2SamplingState(TrainTimestepMaskedPromptSamplingState):
 class Lumina2Model(
     VaeDecodeMixin,
     MaskedPromptModelMixin,
-    LoraModelMixin,
     DiffusersPipelineModelBase,
     EncoderAttentionMaskRunnerBase,
 ):

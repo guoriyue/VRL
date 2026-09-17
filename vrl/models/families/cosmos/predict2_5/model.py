@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 import sys
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import torch
 
@@ -16,7 +16,6 @@ from vrl.models.families.cosmos import (
     no_safety_checker,
 )
 from vrl.models.interfaces.runtime import ModelBuild
-from vrl.models.peft_adapter import load_trainable_lora_adapter
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
@@ -32,15 +31,6 @@ from vrl.models.steps.denoise.common import (
     expand_tensor_to_batch,
     replay_tensor,
     shared_replay_tensor,
-)
-from vrl.models.steps.denoise.common.lora import (
-    build_lora_config as _build_lora_config,
-)
-from vrl.models.steps.denoise.common.lora import (
-    copy_adapter_weights as _copy_adapter_weights,
-)
-from vrl.models.steps.denoise.common.lora import (
-    freeze_checkpoint_owned_adapter_params as _freeze_checkpoint_owned_adapter_params,
 )
 
 
@@ -209,65 +199,9 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             synthetic_prompt_embeds=skip_text_encoder,
         )
 
-    def apply_lora(self, build: ModelBuild) -> None:
-        # Single attach path for BOTH the driver and the replay subclass: at
-        # entry self.transformer is the raw, unwrapped transformer in either case
-        # (the replay model has no pipeline), so this is defined once and
-        # inherited — there is no per-class copy to drift.
-        #
-        # Deliberately NOT LoraModelMixin: this family also manages a second
-        # "previous" adapter for NFT previous-policy replay (different shape, not
-        # a copy of the shared attach logic).
-        from peft import get_peft_model
-
-        base = self.transformer
-        base.requires_grad_(False)
-        if not build.defer_trainable_device_move:
-            base.to(self.device)
-        lora_config = build.lora
-        if lora_config is None:
-            raise ValueError("Cosmos Predict2.5 requires model.lora configuration")
-        if build.lora_path:
-            transformer = load_trainable_lora_adapter(
-                base,
-                build.lora_path,
-                expected_rank=lora_config["rank"],
-                expected_alpha=lora_config["alpha"],
-                expected_dropout=lora_config.get("dropout", 0.0),
-                expected_target_modules=lora_config["target_modules"],
-                adapter_name="default",
-            )
-        else:
-            transformer = get_peft_model(
-                base,
-                _build_lora_config(lora_config),
-                adapter_name="default",
-            )
-
-        # NFT's forward-only "previous" mirror: seed it from default and freeze
-        # it (so DDP find_unused_parameters=false stays correct). Freezing is a
-        # one-time setup step; the per-step refresh (sync_previous_policy_adapter)
-        # re-runs only the copy, which is why these stay separate primitives.
-        if "previous" not in getattr(transformer, "peft_config", {}):
-            transformer.add_adapter("previous", _build_lora_config(lora_config))
-        _copy_adapter_weights(transformer, src="default", dst="previous")
-        _freeze_checkpoint_owned_adapter_params(transformer, "previous")
-        transformer.set_adapter("default")
-        self._set_transformer(transformer)
-
-    def sync_previous_policy_adapter(self, *, decay: float = 0.0) -> None:
-        """Refresh the DiffusionNFT previous-policy adapter from the trainable adapter.
-
-        Reached via getattr dispatch in vrl/algorithms/diffusion_nft.py, not a
-        direct call — keep even though textual call-site searches miss it.
-        """
-
-        _copy_adapter_weights(
-            self.transformer,
-            src="default",
-            dst="previous",
-            decay=decay,
-        )
+    # DiffusionNFT's forward-only "previous" mirror is part of this family's
+    # recipe, not a per-run switch: the base attach builds it on every LoRA run.
+    lora_previous_policy_adapter: ClassVar[bool] = True
 
     def apply_full_finetune(self, build: ModelBuild) -> None:
         del build
@@ -587,9 +521,8 @@ class CosmosPredict25ReplayModel(DiffusersReplayModelBase, CosmosPredict25Model)
         )
         self.synthetic_prompt_embeds = False
 
-    # apply_lora is inherited from CosmosPredict25Model: it attaches to
-    # self.transformer, which this replay model owns directly (no pipeline), so
-    # the parent's single implementation already does the right thing.
+    # apply_lora is inherited from DiffusionModelBase: it walks
+    # trainable_modules, which this replay model owns directly (no pipeline).
     # torch_compile_transformer is inherited from DiffusionModelBase: it calls
     # self._set_transformer, which the replay base owns.
 

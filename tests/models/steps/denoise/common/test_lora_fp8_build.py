@@ -17,8 +17,8 @@ from torch import nn
 
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
+from vrl.models.steps.denoise import DiffusionModelBase
 from vrl.models.steps.denoise.build import build_denoise_runtime_bundle
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
 class _TrackingTransformer(nn.Module):
@@ -62,13 +62,23 @@ def _record_swap(monkeypatch, events: list[str], scheme_name: str = "Fp8Linear")
     )
 
 
-class _LoraPolicy(LoraModelMixin):
+class _LoraPolicy(DiffusionModelBase):
     def __init__(self, events: list[str]) -> None:
+        super().__init__()
         self.transformer = _TrackingTransformer(events)
         self.device = "cpu"
 
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
+    def encode_prompt(self, prompt, negative_prompt=None, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    def prepare_sampling(self, request, encoded, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    def forward_step(self, state, step_idx):  # pragma: no cover
+        raise NotImplementedError
+
+    def decode_latents(self, latents):  # pragma: no cover
+        raise NotImplementedError
 
 
 def _build(
@@ -112,7 +122,7 @@ def test_quantized_lora_attach_defers_device_move(
     fake_peft = ModuleType("peft")
     fake_peft.LoraConfig = lambda **_kwargs: object()
     fake_peft.PeftModel = object
-    fake_peft.get_peft_model = lambda transformer, _cfg: transformer
+    fake_peft.get_peft_model = lambda transformer, _cfg, **_kwargs: transformer
     monkeypatch.setitem(sys.modules, "peft", fake_peft)
 
     _LoraPolicy(events).apply_lora(
@@ -122,14 +132,16 @@ def test_quantized_lora_attach_defers_device_move(
 
 
 def test_plain_lora_attach_keeps_direct_device_move(monkeypatch) -> None:
+    """An unquantized attach places the root; the load dtype is left alone."""
     events: list[str] = []
     fake_peft = ModuleType("peft")
     fake_peft.LoraConfig = lambda **_kwargs: object()
     fake_peft.PeftModel = object
-    fake_peft.get_peft_model = lambda transformer, _cfg: transformer
+    fake_peft.get_peft_model = lambda transformer, _cfg, **_kwargs: transformer
     monkeypatch.setitem(sys.modules, "peft", fake_peft)
 
     policy = _LoraPolicy(events)
+    policy.transformer.proj.to(torch.float16)
     policy.apply_lora(_build(quantization_format=None))
     assert events == ["move"]
     assert policy.transformer.proj.weight.dtype is torch.float16
@@ -140,7 +152,7 @@ def test_fsdp_replay_lora_attach_defers_device_move(monkeypatch) -> None:
     fake_peft = ModuleType("peft")
     fake_peft.LoraConfig = lambda **_kwargs: object()
     fake_peft.PeftModel = object
-    fake_peft.get_peft_model = lambda transformer, _cfg: transformer
+    fake_peft.get_peft_model = lambda transformer, _cfg, **_kwargs: transformer
     monkeypatch.setitem(sys.modules, "peft", fake_peft)
 
     _LoraPolicy(events).apply_lora(
@@ -165,7 +177,7 @@ def test_fp8_config_replay_build_does_not_defer_device_move(monkeypatch) -> None
     fake_peft = ModuleType("peft")
     fake_peft.LoraConfig = lambda **_kwargs: object()
     fake_peft.PeftModel = object
-    fake_peft.get_peft_model = lambda transformer, _cfg: transformer
+    fake_peft.get_peft_model = lambda transformer, _cfg, **_kwargs: transformer
     monkeypatch.setitem(sys.modules, "peft", fake_peft)
     cfg = OmegaConf.create(
         {

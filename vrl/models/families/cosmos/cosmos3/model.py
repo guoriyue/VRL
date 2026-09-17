@@ -44,7 +44,6 @@ from vrl.models.steps.denoise import (
     DiffusersReplayModelBase,
     GuidedDiffusionSamplingStateBase,
 )
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 from vrl.utils.logging import init_logger, kv
 from vrl.utils.validation import require_int
 
@@ -78,7 +77,7 @@ class Cosmos3SamplingState(GuidedDiffusionSamplingStateBase):
     uncond_input_ids: list[int] = field(default_factory=list)
 
 
-class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBase):
+class Cosmos3Model(CosmosReplayForward, DiffusersPipelineModelBase):
     """Cosmos3 Omni T2V generator wrapped for the vrl diffusion RL seam."""
 
     _frozen_encoder_names: tuple[str, ...] = ()
@@ -115,12 +114,6 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
             kv(path=build.model_name_or_path, device=build.device, dtype=build.parameter_dtype),
         )
         return cls(pipeline=pipeline, device=build.device)
-
-    def _lora_dtype(self, build: ModelBuild) -> Any | None:
-        # The transformer is already cast at load (from_build .to(dtype));
-        # skip the mixin's default pre-wrap dtype cast.
-        del build
-        return None
 
     # ---- encode ----
     def encode_prompt(

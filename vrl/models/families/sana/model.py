@@ -42,7 +42,6 @@ from vrl.models.steps.denoise.common import (
     MaskedPromptSamplingState,
     VaeDecodeMixin,
 )
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
 @dataclass
@@ -53,7 +52,6 @@ class SanaSamplingState(MaskedPromptSamplingState):
 class SanaModel(
     VaeDecodeMixin,
     MaskedPromptModelMixin,
-    LoraModelMixin,
     DiffusersPipelineModelBase,
     EncoderAttentionMaskRunnerBase,
 ):

@@ -1,18 +1,17 @@
-"""Shared PEFT LoRA attach logic for diffusion family models.
+"""PEFT LoRA primitives shared by every denoise family.
 
-Five families carried near-identical copies of ``apply_lora``; the PEFT call
-convention (validated saved adapter for warm start vs
-LoraConfig+get_peft_model for fresh adapters) is family-agnostic, so it lives
-here once. Families only override the small hooks that actually differ.
+``DiffusionModelBase.apply_lora`` is the single attach site: it walks the
+model's ``trainable_modules`` and hands each root to ``attach_lora_adapter``
+here (validated saved adapter for a warm start, ``LoraConfig`` +
+``get_peft_model`` for a fresh one). Families declare data on the base class
+(default init, adapter dtype policy, whether the frozen ``previous`` mirror is
+mandatory) and never re-implement the PEFT call sequence.
 
 The previous-policy adapter primitives (``build_lora_config`` /
-``copy_adapter_weights`` / ``freeze_checkpoint_owned_adapter_params``) also
-live here: they are pure PEFT operations with no family specifics. The frozen
+``copy_adapter_weights`` / ``freeze_checkpoint_owned_adapter_params`` /
+``attach_previous_policy_adapter``) are pure PEFT operations too. The frozen
 ``previous`` LoRA mirror they build is what DiffusionNFT's negative branch and
-V-GRPO's importance ratio evaluate the behaviour policy through, so the mixin
-carries the attach / sync pair once (``model.nft_previous_adapter: true`` opts
-a LoRA family in) instead of every family copying it; cosmos/predict2.5 keeps
-its own ``apply_lora`` because it always builds the mirror.
+V-GRPO's importance ratio evaluate the behaviour policy through.
 """
 
 from __future__ import annotations
@@ -23,124 +22,77 @@ from vrl.models.interfaces.runtime import ModelBuild, register_checkpoint_owned_
 from vrl.models.peft_adapter import load_trainable_lora_adapter
 
 
-class LoraModelMixin:
-    """Attach a PEFT LoRA adapter to the family transformer per runtime build."""
+def require_lora_config(build: ModelBuild) -> dict[str, Any]:
+    """Return ``build.lora`` or fail: attach without a LoRA block is a config bug."""
 
-    # Fresh-adapter weight init when the config does not set init_lora_weights.
-    # Wan overrides to True: empty training adapters must initially preserve
-    # base Wan output.
-    _lora_default_init_weights: Any = "gaussian"
-    # Explicit model-parallel families have already placed the frozen base.
-    _lora_preserve_device_placement: bool = False
+    lora_config = getattr(build, "lora", None)
+    if lora_config is None:
+        raise ValueError("LoRA runtime build requires model.lora configuration")
+    return lora_config
 
-    def _lora_dtype(self, build: ModelBuild) -> Any | None:
-        """Dtype for the pre-wrap device move; ``None`` skips the cast.
 
-        Default: the build's parameter dtype — the near-universal diffusers-family
-        behavior. Overrides: cosmos predict2/cosmos3 return ``None`` (their
-        transformer is already cast at load); anima/echo return their stored
-        ``self._dtype`` (single-file checkpoints with their own parameter storage).
-        """
+def attach_lora_adapter(
+    module: Any,
+    lora_config: dict[str, Any],
+    *,
+    lora_path: str | None = None,
+    init_weights_default: Any = "gaussian",
+    autocast_adapter_dtype: bool = True,
+    adapter_name: str = "default",
+) -> Any:
+    """Wrap one trainable root with a PEFT adapter per ``model.lora``.
 
-        return build.parameter_dtype
+    A warm start (``lora_path``) validates the saved adapter's topology against
+    the configured one before mutating ``module``; a fresh adapter takes
+    ``model.lora.init_lora_weights`` or the family's ``init_weights_default``.
+    ``autocast_adapter_dtype`` is PEFT's fp32 adapter upcast; it is threaded
+    through both branches so a warm-started adapter matches a fresh one.
+    """
 
-    def apply_lora(self, build: ModelBuild) -> None:
-        """Wrap the family transformer with PEFT LoRA per ``build.lora_*``."""
-        from peft import LoraConfig, get_peft_model
-
-        # ``self.transformer`` (kept in sync with ``pipeline.transformer`` by every
-        # family's ``_set_transformer``) rather than ``pipeline.transformer``, so this
-        # one attach path also serves the pipeline-less replay models.
-        transformer = self.transformer
-        transformer.requires_grad_(False)
-        dtype = self._lora_dtype(build)
-        # Quantized rollouts keep the checkpoint on CPU until base-weight
-        # compaction. FSDP replay keeps it there until fully_shard can move and
-        # shard one transformer block at a time. Either path would otherwise
-        # materialize the full base model on one GPU before its memory-saving
-        # transform owns the parameters.
-        rollout = getattr(build, "rollout", None)
-        defer_device_move = bool(
-            self._lora_preserve_device_placement
-            or getattr(build, "defer_trainable_device_move", False)
-            or (
-                rollout is not None
-                and getattr(getattr(build, "precision", None), "quantization", None)
-            ),
+    if lora_path:
+        wrapped = load_trainable_lora_adapter(
+            module,
+            lora_path,
+            expected_rank=lora_config["rank"],
+            expected_alpha=lora_config["alpha"],
+            expected_dropout=lora_config.get("dropout", 0.0),
+            expected_target_modules=lora_config["target_modules"],
+            adapter_name=adapter_name,
+            autocast_adapter_dtype=autocast_adapter_dtype,
         )
-        if not defer_device_move:
-            if dtype is None:
-                transformer.to(self.device)
-            else:
-                transformer.to(self.device, dtype=dtype)
+        wrapped.set_adapter(adapter_name)
+        return wrapped
 
-        lora_config = build.lora
-        if lora_config is None:
-            raise ValueError("LoRA runtime build requires model.lora configuration")
+    from peft import LoraConfig, get_peft_model
 
-        lora_path = build.lora_path
-        if lora_path:
-            wrapped = load_trainable_lora_adapter(
-                transformer,
-                lora_path,
-                expected_rank=lora_config["rank"],
-                expected_alpha=lora_config["alpha"],
-                expected_dropout=lora_config.get("dropout", 0.0),
-                expected_target_modules=lora_config["target_modules"],
-            )
-            wrapped.set_adapter("default")
-            self._set_transformer(wrapped)
-            return
+    cfg = LoraConfig(
+        r=lora_config["rank"],
+        lora_alpha=lora_config["alpha"],
+        lora_dropout=lora_config.get("dropout", 0.0),
+        init_lora_weights=lora_config.get("init_lora_weights", init_weights_default),
+        target_modules=lora_config["target_modules"],
+    )
+    return get_peft_model(
+        module,
+        cfg,
+        adapter_name=adapter_name,
+        autocast_adapter_dtype=autocast_adapter_dtype,
+    )
 
-        cfg = LoraConfig(
-            r=lora_config["rank"],
-            lora_alpha=lora_config["alpha"],
-            lora_dropout=lora_config.get("dropout", 0.0),
-            init_lora_weights=lora_config.get(
-                "init_lora_weights",
-                self._lora_default_init_weights,
-            ),
-            target_modules=lora_config["target_modules"],
-        )
-        self._set_transformer(get_peft_model(transformer, cfg))
-        if previous_policy_adapter_requested(build):
-            self.attach_previous_policy_adapter(build)
 
-    # -- previous-policy adapter (DiffusionNFT / V-GRPO) ------------------
-    # Both objectives evaluate the behaviour policy through a frozen ``previous``
-    # copy of the trainable adapter: forward-only under no_grad, refreshed by
-    # weight copy after each optimizer step, never optimized. Attach runs right
-    # after the normal LoRA attach (``self.transformer`` must carry ``default``).
+def attach_previous_policy_adapter(transformer: Any, lora_config: dict[str, Any]) -> None:
+    """Build the frozen ``previous`` adapter on ``transformer``, seeded from ``default``.
 
-    def attach_previous_policy_adapter(self, build: ModelBuild) -> None:
-        """Build the frozen ``previous`` adapter, seeded from ``default``.
+    Idempotent on the adapter slot: only adds it once, then (re)seeds it from
+    the current ``default`` so ``previous == default`` at attach time (the
+    lr=0 invariants of NFT and V-GRPO). Leaves ``default`` active.
+    """
 
-        Idempotent on the adapter slot: only adds it once, then (re)seeds it from
-        the current ``default`` so ``previous == default`` at attach time (the
-        lr=0 invariants of NFT and V-GRPO). Leaves ``default`` active.
-        """
-
-        transformer = self.transformer
-        lora_config = getattr(build, "lora", None)
-        if lora_config is None:
-            raise ValueError(
-                "attach_previous_policy_adapter requires build.lora (LoRA only)",
-            )
-        if "previous" not in getattr(transformer, "peft_config", {}):
-            transformer.add_adapter("previous", build_lora_config(lora_config))
-        copy_adapter_weights(transformer, src="default", dst="previous")
-        freeze_checkpoint_owned_adapter_params(transformer, "previous")
-        transformer.set_adapter("default")
-
-    def sync_previous_policy_adapter(self, *, decay: float = 0.0) -> None:
-        """Refresh the ``previous`` adapter from the trainable ``default`` adapter.
-
-        Reached via getattr dispatch from the objectives' ``after_optimizer_step``
-        (vrl/algorithms/diffusion_nft.py, vrl/algorithms/v_grpo.py), not a
-        direct call — keep even though textual call-site searches miss it.
-        """
-
-        copy_adapter_weights(self.transformer, src="default", dst="previous", decay=decay)
+    if "previous" not in getattr(transformer, "peft_config", {}):
+        transformer.add_adapter("previous", build_lora_config(lora_config))
+    copy_adapter_weights(transformer, src="default", dst="previous")
+    freeze_checkpoint_owned_adapter_params(transformer, "previous")
+    transformer.set_adapter("default")
 
 
 def previous_policy_adapter_requested(build: ModelBuild) -> bool:
@@ -258,10 +210,12 @@ def freeze_checkpoint_owned_adapter_params(module: Any, adapter: str) -> None:
 
 
 __all__ = [
-    "LoraModelMixin",
+    "attach_lora_adapter",
+    "attach_previous_policy_adapter",
     "build_lora_config",
     "copy_adapter_weights",
     "freeze_checkpoint_owned_adapter_params",
     "previous_policy_adapter_requested",
+    "require_lora_config",
     "require_lora_for_previous_policy_adapter",
 ]

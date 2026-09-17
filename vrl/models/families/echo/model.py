@@ -35,7 +35,6 @@ from vrl.models.steps.denoise.base import (
     DiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 # LTX-2 latent channel dimension (transformer in/out channels). The other latent
 # grid factors (temporal/spatial compression) are read from Echo's own
@@ -108,7 +107,7 @@ class EchoSamplingState(DiffusionSamplingStateBase):
     num_train_timesteps: int  # sigma = t / num_train_timesteps
 
 
-class EchoModel(LoraModelMixin, DiffusionModelBase):
+class EchoModel(DiffusionModelBase):
     """Diffusers-free JoyAI-Echo video flow-matching policy."""
 
     # Echo replay keeps the velocity model in its native dtype; mirror the family
@@ -142,10 +141,6 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
     def _set_transformer(self, transformer: Any) -> None:
         self.transformer = transformer
         self._echo.model = transformer
-
-    def _lora_dtype(self, build: ModelBuild) -> Any:
-        del build
-        return self._dtype
 
     @property
     def scheduler(self) -> Any:

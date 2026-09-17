@@ -33,7 +33,6 @@ from vrl.models.steps.denoise.common import (
     expand_tensor_to_batch,
     shared_replay_tensor,
 )
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
 @dataclass
@@ -46,7 +45,7 @@ class AnimaSamplingState(GuidedDiffusionSamplingStateBase):
     padding_mask: torch.Tensor
 
 
-class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
+class AnimaModel(CosmosReplayForward, DiffusionModelBase):
     """Single-file Anima model on the shared diffusion RL path."""
 
     def __init__(
@@ -172,10 +171,6 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
             device=build.device,
             dtype=dtype,
         )
-
-    def _lora_dtype(self, build: ModelBuild) -> Any:
-        del build
-        return self._dtype
 
     def apply_full_finetune(self, build: ModelBuild) -> None:
         self.transformer.requires_grad_(True)

@@ -70,7 +70,10 @@ class H3GenerationPlacement:
 
 
 class PartitionedH3GenerationModel(MiniMaxH3Model):
-    _lora_preserve_device_placement = True
+    def _defer_trainable_device_move(self, build: ModelBuild) -> bool:
+        # The frozen base is already placed block-by-block across devices.
+        del build
+        return True
 
     def __init__(self, *, pipeline: Any, device: Any, placement: H3GenerationPlacement):
         super().__init__(pipeline=pipeline, device=device)

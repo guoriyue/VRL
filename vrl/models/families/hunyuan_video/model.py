@@ -47,7 +47,6 @@ from vrl.models.steps.denoise.common import (
     expand_batch_timestep,
     pack_eval_timestep,
 )
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
 @dataclass
@@ -61,7 +60,6 @@ class HunyuanVideoSamplingState(GuidedDiffusionSamplingStateBase):
 
 class HunyuanVideoModel(
     VaeDecodeMixin,
-    LoraModelMixin,
     DiffusersPipelineModelBase,
     DiffusionBackboneRunnerBase,
 ):

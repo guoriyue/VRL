@@ -51,10 +51,7 @@ from vrl.models.steps.denoise.common import (
     expand_batch_timestep,
     pack_eval_timestep,
 )
-from vrl.models.steps.denoise.common.lora import (
-    LoraModelMixin,
-    require_lora_for_previous_policy_adapter,
-)
+from vrl.models.steps.denoise.common.lora import require_lora_for_previous_policy_adapter
 
 
 @dataclass
@@ -81,7 +78,6 @@ class SD3SamplingState(GuidedDiffusionSamplingStateBase):
 
 class SD3_5Model(
     VaeDecodeMixin,
-    LoraModelMixin,
     DiffusersPipelineModelBase,
     DiffusionBackboneRunnerBase,
 ):

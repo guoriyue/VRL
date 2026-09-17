@@ -32,7 +32,7 @@ import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 import torch
 
@@ -45,7 +45,6 @@ from vrl.models.families.wan_2_1.config import (
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.peft_adapter import (
     disable_adapter_on,
-    load_trainable_lora_adapter,
     peel_peft,
 )
 from vrl.models.steps.denoise import (
@@ -65,7 +64,6 @@ from vrl.models.steps.denoise.common import (
     expand_tensor_to_batch,
     pack_eval_timestep,
 )
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 from vrl.models.weight_utils import load_weights_into, require_weights_for
 
 logger = logging.getLogger(__name__)
@@ -132,7 +130,6 @@ def _routing_timestep(
 
 
 class WanT2VDiffusersModel(
-    LoraModelMixin,
     DiffusersPipelineModelBase,
     DiffusionBackboneRunnerBase,
 ):
@@ -255,7 +252,22 @@ class WanT2VDiffusersModel(
         )
 
     # Empty training adapters must initially preserve base Wan output.
-    _lora_default_init_weights = True
+    lora_init_weights_default: ClassVar[Any] = True
+    # Adapters are created in the transformer's resolved dtype, not peft's
+    # default fp32 upcast: the FSDP actor policy stores every trainer parameter
+    # in the resolved low precision (update precision comes from the fp32-master
+    # optimizer on all topologies), so an fp32 adapter makes the rollout
+    # worker's runtime dtype diverge from the FSDP trainer's synced payload and
+    # load_trainable_state fails its strict dtype check (measured on the hpsv3
+    # fsdp 4-rank smoke, 2026-08-16).
+    lora_autocast_adapter_dtype: ClassVar[bool] = False
+
+    def _defer_trainable_device_move(self, build: ModelBuild) -> bool:
+        # Keep the full transformer on CPU for FSDP or pipeline CPU offload.
+        return bool(
+            getattr(build, "defer_trainable_device_move", False)
+            or _resolve_wan_offload_mode(build) != "none"
+        )
 
     def _wan_transformers(self) -> dict[str, Any]:
         modules = {"transformer": self.transformer}
@@ -278,75 +290,6 @@ class WanT2VDiffusersModel(
                 # CPU storage now so trainer payloads and rollout parameters have
                 # one exact dtype without prematurely occupying the whole GPU.
                 module.to(dtype=build.parameter_dtype)
-
-    def apply_lora(self, build: ModelBuild) -> None:
-        """Attach LoRA to the configured Wan trainable transformer(s)."""
-
-        from peft import LoraConfig, get_peft_model
-
-        # Validated by WanModelSection; only the fp32 cast below reads it.
-        adapter_dtype = (build.model_config or {}).get("lora_parameter_dtype")
-        lora_path = build.lora_path
-        names = self._trainable_transformer_names
-        if lora_path and len(names) != 1:
-            raise ValueError(
-                "model.lora.path can only resume one Wan transformer; set "
-                "model.trainable_transformers to a single transformer name",
-            )
-
-        lora_config = build.lora
-        if lora_config is None:
-            raise ValueError("LoRA runtime build requires model.lora configuration")
-
-        for name in names:
-            transformer = self._wan_transformers()[name]
-            transformer.requires_grad_(False)
-            # Keep the full transformer on CPU for FSDP or pipeline CPU offload.
-            defer_device_move = bool(
-                getattr(build, "defer_trainable_device_move", False)
-                or _resolve_wan_offload_mode(build) != "none"
-            )
-            if not defer_device_move:
-                transformer.to(self.device)
-            if lora_path:
-                wrapped = load_trainable_lora_adapter(
-                    transformer,
-                    lora_path,
-                    expected_rank=lora_config["rank"],
-                    expected_alpha=lora_config["alpha"],
-                    expected_dropout=lora_config.get("dropout", 0.0),
-                    expected_target_modules=lora_config["target_modules"],
-                    # Same construction dtype as the fresh-create branch below.
-                    autocast_adapter_dtype=False,
-                )
-                wrapped.set_adapter("default")
-            else:
-                cfg = LoraConfig(
-                    r=lora_config["rank"],
-                    lora_alpha=lora_config["alpha"],
-                    lora_dropout=lora_config.get("dropout", 0.0),
-                    init_lora_weights=lora_config.get(
-                        "init_lora_weights",
-                        self._lora_default_init_weights,
-                    ),
-                    target_modules=lora_config["target_modules"],
-                )
-                # Adapters must be created in the transformer's resolved dtype,
-                # not peft's default fp32 upcast: the FSDP actor policy stores
-                # every trainer parameter in the resolved low precision (update
-                # precision comes from the fp32-master optimizer on all
-                # topologies), so an fp32 adapter here makes the rollout
-                # worker's runtime dtype diverge from the FSDP trainer's synced
-                # payload — load_trainable_state then fails its strict dtype
-                # check (measured on the hpsv3 fsdp 4-rank smoke, 2026-08-16).
-                # One construction dtype keeps single-process, FSDP, and worker
-                # replicas byte-compatible at weight sync.
-                wrapped = get_peft_model(transformer, cfg, autocast_adapter_dtype=False)
-            if adapter_dtype == "float32":
-                for parameter in wrapped.parameters():
-                    if parameter.requires_grad:
-                        parameter.data = parameter.data.to(dtype=torch.float32)
-            self._set_wan_transformer(name, wrapped)
 
     @property
     def uses_pipeline_cpu_offload(self) -> bool:

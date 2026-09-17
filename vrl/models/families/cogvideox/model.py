@@ -51,7 +51,6 @@ from vrl.models.steps.denoise.common import (
     expand_batch_timestep,
     pack_eval_timestep,
 )
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
 def cogvideox_rotary_embeds(
@@ -121,7 +120,7 @@ class CogVideoXSamplingState(GuidedDiffusionSamplingStateBase):
     vae_scale_factor_spatial: int
 
 
-class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+class CogVideoXModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
     """Diffusers-backed CogVideoX t2v model (v-prediction DDPM family)."""
 
     cfg_mode = "batched_cfg"

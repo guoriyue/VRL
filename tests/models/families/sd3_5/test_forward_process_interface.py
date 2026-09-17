@@ -5,7 +5,7 @@ the real checkpoint: ``diffusion_nft_prepare_transformer_input`` must yield
 kwargs the real (tiny) ``SD3Transformer2DModel`` consumes and that match the
 conditional branch ``forward_step`` runs, ``latents_clean`` must be exported,
 and the frozen ``previous`` adapter must attach and sync through the shared
-``LoraModelMixin`` on a real PEFT-wrapped transformer.
+``DiffusionModelBase`` on a real PEFT-wrapped transformer.
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ def _peft_default_only_replay_model() -> SD3_5ReplayModel:
 
 
 def test_previous_policy_adapter_attaches_frozen_and_syncs_through_the_shared_mixin() -> None:
-    """The replay model (no pipeline) reaches ``LoraModelMixin``'s attach/sync:
+    """The replay model (no pipeline) reaches ``DiffusionModelBase``'s attach/sync:
     a frozen ``previous`` mirror seeded from ``default`` and refreshed on sync."""
     model = _peft_default_only_replay_model()
     build = SimpleNamespace(lora={"rank": 4, "alpha": 8, "target_modules": _LORA_TARGETS})

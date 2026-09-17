@@ -59,7 +59,6 @@ from vrl.models.steps.denoise import (
     ReplayRolloutStubs,
 )
 from vrl.models.steps.denoise.common import ChunkedLatentDecoder, LatentDecodePlan
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 from vrl.models.steps.denoise.common.tensors import expand_tensor_to_batch
 from vrl.utils.logging import init_logger, kv
 
@@ -299,7 +298,7 @@ class MiniMaxH3SamplingState(DiffusionSamplingStateBase):
     audio_rows_by_step: list[torch.Tensor] = field(default_factory=list)
 
 
-class MiniMaxH3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBase):
+class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
     """MiniMax-H3 text-to-video(+audio) generator wrapped for the vrl diffusion RL seam."""
 
     # ``from_build`` is family-owned (modular pipeline, not ``DiffusionPipeline``);
@@ -352,14 +351,6 @@ class MiniMaxH3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModel
             kv(path=build.model_name_or_path, device=build.device, dtype=build.parameter_dtype),
         )
         return cls(pipeline=components, device=build.device)
-
-    def _lora_dtype(self, build: ModelBuild) -> Any | None:
-        # The checkpoint is mixed-precision (fp32 patch projections, timestep
-        # MLP and output heads inside a bf16 stack; ``_keep_in_fp32_modules``).
-        # A dtype cast at LoRA attach would flatten that, so the pre-wrap move
-        # is device-only, as for cosmos.
-        del build
-        return None
 
     # ---- schedule ----
     def set_num_steps(self, n: int) -> None:

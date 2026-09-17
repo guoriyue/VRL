@@ -53,7 +53,6 @@ from vrl.models.steps.denoise.common import (
     MaskedPromptSamplingState,
     VaeDecodeMixin,
 )
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 # 512/1024-MS checkpoints train without micro-conditioning, but the
 # transformer forward still requires the dict when config.sample_size == 128;
@@ -99,7 +98,6 @@ class PixArtSigmaSamplingState(MaskedPromptSamplingState):
 class PixArtSigmaModel(
     VaeDecodeMixin,
     MaskedPromptModelMixin,
-    LoraModelMixin,
     DiffusersPipelineModelBase,
     EncoderAttentionMaskRunnerBase,
 ):

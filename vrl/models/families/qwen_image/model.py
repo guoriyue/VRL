@@ -45,7 +45,6 @@ from vrl.models.steps.denoise.common import (
     pack_eval_timestep,
     set_mu_shifted_timesteps,
 )
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
 @dataclass
@@ -63,7 +62,7 @@ class QwenImageSamplingState(GuidedDiffusionSamplingStateBase):
     vae_scale_factor: int
 
 
-class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+class QwenImageModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
     """Diffusers-backed Qwen-Image t2i model.
 
     Implements the backbone-runner protocol itself. Qwen-Image does TRUE

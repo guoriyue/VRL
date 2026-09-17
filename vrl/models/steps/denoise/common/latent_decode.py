@@ -60,8 +60,7 @@ class VaeDecodeMixin:
     OPT IN BY LISTING THIS MIXIN FIRST in the bases. ``decode_latents`` is an
     ``@abstractmethod`` on ``DiffusionModelBase``, so a mixin placed after
     ``DiffusersPipelineModelBase`` loses the MRO race, the abstract method
-    survives, and the class raises ``TypeError`` at instantiation — the same
-    reason ``LoraModelMixin`` precedes it.
+    survives, and the class raises ``TypeError`` at instantiation.
 
     Families whose decode is more than scale + shift keep their own override:
     flux/qwen_image unpack packed latents first, mochi/cogvideox denormalize

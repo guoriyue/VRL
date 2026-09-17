@@ -51,10 +51,7 @@ from vrl.models.steps.denoise.common import (
     pack_eval_timestep,
     set_mu_shifted_timesteps,
 )
-from vrl.models.steps.denoise.common.lora import (
-    LoraModelMixin,
-    require_lora_for_previous_policy_adapter,
-)
+from vrl.models.steps.denoise.common.lora import require_lora_for_previous_policy_adapter
 
 
 @dataclass
@@ -70,11 +67,11 @@ class FluxSamplingState(GuidedDiffusionSamplingStateBase):
     width: int
 
 
-class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+class FluxModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
     """Diffusers-backed FLUX.1 t2i model.
 
     The frozen ``previous`` LoRA mirror DiffusionNFT and V-GRPO evaluate the
-    behaviour policy through comes from ``LoraModelMixin``
+    behaviour policy through comes from ``DiffusionModelBase.apply_lora``
     (``model.nft_previous_adapter: true``); plain GRPO runs never attach it.
 
     Implements the backbone-runner protocol itself. FLUX.1-dev is

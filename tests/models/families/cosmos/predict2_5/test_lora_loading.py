@@ -39,15 +39,15 @@ def test_predict25_warm_start_validates_effective_topology(
         return _Wrapped()
 
     monkeypatch.setattr(
-        "vrl.models.families.cosmos.predict2_5.model.load_trainable_lora_adapter",
+        "vrl.models.steps.denoise.common.lora.load_trainable_lora_adapter",
         fake_load,
     )
     monkeypatch.setattr(
-        "vrl.models.families.cosmos.predict2_5.model._copy_adapter_weights",
+        "vrl.models.steps.denoise.common.lora.copy_adapter_weights",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "vrl.models.families.cosmos.predict2_5.model._freeze_checkpoint_owned_adapter_params",
+        "vrl.models.steps.denoise.common.lora.freeze_checkpoint_owned_adapter_params",
         lambda *_args, **_kwargs: None,
     )
     model = CosmosPredict25ReplayModel(
@@ -78,6 +78,7 @@ def test_predict25_warm_start_validates_effective_topology(
         "expected_dropout": 0.3,
         "expected_target_modules": ["proj"],
         "adapter_name": "default",
+        "autocast_adapter_dtype": True,
         "active_adapter": "default",
     }
 
@@ -89,7 +90,7 @@ def test_predict25_warm_start_validation_failure_keeps_raw_transformer(
         raise ValueError("topology mismatch")
 
     monkeypatch.setattr(
-        "vrl.models.families.cosmos.predict2_5.model.load_trainable_lora_adapter",
+        "vrl.models.steps.denoise.common.lora.load_trainable_lora_adapter",
         reject,
     )
     model = CosmosPredict25ReplayModel(

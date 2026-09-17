@@ -44,7 +44,6 @@ from vrl.models.steps.denoise.common import (
     replay_tensor,
     shared_replay_tensor,
 )
-from vrl.models.steps.denoise.common.lora import LoraModelMixin
 
 
 @dataclass(slots=True)
@@ -180,7 +179,7 @@ class CosmosPredict2SamplingState(GuidedDiffusionSamplingStateBase):
             )
 
 
-class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBase):
+class CosmosPredict2Model(CosmosReplayForward, DiffusersPipelineModelBase):
     """Diffusers-backed Cosmos Predict2 Video2World model (RL path).
 
     The pipeline is constructed by the family runtime
@@ -220,12 +219,6 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
             pipeline=pipeline,
             device=build.device,
         )
-
-    def _lora_dtype(self, build: ModelBuild) -> Any | None:
-        # The transformer is already cast at load (from_pretrained torch_dtype);
-        # skip the mixin's default pre-wrap dtype cast.
-        del build
-        return None
 
     # -- encode_prompt -------------------------------------------------
 
