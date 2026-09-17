@@ -360,7 +360,8 @@ def test_diffusion_gather_rejects_mixed_field_dtypes(field) -> None:
     request = _request(cfg=False)
     batches = _diffusion_batches({"model_family": "sd3_5"})
     setattr(batches[1], field, getattr(batches[1], field).double())
-    with pytest.raises(ValueError, match=rf"{field!r}.*index 1.*dtypes must match"):
+    error_field = "reward_media" if field == "video" else field
+    with pytest.raises(ValueError, match=rf"{error_field!r}.*index 1.*dtypes must match"):
         DiffusionBatchGatherer().merge_generation_batches(request, request.sample_rows(), batches)
 
 

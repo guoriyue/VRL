@@ -14,8 +14,6 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from vrl.utils.artifacts import MaterializedArtifact
-
 # Internal schema key joining rollout prompt groups across the reward boundary.
 # The collector is the only writer; batch-capable rewards consume the opaque
 # value by equality and must never reconstruct it from sample ids or prompt text.
@@ -26,17 +24,14 @@ REWARD_GROUP_ID_METADATA_KEY = "reward_group_id"
 class RewardSample:
     """One generated sample at the reward-domain boundary.
 
-    ``output`` is the in-memory media (frames / latents) for rewards that read
-    tensors; ``artifacts`` are worker-materialized files keyed by the reward
-    component that asked for them. Online training ships only artifacts for
-    disk rewards, so ``output`` may be None there.
+    ``output`` is decoded media or a boxed object-store sample reference.
+    Transport selection and scorer-local files do not change this contract.
     """
 
     prompt: str
-    output: Any  # Final generated media (frames / latents), or None
+    output: Any
     sample_id: str
     metadata: dict[str, Any] = field(default_factory=dict)
-    artifacts: dict[str, MaterializedArtifact] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.sample_id:

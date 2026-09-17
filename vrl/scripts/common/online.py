@@ -365,7 +365,7 @@ def _validate_reward_placement(
             "reserved no reward bundle; the reservation and execution device "
             "have diverged",
         )
-    if reward_device.startswith("cuda"):
+    if reward_device.startswith("cuda") and not resources.cross_node:
         # reward_device is a process-local torch ordinal while the placement
         # bundle reports Ray physical ids; on a rank-local torchrun launch the
         # two spaces differ (CUDA mask narrows torch to one logical device),
@@ -885,9 +885,9 @@ async def run_online_recipe(
     # trainer device so the trainer model, rollout, and weight sync all land on
     # this rank's card. single_process passes the resolver device straight through.
     device = training_context.device
-    # Rewards execute in this driver process. A dedicated local reward reservation
-    # must therefore select the reward model's actual CUDA device; cross-node reward
-    # ordinals are remote budget tokens and fail here before any model is loaded.
+    # Resolve device intent before actor construction. Dedicated Ray placement
+    # maps its reservation to an actor-local GPU; shared actors borrow this
+    # trainer's physical device under the topology's parking lease.
     reward_inputs = resolved.reward_inputs(trainer_device=device)
     data_config = built.root.data
     if family_entry.task in {"i2v", "v2w"}:
@@ -968,10 +968,9 @@ async def run_online_recipe(
     scheduler = getattr(bundle, "scheduler", None)
 
     # One run-level Ray placement group owns the trainer/reward reservations and
-    # rollout bundles for the whole run. It is created after the trainer model is
-    # placed and before reward/rollout construction: the rollout actor receives
-    # its role placement, while the local reward model uses the reserved physical
-    # device selected above.
+    # rollout bundles for the whole run. Both actor roles receive their resolved
+    # ownership before construction; shared rewards borrow the trainer/rollout
+    # GPU only through the phase parking lease.
     placement_owner = GlobalRayPlacementOwner(
         resources,
         generation_config.worker,
@@ -1000,7 +999,15 @@ async def run_online_recipe(
             reward_device=reward_inputs.device,
         )
         collector_config = resolved.collector
-        reward_runtime = lifecycle.reward_runtime = build_reward_runtime(reward_inputs)
+        from vrl.scripts.common.factory import resolve_reward_actor_placement
+
+        reward_placement = resolve_reward_actor_placement(
+            reward_inputs,
+            placement_owner,
+        )
+        reward_runtime = lifecycle.reward_runtime = build_reward_runtime(
+            reward_inputs, ray_placement=reward_placement
+        )
         algorithm_and_evaluator = AlgorithmEvaluatorPair.from_configs(
             family_entry=family_entry,
             built=built,

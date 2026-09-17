@@ -1,6 +1,6 @@
-"""PhyMotion human-dynamics reward function (disk artifacts + in-process runtime).
+"""PhyMotion human-dynamics reward function.
 
-A ``DiskArtifactRewardFunction`` on the disk-artifact path whose runtime delegates to an
+A ``ModelRewardFunction`` whose runtime delegates to an
 external PhyMotion environment (SMPL + MuJoCo) via a configured command (see
 ``vrl.rewards.models.phymotion.PhyMotionModel``). Returns
 ``kinematic`` / ``contact`` / ``dynamic`` / ``overall``; default
@@ -13,10 +13,10 @@ at a working PhyMotion install.
 
 from __future__ import annotations
 
-from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.base import ModelRewardFunction
 
 
-class PhyMotionReward(DiskArtifactRewardFunction):
+class PhyMotionReward(ModelRewardFunction):
     """PhyMotion human-dynamics reward via an external scorer."""
 
     model_factory = "vrl.rewards.models.phymotion:PhyMotionModel"

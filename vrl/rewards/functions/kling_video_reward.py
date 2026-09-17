@@ -1,18 +1,18 @@
 """Kling VideoReward entry point for world-model RL.
 
-``KlingVideoReward`` writes each sample's media to disk and scores it through
-the configured in-process or HTTP runtime. ``DiskArtifactRewardFunction`` is the
+``KlingVideoReward`` forwards sample media to the configured inference runtime.
+The file-only Kling model receives a scorer-local MP4. ``ModelRewardFunction`` is the
 transport capability boundary; this file only pins the Kling video-reward model
 factory and its defaults.
 """
 
 from __future__ import annotations
 
-from vrl.rewards.base import DiskArtifactRewardFunction, ProductionContract
+from vrl.rewards.base import ModelRewardFunction, ProductionContract
 
 
-class KlingVideoReward(DiskArtifactRewardFunction):
-    """Kling VideoReward scored from disk artifacts."""
+class KlingVideoReward(ModelRewardFunction):
+    """Kling VideoReward scored through the configured runtime."""
 
     model_factory = "vrl.rewards.models.kling_video_reward:KlingVideoRewardModel"
     request_prefix = "kling-video-reward"

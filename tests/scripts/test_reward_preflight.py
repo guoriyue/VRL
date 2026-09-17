@@ -30,12 +30,29 @@ def _config(tmp_path, *overrides: str):
 
 
 def test_preflight_scores_every_row_with_every_component(tmp_path) -> None:
+    import ray
+
+    initialized_before = ray.is_initialized()
     report = preflight_rewards(_config(tmp_path), prompts=2, device=torch.device("cpu"), seed=3)
 
     assert len(report.prompts) == 2
     assert set(report.output.components) == {"image_sharpness"}
     assert len(report.output.scores) == 2
     assert report.lines()[0].startswith("prompt")
+    assert ray.is_initialized() == initialized_before
+
+
+def test_preflight_closes_its_ray_session_when_scoring_fails(tmp_path) -> None:
+    import ray
+
+    initialized_before = ray.is_initialized()
+    with pytest.raises((ValueError, KeyError), match="missing"):
+        preflight_rewards(
+            _config(tmp_path, "reward.kwargs.image_sharpness.score_key=missing"),
+            prompts=1,
+            device=torch.device("cpu"),
+        )
+    assert ray.is_initialized() == initialized_before
 
 
 def test_preflight_can_score_the_eval_manifest(tmp_path) -> None:

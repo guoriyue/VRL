@@ -1,9 +1,9 @@
-"""VideoScore2 reward function (disk artifacts + in-process runtime).
+"""VideoScore2 reward function.
 
-A ``DiskArtifactRewardFunction`` on the disk-artifact path whose runtime loads ``TIGER-Lab/VideoScore2`` and
+A ``ModelRewardFunction`` whose runtime loads ``TIGER-Lab/VideoScore2`` and
 returns ``visual_quality`` / ``text_alignment`` / ``physical_common_sense`` /
 ``overall`` per artifact. This file only pins the model factory and the
-VideoScore2 defaults; transport and disk-vs-in-memory wiring are shared.
+VideoScore2 defaults; transport and scorer-local media adaptation are shared.
 
 The default ``score_key`` is ``physical_common_sense`` (see
 ``vrl/config/presets/reward/videoscore2.yaml``) so a motion/physics compound gets the
@@ -12,11 +12,11 @@ naturalness-and-plausibility axis without also pulling in text alignment.
 
 from __future__ import annotations
 
-from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.base import ModelRewardFunction
 
 
-class VideoScore2Reward(DiskArtifactRewardFunction):
-    """VideoScore2 reward scored from disk artifacts."""
+class VideoScore2Reward(ModelRewardFunction):
+    """VideoScore2 reward scored through the configured runtime."""
 
     model_factory = "vrl.rewards.models.videoscore2:VideoScore2Model"
     request_prefix = "videoscore2"

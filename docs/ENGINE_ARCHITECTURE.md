@@ -154,7 +154,7 @@ engine.
 | | `MemoryParkingScorer` | Optional capability (dual of `BatchSizeProbeExecutor`): `requires_memory_parking`, `activate`, `park_memory` for verified GPU parking. |
 | | `ArtifactRetainingError` | Error capability: `retain_reward_artifacts` declared by transport errors whose scoring state is unknown — the artifact owner keeps shared files alive. `RemoteRewardServiceError` satisfies it. |
 | `inference.py` | `RewardInferenceArtifact`, `RewardInferenceRequest`, `RewardInferenceResult` | The schema both transports exchange; the service wire format derives its field sets from these dataclasses. `RewardInferenceRequest.validate_and_order_results()` is the identity guard every transport runs: one typed, finite result per artifact, restored to request order. |
-| `artifacts.py` | `MediaType`, `ArtifactFormat`, `RewardArtifactStore` (protocol), `InMemoryRewardArtifactStore`, `DiskRewardArtifactStore` | The store seam: `materialize` builds artifacts; exactly one of `release`/`retain` runs at a terminal state. In-memory is the default; the disk store writes integrity-checked files (mp4/`.pt`) for the shared-filesystem service transport and tracks path ownership so a file a live remote scorer might read is never deleted. |
+| `artifacts.py` | `MediaType`, `ArtifactFormat`, `RewardArtifactStore` (protocol), `InMemoryRewardArtifactStore`, `DiskRewardArtifactStore` | The store seam: `materialize` builds artifacts; exactly one of `release`/`retain` runs at a terminal state. Tensors or boxed references are the default. The disk store is explicitly selected for archives or file-backed inputs and tracks ownership; scoring transport does not imply a driver-side file. |
 | `launch_contract.py` | `RewardWorkerLaunchContract` | The typed closed key set the runtime branches on, parsed once from `worker_config` by both processes that read it (in-process scorer, standalone service). Twin: `GenerationRuntimeLaunchContract`. |
 | `types.py` | `RewardSample`, `RewardOutput` | Collector-facing input/output pair. |
 
@@ -181,12 +181,12 @@ classDiagram
     class CumemRewardFunction {
         memory_parking_residual_bytes_limit = CUDA limit
     }
-    class DiskArtifactRewardFunction {
-        __init__ builds DiskRewardArtifactStore + scorer
+    class ModelRewardFunction {
+        __init__ resolves model factory + scorer
     }
     RewardFunction <|-- InferenceRewardFunction
     InferenceRewardFunction <|-- CumemRewardFunction
-    CumemRewardFunction <|-- DiskArtifactRewardFunction
+    CumemRewardFunction <|-- ModelRewardFunction
     RewardFunction <|-- MultiReward
     RewardFunction <|-- GenEvalReward
     InferenceRewardFunction <|-- NSFWSafetyReward
@@ -195,13 +195,13 @@ classDiagram
     InferenceRewardFunction <|-- TargetDinoSimilarityReward
     CumemRewardFunction <|-- AestheticReward
     CumemRewardFunction <|-- PickScoreReward
-    DiskArtifactRewardFunction <|-- KlingVideoReward
-    DiskArtifactRewardFunction <|-- RoboticsVideoReward
-    DiskArtifactRewardFunction <|-- Cosmos3ReasonerReward
-    DiskArtifactRewardFunction <|-- VideoScore2Reward
-    DiskArtifactRewardFunction <|-- VideoConPhysicsReward
-    DiskArtifactRewardFunction <|-- UnifiedRewardVideoReward
-    DiskArtifactRewardFunction <|-- PhyMotionReward
+    ModelRewardFunction <|-- KlingVideoReward
+    ModelRewardFunction <|-- RoboticsVideoReward
+    ModelRewardFunction <|-- Cosmos3ReasonerReward
+    ModelRewardFunction <|-- VideoScore2Reward
+    ModelRewardFunction <|-- VideoConPhysicsReward
+    ModelRewardFunction <|-- UnifiedRewardVideoReward
+    ModelRewardFunction <|-- PhyMotionReward
 ```
 
 - **`RewardFunction`** — plugin base: lifecycle defaults, scalar→batch
@@ -219,11 +219,12 @@ classDiagram
 - **`CumemRewardFunction`** — declares that all model CUDA state is built in
   the tagged pool, enabling verified memory parking
   (`memory_parking_residual_bytes_limit`).
-- **`DiskArtifactRewardFunction`** — real constructor that builds the
-  `DiskRewardArtifactStore` and (unless a ready scorer is injected) the
-  in-process scorer from `model_factory` + `worker_config`. Registry
-  preflight gates HTTP inference on `issubclass(reward_cls, DiskArtifactRewardFunction)` —
-  in-memory media cannot ride the HTTP transport.
+- **`ModelRewardFunction`** — real constructor that builds the
+  scorer from `model_factory` + `worker_config`, unless a ready scorer is
+  injected. Registry preflight admits remote inference through this model-factory
+  contract. Media stays in memory by default; `archive_dir` separately opts into
+  retained experiment output. File-only models declare `input_artifact_format`
+  and receive temporary files owned by the scoring process.
 - **`MultiReward`** — weighted composite built by the registry
   (`MultiReward.from_dict`, called from `vrl/scripts/common/factory.py`);
   aggregates both capability flags with `all()` across components (one
@@ -236,9 +237,9 @@ classDiagram
 | Class | Role |
 |---|---|
 | `RewardFunctionRuntime` (`runtime.py`) | Implements `RewardRuntime` around the configured `RewardFunction`: lifecycle FSM, deadlines, parking gate (`validate_parking_residual`). What `RayGenerationRuntime` is to generation. |
-| `InProcessRewardScorer` (`runtime.py`) | `RewardScorer` + `MemoryParkingScorer` implementation: builds the reward model lazily from `RewardWorkerLaunchContract.model_factory` (inside a `CumemPool` when parking is on), scores via `_score_artifacts` (batch hook or per-artifact call loop). |
+| `InProcessRewardScorer` (`runtime.py`) | `RewardScorer` + `MemoryParkingScorer` implementation: builds the model from `RewardRuntimeLaunchContract.model_factory` (inside a `CumemPool` when parking is on). `_score_artifacts` resolves media and owns model-required temporary files; `_infer` runs the batch hook or per-artifact loop. Remote scoring processes reuse it. |
 | `build_reward_scorer` (`runtime.py`) | Factory: worker config or `RewardInferenceConfig` → in-process or HTTP scorer. |
-| `HttpRewardScorer` (`service/client.py`) | `RewardScorer` + `RemoteReadyScorer` over HTTP: checks service identity/capabilities at `ensure_ready`, requires the shared-filesystem artifact transport, marks ambiguous transport failures with `retain_reward_artifacts`. |
+| `HttpRewardScorer` (`service/client.py`) | `RewardScorer` + `RemoteReadyScorer` over HTTP: checks service identity/capabilities at `ensure_ready` and uploads tensor media, with explicit shared-file inputs also supported. Ambiguous failures retain borrowed/shared artifacts where applicable. |
 | `RewardService`, `RewardServiceConfig` (`service/server.py`) | The standalone scoring process: parses the same launch contract, re-verifies artifact integrity (`sha256_file`), runs the same `validate_and_order_results` guard server-side. |
 | `RewardScoringThread` (`service/owner.py`) | Runs every runtime operation on one dedicated event-loop thread inside the service. |
 | `RewardServiceInfo`, `RewardServiceErrorCode`, `RewardServiceProtocolError(ValueError)`, `RemoteRewardServiceError(RuntimeError)` (`service/protocol.py`) | The wire protocol vocabulary; `RemoteRewardServiceError` carries `retain_reward_artifacts` (typed ctor field) and thereby satisfies `ArtifactRetainingError`. |
@@ -248,6 +249,7 @@ classDiagram
 | Class | Inherits | Notes |
 |---|---|---|
 | `RewardModel` | Protocol | What a scorer drives: `__call__(artifact) -> scores` (optional `score_batch`). |
+| `FileRewardModel` | Structural protocol | Optional `input_artifact_format` declaration (`mp4` or `tensor`) for file-only models. The scoring process creates and cleans temporary input files; media-native models omit this declaration. |
 | `LazyTorchModule` | ABC | Defers module construction to `prepare_for_inference()` so weights land in the runtime's CuMem build frame, never in `__init__`. |
 | `TorchRewardModel` | `LazyTorchModule` | Adds the media-scoring loop (`score_media`). |
 | `AestheticRewardModel`, `PickScoreRewardModel` | `TorchRewardModel` | CLIP-head scorers. |

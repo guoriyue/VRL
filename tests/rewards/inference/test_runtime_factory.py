@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+import torch
 
 from vrl.rewards.functions.kling_video_reward import (
     KlingVideoReward,
@@ -40,6 +41,8 @@ class _FakeRewardModel:
 
     def __call__(self, artifact):
         assert artifact.prompt == "prompt"
+        assert artifact.path == ""
+        assert torch.equal(artifact.as_media(), torch.ones(3, 2, 16, 16))
         assert self.worker_config["reward_model_name"] == "KlingTeam/VideoReward@main"
         return {"overall_reward": 3.0, "motion_quality": 1.0}
 
@@ -70,14 +73,13 @@ def test_runtime_requires_model_factory() -> None:
         asyncio.run(runtime.score_batch(request))
 
 
-def test_video_reward_derives_internal_model_factory_from_reward_name(tmp_path) -> None:
+def test_video_reward_derives_internal_model_factory_from_reward_name() -> None:
     """A hub-style ``reward_name`` becomes both ``reward_model_name`` and ``reward_model_version``
     in the scorer's worker config, next to the class's own ``model_factory``.
     """
     reward = KlingVideoReward(
         reward_name="KlingTeam/VideoReward@main",
         score_key="overall_reward",
-        artifact_dir=str(tmp_path),
         worker_config={"model_path": "", "dtype": "bfloat16"},
     )
 
@@ -109,8 +111,9 @@ async def test_runtime_loads_reward_model_via_factory() -> None:
             RewardInferenceArtifact(
                 artifact_id="a0",
                 sample_id="sample-0",
-                path="/tmp/a0.mp4",
+                path="",
                 prompt="prompt",
+                media=torch.ones(3, 2, 16, 16),
             ),
         ),
     )

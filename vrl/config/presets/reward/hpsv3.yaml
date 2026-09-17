@@ -17,9 +17,6 @@ reward:
     hpsv3:
       reward_name: hpsv3   # logical tag (request label)
       score_key: top_frame_mean
-      media_type: video
-      artifact_format: mp4
-      artifact_dir: ${trainer.output_dir}/reward_artifacts
       debug_dir: ${trainer.output_dir}/reward_debug
       # Omit model_path to resolve MizzenAI/HPSv3 from the local HF cache; set
       # worker_config.model_path to a local dir containing HPSv3.safetensors.

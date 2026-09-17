@@ -8,9 +8,9 @@ why accelerator isolation is *verified* against the service's advertised
 ``generation_overlap_safe`` fact rather than assumed. Sessions are loop-affine (aiohttp binds a
 pool to its creation loop), so preflight on the trainer loop hands off only
 validated identity state and the scoring owner builds its own pool. An
-ambiguous POST outcome is settled via explicit request-id cancellation; when
-still unknown, the raised error tells the artifact owner to retain shared
-files a live remote scorer might read.
+ambiguous POST outcome is settled via explicit request-id cancellation.
+Uploaded tensors require no shared files; only the optional shared-path mode
+marks artifacts for retention when a live remote scorer might still read them.
 """
 
 from __future__ import annotations
@@ -72,14 +72,13 @@ class HttpRewardScorer:
         )
 
         if isinstance(service, RewardInferenceConfig):
-            if service.kind not in {"http", "service"}:
+            if service.kind != "http":
                 raise ValueError(
-                    "HttpRewardScorer requires inference.kind=http or service",
+                    "HttpRewardScorer requires inference.kind=http",
                 )
             if not service.endpoint:
                 raise ValueError(
-                    "HttpRewardScorer requires a resolved endpoint; a managed service "
-                    "resolves its loopback endpoint before constructing the client",
+                    "HttpRewardScorer requires an operator-owned HTTP endpoint",
                 )
             if (
                 timeout_s is not None
@@ -131,7 +130,8 @@ class HttpRewardScorer:
         request: RewardInferenceRequest,
     ) -> list[RewardInferenceResult]:
         await self._ensure_identity()
-        payload = request_to_wire(request)
+        # Tensor copies/base64 encoding must not block the scoring owner's loop.
+        payload = await asyncio.to_thread(request_to_wire, request)
         roundtrip_started = time.perf_counter()
         try:
             body, status = await self._request_json("POST", "/score", json_body=payload)
@@ -148,7 +148,9 @@ class HttpRewardScorer:
                 error.code == RewardServiceErrorCode.TRANSPORT_ERROR.value
                 and not await self._settle_ambiguous_request(request.request_id)
             ):
-                error.retain_reward_artifacts = True
+                error.retain_reward_artifacts = any(
+                    artifact.path and artifact.media is None for artifact in request.artifacts
+                )
             raise
         if status >= 400:
             raise error_from_wire(body, status_code=status)
@@ -378,11 +380,19 @@ class HttpRewardScorer:
         json_body: dict[str, Any] | None = None,
     ) -> tuple[Any, int]:
         session = await self._get_session()
+        encoded = (
+            None
+            if json_body is None
+            else await asyncio.to_thread(
+                json.dumps, json_body, allow_nan=False, separators=(",", ":")
+            )
+        )
         try:
             async with session.request(
                 method,
                 f"{self._base_url}{path}",
-                json=json_body,
+                data=encoded,
+                headers={"Content-Type": "application/json"} if encoded is not None else None,
             ) as response:
                 status = response.status
                 try:
@@ -411,7 +421,8 @@ class HttpRewardScorer:
 
         DELETE waits for the server-side task to stop, including a
         non-cooperative model call. A timeout or missing request is still
-        ambiguous, so callers must retain shared artifacts in that case.
+        ambiguous. Shared-path callers must retain their artifacts in that case;
+        uploaded media has no caller-owned remote filesystem lifetime.
         """
 
         try:

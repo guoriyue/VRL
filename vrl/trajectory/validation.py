@@ -122,7 +122,9 @@ class TrajectoryValidator:
                 f"TrajectorySegment {segment.name!r} references unknown reward_view "
                 f"{segment.reward_view!r}",
             )
-        if not segment.tensors:
+        # Generation-only segments may describe media delivered outside the
+        # trajectory (including reward files). Trainable replay still needs tensors.
+        if not segment.tensors and (segment.trainable or segment.reward_view is None):
             self._fail(f"TrajectorySegment {segment.name!r} must contain tensors")
 
         roles: dict[str, TrajectoryTensor] = {}

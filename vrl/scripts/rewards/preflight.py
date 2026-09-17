@@ -8,9 +8,11 @@ synthetic media of the configured sampling geometry, so that failure surfaces
 in seconds instead of after a rollout.
 
 What it exercises: the reward factory (every configured component, device
-placement, HTTP or in-process transport), ``preflight`` / ``activate``, one
+placement, Ray actors or external HTTP transport), ``preflight`` / ``activate``, one
 ``score`` call with per-component scores, and shutdown. What it does not
 claim: anything about the scores' values, which come from random pixels.
+The probe reserves its local ``--device`` independently of the training fleet;
+it does not certify the training run's multi-node topology or memory overlap.
 
 Usage::
 
@@ -89,9 +91,22 @@ def preflight_rewards(
     """Score the first ``prompts`` rows of the configured manifest with the configured reward."""
 
     from vrl.config.builders import build_configs
+    from vrl.config.schema import DistributedSection
+    from vrl.generation.ray.config import RolloutWorkerConfig
+    from vrl.ray.dependencies import require_ray
+    from vrl.ray.placement import GlobalRayPlacementOwner
+    from vrl.ray.resources import (
+        DistributedResourceConfig,
+        ResolvedDistributedResources,
+        RewardResourceConfig,
+        RoleResourceConfig,
+        RolloutResourceConfig,
+    )
+    from vrl.rewards.functions.registry import get_reward
     from vrl.rollouts.collector.config import RolloutCollectorConfig
     from vrl.rollouts.collector.requests import GenerationRequestBuilder
-    from vrl.scripts.common.factory import build_reward_runtime
+    from vrl.scripts.common.factory import build_reward_runtime, resolve_reward_actor_placement
+    from vrl.scripts.common.online import _RayClusterSession
     from vrl.trainers.data.prompts import load_prompt_examples_from_config
 
     built = build_configs(cfg)
@@ -118,17 +133,87 @@ def preflight_rewards(
         _sample_for(example, index, request_builder, built.root.sampling, entry.task, seed)
         for index, example in enumerate(examples)
     )
-    runtime = build_reward_runtime(
-        ResolvedReward(config=built.reward, device=str(device), memory_parking_required=False)
-    )
 
     async def _run() -> RewardOutput:
-        await runtime.preflight()
-        await runtime.activate()
+        runtime = None
+        session = None
+        owner = None
         try:
+            reward = ResolvedReward(
+                config=built.reward, device=str(device), memory_parking_required=False
+            )
+            placement = None
+            if any(
+                inference.kind == "ray" for inference in built.reward.inference_configs.values()
+            ):
+                # This probe owns no generator or trainer. Reserve only its
+                # explicitly selected reward device through the normal planner.
+                selected = ()
+                needs_cuda = any(
+                    inference.kind == "ray"
+                    and get_reward(name)
+                    .resolve_execution_device(
+                        device=str(device),
+                        kwargs=built.reward.kwargs[name],
+                    )
+                    .startswith("cuda")
+                    for name, inference in built.reward.inference_configs.items()
+                )
+                if needs_cuda:
+                    import os
+
+                    ordinal = (
+                        device.index if device.index is not None else torch.cuda.current_device()
+                    )
+                    mask = os.environ.get("CUDA_VISIBLE_DEVICES")
+                    selected = (int(mask.split(",")[ordinal]) if mask else ordinal,)
+                resource_config = DistributedResourceConfig(
+                    visible_devices=list(selected),
+                    trainer=RoleResourceConfig(num_gpus=0),
+                    rollout=RolloutResourceConfig(num_gpus=0, num_engines=0),
+                    reward=RewardResourceConfig(
+                        device="gpu" if selected else "cpu",
+                        devices=list(selected) if selected else "auto",
+                        gpu_pool="dedicated",
+                    ),
+                )
+                probe_root = built.root.model_copy(
+                    update={
+                        "distributed": DistributedSection(resources=resource_config),
+                    }
+                )
+                resources = ResolvedDistributedResources.from_root(
+                    probe_root,
+                    reward_inference=built.reward.inference_configs,
+                )
+                owner = GlobalRayPlacementOwner(
+                    resources,
+                    RolloutWorkerConfig.from_public_section(None),
+                )
+                ray = require_ray()
+                session = _RayClusterSession.connect(
+                    ray,
+                    cross_node=False,
+                    local_num_cpus=owner.required_local_cluster_cpus(),
+                    local_gpu_ids=selected,
+                )
+                owner.create()
+                placement = resolve_reward_actor_placement(reward, owner)
+            runtime = build_reward_runtime(reward, ray_placement=placement)
+            await runtime.preflight()
+            await runtime.activate()
             return await runtime.score(samples)
         finally:
-            await runtime.shutdown()
+            try:
+                if runtime is not None:
+                    await runtime.shutdown()
+            finally:
+                try:
+                    if owner is not None:
+                        owner.shutdown()
+                finally:
+                    if session is not None:
+                        session.shutdown()
 
     output = asyncio.run(_run())
     return PreflightReport(prompts=tuple(sample.prompt for sample in samples), output=output)

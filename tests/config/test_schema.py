@@ -222,9 +222,7 @@ def test_reward_inference_rejects_unknown_component() -> None:
 
 
 def test_production_video_reward_structural_rules() -> None:
-    """A production Kling video-reward config with sleep_offload, a hub reward name, mp4 video
-    artifacts and a text-to-video task passes the production reward contract.
-    """
+    """Production validates the named reward and task, not transport encoding."""
     cfg = OmegaConf.create(
         {
             "algorithm": {"kind": "grpo"},
@@ -243,8 +241,6 @@ def test_production_video_reward_structural_rules() -> None:
                         "sleep_offload": True,
                         "reward_name": "org/model@main",
                         "score_key": "overall",
-                        "media_type": "video",
-                        "artifact_format": "mp4",
                         "worker_config": {},
                     }
                 },

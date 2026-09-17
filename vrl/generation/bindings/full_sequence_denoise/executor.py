@@ -63,14 +63,10 @@ class DiffusionBatchResult:
     log_probs: Any
     timesteps: Any
     kl: Any
-    # Decoded media (uint8 on the wire), or None once the worker materialized
-    # the request's reward artifacts and dropped the tensor from the wire.
+    # Decoded media (uint8), or sample-ordered references from a Ray actor.
     video: Any
     replay_tensors: dict[str, Any]
     context: dict[str, Any]
-    # Worker-written reward files per component, sample order (see
-    # vrl/generation/execution/reward_artifacts.py).
-    artifacts: dict[str, list[Any]] = field(default_factory=dict)
     # Display/provenance-only: emitted through per-batch runtime debug metrics.
     peak_memory_mb: float | None = None
     # Binding-local memory reading consumed and cleared at the worker boundary.
@@ -92,7 +88,7 @@ class DiffusionBatchResult:
         return self.latents[:, 1:]
 
     # The media a reward scores, by one name across the family result types
-    # (the worker's artifact materialization reads and clears it).
+    # (the Ray adapter replaces it with references for online scoring).
     @property
     def reward_media(self) -> Any:
         return self.video

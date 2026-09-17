@@ -5,15 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.base import ModelRewardFunction
 
 
-class ImageSharpnessReward(DiskArtifactRewardFunction):
+class ImageSharpnessReward(ModelRewardFunction):
     """Model-free image sharpness (Laplacian variance) reward on CPU.
 
     In-process the model is built here and media rides the request in memory;
-    ``inference.kind=service`` hands the same kwargs to a driver-launched
-    service that scores this reward's ``.pt`` artifacts.
+    ``inference.kind=ray`` hands the same kwargs and media to a placement-owned
+    Ray actor.
     """
 
     model_factory = "vrl.rewards.models.image_sharpness:ImageSharpnessRewardModel"
@@ -23,7 +23,6 @@ class ImageSharpnessReward(DiskArtifactRewardFunction):
     default_score_key = "image_sharpness"
     default_artifact_format = "tensor"
     default_media_type = "image"
-    in_process_media = "memory"
     eager_model = True
 
     @classmethod

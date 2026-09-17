@@ -653,6 +653,8 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
     collector: Any | None = None
     trainer: OnlineTrainer | None = None
     reward_fn: Any | None = None
+    reward_placement_owner = None
+    reward_ray_session = None
     try:
         device = torch.device("cuda")
         built = build_configs(cfg)
@@ -685,9 +687,42 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             reward_fn = None
         else:
             executor = _build_executor(entry, bundle.model, cfg)
+            ray_placement = None
+            reward_inputs = resolve_reward_inputs(built, resources, trainer_device=device)
+            if case.use_config_reward and any(
+                inference.kind == "ray" for inference in built.reward.inference_configs.values()
+            ):
+                from vrl.generation.ray.config import RayGenerationConfig
+                from vrl.ray.dependencies import require_ray
+                from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
+                from vrl.scripts.common.factory import resolve_reward_actor_placement
+                from vrl.scripts.common.online import _RayClusterSession
+
+                reward_placement_owner = GlobalRayPlacementOwner(
+                    resources,
+                    RayGenerationConfig.from_root(built.root, resources=resources).worker,
+                )
+                ray = require_ray()
+                reward_ray_session = _RayClusterSession.connect(
+                    ray,
+                    cross_node=resources.cross_node,
+                    local_num_cpus=reward_placement_owner.required_local_cluster_cpus(),
+                    local_gpu_ids=tuple(
+                        gpu
+                        for gpu in reward_placement_owner.layout.bundle_gpu_ids
+                        if gpu is not None
+                    ),
+                )
+                if resources.cross_node:
+                    cross_node_preflight(ray, resources)
+                reward_placement_owner.create()
+                ray_placement = resolve_reward_actor_placement(
+                    reward_inputs, reward_placement_owner
+                )
             reward_fn = (
                 build_reward_function(
-                    resolve_reward_inputs(built, resources, trainer_device=device),
+                    reward_inputs,
+                    ray_placement=ray_placement,
                 )
                 if case.use_config_reward
                 else _IndexReward()
@@ -752,18 +787,26 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 samples=int(cfg.rollout.n_samples_per_prompt),
             )
     finally:
-        if trainer is not None:
-            # Production order: park the trainer's state, then release the
-            # collector, so a shared in-process reward can prove its memory
-            # went away against the pre-load baseline.
-            asyncio.run(trainer.rollout_schedule.lifecycle.shutdown_collector_runtime())
-        elif collector is not None:
-            asyncio.run(collector.shutdown())
-        elif reward_fn is not None:
-            # Once constructed, the collector is the reward runtime's sole
-            # terminal owner. The standalone fallback is only for failures
-            # before that ownership transfer completes.
-            asyncio.run(_shutdown_if_present(reward_fn))
+        try:
+            if trainer is not None:
+                # Production order: park the trainer's state, then release the
+                # collector, so a shared reward actor can prove its memory
+                # went away against the pre-load baseline.
+                asyncio.run(trainer.rollout_schedule.lifecycle.shutdown_collector_runtime())
+            elif collector is not None:
+                asyncio.run(collector.shutdown())
+            elif reward_fn is not None:
+                # Once constructed, the collector is the reward runtime's sole
+                # terminal owner. The standalone fallback is only for failures
+                # before that ownership transfer completes.
+                asyncio.run(_shutdown_if_present(reward_fn))
+        finally:
+            try:
+                if reward_placement_owner is not None:
+                    reward_placement_owner.shutdown()
+            finally:
+                if reward_ray_session is not None:
+                    reward_ray_session.shutdown()
         del trainer, collector, reward_fn, bundle
         gc.collect()
         if torch.cuda.is_available():
@@ -806,11 +849,9 @@ def _local_reward_overrides(tmp_path: Path, model_factory: str | None) -> tuple[
     artifact_dir = tmp_path / "reward_artifacts"
     debug_dir = tmp_path / "reward_debug"
     overrides = [
-        f"reward.kwargs.kling_video_reward.artifact_dir={artifact_dir.as_posix()}",
+        f"reward.kwargs.kling_video_reward.archive_dir={artifact_dir.as_posix()}",
         f"reward.kwargs.kling_video_reward.debug_dir={debug_dir.as_posix()}",
-        # Scored artifacts are released after scoring by default; keep them so
-        # the on-disk transport can be asserted.
-        "reward.kwargs.kling_video_reward.retain_artifacts=true",
+        # Explicit experiment archives are independent of the reward transport.
         "reward.kwargs.kling_video_reward.worker_config.local_files_only=true",
     ]
     if model_factory is not None:

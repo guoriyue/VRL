@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from vrl.utils.media_reference import MediaReference
 from vrl.utils.validation import require_int
 
 
@@ -33,8 +34,8 @@ class RewardInferenceArtifact:
     size_bytes: int | None = None
     sha256: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    # Optional in-memory payload (e.g. an image/video tensor). The HTTP transport
-    # ships file references; the in-process runtime can avoid materialization.
+    # A tensor or boxed Ray sample reference. Only the scoring process (or an
+    # external HTTP uploader) resolves references; the driver forwards them.
     media: Any = None
 
     def __post_init__(self) -> None:
@@ -78,6 +79,8 @@ class RewardInferenceArtifact:
         """
 
         if self.media is not None:
+            if isinstance(self.media, MediaReference):
+                return self.media.resolve()
             return self.media
         if self.path.endswith(".pt"):
             import torch
@@ -149,7 +152,7 @@ class RewardInferenceRequest:
     ) -> list[RewardInferenceResult]:
         """Validate one finite result per artifact and restore request order.
 
-        Every transport (in-process, HTTP client, HTTP server) runs scored
+        Every transport (in-process, Ray, HTTP client, HTTP server) runs scored
         results through this before handing them back, so a scorer that drops,
         duplicates, invents, or mistypes a result fails at the boundary it
         crossed. The request owns the check because the request defines the
@@ -174,6 +177,20 @@ class RewardInferenceRequest:
                 f"reward inference result/artifact mismatch: missing={missing}, extra={extra}",
             )
         return [by_id[artifact_id] for artifact_id in expected_ids]
+
+    def resolve_media(self) -> RewardInferenceRequest:
+        """Resolve boxed media at the consumer, sharing fetches across samples."""
+
+        cache: dict[Any, Any] = {}
+        return replace(
+            self,
+            artifacts=tuple(
+                replace(artifact, media=artifact.media.resolve(cache))
+                if isinstance(artifact.media, MediaReference)
+                else artifact
+                for artifact in self.artifacts
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)

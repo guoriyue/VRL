@@ -100,11 +100,6 @@ reward:
     unified_reward_video:
       reward_name: unified_reward_video
       score_key: overall
-      media_type: video
-      artifact_format: mp4
-      # Resolves under the service's configured artifact_roots.
-      # HTTP carries the control protocol; the mp4 moves as a filesystem path.
-      artifact_dir: ${trainer.output_dir}/reward_artifacts
   # Transport only. Physical isolation is the service's own attestation.
   inference:
     unified_reward_video:

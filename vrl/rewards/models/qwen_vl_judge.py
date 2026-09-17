@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 import torch
 
@@ -32,6 +32,8 @@ _DEFAULT_MAX_NEW_TOKENS = 1024
 
 class QwenVLVideoJudge:
     """Load a Qwen-VL judge and score one (prompt, video) pair per call."""
+
+    input_artifact_format: ClassVar[Literal["mp4", "tensor"]] = "mp4"
 
     family: str = "Qwen-VL judge"
     # The rubric turn and the fixed-format score line. A judge whose output is

@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.base import ModelRewardFunction
 
 
-class GenEvalOwlReward(DiskArtifactRewardFunction):
+class GenEvalOwlReward(ModelRewardFunction):
     """GenEval-style compositional reward with an OWL detector.
 
     Model paths and dtype come from YAML; this binding pins the factory and
     the transport: in-process the runtime builds the model on the resolved
-    device (CuMem-pooled under a shared GPU), ``inference.kind=service`` hands
-    the same worker_config to a driver-launched service.
+    device (CuMem-pooled under a shared GPU), ``inference.kind=ray`` hands
+    the same worker_config to a placement-owned Ray actor.
     """
 
     model_factory = "vrl.rewards.models.geneval_owl:GenEvalOwlRewardModel"
@@ -22,7 +22,6 @@ class GenEvalOwlReward(DiskArtifactRewardFunction):
     score_keys = ("geneval_owl_dense", "geneval_owl_partial", "geneval_owl_strict")
     default_artifact_format = "tensor"
     default_media_type = "image"
-    in_process_media = "memory"
 
 
 __all__ = ["GenEvalOwlReward"]

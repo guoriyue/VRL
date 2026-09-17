@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -31,6 +31,7 @@ from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.trajectory.types import TrajectoryBatch
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
+from vrl.utils.media_reference import MediaReference
 
 from ._helpers import ResolvedRef
 
@@ -188,6 +189,37 @@ def _executor(
         generation_stall_timeout_s=30.0,
     )
     return executor, engines
+
+
+@pytest.mark.asyncio
+async def test_failed_gather_rejects_misaligned_media_references() -> None:
+    from vrl.generation.bindings.full_sequence_denoise import (
+        DiffusionBatchGatherer,
+        DiffusionBatchResult,
+    )
+
+    class MalformedMediaWorker(_CapacityWorker):
+        def execute_batch(self, envelope):
+            # Boxed references must obey the same sample-count contract as tensors.
+            media = [MediaReference("batch-ref", i) for i in range(2)]
+            result = super().execute_batch(envelope)
+            result.output = DiffusionBatchResult(
+                batch=envelope.batch,
+                latents=torch.ones(1, 3, 3),
+                log_probs=torch.zeros(1, 2),
+                timesteps=torch.ones(1, 2),
+                kl=torch.zeros(1, 2),
+                video=media,
+                replay_tensors={},
+                context={"model_family": "sd3_5"},
+            )
+            return result
+
+    executor, _ = _executor([GenerationSampleBatch(0, 0, 1)], [MalformedMediaWorker("w0", 1)])
+    executor.gatherer = DiffusionBatchGatherer()
+    request = replace(_request(1), reward_media_refs=True)
+    with pytest.raises(ValueError, match="has 2 rows, expected 1"):
+        await executor.execute(request)
 
 
 @pytest.mark.gpu

@@ -54,6 +54,56 @@ A、B、C 三条互不依赖，可以并行推进；D、E、F 在其后；G 等�
 epoch 墙钟不劣化。
 非目标：跨节点对象传输策略。
 
+#### Reward transport revision (2026-09-16)
+
+The worker-file design described above is superseded. Execution placement and
+media transport are separate: internal rewards use Ray actors; independently
+deployed services use HTTP uploads. Explicit in-process execution remains
+available for offline evaluation.
+
+Online generation workers put decoded media in Ray's object store and return
+boxed per-sample references. Gather and collector preserve order without fetching
+the payload; the scorer resolves each batch once and normalizes its pixel range.
+Reference payload sizes still count against pending-queue capacity. Direct
+generation retains its tensor output API. These references are not durable
+archives and do not promise survival after their owner dies.
+
+HTTP uploads carry typed, checksummed tensor bytes, not pickle or driver-local
+paths. Shared paths remain an explicitly configured compatibility mode. Large
+video requests need an appropriate service request-size limit.
+
+Only scorers whose model requires a filename encode temporary media, inside the
+scoring process. Normal completion and exceptions remove these files. Forced
+Ray actor termination is followed by bounded cleanup of that actor's exact
+private directory on the same node; unreachable-node cleanup fails explicitly
+and can be retried. There is no directory scan or generic storage manager.
+Explicit experiment archives are independent of the scoring transport.
+
+Migration verification covers real CPU Ray actors, two logical Ray nodes with
+distinct producer/consumer processes, loopback HTTP without shared roots,
+temporary-file cleanup, and MP4 decoding/score parity with the former encoding.
+The logical-node check is not a physical multi-machine throughput measurement.
+GPU training performance has not been remeasured for this migration.
+
+Verification at migration completion:
+
+- Reward, generation, collector, trajectory, configuration, resource placement,
+  factory and online-lifecycle CPU regression: **1926 passed, 7 skipped**
+  (GPU, slow and distributed-marked cases excluded).
+- Real Ray scorer and media-reference integration, including two logical nodes:
+  **20 passed**. The subprocess disables Ray's inherited uv environment hook;
+  the test uses the installed environment rather than rebuilding it remotely.
+- Reward preflight, image checkpoint evaluation and real-checkpoint configuration
+  checks: **42 passed, 10 skipped**; the skipped cases require GPU checkpoints.
+- HTTP tests are included in the main regression; the standalone service suite
+  also passed **100 tests**, including uploads without shared roots and cancellation.
+- Scoped Ruff checks and `git diff --check` passed. No GPU training was launched.
+
+Online training, reward preflight and the configured-reward E2E path now share
+placement derivation. Preflight owns a reward-only Ray session/placement group
+and releases runtime, placement and session in that order, including failures.
+It verifies local reward execution, not a training run's multi-node topology.
+
 ### B. sglang-diffusion rollout provider（KILL-RISK spike 先行）
 
 Spike（本机 GPU 3，一天内）：

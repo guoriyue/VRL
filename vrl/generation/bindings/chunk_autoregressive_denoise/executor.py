@@ -39,12 +39,8 @@ class ChunkAutoregressiveDenoiseResult:
     # Values and producer-declared axes travel together across the wire.
     replay_tensors: dict[str, TrajectoryTensor] = field(default_factory=dict)
     context: dict[str, Any] = field(default_factory=dict)
-    # Worker-written reward files per component, sample order (see
-    # vrl/generation/execution/reward_artifacts.py).
-    artifacts: dict[str, list[Any]] = field(default_factory=dict)
 
-    # The decoded output is the reward media; the worker's artifact
-    # materialization reads and clears it by this one name.
+    # Common decoded-media seam used by the Ray transport adapter.
     @property
     def reward_media(self) -> Any:
         return self.output

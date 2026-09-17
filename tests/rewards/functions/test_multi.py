@@ -6,8 +6,8 @@ import pytest
 
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.base import (
-    DiskArtifactRewardFunction,
     InferenceRewardFunction,
+    ModelRewardFunction,
     RewardCleanupError,
     RewardFunction,
 )
@@ -424,7 +424,6 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
     reward = MultiReward.from_dict(
         {"videoscore2": 1.0},
         device="cuda:0",
-        reward_kwargs={"videoscore2": {"artifact_dir": str(tmp_path)}},
         inference_configs={
             "videoscore2": RewardInferenceConfig(
                 kind="http",
@@ -436,7 +435,7 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
     )
 
     component = reward.rewards[0][2]
-    assert isinstance(component, DiskArtifactRewardFunction)
+    assert isinstance(component, ModelRewardFunction)
     assert isinstance(component.scorer, HttpRewardScorer)
     assert component.scoring_is_nonblocking is True
     assert component.external_accelerator_isolation_verified is False
@@ -444,13 +443,13 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
     assert reward.external_accelerator_isolation_verified is False
 
 
-def test_http_ocr_reward_uses_disk_tensors_and_the_remote_scorer(tmp_path) -> None:
-    from vrl.rewards.artifacts import DiskRewardArtifactStore
+def test_http_ocr_reward_uses_media_uploads_and_the_remote_scorer(tmp_path) -> None:
+    from vrl.rewards.artifacts import InMemoryRewardArtifactStore
 
     reward = MultiReward.from_dict(
         {"ocr": 1.0},
         device="cpu",
-        reward_kwargs={"ocr": {"artifact_dir": str(tmp_path), "score_key": "ocr_match"}},
+        reward_kwargs={"ocr": {"score_key": "ocr_match"}},
         inference_configs={
             "ocr": RewardInferenceConfig(
                 kind="http",
@@ -461,9 +460,9 @@ def test_http_ocr_reward_uses_disk_tensors_and_the_remote_scorer(tmp_path) -> No
     )
 
     component = reward.rewards[0][2]
-    assert isinstance(component, DiskArtifactRewardFunction)
+    assert isinstance(component, ModelRewardFunction)
     assert isinstance(component.scorer, HttpRewardScorer)
-    assert isinstance(component.artifact_store, DiskRewardArtifactStore)
+    assert isinstance(component.artifact_store, InMemoryRewardArtifactStore)
     assert component.score_key == "ocr_match"
     # No in-process engine exists behind a remote scorer.
     with pytest.raises(AttributeError):
@@ -481,7 +480,7 @@ def test_in_process_ocr_reward_keeps_media_in_memory() -> None:
 
 def test_http_reward_rejects_inmemory_artifact_component() -> None:
     # geneval delegates to an external callable and has no artifact transport.
-    with pytest.raises(ValueError, match="in-memory artifacts"):
+    with pytest.raises(ValueError, match="no remote model-factory contract"):
         MultiReward.from_dict(
             {"geneval": 1.0},
             device="cpu",
@@ -574,12 +573,10 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
     remote_a = VideoScore2Reward(
         reward_name="a",
         scorer=_client(),
-        artifact_dir=str(tmp_path / "remote-a"),
     )
     remote_b = VideoScore2Reward(
         reward_name="b",
         scorer=_client(),
-        artifact_dir=str(tmp_path / "remote-b"),
     )
     # A real in-process runtime is the "skips local ones" half: it has no
     # ensure_ready at all, so preflight's capability dispatch must step over it.
@@ -607,7 +604,6 @@ def test_mixed_runtime_components_fail_closed_for_generation_overlap(tmp_path) -
     reward = MultiReward.from_dict(
         {"videoscore2": 1.0, "ocr": 0.5},
         device="cpu",
-        reward_kwargs={"videoscore2": {"artifact_dir": str(tmp_path)}},
         inference_configs={
             "videoscore2": RewardInferenceConfig(
                 kind="http",
@@ -642,56 +638,73 @@ def test_http_reward_rejects_local_worker_config() -> None:
         )
 
 
-def test_service_ocr_reward_gets_a_managed_scorer_with_its_knobs(tmp_path) -> None:
-    from vrl.rewards.service.managed import ManagedRewardScorer
+def test_ray_ocr_reward_gets_an_actor_scorer_with_its_knobs(tmp_path) -> None:
+    from vrl.rewards.ray import RayRewardScorer
 
     reward = MultiReward.from_dict(
         {"ocr": 1.0},
         device="cpu",
         reward_kwargs={
             "ocr": {
-                "artifact_dir": str(tmp_path / "reward_artifacts"),
                 "debug_dir": str(tmp_path / "ocr_debug"),
                 "score_key": "ocr_match",
             }
         },
-        inference_configs={"ocr": RewardInferenceConfig(kind="service")},
+        inference_configs={"ocr": RewardInferenceConfig(kind="ray")},
     )
     component = reward.rewards[0][2]
-    assert isinstance(component, DiskArtifactRewardFunction)
+    assert isinstance(component, ModelRewardFunction)
     scorer = component.scorer
-    assert isinstance(scorer, ManagedRewardScorer)
-    assert scorer.worker_config["model_factory"] == "vrl.rewards.models.ocr:OCRRewardModel"
-    assert scorer.worker_config["debug_dir"] == str(tmp_path / "ocr_debug")
-    assert scorer.worker_config["device"] == "cpu"
-    assert scorer.pid is None  # launched lazily by preflight/scoring
+    assert isinstance(scorer, RayRewardScorer)
+    assert scorer._launch.model_factory == "vrl.rewards.models.ocr:OCRRewardModel"
+    assert scorer._launch.component_config["debug_dir"] == str(tmp_path / "ocr_debug")
+    assert scorer._launch.device == "cpu"
 
 
-def test_service_kind_rejects_inmemory_rewards() -> None:
-    with pytest.raises(ValueError, match="in-memory artifacts"):
+def test_ray_kind_rejects_rewards_without_a_worker_factory() -> None:
+    with pytest.raises(ValueError, match="no remote model-factory contract"):
         MultiReward.from_dict(
             {"geneval": 1.0},
             device="cpu",
-            inference_configs={"geneval": RewardInferenceConfig(kind="service")},
+            inference_configs={"geneval": RewardInferenceConfig(kind="ray")},
         )
 
 
-def test_service_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:
-    from vrl.rewards.service.managed import ManagedRewardScorer
+def test_ray_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:
+    from vrl.rewards.ray import RayRewardPlacement, RayRewardScorer
 
     reward = MultiReward.from_dict(
         {"videoscore2": 1.0},
         device="cuda:0",
         memory_parking_required=True,
-        reward_kwargs={"videoscore2": {"artifact_dir": str(tmp_path)}},
-        inference_configs={"videoscore2": RewardInferenceConfig(kind="service")},
+        inference_configs={"videoscore2": RewardInferenceConfig(kind="ray")},
+        ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"),
     )
     scorer = reward.rewards[0][2].scorer
-    assert isinstance(scorer, ManagedRewardScorer)
-    assert scorer.worker_config["sleep_offload"] is True
-    assert scorer.worker_config["device"] == "cuda:0"
-    # Not advertised until the launched service reports it at preflight.
-    assert scorer.requires_memory_parking is False
+    assert isinstance(scorer, RayRewardScorer)
+    assert scorer._launch.sleep_offload is True
+    assert scorer._launch.device == "cuda:0"
+    assert scorer.requires_memory_parking is True
+
+
+def test_multiple_gpu_reward_actors_divide_the_owned_bundle() -> None:
+    from vrl.ray.placement import RolePlacement
+    from vrl.rewards.ray import RayRewardPlacement
+
+    placement = RolePlacement(object(), (2,), (3,))
+    reward = MultiReward.from_dict(
+        {"aesthetic": 1.0, "pickscore": 1.0, "ocr": 0.0},
+        device="cuda:3",
+        inference_configs={
+            name: RewardInferenceConfig() for name in ("aesthetic", "pickscore", "ocr")
+        },
+        ray_placement=RayRewardPlacement(placement=placement),
+    )
+    first, second, cpu = (component.scorer for _, _, component in reward.rewards)
+    assert first._placement.placement is placement
+    assert second._placement.placement is placement
+    assert first._placement.gpu_fraction == second._placement.gpu_fraction == 0.5
+    assert cpu._placement is None
 
 
 @pytest.mark.parametrize(
@@ -710,83 +723,23 @@ def test_service_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:
         ("idm_action_following", "cuda:0", {}),
     ],
 )
-def test_every_former_in_process_reward_can_run_as_a_managed_service(
-    tmp_path, name, device, kwargs
-) -> None:
-    """P3 of reward isolation: each binding forwards its config to a service."""
-    from vrl.rewards.service.managed import ManagedRewardScorer
+def test_every_model_reward_can_run_as_a_ray_actor(tmp_path, name, device, kwargs) -> None:
+    """Every binding forwards model configuration to its actor scorer."""
+    from vrl.ray.placement import RolePlacement
+    from vrl.rewards.ray import RayRewardPlacement, RayRewardScorer
 
     reward = MultiReward.from_dict(
         {name: 1.0},
         device=device,
-        reward_kwargs={name: {"artifact_dir": str(tmp_path / name), **kwargs}},
-        inference_configs={name: RewardInferenceConfig(kind="service")},
+        reward_kwargs={name: kwargs},
+        inference_configs={name: RewardInferenceConfig(kind="ray")},
+        ray_placement=RayRewardPlacement(placement=RolePlacement(object(), (0,), (0,))),
     )
     component = reward.rewards[0][2]
-    assert isinstance(component, DiskArtifactRewardFunction)
+    assert isinstance(component, ModelRewardFunction)
     scorer = component.scorer
-    assert isinstance(scorer, ManagedRewardScorer)
-    assert scorer.worker_config["model_factory"] == type(component).model_factory
-    assert scorer.worker_config["device"] == type(component).resolve_execution_device(
+    assert isinstance(scorer, RayRewardScorer)
+    assert scorer._launch.model_factory == type(component).model_factory
+    assert scorer._launch.device == type(component).resolve_execution_device(
         device=device, kwargs=kwargs
     )
-    assert scorer.artifact_dir == (tmp_path / name).resolve()
-    assert scorer.pid is None
-
-
-def test_media_leaves_the_wire_only_when_every_component_reads_files(tmp_path) -> None:
-    """One in-memory reward next to a disk reward keeps the media on the wire."""
-
-    from vrl.rewards.functions.ocr import OCRReward
-
-    disk_only = MultiReward.from_dict(
-        {"hpsv3": 1.0},
-        device="cpu",
-        reward_kwargs={"hpsv3": {"artifact_dir": str(tmp_path / "hpsv3")}},
-    )
-    assert disk_only.consumes_worker_artifacts is True
-    mixed = MultiReward.from_dict(
-        {"hpsv3": 1.0, "ocr": 1.0},
-        device="cpu",
-        reward_kwargs={"hpsv3": {"artifact_dir": str(tmp_path / "hpsv3")}},
-    )
-    assert [name for name, _, _ in mixed.rewards] == ["hpsv3", "ocr"]
-    assert isinstance(mixed.rewards[1][2], OCRReward)
-    assert mixed.rewards[1][2].consumes_worker_artifacts is False
-    assert mixed.consumes_worker_artifacts is False
-    assert [spec.name for spec in mixed.artifact_specs()] == ["hpsv3"]
-
-
-def test_disk_rewards_project_artifact_specs_and_the_builder_fills_fps(tmp_path) -> None:
-    from vrl.models.families.registry import get_model_family_entry
-    from vrl.rollouts.collector.config import RolloutCollectorConfig
-    from vrl.rollouts.collector.requests import GenerationRequestBuilder
-    from vrl.utils.artifacts import RewardArtifactSpec
-
-    reward = MultiReward.from_dict(
-        {"hpsv3": 1.0, "geneval": 0.0},
-        device="cpu",
-        reward_kwargs={
-            "hpsv3": {"artifact_dir": str(tmp_path / "hpsv3"), "artifact_format": "mp4"},
-            "geneval": {"import_path": "tests.rewards.functions.test_multi:_never"},
-        },
-    )
-    specs = reward.artifact_specs()
-    assert [spec.name for spec in specs] == ["hpsv3"]
-    assert specs[0] == RewardArtifactSpec(
-        name="hpsv3",
-        root=str((tmp_path / "hpsv3").resolve()),
-        media_type="video",
-        artifact_format="mp4",
-    )
-    builder = GenerationRequestBuilder(
-        entry=get_model_family_entry("wan_2_1"),
-        config=RolloutCollectorConfig(request_sampling={"fps": 16, "num_steps": 2}),
-    )
-    request = builder.build(["a prompt"], 2, reward_artifacts=specs).request
-    assert request.reward_artifacts[0].fps == 16.0
-    assert request.reward_artifacts[0].root == specs[0].root
-
-
-def _never(**kwargs):  # pragma: no cover - geneval score_fn placeholder
-    raise AssertionError("not scored")

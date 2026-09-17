@@ -17,7 +17,7 @@ compile: final five-arm table"。
 
 | 事实 | 位置 |
 |---|---|
-| 24 个 reward function：13 个 `DiskArtifactRewardFunction`（HTTP-capable），7 个 `InferenceRewardFunction`（纯内存），3 个 `CumemRewardFunction`（GPU 进程内 + CuMem 池），1 个 `RewardFunction`（geneval） | `vrl/rewards/functions/*.py` |
+| 24 个 reward function：13 个 `ModelRewardFunction`（HTTP-capable），7 个 `InferenceRewardFunction`（纯内存），3 个 `CumemRewardFunction`（GPU 进程内 + CuMem 池），1 个 `RewardFunction`（geneval） | `vrl/rewards/functions/*.py` |
 | 传输只有两种：`in_process`（默认）、`http`（操作者手工起 `vrl-reward-service`） | `vrl/config/reward_inference.py` |
 | HTTP 服务被定义为"独占加速器"：`generation_overlap_safe` 默认 false；服务禁止 `sleep_offload` | `vrl/rewards/service/server.py:137` |
 | 服务协议只有 `/live /ready /info /score DELETE /requests`，没有 park/wake | `server.py:278-281` |
@@ -85,14 +85,14 @@ GPU 验收（3x1 preset + `reward.inference.ocr.kind=service`，期望 ≈398 s/
   服务与每个 rank 时分同一张卡，metrics 与 2026-09-11 的 smoke 一致，无 Xid、无残留超限。
 
 ### P3 剩余 11 个 reward 变为服务可用 — 已落地
-实际形状：`DiskArtifactRewardFunction` 新增 `in_process_media="memory"`（进程内保持内存张量，
+实际形状：`ModelRewardFunction` 新增 `in_process_media="memory"`（进程内保持内存张量，
 零 IO，行为与改前完全一致）和 `eager_model`（进程内构造期建模，配置错误立即暴露；sleep_offload
 下改为 runtime 工厂建模）两个声明位；11 个绑定全部改成声明块。geneval 保留为 `RewardFunction`：
 它委托外部可调用对象、无模型无 artifact 传输，不存在 GIL 争用，在注册表里仍被 http/service 拒绝。
 - 7 个 `InferenceRewardFunction`（nsfw_safety、wd_tagger、motion_dynamics、
   image_sharpness、target_dino_similarity、grounded_ocr、codex_image_qa）和 3 个
   `CumemRewardFunction`（aesthetic、pickscore、geneval_owl）改为
-  `DiskArtifactRewardFunction` 声明块（照 `countgd.py` / 本次 `ocr.py` 的形状）；它们的
+  `ModelRewardFunction` 声明块（照 `countgd.py` / 本次 `ocr.py` 的形状）；它们的
   model 类已经是 `__call__(artifact)` 契约，只需 `worker_config` 构造函数。
 - `geneval`（规则型 `RewardFunction`）：读代码后决定是包成服务还是留在 driver（无
   模型、无 GIL 争用的纯 Python 规则可以豁免，需在文档写明理由）。

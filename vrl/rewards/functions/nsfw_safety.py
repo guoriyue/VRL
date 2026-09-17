@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.base import ModelRewardFunction
 
 
-class NSFWSafetyReward(DiskArtifactRewardFunction):
+class NSFWSafetyReward(ModelRewardFunction):
     """NSFW safety penalty from a Falconsai image classifier over sampled frames.
 
     In-process the model is built here and media rides the request in memory;
-    ``inference.kind=service`` hands the same kwargs to a driver-launched
-    service that scores this reward's ``.pt`` artifacts.
+    ``inference.kind=ray`` hands the same kwargs and media to a placement-owned
+    Ray actor.
     """
 
     model_factory = "vrl.rewards.models.nsfw_safety:NSFWSafetyRewardModel"
@@ -22,7 +22,6 @@ class NSFWSafetyReward(DiskArtifactRewardFunction):
     default_score_key = "nsfw_safety"
     default_artifact_format = "tensor"
     default_media_type = "image"
-    in_process_media = "memory"
     eager_model = True
 
     def __init__(self, *, scorer: Any = None, **kwargs: Any) -> None:

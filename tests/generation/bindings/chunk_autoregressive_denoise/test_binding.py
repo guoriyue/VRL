@@ -21,6 +21,7 @@ from vrl.rollouts.collector.batch_builder import (
     TrajectoryRolloutBatchBuilder,
 )
 from vrl.trajectory.types import TrajectoryTensor
+from vrl.utils.media_reference import MediaReference
 
 
 def test_trainable_trajectory_declares_temporal_chunk_and_transition_axes() -> None:
@@ -79,6 +80,26 @@ def test_gatherer_orders_transport_chunks_and_concatenates_sample_rows() -> None
     )
 
 
+@pytest.mark.parametrize("trainable", [True, False])
+def test_media_references_survive_chunk_gather_in_sample_order(trainable):
+    request = replace(_request(), reward_media_refs=True)
+    make_result = _trainable_result if trainable else _generation_only_result
+    batches = [make_result(0.75, sample_start=1), make_result(0.25, sample_start=0)]
+    for batch in batches:
+        batch.output = [MediaReference(f"batch-{batch.batch.sample_start}", 0)]
+    output = ChunkAutoregressiveDenoiseGatherer().merge_generation_batches(
+        request, request.sample_rows(), batches
+    )
+    assert [ref.object_ref for ref in output.output] == ["batch-0", "batch-1"]
+    if trainable:
+        assert torch.equal(
+            output.trajectory.segments["denoise"].tensors["old_log_prob"].value[:, 0, 0],
+            torch.tensor([0.25, 0.75]),
+        )
+    else:
+        assert output.trajectory.segments["generated_chunks"].tensors == {}
+
+
 def test_generation_only_result_has_no_fabricated_policy_facts() -> None:
     request = _request()
     sample_rows = request.sample_rows()
@@ -101,8 +122,8 @@ def test_generation_only_result_has_no_fabricated_policy_facts() -> None:
     segment = trajectory.segments["generated_chunks"]
     assert segment.trainable is False
     assert trajectory.primary_segment is None
-    assert set(segment.tensors) == {"output"}
-    assert segment.tensors["output"].role == "replay_input"
+    assert segment.tensors == {}
+    assert trajectory.reward_views["video"].metadata["output_ref"] == "GenerationOutput.output"
     assert trajectory.context == {"model_family": "causvid"}
 
     builder = TrajectoryRolloutBatchBuilder(

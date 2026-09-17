@@ -1,7 +1,7 @@
 """AnimeReward visual-quality reward entry point for anime image RL.
 
-``AnimeRewardQualityReward`` writes each sample's media to disk and scores it
-through the configured in-process or HTTP runtime. ``DiskArtifactRewardFunction``
+``AnimeRewardQualityReward`` forwards sample media for scoring
+through the configured inference runtime. ``ModelRewardFunction``
 is the transport capability boundary; this file only pins the AnimeReward
 quality model factory and its defaults.
 
@@ -12,10 +12,10 @@ reward service (``/reward/animereward_quality_http``) rather than colocated.
 
 from __future__ import annotations
 
-from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.base import ModelRewardFunction
 
 
-class AnimeRewardQualityReward(DiskArtifactRewardFunction):
+class AnimeRewardQualityReward(ModelRewardFunction):
     """AnimeReward visual quality (Idefics2-8B regression head), roughly [0, 1]."""
 
     model_factory = "vrl.rewards.models.animereward_quality:AnimeRewardQualityModel"

@@ -18,7 +18,7 @@ vendored ``third_party.mplug_owl_video`` module directly.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 import torch
 import torch.nn as nn
@@ -45,6 +45,8 @@ _DEFAULT_VIDEO_TOKEN = "<|video|>"
 
 class VideoConPhysicsModel:
     """Load VideoCon-Physics and score one (prompt, video) pair per call."""
+
+    input_artifact_format: ClassVar[Literal["mp4", "tensor"]] = "mp4"
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)

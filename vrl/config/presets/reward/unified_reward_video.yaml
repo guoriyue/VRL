@@ -15,9 +15,6 @@ reward:
     unified_reward_video:
       reward_name: unified_reward_video   # logical tag (request label)
       score_key: overall
-      media_type: video
-      artifact_format: mp4
-      artifact_dir: ${trainer.output_dir}/reward_artifacts
       debug_dir: ${trainer.output_dir}/reward_debug
       worker_config:
         reward_model_name: CodeGoat24/UnifiedReward-2.0-qwen-7b@main

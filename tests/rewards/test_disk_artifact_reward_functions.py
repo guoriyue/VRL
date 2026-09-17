@@ -1,10 +1,10 @@
-"""Disk-artifact reward functions as thin inference-runtime adapters.
+"""Model-backed reward functions as thin in-memory inference-runtime adapters.
 
 HPSv3, VideoScore2, Kling VideoReward and UnifiedReward-2.0 are all
-zero-method subclasses of ``DiskArtifactRewardFunction``: they only pin a
+zero-method subclasses of ``ModelRewardFunction``: they only pin a
 model factory, a debug basename and their defaults. Every behavior asserted
-here -- artifact materialization, ``score_key`` selection, the missing-key and
-result/artifact-mismatch failures, and post-scoring artifact release -- lives
+here -- media forwarding, ``score_key`` selection, the missing-key and
+result/artifact-mismatch failures, and optional archive ownership -- lives
 in ``vrl/rewards/base.py`` and ``vrl/rewards/inference.py``. One parametrized
 module pins that shared contract for all four wrappers, so a wrapper that
 starts overriding the adapter shows up as a red test rather than as an
@@ -121,7 +121,7 @@ class _EmptyRuntime(_FakeRuntime):
 def _sample() -> RewardSample:
     return RewardSample(
         prompt="a red fox curled on mossy stones",
-        output=torch.ones(1, 2, 2, 2),
+        output=torch.ones(3, 2, 16, 16),
         sample_id="sample-a",
         metadata={"policy_version": 7},
     )
@@ -132,35 +132,33 @@ def _build_reward(
     tmp_path: Path,
     *,
     score_key: str,
-    retain_artifacts: bool = True,
+    archive_dir: str = "",
     scorer: _FakeRuntime | None = None,
 ):
     return case.reward_cls(
         reward_name=case.reward_name,
         score_key=score_key,
-        media_type="video",
-        # tensor avoids the imageio mp4 writer; this checks materialization wiring.
-        artifact_format="tensor",
-        artifact_dir=str(tmp_path / "artifacts"),
+        archive_dir=archive_dir,
         debug_dir=str(tmp_path / "debug"),
-        retain_artifacts=retain_artifacts,
         scorer=scorer if scorer is not None else _FakeRuntime(case.fake_scores),
     )
 
 
 @pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
 @pytest.mark.asyncio
-async def test_materializes_artifacts_and_selects_the_score_key(
-    case: _Case, tmp_path: Path
-) -> None:
+async def test_forwards_media_and_selects_the_score_key(case: _Case, tmp_path: Path) -> None:
     """Default and alternate score keys select their axis; debug logs every public key."""
     reward = _build_reward(case, tmp_path, score_key=case.default_score_key)
-    output = await reward.score_batch([_sample()])
+    sample = _sample()
+    output = await reward.score_batch([sample])
 
     assert output.scores == pytest.approx([case.fake_scores[case.default_score_key]])
     request = reward.scorer.requests[0]
     assert len(request.artifacts) == 1
-    assert Path(request.artifacts[0].path).exists()
+    assert request.artifacts[0].path == ""
+    assert request.artifacts[0].media is sample.output
+    assert not list(tmp_path.rglob("*.mp4"))
+    assert not list(tmp_path.rglob("*.pt"))
     assert (tmp_path / "debug" / f"{case.reward_name}_requests.jsonl").exists()
     results_path = tmp_path / "debug" / f"{case.reward_name}_results.jsonl"
     body = results_path.read_text(encoding="utf-8")
@@ -184,15 +182,34 @@ async def test_missing_score_key_fails_fast(case: _Case, tmp_path: Path) -> None
 
 @pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
 @pytest.mark.asyncio
-async def test_releases_artifacts_after_success_by_default(case: _Case, tmp_path: Path) -> None:
-    """Without retain_artifacts a scored run leaves nothing on disk."""
-    reward = _build_reward(
-        case, tmp_path, score_key=case.default_score_key, retain_artifacts=False
-    )
+async def test_default_scoring_never_creates_media_files(case: _Case, tmp_path: Path) -> None:
+    """Media reaches the runtime in memory; debug logs are not media artifacts."""
+    reward = _build_reward(case, tmp_path, score_key=case.default_score_key)
 
     await reward.score_batch([_sample()])
 
-    assert not Path(reward.scorer.requests[0].artifacts[0].path).exists()
+    assert reward.scorer.requests[0].artifacts[0].path == ""
+    assert not list(tmp_path.rglob("*.mp4"))
+    assert not list(tmp_path.rglob("*.pt"))
+
+
+@pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
+@pytest.mark.asyncio
+async def test_explicit_archive_is_retained_without_becoming_scoring_transport(
+    case: _Case, tmp_path: Path
+) -> None:
+    archive = tmp_path / "archive"
+    reward = _build_reward(
+        case, tmp_path, score_key=case.default_score_key, archive_dir=str(archive)
+    )
+    sample = _sample()
+
+    await reward.score_batch([sample])
+
+    artifact = reward.scorer.requests[0].artifacts[0]
+    assert artifact.path == ""
+    assert artifact.media is sample.output
+    assert len(list(archive.glob("*.mp4"))) == 1
 
 
 @pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
@@ -205,13 +222,13 @@ async def test_unmatched_runtime_results_fail_without_leaking_artifacts(
         case,
         tmp_path,
         score_key=case.default_score_key,
-        retain_artifacts=False,
         scorer=_EmptyRuntime(case.fake_scores),
     )
 
     with pytest.raises(RuntimeError, match="result/artifact mismatch"):
         await reward.score_batch([_sample()])
-    assert not list((tmp_path / "artifacts").glob("*.pt"))
+    assert not list(tmp_path.rglob("*.pt"))
+    assert not list(tmp_path.rglob("*.mp4"))
 
 
 @pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)

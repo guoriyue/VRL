@@ -7,7 +7,9 @@ The implementation layer behind the vrl/rewards/protocols contract:
   FSM, the operation lock, and the score deadline so every wrapped
   ``RewardFunction`` gets identical admission and teardown semantics.
 - ``InProcessRewardScorer``: the local ``RewardScorer`` transport (twin of the
-  remote ``HttpRewardScorer``) and the only one that owns CUDA memory parking.
+  remote ``HttpRewardScorer``), also used inside remote scoring processes.
+  It resolves media references, owns temporary files required by a model,
+  and owns CUDA memory parking.
 - ``build_reward_scorer``: the single transport-selection point, keyed by the
   typed inference deployment config.
 
@@ -24,7 +26,10 @@ import time
 import traceback
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager, nullcontext
-from typing import Any
+from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING, Any
 
 from vrl.config.reward_inference import (
     RewardInferenceConfig,
@@ -43,6 +48,9 @@ from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import release_cuda_memory_for_parking
 from vrl.utils.deadline import OperationDeadline, require_timeout
 from vrl.utils.lifecycle import RuntimeLifecycle, RuntimePhase
+
+if TYPE_CHECKING:
+    from vrl.rewards.ray import RayRewardPlacement
 
 # Matches the HTTP reward client's default request timeout so the two
 # transports share one notion of "scoring took too long".
@@ -74,19 +82,6 @@ class RewardFunctionRuntime:
 
         reward_function = self._reward_function
         return bool(reward_function is not None and reward_function.scoring_is_nonblocking)
-
-    def artifact_specs(self) -> tuple[Any, ...]:
-        """Reward files the rollout worker writes for the configured components."""
-
-        reward_function = self._reward_function
-        return () if reward_function is None else tuple(reward_function.artifact_specs())
-
-    @property
-    def media_off_wire(self) -> bool:
-        """Whether every configured component scores from a worker-written file."""
-
-        reward_function = self._reward_function
-        return bool(reward_function is not None and reward_function.consumes_worker_artifacts)
 
     @property
     def external_accelerator_isolation_verified(self) -> bool:
@@ -331,6 +326,7 @@ class InProcessRewardScorer:
         worker_config: Mapping[str, Any] | None = None,
         *,
         model: Any | None = None,
+        media_temp_dir: str | None = None,
     ) -> None:
         # Typed runtime contract; the verbatim bag still feeds the factory.
         self._launch = RewardRuntimeLaunchContract.from_component_config(worker_config)
@@ -344,6 +340,7 @@ class InProcessRewardScorer:
                 "GPU baseline and validate a complete parking backend.",
             )
         self._model = model
+        self._media_temp_dir = media_temp_dir
         self._pool: CumemPool | None = None
 
     @property
@@ -461,6 +458,41 @@ class InProcessRewardScorer:
         model: Any,
         request: RewardInferenceRequest,
     ) -> list[RewardInferenceResult]:
+        """Resolve media and adapt file-only models inside the scoring process."""
+
+        from vrl.rewards.models.base import FileRewardModel
+
+        request = request.resolve_media()
+        if not isinstance(model, FileRewardModel):
+            return self._infer(model, request)
+        if all(artifact.path for artifact in request.artifacts):
+            return self._infer(model, request)
+        with TemporaryDirectory(prefix="vrl-reward-", dir=self._media_temp_dir) as directory:
+            artifacts = []
+            for index, artifact in enumerate(request.artifacts):
+                if artifact.path:
+                    artifacts.append(artifact)
+                    continue
+                media = artifact.as_media()
+                if model.input_artifact_format == "mp4":
+                    from vrl.utils.media import write_mp4
+
+                    path = Path(directory) / f"{index}.mp4"
+                    fps = artifact.metadata.get("video_fps", artifact.metadata.get("fps", 8.0))
+                    write_mp4(media, path, fps=8.0 if fps is None else float(fps))
+                elif model.input_artifact_format == "tensor":
+                    import torch
+
+                    path = Path(directory) / f"{index}.pt"
+                    torch.save(media.detach().cpu(), path)
+                else:
+                    raise ValueError(
+                        f"unsupported scorer input format {model.input_artifact_format!r}"
+                    )
+                artifacts.append(replace(artifact, path=str(path), media=None))
+            return self._infer(model, replace(request, artifacts=tuple(artifacts)))
+
+    def _infer(self, model: Any, request: RewardInferenceRequest) -> list[RewardInferenceResult]:
         """Run the reward model over the request's artifacts and build results.
 
         A model may expose a ``score_batch(artifacts) -> list[Mapping]`` hook;
@@ -533,14 +565,12 @@ def build_reward_scorer(
     worker_config: Mapping[str, Any] | None = None,
     *,
     inference: Mapping[str, Any] | RewardInferenceConfig | None = None,
-    artifact_dir: str | None = None,
-    component_name: str = "",
+    ray_placement: RayRewardPlacement | None = None,
 ) -> RewardScorer:
     """Build the runtime selected by the typed inference deployment config.
 
-    ``artifact_dir`` and ``component_name`` matter only to ``kind=service``: the
-    managed subprocess must be allowed to read the artifacts this reward writes,
-    and its config/log files are named after the component.
+    Internal actors receive the same model configuration as direct evaluation;
+    external HTTP services own their model configuration and receive only media.
     """
 
     if worker_config is not None and not isinstance(worker_config, Mapping):
@@ -561,19 +591,13 @@ def build_reward_scorer(
     )
     if deployment.kind == "in_process":
         return InProcessRewardScorer(cfg)
-    if deployment.kind == "service":
-        from vrl.rewards.service.managed import ManagedRewardScorer
+    if deployment.kind == "ray":
+        from vrl.rewards.ray import RayRewardScorer
 
-        if artifact_dir is None:
-            raise ValueError(
-                "a managed reward service needs the reward's artifact_dir so the "
-                "subprocess may read the artifacts written for it",
-            )
-        return ManagedRewardScorer(
-            deployment,
-            worker_config=cfg,
-            artifact_dir=artifact_dir,
-            component_name=component_name,
+        return RayRewardScorer(
+            cfg,
+            placement=ray_placement,
+            timeout_s=deployment.timeout_s,
         )
     if cfg:
         raise ValueError(

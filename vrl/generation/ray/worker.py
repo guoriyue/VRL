@@ -24,6 +24,7 @@ from vrl.generation.ray.pipeline_protocol import PipelinedRequestProgress
 from vrl.generation.ray.tensor_wire import register_tensor_wire_serializer
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.ray.dependencies import current_gpu_ids, current_node_ip
+from vrl.utils.media_reference import MediaReference
 
 # Ray binds methods to a concurrency group by name across two separate APIs --
 # @ray.method here and ray.remote(concurrency_groups=...) at actor creation --
@@ -130,7 +131,28 @@ class RayGenerationWorker:
         }
 
     def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
-        return self.core.execute_batch(envelope)
+        result = self.core.execute_batch(envelope)
+        if result.output is not None and not result.error:
+            self._reference_reward_media(result.output, envelope.request)
+        return result
+
+    def _reference_reward_media(self, output: Any, request: GenerationRequest) -> None:
+        """Keep online media in the object store, boxed until the reward actor reads it."""
+
+        if not request.reward_media_refs:
+            return
+        rank_group = self.core.rank_group_spec
+        if rank_group is not None and rank_group.group_rank != 0:
+            # Engine combination only keeps the primary payload. No redundant
+            # object-store media or tensor serialization on discarded ranks.
+            output.reward_media = None
+            return
+        media = output.reward_media
+        ref = ray.put(media)
+        output.reward_media = [
+            MediaReference(ref, index, nbytes=sample.numel() * sample.element_size())
+            for index, sample in enumerate(media)
+        ]
 
     def probe_batch_size(
         self,
@@ -195,12 +217,15 @@ class RayGenerationWorker:
                 self._pipelined_completion_fences.append(fence)
 
         try:
-            return self.core.execute_request_pipelined(
+            output = self.core.execute_request_pipelined(
                 request,
                 engine_plan,
                 sample_rows,
                 completion_callback=record_completion,
             )
+            if isinstance(output, GenerationOutput):
+                self._reference_reward_media(output, request)
+            return output
         finally:
             with self._pipelined_progress_lock:
                 self._pipelined_completion_fences.clear()

@@ -211,10 +211,10 @@ def cross_node_preflight(ray: Any, resources: ResolvedDistributedResources) -> N
 
     topology = ClusterTopology.discover(ray)
 
-    needed = resources.rollout_num_gpus
+    needed = len(set(resources.rollout_devices) | set(resources.reward_devices))
     if topology.non_driver_gpus < needed:
         raise RuntimeError(
-            f"cross_node rollout needs {needed} GPU(s) on non-driver Ray nodes, but "
+            f"cross_node rollout/reward needs {needed} GPU(s) on non-driver Ray nodes, but "
             f"only {topology.non_driver_gpus:g} are advertised. Join more rollout "
             "workers, e.g. `ray start --address=<head>:6379 --num-gpus=<n>`.",
         )

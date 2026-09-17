@@ -41,10 +41,6 @@ trainer:
   output_dir: outputs/vdn_h3_kling_video_reward
   save_freq: 20
 
-reward:
-  kwargs:
-    kling_video_reward:
-      artifact_format: mp4
 
 production:
   kling_video_reward:

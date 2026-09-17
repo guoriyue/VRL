@@ -23,6 +23,7 @@ import torch
 
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.types import GenerationRequest
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 
 _NOOP_CB = lambda *args, **kwargs: None  # noqa: E731
@@ -320,7 +321,7 @@ def test_parked_worker_rejects_execution_until_wake() -> None:
         family=core.family_entry.family,
         task=core.family_entry.task,
     )
-    request = SimpleNamespace(policy_version=1)
+    request = GenerationRequest("r", "sd3_5", "t2i", ["p"], 1, policy_version=1)
 
     core.sleep()
     with pytest.raises(RuntimeError, match=r"parked.*refusing execute_request_pipelined"):
@@ -791,7 +792,7 @@ def test_generation_execution_does_not_reenter_one_shot_cumem_scope(
         task=core.family_entry.task,
     )
     core.load_policy()
-    request = SimpleNamespace(policy_version=1)
+    request = GenerationRequest("r", "sd3_5", "t2i", ["p"], 1, policy_version=1)
     engine_plan = object()
     sample_rows: list[Any] = []
 

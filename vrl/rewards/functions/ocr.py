@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.base import ModelRewardFunction
 
 
-class OCRReward(DiskArtifactRewardFunction):
+class OCRReward(ModelRewardFunction):
     """OCR-based text matching reward (flow_grpo-compatible).
 
     Uses ``paddleocr`` (matches flow_grpo's engine choice) to detect text in
@@ -18,8 +18,8 @@ class OCRReward(DiskArtifactRewardFunction):
     fraction (``ocr_match``).
 
     Transports: in-process (model built eagerly, media in memory, image or
-    video tensors alike); ``kind=service`` (the driver launches a PaddleOCR
-    service); ``kind=http`` (an operator-run service). ``debug_dir`` dumps the
+    video tensors alike); ``kind=ray`` (a placement-owned PaddleOCR actor);
+    ``kind=http`` (an operator-run service). ``debug_dir`` dumps the
     best-scoring frame and the recognized lines.
     """
 
@@ -30,7 +30,6 @@ class OCRReward(DiskArtifactRewardFunction):
     default_score_key = "ocr"
     default_artifact_format = "tensor"
     default_media_type = "image"
-    in_process_media = "memory"
     eager_model = True
     score_keys = ("ocr", "ocr_match")
 

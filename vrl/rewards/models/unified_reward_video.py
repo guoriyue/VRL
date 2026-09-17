@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 import torch
 
@@ -43,6 +43,8 @@ _DEFAULT_REWARD_MODEL = "CodeGoat24/UnifiedReward-2.0-qwen-7b"
 
 class UnifiedRewardVideoModel:
     """Load UnifiedReward-2.0 and pointwise-score one (prompt, video) per call."""
+
+    input_artifact_format: ClassVar[Literal["mp4", "tensor"]] = "mp4"
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)

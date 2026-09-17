@@ -14,9 +14,6 @@ reward:
       # injects the verified CuMem phase lease and release proof.
       reward_name: kling_video_reward   # logical tag (request label)
       score_key: overall_reward
-      media_type: video
-      artifact_format: mp4   # tensor (.pt) is unreadable by decord; every working run uses mp4
-      artifact_dir: ${trainer.output_dir}/reward_artifacts
       debug_dir: ${trainer.output_dir}/reward_debug
       # Omit model_path to resolve reward_model_name from the local HF
       # cache; set worker_config.model_path to load a local checkpoint dir.

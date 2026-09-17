@@ -17,9 +17,10 @@ from vrl.utils.validation import require_int
 # deployed at different versions, so a mismatched peer must fail loudly (426)
 # instead of silently misreading fields. v3 dropped the protocol string, the
 # capability array, and the artifact-transport field; v4 adds the original
-# sample identity to artifact provenance. Fixed facts of the service are
-# guaranteed by this version, not advertised per request.
-WIRE_VERSION = 4
+# sample identity to artifact provenance; v5 adds safe typed tensor uploads
+# and removes the obsolete managed-child launch token. Fixed facts of the
+# service are guaranteed by this version, not advertised per request.
+WIRE_VERSION = 5
 
 
 # Keep the exported enum's historical ``str(member)`` representation; the wire
@@ -56,15 +57,11 @@ class RewardServiceInfo:
     generation_overlap_safe: bool
     max_concurrency: int
     max_pending_requests: int
-    # Whether this service takes the shared-GPU phase lease: its model is built
-    # in a CuMem pool and POST /park releases the physical pages while the
-    # trainer/rollout own the card, POST /wake restores them. A service that
+    # Whether this service takes the shared-GPU phase lease: POST /park yields
+    # its model's GPU memory while the trainer/rollout own the card, and
+    # POST /wake restores it through the configured parking backend. A service that
     # parks is by construction NOT generation_overlap_safe.
     memory_parking: bool = False
-    # Per-launch identity the launcher wrote into the service config; a client
-    # that started this child compares it so a healthy answer from *another*
-    # service on the same port (a config-path race, a stale process) is refused.
-    launch_token: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.memory_parking, bool):

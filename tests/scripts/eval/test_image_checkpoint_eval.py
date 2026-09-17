@@ -285,11 +285,15 @@ def test_reward_batches_are_blinded_consistently_across_seeds(generation, monkey
         async def shutdown(self):
             shutdowns.append(True)
 
-    monkeypatch.setattr("vrl.rewards.functions.registry._register_builtins", lambda: None)
-    monkeypatch.setattr("vrl.rewards.functions.registry.get_reward", lambda _name: FakeReward)
+    def build_reward(_weights, **kwargs):
+        # Offline scoring must not inherit training's unowned Ray deployment.
+        assert kwargs["inference_configs"]["fake"].kind == "in_process"
+        assert "artifact_dir" not in kwargs["reward_kwargs"]["fake"]
+        return FakeReward()
+
     monkeypatch.setattr(
         "vrl.rewards.functions.registry.MultiReward.from_dict",
-        lambda *_args, **_kwargs: FakeReward(),
+        build_reward,
     )
     scored = asyncio.run(checkpoint_eval.score_images(archive.plan, rows, archive.directory))
     order = archive.plan.blind_orders()[0]

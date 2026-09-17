@@ -1,9 +1,9 @@
-"""UnifiedReward-2.0 video reward function (disk artifacts + in-process runtime).
+"""UnifiedReward-2.0 video reward function.
 
-A ``DiskArtifactRewardFunction`` on the disk-artifact path whose runtime loads
+A ``ModelRewardFunction`` whose runtime loads
 ``CodeGoat24/UnifiedReward-2.0-qwen-7b`` and returns ``alignment`` / ``physics``
 / ``style`` / ``overall`` per artifact. This file only pins the model factory and
-the UnifiedReward defaults; transport and disk-vs-in-memory wiring are shared.
+the UnifiedReward defaults; transport and scorer-local media adaptation are shared.
 
 Default ``score_key`` is ``overall``; switch to ``physics`` for the sprint's
 skirt/cloth plausibility compound, optionally with a task rubric via
@@ -12,11 +12,11 @@ skirt/cloth plausibility compound, optionally with a task rubric via
 
 from __future__ import annotations
 
-from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.base import ModelRewardFunction
 
 
-class UnifiedRewardVideoReward(DiskArtifactRewardFunction):
-    """UnifiedReward-2.0 video judge scored from disk artifacts."""
+class UnifiedRewardVideoReward(ModelRewardFunction):
+    """UnifiedReward-2.0 video judge scored through the configured runtime."""
 
     model_factory = "vrl.rewards.models.unified_reward_video:UnifiedRewardVideoModel"
     request_prefix = "unified-reward-video"

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.base import ModelRewardFunction
 
 
-class CountGDReward(DiskArtifactRewardFunction):
+class CountGDReward(ModelRewardFunction):
     """Count ``metadata.object_class`` against ``metadata.expected_count``."""
 
     model_factory = "vrl.rewards.models.countgd:CountGDModel"

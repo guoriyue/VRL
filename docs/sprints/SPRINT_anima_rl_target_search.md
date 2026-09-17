@@ -1352,7 +1352,7 @@ The integration deliberately keeps three existing boundaries:
 
 - `CountGDPersonCountModel` owns the pinned external-model protocol and reads
   the target only from typed `metadata.expected_people`.
-- `CountGDPersonCountReward` remains a thin `DiskArtifactRewardFunction`
+- `CountGDPersonCountReward` remains a thin `ModelRewardFunction`
   framework/HTTP adapter; flattening it would break the uniform reward registry
   shape without removing complexity.
 - The existing reward-service wire format, artifact integrity checks, runtime,

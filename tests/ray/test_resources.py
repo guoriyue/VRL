@@ -608,9 +608,9 @@ def test_multi_gpu_local_reward_is_rejected_at_resolution() -> None:
         )
 
 
-def test_cross_node_reward_gpu_is_rejected_at_resolution() -> None:
-    """A remote Ray ordinal cannot be used as a CUDA device in the driver process."""
-    with pytest.raises(ValueError, match="cannot reserve a local reward GPU"):
+def test_cross_node_reward_gpu_cannot_share_a_remote_rollout_token() -> None:
+    """A shared remote GPU needs a node-local lease, not a budget-token ordinal."""
+    with pytest.raises(ValueError, match="require a dedicated Ray bundle"):
         ResolvedDistributedResources.from_root(
             parse_config(
                 _cfg(
@@ -627,6 +627,25 @@ def test_cross_node_reward_gpu_is_rejected_at_resolution() -> None:
                 )
             ),
         )
+
+
+def test_cross_node_dedicated_reward_gets_its_own_budget_token() -> None:
+    resolved = ResolvedDistributedResources.from_root(
+        parse_config(
+            _cfg(
+                {
+                    "visible_devices": "auto",
+                    "cross_node": True,
+                    "trainer": {"num_gpus": 1},
+                    "rollout": {"num_gpus": 1},
+                    "reward": {"device": "gpu", "gpu_pool": "dedicated"},
+                }
+            )
+        )
+    )
+    assert resolved.reward_devices == (2,)
+    assert not resolved.lifecycle.release_reward_after_score
+    assert resolved.reward_torch_device() == "cuda:0"
 
 
 def test_resource_plan_formatter_includes_key_fields() -> None:

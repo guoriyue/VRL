@@ -1,15 +1,13 @@
 """Async standalone reward scoring service and CLI lifecycle.
 
 The server half of the HTTP ``RewardScorer`` transport (client half:
-service/client.py). It runs as an operator-owned process that keeps one model
-identity and its device for its whole lifetime — the opposite deal from the
-colocated in-process scorer, which is why ``RewardService.from_yaml`` rejects
-``sleep_offload``. ``RewardService`` owns HTTP-side policy only — admission
-limits, request-id idempotency, cancellation, and artifact path/integrity
-validation against the configured roots — while the model runs on
+service/client.py). It runs as an operator-owned process with one model
+identity. ``RewardService`` owns HTTP-side policy only — admission limits,
+request-id idempotency, cancellation, typed media uploads, and optional shared
+artifact path/integrity validation against configured roots — while the model runs on
 ``RewardScoringThread``'s dedicated thread (service/owner.py) so liveness and
-cancel endpoints stay responsive during synchronous GPU work. The generation
-engine has no service twin: its workers are Ray actors inside the job.
+cancel endpoints stay responsive during synchronous GPU work. An explicitly
+configured shared-GPU service preserves its park/wake phase-lease endpoints.
 """
 
 from __future__ import annotations
@@ -89,12 +87,13 @@ class RewardServiceConfig(ConfigBase):
     max_concurrency: StrictInt = 1
     max_pending_requests: StrictInt = 8
     max_cached_requests: StrictInt = 1024
+    # Uploads are uncompressed base64 (4/3 the tensor bytes). Video deployments
+    # must explicitly size this cap and admission together: parsing/decoding
+    # temporarily holds both encoded and decoded copies of each request.
     max_request_bytes: StrictInt = 16 * 1024 * 1024
     # Operator attestation for GPU services. CPU services are inferred safe by
     # RewardService.from_yaml because they execute no accelerator work beside generation.
     generation_overlap_safe: StrictBool = False
-    # Written by a driver-managed launch and echoed on /info (see RewardServiceInfo).
-    launch_token: str = ""
 
     @field_validator("artifact_roots", mode="before")
     @classmethod
@@ -160,14 +159,13 @@ class RewardService:
             max_cached_requests=int(cfg.max_cached_requests),
             max_request_bytes=int(cfg.max_request_bytes),
             generation_overlap_safe=bool(cfg.generation_overlap_safe or runs_on_cpu),
-            launch_token=str(cfg.launch_token),
         )
 
     def __init__(
         self,
         runtime: RewardScorer,
         *,
-        artifact_roots: Sequence[str | Path],
+        artifact_roots: Sequence[str | Path] = (),
         host: str = "127.0.0.1",
         port: int = 8300,
         model_name: str = "",
@@ -177,7 +175,6 @@ class RewardService:
         max_cached_requests: int = 1024,
         max_request_bytes: int = 16 * 1024 * 1024,
         generation_overlap_safe: bool = False,
-        launch_token: str = "",
     ) -> None:
         if not host:
             raise ValueError("reward service host is required")
@@ -204,15 +201,9 @@ class RewardService:
             if not root.is_dir():
                 raise ValueError(f"reward artifact root is not a directory: {root}")
             roots.append(root)
-        if not roots:
-            raise ValueError(
-                "reward service requires at least one artifact_root; unrestricted "
-                "client-supplied filesystem paths are not allowed",
-            )
-
         self._host = host
         self._port = int(port)
-        self._artifact_paths = RootedPaths(roots[0], *roots[1:])
+        self._artifact_paths = RootedPaths(roots[0], *roots[1:]) if roots else None
         # The service parks iff its runtime takes the parking contract. The
         # in-service InProcessRewardScorer does so when worker_config.sleep_offload
         # is set (the same contract the driver-side runtime used to fulfil).
@@ -224,7 +215,6 @@ class RewardService:
             max_concurrency=max_concurrency,
             max_pending_requests=max_pending_requests,
             memory_parking=memory_parking,
-            launch_token=str(launch_token),
         )
         self._runtime_device = str(getattr(getattr(runtime, "_launch", None), "device", "") or "")
         self._max_cached_requests = max_cached_requests
@@ -434,14 +424,14 @@ class RewardService:
                 retryable=True,
             )
         try:
-            payload = await request.json(loads=json.loads)
+            payload = await asyncio.to_thread(json.loads, await request.read())
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
             raise RewardServiceProtocolError(
                 RewardServiceErrorCode.BAD_REQUEST,
                 f"request body must be valid JSON: {error}",
             ) from error
-        inference_request = request_from_wire(payload)
-        fingerprint = request_fingerprint(inference_request)
+        inference_request = await asyncio.to_thread(request_from_wire, payload)
+        fingerprint = await asyncio.to_thread(request_fingerprint, inference_request)
 
         request_id = inference_request.request_id
         async with self._records_lock:
@@ -649,6 +639,15 @@ class RewardService:
     ) -> RewardInferenceRequest:
         artifacts = []
         for artifact in request.artifacts:
+            if artifact.media is not None:
+                artifacts.append(artifact)
+                continue
+            if self._artifact_paths is None:
+                raise RewardServiceProtocolError(
+                    RewardServiceErrorCode.PATH_NOT_ALLOWED,
+                    "shared reward paths require explicit artifact_roots; upload media instead",
+                    request_id=request.request_id,
+                )
             path = Path(artifact.path).expanduser()
             if not path.is_absolute():
                 raise RewardServiceProtocolError(

@@ -88,9 +88,6 @@ reward:
     unified_reward_video:
       reward_name: unified_reward_video
       score_key: alignment+physics
-      media_type: video
-      artifact_format: mp4
-      artifact_dir: ${trainer.output_dir}/reward_artifacts
   inference:
     unified_reward_video:
       kind: http

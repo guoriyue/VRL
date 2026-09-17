@@ -11,6 +11,7 @@ from PIL.Image import Image
 from vrl.trajectory.device import map_tensor_tree
 from vrl.trajectory.types import TrajectoryBatch
 from vrl.utils.config import to_builtin_deep
+from vrl.utils.media_reference import MediaReference
 
 TrajectoryStorageDevice = Literal["preserve", "cpu"]
 TrajectoryStorageDType = Literal["preserve", "float32", "float16", "bfloat16"]
@@ -99,7 +100,7 @@ class TrajectoryStoragePolicy:
 def trajectory_tensor_bytes(value: object) -> int:
     """Estimate payload bytes, counting each object once within this traversal.
 
-    Includes tensor, image and byte leaves. Distinct tensor views may share
+    Includes tensor, remote media, image and byte leaves. Distinct tensor views may share
     storage, so this is neither unique storage size nor peak device occupancy.
     """
 
@@ -129,6 +130,8 @@ def trajectory_tensor_bytes(value: object) -> int:
 
         if isinstance(value, Tensor):
             return int(value.numel()) * int(value.element_size())
+        if isinstance(value, MediaReference):
+            return value.nbytes
         if is_dataclass(value) and not isinstance(value, type):
             return sum(count_bytes(getattr(value, item.name)) for item in fields(value))
         if isinstance(value, Image):

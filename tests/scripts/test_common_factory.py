@@ -182,6 +182,7 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
     cfg.distributed.resources.visible_devices = [0]
     built = build_configs(cfg)
+    from vrl.rewards.ray import RayRewardPlacement
 
     reward = build_reward_function(
         resolve_reward_inputs(
@@ -189,6 +190,7 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
             ResolvedDistributedResources.from_root(parse_config(cfg)),
             trainer_device="cuda:0",
         ),
+        ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"),
     )
 
     assert [(name, weight) for name, weight, _ in reward.rewards] == [
@@ -196,9 +198,9 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
         ("pickscore", 0.0),
     ]
     pickscore = reward.rewards[1][2]
-    # Online rewards run as managed services; the resolved device travels in
-    # the service's worker_config.
-    assert pickscore.scorer.worker_config["device"] == "cpu"
+    # Online rewards run as Ray actors; the resolved device travels in
+    # the actor's worker_config.
+    assert pickscore.scorer._launch.device == "cpu"
 
 
 def test_sana_family_defaults_to_native_fp16() -> None:
@@ -266,6 +268,7 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam_long")
     cfg.distributed.resources.visible_devices = [0]
     built = build_configs(cfg)
+    from vrl.rewards.ray import RayRewardPlacement
 
     assert built.resume.checkpoint_path is None
     assert built.resume.strict is True
@@ -276,9 +279,10 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
             ResolvedDistributedResources.from_root(parse_config(cfg)),
             trainer_device="cuda:0",
         ),
+        ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"),
     )
-    aesthetic_config = reward.rewards[0][2].scorer.worker_config
-    pickscore_config = reward.rewards[1][2].scorer.worker_config
+    aesthetic_config = reward.rewards[0][2].scorer._launch.component_config
+    pickscore_config = reward.rewards[1][2].scorer._launch.component_config
     assert aesthetic_config["model_revision"] == cfg.reward.kwargs.aesthetic.model_revision
     assert pickscore_config["device"] == "cpu"
     assert pickscore_config["processor_revision"] == cfg.reward.kwargs.pickscore.processor_revision
@@ -460,16 +464,16 @@ def test_multi_gpu_engine_gate_requires_family_capability() -> None:
     get_model_family_entry("sd3_5").validate_gpus_per_engine(2)
 
 
-def test_disk_rewards_default_their_artifact_dir_to_the_run_output(tmp_path) -> None:
-    """A disk reward without an explicit artifact_dir writes under the run's
-    output tree, and a managed service scorer is scoped to that directory."""
-    from vrl.rewards.service.managed import ManagedRewardScorer
+def test_ray_rewards_do_not_materialize_transport_files_in_the_run_output(tmp_path) -> None:
+    """A run-owned scorer transfers media without making an artifact directory."""
+    from vrl.rewards.artifacts import InMemoryRewardArtifactStore
+    from vrl.rewards.ray import RayRewardScorer
 
     cfg = load_config(
         "experiment/sd3_5/online_grpo_ocr",
         overrides=[
             f"trainer.output_dir={tmp_path}/run",
-            "reward.inference.ocr.kind=service",
+            "reward.inference.ocr.kind=ray",
         ],
     )
     cfg.distributed.resources.visible_devices = [0]
@@ -479,11 +483,8 @@ def test_disk_rewards_default_their_artifact_dir_to_the_run_output(tmp_path) -> 
         ResolvedDistributedResources.from_root(parse_config(cfg)),
         trainer_device="cuda:0",
     )
-    assert resolved.artifact_root == f"{tmp_path}/run/reward_artifacts"
-
     reward = build_reward_function(resolved)
     component = reward.rewards[0][2]
-    assert isinstance(component.scorer, ManagedRewardScorer)
-    assert component.scorer.artifact_dir == (tmp_path / "run" / "reward_artifacts" / "ocr")
-    assert component.scorer.state_dir == (tmp_path / "run" / "reward_artifacts")
-    assert component.artifact_store.root == tmp_path / "run" / "reward_artifacts" / "ocr"
+    assert isinstance(component.scorer, RayRewardScorer)
+    assert isinstance(component.artifact_store, InMemoryRewardArtifactStore)
+    assert not (tmp_path / "run" / "reward_artifacts").exists()

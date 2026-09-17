@@ -1,6 +1,6 @@
 # Text-conditioned exact-count reward served from CountGD's isolated CPU
 # environment. The service owns model paths and placement; this preset owns only
-# the shared-filesystem artifact and HTTP transport contract.
+# the uploaded-media HTTP transport contract.
 #
 # Each sample supplies metadata.object_class (e.g. "cat") and an integer
 # metadata.expected_count >= 0. One service handles different classes per sample.
@@ -13,9 +13,6 @@ reward:
     countgd:
       reward_name: countgd
       score_key: countgd
-      media_type: image
-      artifact_format: tensor
-      artifact_dir: ${trainer.output_dir}/reward_artifacts
       debug_dir: ${trainer.output_dir}/reward_debug
   inference:
     countgd:

@@ -13,8 +13,7 @@
 #
 # `endpoint` and `expected_model` below are placeholders — every experiment is
 # expected to override them to match the service it actually talks to. HTTP
-# scoring passes artifacts by shared-filesystem path, so `artifact_dir` must
-# resolve to the same absolute location for both trainer and service.
+# scoring uploads media bytes; no shared filesystem is required.
 #
 # An external service stays fail-closed for generation/reward overlap unless its
 # /info response advertises `generation_overlap_safe`; see presets/reward/README.md.
@@ -25,9 +24,6 @@ reward:
     unified_reward_video:
       reward_name: unified_reward_video   # logical tag (request label)
       score_key: overall
-      media_type: video
-      artifact_format: mp4
-      artifact_dir: ${trainer.output_dir}/reward_artifacts
       # Persist raw axes for reward-hacking audits; the selected scalar alone
       # cannot reveal alignment, physics, and style moving in opposite directions.
       debug_dir: ${trainer.output_dir}/reward_debug

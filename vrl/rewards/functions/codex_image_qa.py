@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.base import ModelRewardFunction
 from vrl.rewards.models.codex_image_qa import (
     DEFAULT_PROMPT_TEMPLATE,
     _extract_score_from_text,
@@ -13,12 +13,12 @@ from vrl.rewards.models.codex_image_qa import (
 )
 
 
-class CodexImageQAReward(DiskArtifactRewardFunction):
+class CodexImageQAReward(ModelRewardFunction):
     """Codex CLI subprocess judge scoring an image against its prompt.
 
     In-process the model is built here and media rides the request in memory;
-    ``inference.kind=service`` hands the same kwargs to a driver-launched
-    service that scores this reward's ``.pt`` artifacts.
+    ``inference.kind=ray`` hands the same kwargs and media to a placement-owned
+    Ray actor.
     """
 
     model_factory = "vrl.rewards.models.codex_image_qa:CodexImageQARewardModel"
@@ -28,7 +28,6 @@ class CodexImageQAReward(DiskArtifactRewardFunction):
     default_score_key = "codex_image_qa"
     default_artifact_format = "tensor"
     default_media_type = "image"
-    in_process_media = "memory"
     eager_model = True
 
     @classmethod

@@ -819,7 +819,7 @@ def test_wan_video_reward_production_config_requires_reward_name() -> None:
 def test_wan_video_reward_production_rejects_a_redirected_model_loader() -> None:
     """A production Kling config cannot carry ``worker_config.model_factory``.
 
-    That key is the live redirect: ``DiskArtifactRewardFunction.__init__`` prefers
+    That key is the live redirect: ``ModelRewardFunction.__init__`` prefers
     it over the reward class's own factory, so a config carrying it names the
     loader instead of the model. ``import_path`` used to be locked beside it and
     is not any more -- it is a GenEval *constructor* kwarg

@@ -19,7 +19,6 @@ import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from vrl.utils.artifacts import MaterializedArtifact, RewardArtifactSpec
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
@@ -102,14 +101,9 @@ class GenerationRequest:
     sde_window_seed: int | None = None
     runtime_debug: bool = False
     policy_version: int | None = None
-    # Disk-reward media the worker materializes itself (see RewardArtifactSpec).
-    # Non-empty means the decoded media stays on the worker: GenerationOutput
-    # .output is None and every sample carries MaterializedArtifact references.
-    reward_artifacts: tuple[RewardArtifactSpec, ...] = ()
-    # True only when every reward component scores from a worker-written
-    # artifact: the worker then drops the decoded media from its result. Any
-    # in-memory reward in the set keeps the media on the wire next to the files.
-    media_off_wire: bool = False
+    # Online reward transport: Ray actors return boxed media references instead
+    # of decoded tensors. Direct/in-process generation retains its tensor API.
+    reward_media_refs: bool = False
 
     def __init__(
         self,
@@ -126,8 +120,7 @@ class GenerationRequest:
         runtime_debug: bool = False,
         policy_version: int | None = None,
         sde_window_seed: int | None = None,
-        reward_artifacts: tuple[RewardArtifactSpec, ...] | list[RewardArtifactSpec] = (),
-        media_off_wire: bool = False,
+        reward_media_refs: bool = False,
     ) -> None:
         normalized_inputs: list[GenerationInput] = []
         for value in inputs:
@@ -149,13 +142,7 @@ class GenerationRequest:
         self.trajectory_storage = trajectory_storage
         self.denoise = denoise
         self.sde_window_seed = sde_window_seed
-        specs = tuple(reward_artifacts)
-        if len({spec.name for spec in specs}) != len(specs):
-            raise ValueError("GenerationRequest.reward_artifacts names must be unique")
-        self.reward_artifacts = specs
-        if media_off_wire and not specs:
-            raise ValueError("GenerationRequest.media_off_wire requires reward_artifacts")
-        self.media_off_wire = bool(media_off_wire)
+        self.reward_media_refs = bool(reward_media_refs)
         self.runtime_debug = runtime_debug
         self.policy_version = policy_version
         self.__post_init__()
@@ -276,21 +263,28 @@ class GenerationOutput:
     Reward, advantage, and GRPO group semantics stay outside this type.
     """
 
-    # Decoded media, or None when the request asked the worker to materialize
-    # reward artifacts instead (then ``artifacts`` carries one file reference
-    # per sample per reward component, in sample-row order).
+    # Decoded media, or sample-ordered boxed MediaReferences for online scoring.
     output: Any
     trajectory: TrajectoryBatch
     # Display/provenance-only: optional scheduler/worker diagnostics requested
     # explicitly by GenerationRequest.runtime_debug.
     runtime_debug: dict[str, Any] | None = None
-    artifacts: dict[str, list[MaterializedArtifact]] | None = None
 
     def __post_init__(self) -> None:
         from vrl.trajectory.types import TrajectoryBatch
 
         if not isinstance(self.trajectory, TrajectoryBatch):
             raise TypeError("GenerationOutput.trajectory must be a TrajectoryBatch")
+
+    @property
+    def reward_media(self) -> Any:
+        """Expose gathered media to the Ray transport adapter."""
+
+        return self.output
+
+    @reward_media.setter
+    def reward_media(self, value: Any) -> None:
+        self.output = value
 
     @property
     def request_id(self) -> str:

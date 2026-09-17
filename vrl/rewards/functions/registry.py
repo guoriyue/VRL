@@ -15,17 +15,21 @@ resolved device inside its own memory frame.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any
 
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.base import (
     CumemRewardFunction,
-    DiskArtifactRewardFunction,
+    ModelRewardFunction,
     RewardCleanupError,
     RewardFunction,
 )
 from vrl.rewards.runtime import build_reward_scorer
 from vrl.rewards.types import RewardOutput, RewardSample
+
+if TYPE_CHECKING:
+    from vrl.rewards.ray import RayRewardPlacement
 
 # Registry of reward function factories.
 # Each factory takes (device,) and returns a RewardFunction instance.
@@ -105,11 +109,15 @@ def _register_builtins() -> None:
 class MultiReward(RewardFunction):
     """Weighted combination of named reward functions.
 
-    Usage::
+    Explicit local scoring (training runs instead supply resolved placement)::
 
         reward_fn = MultiReward.from_dict(
             {"ocr": 1.0, "aesthetic": 0.3},
             device="cuda",
+            inference_configs={
+                "ocr": RewardInferenceConfig(kind="in_process"),
+                "aesthetic": RewardInferenceConfig(kind="in_process"),
+            },
         )
         output = await reward_fn.score_batch([sample])
         # output.scores     -> weighted totals
@@ -138,28 +146,6 @@ class MultiReward(RewardFunction):
         return bool(self.rewards) and all(
             reward.scoring_is_nonblocking for _, _, reward in self.rewards
         )
-
-    @property
-    def consumes_worker_artifacts(self) -> bool:
-        """Whether every component scores from a worker-written file."""
-
-        return bool(self.rewards) and all(
-            reward.consumes_worker_artifacts for _, _, reward in self.rewards
-        )
-
-    def artifact_specs(self) -> tuple[Any, ...]:
-        """Every component's worker-materialized artifact request, name-unique."""
-
-        specs: list[Any] = []
-        for name, _, reward in self.rewards:
-            for spec in reward.artifact_specs():
-                if spec.name != name:
-                    raise ValueError(
-                        f"reward component {name!r} declares an artifact spec named "
-                        f"{spec.name!r}; specs are keyed by component name",
-                    )
-                specs.append(spec)
-        return tuple(specs)
 
     @property
     def external_accelerator_isolation_verified(self) -> bool:
@@ -202,6 +188,7 @@ class MultiReward(RewardFunction):
         reward_kwargs: dict[str, dict[str, Any]] | None = None,
         memory_parking_required: bool | None = None,
         inference_configs: Mapping[str, RewardInferenceConfig] | None = None,
+        ray_placement: RayRewardPlacement | None = None,
     ) -> MultiReward:
         """Build from ``{"name": weight}`` dict, like flow_grpo config.reward_fn.
 
@@ -209,7 +196,7 @@ class MultiReward(RewardFunction):
         e.g. ``{"ocr": {"debug_dir": "out/ocr_debug"}}``.
 
         Config-driven callers pass their already-resolved ``inference_configs``
-        (YAML defaults to a managed service). Direct callers may omit it; every
+        (YAML defaults to a Ray actor). Direct callers may omit it; every
         component then executes in-process, the evaluation/test shape.
         """
         _register_builtins()
@@ -229,12 +216,24 @@ class MultiReward(RewardFunction):
                 inference_configs=resolved_inference_configs,
             )
 
+        gpu_actor_count = sum(
+            resolved_inference_configs[name].kind == "ray"
+            and reward_cls.resolve_execution_device(
+                device=device, kwargs=dict(reward_kwargs.get(name) or {})
+            ).startswith("cuda")
+            for name, reward_cls in reward_classes.items()
+        )
+        if ray_placement is not None and gpu_actor_count:
+            # One reward GPU bundle is owned by the run. Fractions divide
+            # its logical actor slots, not the models' physical memory.
+            ray_placement = replace(ray_placement, gpu_fraction=1.0 / gpu_actor_count)
+
         triples: list[tuple[str, float, RewardFunction]] = []
         for name, weight in configured_weights.items():
             reward_cls = reward_classes[name]
             # `or {}`: a bare YAML key (kwargs: <name>:) parses as None.
             extra = dict(reward_kwargs.get(name) or {})
-            reserved_runtime_keys = sorted(set(extra) & {"scorer", "runtime"})
+            reserved_runtime_keys = sorted(set(extra) & {"scorer", "runtime", "ray_placement"})
             if reserved_runtime_keys:
                 raise ValueError(
                     f"reward.kwargs.{name} cannot set runtime injection keys "
@@ -245,25 +244,26 @@ class MultiReward(RewardFunction):
             if "execution" in extra:
                 raise ValueError(
                     f"reward.kwargs.{name}.execution is no longer supported: the "
-                    "Ray reward pool was removed and rewards score in-process. "
+                    "execution placement is owned by reward.inference. "
                     "Drop the key; shared-GPU parking is derived from distributed "
                     "resource topology.",
                 )
-            if inference.kind in {"http", "service"} and not issubclass(
-                reward_cls, DiskArtifactRewardFunction
+            if inference.kind in {"http", "ray"} and not issubclass(
+                reward_cls, ModelRewardFunction
             ):
                 raise ValueError(
-                    f"reward {name!r} uses in-memory artifacts and cannot use "
+                    f"reward {name!r} has no remote model-factory contract and cannot use "
                     f"{inference.kind} inference",
                 )
-            if inference.kind == "service":
-                # The managed subprocess receives the component's resolved device
-                # and worker_config; only the transport differs from in-process.
+            if inference.kind == "ray":
+                # Placement is launcher-owned; component device overrides may
+                # downgrade to CPU but cannot independently select a GPU.
                 component_device = reward_cls.resolve_execution_device(
                     device=device,
                     kwargs=extra,
                 )
                 extra["inference"] = inference
+                extra["ray_placement"] = ray_placement
             elif inference.kind == "http":
                 local_only = sorted(
                     set(extra)
@@ -291,14 +291,14 @@ class MultiReward(RewardFunction):
             # the CPU-downgrade input.
             extra.pop("device", None)
             if (
-                inference.kind in {"in_process", "service"}
+                inference.kind in {"in_process", "ray"}
                 and memory_parking_required is True
                 and component_device.startswith("cuda")
             ):
                 # GPU ownership comes from topology. A shared reward cannot rely
                 # on every preset remembering an independent parking knob. For a
-                # managed service the knob travels in its worker_config and the
-                # service takes the lease over HTTP (/park, /wake).
+                # Ray actor the knob travels in its worker_config and its
+                # scorer owns the park/wake lifecycle.
                 if not issubclass(reward_cls, CumemRewardFunction):
                     raise ValueError(
                         f"reward {name!r} has no complete memory-parking contract",
@@ -310,7 +310,6 @@ class MultiReward(RewardFunction):
                 # CPU-only components also never receive a GPU parking knob.
                 extra.pop("sleep_offload", None)
             component = reward_cls(device=component_device, **extra)
-            component.bind_component(name)
             triples.append((name, weight, component))
         return cls(triples)
 
@@ -375,7 +374,7 @@ def validate_reward_memory_parking_components(
     kwargs_by_name = reward_kwargs or {}
     if inference_configs is None:
         inference_configs = {name: RewardInferenceConfig(kind="in_process") for name in names}
-    local_kinds = {"in_process", "service"}
+    local_kinds = {"in_process", "ray"}
     gpu_components = [
         name
         for name in names

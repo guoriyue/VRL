@@ -291,7 +291,7 @@ Keep these thin boundaries:
   eagerly importing the server before `python -m vrl.rewards.service.server`.
 - `wire.py`: versioned protocol adapter.
 - `owner.py`: synchronous model thread/event-loop ownership.
-- `DiskArtifactRewardFunction`: artifact capability visible before registry
+- `ModelRewardFunction`: artifact capability visible before registry
   construction.
 
 Keep protocol constants such as `WIRE_PROTOCOL`, `WIRE_VERSION`,

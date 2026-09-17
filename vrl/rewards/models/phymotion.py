@@ -31,7 +31,7 @@ import subprocess
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.utils.logging import init_logger, kv
@@ -44,6 +44,8 @@ _DEFAULT_TIMEOUT_S = 1200
 
 class PhyMotionModel:
     """Score one video by delegating to an external PhyMotion command."""
+
+    input_artifact_format: ClassVar[Literal["mp4", "tensor"]] = "mp4"
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)

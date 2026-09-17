@@ -301,18 +301,18 @@ class ResolvedDistributedResources:
         return f"cuda:{self._local_torch_ordinal(int(devices[0]))}"
 
     def reward_torch_device(self, *, trainer_device: Any | None = None) -> str:
-        """Device for the local, in-process reward runtime.
+        """Device intent passed to the reward component.
 
-        A resolved reward GPU is a local reservation, not a Ray worker
-        placement; resolution already enforced "exactly one, never under
-        cross_node". When no reward GPU is reserved, reward inference follows
-        the trainer device. ``trainer_device`` lets torchrun callers provide
-        their rank-local device instead of the resolver's rank-agnostic
-        trainer ordinal.
+        Remote GPU ordinals come from Ray placement, not budget tokens;
+        ``cuda:0`` names the actor-local CUDA device in that case. Local shared
+        execution follows the trainer's rank-local device until actor launch
+        translates its explicit physical visibility to actor-local zero.
         """
 
         devices = tuple(self.reward_devices)
         if devices:
+            if self.cross_node:
+                return "cuda:0"
             return f"cuda:{self._local_torch_ordinal(int(devices[0]))}"
         if self.reward_runs_on_cpu:
             return "cpu"
@@ -398,11 +398,10 @@ class ResolvedDistributedResources:
                 from vrl.config.builders import RewardRuntimeConfig
 
                 reward_inference = RewardRuntimeConfig.from_cfg(root.reward).inference_configs
-        # in_process and managed-service components both execute on THIS host's
-        # resources (a managed service is a subprocess the driver launches);
-        # only operator-owned HTTP services are external.
+        # In-process components and run-owned Ray actors consume this run's
+        # resource plan; only operator-owned HTTP services are external.
         local_reward_configured = any(
-            inference.kind in {"in_process", "service"} for inference in reward_inference.values()
+            inference.kind in {"in_process", "ray"} for inference in reward_inference.values()
         )
         if reward_inference and not local_reward_configured:
             # External services own their accelerator and process placement. Ignore
@@ -484,12 +483,10 @@ class ResolvedDistributedResources:
         colocated = bool(set(trainer_devices) & set(rollout_devices))
 
         reward_mode = config.reward.device
-        if config.cross_node and reward_mode == "gpu":
+        if config.cross_node and reward_mode == "gpu" and config.reward.gpu_pool == "rollout":
             raise ValueError(
-                "distributed.resources.cross_node=true cannot reserve a local reward "
-                "GPU: cross-node device ids are Ray budget tokens, not driver-local "
-                "CUDA ordinals. Use reward.device=trainer to score on the trainer "
-                "device, or an HTTP reward service.",
+                "cross_node reward GPUs require a dedicated Ray bundle; "
+                "reward.gpu_pool=rollout cannot identify the remote shared GPU",
             )
         reward_devices = _resolve_reward_devices(
             visible_devices=visible_devices,
@@ -497,6 +494,10 @@ class ResolvedDistributedResources:
             rollout_devices=rollout_devices,
             reward_config=config.reward,
         )
+        if config.cross_node and set(reward_devices) & (
+            set(trainer_devices) | set(rollout_devices)
+        ):
+            raise ValueError("cross_node reward GPUs require a dedicated Ray bundle")
 
         # Asymmetric fsdp owns the whole training world with rollout/reward on separate
         # cards, so the trainer set must be disjoint from both regardless of any
@@ -647,9 +648,9 @@ def _resolve_cross_node_visible_devices(
             _validate_device_ids(explicit, field_name="distributed.resources.visible_devices"),
         )
 
-    # Reward never reserves a local GPU under cross_node (rejected during
-    # resolution), so only trainer and rollout contribute budget tokens.
     total = _explicit_role_gpu_count(config.trainer) + _explicit_role_gpu_count(config.rollout)
+    if config.reward.device == "gpu":
+        total += 1
     return tuple(range(total))
 
 

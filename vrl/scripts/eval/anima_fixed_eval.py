@@ -203,13 +203,7 @@ async def _score(
     from vrl.rewards.types import RewardSample
 
     components: dict[str, float] = {"animereward_quality": 1.0}
-    kwargs: dict[str, Any] = {
-        "animereward_quality": {
-            "media_type": "image",
-            "artifact_format": "tensor",
-            "artifact_dir": "outputs/reward_artifacts",
-        }
-    }
+    kwargs: dict[str, Any] = {}
     inference_configs = {
         "animereward_quality": RewardInferenceConfig(
             kind="http",
@@ -220,7 +214,8 @@ async def _score(
     if with_pickscore:
         components["pickscore"] = 1.0
         kwargs["pickscore"] = {"dtype": "float32"}
-        inference_configs["pickscore"] = RewardInferenceConfig()
+        # Offline evaluation owns its local judge, not a training Ray placement.
+        inference_configs["pickscore"] = RewardInferenceConfig(kind="in_process")
 
     reward = MultiReward.from_dict(
         components,
@@ -234,7 +229,10 @@ async def _score(
         samples.append(
             RewardSample(prompt=row["prompt"], output=tensor, sample_id=f"eval-{row['index']:04d}")
         )
-    output = await reward.score_batch(samples)
+    try:
+        output = await reward.score_batch(samples)
+    finally:
+        await reward.shutdown()
     per_component = {
         name: [float(v) for v in values] for name, values in (output.components or {}).items()
     }

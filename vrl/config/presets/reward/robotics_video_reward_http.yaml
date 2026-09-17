@@ -8,9 +8,6 @@ reward:
     robotics_video_reward:
       reward_name: robotics_video_reward
       score_key: robotics_blend
-      media_type: video
-      artifact_format: mp4
-      artifact_dir: ${trainer.output_dir}/reward_artifacts
       debug_dir: ${trainer.output_dir}/reward_debug
   inference:
     robotics_video_reward:

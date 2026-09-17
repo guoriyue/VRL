@@ -80,6 +80,21 @@ def concatenate_sample_values(values: Sequence[Any], *, name: str) -> Any:
     raise TypeError(f"batch field {name!r} must use one consistent concatenable type")
 
 
+def gather_batch_media(batches: Sequence[Any]) -> Any:
+    """Merge decoded tensors or sample-ordered boxed object references.
+
+    Binding-owned payloads expose media through the same transport property;
+    replay tensors remain mandatory and are gathered separately.
+    """
+
+    media = [batch.reward_media for batch in batches]
+    if any(value is None for value in media):
+        raise ValueError("generation batches must carry decoded media or media references")
+    for batch in batches:
+        require_sample_rows("reward_media", batch.reward_media, batch.batch.sample_count)
+    return concatenate_sample_values(media, name="reward_media")
+
+
 def gather_replay_tensors(
     replay_mappings: Sequence[Mapping[str, Any]],
     *,
@@ -371,6 +386,7 @@ __all__ = [
     "concatenate_sample_values",
     "execute_generation_batches",
     "gather_batch_context",
+    "gather_batch_media",
     "gather_replay_tensors",
     "require_sample_rows",
     "sort_and_validate_batch_coverage",

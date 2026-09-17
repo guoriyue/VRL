@@ -77,7 +77,7 @@ class RewardRuntimeConfig:
             raise ValueError(f"reward kwargs configured for unknown component(s): {keys}")
         kwargs = {name: dict(reward.kwargs.get(name) or {}) for name in weights}
         # RewardConfig already parsed the typed inference section; absent
-        # entries take the dataclass default (a driver-managed service).
+        # entries take the dataclass default (a driver-owned Ray actor).
         inference_configs = {
             name: reward.inference.get(name, RewardInferenceConfig()) for name in weights
         }

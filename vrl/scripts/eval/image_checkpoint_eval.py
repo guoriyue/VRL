@@ -4,6 +4,7 @@ Generation uses the registered full-sequence denoise model and its native step
 scheduler. This is not the frozen SANA official-pipeline benchmark or a video
 benchmark. Generated images are content-bound before scoring, so failed reward calls can be retried without
 loading the generator. Completed reports are immutable.
+Local rewards run in-process after generation; configured HTTP judges stay remote.
 """
 
 from __future__ import annotations
@@ -572,9 +573,9 @@ async def score_images(
     from PIL import Image
 
     from vrl.config.builders import RewardRuntimeConfig
+    from vrl.config.reward_inference import RewardInferenceConfig
     from vrl.config.schema import RewardConfig
-    from vrl.rewards.base import DiskArtifactRewardFunction
-    from vrl.rewards.functions.registry import MultiReward, _register_builtins, get_reward
+    from vrl.rewards.functions.registry import MultiReward
     from vrl.rewards.types import REWARD_GROUP_ID_METADATA_KEY, RewardSample
     from vrl.scripts.eval.image_statistics import (
         brightness,
@@ -583,21 +584,28 @@ async def score_images(
         saturation,
     )
 
-    _register_builtins()
     kwargs = {
         name: dict(plan.reward["kwargs"].get(name) or {}) for name in plan.reward["components"]
     }
-    for name, settings in kwargs.items():
-        if issubclass(get_reward(name), DiskArtifactRewardFunction):
-            settings["artifact_dir"] = str(output_dir / "reward_artifacts" / name)
+    deployments = RewardRuntimeConfig.from_cfg(
+        RewardConfig.model_validate(plan.reward),
+    ).inference_configs
+    # Generation is complete before evaluation scores saved images. Local
+    # judges run here, without pretending to own the training Ray placement;
+    # operator-owned HTTP judges keep their configured endpoint and identity.
+    deployments = {
+        name: deployment if deployment.kind == "http" else RewardInferenceConfig(kind="in_process")
+        for name, deployment in deployments.items()
+    }
+    logger.info(
+        "Offline reward deployments: %s", {name: cfg.kind for name, cfg in deployments.items()}
+    )
     scorer = MultiReward.from_dict(
         plan.reward["components"],
         device=plan.reward_device,
         reward_kwargs=kwargs,
         memory_parking_required=False,
-        inference_configs=RewardRuntimeConfig.from_cfg(
-            RewardConfig.model_validate(plan.reward),
-        ).inference_configs,
+        inference_configs=deployments,
     )
     by_key = {
         (row["checkpoint_label"], row["prompt_index"], row["sample_index"]): row for row in rows

@@ -42,7 +42,6 @@ trainer:
 reward:
   kwargs:
     kling_video_reward:
-      artifact_format: mp4
       score_key: motion_quality
 
 production:

@@ -74,10 +74,6 @@ trainer:
     first_step: true
   # Evaluate saved checkpoints separately with the held-out manifest and fixed seeds.
 
-reward:
-  kwargs:
-    kling_video_reward:
-      artifact_format: mp4
 
 production:
   kling_video_reward:

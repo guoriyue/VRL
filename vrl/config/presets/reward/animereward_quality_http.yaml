@@ -11,9 +11,6 @@ reward:
     animereward_quality:
       reward_name: animereward_quality
       score_key: animereward_quality
-      media_type: image
-      artifact_format: tensor
-      artifact_dir: ${trainer.output_dir}/reward_artifacts
       debug_dir: ${trainer.output_dir}/reward_debug
   inference:
     animereward_quality:

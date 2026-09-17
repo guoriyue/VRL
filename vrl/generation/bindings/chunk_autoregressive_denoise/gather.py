@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
-from vrl.generation.execution.reward_artifacts import gather_reward_artifacts
 from vrl.generation.execution.sample_batches import (
     concatenate_sample_values,
     gather_batch_context,
+    gather_batch_media,
     gather_replay_tensors,
     sort_and_validate_batch_coverage,
 )
@@ -43,7 +43,7 @@ class ChunkAutoregressiveDenoiseGatherer:
             sample_rows,
             cast("Sequence[ChunkAutoregressiveDenoiseResult]", batches),
         )
-        output = concatenate_sample_values([batch.output for batch in ordered], name="output")
+        output = gather_batch_media(ordered)
         rows = list(sample_rows)
         context = gather_batch_context([batch.context for batch in ordered])
 
@@ -94,7 +94,6 @@ class ChunkAutoregressiveDenoiseGatherer:
         return GenerationOutput(
             output=output,
             trajectory=trajectory,
-            artifacts=gather_reward_artifacts(ordered),
         )
 
     @staticmethod
@@ -107,7 +106,7 @@ class ChunkAutoregressiveDenoiseGatherer:
             request,
             sample_rows,
             batches,
-            row_fields=("output",),
+            row_fields=(),
         )
         first = ordered[0]
         for batch in ordered:

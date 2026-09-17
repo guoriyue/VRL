@@ -7,15 +7,19 @@ keeps those dataclasses the one schema source — adding a field changes the
 wire, and unknown keys are rejected rather than ignored. The envelope pins
 ``WIRE_VERSION`` so a mismatched peer fails before any scoring, and
 ``request_fingerprint`` canonicalizes a request for the server's idempotency
-check. In-memory media never crosses this boundary: remote
-scoring requires disk-materialized artifacts.
+check. Image/video tensors cross as explicit typed, checksummed numeric bytes,
+never Python pickle. Shared filesystem paths remain an optional compatibility
+transport for operators who explicitly configure allowed roots.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import math
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, fields
+from dataclasses import asdict, dataclass, fields
 from typing import Any
 
 from vrl.rewards.inference import (
@@ -88,27 +92,97 @@ def _reject_unknown_keys(
         )
 
 
-# Artifact wire schema: every dataclass field except the in-memory payload,
-# which never crosses the HTTP boundary (remote scoring reads disk files).
-_ARTIFACT_WIRE_FIELDS = tuple(
-    field.name for field in fields(RewardInferenceArtifact) if field.name != "media"
-)
+@dataclass(frozen=True, slots=True)
+class _TensorMedia:
+    """Closed raw-tensor wire schema; dtype uses an explicit little-endian codec."""
+
+    encoding: str
+    dtype: str
+    shape: list[int]
+    data: str
+    sha256: str
+
+
+def _media_dtype(name: str) -> Any:
+    import numpy as np
+
+    # Deliberately bounded protocol vocabulary, not arbitrary numpy dtype input.
+    codecs = {"uint8": "u1", "float16": "<f2", "float32": "<f4", "float64": "<f8"}
+    if not isinstance(name, str) or name not in codecs:
+        raise ValueError(f"unsupported reward media dtype: {name!r}")
+    return np.dtype(codecs[name])
+
+
+def _media_to_wire(media: Any) -> dict[str, Any]:
+    import torch
+
+    if not isinstance(media, torch.Tensor):
+        raise ValueError("uploaded reward media must be an image/video tensor")
+    if media.ndim not in {3, 4} or any(size < 1 for size in media.shape):
+        raise ValueError("uploaded reward media requires non-empty [C,H,W] or [C,T,H,W]")
+    media = media.detach().cpu()
+    # NumPy has no portable bfloat16 dtype; conversion preserves every value.
+    if media.dtype == torch.bfloat16:
+        media = media.float()
+    dtype = str(media.dtype).removeprefix("torch.")
+    raw = media.numpy().astype(_media_dtype(dtype), copy=False).tobytes(order="C")
+    return asdict(
+        _TensorMedia(
+            encoding="tensor-base64",
+            dtype=dtype,
+            shape=list(media.shape),
+            data=base64.b64encode(raw).decode("ascii"),
+            sha256=hashlib.sha256(raw).hexdigest(),
+        )
+    )
+
+
+def _media_from_wire(value: Any) -> Any:
+    import numpy as np
+    import torch
+
+    body = _require_mapping(value, context="reward media")
+    _reject_unknown_keys(
+        body, {field.name for field in fields(_TensorMedia)}, context="reward media"
+    )
+    media = _TensorMedia(**dict(body))
+    if media.encoding != "tensor-base64":
+        raise ValueError("reward media encoding must be tensor-base64")
+    dtype = _media_dtype(media.dtype)
+    if (
+        not isinstance(media.shape, list)
+        or len(media.shape) not in {3, 4}
+        or any(type(size) is not int or size < 1 for size in media.shape)
+    ):
+        raise ValueError("reward media shape requires positive [C,H,W] or [C,T,H,W] dimensions")
+    expected_bytes = math.prod(media.shape) * dtype.itemsize
+    if not isinstance(media.data, str) or len(media.data) != 4 * ((expected_bytes + 2) // 3):
+        raise ValueError("reward media encoded size disagrees with shape and dtype")
+    # Check declared shape before decoding or allocating a tensor. No compression
+    # or executable serialization can expand an adversarial payload here.
+    raw = base64.b64decode(media.data, validate=True)
+    if len(raw) != expected_bytes:
+        raise ValueError("reward media byte size disagrees with shape and dtype")
+    if not isinstance(media.sha256, str) or hashlib.sha256(raw).hexdigest() != media.sha256:
+        raise ValueError("reward media SHA-256 mismatch")
+    array = np.frombuffer(raw, dtype=dtype).reshape(media.shape)
+    return torch.from_numpy(array.astype(dtype.newbyteorder("="), copy=True))
 
 
 def request_to_wire(request: RewardInferenceRequest) -> dict[str, Any]:
-    """Serialize a disk-artifact request into the current protocol envelope."""
+    """Serialize uploaded tensors or explicitly shared artifact paths."""
 
+    request = request.resolve_media()
     artifacts: list[dict[str, Any]] = []
     for artifact in request.artifacts:
-        if not artifact.path:
-            raise ValueError(
-                "remote reward scoring requires disk-materialized artifacts, but "
-                f"{artifact.artifact_id!r} carries only in-memory media. Use a "
-                "disk-artifact reward or score inline.",
-            )
-        artifacts.append(
-            {name: getattr(artifact, name) for name in _ARTIFACT_WIRE_FIELDS},
-        )
+        row = {
+            field.name: getattr(artifact, field.name)
+            for field in fields(RewardInferenceArtifact)
+            if field.name != "media"
+        }
+        if artifact.media is not None:
+            row.update(path="", size_bytes=None, sha256=None, media=_media_to_wire(artifact.media))
+        artifacts.append(row)
     body = {
         field.name: getattr(request, field.name)
         for field in fields(RewardInferenceRequest)
@@ -152,10 +226,15 @@ def request_from_wire(payload: Any) -> RewardInferenceRequest:
             )
             _reject_unknown_keys(
                 artifact,
-                set(_ARTIFACT_WIRE_FIELDS),
+                {field.name for field in fields(RewardInferenceArtifact)},
                 context=f"reward artifact at index {index}",
             )
-            artifacts.append(RewardInferenceArtifact(**dict(artifact)))
+            artifact_kwargs = dict(artifact)
+            if artifact_kwargs.get("media") is not None:
+                if artifact_kwargs.get("path"):
+                    raise ValueError("reward artifact must choose uploaded media or a shared path")
+                artifact_kwargs["media"] = _media_from_wire(artifact_kwargs["media"])
+            artifacts.append(RewardInferenceArtifact(**artifact_kwargs))
         # Construct from the full validated body (unknown keys were rejected
         # above) so a future request field crosses the wire instead of being
         # silently dropped by a hand-written constructor call.

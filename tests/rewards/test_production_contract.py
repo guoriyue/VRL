@@ -14,8 +14,6 @@ from vrl.rewards.functions.kling_video_reward import KlingVideoReward
 
 _CONTRACT = ProductionContract(task_types=frozenset({"text_to_video", "video2world"}))
 _VALID = {
-    "media_type": "video",
-    "artifact_format": "mp4",
     "reward_name": "org/model@main",
     "worker_config": {},
 }
@@ -28,8 +26,6 @@ def test_a_valid_production_config_passes() -> None:
 @pytest.mark.parametrize(
     ("override", "message"),
     [
-        ({"media_type": "image"}, "media_type=video"),
-        ({"artifact_format": "tensor"}, "artifact_format=mp4"),
         ({"reward_name": "  "}, "reward_name"),
         ({"worker_config": {"model_factory": "fake:factory"}}, "remove extra loader fields"),
     ],
@@ -66,8 +62,6 @@ def test_a_reward_declares_its_contract_and_most_rewards_have_none() -> None:
         "image_to_video",
         "video2world",
     }
-    assert KlingVideoReward.production.media_type == KlingVideoReward.default_media_type
-    assert KlingVideoReward.production.artifact_format == KlingVideoReward.default_artifact_format
     assert RewardFunction.production is None
 
 

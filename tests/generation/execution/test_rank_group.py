@@ -55,6 +55,7 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
             import random
 
             from vrl.generation.execution.worker import GenerationWorkerCore
+            from vrl.generation.types import GenerationRequest
 
             core = object.__new__(GenerationWorkerCore)
             core.rank_group_spec = spec
@@ -71,7 +72,7 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
                 torch.manual_seed(rank + iteration * 100)
                 random.seed(rank + iteration * 100)
                 output = core.execute_request_pipelined(
-                    SimpleNamespace(policy_version=None),
+                    GenerationRequest("r", "sd3_5", "t2i", ["p"], 1),
                     None,
                     [],
                     completion_callback=None,

@@ -3,18 +3,16 @@
 Owns the artifact vocabulary (``MediaType``, ``ArtifactFormat``) and the
 store seam ``RewardFunction`` scores through: ``RewardArtifactStore`` is the
 protocol, ``InMemoryRewardArtifactStore`` the default transport, and
-``DiskRewardArtifactStore`` the file-backed one. Disk materialization exists
-because the reward service's only artifact transport is shared filesystem
-paths: the wire format rejects in-memory media, so disk rewards must write
-stable files (with the size/sha256 integrity fields the server re-verifies)
-before scoring. The disk store tracks which paths it owns so the
-terminal-state seam in base.py can either delete a call's materializations
-(``release``) or transfer them out of store ownership (``retain``) when they
-are explicitly kept or a remote request's fate is unknown — a file a live
-remote scorer might still read is never deleted. torch loads lazily inside
-the disk writer so this module stays importable in torch-free processes. No
-generation-side dual: generation results travel in-process through the Ray
-layer.
+``DiskRewardArtifactStore`` the explicitly file-backed one. Normal scoring
+forwards tensors or boxed media references without driver-side files. A disk
+store is used for requested experiment archives or an explicitly injected
+file-backed input store, not inferred from the inference transport.
+
+The disk store tracks files it creates: ``release`` deletes owned files and
+``retain`` transfers them to the output owner. Borrowed paths are never
+deleted. Model-specific temporary encoding is owned separately by the scoring
+process; it does not turn a reward call into a persistent archive. Torch loads
+lazily inside the disk writer to preserve import-light schema consumers.
 """
 
 from __future__ import annotations
@@ -26,6 +24,7 @@ from typing import Any, Literal, Protocol, get_args, runtime_checkable
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.types import RewardSample
 from vrl.utils.artifacts import sha256_file
+from vrl.utils.media_reference import MediaReference
 
 # Valid artifact media kinds. The Literal is the single source of truth; the
 # store constructor derives its validation set from it.
@@ -86,7 +85,7 @@ class InMemoryRewardArtifactStore:
 
 
 class DiskRewardArtifactStore:
-    """Driver-side writer for stable reward media artifacts."""
+    """Explicit writer for stable reward archives or file-backed input artifacts."""
 
     def __init__(
         self,
@@ -94,7 +93,6 @@ class DiskRewardArtifactStore:
         *,
         media_type: MediaType = "video",
         artifact_format: ArtifactFormat = "tensor",
-        name: str = "",
     ) -> None:
         if media_type not in get_args(MediaType):
             raise ValueError(
@@ -109,32 +107,14 @@ class DiskRewardArtifactStore:
         self.root = Path(root)
         self.media_type = media_type
         self.artifact_format = artifact_format
-        # Reward component this store serves: the key under which the rollout
-        # worker delivers pre-written files (RewardSample.artifacts).
-        self.name = str(name)
         self._owned_paths: set[Path] = set()
         self.root.mkdir(parents=True, exist_ok=True)
-
-    def spec(self) -> dict[str, Any]:
-        """What a rollout worker needs to write this store's files itself."""
-
-        return {
-            "name": self.name,
-            "root": str(self.root.resolve()),
-            "media_type": self.media_type,
-            "artifact_format": self.artifact_format,
-        }
 
     def materialize(self, samples: list[RewardSample]) -> list[RewardInferenceArtifact]:
         artifacts: list[RewardInferenceArtifact] = []
         try:
             for sample in samples:
-                delivered = sample.artifacts.get(self.name) if self.name else None
-                artifacts.append(
-                    self._write_one(sample)
-                    if delivered is None
-                    else self._adopt(sample, delivered)
-                )
+                artifacts.append(self._write_one(sample))
         except BaseException:
             self.release(artifacts)
             raise
@@ -168,35 +148,12 @@ class DiskRewardArtifactStore:
             if artifact.path:
                 self._owned_paths.discard(Path(artifact.path))
 
-    def _adopt(self, sample: RewardSample, delivered: Any) -> RewardInferenceArtifact:
-        """Take ownership of a file the rollout worker wrote for this store."""
-
-        path = Path(delivered.path)
-        if not path.is_absolute() or not path.exists():
-            raise FileNotFoundError(
-                f"worker-materialized reward artifact for {self.name!r} is missing: {path}",
-            )
-        expected_root = self.root.resolve()
-        if expected_root not in path.resolve().parents:
-            raise ValueError(
-                f"worker-materialized reward artifact {path} lies outside this store's "
-                f"root {expected_root}",
-            )
-        self._owned_paths.add(path.resolve())
-        return RewardInferenceArtifact(
-            artifact_id=f"{sample.sample_id}:{path.stem}",
-            sample_id=sample.sample_id,
-            path=str(path.resolve()),
-            prompt=str(sample.prompt),
-            size_bytes=int(delivered.size_bytes),
-            sha256=str(delivered.sha256),
-            metadata=_artifact_provenance(dict(sample.metadata or {})),
-        )
-
     def _write_one(self, sample: RewardSample) -> RewardInferenceArtifact:
         import torch
 
         output = sample.output
+        if isinstance(output, MediaReference):
+            output = output.resolve()
         if not isinstance(output, torch.Tensor):
             raise TypeError(
                 f"{self.media_type} reward artifact materialization requires tensor sample output",

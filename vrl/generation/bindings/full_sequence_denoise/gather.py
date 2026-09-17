@@ -11,12 +11,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
-from vrl.generation.execution.reward_artifacts import gather_reward_artifacts
 from vrl.generation.execution.sample_batches import (
     concatenate_sample_values,
     gather_batch_context,
+    gather_batch_media,
     gather_replay_tensors,
-    require_sample_rows,
     sort_and_validate_batch_coverage,
 )
 from vrl.generation.protocols import BatchPayload
@@ -44,8 +43,7 @@ class DiffusionBatchGatherer:
             request,
             sample_rows,
             cast("Sequence[DiffusionBatchResult]", batches),
-            # "video" is validated below: it is None on every batch once the
-            # worker materialized the reward artifacts instead of shipping media.
+            # Decoded media or boxed references are validated separately below.
             row_fields=("latents", "log_probs", "timesteps", "kl"),
         )
 
@@ -69,16 +67,7 @@ class DiffusionBatchGatherer:
             [batch.timesteps for batch in ordered_batches], name="timesteps"
         )
         kl_tensor = concatenate_sample_values([batch.kl for batch in ordered_batches], name="kl")
-        videos = [batch.video for batch in ordered_batches]
-        if all(v is None for v in videos):
-            video = None
-        elif any(v is None for v in videos):
-            raise ValueError("generation batches disagree on whether media crossed the wire")
-        else:
-            for batch in ordered_batches:
-                require_sample_rows("video", batch.video, batch.batch.sample_count)
-            video = concatenate_sample_values(videos, name="video")
-        artifacts = gather_reward_artifacts(ordered_batches)
+        video = gather_batch_media(ordered_batches)
         replay_tensors = gather_replay_tensors(
             [batch.replay_tensors for batch in ordered_batches],
             sample_counts=[batch.batch.sample_count for batch in ordered_batches],
@@ -105,7 +94,6 @@ class DiffusionBatchGatherer:
         return GenerationOutput(
             output=video,
             trajectory=trajectory,
-            artifacts=artifacts,
         )
 
 

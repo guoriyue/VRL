@@ -7,9 +7,8 @@ import os
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any, Literal
+from typing import IO, Any
 
 DATA_ROOT_ENV = "VRL_DATA_ROOT"
 
@@ -160,73 +159,11 @@ def coerce_data_root(value: str | Path | None) -> Path:
     return Path(value).expanduser().resolve() if value is not None else default_data_root()
 
 
-# ---- reward artifact wire contract -------------------------------------------
-# Shared by the generation worker (writes the files) and the reward layer
-# (admits them). Neither layer may import the other, so the contract lives here
-# with the other artifact primitives.
-
-
-@dataclass(frozen=True, slots=True)
-class RewardArtifactSpec:
-    """One reward component's request that the worker write its media to disk.
-
-    Projected by the collector from the reward function's disk artifact
-    stores. The worker writes one file per sample under ``root`` in the
-    component's format and returns ``MaterializedArtifact`` references; the
-    decoded media then never crosses the worker->driver wire and the driver
-    never encodes video. ``fps`` is the mp4 encode rate, filled from the
-    request's sampling when the store did not pin one.
-    """
-
-    name: str
-    root: str
-    media_type: Literal["image", "video"]
-    artifact_format: Literal["tensor", "mp4"]
-    fps: float | None = None
-
-    def __post_init__(self) -> None:
-        if not self.name or not self.root:
-            raise ValueError("RewardArtifactSpec needs a component name and a root directory")
-        if self.media_type not in ("image", "video"):
-            raise ValueError(
-                f"RewardArtifactSpec.media_type must be image or video, got {self.media_type!r}",
-            )
-        if self.artifact_format not in ("tensor", "mp4"):
-            raise ValueError(
-                f"RewardArtifactSpec.artifact_format must be tensor or mp4, got {self.artifact_format!r}",
-            )
-        if self.artifact_format == "mp4" and self.media_type != "video":
-            raise ValueError("RewardArtifactSpec: artifact_format=mp4 requires media_type=video")
-
-
-@dataclass(frozen=True, slots=True)
-class MaterializedArtifact:
-    """A reward media file already written for one sample by the rollout worker.
-
-    Carries exactly what the reward service needs to admit the file (path +
-    integrity); the driver never decodes or re-encodes the media it refers to.
-    """
-
-    path: str
-    size_bytes: int
-    sha256: str
-
-    def __post_init__(self) -> None:
-        if not self.path:
-            raise ValueError("MaterializedArtifact.path must be non-empty")
-        if isinstance(self.size_bytes, bool) or int(self.size_bytes) < 0:
-            raise ValueError("MaterializedArtifact.size_bytes must be >= 0")
-        if len(self.sha256) != 64:
-            raise ValueError("MaterializedArtifact.sha256 must be a hex digest")
-
-
 __all__ = [
     "DATA_ROOT_ENV",
     "IMAGE_SUFFIXES",
     "ArtifactManifestError",
-    "MaterializedArtifact",
     "PathOutsideRootsError",
-    "RewardArtifactSpec",
     "RootedPaths",
     "atomic_file",
     "coerce_data_root",

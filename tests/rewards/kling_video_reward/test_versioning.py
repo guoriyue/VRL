@@ -49,8 +49,6 @@ async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -
     reward = KlingVideoReward(
         reward_name="KlingTeam/VideoReward@main",
         score_key="overall_reward",
-        artifact_format="tensor",  # codec-independent wiring test (no imageio dep)
-        artifact_dir=str(tmp_path / "reward_artifacts"),
         debug_dir=str(tmp_path / "reward_debug"),
         scorer=_VersionedRuntime(),
     )

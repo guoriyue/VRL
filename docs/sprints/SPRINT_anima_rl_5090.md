@@ -98,7 +98,7 @@ justifies the integration cost.
 
 - `vrl/rewards/models/animereward.py` — `AnimeRewardQualityModel` (TorchRewardModel).
 - `vrl/rewards/functions/animereward.py` — `AnimeRewardQualityReward`
-  (DiskArtifactRewardFunction, so the HTTP transport is available).
+  (ModelRewardFunction, so the HTTP transport is available).
 - registered as `animereward_quality`; preset `/reward/animereward_quality_http`.
 - `vrl/config/reward_service/animereward_quality.yaml` — service on port 8310,
   `generation_overlap_safe: false` (it shares the one physical GPU).

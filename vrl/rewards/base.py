@@ -8,8 +8,9 @@ capabilities the registry and runtime probe, not taxonomy:
 release-or-retain seam so every transport (including injected fakes) passes
 the same result-identity guard; ``CumemRewardFunction`` declares that all
 model CUDA state is built in the tagged pool, enabling verified memory
-parking; ``DiskArtifactRewardFunction`` materializes media to disk before
-scoring (registry preflight selects it by subclass).
+parking; ``ModelRewardFunction`` resolves a model factory and scoring transport
+while forwarding media in memory by default. Explicit archives are separate
+experiment outputs; file-only models receive scorer-local temporary files.
 """
 
 from __future__ import annotations
@@ -22,11 +23,10 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.artifacts import (
-    ArtifactFormat,
     DiskRewardArtifactStore,
     InMemoryRewardArtifactStore,
     MediaType,
@@ -43,8 +43,10 @@ from vrl.rewards.protocols import (
     RewardScorer,
 )
 from vrl.rewards.types import RewardOutput, RewardSample
-from vrl.utils.artifacts import RewardArtifactSpec
 from vrl.utils.logging import init_logger
+
+if TYPE_CHECKING:
+    from vrl.rewards.ray import RayRewardPlacement
 
 logger = init_logger(__name__)
 
@@ -73,18 +75,14 @@ class ProductionContract:
     row it cannot read, a service that is down) shows up by running the reward
     -- ``python -m vrl.scripts.rewards.preflight`` does that in seconds. What
     stays here is what running the reward cannot answer: the prompt task types
-    the reward was validated against, the archive format a production run must
-    leave behind, and the loader keys a production config must not carry.
+    the reward was validated against and the loader keys a production config
+    must not carry. Input media encoding belongs to the scoring model, not the
+    experiment recipe.
     """
 
     # Prompt task types (``data.task_type``) this reward is validated for.
     task_types: frozenset[str]
-    # The archive a production run must leave behind. Defaults are the disk
-    # rewards' own; a reward whose production evidence differs declares its own.
-    media_type: MediaType = "video"
-    artifact_format: ArtifactFormat = "mp4"
-
-    # ``DiskArtifactRewardFunction.__init__`` prefers ``worker_config["model_factory"]``
+    # ``ModelRewardFunction.__init__`` prefers ``worker_config["model_factory"]``
     # over the class's own, so this key redirects the reward's model loader. A
     # production config names its model, never its loader. Not per-reward data
     # -- it is a property of how the loader reads its config -- so it lives on
@@ -95,10 +93,6 @@ class ProductionContract:
         """Refuse a production config for component ``name`` that breaks the contract."""
 
         prefix = f"production.{name} requires"
-        if str(kwargs.get("media_type", "")) != str(self.media_type):
-            raise ValueError(f"{prefix} reward.kwargs.{name}.media_type={self.media_type}")
-        if str(kwargs.get("artifact_format", "")) != str(self.artifact_format):
-            raise ValueError(f"{prefix} artifact_format={self.artifact_format}")
         if not str(kwargs.get("reward_name", "")).strip():
             raise ValueError(f"{prefix} reward.kwargs.{name}.reward_name")
         worker_config = kwargs.get("worker_config") or {}
@@ -210,43 +204,6 @@ class RewardFunction:
 
         return False
 
-    def bind_component(self, name: str) -> None:
-        """Tell this reward its registry component name.
-
-        Called by ``MultiReward`` after construction. A disk store keyed by that
-        name can then be served by the rollout worker (``artifact_specs``);
-        directly constructed rewards (tests, evaluation scripts) stay unbound
-        and keep materializing media themselves.
-        """
-
-        store = getattr(self, "artifact_store", None)
-        if isinstance(store, DiskRewardArtifactStore):
-            store.name = str(name)
-
-    def artifact_specs(self) -> tuple[RewardArtifactSpec, ...]:
-        """Reward files the rollout worker should write for this reward.
-
-        Empty for rewards that read media in memory or were never bound to a
-        component; a bound disk store returns its (name, root, media_type,
-        format) so the worker materializes the file and the driver never
-        touches the media (see ``vrl/generation/execution/reward_artifacts.py``).
-        """
-
-        store = getattr(self, "artifact_store", None)
-        if isinstance(store, DiskRewardArtifactStore) and store.name:
-            return (RewardArtifactSpec(**store.spec()),)
-        return ()
-
-    @property
-    def consumes_worker_artifacts(self) -> bool:
-        """Whether this reward scores from the files ``artifact_specs`` asked for.
-
-        False for a reward that reads media in memory; the collector keeps the
-        media on the wire while any component answers False.
-        """
-
-        return bool(self.artifact_specs())
-
     @property
     def external_accelerator_isolation_verified(self) -> bool:
         """Whether out-of-plan reward accelerator work has been isolated."""
@@ -294,6 +251,7 @@ class InferenceRewardFunction(RewardFunction):
         score_key: str,
         scorer: RewardScorer,
         artifact_store: RewardArtifactStore | None = None,
+        archive_store: RewardArtifactStore | None = None,
         retain_artifacts: bool = False,
         debug_dir: str = "",
         request_prefix: str = "reward",
@@ -306,8 +264,7 @@ class InferenceRewardFunction(RewardFunction):
         if not normalized_score_key:
             raise ValueError("score_key must be non-empty")
         if artifact_store is None:
-            # In-memory media is the default transport; the disk base injects
-            # the file-backed store.
+            # Media stays in memory unless a caller explicitly injects a store.
             artifact_store = InMemoryRewardArtifactStore()
         self.reward_name = normalized_reward_name
         self.score_key = normalized_score_key
@@ -320,6 +277,7 @@ class InferenceRewardFunction(RewardFunction):
         self._selected_score_keys = selected_score_keys
         self.scorer = scorer
         self.artifact_store = artifact_store
+        self._archive_store = archive_store
         self._retain_artifacts = bool(retain_artifacts)
         self.debug_dir = str(debug_dir)
         self._request_prefix = request_prefix
@@ -391,6 +349,11 @@ class InferenceRewardFunction(RewardFunction):
         if not samples:
             return RewardOutput(scores=())
 
+        if self._archive_store is not None:
+            # Explicit experiment output is independent of scorer transport;
+            # never send these driver-local paths to a remote worker.
+            archived = self._archive_store.materialize(samples)
+            self._archive_store.retain(archived)
         scorer = self.scorer
         total_started = time.perf_counter()
         materialize_started = time.perf_counter()
@@ -527,30 +490,23 @@ class CumemRewardFunction(InferenceRewardFunction):
     """Reward whose model allocations are built in the tagged CuMem pool."""
 
 
-class DiskArtifactRewardFunction(CumemRewardFunction):
-    """Base for rewards whose media is materialized to disk before scoring.
+class ModelRewardFunction(CumemRewardFunction):
+    """Model-backed reward with shared factory and inference-transport wiring.
 
-    The heavyweight sibling of the in-memory default: media is written to
-    disk via ``DiskRewardArtifactStore`` and scored through the selected
-    inference transport instead of riding the request in-memory (registry
-    preflight selects HTTP-capable rewards by this subclass).
-    ``model_factory`` / ``request_prefix`` / ``debug_basename`` are the only
-    per-reward differences — concrete rewards pin their own ``reward_name`` /
-    ``score_key`` / ``artifact_format`` defaults before delegating here, so no
-    concrete reward copies this wiring. ``sleep_offload`` releases an
-    in-process model's physical GPU pages between scores while its contents
-    stay in pinned host RAM (the rollout/trainer own the GPU then), mirroring
-    the rollout lease's sleep/wake. ``scorer`` injects a ready
-    ``RewardScorer`` (HTTP components, tests); it wins over the factory-built
-    one. ``artifact_store`` likewise injects a ready store: a reward that
-    scores in-process without a CUDA model (OCR) keeps its tensors in memory
-    and materializes to disk only when its scorer is remote. Disk files
-    belong to this reward call and are deleted after terminal
-    success or failure; explicit ``retain_artifacts`` or an ambiguous remote
-    state transfers them to the debug/output owner instead.
+    Subclasses declare the model factory, score defaults, and debug identity;
+    the registry uses this boundary to admit remote model inference. Samples
+    remain in memory (including boxed references) by default. File-only models
+    declare their input format on the model itself, and the scoring process
+    owns any temporary encoding and cleanup.
+
+    ``scorer`` injects a ready transport in place of factory construction.
+    ``artifact_store`` is an explicit alternative input store, while
+    ``archive_dir`` independently retains experiment output; an archive is
+    never selected merely because scoring is remote. ``sleep_offload`` lets
+    the scorer release its model's GPU memory between scoring phases.
     """
 
-    # Rule-3 collapse: concrete disk rewards differ only in these constants,
+    # Concrete model rewards differ in these declarations,
     # so each subclass is a declaration block instead of a forwarding
     # __init__. model_factory/request_prefix/debug_basename have no class
     # default on purpose — a subclass that forgets them fails loudly at
@@ -560,12 +516,9 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
     debug_basename: ClassVar[str]
     default_reward_name: ClassVar[str]
     default_score_key: ClassVar[str]
+    # Explicit archive encoding only; scorer input format belongs to its model.
     default_artifact_format: ClassVar[str] = "mp4"
     default_media_type: ClassVar[MediaType] = "video"
-    # In-process transport only (a remote scorer always reads disk artifacts):
-    # "memory" keeps media on the request exactly as the former in-memory
-    # rewards did (any tensor layout, no file IO); "disk" materializes it.
-    in_process_media: ClassVar[str] = "disk"
     # In-process transport only: build the model in the constructor so config
     # validation fails at construction and tests can reach ``self._model``
     # (e.g. to inject a fake engine). Skipped under sleep_offload, whose pooled
@@ -584,17 +537,15 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
         *,
         reward_name: str | None = None,
         score_key: str | None = None,
-        artifact_format: str | None = None,
-        media_type: MediaType | None = None,
-        artifact_dir: str = "outputs/reward_artifacts",
+        archive_dir: str = "",
         debug_dir: str = "",
         device: str | None = None,
         sleep_offload: bool = False,
-        retain_artifacts: bool = False,
         worker_config: Mapping[str, Any] | None = None,
         scorer: RewardScorer | None = None,
         artifact_store: RewardArtifactStore | None = None,
         inference: RewardInferenceConfig | None = None,
+        ray_placement: RayRewardPlacement | None = None,
         **model_kwargs: Any,
     ) -> None:
         """Transport keywords are the explicit parameters; every other keyword
@@ -605,6 +556,17 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
         # Deferred: runtime.py imports this module (cycle guard).
         from vrl.rewards.runtime import build_reward_scorer
 
+        removed = {
+            "artifact_dir",
+            "artifact_format",
+            "media_type",
+            "retain_artifacts",
+        } & model_kwargs.keys()
+        if removed:
+            raise TypeError(
+                f"reward transport options {sorted(removed)} were removed; "
+                "scorers own their input format; use archive_dir only for explicit experiment output"
+            )
         if model_kwargs and self.worker_config_only:
             raise TypeError(
                 f"{type(self).__name__} takes model knobs under worker_config; "
@@ -619,33 +581,23 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
                 f"{reward_name} score_key must be one of {list(self.score_keys)}, "
                 f"got {score_key!r}",
             )
-        artifact_format = (
-            self.default_artifact_format if artifact_format is None else artifact_format
-        )
-        media_type = self.default_media_type if media_type is None else media_type
-
-        # In-process transport keeps media on the request when the reward says
-        # so (the former in-memory rewards: any tensor layout, no file IO);
-        # every remote scorer reads disk artifacts.
         in_process = scorer is None and (inference is None or inference.kind == "in_process")
-        if artifact_store is None and in_process and self.in_process_media == "memory":
-            artifact_store = InMemoryRewardArtifactStore()
-        if artifact_store is None:
-            artifact_store = DiskRewardArtifactStore(
-                artifact_dir,
-                media_type=str(media_type),
-                # Unnamed until MultiReward binds the registry component name
-                # (reward_name is not it: presets reuse reward_name as the hub
-                # model id, e.g. MizzenAI/HPSv3@main).
-                artifact_format=str(artifact_format),
+        archive_store = (
+            DiskRewardArtifactStore(
+                archive_dir,
+                media_type=self.default_media_type,
+                artifact_format=self.default_artifact_format,
             )
+            if archive_dir
+            else None
+        )
 
         if scorer is None:
             worker_cfg = dict(worker_config or {})
             has_model_factory = bool(
                 str(worker_cfg.get("model_factory", "")).strip(),
             )
-            # Normalize the model-id key ONCE here so the disk loaders
+            # Normalize the model-id key ONCE here so the model loaders
             # (kling/videocon) read only worker_config["reward_model_name"].
             # Precedence: an explicit worker_config.reward_model_name wins;
             # otherwise fold a top-level reward_name that looks like a HF repo
@@ -660,7 +612,7 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
             if not has_model_factory:
                 # A missing injected scorer is the in-process path: HTTP
                 # components inject their ready client in MultiReward before
-                # they reach this constructor. Every local disk reward
+                # they reach this constructor. Every model-backed reward
                 # therefore needs its concrete factory even when it is a
                 # composite model rather than one Hugging Face repository.
                 worker_cfg["model_factory"] = model_factory
@@ -680,8 +632,8 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
                 )
             if sleep_offload:
                 worker_cfg["sleep_offload"] = True
-            # ``inference`` selects in-process (None/default) or a managed
-            # service subprocess that receives this same worker_cfg. External
+            # ``inference`` selects in-process (None/default) or a placed Ray
+            # actor that receives this same worker_cfg. External
             # HTTP components never reach here: the registry injects their
             # ready client as ``scorer``.
             if in_process and self.eager_model and not worker_cfg.get("sleep_offload"):
@@ -694,8 +646,7 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
                 scorer = build_reward_scorer(
                     worker_cfg,
                     inference=inference,
-                    artifact_dir=str(artifact_dir),
-                    component_name=str(reward_name),
+                    ray_placement=ray_placement,
                 )
 
         super().__init__(
@@ -703,7 +654,7 @@ class DiskArtifactRewardFunction(CumemRewardFunction):
             score_key=str(score_key),
             scorer=scorer,
             artifact_store=artifact_store,
-            retain_artifacts=retain_artifacts,
+            archive_store=archive_store,
             debug_dir=debug_dir,
             request_prefix=self.request_prefix,
             debug_basename=self.debug_basename,
@@ -749,8 +700,8 @@ def _result_timing_summary(
 
 __all__ = [
     "CumemRewardFunction",
-    "DiskArtifactRewardFunction",
     "InferenceRewardFunction",
+    "ModelRewardFunction",
     "RewardCleanupError",
     "RewardFunction",
 ]

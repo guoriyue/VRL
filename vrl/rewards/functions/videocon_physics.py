@@ -1,6 +1,6 @@
-"""VideoCon-Physics reward function (disk artifacts + in-process runtime).
+"""VideoCon-Physics reward function.
 
-A ``DiskArtifactRewardFunction`` configured for the disk-artifact path whose runtime loads the vendored mPLUG-Owl-Video
+A ``ModelRewardFunction`` whose runtime loads the vendored mPLUG-Owl-Video
 backbone with the VideoCon-Physics checkpoint and returns ``physical_commonsense``,
 ``semantic_adherence``, and ``overall`` sub-scores per artifact. This file only
 pins the model factory and the physics-reward defaults.
@@ -12,11 +12,11 @@ Switch to ``overall`` to also reward caption faithfulness.
 
 from __future__ import annotations
 
-from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.base import ModelRewardFunction
 
 
-class VideoConPhysicsReward(DiskArtifactRewardFunction):
-    """VideoCon-Physics reward scored from disk artifacts."""
+class VideoConPhysicsReward(ModelRewardFunction):
+    """VideoCon-Physics reward scored through the configured runtime."""
 
     model_factory = "vrl.rewards.models.videocon_physics:VideoConPhysicsModel"
     request_prefix = "videocon-physics"

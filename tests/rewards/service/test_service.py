@@ -139,7 +139,7 @@ def test_wire_roundtrip_is_versioned_and_preserves_request(tmp_path) -> None:
     assert restored.artifacts[0].metadata == {"target_text": "HELLO"}
 
 
-def test_wire_rejects_inmemory_media() -> None:
+def test_wire_rejects_unsupported_inmemory_media() -> None:
     request = RewardInferenceRequest(
         request_id="req-2",
         artifacts=(
@@ -151,7 +151,7 @@ def test_wire_rejects_inmemory_media() -> None:
             ),
         ),
     )
-    with pytest.raises(ValueError, match="disk-materialized"):
+    with pytest.raises(ValueError, match="image/video tensor"):
         request_to_wire(request)
 
 
@@ -901,12 +901,31 @@ def test_build_reward_scorer_accepts_typed_http_config() -> None:
 
 
 def test_service_requires_explicit_existing_absolute_artifact_roots(tmp_path) -> None:
-    with pytest.raises(ValueError, match="at least one artifact_root"):
-        RewardService(_FakeRuntime(), artifact_roots=[])
     with pytest.raises(ValueError, match="must be absolute"):
         RewardService(_FakeRuntime(), artifact_roots=[Path("relative")])
     with pytest.raises(ValueError, match="does not exist"):
         RewardService(_FakeRuntime(), artifact_roots=[tmp_path / "missing"])
+
+
+def test_obsolete_managed_launch_token_is_rejected_by_config_and_wire() -> None:
+    from vrl.rewards.service.protocol import RewardServiceInfo
+    from vrl.rewards.service.wire import info_from_wire, info_to_wire
+
+    with pytest.raises(ValueError, match="unknown launch_token"):
+        RewardServiceConfig.from_mapping({"launch_token": "obsolete-child-token"})
+    info = RewardServiceInfo(
+        model_name="external-model",
+        model_version="v1",
+        generation_overlap_safe=False,
+        max_concurrency=1,
+        max_pending_requests=8,
+    )
+    payload = info_to_wire(info)
+    assert "launch_token" not in payload["info"]
+    assert info_from_wire(payload) == info
+    payload["info"]["launch_token"] = "obsolete-child-token"
+    with pytest.raises(RewardServiceProtocolError, match="launch_token"):
+        info_from_wire(payload)
 
 
 def test_cli_config_rejects_unknown_top_level_keys_but_keeps_worker_config_open() -> None:

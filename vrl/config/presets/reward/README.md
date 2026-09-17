@@ -15,11 +15,11 @@ signal than the base reward default.
 Reward execution is selected per component and always runs outside the
 trainer process: a reward scoring in the driver competes with the launch-bound
 replay for the interpreter (measured +61 s per epoch on SD3.5 under continuous
-scheduling). The default, `service`, makes the trainer launch
-`vrl-reward-service` itself for each component: the component's
-`reward.kwargs` become the service's `worker_config`, config and log land under
-`${trainer.output_dir}/reward_artifacts/`, and a shared-GPU topology hands the
-service the phase lease (`POST /park`, `POST /wake`). `kind: http` connects to
+scheduling). The default, `ray`, runs each component in a driver-owned Ray
+actor with placement and memory parking derived from the run topology.
+Media travels through Ray without driver-side image or video files. Models
+that need a file decoder materialize temporary inputs inside their scoring
+process. `kind: http` connects to
 an operator-owned service instead, with typed transport config in the
 `reward.inference` section, keyed by component name:
 
@@ -27,9 +27,6 @@ an operator-owned service instead, with typed transport config in the
 reward:
   components:
     videoscore2: 1.0
-  kwargs:
-    videoscore2:
-      artifact_dir: /shared/vrl/reward_artifacts
   inference:
     videoscore2:
       kind: http
@@ -43,14 +40,18 @@ reward:
 never nests inside it.
 
 Do not put `worker_config`, `device`, or parking fields on an HTTP component.
-Those belong to the standalone service config. HTTP scoring currently uses
-integrity-checked shared-filesystem paths, so the trainer and service must see
-the same absolute `artifact_dir`. External-only rewards receive no local Ray
+Those belong to the standalone service config. HTTP scoring uploads media bytes;
+the trainer and service do not need a shared filesystem. External-only rewards receive no local Ray
 resource bundle. `expected_model` is required; set `expected_model_version` for
 fixed reward protocols so preflight also rejects a same-name service running a
-different checkpoint, revision, or threshold. If a transport failure leaves the remote request state
-unknown, VRL retains that request's artifacts for operator cleanup rather than
-deleting files that the service may still be reading.
+different checkpoint, revision, or threshold.
+
+Scoring does not require `media_type`, `artifact_format`, `artifact_dir`, or
+`retain_artifacts` constructor settings. The model owns its decoder format.
+For an explicit experiment archive, set `reward.kwargs.<component>.archive_dir`;
+these saved copies are separate from the inputs sent for scoring. `debug_dir`
+remains available for reward-specific diagnostic records. GenEval's evaluator
+`artifact_dir` is a separate model argument, not a transport directory.
 
 Generation/reward streaming is capability-derived. It is enabled only when no
 GPU phase handoff is required and every reward component is both non-blocking
@@ -188,10 +189,10 @@ a list of component instances in a separate sprint.
 Two ways to keep PaddleOCR out of the trainer process (measured: in-process
 OCR under continuous scheduling cost 61 s per epoch of launch-bound replay):
 
-- `reward.inference.ocr.kind=service` on top of `/reward/ocr`: the trainer
-  launches `vrl-reward-service` itself for this component, hands it the
-  recipe's `reward.kwargs.ocr`, and scores over loopback HTTP. Nothing to
-  start by hand; the service config and log land in the run's output dir.
+- `/reward/ocr` uses a driver-owned Ray actor by default. The actor receives
+  `reward.kwargs.ocr` and scores media through Ray; no HTTP server or manual
+  startup is needed. The removed `kind=service` override must be dropped or
+  replaced with `kind=ray`.
 - `/reward=ocr_http` (self-contained preset): an operator-run service
   (`vrl/config/reward_service/ocr_paddle.yaml`):
 

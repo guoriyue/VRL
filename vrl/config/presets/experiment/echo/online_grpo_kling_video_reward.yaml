@@ -48,8 +48,3 @@ rollout:
 trainer:
   output_dir: outputs/echo_kling_video_reward
   save_freq: 20
-
-reward:
-  kwargs:
-    kling_video_reward:
-      artifact_format: mp4

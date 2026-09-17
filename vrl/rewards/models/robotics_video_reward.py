@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
@@ -50,6 +50,9 @@ class RoboticsVideoRewardModel:
     the anti-static motion floor. Keeping all three behind one HTTP model lets
     generation continue on disjoint GPUs while this service scores artifacts.
     """
+
+    # Kling requires a video path even though the other children accept media.
+    input_artifact_format: ClassVar[Literal["mp4", "tensor"]] = "mp4"
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         cfg = dict(worker_config)

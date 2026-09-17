@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vrl.algorithms.base import Algorithm
 from vrl.config.builders import BuiltConfigs
@@ -15,6 +16,34 @@ from vrl.rewards import RewardRuntime
 from vrl.rewards.base import RewardFunction
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.run import ResolvedReward
+
+if TYPE_CHECKING:
+    from vrl.ray.placement import GlobalRayPlacementOwner
+    from vrl.rewards.ray import RayRewardPlacement
+
+
+def resolve_reward_actor_placement(
+    reward: ResolvedReward,
+    owner: GlobalRayPlacementOwner,
+) -> RayRewardPlacement:
+    """Bind a component deployment to the run's acquired resource ownership."""
+    from vrl.rewards.ray import RayRewardPlacement
+
+    if reward.device.startswith("cuda") and reward.memory_parking_required:
+        import torch
+
+        from vrl.ray.dependencies import require_ray
+
+        # CUDA ordinals in a driver mask are not Ray's physical GPU IDs.
+        device_index = torch.device(reward.device).index
+        ordinal = torch.cuda.current_device() if device_index is None else device_index
+        mask = os.environ.get("CUDA_VISIBLE_DEVICES")
+        physical_gpu = int(mask.split(",")[ordinal]) if mask else ordinal
+        return RayRewardPlacement(
+            shared_gpu_id=physical_gpu,
+            node_id=str(require_ray().get_runtime_context().get_node_id()),
+        )
+    return RayRewardPlacement(placement=owner.reward_placement)
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +185,9 @@ class AlgorithmEvaluatorPair:
         raise ValueError(f"unsupported online algorithm.kind: {kind!r}")
 
 
-def build_reward_function(reward: ResolvedReward) -> RewardFunction:
+def build_reward_function(
+    reward: ResolvedReward, *, ray_placement: RayRewardPlacement | None = None
+) -> RewardFunction:
     """Build the online reward function from the resolved reward inputs.
 
     Device and parking policy are decided once by ``ResolvedOnlineRun.
@@ -181,7 +212,7 @@ def build_reward_function(reward: ResolvedReward) -> RewardFunction:
         # training isolates every reward in its own process.
         raise ValueError(
             f"reward.inference.{{{', '.join(in_process)}}}.kind=in_process is not admitted "
-            "for online training; drop the key (managed service, the default) or "
+            "for online training; drop the key (Ray actor, the default) or "
             "point it at an operator-run service with kind=http",
         )
     from vrl.rewards.functions.registry import MultiReward
@@ -198,38 +229,24 @@ def build_reward_function(reward: ResolvedReward) -> RewardFunction:
             inference_configs=config.inference_configs,
         )
 
-    reward_kwargs = config.kwargs
-    if reward.artifact_root:
-        from vrl.rewards.base import DiskArtifactRewardFunction
-        from vrl.rewards.functions.registry import get_reward
-
-        # Disk artifacts belong to the run, not to a repo-relative default:
-        # they must survive the run for audits and a managed service is only
-        # allowed to read this run's directory.
-        reward_kwargs = {
-            name: (
-                {**kwargs, "artifact_dir": f"{reward.artifact_root}/{name}"}
-                if issubclass(get_reward(name), DiskArtifactRewardFunction)
-                and not str(kwargs.get("artifact_dir") or "").strip()
-                else dict(kwargs)
-            )
-            for name, kwargs in config.kwargs.items()
-        }
     return MultiReward.from_dict(
         config.weights,
         device=reward.device,
-        reward_kwargs=reward_kwargs,
+        reward_kwargs=config.kwargs,
         memory_parking_required=reward.memory_parking_required,
         inference_configs=config.inference_configs,
+        ray_placement=ray_placement,
     )
 
 
-def build_reward_runtime(reward: ResolvedReward) -> RewardRuntime:
+def build_reward_runtime(
+    reward: ResolvedReward, *, ray_placement: RayRewardPlacement | None = None
+) -> RewardRuntime:
     """Build the collector-facing runtime around the configured reward function."""
 
     from vrl.rewards.runtime import RewardFunctionRuntime
 
-    return RewardFunctionRuntime(build_reward_function(reward))
+    return RewardFunctionRuntime(build_reward_function(reward, ray_placement=ray_placement))
 
 
 def validate_reward_memory_parking(

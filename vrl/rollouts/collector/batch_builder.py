@@ -9,7 +9,7 @@ trajectory packs into the engine-neutral ``RolloutBatch``. One builder per ``Gen
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import torch
@@ -20,6 +20,7 @@ from vrl.rewards.types import REWARD_GROUP_ID_METADATA_KEY
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.storage import TrajectoryStoragePolicy
 from vrl.trajectory.types import TrajectorySegment
+from vrl.utils.media_reference import MediaReference
 
 
 @dataclass(slots=True)
@@ -50,19 +51,8 @@ class TrajectoryRolloutBatchBuilder:
     def reward_samples(self) -> tuple[RewardSample, ...]:
         """Build reward-owned samples from this generation output."""
 
-        artifacts = self.output.artifacts or {}
-        # Worker-materialized files and in-memory media coexist when the reward
-        # set mixes both kinds; the media is absent only when every component
-        # scores from a file (GenerationRequest.media_off_wire).
-        reward_outputs = None if self.output.output is None else self.reward_outputs()
-        sizes = {name: len(files) for name, files in artifacts.items()}
-        if reward_outputs is not None:
-            sizes["output"] = self._batch_size(reward_outputs)
-        if not sizes:
-            raise ValueError("generation output carries neither media nor reward artifacts")
-        if len(set(sizes.values())) != 1:
-            raise ValueError(f"reward inputs disagree on batch size: {sizes}")
-        batch_size = next(iter(sizes.values()))
+        reward_outputs = self.reward_outputs()
+        batch_size = self._batch_size(reward_outputs)
         if len(self.output.sample_rows) != batch_size:
             raise ValueError(
                 "reward sample-row/output batch mismatch: "
@@ -81,10 +71,9 @@ class TrajectoryRolloutBatchBuilder:
             samples.append(
                 RewardSample(
                     prompt=row.prompt,
-                    output=None if reward_outputs is None else reward_outputs[index],
+                    output=reward_outputs[index],
                     sample_id=row.sample_id,
                     metadata=metadata,
-                    artifacts={name: files[index] for name, files in artifacts.items()},
                 ),
             )
         return tuple(samples)
@@ -125,6 +114,13 @@ class TrajectoryRolloutBatchBuilder:
                 f"RewardInputSpec {view.name!r} has no tensor_refs and no supported output_ref",
             )
 
+        if (
+            isinstance(reward_output, list)
+            and reward_output
+            and all(isinstance(value, MediaReference) for value in reward_output)
+        ):
+            # Preserve range metadata without resolving bytes on the driver.
+            return [replace(value, value_range=view.value_range) for value in reward_output]
         if isinstance(reward_output, torch.Tensor) and reward_output.dtype == torch.uint8:
             # Worker-side wire packing (see decode_denoise_result): decoded
             # video crosses the wire as uint8. k/255 reconstruction round-trips

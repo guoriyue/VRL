@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import importlib.util
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 import torch
 import torch.nn as nn
@@ -142,6 +142,8 @@ class HPSv3Qwen2VLRewardModel(Qwen2VLForConditionalGeneration):
 
 class HPSv3Model:
     """Load HPSv3 and score one (prompt, video) pair per call, frame by frame."""
+
+    input_artifact_format: ClassVar[Literal["mp4", "tensor"]] = "mp4"
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)

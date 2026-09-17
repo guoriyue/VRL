@@ -18,11 +18,10 @@ class _Runtime:
         return None
 
 
-def test_explicit_empty_request_identity_is_rejected(tmp_path) -> None:
+def test_explicit_empty_request_identity_is_rejected() -> None:
     with pytest.raises(ValueError, match="score_key"):
         VideoScore2Reward(
             reward_name="videoscore2",
             score_key="",
-            artifact_dir=str(tmp_path),
             scorer=_Runtime(),
         )

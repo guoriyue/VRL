@@ -73,7 +73,7 @@ def test_component_inference_configs_resolve_independently() -> None:
         RewardConfig.model_validate(cfg["reward"])
     ).inference_configs
 
-    assert resolved["ocr"].kind == "service"
+    assert resolved["ocr"].kind == "ray"
     assert resolved["videoscore2"] == RewardInferenceConfig(
         kind="http",
         endpoint="http://reward:8300",
@@ -81,3 +81,14 @@ def test_component_inference_configs_resolve_independently() -> None:
         expected_model="videoscore2-v1",
         expected_model_version="VideoScore2@unit-revision",
     )
+
+
+def test_managed_service_requires_explicit_migration() -> None:
+    with pytest.raises(ValueError, match="replaced by kind=ray"):
+        RewardInferenceConfig.from_mapping({"kind": "service"}, context="reward.inference.x")
+
+
+@pytest.mark.parametrize("field", ["endpoint", "expected_model", "expected_model_version"])
+def test_ray_rejects_external_identity_configuration(field: str) -> None:
+    with pytest.raises(ValueError, match="kind=ray cannot"):
+        RewardInferenceConfig.from_mapping({field: "external"}, context="reward.inference.x")

@@ -73,10 +73,6 @@ trainer:
   debug:
     first_step: true
 
-reward:
-  kwargs:
-    kling_video_reward:
-      artifact_format: mp4
 
 production:
   kling_video_reward:

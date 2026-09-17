@@ -43,29 +43,30 @@ class RewardInferenceConfig:
     device configuration belongs to the standalone service.
     """
 
-    # service (default): the driver launches ``vrl-reward-service`` itself for
-    #          this component (a managed subprocess on this host), waits for
-    #          it, and scores over HTTP. endpoint is optional (default: loopback
-    #          on a free port); expected_model defaults to the launched
-    #          identity. The component's device/worker_config are handed to the
-    #          service, and a shared-GPU topology hands it the parking lease.
+    # ray (default): one driver-owned Ray actor per component, with device
+    #          ownership and memory parking derived from the run topology.
     # http: an operator-owned service the driver connects to (endpoint +
     #       expected_model required).
     # in_process: the component builds and scores its model inside the driver.
     #          Not admitted for online training (a reward in the trainer
     #          process competes with kernel launch for the interpreter); kept
     #          for evaluation scripts and tests that construct rewards directly.
-    kind: Literal["in_process", "http", "service"] = "service"
+    kind: Literal["in_process", "http", "ray"] = "ray"
     endpoint: str = ""
     timeout_s: float = 1800.0
     expected_model: str = ""
     expected_model_version: str = ""
 
     def __post_init__(self) -> None:
-        if self.kind not in {"in_process", "http", "service"}:
+        if self.kind == "service":
             raise ValueError(
-                "reward inference.kind must be 'in_process', 'http', or 'service', "
-                f"got {self.kind!r}",
+                "reward inference.kind=service was replaced by kind=ray; remove "
+                "the override for a run-owned actor, or use kind=http with an "
+                "endpoint and expected_model for an operator-owned service",
+            )
+        if self.kind not in {"in_process", "http", "ray"}:
+            raise ValueError(
+                f"reward inference.kind must be 'in_process', 'http', or 'ray', got {self.kind!r}",
             )
         timeout_s = require_timeout(self.timeout_s, name="reward inference.timeout_s")
         endpoint = self.endpoint.strip()
@@ -74,17 +75,12 @@ class RewardInferenceConfig:
         object.__setattr__(self, "timeout_s", timeout_s)
         object.__setattr__(self, "expected_model", expected_model)
         object.__setattr__(self, "expected_model_version", expected_model_version)
-        if self.kind == "in_process":
+        if self.kind in {"in_process", "ray"}:
             if endpoint or expected_model or expected_model_version:
                 raise ValueError(
-                    "reward inference.kind=in_process cannot set endpoint, expected_model, "
+                    f"reward inference.kind={self.kind} cannot set endpoint, expected_model, "
                     "or expected_model_version",
                 )
-            object.__setattr__(self, "endpoint", endpoint)
-            return
-        if self.kind == "service":
-            if endpoint:
-                endpoint = require_http_origin(endpoint, context="reward inference.endpoint")
             object.__setattr__(self, "endpoint", endpoint)
             return
         endpoint = require_http_origin(endpoint, context="reward inference.endpoint")

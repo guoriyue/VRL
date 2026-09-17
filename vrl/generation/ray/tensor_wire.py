@@ -1,4 +1,4 @@
-"""Zero-copy tensor serialization for results leaving a generation actor.
+"""Out-of-band tensor serialization for results leaving a generation actor.
 
 Ray pickles a CPU ``torch.Tensor`` through its storage, which serializes the
 bytes in-band: the actor copies the whole trajectory into a bytes object, Ray

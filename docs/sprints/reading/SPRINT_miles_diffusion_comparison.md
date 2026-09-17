@@ -1,5 +1,12 @@
 # 阅读：miles / miles_diffusion 与 VRL 的对照（2026-09-14）
 
+> Historical snapshot. The 2026-09-16 reward transport migration supersedes
+> the managed HTTP subprocess and shared-artifact descriptions below. Internal
+> rewards now use Ray actors; external HTTP accepts media uploads. The managed
+> launcher and its `launch_token` handshake have been removed. See
+> [the transport revision](../SPRINT_miles_diffusion_parity_program.md#reward-transport-revision-2026-09-16)
+> for the current design and verification limits.
+
 来源：`/home/ubuntu/miles`（radixark/miles @2ef603a）、`/home/ubuntu/miles_diffusion`
 （@ebd55fc，30 个提交，17k 行，62 个测试文件 / 192 个测试）。VRL 同日：110k 行，
 384 个测试文件 / 3320 个测试，27 个模型家族，76 个 experiment recipe，24 个 reward。

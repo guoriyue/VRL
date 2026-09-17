@@ -358,14 +358,9 @@ def build_chunk_autoregressive_generation_trajectory(
                 modality=reward_modality,
                 trainable=False,
                 distribution="deterministic",
-                tensors={
-                    "output": TrajectoryTensor(
-                        "output",
-                        output,
-                        ("sample",),
-                        "replay_input",
-                    ),
-                },
+                # Decoded media belongs to GenerationOutput, not replay state.
+                # Keeping another reference here defeats file-only transport.
+                tensors={},
                 reward_view=reward_modality,
             )
         },
@@ -373,8 +368,8 @@ def build_chunk_autoregressive_generation_trajectory(
         reward_views={
             reward_modality: RewardInputSpec(
                 name=reward_modality,
-                tensor_refs=(tensor_ref("generated_chunks", "output"),),
                 value_range="unit",
+                metadata={"output_ref": "GenerationOutput.output"},
             )
         },
         context=_serializable_context(context),

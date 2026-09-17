@@ -8,15 +8,22 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from tests.generation.execution._helpers import launch_contract
+from vrl.generation.bindings.full_sequence_denoise import (
+    DiffusionBatchGatherer,
+    DiffusionBatchResult,
+)
 from vrl.generation.execution.memory_parking import WorkerMemoryParking
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
     BatchProduceFence,
     PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
+from vrl.generation.types import GenerationRequest
 
 _NOOP_CB = lambda *args, **kwargs: None  # noqa: E731 — sites that do not assert on it
 
@@ -75,7 +82,7 @@ def _core(*, executor, uses_slots: bool, policy_version: int | None):
 
 
 def _request(version):
-    return SimpleNamespace(policy_version=version, request_id="r", metadata={})
+    return GenerationRequest("r", "sd3_5", "t2i", ["p"], 1, policy_version=version)
 
 
 def test_slot_mode_with_live_slot_activates_and_runs() -> None:
@@ -110,6 +117,36 @@ def test_worker_core_forwards_pipelined_completion_callback() -> None:
 
     assert output == "GATHERED_OUTPUT"
     assert fences == [BatchProduceFence(completed_batches=1, event=None)]
+
+
+def test_pipelined_core_keeps_media_tensor_for_ray_adapter():
+    request = GenerationRequest(
+        "r",
+        "sd3_5",
+        "t2i",
+        ["p"],
+        1,
+        reward_media_refs=True,
+    )
+    batch = DiffusionBatchResult(
+        batch=GenerationSampleBatch(0, 0, 1),
+        latents=torch.ones(1, 3, 3),
+        log_probs=torch.zeros(1, 2),
+        timesteps=torch.ones(1, 2),
+        kl=torch.zeros(1, 2),
+        video=torch.full((1, 3, 4, 4), 0.5),
+        replay_tensors={},
+        context={"model_family": "sd3_5"},
+    )
+    gathered = DiffusionBatchGatherer().merge_generation_batches(
+        request, request.sample_rows(), [batch]
+    )
+    executor = SimpleNamespace(forward_plan_pipelined=lambda *args, **kwargs: gathered)
+    core = _core(executor=executor, uses_slots=False, policy_version=None)
+    output = core.execute_request_pipelined(
+        request, "plan", request.sample_rows(), completion_callback=_NOOP_CB
+    )
+    assert torch.equal(output.output, batch.video)
 
 
 def test_slot_mode_with_evicted_slot_raises_stale_discard_and_does_not_run() -> None:

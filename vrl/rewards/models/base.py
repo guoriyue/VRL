@@ -1,6 +1,6 @@
 """Reward model contract and shared base for in-process torch reward models.
 
-``RewardModel`` is the scoring contract: given one already-materialized
+``RewardModel`` is the scoring contract: given one resolved media
 artifact, return named scores. ``TorchRewardModel``
 implements it and absorbs the device/dtype/lazy-load boilerplate that every
 torch-nn reward used to hand-roll. Subclasses implement ``_load_module``
@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from typing import Any, Protocol
+from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact
@@ -43,6 +43,19 @@ class RewardModel(Protocol):
     """
 
     def __call__(self, artifact: RewardInferenceArtifact) -> Mapping[str, float]: ...
+
+
+@runtime_checkable
+class FileRewardModel(RewardModel, Protocol):
+    """A scorer that needs a local file rather than in-memory artifact media.
+
+    The inference runtime materializes this format only for the duration of
+    scoring. This is a model capability, including for an arbitrary external
+    service factory; it is independent of reward-function transport settings.
+    Models that accept media directly leave this capability undeclared.
+    """
+
+    input_artifact_format: ClassVar[Literal["mp4", "tensor"]]
 
 
 class LazyTorchModule(ABC):
@@ -97,6 +110,7 @@ class TorchRewardModel(LazyTorchModule):
 
 
 __all__ = [
+    "FileRewardModel",
     "LazyTorchModule",
     "RewardModel",
     "TorchRewardModel",

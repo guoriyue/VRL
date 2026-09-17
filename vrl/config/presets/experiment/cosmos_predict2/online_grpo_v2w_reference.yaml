@@ -21,8 +21,3 @@ trainer:
   save_freq: 20
   debug:
     first_step: true
-
-reward:
-  kwargs:
-    kling_video_reward:
-      artifact_format: mp4

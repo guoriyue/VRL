@@ -372,9 +372,8 @@ class GenerationWorkerCore:
             if self._uses_versioned_slots and expected_version is not None:
                 model.activate_trainable_state(expected_version)
             output = self._profile_forward_batch(envelope)
-            self._materialize_reward_artifacts(output, request, primary=self._is_primary_rank)
             memory = self._batch_memory_reading(output)
-            return GenerationBatchResult(
+            result = GenerationBatchResult(
                 request_id=request.request_id,
                 worker_id=self.worker_id,
                 batch=batch,
@@ -386,6 +385,7 @@ class GenerationWorkerCore:
                 ),
                 policy_version=result_version,
             )
+            return result
         except Exception as exc:
             self._memory_parking.recover_after_execution_error(model, exc)
             return GenerationBatchResult(
@@ -642,12 +642,13 @@ class GenerationWorkerCore:
                 "for per-request pipelined execution",
             )
         try:
-            return forward_plan_pipelined(
+            output = forward_plan_pipelined(
                 request,
                 sample_rows,
                 engine_plan,
                 completion_callback=completion_callback,
             )
+            return output
         except RuntimeError as error:
             self._memory_parking.recover_after_execution_error(model, error)
             if not is_cuda_out_of_memory(error):
@@ -670,48 +671,6 @@ class GenerationWorkerCore:
         except Exception as error:
             self._memory_parking.recover_after_execution_error(model, error)
             raise
-
-    @property
-    def _is_primary_rank(self) -> bool:
-        """Whether this worker's result is the one the engine keeps.
-
-        A multi-rank engine runs the same batch on every rank and the driver
-        keeps rank 0's result (``combine_rank_batch_results``); only that rank
-        owns files, or the others' would be orphaned with no owner to release
-        them.
-        """
-
-        return self.rank_group_spec is None or self.rank_group_spec.group_rank == 0
-
-    @staticmethod
-    def _materialize_reward_artifacts(
-        output: Any,
-        request: GenerationRequest,
-        *,
-        primary: bool,
-    ) -> None:
-        """Write the request's reward files on the owning rank.
-
-        Every family result exposes its decoded media as ``reward_media`` and a
-        ``artifacts`` slot. The media leaves the wire only when the request says
-        every reward scores from a file (``media_off_wire``); an in-memory
-        reward in the same run keeps it next to the files.
-        """
-
-        specs = request.reward_artifacts
-        if not specs or not primary:
-            return
-        if not hasattr(type(output), "reward_media") or not hasattr(output, "artifacts"):
-            raise TypeError(
-                f"{type(output).__name__} cannot materialize reward artifacts: the "
-                "family binding must expose decoded media as `reward_media` and an "
-                "`artifacts` slot",
-            )
-        from vrl.generation.execution.reward_artifacts import materialize_reward_artifacts
-
-        output.artifacts = materialize_reward_artifacts(output.reward_media, specs)
-        if request.media_off_wire:
-            output.reward_media = None
 
     def _profile_forward_batch(
         self,

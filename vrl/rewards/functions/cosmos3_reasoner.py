@@ -1,10 +1,10 @@
-"""Cosmos3 reasoner reward function (disk artifacts + in-process runtime).
+"""Cosmos3 reasoner reward function.
 
-A ``DiskArtifactRewardFunction`` on the disk-artifact path whose runtime loads the Cosmos3 reasoner (Qwen3-VL
+A ``ModelRewardFunction`` whose runtime loads the Cosmos3 reasoner (Qwen3-VL
 understanding tower) and returns ``task_success`` / ``contact_realism`` /
 ``temporal_consistency`` / ``physical_plausibility`` / ``overall`` per artifact.
 This file only pins the model factory and the Cosmos3-reasoner defaults;
-transport and disk-vs-in-memory wiring are shared.
+transport and scorer-local media adaptation are shared.
 
 Default ``score_key`` is ``task_success`` so a robotics compound gets the
 goal-completion axis; switch to ``overall`` for a blended physical-AI signal.
@@ -14,11 +14,11 @@ The judge needs a pre-remapped reasoner checkpoint (see the model module /
 
 from __future__ import annotations
 
-from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.base import ModelRewardFunction
 
 
-class Cosmos3ReasonerReward(DiskArtifactRewardFunction):
-    """Cosmos3-reasoner reward scored from disk artifacts."""
+class Cosmos3ReasonerReward(ModelRewardFunction):
+    """Cosmos3-reasoner reward scored through the configured runtime."""
 
     model_factory = "vrl.rewards.models.cosmos3_reasoner:Cosmos3ReasonerRewardModel"
     request_prefix = "cosmos3_reasoner"

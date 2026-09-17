@@ -1,7 +1,7 @@
 """IDM action-following reward entry point for world-model RL.
 
-``ActionFollowingReward`` writes each sample's video to disk and scores it with
-the trained DROID inverse-dynamics model. ``DiskArtifactRewardFunction`` is the
+``ActionFollowingReward`` forwards sample video tensors for scoring with
+the trained DROID inverse-dynamics model. ``ModelRewardFunction`` is the
 transport capability boundary; this file only pins the IDM model factory and
 its defaults. Why the signal exists — and why it must pass the discrimination
 gate before driving GRPO — is documented in
@@ -10,11 +10,11 @@ gate before driving GRPO — is documented in
 
 from __future__ import annotations
 
-from vrl.rewards.base import DiskArtifactRewardFunction
+from vrl.rewards.base import ModelRewardFunction
 
 
-class ActionFollowingReward(DiskArtifactRewardFunction):
-    """Commanded-action agreement scored from disk video artifacts."""
+class ActionFollowingReward(ModelRewardFunction):
+    """Commanded-action agreement scored from video media."""
 
     model_factory = "vrl.rewards.models.idm_action_following:ActionFollowingIDMModel"
     request_prefix = "idm-action-following"

@@ -76,5 +76,4 @@ reward:
       worker_config:
         device: cpu
     kling_video_reward:
-      artifact_format: mp4
       score_key: visual_quality+motion_quality

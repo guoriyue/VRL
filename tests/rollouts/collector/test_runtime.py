@@ -49,8 +49,7 @@ class _RequestBuilder:
         request_overrides: dict[str, Any] | None = None,
         runtime_debug: bool = False,
         policy_version: int | None = None,
-        reward_artifacts: tuple[Any, ...] = (),
-        media_off_wire: bool = False,
+        reward_media_refs: bool = False,
     ) -> CollectorRequest:
         request_id = f"unit-request-{self._request_index}"
         self._request_index += 1
@@ -63,8 +62,7 @@ class _RequestBuilder:
             sampling=dict(request_overrides or {}),
             runtime_debug=runtime_debug,
             policy_version=policy_version,
-            reward_artifacts=tuple(reward_artifacts),
-            media_off_wire=media_off_wire,
+            reward_media_refs=reward_media_refs,
         )
         return CollectorRequest(
             request=request,
@@ -144,11 +142,6 @@ class _RewardRuntime:
         self.shutdown_failures = 0
         self.shutdown_calls = 0
         self.memory_parked = False
-
-    def artifact_specs(self) -> tuple[Any, ...]:
-        return ()
-
-    media_off_wire = False
 
     async def preflight(self) -> None:
         return None
@@ -623,33 +616,40 @@ def _reward_sample_builder(
     )
 
 
-def test_reward_samples_carry_media_and_worker_files_side_by_side() -> None:
-    """A reward set mixing in-memory and disk components: the worker wrote the
-    disk components' files and kept the media on the wire; each sample gets both."""
+@pytest.mark.parametrize("value_range", ["unit", "tanh"])
+def test_reward_samples_forward_boxed_media_without_resolving(monkeypatch, value_range) -> None:
+    from dataclasses import replace
 
-    from vrl.utils.artifacts import MaterializedArtifact
+    from vrl.utils.media_reference import MediaReference
 
-    builder = _reward_sample_builder("request-0", ["p0", "p1"], outputs=torch.ones(2, 3))
-    files = [
-        MaterializedArtifact(path=f"/tmp/{i}.pt", size_bytes=1, sha256="a" * 64) for i in range(2)
-    ]
-    builder.output.artifacts = {"hpsv3": files}
+    def unexpected_resolve(*args, **kwargs):
+        pytest.fail("collector must not resolve media references")
+
+    monkeypatch.setattr(MediaReference, "resolve", unexpected_resolve)
+    refs = [MediaReference("boxed-ref", i, nbytes=48) for i in range(2)]
+    builder = _reward_sample_builder("request-0", ["p0", "p1"], outputs=refs)
+    builder.trajectory.reward_views = {
+        "image": RewardInputSpec(
+            name="image",
+            value_range=value_range,
+            metadata={"output_ref": "GenerationOutput.output"},
+        ),
+    }
 
     samples = builder.reward_samples()
 
-    assert [sample.output is not None for sample in samples] == [True, True]
-    assert [sample.artifacts["hpsv3"] for sample in samples] == files
+    assert [sample.output for sample in samples] == [
+        replace(ref, value_range=value_range) for ref in refs
+    ]
 
 
-def test_reward_samples_reject_files_disagreeing_with_media_batch_size() -> None:
-    from vrl.utils.artifacts import MaterializedArtifact
+def test_reward_samples_reject_reference_count_mismatch() -> None:
+    from vrl.utils.media_reference import MediaReference
 
     builder = _reward_sample_builder("request-0", ["p0", "p1"], outputs=torch.ones(2, 3))
-    builder.output.artifacts = {
-        "hpsv3": [MaterializedArtifact(path="/tmp/0.pt", size_bytes=1, sha256="a" * 64)],
-    }
+    builder.output.output = [MediaReference("boxed-ref", 0)]
 
-    with pytest.raises(ValueError, match="disagree on batch size"):
+    with pytest.raises(ValueError, match="sample-row/output batch mismatch"):
         builder.reward_samples()
 
 

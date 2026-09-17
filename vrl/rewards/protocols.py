@@ -11,8 +11,8 @@ same lease vocabulary.
 
 One layer below, ``RewardScorer`` is the transport seam under
 ``RewardFunction`` — the reward dual of the generation engine's Ray executor
-layer, with two implementations: ``InProcessRewardScorer`` (runtime.py) and
-``HttpRewardScorer`` (service/client.py). ``RemoteReadyScorer``,
+layer, with Ray actors (ray.py), standalone HTTP (service/client.py), and
+explicit in-process execution (runtime.py). ``RemoteReadyScorer``,
 ``MemoryParkingScorer`` (the reward twin of ``BatchSizeProbeExecutor``), and
 ``ArtifactRetainingError`` are isinstance-probed optional capabilities.
 """
@@ -20,7 +20,7 @@ layer, with two implementations: ``InProcessRewardScorer`` (runtime.py) and
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from vrl.rewards.inference import RewardInferenceRequest, RewardInferenceResult
 from vrl.rewards.types import RewardOutput, RewardSample
@@ -44,17 +44,14 @@ class RewardRuntime(Protocol):
         """Validate external scoring dependencies before generation starts."""
         ...
 
-    def artifact_specs(self) -> tuple[Any, ...]:
-        """Reward files the rollout worker should materialize per sample."""
-        ...
-
     async def activate(self) -> None:
         """Pre-warm reward model ownership at a GPU handoff.
 
         The inverse of :meth:`park_memory`, mirroring the generation runtime's
         activate/offload pair: parking-capable in-process rewards build or wake
         their model now so the first score does not pay load latency inside the
-        measured scoring phase. CPU and remote rewards need no warm-up.
+        measured scoring phase. Remote parking-capable scorers forward the
+        same handoff to the process that owns the model.
         """
         ...
 

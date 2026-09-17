@@ -14,7 +14,7 @@ import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import torch
 import torch.nn as nn
@@ -132,6 +132,8 @@ class _PeftLoraConfig:
 
 class KlingVideoRewardModel:
     """One RewardModel: load KlingTeam/VideoReward weights and score a video artifact."""
+
+    input_artifact_format: ClassVar[Literal["mp4", "tensor"]] = "mp4"
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)
