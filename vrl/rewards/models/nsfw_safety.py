@@ -32,7 +32,9 @@ class NSFWSafetyRewardModel:
         cfg = dict(worker_config)
         self._device = str(cfg.get("classifier_device") or cfg.get("device", "cuda"))
         self._model_name = str(cfg.get("model_name", "Falconsai/nsfw_image_detection"))
-        self._threshold = _validate_probability("threshold", cfg.get("threshold", 0.35))
+        self._threshold = float(cfg.get("threshold", 0.35))
+        if not 0.0 <= self._threshold < 1.0:
+            raise ValueError("threshold must satisfy 0.0 <= threshold < 1.0")
         self._penalty_scale = _validate_lower_bounded(
             "penalty_scale",
             cfg.get("penalty_scale", 1.0),
@@ -101,10 +103,17 @@ class NSFWSafetyRewardModel:
             return
         from transformers import pipeline
 
+        # transformers pipelines take a device ordinal: -1 for CPU, else the
+        # CUDA index (bare "cuda" means 0).
+        device = self._device.strip().lower()
+        if device.startswith("cuda:"):
+            ordinal = int(device.split(":", 1)[1] or 0)
+        else:
+            ordinal = 0 if device == "cuda" else -1
         self._classifier = pipeline(
             "image-classification",
             model=self._model_name,
-            device=_pipeline_device(self._device),
+            device=ordinal,
         )
 
     def _probability_from_classifier_result(self, result: Any) -> float:
@@ -249,25 +258,6 @@ def _label_matches(label: str, patterns: Sequence[str]) -> bool:
         if re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", normalized):
             return True
     return False
-
-
-def _pipeline_device(device: str) -> int:
-    text = str(device).strip().lower()
-    if text in {"", "cpu", "none"}:
-        return -1
-    if text.startswith("cuda:"):
-        suffix = text.split(":", 1)[1]
-        return int(suffix) if suffix else 0
-    if text == "cuda":
-        return 0
-    return -1
-
-
-def _validate_probability(name: str, value: float) -> float:
-    out = float(value)
-    if not 0.0 <= out < 1.0:
-        raise ValueError(f"{name} must satisfy 0.0 <= {name} < 1.0")
-    return out
 
 
 def _clamp01(value: float) -> float:

@@ -52,7 +52,11 @@ class GenEvalReward(RewardFunction):
         )
         if inspect.isawaitable(result):
             result = await result
-        return _normalize_result(result)
+        if isinstance(result, dict):
+            if "score" not in result:
+                raise ValueError("GenEval score_fn dict result must contain a 'score' key")
+            result = result["score"]
+        return float(result)
 
     @staticmethod
     def _extract_geneval_metadata(sample: RewardSample) -> dict[str, Any]:
@@ -78,14 +82,6 @@ class GenEvalReward(RewardFunction):
             raise TypeError(f"GenEval import_path target is not callable: {self.import_path}")
         self._scorer = score_fn
         return score_fn
-
-
-def _normalize_result(result: Any) -> float:
-    if isinstance(result, dict):
-        if "score" not in result:
-            raise ValueError("GenEval score_fn dict result must contain a 'score' key")
-        result = result["score"]
-    return float(result)
 
 
 __all__ = ["GenEvalReward"]

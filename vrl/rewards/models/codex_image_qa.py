@@ -154,7 +154,9 @@ class CodexImageQARewardModel:
         command = cfg.get("command")
         if command is None:
             raise ValueError("CodexImageQAReward requires reward.kwargs.codex_image_qa.command")
-        self.command = _normalize_command(command)
+        self.command = (
+            shlex.split(command) if isinstance(command, str) else [str(part) for part in command]
+        )
         self.timeout_s = float(cfg.get("timeout_s", 300.0))
         self.prompt_template = cfg.get("prompt_template", DEFAULT_PROMPT_TEMPLATE)
         raw_prompt_metadata_key = cfg.get("prompt_metadata_key", "")
@@ -1026,12 +1028,6 @@ class CodexImageQARewardModel:
             if file_text:
                 return file_text
         return stdout_text
-
-
-def _normalize_command(command: str | list[str] | tuple[str, ...]) -> list[str]:
-    if isinstance(command, str):
-        return shlex.split(command)
-    return [str(part) for part in command]
 
 
 def _render_command(

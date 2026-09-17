@@ -242,10 +242,14 @@ class HPSv3Model:
         return self._score_video(video_path, prompt)
 
     def _score_video(self, video_path: str, prompt: str) -> dict[str, float]:
+        from PIL import Image
+
         from vrl.utils.media import read_video_frames
 
         frames = read_video_frames(video_path, self.num_frames)
-        images = _frames_to_pil(frames)
+        # [T,H,W,3] float [0,1] -> PIL
+        array = (frames.clamp(0.0, 1.0) * 255.0).round().to(torch.uint8).cpu().numpy()
+        images = [Image.fromarray(frame) for frame in array]
         mu_scores: list[float] = []
         for start in range(0, len(images), self.frames_per_forward):
             chunk = images[start : start + self.frames_per_forward]
@@ -289,15 +293,6 @@ class HPSv3Model:
             return_tensors="pt",
         )
         return batch.to(self.device)
-
-
-def _frames_to_pil(frames: torch.Tensor) -> list[Any]:
-    """Convert a ``[T,H,W,3]`` float ``[0,1]`` frame stack to PIL images."""
-
-    from PIL import Image
-
-    array = (frames.clamp(0.0, 1.0) * 255.0).round().to(torch.uint8).cpu().numpy()
-    return [Image.fromarray(frame) for frame in array]
 
 
 def _aggregate_frame_scores(scores: list[float], top_fraction: float) -> dict[str, float]:

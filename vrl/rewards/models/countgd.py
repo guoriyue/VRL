@@ -23,7 +23,6 @@ from argparse import Namespace
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 from vrl.rewards.inference import RewardInferenceArtifact
@@ -475,7 +474,14 @@ def _expose_isolated_upstream(source_dir: Path) -> None:
 
     for module_name in ("datasets_inference", "groundingdino", "models", "util"):
         module = sys.modules.get(module_name)
-        if module is not None and not _module_is_under(module, source_dir):
+        if module is None:
+            continue
+        raw_path = getattr(module, "__file__", None)
+        try:
+            owned = bool(raw_path) and Path(raw_path).resolve().is_relative_to(source_dir)
+        except (OSError, ValueError):
+            owned = False
+        if not owned:
             raise RuntimeError(
                 f"CountGD requires an isolated service process; top-level module "
                 f"{module_name!r} is already loaded from {getattr(module, '__file__', None)!r}",
@@ -486,16 +492,6 @@ def _expose_isolated_upstream(source_dir: Path) -> None:
     # or ``util`` package would win before either appears in sys.modules.
     sys.path[:] = [entry for entry in sys.path if entry != source_text]
     sys.path.insert(0, source_text)
-
-
-def _module_is_under(module: ModuleType, source_dir: Path) -> bool:
-    raw_path = getattr(module, "__file__", None)
-    if not raw_path:
-        return False
-    try:
-        return Path(raw_path).resolve().is_relative_to(source_dir)
-    except (OSError, ValueError):
-        return False
 
 
 __all__ = [

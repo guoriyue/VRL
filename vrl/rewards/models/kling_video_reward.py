@@ -183,7 +183,12 @@ class KlingVideoRewardModel:
             logger.info("Forcing Kling VideoReward to use SDPA attention")
 
         logger.info("loading Kling VideoReward configs %s", kv(root=self.model_root))
-        data_config, model_config, peft_config, inference_config = _load_configs(self.model_root)
+        with (self.model_root / "model_config.json").open("r", encoding="utf-8") as handle:
+            raw_config = json.load(handle)
+        data_config = _from_dataclass(_DataConfig, raw_config.get("data_config", {}))
+        model_config = _from_dataclass(_ModelConfig, raw_config.get("model_config", {}))
+        peft_config = _from_dataclass(_PeftLoraConfig, raw_config.get("peft_lora_config", {}))
+        inference_config = raw_config.get("inference_config")
         logger.info(
             "building Kling VideoReward base model %s",
             kv(
@@ -621,19 +626,6 @@ def _create_model_and_processor(
     model.config.tokenizer_padding_side = processor.tokenizer.padding_side
     model.config.pad_token_id = processor.tokenizer.pad_token_id
     return model, processor
-
-
-def _load_configs(
-    root: Path,
-) -> tuple[_DataConfig, _ModelConfig, _PeftLoraConfig, dict[str, float] | None]:
-    with (root / "model_config.json").open("r", encoding="utf-8") as handle:
-        config = json.load(handle)
-    return (
-        _from_dataclass(_DataConfig, config.get("data_config", {})),
-        _from_dataclass(_ModelConfig, config.get("model_config", {})),
-        _from_dataclass(_PeftLoraConfig, config.get("peft_lora_config", {})),
-        config.get("inference_config"),
-    )
 
 
 def _from_dataclass(cls: Any, values: Mapping[str, Any]) -> Any:

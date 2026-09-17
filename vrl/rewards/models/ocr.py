@@ -294,7 +294,14 @@ def _extract_ocr_lines(result: Any) -> tuple[_OcrLine, ...]:
         if "rec_texts" in result:
             return _lines_from_columns(result.get("rec_texts"), result.get("rec_scores"))
         return ()
-    if _is_legacy_ocr_row(result):
+    # PaddleOCR 2.x row: [box, (text, score)].
+    if (
+        isinstance(result, (list, tuple))
+        and len(result) >= 2
+        and isinstance(result[1], (list, tuple))
+        and result[1]
+        and isinstance(result[1][0], str)
+    ):
         text_score = result[1]
         text = text_score[0]
         confidence = float(text_score[1]) if len(text_score) > 1 else 1.0
@@ -307,17 +314,6 @@ def _extract_ocr_lines(result: Any) -> tuple[_OcrLine, ...]:
             lines.extend(_extract_ocr_lines(item))
         return tuple(lines)
     return ()
-
-
-def _is_legacy_ocr_row(value: Any) -> bool:
-    if not isinstance(value, (list, tuple)) or len(value) < 2:
-        return False
-    text_score = value[1]
-    return (
-        isinstance(text_score, (list, tuple))
-        and bool(text_score)
-        and isinstance(text_score[0], str)
-    )
 
 
 def _lines_from_columns(texts: Any, scores: Any) -> tuple[_OcrLine, ...]:

@@ -201,7 +201,14 @@ def _soft_scores_from_generation(
         if slot is None or slot >= len(step_logits):
             out[name] = None
             continue
-        out[name] = _expected_digit_value(step_logits[slot], digit_token_ids)
+        # Softmax over the 1-5 digit logits, reported as the expected score.
+        digits = sorted(digit_token_ids)
+        selected = torch.tensor(
+            [float(step_logits[slot][digit_token_ids[d]]) for d in digits],
+            dtype=torch.float32,
+        )
+        values = torch.tensor([float(d) for d in digits], dtype=torch.float32)
+        out[name] = float((torch.softmax(selected, dim=0) * values).sum().item())
         cursor = slot + 1
     return out
 
@@ -269,19 +276,6 @@ def _find_subsequence(
         if all(haystack[i + k] == needle[k] for k in range(len(needle))):
             return i + len(needle)
     return None
-
-
-def _expected_digit_value(logits: Any, digit_token_ids: Mapping[int, int]) -> float:
-    """Softmax over the 1-5 digit logits, returned as the expected score."""
-
-    digits = sorted(digit_token_ids)
-    selected = torch.tensor(
-        [float(logits[digit_token_ids[d]]) for d in digits],
-        dtype=torch.float32,
-    )
-    probs = torch.softmax(selected, dim=0)
-    values = torch.tensor([float(d) for d in digits], dtype=torch.float32)
-    return float((probs * values).sum().item())
 
 
 __all__ = ["VideoScore2Model"]

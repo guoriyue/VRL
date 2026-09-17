@@ -259,7 +259,11 @@ def _reward_device_scope(device: str | None) -> Any:
 
 
 def _host_memory_trim() -> Any:
-    """Resolve the measured glibc release operation before a reload-mode build."""
+    """Resolve glibc ``malloc_trim`` for reload-mode parking.
+
+    A module-level seam on purpose: it is the libc boundary the reload tests
+    replace, and reload parking must fail at construction on a libc without it.
+    """
     import ctypes
 
     libc = ctypes.CDLL(None)
@@ -269,31 +273,6 @@ def _host_memory_trim() -> Any:
     trim.argtypes = [ctypes.c_size_t]
     trim.restype = ctypes.c_int
     return lambda: trim(0)
-
-
-def _build_prepared_model_in_pool(
-    pool: CumemPool | None,
-    factory: Any,
-    worker_config: Mapping[str, Any],
-) -> Any:
-    """Build and prepare in an isolated frame, optionally owned by a CuMem pool.
-
-    The separate frame is a failure-ownership boundary: if lazy preparation
-    allocates partial CUDA state and raises, the caller can clear this frame
-    from the exception traceback before closing the pool. Keeping the candidate
-    in the caller or traceback would leave its tensors live during cleanup.
-    """
-
-    # PyTorch's pool scope captures the current device, not arbitrary .to() targets.
-    with (
-        _reward_device_scope(worker_config.get("device")),
-        pool.building() if pool else nullcontext(),
-    ):
-        model = factory(worker_config)
-        prepare = getattr(model, "prepare_for_inference", None)
-        if callable(prepare):
-            prepare()
-        return model
 
 
 class InProcessRewardScorer:
@@ -407,17 +386,24 @@ class InProcessRewardScorer:
                     )
                     # Build inside the pool so every CUDA allocation the factory
                     # makes (from_pretrained, .to(device), buffers) is tagged and
-                    # sleep/wake can release/restore it wholesale.
+                    # sleep/wake can release/restore it wholesale. PyTorch's pool
+                    # scope captures the current device, not .to() targets.
+                    model = None
                     try:
-                        model = _build_prepared_model_in_pool(
-                            pool,
-                            factory,
-                            self._launch.component_config,
-                        )
+                        with (
+                            _reward_device_scope(self._launch.device),
+                            pool.building() if pool else nullcontext(),
+                        ):
+                            model = factory(self._launch.component_config)
+                            prepare = getattr(model, "prepare_for_inference", None)
+                            if callable(prepare):
+                                prepare()
                     except BaseException as load_error:
-                        # Commit neither half of a failed model/pool build. Dropping
-                        # traceback-held helper locals first lets terminal pool close
-                        # release partial CUDA allocations before a future retry.
+                        # Commit neither half of a failed model/pool build. Drop
+                        # the half-built candidate and any traceback-held locals
+                        # first, so the terminal pool close can release partial
+                        # CUDA allocations before a future retry.
+                        model = None
                         traceback.clear_frames(load_error.__traceback__)
                         try:
                             self._release_cuda_memory_for_parking()
