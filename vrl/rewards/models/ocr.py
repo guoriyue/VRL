@@ -21,13 +21,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from vrl.rewards.ocr_text import normalize_ocr_text
 from vrl.utils.media import to_uint8
 
 logger = logging.getLogger(__name__)
 
 # Persisted sidecar protocol used to audit the exact OCR decision behind a reward.
 OCR_DEBUG_SCHEMA = "vrl.ocr-debug/v6"
+
+
+def normalize_ocr_text(text: str) -> str:
+    """Match Flow-GRPO OCR targets by lowercasing and removing ASCII spaces.
+
+    Punctuation remains significant; this is the exact comparison key the
+    reward scores against, so dataset targets must be derived the same way.
+    """
+
+    return text.replace(" ", "").lower()
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,4 +341,4 @@ def _lines_from_columns(texts: Any, scores: Any) -> tuple[_OcrLine, ...]:
     return tuple(lines)
 
 
-__all__ = ["OCRRewardModel"]
+__all__ = ["OCRRewardModel", "normalize_ocr_text"]

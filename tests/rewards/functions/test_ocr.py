@@ -23,8 +23,8 @@ from vrl.rewards.models.ocr import (
     _build_paddle_ocr,
     _extract_ocr_lines,
     _run_paddle_ocr,
+    normalize_ocr_text,
 )
-from vrl.rewards.ocr_text import normalize_ocr_text
 
 _TRUETYPE_FONTS = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
