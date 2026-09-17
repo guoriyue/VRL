@@ -259,7 +259,9 @@ def test_phase_handoff_keeps_actor_and_owner_placement(local_ray) -> None:
         owner.resources,
         lifecycle=replace(
             owner.resources.lifecycle,
-            trainer_and_rollout_share_gpu=True,
+            # A CPU owner has no trainer GPU; pin both roles to one card to force the lease.
+            trainer=(0,),
+            rollout=(0,),
         ),
     )
     runtime = RayGenerationLauncher(init_ray=False).create_runtime(

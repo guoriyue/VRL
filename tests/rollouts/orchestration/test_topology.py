@@ -18,8 +18,8 @@ def _resources(
     return SimpleNamespace(
         colocated=colocated,
         lifecycle=SimpleNamespace(
-            release_rollout_before_reward=reward_handoff,
-            release_trainer_before_reward=trainer_reward_handoff,
+            park_rollout_for_reward=reward_handoff,
+            park_trainer_for_reward=trainer_reward_handoff,
         ),
     )
 

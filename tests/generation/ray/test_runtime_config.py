@@ -812,7 +812,8 @@ def _runtime_factory_inputs(
                 config.resources,
                 lifecycle=replace(
                     config.resources.lifecycle,
-                    trainer_and_rollout_share_gpu=True,
+                    trainer=(0,),
+                    rollout=(0,),
                 ),
             ),
         )

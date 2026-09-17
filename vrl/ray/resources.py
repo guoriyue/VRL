@@ -207,47 +207,63 @@ class DistributedResourceConfig:
 
 @dataclass(frozen=True, slots=True)
 class RayLifecyclePlan:
-    """Single topology-derived answer to "which role yields its GPU when".
+    """Which role gives up its GPU when, read straight off the device sets.
 
-    Stores the run's three pairwise GPU-sharing facts — the only independent
-    bits in the trainer/rollout/reward topology triangle. Every handoff flag
-    and lease mode is a phase-ordered *view* over them, derived by property,
-    so no stored flag can drift from the sharing fact that implies it. Built
-    by :func:`ResolvedDistributedResources`; the launcher, collector, and
-    reward runtime read this one declarative plan instead of re-deriving
-    releases from raw device sets.
+    Stores each role's resolved GPU set; every offload decision is a property
+    over them, so nothing can drift from the placement that implies it. Built
+    by :class:`ResolvedDistributedResources`; the launcher, collector and
+    reward runtime read this plan instead of re-deriving releases.
+
+    The three ``offload_*`` bits are the public vocabulary (they match miles'
+    ``--offload-train`` / ``--offload-rollout``): a role offloads when it
+    shares a GPU with any other role. The ``park_*_for_*`` views name the
+    boundary a park happens at; they are finer than the offload bits because a
+    role can share with one neighbour but not the other (trainer+rollout on
+    GPU 0, reward on GPU 1 parks nothing around scoring).
     """
 
-    trainer_and_rollout_share_gpu: bool
-    rollout_and_reward_share_gpu: bool
-    trainer_and_reward_share_gpu: bool
+    trainer: tuple[int, ...]
+    rollout: tuple[int, ...]
+    reward: tuple[int, ...]
 
+    # ── the three offload bits ────────────────────────────────────────
+    @property
+    def offload_train(self) -> bool:
+        """Trainer parks its model/optimizer while rollout or reward use its GPU."""
+
+        return bool(set(self.trainer) & (set(self.rollout) | set(self.reward)))
+
+    @property
+    def offload_rollout(self) -> bool:
+        """Rollout workers park (CuMem sleep) between phases; ``on_demand`` lease."""
+
+        return bool(set(self.rollout) & (set(self.trainer) | set(self.reward)))
+
+    @property
+    def offload_reward(self) -> bool:
+        """Reward parks after scoring: it sits on someone else's card."""
+
+        return bool(set(self.reward) & (set(self.trainer) | set(self.rollout)))
+
+    # ── boundary views ────────────────────────────────────────────────
     @property
     def rollout_mode(self) -> Literal["resident", "on_demand"]:
-        """``resident`` keeps serving across phases (rollout owns its GPU);
-        ``on_demand`` yields a contested GPU at a handoff and reactivates on
-        next use (workers park in host RAM — no process destruction)."""
+        """``resident`` keeps serving across phases; ``on_demand`` parks at a
+        handoff and reactivates on next use (host RAM, no process teardown)."""
 
-        contested = self.trainer_and_rollout_share_gpu or self.rollout_and_reward_share_gpu
-        return "on_demand" if contested else "resident"
+        return "on_demand" if self.offload_rollout else "resident"
 
     @property
-    def release_rollout_before_train(self) -> bool:
-        return self.trainer_and_rollout_share_gpu
+    def park_rollout_for_train(self) -> bool:
+        return bool(set(self.trainer) & set(self.rollout))
 
     @property
-    def release_rollout_before_reward(self) -> bool:
-        return self.rollout_and_reward_share_gpu
+    def park_rollout_for_reward(self) -> bool:
+        return bool(set(self.rollout) & set(self.reward))
 
     @property
-    def release_trainer_before_reward(self) -> bool:
-        return self.trainer_and_reward_share_gpu
-
-    @property
-    def release_reward_after_score(self) -> bool:
-        """A reward on anyone else's card must prove it parked after scoring."""
-
-        return self.rollout_and_reward_share_gpu or self.trainer_and_reward_share_gpu
+    def park_trainer_for_reward(self) -> bool:
+        return bool(set(self.trainer) & set(self.reward))
 
 
 @dataclass(frozen=True, slots=True)
@@ -480,8 +496,6 @@ class ResolvedDistributedResources:
         # Sharing is consent: an intersection can only arise from hand-pinned
         # ``devices`` sets, a sharing pool word, or the auto spare-first-else-share
         # fallback. All are declarations; the startup receipt announces the plan.
-        colocated = bool(set(trainer_devices) & set(rollout_devices))
-
         reward_mode = config.reward.device
         if config.cross_node and reward_mode == "gpu" and config.reward.gpu_pool == "rollout":
             raise ValueError(
@@ -518,16 +532,12 @@ class ResolvedDistributedResources:
         reward_execution_devices = (
             tuple(trainer_devices) if reward_uses_trainer_device else tuple(reward_devices)
         )
-        reward_shared_with_rollout = bool(set(reward_execution_devices) & set(rollout_devices))
-        reward_shared_with_trainer = bool(set(reward_execution_devices) & set(trainer_devices))
 
-        # Release scheduling is derived entirely from the resolved GPU topology:
-        # the plan stores the three sharing facts; handoffs and lease modes are
-        # its derived views.
+        # Offload scheduling is read straight off the resolved device sets.
         lifecycle = RayLifecyclePlan(
-            trainer_and_rollout_share_gpu=colocated,
-            rollout_and_reward_share_gpu=reward_shared_with_rollout,
-            trainer_and_reward_share_gpu=reward_shared_with_trainer,
+            trainer=tuple(trainer_devices),
+            rollout=tuple(rollout_devices),
+            reward=tuple(reward_execution_devices),
         )
         return cls(
             visible_devices=visible_devices,
@@ -616,15 +626,15 @@ def format_distributed_resource_plan(resolved: ResolvedDistributedResources) -> 
         f"colocated={resolved.colocated}",
         f"cross_node={resolved.cross_node}",
         f"trainer_reservation={resolved.requires_trainer_reservation}",
-        # Reading the plan at a glance: rollout lease mode + which boundaries
-        # release. resident=stays active, on_demand=parks at the handoff.
-        f"lifecycle=rollout:{resolved.lifecycle.rollout_mode}",
-        "handoff="
-        f"before_train:{resolved.lifecycle.release_rollout_before_train}"
-        f",before_reward:{resolved.lifecycle.release_rollout_before_reward}"
-        f",trainer_before_reward:"
-        f"{resolved.lifecycle.release_trainer_before_reward}"
-        f",reward_after_score:{resolved.lifecycle.release_reward_after_score}",
+        # Reading the plan at a glance: who offloads, and at which boundary.
+        "offload="
+        f"train:{resolved.lifecycle.offload_train}"
+        f",rollout:{resolved.lifecycle.offload_rollout}"
+        f",reward:{resolved.lifecycle.offload_reward}",
+        "park="
+        f"rollout_for_train:{resolved.lifecycle.park_rollout_for_train}"
+        f",rollout_for_reward:{resolved.lifecycle.park_rollout_for_reward}"
+        f",trainer_for_reward:{resolved.lifecycle.park_trainer_for_reward}",
     ]
     return "Distributed resources: " + " ".join(parts)
 

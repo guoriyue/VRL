@@ -875,10 +875,7 @@ async def run_online_recipe(
     # execution needs complete trainer-state parking; distributed strategies must
     # reject that topology here instead of failing after expensive launch work.
     strategy = build_strategy(built.root, training_context)
-    if (
-        resources.lifecycle.release_rollout_before_train
-        or resources.lifecycle.release_trainer_before_reward
-    ):
+    if resources.lifecycle.offload_train:
         strategy.validate_training_state_parking()
     # Under ddp every torchrun rank owns a distinct GPU: DistributedTrainingContext.from_root
     # returns cuda:<local_rank>, which overrides the resolver's (rank-agnostic)

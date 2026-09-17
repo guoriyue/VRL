@@ -644,7 +644,7 @@ def test_cross_node_dedicated_reward_gets_its_own_budget_token() -> None:
         )
     )
     assert resolved.reward_devices == (2,)
-    assert not resolved.lifecycle.release_reward_after_score
+    assert not resolved.lifecycle.offload_reward
     assert resolved.reward_torch_device() == "cuda:0"
 
 
@@ -670,7 +670,7 @@ def test_resource_plan_formatter_includes_key_fields() -> None:
     assert f"rollout={list(resolved.rollout_devices)}" in text
     assert f"reward={list(resolved.reward_devices)}" in text
     assert f"trainer_reservation={resolved.requires_trainer_reservation}" in text
-    assert f"lifecycle=rollout:{resolved.lifecycle.rollout_mode}" in text
+    assert f"offload=train:{resolved.lifecycle.offload_train}" in text
 
 
 def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
@@ -792,7 +792,7 @@ def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
     assert resolved.reward_runs_on_cpu is False
     assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
     assert resolved.requires_trainer_reservation is True
-    assert resolved.lifecycle.release_rollout_before_reward is False
+    assert resolved.lifecycle.park_rollout_for_reward is False
 
 
 def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
@@ -813,9 +813,9 @@ def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
     assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
     plan = resolved.lifecycle
     assert plan.rollout_mode == "resident"
-    assert plan.release_rollout_before_train is False
-    assert plan.release_rollout_before_reward is False
-    assert plan.release_reward_after_score is False
+    assert plan.park_rollout_for_train is False
+    assert plan.park_rollout_for_reward is False
+    assert plan.offload_reward is False
 
 
 def test_lifecycle_plan_on_demand_for_shared_reward() -> None:
@@ -836,9 +836,9 @@ def test_lifecycle_plan_on_demand_for_shared_reward() -> None:
     assert set(resolved.reward_devices) & set(resolved.rollout_devices)
     plan = resolved.lifecycle
     assert plan.rollout_mode == "on_demand"
-    assert plan.release_rollout_before_train is False
-    assert plan.release_rollout_before_reward is True
-    assert plan.release_reward_after_score is True
+    assert plan.park_rollout_for_train is False
+    assert plan.park_rollout_for_reward is True
+    assert plan.offload_reward is True
 
 
 def test_lifecycle_plan_colocated_rollout_is_on_demand_before_train() -> None:
@@ -858,10 +858,10 @@ def test_lifecycle_plan_colocated_rollout_is_on_demand_before_train() -> None:
     plan = resolved.lifecycle
     assert resolved.colocated is True
     assert plan.rollout_mode == "on_demand"
-    assert plan.release_rollout_before_train is True
+    assert plan.park_rollout_for_train is True
     # No reward role shares the rollout GPU, so no reward release is needed.
-    assert plan.release_reward_after_score is False
-    assert plan.release_rollout_before_reward is False
+    assert plan.offload_reward is False
+    assert plan.park_rollout_for_reward is False
 
 
 def test_in_process_reward_without_reservation_follows_trainer_topology() -> None:
@@ -884,9 +884,9 @@ def test_in_process_reward_without_reservation_follows_trainer_topology() -> Non
     )
 
     assert resolved.reward_devices == ()
-    assert resolved.lifecycle.release_trainer_before_reward is True
-    assert resolved.lifecycle.release_rollout_before_reward is True
-    assert resolved.lifecycle.release_reward_after_score is True
+    assert resolved.lifecycle.park_trainer_for_reward is True
+    assert resolved.lifecycle.park_rollout_for_reward is True
+    assert resolved.lifecycle.offload_reward is True
 
 
 def test_explicit_cpu_reward_does_not_create_gpu_handoffs() -> None:
@@ -905,9 +905,9 @@ def test_explicit_cpu_reward_does_not_create_gpu_handoffs() -> None:
         ),
     )
 
-    assert resolved.lifecycle.release_trainer_before_reward is False
-    assert resolved.lifecycle.release_rollout_before_reward is False
-    assert resolved.lifecycle.release_reward_after_score is False
+    assert resolved.lifecycle.park_trainer_for_reward is False
+    assert resolved.lifecycle.park_rollout_for_reward is False
+    assert resolved.lifecycle.offload_reward is False
     assert resolved.reward_torch_device(trainer_device="cuda:0") == "cpu"
 
 
@@ -938,9 +938,9 @@ def test_http_only_reward_owns_no_local_resource_or_handoff() -> None:
     )
 
     assert resolved.reward_devices == ()
-    assert resolved.lifecycle.release_trainer_before_reward is False
-    assert resolved.lifecycle.release_rollout_before_reward is False
-    assert resolved.lifecycle.release_reward_after_score is False
+    assert resolved.lifecycle.park_trainer_for_reward is False
+    assert resolved.lifecycle.park_rollout_for_reward is False
+    assert resolved.lifecycle.offload_reward is False
     assert BundleLayout.from_resources(resolved).reward_bundle_indices == ()
 
 
@@ -992,7 +992,7 @@ def test_reward_auto_placement_prefers_dedicated_spare_gpu() -> None:
 
     assert resolved.reward_devices == (2,)
     assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
-    assert resolved.lifecycle.release_reward_after_score is False
+    assert resolved.lifecycle.offload_reward is False
 
 
 def test_reward_auto_placement_falls_back_to_shared_pool_on_single_gpu() -> None:
@@ -1012,8 +1012,8 @@ def test_reward_auto_placement_falls_back_to_shared_pool_on_single_gpu() -> None
 
     assert resolved.reward_devices == (0,)
     assert set(resolved.reward_devices) & set(resolved.rollout_devices)
-    assert resolved.lifecycle.release_rollout_before_reward is True
-    assert resolved.lifecycle.release_reward_after_score is True
+    assert resolved.lifecycle.park_rollout_for_reward is True
+    assert resolved.lifecycle.offload_reward is True
 
 
 def test_reward_can_share_rollout_pool_when_phases_release() -> None:
@@ -1035,8 +1035,8 @@ def test_reward_can_share_rollout_pool_when_phases_release() -> None:
 
     assert resolved.reward_devices == (1,)
     assert set(resolved.reward_devices) & set(resolved.rollout_devices)
-    assert resolved.lifecycle.release_rollout_before_reward is True
-    assert resolved.lifecycle.release_reward_after_score is True
+    assert resolved.lifecycle.park_rollout_for_reward is True
+    assert resolved.lifecycle.offload_reward is True
 
 
 def test_reward_shared_pool_requires_a_rollout_gpu() -> None:
@@ -1075,7 +1075,7 @@ def test_pinned_reward_on_the_trainer_gpu_declares_sharing() -> None:
     )
 
     assert resolved.reward_devices == (0,)
-    assert resolved.lifecycle.trainer_and_reward_share_gpu is True
+    assert resolved.lifecycle.park_trainer_for_reward is True
 
 
 def test_colocated_reward_on_dedicated_gpu_owns_its_own_bundle() -> None:
@@ -1337,9 +1337,9 @@ def test_cosmos_async_reward_recipe_resolves_resident_reward_overlap() -> None:
     # the rollout GPU, otherwise reward(N) serializes after rollout(N).
     assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
     # Disjoint reward -> no pre-reward rollout release -> reward overlaps rollout(N+1).
-    assert resolved.lifecycle.release_rollout_before_reward is False
+    assert resolved.lifecycle.park_rollout_for_reward is False
     # A resident reward lease is what keeps reward on its own card across iterations.
-    assert resolved.lifecycle.release_reward_after_score is False
+    assert resolved.lifecycle.offload_reward is False
 
     # Continuous orchestration must be composed in (the producer keeps rollout(N+1)
     # in flight while reward(N) scores). Assert the parsed schedule mode + inflight

@@ -25,10 +25,10 @@
 #     choose reward.gpu_pool=rollout for phase-separated sharing.
 #
 # WHY the dedicated reward GPU is load-bearing for throughput: when reward shares
-# rollout's GPU, the topology derives release_rollout_before_reward=True (rollout
+# rollout's GPU, the topology derives park_rollout_for_reward=True (rollout
 # must step off so reward can run), serializing reward(N) after rollout(N).
 # Disjoint reward devices make reward_shared_with_rollout False, so
-# release_rollout_before_reward resolves False and the reward model stays resident —
+# park_rollout_for_reward resolves False and the reward model stays resident —
 # reward(N) overlaps an already-submitted rollout(N+1) on its own card. That hides the
 # measured ~14% reward stage instead of paying it on the critical path.
 #

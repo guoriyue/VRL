@@ -43,5 +43,5 @@ def test_four_card_preset_resolves_rank_local_phase_owners(rank):
     assert tuple(resources.trainer_devices) == (rank,)
     assert tuple(resources.rollout_devices) == (rank,)
     assert tuple(resources.reward_devices) == (rank,)
-    assert resources.lifecycle.release_rollout_before_train
-    assert resources.lifecycle.release_trainer_before_reward
+    assert resources.lifecycle.park_rollout_for_train
+    assert resources.lifecycle.park_trainer_for_reward

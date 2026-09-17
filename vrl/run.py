@@ -296,9 +296,7 @@ def resolve_reward_inputs(
     # HTTP components execute as CPU clients in this process and own no local
     # GPU memory; run-owned rewards inherit the handoff policy.
     memory_parking_required = (
-        False
-        if reward.all_external_inference
-        else bool(resources.lifecycle.release_reward_after_score)
+        False if reward.all_external_inference else bool(resources.lifecycle.offload_reward)
     )
     return ResolvedReward(
         config=reward,

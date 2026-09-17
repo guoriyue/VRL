@@ -735,7 +735,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                     executor,
                     model=bundle.model,
                     device=device,
-                    park_model=lifecycle is not None and lifecycle.trainer_and_rollout_share_gpu,
+                    park_model=lifecycle is not None and lifecycle.park_rollout_for_train,
                 ),
                 lifecycle=lifecycle,
             )

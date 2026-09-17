@@ -397,10 +397,10 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
     assert resources.lifecycle.rollout_mode == "resident"
     assert not any(
         (
-            resources.lifecycle.release_rollout_before_train,
-            resources.lifecycle.release_rollout_before_reward,
-            resources.lifecycle.release_trainer_before_reward,
-            resources.lifecycle.release_reward_after_score,
+            resources.lifecycle.park_rollout_for_train,
+            resources.lifecycle.park_rollout_for_reward,
+            resources.lifecycle.park_trainer_for_reward,
+            resources.lifecycle.offload_reward,
         ),
     )
     assert built.trainer.rollout_orchestration.schedule_mode == "continuous"
@@ -428,7 +428,7 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
     assert resources.rollout_num_engines == 1
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.release_rollout_before_train is True
+    assert resources.lifecycle.park_rollout_for_train is True
 
     # Per-rank geometry remains inherited from the parent; only the topology
     # leaves may differ. Compare against the source of truth, not literals.
@@ -464,7 +464,7 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
     assert resources.rollout_num_engines == 1
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.release_rollout_before_train is True
+    assert resources.lifecycle.park_rollout_for_train is True
 
     # The parent is the single source of truth for learning, dataset, and reward
     # semantics. Only the validated hardware-specific leaves may differ here.
@@ -557,7 +557,7 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
     assert resources.rollout_num_engines == 1
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.release_rollout_before_train is True
+    assert resources.lifecycle.park_rollout_for_train is True
     assert built.trainer.rollout_orchestration.schedule_mode == "strict_on_policy"
 
 
@@ -581,12 +581,12 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devi
     assert resources.reward_devices == ()
     assert resources.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
     assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.release_reward_after_score is True
+    assert resources.lifecycle.offload_reward is True
     handoff = resources.lifecycle
-    assert handoff.release_rollout_before_train is True
-    assert handoff.release_rollout_before_reward is True
-    assert handoff.release_trainer_before_reward is True
-    assert handoff.release_reward_after_score is True
+    assert handoff.park_rollout_for_train is True
+    assert handoff.park_rollout_for_reward is True
+    assert handoff.park_trainer_for_reward is True
+    assert handoff.offload_reward is True
 
 
 def test_masked_physical_ordinal_comes_from_the_config_knob_not_the_auto_path() -> None:
@@ -805,7 +805,7 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> No
     assert resources.rollout_num_engines == 1
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.release_rollout_before_train is True
+    assert resources.lifecycle.park_rollout_for_train is True
 
 
 def test_wan_video_reward_production_config_requires_reward_name() -> None:

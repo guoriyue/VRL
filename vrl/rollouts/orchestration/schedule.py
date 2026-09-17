@@ -179,12 +179,12 @@ def validate_rollout_schedule_topology(
             "continuous rollout requires disjoint trainer and rollout GPUs; "
             "use strict_on_policy with gpu_pool=trainer for shared-GPU phase handoff",
         )
-    if resources.lifecycle.release_rollout_before_reward:
+    if resources.lifecycle.park_rollout_for_reward:
         raise ValueError(
             "continuous rollout cannot hand the rollout GPU to reward scoring "
             "mid-iteration; use a dedicated reward GPU or strict_on_policy",
         )
-    if resources.lifecycle.release_trainer_before_reward:
+    if resources.lifecycle.park_trainer_for_reward:
         raise ValueError(
             "continuous rollout cannot run reward scoring on the trainer GPU while "
             "backward overlaps; use a CPU/dedicated reward or strict_on_policy",

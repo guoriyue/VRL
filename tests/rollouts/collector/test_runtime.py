@@ -334,11 +334,7 @@ def test_collector_offloads_runtime_memory_before_reward_scoring() -> None:
     reward_runtime = _RewardRuntime(runtime)
     # Shared reward GPU: the lifecycle plan (not the runtime) tells the collector
     # to park rollout GPU memory before the in-process reward model scores.
-    lifecycle = RayLifecyclePlan(
-        trainer_and_rollout_share_gpu=True,
-        rollout_and_reward_share_gpu=True,
-        trainer_and_reward_share_gpu=True,
-    )
+    lifecycle = RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=(0,))
     collector = _collector(
         generation_runtime=runtime,
         reward_runtime=reward_runtime,
@@ -367,11 +363,7 @@ def test_collector_does_not_offload_runtime_before_independent_reward() -> None:
     reward_runtime = _RewardRuntime(runtime)
     # Dedicated reward GPU: the plan keeps both roles resident, so the collector
     # never releases before reward.
-    lifecycle = RayLifecyclePlan(
-        trainer_and_rollout_share_gpu=False,
-        rollout_and_reward_share_gpu=False,
-        trainer_and_reward_share_gpu=False,
-    )
+    lifecycle = RayLifecyclePlan(trainer=(0,), rollout=(1,), reward=(2,))
     collector = _collector(
         generation_runtime=runtime,
         reward_runtime=reward_runtime,
@@ -405,9 +397,9 @@ def test_collector_derives_reward_generation_overlap_from_topology_and_scorer(
     expected: bool,
 ) -> None:
     lifecycle = RayLifecyclePlan(
-        trainer_and_rollout_share_gpu=False,
-        rollout_and_reward_share_gpu=rollout_handoff,
-        trainer_and_reward_share_gpu=trainer_handoff,
+        trainer=(0,),
+        rollout=(1,),
+        reward=((1,) if rollout_handoff else ()) + ((0,) if trainer_handoff else ()),
     )
     collector = _collector(
         reward_runtime=_RewardRuntime(
@@ -475,11 +467,7 @@ def test_collector_blocks_trainer_handoff_when_reward_parking_fails() -> None:
             raise RuntimeError("reward park failed")
 
     runtime = _Runtime()
-    lifecycle = RayLifecyclePlan(
-        trainer_and_rollout_share_gpu=True,
-        rollout_and_reward_share_gpu=True,
-        trainer_and_reward_share_gpu=True,
-    )
+    lifecycle = RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=(0,))
     collector = _collector(
         generation_runtime=runtime,
         reward_runtime=_FailingRewardRuntime(runtime, fail_park=True),
@@ -523,11 +511,7 @@ def test_collector_phase_final_gate_retries_reward_parking() -> None:
 
     runtime = _Runtime()
     reward_runtime = _FlakyRewardRuntime(runtime)
-    lifecycle = RayLifecyclePlan(
-        trainer_and_rollout_share_gpu=True,
-        rollout_and_reward_share_gpu=True,
-        trainer_and_reward_share_gpu=True,
-    )
+    lifecycle = RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=(0,))
     collector = _collector(
         generation_runtime=runtime,
         reward_runtime=reward_runtime,
@@ -552,11 +536,7 @@ def test_collector_attempts_reward_park_after_rollout_offload_failure(
 
     runtime = _Runtime(fail_offload=True)
     reward_runtime = _RewardRuntime(runtime, fail_park=reward_park_fails)
-    lifecycle = RayLifecyclePlan(
-        trainer_and_rollout_share_gpu=True,
-        rollout_and_reward_share_gpu=True,
-        trainer_and_reward_share_gpu=True,
-    )
+    lifecycle = RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=(0,))
     collector = _collector(
         generation_runtime=runtime,
         reward_runtime=reward_runtime,
