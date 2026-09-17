@@ -1,7 +1,6 @@
 """Shared image/video generation through the stepwise denoise model boundary.
 
-This does not replace native pipeline protocols such as the frozen SANA
-evaluation, or token-autoregressive generation.
+This does not replace native pipeline protocols such as frozen SANA evaluation.
 """
 
 from __future__ import annotations

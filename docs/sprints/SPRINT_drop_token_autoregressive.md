@@ -1,5 +1,34 @@
 # SPRINT：主线只保留 diffusion，移除 token-autoregressive 家族
 
+## Follow-up verification (2026-09-16)
+
+The existing removal commits through `30aceb28` were independently checked.
+The annotated archive tag peels to `5f1362c69fc805108da47b39b6a5c3996d71efc9`;
+no second tag, commit, or push was made by this follow-up.
+
+Removed the orphaned `replay_context_image_size` helper and public re-exports:
+its Emu3/GLM consumers had already been removed and no live caller remained.
+Removed the now-unused request-specific segment override; retained the segment
+and timestep checks because causal-chunk replay still needs them. Repointed the
+real-cover resolver fixture from the deleted paged-attention test to the existing
+CPU JSON-file test, and corrected stale token-binding comments.
+
+After cleanup, the combined config, model-interface, algorithm, trajectory,
+rollout, generation and real-cover suites passed: **1840 passed, 3 skipped,
+41 deselected** in 37.20 seconds with CUDA hidden and GPU/distributed/slow tests
+excluded. Scoped Ruff checks/formatting and diff checks passed.
+
+The separate architecture suite has **20 passed, 1 failed**. The failure is the
+previously observed generation public-import-floor violation for
+`expand_tensor_to_batch` and `models.parking.{CumemPool,ModelParking}`; it predates
+token-AR removal. It was not hidden or weakened. No full-suite, Bazel-build,
+GPU performance or real-weight training claim follows from the CPU run.
+
+The uncommitted AR/diffusion ownership proposal is marked superseded in scope;
+AR migration must not be reintroduced from that historical plan. Diffusion-only
+generation/replay ownership and native engine loading remain separate follow-up
+work. CuMem, blockwise FP8, CausVid and MAGI remain intact.
+
 状态：**done（2026-09-16）**，在 `review/combined-20260916` 上按四个提交落地（见文末「结果」）。
 
 ## 决定与边界

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Protocol, cast, runtime_checkable
-
-from vrl.utils.validation import require_int
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,18 +121,16 @@ class ReplayRequestContract:
     makes "what can this family replay?" answerable from the class header, and
     the identity is read where it lives instead of passed around.
 
-    The two checks stay separate methods because they are separate theorems:
-    janus_pro's supported set is request-dependent (its R1 path validates a
-    different set than its default one), so it needs the segment check on its
-    own branch while the timestep check always runs.
+    Segment selection and timestep selection are independent: causal-chunk
+    replay validates its segment but replays the whole trajectory at once.
     """
 
     # No default: a replay model that forgets to declare its segments raises
     # AttributeError at the first validation instead of silently accepting any
     # selection.
     replay_segments: ClassVar[tuple[str, ...]]
-    # Denoise families index scheduler timesteps; token families replay one
-    # whole sequence and have no timestep axis to select.
+    # Full-sequence denoise indexes timesteps; causal-chunk replay runs the
+    # whole trajectory and has no individual timestep to select.
     replay_indexes_timesteps: ClassVar[bool] = True
 
     def reject_replay_timestep_selection(self, timestep_idx: int) -> None:
@@ -150,14 +146,12 @@ class ReplayRequestContract:
     def reject_unsupported_replay_segments(
         self,
         request: ReplayRequest | None,
-        *,
-        segments: tuple[str, ...] | None = None,
     ) -> None:
-        """``segments`` overrides the declared set for a request-dependent contract."""
+        """Validate selection against the model's declared replay segments."""
 
         if request is None or request.segment_names is None:
             return
-        supported = self.replay_segments if segments is None else segments
+        supported = self.replay_segments
         requested = request.segment_names
         unsupported = tuple(name for name in requested if name not in supported)
         if requested and not unsupported:
@@ -165,44 +159,6 @@ class ReplayRequestContract:
         raise ValueError(
             f"{type(self).__name__} replay supports segments {supported!r}; got {requested!r}",
         )
-
-
-def replay_context_image_size(
-    batch: Any,
-    *,
-    token_count: int,
-    expected_token_num: Callable[[int, int], int],
-    owner: str,
-) -> tuple[int, int]:
-    """Read and validate the rollout image size from the trajectory context.
-
-    The executor records ``image_height``/``image_width`` in family-defined
-    units: Emu3 latent grid dimensions or GLM-Image pixel dimensions. These
-    cannot be derived from token count alone for non-square ratios.
-    Returns ``(height, width)`` after confirming the recorded size reproduces
-    ``token_count`` under the family ``expected_token_num``.
-    """
-
-    context = getattr(batch, "context", None) or {}
-    trajectory = getattr(batch, "trajectory", None)
-    if not context and trajectory is not None:
-        context = getattr(trajectory, "context", None) or {}
-    height = context.get("image_height")
-    width = context.get("image_width")
-    if height is None or width is None:
-        raise RuntimeError(
-            f"{owner} replay requires image_height/image_width in the rollout "
-            "context to rebuild the replay token schedule.",
-        )
-    height = require_int(height, path=f"{owner} replay image_height", minimum=1)
-    width = require_int(width, path=f"{owner} replay image_width", minimum=1)
-    expected = expected_token_num(height, width)
-    if expected != token_count:
-        raise RuntimeError(
-            f"{owner} replay token count {token_count} does not match the "
-            f"{height}x{width} image size (expected {expected}).",
-        )
-    return height, width
 
 
 def _require_protocol(value: Any, proto: Any, *, owner: str) -> Any:
@@ -236,7 +192,6 @@ __all__ = [
     "ReplayResult",
     "ReplaySegmentResult",
     "RuntimeModel",
-    "replay_context_image_size",
     "require_replay_model",
     "require_runtime_model",
 ]

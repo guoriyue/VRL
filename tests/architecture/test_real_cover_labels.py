@@ -192,7 +192,7 @@ def test_the_resolver_rejects_missing_targets_and_reports_lane_metadata() -> Non
     "target, expected",
     [
         ("tests/generation/execution/test_sample_batches_pipelined_cuda.py", ("gpu",)),
-        ("tests/nn/layers/test_paged_attention_contract.py", ()),
+        ("tests/utils/test_json_files.py", ()),
     ],
 )
 def test_a_bare_file_target_reports_only_the_lanes_every_test_in_it_shares(

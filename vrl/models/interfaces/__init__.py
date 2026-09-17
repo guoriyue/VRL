@@ -11,7 +11,6 @@ from vrl.models.interfaces.replay import (
     ReplayResult,
     ReplaySegmentResult,
     RuntimeModel,
-    replay_context_image_size,
     require_replay_model,
     require_runtime_model,
 )
@@ -37,7 +36,6 @@ __all__ = [
     "VaeDecodeMemory",
     "checkpoint_owned_state_names",
     "register_checkpoint_owned_state",
-    "replay_context_image_size",
     "require_replay_model",
     "require_runtime_model",
 ]
