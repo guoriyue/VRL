@@ -19,7 +19,6 @@ from tests.models.steps.denoise.fixtures import (
     TINY_SD3_LATENT_SHAPE,
     TINY_SD3_POOLED_DIM,
     build_tiny_sd3_transformer,
-    lora_test_build,
     stamp_model_precision,
 )
 from vrl.models.families.sd3_5.model import SD3_5Model, SD3_5ReplayModel, SD3SamplingState
@@ -150,11 +149,7 @@ def test_previous_policy_adapter_attaches_frozen_and_syncs_through_the_shared_mi
     """The replay model (no pipeline) reaches ``DiffusionModelBase``'s attach/sync:
     a frozen ``previous`` mirror seeded from ``default`` and refreshed on sync."""
     model = _peft_default_only_replay_model()
-    build = lora_test_build(
-        {"rank": 4, "alpha": 8, "target_modules": _LORA_TARGETS}, family="sd3_5"
-    )
-
-    model.attach_previous_policy_adapter(build)
+    model.attach_previous_policy_adapter()
 
     named = dict(model.transformer.named_parameters())
     previous = {n: p for n, p in named.items() if ".previous." in n}

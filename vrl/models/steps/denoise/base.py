@@ -12,6 +12,7 @@ import contextlib
 import functools
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -441,7 +442,9 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         base model on one GPU before its memory-saving transform owns it.
         """
 
-        from vrl.models.steps.denoise.common import lora as _lora
+        from peft import LoraConfig, get_peft_model
+
+        from vrl.models.peft_adapter import load_trainable_lora_adapter
 
         lora_config = build.require_lora_config()
         roots = self.trainable_modules
@@ -462,32 +465,62 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
             module.requires_grad_(False)
             if not defer_device_move:
                 module.to(self.device)
-            wrapped = _lora.attach_lora_adapter(
-                module,
-                lora_config,
-                lora_path=lora_path,
-                init_weights_default=self.lora_init_weights_default,
-                autocast_adapter_dtype=self.lora_autocast_adapter_dtype,
-            )
+            if lora_path:
+                wrapped = load_trainable_lora_adapter(
+                    module,
+                    lora_path,
+                    expected_rank=lora_config["rank"],
+                    expected_alpha=lora_config["alpha"],
+                    expected_dropout=lora_config.get("dropout", 0.0),
+                    expected_target_modules=lora_config["target_modules"],
+                    adapter_name="default",
+                    autocast_adapter_dtype=self.lora_autocast_adapter_dtype,
+                )
+                wrapped.set_adapter("default")
+            else:
+                wrapped = get_peft_model(
+                    module,
+                    LoraConfig(
+                        r=lora_config["rank"],
+                        lora_alpha=lora_config["alpha"],
+                        lora_dropout=lora_config.get("dropout", 0.0),
+                        init_lora_weights=lora_config.get(
+                            "init_lora_weights", self.lora_init_weights_default
+                        ),
+                        target_modules=lora_config["target_modules"],
+                    ),
+                    autocast_adapter_dtype=self.lora_autocast_adapter_dtype,
+                )
             if adapter_dtype == "float32":
                 for parameter in wrapped.parameters():
                     if parameter.requires_grad:
                         parameter.data = parameter.data.to(dtype=torch.float32)
             self.set_module_root(name, wrapped)
         if self.lora_previous_policy_adapter or build.previous_policy_adapter_requested:
-            self.attach_previous_policy_adapter(build)
+            self.attach_previous_policy_adapter()
 
     # Both DiffusionNFT and V-GRPO evaluate the behaviour policy through a
     # frozen ``previous`` copy of the trainable adapter: forward-only under
     # no_grad, refreshed by weight copy after each optimizer step, never
     # optimized. Attach runs right after the normal LoRA attach.
 
-    def attach_previous_policy_adapter(self, build: ModelBuild) -> None:
+    def attach_previous_policy_adapter(self) -> None:
         """Build the frozen ``previous`` adapter on ``self.transformer``."""
 
         from vrl.models.steps.denoise.common import lora as _lora
 
-        _lora.attach_previous_policy_adapter(self.transformer, build.require_lora_config())
+        transformer = self.transformer
+        if "previous" not in transformer.peft_config:
+            # The installed adapter owns its effective topology. Keep the
+            # existing Gaussian initialization/RNG behavior before copying;
+            # never repeat a base-changing initializer for a frozen mirror.
+            config = deepcopy(transformer.peft_config["default"])
+            config.init_lora_weights = "gaussian"
+            config.inference_mode = False
+            transformer.add_adapter("previous", config)
+        _lora.copy_adapter_weights(transformer, src="default", dst="previous")
+        _lora.freeze_checkpoint_owned_adapter_params(transformer, "previous")
+        transformer.set_adapter("default")
 
     def sync_previous_policy_adapter(self, *, decay: float = 0.0) -> None:
         """Refresh the ``previous`` adapter from the trainable ``default`` adapter.

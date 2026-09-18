@@ -7,7 +7,6 @@ from torch import nn
 
 from tests.models.steps.denoise.fixtures import lora_test_build
 from vrl.models.steps.denoise import DiffusionModelBase
-from vrl.models.steps.denoise.common.lora import build_lora_config
 
 pytest.importorskip("peft")
 
@@ -77,9 +76,15 @@ def test_previous_adapter_config_preserves_effective_dropout(
     configured_dropout: float | None,
     expected_dropout: float,
 ) -> None:
-    config = build_lora_config(_lora_values(configured_dropout))
+    policy = _Policy()
+    policy.apply_lora(lora_test_build(_lora_values(configured_dropout), family="sd3_5"))
+    policy.attach_previous_policy_adapter()
 
-    assert config.lora_dropout == expected_dropout
+    config = policy.transformer.peft_config
+    assert config["previous"] is not config["default"]
+    assert config["previous"].lora_dropout == expected_dropout
+    assert config["previous"].r == config["default"].r
+    assert config["previous"].target_modules == config["default"].target_modules
 
 
 def test_shared_warm_start_validates_effective_topology(
@@ -100,7 +105,7 @@ def test_shared_warm_start_validates_effective_topology(
         return _Wrapped()
 
     monkeypatch.setattr(
-        "vrl.models.steps.denoise.common.lora.load_trainable_lora_adapter",
+        "vrl.models.peft_adapter.load_trainable_lora_adapter",
         fake_load,
     )
     policy = _Policy()
@@ -134,7 +139,7 @@ def test_shared_warm_start_validation_failure_keeps_raw_transformer(
         raise ValueError("topology mismatch")
 
     monkeypatch.setattr(
-        "vrl.models.steps.denoise.common.lora.load_trainable_lora_adapter",
+        "vrl.models.peft_adapter.load_trainable_lora_adapter",
         reject,
     )
     policy = _Policy()

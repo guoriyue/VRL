@@ -25,10 +25,8 @@ from torch import nn
 from tests.models.steps.denoise.fixtures import (
     _TINY_WAN_LORA_TARGETS,
     build_tiny_wan_transformer,
-    lora_test_build,
 )
 from vrl.models.families.flux.model import FluxReplayModel
-from vrl.models.interfaces.runtime import ModelBuild
 
 
 class _DummyFluxTransformer(nn.Module):
@@ -186,20 +184,13 @@ def _peft_default_only_model() -> FluxReplayModel:
     return FluxReplayModel(transformer=peft_t, scheduler=None, device="cpu")
 
 
-def _build() -> ModelBuild:
-    return lora_test_build(
-        {"rank": 4, "alpha": 8, "target_modules": _TINY_WAN_LORA_TARGETS},
-        family="flux",
-    )
-
-
 def test_attach_previous_policy_adapter_builds_frozen_mirror() -> None:
     """attach builds a frozen ``previous`` adapter seeded from ``default``."""
 
     model = _peft_default_only_model()
     assert "previous" not in model.transformer.peft_config
 
-    model.attach_previous_policy_adapter(_build())
+    model.attach_previous_policy_adapter()
 
     assert "previous" in model.transformer.peft_config
     prev = {n: p for n, p in model.transformer.named_parameters() if ".previous." in n}
@@ -222,7 +213,7 @@ def test_sync_previous_policy_adapter_refreshes_from_default() -> None:
     """sync(decay=0) re-copies the trained ``default`` weights into ``previous``."""
 
     model = _peft_default_only_model()
-    model.attach_previous_policy_adapter(_build())
+    model.attach_previous_policy_adapter()
     named = dict(model.transformer.named_parameters())
     a_name = next(n for n in named if ".previous." in n and "lora_A" in n)
     d_name = a_name.replace(".previous.", ".default.")

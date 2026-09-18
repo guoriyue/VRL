@@ -1,17 +1,9 @@
-"""PEFT LoRA primitives shared by every denoise family.
+"""Previous-policy updates and checkpoint ownership beyond PEFT's adapter API.
 
-``DiffusionModelBase.apply_lora`` is the single attach site: it walks the
-model's ``trainable_modules`` and hands each root to ``attach_lora_adapter``
-here (validated saved adapter for a warm start, ``LoraConfig`` +
-``get_peft_model`` for a fresh one). Families declare data on the base class
-(default init, adapter dtype policy, whether the frozen ``previous`` mirror is
-mandatory) and never re-implement the PEFT call sequence.
-
-The previous-policy adapter primitives (``build_lora_config`` /
-``copy_adapter_weights`` / ``freeze_checkpoint_owned_adapter_params`` /
-``attach_previous_policy_adapter``) are pure PEFT operations too. The frozen
-``previous`` LoRA mirror they build is what DiffusionNFT's negative branch and
-V-GRPO's importance ratio evaluate the behaviour policy through.
+Model construction and adapter installation use PEFT directly in
+``DiffusionModelBase``. These operations remain VRL-owned: PEFT does not define
+the algorithms' copy/EMA schedule or checkpoint registration of mutable frozen
+parameters. Both DiffusionNFT and V-GRPO consume the frozen mirror.
 """
 
 from __future__ import annotations
@@ -19,87 +11,6 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.models.interfaces.runtime import register_checkpoint_owned_state
-from vrl.models.peft_adapter import load_trainable_lora_adapter
-
-
-def attach_lora_adapter(
-    module: Any,
-    lora_config: dict[str, Any],
-    *,
-    lora_path: str | None = None,
-    init_weights_default: Any = "gaussian",
-    autocast_adapter_dtype: bool = True,
-    adapter_name: str = "default",
-) -> Any:
-    """Wrap one trainable root with a PEFT adapter per ``model.lora``.
-
-    A warm start (``lora_path``) validates the saved adapter's topology against
-    the configured one before mutating ``module``; a fresh adapter takes
-    ``model.lora.init_lora_weights`` or the family's ``init_weights_default``.
-    ``autocast_adapter_dtype`` is PEFT's fp32 adapter upcast; it is threaded
-    through both branches so a warm-started adapter matches a fresh one.
-    """
-
-    if lora_path:
-        wrapped = load_trainable_lora_adapter(
-            module,
-            lora_path,
-            expected_rank=lora_config["rank"],
-            expected_alpha=lora_config["alpha"],
-            expected_dropout=lora_config.get("dropout", 0.0),
-            expected_target_modules=lora_config["target_modules"],
-            adapter_name=adapter_name,
-            autocast_adapter_dtype=autocast_adapter_dtype,
-        )
-        wrapped.set_adapter(adapter_name)
-        return wrapped
-
-    from peft import get_peft_model
-
-    return get_peft_model(
-        module,
-        build_lora_config(
-            lora_config,
-            init_lora_weights=lora_config.get("init_lora_weights", init_weights_default),
-        ),
-        adapter_name=adapter_name,
-        autocast_adapter_dtype=autocast_adapter_dtype,
-    )
-
-
-def attach_previous_policy_adapter(transformer: Any, lora_config: dict[str, Any]) -> None:
-    """Build the frozen ``previous`` adapter on ``transformer``, seeded from ``default``.
-
-    Idempotent on the adapter slot: only adds it once, then (re)seeds it from
-    the current ``default`` so ``previous == default`` at attach time (the
-    lr=0 invariants of NFT and V-GRPO). Leaves ``default`` active.
-    """
-
-    if "previous" not in getattr(transformer, "peft_config", {}):
-        transformer.add_adapter("previous", build_lora_config(lora_config))
-    copy_adapter_weights(transformer, src="default", dst="previous")
-    freeze_checkpoint_owned_adapter_params(transformer, "previous")
-    transformer.set_adapter("default")
-
-
-def build_lora_config(lora_config: Any, *, init_lora_weights: Any = "gaussian") -> Any:
-    """Build one PEFT ``LoraConfig`` from a ``model.lora`` block.
-
-    The ``default`` adapter and its frozen ``previous`` mirror share this
-    shape. Init only matters for a fresh ``default`` (``attach_lora_adapter``
-    passes the resolved value); ``previous`` is overwritten by
-    ``copy_adapter_weights`` right after creation, so the default suffices.
-    """
-
-    from peft import LoraConfig
-
-    return LoraConfig(
-        r=lora_config["rank"],
-        lora_alpha=lora_config["alpha"],
-        lora_dropout=lora_config.get("dropout", 0.0),
-        init_lora_weights=init_lora_weights,
-        target_modules=lora_config["target_modules"],
-    )
 
 
 def copy_adapter_weights(
@@ -179,9 +90,6 @@ def freeze_checkpoint_owned_adapter_params(module: Any, adapter: str) -> None:
 
 
 __all__ = [
-    "attach_lora_adapter",
-    "attach_previous_policy_adapter",
-    "build_lora_config",
     "copy_adapter_weights",
     "freeze_checkpoint_owned_adapter_params",
 ]
