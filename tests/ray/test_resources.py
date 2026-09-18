@@ -1399,7 +1399,7 @@ def test_offload_false_declares_a_resident_role_and_its_neighbours_skip_parking(
     )
 
     plan = resolved.lifecycle
-    assert plan.resident_reward and not plan.offload_reward
+    assert plan.reward_offload is False and not plan.offload_reward
     assert not plan.park_rollout_for_reward and not plan.park_trainer_for_reward
     assert plan.offload_rollout and plan.offload_train
     assert plan.park_rollout_for_train and plan.park_trainer_for_rollout
