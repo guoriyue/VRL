@@ -84,7 +84,7 @@ class _LoraPolicy(DiffusionModelBase):
 def _build(
     *,
     quantization_format: str | None,
-    defer_trainable_device_move: bool = False,
+    replay: bool = False,
 ) -> ModelBuild:
     quantization = (
         None if quantization_format is None else QuantizationPolicy(format=quantization_format)
@@ -95,12 +95,7 @@ def _build(
         device="cpu",
         family="sd3_5",
         precision=RolePrecision("fp16", "tf32", quantization),
-        rollout=(
-            None
-            if defer_trainable_device_move
-            else RolloutBuildOptions(prompt_encoder_dtype=torch.float16)
-        ),
-        defer_trainable_device_move=defer_trainable_device_move,
+        rollout=(None if replay else RolloutBuildOptions(prompt_encoder_dtype=torch.float16)),
         parameter_dtype=torch.float16,
         model_config={
             "use_lora": True,
@@ -157,7 +152,8 @@ def test_plain_lora_attach_keeps_direct_device_move(monkeypatch) -> None:
     assert policy.transformer.proj.weight.dtype is torch.float16
 
 
-def test_fsdp_replay_lora_attach_defers_device_move(monkeypatch) -> None:
+def test_replay_lora_attach_never_moves(monkeypatch) -> None:
+    """Replay placement belongs to the training strategy, not to attach."""
     events: list[str] = []
     fake_peft = ModuleType("peft")
     fake_peft.LoraConfig = lambda **_kwargs: object()
@@ -165,17 +161,12 @@ def test_fsdp_replay_lora_attach_defers_device_move(monkeypatch) -> None:
     fake_peft.get_peft_model = lambda transformer, _cfg, **_kwargs: transformer
     monkeypatch.setitem(sys.modules, "peft", fake_peft)
 
-    _LoraPolicy(events).apply_lora(
-        _build(
-            quantization_format=None,
-            defer_trainable_device_move=True,
-        ),
-    )
+    _LoraPolicy(events).apply_lora(_build(quantization_format=None, replay=True))
 
     assert events == []
 
 
-def test_fp8_config_replay_build_does_not_defer_device_move(monkeypatch) -> None:
+def test_fp8_config_replay_build_ignores_rollout_options(monkeypatch) -> None:
     """Replay owns no rollout options even when collection uses fp8."""
     from omegaconf import OmegaConf
 
@@ -218,7 +209,7 @@ def test_fp8_config_replay_build_does_not_defer_device_move(monkeypatch) -> None
 
     assert build.rollout is None
     _LoraPolicy(events).apply_lora(build)
-    assert events == ["move"]
+    assert events == []
 
 
 def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch) -> None:

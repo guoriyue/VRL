@@ -354,14 +354,6 @@ class ModelFamilyEntry:
             sampling_config=sampling_config,
             generation_memory=generation_memory,
             rollout=rollout,
-            defer_trainable_device_move=(
-                isinstance(self.family_build, DenoiseFamilyBuild)
-                and self.family_build.replay_cls is not None
-                and not for_rollout
-                and root.distributed is not None
-                and root.distributed.training is not None
-                and root.distributed.training.strategy == "fsdp"
-            ),
         )
 
         if (

@@ -174,7 +174,7 @@ class AnimaModel(CosmosReplayForward, DiffusionModelBase):
 
     def apply_full_finetune(self, build: ModelBuild) -> None:
         self.transformer.requires_grad_(True)
-        if not build.defer_trainable_device_move:
+        if self._place_trainable_roots_at_build(build):
             self.transformer.to(self.device, dtype=self._dtype)
 
     def set_num_steps(self, n: int) -> None:

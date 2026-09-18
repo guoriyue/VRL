@@ -171,7 +171,6 @@ def _build_policy(seed: int = 0) -> WanI2VReplayModel:
                 "target_modules": ["to_q", "to_v"],
             },
         },
-        defer_trainable_device_move=True,
     )
     policy.apply_lora(build)
     stamp_model_precision(policy)
@@ -203,7 +202,6 @@ def _build_dual_policy(seed: int = 0) -> WanI2VReplayModel:
                 "target_modules": ["to_q", "to_v"],
             },
         },
-        defer_trainable_device_move=True,
     )
     policy.apply_lora(build)
     stamp_model_precision(policy)

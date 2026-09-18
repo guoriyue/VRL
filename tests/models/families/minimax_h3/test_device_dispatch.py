@@ -130,7 +130,6 @@ def test_partitioned_replay_loads_local_shards_and_keeps_native_lora_on_owners(t
     )
     reference = build_minimax_h3_replay_runtime_bundle(build)
     split = build_minimax_h3_replay_runtime_bundle(build, block_devices=(0, 1))
-    assert build.defer_trainable_device_move is False
     for name, parameter in reference.model.transformer.named_parameters():
         if "lora_B" in name:
             torch.nn.init.normal_(parameter, std=0.01)
@@ -410,7 +409,6 @@ def test_unified_partitioned_generation_build_and_automatic_decode(tmp_path, par
     bundle = build_partitioned_h3_generation_runtime_bundle(build, placement)
     model = bundle.model
     model.pipeline.text_encoder_layer = 1
-    assert build.defer_trainable_device_move is False
     assert model.pipeline.vae.dtype == model.pipeline.audio_vae.dtype == torch.float32
     assert {p.device.index for p in model.transformer.parameters()} == {0, 1}
     assert {p.device.index for p in model.pipeline.text_encoder.parameters()} == {2, 3}

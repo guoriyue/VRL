@@ -11,6 +11,7 @@ import pytest
 import torch
 from torch import nn
 
+from tests.trainers._strategy_policies import FakePolicy, ToyTransformer
 from tests.trainers.online._helpers import bare_trainer
 from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.models.parking import TrainingMemoryState
@@ -47,6 +48,37 @@ def test_prepare_model_is_identity_for_single_process() -> None:
 
     for p_ref, p_strat in zip(ref.parameters(), strat.parameters(), strict=True):
         assert torch.equal(p_ref.grad, p_strat.grad)
+
+
+class _PlacementTracker(ToyTransformer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.to_targets: list[object] = []
+
+    def to(self, *args, **kwargs):
+        self.to_targets.append(args[0] if args else kwargs.get("device"))
+        return super().to(*args, **kwargs)
+
+
+def test_prepare_model_places_trainable_roots_on_the_context_device() -> None:
+    """Replay attach leaves the roots on CPU; the strategy owns placement."""
+    transformer = _PlacementTracker()
+    strategy = SingleProcessStrategy()
+
+    assert strategy.prepare_model(FakePolicy(transformer)) is not None
+
+    assert transformer.to_targets == [strategy.context.device]
+
+
+def test_prepare_model_keeps_preplaced_trainable_roots() -> None:
+    """Families that dispatched their roots themselves are never collapsed."""
+    transformer = _PlacementTracker()
+    policy = FakePolicy(transformer)
+    policy.trainable_roots_preplaced = True
+
+    SingleProcessStrategy().prepare_model(policy)
+
+    assert transformer.to_targets == []
 
 
 def test_backward_scales_loss_when_grad_scaler_present() -> None:

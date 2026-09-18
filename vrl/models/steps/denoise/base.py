@@ -26,7 +26,7 @@ from vrl.models.interfaces import (
     ReplayResult,
     ReplaySegmentResult,
 )
-from vrl.models.interfaces.runtime import ModelBuild
+from vrl.models.interfaces.runtime import ModelBuild, PipelineOffloadMode
 from vrl.models.peft_adapter import activate_adapter_on, disable_adapter_on
 from vrl.models.precision import model_autocast
 from vrl.models.weight_utils import (
@@ -415,18 +415,33 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
 
     # ── LoRA ──────────────────────────────────────────────────────────
     # One attach implementation over ``trainable_modules`` + ``set_module_root``.
-    # Family schemas resolve adapter defaults before this shared PEFT sequence;
-    # placement stays here because the loaded model owns residency.
+    # Family schemas resolve adapter defaults before this shared PEFT sequence.
 
-    def _defer_trainable_device_move(self, build: ModelBuild) -> bool:
-        """Whether attach leaves the trainable roots where they were loaded.
+    # Families whose loader already dispatched the trainable roots across
+    # devices (partitioned H3) set this so neither the rollout build nor the
+    # training strategy collapses them onto one card. A class-level fact of the
+    # model, not a config-derived build flag.
+    trainable_roots_preplaced: bool = False
 
-        FSDP replay defers so ``fully_shard`` can move and shard one block at
-        a time. Families that own residency themselves (Wan pipeline offload,
-        partitioned H3) override.
+    def _place_trainable_roots_at_build(self, build: ModelBuild) -> bool:
+        """Whether attach moves the trainable roots to ``self.device`` itself.
+
+        Only a rollout build places at attach time, and only when nothing else
+        owns residency: quantized rollouts compact the base weights first
+        (``build_denoise_runtime_bundle`` moves after the swap), pipeline
+        offload installs Accelerate hooks afterwards, and pre-placed families
+        keep their dispatch. Replay builds never move here: the training
+        strategy's ``prepare_model`` owns placement (``fully_shard`` shards the
+        CPU-loaded roots block by block; unsharded strategies move them whole).
         """
 
-        return build.defer_trainable_device_move
+        rollout = build.rollout
+        return (
+            rollout is not None
+            and not build.precision.quantization
+            and rollout.pipeline_offload_mode == PipelineOffloadMode.NONE
+            and not self.trainable_roots_preplaced
+        )
 
     def apply_lora(self, build: ModelBuild) -> None:
         """Wrap every trainable root with a PEFT LoRA adapter per ``model.lora``.
@@ -452,12 +467,10 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
                 "model.lora.path can only resume one trainable root; "
                 f"{type(self).__name__} trains {sorted(roots)}",
             )
-        defer_device_move = self._defer_trainable_device_move(build) or bool(
-            build.rollout is not None and build.precision.quantization,
-        )
+        place_now = self._place_trainable_roots_at_build(build)
         for name, module in roots.items():
             module.requires_grad_(False)
-            if not defer_device_move:
+            if place_now:
                 module.to(self.device)
             if lora_path:
                 wrapped = load_trainable_lora_adapter(
@@ -541,7 +554,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
 
         transformer = self._require_transformer()
         transformer.requires_grad_(True)
-        if not build.defer_trainable_device_move:
+        if self._place_trainable_roots_at_build(build):
             transformer.to(self.device)
 
     def _set_transformer(self, transformer: Any) -> None:

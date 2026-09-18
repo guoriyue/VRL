@@ -788,16 +788,6 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
         for_rollout=False,
     )
 
-    assert build.defer_trainable_device_move is True
-    assert (
-        entry.resolve_model_build(
-            root,
-            torch.device("cpu"),
-            precision=precision,
-            for_rollout=True,
-        ).defer_trainable_device_move
-        is False
-    )
     bundle = entry.build_replay(build)
     assert transformer.to_calls == 0
     trainable_names = [

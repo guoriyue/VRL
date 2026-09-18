@@ -250,7 +250,7 @@ class _ProcessGroupStrategy:
 
 
 class _UnshardedStateStrategy:
-    """Checkpoint and optimizer state for backends where no tensor is sharded.
+    """Checkpoint, optimizer state and placement for backends that never shard.
 
     The shared precondition is "every rank already holds the full unsharded
     tensor": single process trivially, DDP because it *replicates* the module
@@ -266,6 +266,25 @@ class _UnshardedStateStrategy:
     Concrete strategies inherit this implementation mixin directly. ``Strategy``
     stays outside their MRO as the structural contract consumed by the trainer.
     """
+
+    def place_trainable_roots(self, model: Any) -> None:
+        """Move the policy's trainable roots onto this process's device.
+
+        Replay builds leave the trainable roots where the loader put them (CPU);
+        the strategy owns placement. FSDP shards them onto the mesh block by
+        block; the unsharded backends move each root whole. Plain ``nn.Module``
+        policies (tests, non-diffusion trainers) expose no root mapping and are
+        trained where they are; families whose loader already dispatched the
+        roots across devices declare ``trainable_roots_preplaced``.
+        """
+
+        trainable = getattr(model, "trainable_modules", None)
+        if not isinstance(trainable, Mapping) or getattr(
+            model, "trainable_roots_preplaced", False
+        ):
+            return
+        for handle in trainable.values():
+            handle.to(self.context.device)
 
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
         """Flat trainable state for the rollout policy, with no collective.
@@ -366,8 +385,9 @@ class SingleProcessStrategy(_TrainingParkingStrategy, _UnshardedStateStrategy):
         )
 
     def prepare_model(self, model: Any) -> Any:
-        # Single process trains the model as-is; the seam exists so FSDP2 can wrap
-        # without the trainer changing.
+        # Single process trains the model as-is once placed; the seam exists so
+        # FSDP2 can wrap without the trainer changing.
+        self.place_trainable_roots(model)
         return model
 
     def backward(self, loss: torch.Tensor, *, grad_scaler: Any | None = None) -> None:
@@ -846,6 +866,7 @@ class ContextParallelStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
         handles = _trainable_module_handles(model)
         if len(handles) != 1:
             raise ValueError("CP strategy requires one Cosmos transformer")
+        self.place_trainable_roots(model)
         handle = handles[0][1]
         base = handle.get_base_model() if hasattr(handle, "get_base_model") else handle
         if not isinstance(base, CosmosTransformer3DModel):
@@ -973,6 +994,7 @@ class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
         # Validate the trainable handles BEFORE touching the process group so a bad
         # model fails fast (and the guard tests need no live PG).
         handles = _trainable_module_handles(model)
+        self.place_trainable_roots(model)
         backend = "gloo" if self.context.device.type == "cpu" else "nccl"
         init_training_process_group(self.context, backend=backend)
         device_ids = None

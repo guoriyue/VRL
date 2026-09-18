@@ -250,13 +250,6 @@ class WanT2VDiffusersModel(
             ),
         )
 
-    def _defer_trainable_device_move(self, build: ModelBuild) -> bool:
-        # Keep the full transformer on CPU for FSDP or pipeline CPU offload.
-        return bool(
-            getattr(build, "defer_trainable_device_move", False)
-            or _resolve_wan_offload_mode(build) != "none"
-        )
-
     def _wan_transformers(self) -> dict[str, Any]:
         modules = {"transformer": self.transformer}
         if self.transformer_2 is not None:
@@ -264,14 +257,15 @@ class WanT2VDiffusersModel(
         return modules
 
     def apply_full_finetune(self, build: ModelBuild) -> None:
+        place_now = self._place_trainable_roots_at_build(build)
         for module in self.trainable_modules.values():
             module.requires_grad_(True)
-            if getattr(build, "defer_trainable_device_move", False):
-                # FSDP owns the CPU-to-device transition and normalizes storage
-                # dtype immediately before sharding. Moving or duplicating the
-                # full parameter set here defeats block-wise FSDP construction.
+            if build.rollout is None:
+                # Replay: the training strategy owns placement, and FSDP
+                # normalizes storage dtype right before sharding. Touching the
+                # full parameter set here defeats block-wise construction.
                 continue
-            if _resolve_wan_offload_mode(build) == "none":
+            if place_now:
                 module.to(self.device, dtype=build.parameter_dtype)
             else:
                 # Accelerate installs its hooks after this method. Normalize the

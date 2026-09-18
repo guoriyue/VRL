@@ -254,10 +254,6 @@ class ModelBuild:
     # Carry the same adapter topology across replay, rollout, and resume.
     previous_policy_adapter: bool = False
     sampling_config: dict[str, Any] | None = None
-    # Generic denoise FSDP replay keeps the CPU-loaded trainable root on CPU
-    # until fully_shard can move and shard it block by block. This is resolved
-    # from the training strategy, not exposed as a user config knob.
-    defer_trainable_device_move: bool = False
     # Resolved generation-only model memory policy. A primitive mapping is
     # accepted only at the Ray wire boundary and normalized immediately.
     generation_memory: GenerationMemoryPolicy | Mapping[str, Any] | None = None
@@ -313,13 +309,6 @@ class ModelBuild:
         ):
             raise TypeError(
                 "ModelBuild.generation_memory must be GenerationMemoryPolicy, a mapping, or None",
-            )
-        if not isinstance(self.defer_trainable_device_move, bool):
-            raise TypeError("ModelBuild.defer_trainable_device_move must be a bool")
-        if self.defer_trainable_device_move and self.rollout is not None:
-            raise ValueError(
-                "defer_trainable_device_move is replay-only and cannot be set "
-                "with ModelBuild.rollout",
             )
         if self.generation_memory is not None and self.rollout is None:
             raise ValueError(

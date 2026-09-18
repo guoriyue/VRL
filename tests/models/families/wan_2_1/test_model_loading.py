@@ -272,8 +272,9 @@ def test_wan_full_finetune_normalizes_rollout_parameter_dtype() -> None:
     model = WanT2VDiffusersModel(pipeline=pipeline, device=torch.device("cpu"))
     build = SimpleNamespace(
         parameter_dtype=torch.bfloat16,
-        defer_trainable_device_move=False,
         model_config=_canonical_model_config(),
+        rollout=_rollout_build_options("model"),
+        precision=SimpleNamespace(quantization=None),
     )
 
     model.apply_full_finetune(build)
@@ -303,8 +304,8 @@ def test_wan_full_finetune_defers_dtype_normalization_to_fsdp() -> None:
     model = WanT2VDiffusersModel(pipeline=pipeline, device=torch.device("cuda:0"))
     build = SimpleNamespace(
         parameter_dtype=torch.bfloat16,
-        defer_trainable_device_move=True,
         model_config=_canonical_model_config(),
+        rollout=None,
     )
 
     model.apply_full_finetune(build)
@@ -346,8 +347,8 @@ def test_wan_replay_loads_trainable_state_without_pipeline(family, dual) -> None
     assert "_pipeline" not in vars(model)
 
 
-def test_wan_replay_full_finetune_ignores_rollout_pipeline_offload() -> None:
-    """A normalized replay build moves its transformer through the trainer path."""
+def test_wan_replay_full_finetune_leaves_placement_to_the_strategy() -> None:
+    """A replay build never moves at attach; ``prepare_model`` owns placement."""
     from vrl.models.families.wan_2_1.model import WanT2VReplayModel
 
     transformer = RecordingModule()
@@ -358,14 +359,13 @@ def test_wan_replay_full_finetune_ignores_rollout_pipeline_offload() -> None:
     )
     build = SimpleNamespace(
         parameter_dtype=torch.bfloat16,
-        defer_trainable_device_move=False,
         model_config=_canonical_model_config(),
         rollout=None,
     )
 
     model.apply_full_finetune(build)
 
-    assert transformer.to_calls == [(torch.device("cuda:1"), torch.bfloat16)]
+    assert transformer.to_calls == []
 
 
 def test_wan_sequential_offload_weight_sync_changes_forward() -> None:
@@ -427,7 +427,6 @@ def test_wan_sequential_offload_weight_sync_changes_forward() -> None:
         precision=RolePrecision("fp32", "tf32"),
         device=torch.device("cpu"),
         parameter_dtype=torch.float32,
-        defer_trainable_device_move=False,
         model_config=_canonical_model_config(
             use_lora=True,
             lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},
@@ -560,7 +559,6 @@ def test_wan_block_offload_weight_sync_changes_forward() -> None:
         precision=RolePrecision("fp32", "tf32"),
         device=torch.device("cpu"),
         parameter_dtype=torch.float32,
-        defer_trainable_device_move=False,
         model_config=_canonical_model_config(
             use_lora=True,
             lora={"rank": 2, "alpha": 2, "target_modules": ["proj"]},

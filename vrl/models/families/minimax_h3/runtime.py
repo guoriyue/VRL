@@ -13,7 +13,6 @@ the flow-convention subclass. The generic recipe loads exactly one scheduler.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Any
 
 from vrl.generation.bindings.full_sequence_denoise import (
@@ -81,11 +80,11 @@ def build_minimax_h3_replay_runtime_bundle(
 
     logger.info("Building minimax_h3 replay runtime bundle from %s", build.model_name_or_path)
     components = load_h3_replay_components(build, block_devices=block_devices)
-    if block_devices is not None:
-        # Native PEFT preparation must not collapse the dispatched base onto
-        # the root device. This build is private to the explicit caller.
-        build = replace(build, defer_trainable_device_move=True)
     model = MiniMaxH3ReplayModel(**components)
+    if block_devices is not None:
+        # The training strategy must not collapse the dispatched base onto the
+        # root device when it places the trainable roots.
+        model.trainable_roots_preplaced = True
     num_steps = build.num_steps
     if num_steps is not None:
         model.set_num_steps(num_steps)
