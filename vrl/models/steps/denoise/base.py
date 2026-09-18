@@ -479,7 +479,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
                     if parameter.requires_grad:
                         parameter.data = parameter.data.to(dtype=torch.float32)
             self.set_module_root(name, wrapped)
-        if lora_config.previous_adapter:
+        if build.previous_policy_adapter:
             self.attach_previous_policy_adapter(
                 autocast_adapter_dtype=(
                     lora_config.autocast_adapter_dtype or lora_config.parameter_dtype == "float32"

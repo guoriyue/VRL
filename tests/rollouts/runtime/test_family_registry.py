@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from dataclasses import asdict
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +29,7 @@ from vrl.models.interfaces.generation_memory import (
     GenerationMemoryPolicy,
     VaeDecodeMemory,
 )
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
@@ -40,6 +42,41 @@ def _typed_model_build_inputs(payload):
     cfg = OmegaConf.create(payload)
     root = parse_config(cfg)
     return cfg, root, PrecisionPolicy.from_section(root.precision)
+
+
+@pytest.mark.parametrize("family", ["cosmos-predict2.5", "flux", "sd3_5"])
+@pytest.mark.parametrize("kind", [None, "grpo", "diffusion_nft", "v_grpo"])
+def test_previous_adapter_follows_algorithm_for_both_build_roles(family, kind) -> None:
+    _, root, precision = _typed_model_build_inputs(
+        {
+            "model": {
+                "family": family,
+                "path": "example/model",
+                "revision": "a" * 40,
+                "use_lora": True,
+                "lora": {"rank": 2, "alpha": 4, "target_modules": ["to_q"]},
+            },
+            "algorithm": None if kind is None else {"kind": kind},
+            "rollout": {"sde": {"type": "flow_grpo"}},
+            "precision": {"float32_precision": "ieee", "training": {"dtype": "fp32"}},
+        },
+    )
+    from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
+
+    identities = []
+    for for_rollout in (False, True):
+        build = get_model_family_entry(family).resolve_model_build(
+            root,
+            "cpu",
+            precision=precision,
+            for_rollout=for_rollout,
+        )
+        assert build.previous_policy_adapter is (kind in ("diffusion_nft", "v_grpo"))
+        # Ray reconstructs the same build from the dataclass payload.
+        restored = ModelBuild(**asdict(build))
+        assert restored.previous_policy_adapter == build.previous_policy_adapter
+        identities.append(resolve_checkpoint_model_identity(restored))
+    assert identities[0] == identities[1]
 
 
 def test_model_build_projects_typed_sections_without_losing_falsy_presence() -> None:

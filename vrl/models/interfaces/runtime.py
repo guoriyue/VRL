@@ -221,7 +221,8 @@ class ModelBuild:
     """Model-construction slice of the whole RL config.
 
     Builders take this, not the whole RL cfg. Reward / algorithm / trainer /
-    dataset / logging cadence are explicitly out of scope.
+    dataset / logging cadence are explicitly out of scope. Only resolved
+    model-state requirements, such as a frozen policy adapter, cross this boundary.
 
     ``model_config`` carries the model-owned remainder of ``cfg.model`` after
     registry identity, checkpoint path/revision, and executor settings are separated;
@@ -249,6 +250,9 @@ class ModelBuild:
     # A primitive mapping is accepted only at the Ray wire boundary.
     precision: RolePrecision | Mapping[str, Any]
     model_config: dict[str, Any] | None = None
+    # Resolved from the objective's contract, never a model/YAML setting.
+    # Carry the same adapter topology across replay, rollout, and resume.
+    previous_policy_adapter: bool = False
     sampling_config: dict[str, Any] | None = None
     # Generic denoise FSDP replay keeps the CPU-loaded trainable root on CPU
     # until fully_shard can move and shard it block by block. This is resolved
@@ -377,19 +381,13 @@ class ModelBuild:
             raise ValueError("model.lora requires rank, alpha, and target_modules")
         return config
 
-    @property
-    def previous_policy_adapter_requested(self) -> bool:
-        """Whether the model configuration requests a frozen previous adapter."""
-
-        return bool(self._resolved_lora().previous_adapter)
-
     def require_lora_for_previous_policy_adapter(self) -> None:
         """Reject an incompatible previous-adapter request before model loading."""
 
-        if self.previous_policy_adapter_requested and not self.use_lora:
+        if self.previous_policy_adapter and not self.use_lora:
             raise RuntimeError(
-                "model.lora.previous_adapter requires LoRA (the frozen previous "
-                "adapter is a PEFT adapter); set model.use_lora=true.",
+                "the algorithm's previous-policy adapter requires LoRA; "
+                "full-parameter previous policies are not implemented",
             )
 
     @property

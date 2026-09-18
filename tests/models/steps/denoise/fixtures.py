@@ -22,6 +22,7 @@ def lora_test_build(
     family: str,
     lora_path: str | None = None,
     model_config: dict[str, Any] | None = None,
+    previous_policy_adapter: bool = False,
 ) -> ModelBuild:
     """A real CPU replay build for adapter tests, without checkpoint loading."""
 
@@ -32,6 +33,7 @@ def lora_test_build(
         parameter_dtype=torch.float32,
         family=family,
         precision=RolePrecision("fp32", "ieee"),
+        previous_policy_adapter=previous_policy_adapter,
         model_config={
             **(model_config or {}),
             "use_lora": True,

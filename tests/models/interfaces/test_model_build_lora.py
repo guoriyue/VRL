@@ -28,21 +28,22 @@ def test_disabled_lora_has_no_attach_config_or_previous_request(model_config) ->
     build = _build(model_config)
 
     assert build.lora is None
-    assert not build.previous_policy_adapter_requested
+    assert not build.previous_policy_adapter
     build.require_lora_for_previous_policy_adapter()
     with pytest.raises(ValueError, match=r"requires model\.lora configuration"):
         build.require_lora_config()
 
 
 @pytest.mark.parametrize("use_lora", [False, True])
-def test_previous_adapter_admission_reads_build_config(use_lora: bool) -> None:
-    build = _build({"use_lora": use_lora, "lora": {"previous_adapter": True}})
+def test_previous_adapter_admission_reads_build_requirement(use_lora: bool) -> None:
+    build = _build({"use_lora": use_lora})
+    build.previous_policy_adapter = True
 
-    assert build.previous_policy_adapter_requested
+    assert build.previous_policy_adapter
     if use_lora:
         build.require_lora_for_previous_policy_adapter()
     else:
-        with pytest.raises(RuntimeError, match="previous_adapter requires LoRA"):
+        with pytest.raises(RuntimeError, match="requires LoRA"):
             build.require_lora_for_previous_policy_adapter()
 
 
@@ -59,13 +60,12 @@ def test_required_lora_config_resolves_defaults_and_path(extras) -> None:
             "dropout": 0.0,
             "init_lora_weights": "gaussian",
             "autocast_adapter_dtype": True,
-            "previous_adapter": False,
             **values,
             "path": "/adapter",
         }
     )
     assert build.require_lora_config().path == "/adapter"
-    assert not build.previous_policy_adapter_requested
+    assert not build.previous_policy_adapter
 
 
 @pytest.mark.parametrize("family", FAMILY_REGISTRY)
@@ -79,5 +79,5 @@ def test_family_lora_defaults_are_resolved_by_the_build(family: str) -> None:
         True if family in {"wan_2_1", "wan_2_1_i2v", "causvid"} else "gaussian"
     )
     assert config.autocast_adapter_dtype is (family not in {"wan_2_1", "wan_2_1_i2v"})
-    assert config.previous_adapter is (family == "cosmos-predict2.5")
+    assert not build.previous_policy_adapter
     assert config.dropout == 0.0

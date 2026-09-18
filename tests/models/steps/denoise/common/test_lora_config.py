@@ -107,9 +107,9 @@ def test_previous_adapter_matches_trainable_storage(
                 **_lora_values(None),
                 "autocast_adapter_dtype": autocast,
                 "parameter_dtype": parameter_dtype,
-                "previous_adapter": True,
             },
             family="flux",
+            previous_policy_adapter=True,
         ),
     )
     parameters = dict(policy.transformer.named_parameters())
