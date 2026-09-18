@@ -556,6 +556,13 @@ def _erase_meaningless_spelling(
             raise ValueError(f"unexpected trajectory_storage keys: {sorted(set(value))}")
         return TrajectoryStoragePolicy.from_config(value)
 
+    # ``rollout.same_latent`` was a user-facing no-op knob until commit
+    # 7056ea69 removed it. A run resolved before that carries its default
+    # ``false``; erase that spelling only (a ``true`` would be a real, if inert,
+    # protocol difference and stays visible).
+    rollout = actual.get("rollout")
+    if isinstance(rollout, dict) and rollout.get("same_latent") is False:
+        rollout.pop("same_latent")
     trainer = actual.get("trainer")
     # Historical reports may carry the threshold under debug. This protocol
     # adapter accepts that old spelling without teaching live training configs

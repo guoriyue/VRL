@@ -1,6 +1,19 @@
 # SPRINT：reward 全部走独立服务进程（GIL 隔离）
 
-状态：**P1–P4 已落地（2026-09-14）；P5 全量验收进行中**。用户决策：不论难度，reward 一律与 trainer 进程隔离。
+状态：**目标已达成，实现形态已被取代；剩余验收项需要多卡，parked（2026-09-17）**。
+用户决策：不论难度，reward 一律与 trainer 进程隔离。
+
+> 2026-09-17 更新：`954ea0f5` 用 Ray reward actor + object-store 媒体传输取代了
+> 本文 P1/P2 的托管 HTTP 子进程（`managed.py`、`kind: service` 已不存在；
+> `RewardInferenceConfig.kind` 现在是 `in_process | http | ray`，默认 `ray`，
+> 见 `vrl/rewards/ray.py::_RewardActor / RayRewardScorer`）。隔离目标本身成立：
+> 训练时 reward 默认运行在 driver 之外的 Ray actor 里，共卡时用 CuMem park/wake。
+> 单卡验收已完成：2026-09-17 在 1×5090 上跑 `experiment/sd3_5/online_grpo_pickscore`
+> 两轮，PickScore 在 `_RewardActor` 中打分，每个阶段切换 rollout 释放 15.7 GiB、
+> reward 释放 3.8 GiB，replay parity 0.0。
+> 等待事件：多卡机器可用，用于 §P5 剩余两项（Wan HPSv3 四卡时分、Cosmos DDP 2x1
+> Kling 独占卡 smoke）和五 arm 表的 398 s 复现。下文 §1 的"现状"表与 §3 的 P1–P4
+> 记录保留为历史证据，路径和键名以当前 HEAD 为准。
 来源实验：`docs/sprints/SPRINT_four_l40s_execution.md` "Prefetch / reward placement /
 compile: final five-arm table"。
 

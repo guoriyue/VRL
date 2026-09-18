@@ -8,7 +8,7 @@
 > report at `sana_aesthetic_fullparam_native_fp16_eval/report.json`. Legacy BF16
 > and LoRA evaluator protocols cannot be normalized into this protocol.
 
-状态：**训练已完成；held-out 质量判定待完成**。替代 run
+状态：**已判定：FAIL（2026-09-17，held-out 曲线平）**。结果见文末 §结果。替代 run
 `outputs/sana_aesthetic_fullparam_long/` 已完成全部 300 次更新并发布
 `checkpoint-final`，其中 `global_step=300`、`uses_lora=false`、
 `run_verdict=success`。300 行 metric 覆盖 epoch `0..299`，全部有限且没有零梯度更新；
@@ -461,3 +461,40 @@ Remaining convergence items (non-blocking):
 - `vrl/scripts/eval/sana_aesthetic_report.py`
 - https://huggingface.co/docs/diffusers/v0.32.2/en/api/pipelines/sana
 - https://github.com/huggingface/diffusers/issues/10241
+
+
+## 结果（2026-09-17，1×5090，`sana_aesthetic_checkpoint_eval` + `sana_aesthetic_curve_verdict`）
+
+评测脚本先修了一处协议比对：这次 run 的 `resolved_config.yaml` 里还带着后来被
+`7056ea69` 删除的无效开关 `rollout.same_latent: false`，`normalize_run_config`
+把它当成多余键拒绝。`_erase_meaningless_spelling` 现在只对该键的默认值 `false`
+做擦除（`true` 仍算协议差异）。
+
+报告：`outputs/sana_aesthetic_fullparam_long/sana_aesthetic_fullparam_native_fp16_eval/report.json`
+（13 个曲线点 × 128 张 DrawBench 固定 prompt/seed，1664 张打分）；裁决：
+`outputs/sana_aesthetic_fullparam_long/verdict.json`。两者都在 `~/Desktop/wm-infra/outputs/`。
+
+| 曲线点 | r_aesthetic | r_pickscore |
+|---|---|---|
+| baseline | 5.7582 | 0.8661 |
+| checkpoint-25 | 5.7614 | 0.8673 |
+| checkpoint-100 | 5.7612 | 0.8679 |
+| checkpoint-150 | 5.7453 | 0.8679 |
+| checkpoint-200 | 5.7418 | 0.8673 |
+| checkpoint-300 | 5.7603 | 0.8664 |
+
+每点标准误 ≈ 0.042。全部 13 点落在 5.742–5.763 之间，即 baseline ±0.5 个标准误。
+
+裁决 **FAIL**，四条判据全部未过：
+- aesthetic gain −0.000002 < 0.1（终点三点均值与 baseline 相同）
+- gain z = −0.00003 ≤ 2
+- 固定评测斜率 −0.00002/epoch，不为正
+- 定性盲审未记录（前三条已 FAIL，盲审不再需要）
+
+守护项都干净：300 次更新、pre-update log-prob diff 0、clip fraction 0、PickScore
+0.8661 → 0.8664（无退化）。训练时的 in-distribution reward 从 4.56 升到 4.83
+（+0.27），但 held-out DrawBench 上一点没动：**这条 full-param 曲线学到的是训练
+prompt 上的东西，没有泛化到固定评测集**。
+
+结论：SANA aesthetic full-param 300 步 run 的"可信曲线"问题已回答，答案是否定的。
+后续若再试，先动的应该是 reward 或 prompt 分布，不是训练配方；本 sprint 关闭。
