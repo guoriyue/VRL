@@ -26,7 +26,7 @@ from vrl.models.interfaces import (
     ReplayResult,
     ReplaySegmentResult,
 )
-from vrl.models.interfaces.runtime import ModelBuild, PipelineOffloadMode
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.peft_adapter import activate_adapter_on, disable_adapter_on
 from vrl.models.precision import model_autocast
 from vrl.models.weight_utils import (
@@ -416,41 +416,18 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
     # ── LoRA ──────────────────────────────────────────────────────────
     # One attach implementation over ``trainable_modules`` + ``set_module_root``.
     # Family schemas resolve adapter defaults before this shared PEFT sequence.
-
-    # Families whose loader already dispatched the trainable roots across
-    # devices (partitioned H3) set this so neither the rollout build nor the
-    # training strategy collapses them onto one card. A class-level fact of the
-    # model, not a config-derived build flag.
-    trainable_roots_preplaced: bool = False
-
-    def _place_trainable_roots_at_build(self, build: ModelBuild) -> bool:
-        """Whether attach moves the trainable roots to ``self.device`` itself.
-
-        Only a rollout build places at attach time, and only when nothing else
-        owns residency: quantized rollouts compact the base weights first
-        (``build_denoise_runtime_bundle`` moves after the swap), pipeline
-        offload installs Accelerate hooks afterwards, and pre-placed families
-        keep their dispatch. Replay builds never move here: the training
-        strategy's ``prepare_model`` owns placement (``fully_shard`` shards the
-        CPU-loaded roots block by block; unsharded strategies move them whole).
-        """
-
-        rollout = build.rollout
-        return (
-            rollout is not None
-            and not build.precision.quantization
-            and rollout.pipeline_offload_mode == PipelineOffloadMode.NONE
-            and not self.trainable_roots_preplaced
-        )
+    # Attach never places the roots: the rollout builder moves them after the
+    # quantization swap (``build_denoise_runtime_bundle``), and the training
+    # strategy's ``prepare_model`` owns replay placement.
 
     def apply_lora(self, build: ModelBuild) -> None:
         """Wrap every trainable root with a PEFT LoRA adapter per ``model.lora``.
 
-        The parameter dtype is fixed at load; attach only places the module.
-        Quantized rollouts keep the checkpoint on CPU until base-weight
-        compaction: LoRA must attach before the quantization swap (which only
-        wraps plain ``nn.Linear``), and moving first would materialize the full
-        base model on one GPU before its memory-saving transform owns it.
+        The parameter dtype is fixed at load and the roots stay where the
+        loader put them. LoRA must attach before the quantization swap (which
+        only wraps plain ``nn.Linear``); the rollout builder moves the compact
+        policy afterwards, so the full base model never lands on one GPU
+        before its memory-saving transform owns it.
         """
 
         from peft import LoraConfig, get_peft_model
@@ -467,11 +444,8 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
                 "model.lora.path can only resume one trainable root; "
                 f"{type(self).__name__} trains {sorted(roots)}",
             )
-        place_now = self._place_trainable_roots_at_build(build)
         for name, module in roots.items():
             module.requires_grad_(False)
-            if place_now:
-                module.to(self.device)
             if lora_path:
                 wrapped = load_trainable_lora_adapter(
                     module,
@@ -552,10 +526,8 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
     def apply_full_finetune(self, build: ModelBuild) -> None:
         """Mark the transformer fully trainable (no-LoRA path)."""
 
-        transformer = self._require_transformer()
-        transformer.requires_grad_(True)
-        if self._place_trainable_roots_at_build(build):
-            transformer.to(self.device)
+        del build
+        self._require_transformer().requires_grad_(True)
 
     def _set_transformer(self, transformer: Any) -> None:
         """Register a replacement trainable transformer (LoRA wrap, compile, …).

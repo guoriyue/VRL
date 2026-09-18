@@ -18,6 +18,19 @@ if TYPE_CHECKING:
     import torch
 
 
+def module_on_host(module: Any) -> bool:
+    """Whether every parameter of ``module`` still lives on the CPU.
+
+    The placement rule shared by the rollout builder and the training
+    strategies: a loader that leaves a trainable root on the host expects the
+    build path (rollout) or ``prepare_model`` (replay) to place it; a loader
+    that already dispatched it -- block-partitioned H3 on several CUDA devices,
+    a native package loading straight to its card -- is left alone.
+    """
+
+    return all(parameter.device.type == "cpu" for parameter in module.parameters())
+
+
 class ModelParking:
     """Retain original devices before moving storage, including partial moves."""
 

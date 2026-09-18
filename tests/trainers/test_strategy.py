@@ -70,13 +70,12 @@ def test_prepare_model_places_trainable_roots_on_the_context_device() -> None:
     assert transformer.to_targets == [strategy.context.device]
 
 
-def test_prepare_model_keeps_preplaced_trainable_roots() -> None:
-    """Families that dispatched their roots themselves are never collapsed."""
-    transformer = _PlacementTracker()
-    policy = FakePolicy(transformer)
-    policy.trainable_roots_preplaced = True
+def test_prepare_model_leaves_roots_a_loader_already_dispatched() -> None:
+    """A root that is not host-resident (block-partitioned H3) is never collapsed."""
+    transformer = _PlacementTracker().to(torch.device("meta"))
+    transformer.to_targets.clear()
 
-    SingleProcessStrategy().prepare_model(policy)
+    SingleProcessStrategy().prepare_model(FakePolicy(transformer))
 
     assert transformer.to_targets == []
 

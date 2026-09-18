@@ -19,6 +19,7 @@ from vrl.models.loader import (
     load_flow_match_scheduler,
     validate_rollout_quantization_support,
 )
+from vrl.models.parking import module_on_host
 from vrl.models.precision import apply_float32_precision
 from vrl.nn.optimization import apply_rollout_optimizations
 from vrl.nn.optimization.frame_shared_adaln import share_adaln_across_frames
@@ -42,22 +43,22 @@ def build_denoise_runtime_bundle(
     model = model_cls.from_build(build)
     pipeline_offload = rollout.pipeline_offload_mode != "none"
 
-    # PEFT can wrap only plain nn.Linear, while full-finetune owns the model's
-    # device move. Both paths therefore optimize before the compact policy moves
-    # to CUDA, but LoRA must attach before the quantization swap.
+    # The single rollout placement site. Attach and full-finetune leave the
+    # trainable roots where the loader put them; the compact policy moves AFTER
+    # quantization (PEFT wraps only plain nn.Linear, so LoRA attaches first) and
+    # BEFORE compile (``requires_grad_`` / ``.to()`` must act on the real
+    # module, not on a compiled wrapper).
     def move_to_device() -> None:
-        """Place the policy on its device between the quantize and compile passes.
-
-        Both branches move the (now compact) policy AFTER quantization and
-        BEFORE compile: ``requires_grad_`` / ``.to()`` must act on the real
-        module, not on a compiled wrapper.
-        """
-
-        if build.use_lora:
-            if build.precision.quantization and not pipeline_offload:
-                model.transformer.to(model.device)
-        else:
+        if not build.use_lora:
             model.apply_full_finetune(build)
+        if pipeline_offload:
+            # Accelerate's hooks, installed after this seam, own residency.
+            return
+        for root in model.trainable_modules.values():
+            # A loader that already dispatched a root (block-partitioned H3)
+            # leaves nothing on the host; only host-resident roots move.
+            if module_on_host(root):
+                root.to(model.device)
 
     if build.use_lora:
         model.apply_lora(build)

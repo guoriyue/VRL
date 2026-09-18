@@ -274,7 +274,6 @@ def test_wan_full_finetune_normalizes_rollout_parameter_dtype() -> None:
         parameter_dtype=torch.bfloat16,
         model_config=_canonical_model_config(),
         rollout=_rollout_build_options("model"),
-        precision=SimpleNamespace(quantization=None),
     )
 
     model.apply_full_finetune(build)

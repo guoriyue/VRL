@@ -187,3 +187,20 @@ loader"）把它作为 4×L40S H3 计划的显式加载器交付，并在两张 
     普通 `nn.Module`（测试假模型）原地训练。
 - 验证：ruff 通过；`tests/trainers tests/models/steps/denoise tests/models/families/{wan_2_1,minimax_h3,cosmos} tests/models/interfaces tests/config tests/scripts`
   2218 passed / 42 skipped；全量 CPU 套件与 5090 真跑结果见对话记录。
+
+## 8. 第二步（2026-09-17）：rollout 放置也收敛到一处，删掉 `trainable_roots_preplaced`
+
+第一步之后采样路径的放置仍分散在两处：`apply_lora` 在不量化时搬，
+`build.py` 的 `move_to_device` 在量化后搬。第二步把它收敛：
+
+- `apply_lora` / `apply_full_finetune` 不再搬任何东西，只挂适配器 / 设
+  `requires_grad`。基类的 `_place_trainable_roots_at_build` 判定删除。
+- `build_denoise_runtime_bundle.move_to_device` 是采样路径唯一的放置点：
+  量化之后、compile 之前，把每个 host 上的 trainable root 搬到 `model.device`；
+  pipeline offload 时不搬（Accelerate 钩子随后接管）。
+- `trainable_roots_preplaced` 删除。两处放置（builder、策略）改为只搬
+  **仍在 CPU 上的根**（`vrl/models/parking.py::module_on_host`）。分区 H3 的
+  transformer 由 `device_map` 直接加载到各卡，不在 host 上，自然不动；
+  不再需要 family 声明。
+- anima 的 `apply_full_finetune` 覆写删除（transformer 加载时已是目标 dtype，
+  覆写退化为基类行为）。Wan 的覆写只剩 rollout 路径的 dtype 归一化。

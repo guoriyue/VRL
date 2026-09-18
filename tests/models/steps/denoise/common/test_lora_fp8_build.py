@@ -118,26 +118,16 @@ def _build_sd35_rollout(
     return get_model_family_entry("sd3_5").build_rollout(build)
 
 
-@pytest.mark.parametrize("quantization_format", ["fp8", "nvfp4"])
-def test_quantized_lora_attach_defers_device_move(
-    quantization_format: str,
+@pytest.mark.parametrize(
+    ("quantization_format", "replay"),
+    [("fp8", False), ("nvfp4", False), (None, False), (None, True)],
+)
+def test_lora_attach_never_moves(
+    quantization_format: str | None,
+    replay: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    events: list[str] = []
-    fake_peft = ModuleType("peft")
-    fake_peft.LoraConfig = lambda **_kwargs: object()
-    fake_peft.PeftModel = object
-    fake_peft.get_peft_model = lambda transformer, _cfg, **_kwargs: transformer
-    monkeypatch.setitem(sys.modules, "peft", fake_peft)
-
-    _LoraPolicy(events).apply_lora(
-        _build(quantization_format=quantization_format),
-    )
-    assert events == []
-
-
-def test_plain_lora_attach_keeps_direct_device_move(monkeypatch) -> None:
-    """An unquantized attach places the root; the load dtype is left alone."""
+    """Attach wraps in place; the rollout builder / training strategy place."""
     events: list[str] = []
     fake_peft = ModuleType("peft")
     fake_peft.LoraConfig = lambda **_kwargs: object()
@@ -147,23 +137,47 @@ def test_plain_lora_attach_keeps_direct_device_move(monkeypatch) -> None:
 
     policy = _LoraPolicy(events)
     policy.transformer.proj.to(torch.float16)
-    policy.apply_lora(_build(quantization_format=None))
-    assert events == ["move"]
+    policy.apply_lora(_build(quantization_format=quantization_format, replay=replay))
+
+    assert events == []
     assert policy.transformer.proj.weight.dtype is torch.float16
 
 
-def test_replay_lora_attach_never_moves(monkeypatch) -> None:
-    """Replay placement belongs to the training strategy, not to attach."""
+def test_shared_builder_moves_plain_lora_after_attach(monkeypatch) -> None:
+    """Without quantization the compact policy still moves only in the builder."""
     events: list[str] = []
-    fake_peft = ModuleType("peft")
-    fake_peft.LoraConfig = lambda **_kwargs: object()
-    fake_peft.PeftModel = object
-    fake_peft.get_peft_model = lambda transformer, _cfg, **_kwargs: transformer
-    monkeypatch.setitem(sys.modules, "peft", fake_peft)
 
-    _LoraPolicy(events).apply_lora(_build(quantization_format=None, replay=True))
+    class _Policy:
+        quantization_exclude: tuple[str, ...] = ()
 
-    assert events == []
+        def __init__(self) -> None:
+            self.transformer = _TrackingTransformer(events)
+            self.device = "cpu"
+            self.scheduler = object()
+            self.raw_handle = object()
+            self.trainable_modules = {"transformer": self.transformer}
+            self.adapter_roots: dict[str, Any] = {}
+
+        @property
+        def policy_cores(self) -> dict[str, Any]:
+            return {"transformer": self.transformer}
+
+        @classmethod
+        def from_build(cls, _build: Any) -> _Policy:
+            return cls()
+
+        def apply_lora(self, _build: Any) -> None:
+            events.append("attach")
+
+        def generation_memory_targets(self) -> dict[str, Any]:
+            return {}
+
+        def set_num_steps(self, _steps: int) -> None:
+            return None
+
+    _build_sd35_rollout(monkeypatch, _build(quantization_format=None), _Policy)
+
+    assert events == ["attach", "move"]
 
 
 def test_fp8_config_replay_build_ignores_rollout_options(monkeypatch) -> None:

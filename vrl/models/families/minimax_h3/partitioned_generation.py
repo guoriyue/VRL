@@ -70,9 +70,6 @@ class H3GenerationPlacement:
 
 
 class PartitionedH3GenerationModel(MiniMaxH3Model):
-    # The frozen base is already placed block-by-block across devices.
-    trainable_roots_preplaced = True
-
     def __init__(self, *, pipeline: Any, device: Any, placement: H3GenerationPlacement):
         super().__init__(pipeline=pipeline, device=device)
         self.placement = placement

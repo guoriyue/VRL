@@ -257,21 +257,17 @@ class WanT2VDiffusersModel(
         return modules
 
     def apply_full_finetune(self, build: ModelBuild) -> None:
-        place_now = self._place_trainable_roots_at_build(build)
         for module in self.trainable_modules.values():
             module.requires_grad_(True)
             if build.rollout is None:
-                # Replay: the training strategy owns placement, and FSDP
-                # normalizes storage dtype right before sharding. Touching the
-                # full parameter set here defeats block-wise construction.
+                # Replay: FSDP normalizes storage dtype right before sharding.
+                # Touching the full parameter set here defeats block-wise
+                # construction.
                 continue
-            if place_now:
-                module.to(self.device, dtype=build.parameter_dtype)
-            else:
-                # Accelerate installs its hooks after this method. Normalize the
-                # CPU storage now so trainer payloads and rollout parameters have
-                # one exact dtype without prematurely occupying the whole GPU.
-                module.to(dtype=build.parameter_dtype)
+            # Rollout: normalize the CPU storage now so trainer payloads and
+            # rollout parameters share one exact dtype. The builder places the
+            # module afterwards (or Accelerate's hooks own residency).
+            module.to(dtype=build.parameter_dtype)
 
     @property
     def uses_pipeline_cpu_offload(self) -> bool:

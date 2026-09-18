@@ -21,7 +21,12 @@ from typing import TYPE_CHECKING, Any, Protocol
 import torch
 from torch import nn
 
-from vrl.models.parking import ModelParking, TrainingMemoryState, TrainingStateParking
+from vrl.models.parking import (
+    ModelParking,
+    TrainingMemoryState,
+    TrainingStateParking,
+    module_on_host,
+)
 from vrl.trainers.distributed import (
     ContextParallelPeerGroup,
     DistributedTrainingContext,
@@ -274,17 +279,16 @@ class _UnshardedStateStrategy:
         the strategy owns placement. FSDP shards them onto the mesh block by
         block; the unsharded backends move each root whole. Plain ``nn.Module``
         policies (tests, non-diffusion trainers) expose no root mapping and are
-        trained where they are; families whose loader already dispatched the
-        roots across devices declare ``trainable_roots_preplaced``.
+        trained where they are; a root a loader already dispatched across
+        devices (block-partitioned H3) is not on the host and is left alone.
         """
 
         trainable = getattr(model, "trainable_modules", None)
-        if not isinstance(trainable, Mapping) or getattr(
-            model, "trainable_roots_preplaced", False
-        ):
+        if not isinstance(trainable, Mapping):
             return
         for handle in trainable.values():
-            handle.to(self.context.device)
+            if module_on_host(handle):
+                handle.to(self.context.device)
 
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
         """Flat trainable state for the rollout policy, with no collective.
