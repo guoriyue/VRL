@@ -19,6 +19,7 @@ it away. That catches a sign flip independently of how the loss is written.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -88,6 +89,12 @@ class _NFTModel(DiffusionModelBase):
     ``default`` and ``previous`` LoRA adapters, so ``set_adapter`` /
     ``disable_adapters`` route to actually-different weights. ``sync_previous_policy_adapter``
     delegates to the same ``_copy_adapter_weights`` the production model uses.
+
+    The objectives reach the transformer only through the shared replay
+    contract (``replay_forward_with_latents`` -> ``restore_eval_state`` ->
+    ``forward_step``), so this fake implements exactly that pair the way a
+    single-transformer family does: the step's raw grid timestep is the Wan
+    timestep, the prompt embeds are the only conditioning.
     """
 
     precision = _PRECISION
@@ -95,6 +102,7 @@ class _NFTModel(DiffusionModelBase):
     def __init__(self, transformer: torch.nn.Module) -> None:
         super().__init__()
         self.transformer = transformer
+        self.device = torch.device("cpu")
 
     def encode_prompt(
         self,
@@ -112,32 +120,37 @@ class _NFTModel(DiffusionModelBase):
     ) -> Any:
         raise NotImplementedError
 
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> Any:
+        del batch_context, step_idx
+        # ``timesteps`` arrives already sliced to this step: [B] raw grid values.
+        return SimpleNamespace(
+            latents=latents,
+            timesteps=replay_tensors["timesteps"],
+            prompt_embeds=replay_tensors["prompt_embeds"],
+        )
+
     def forward_step(
         self,
         state: Any,
         step_idx: int,
     ) -> dict[str, Any]:
-        raise NotImplementedError
+        del step_idx
+        prediction = self.transformer(
+            hidden_states=state.latents,
+            timestep=state.timesteps,
+            encoder_hidden_states=state.prompt_embeds,
+            return_dict=False,
+        )[0]
+        return {"noise_pred": prediction}
 
     def decode_latents(self, latents: Any) -> Any:
         raise NotImplementedError
-
-    def diffusion_nft_prepare_transformer_input(
-        self,
-        *,
-        latents: torch.Tensor,
-        prompt_embeds: torch.Tensor,
-        timestep: torch.Tensor,
-        **_kwargs: object,
-    ) -> dict[str, object]:
-        # Real kwargs the Wan transformer consumes; return_dict=False so the
-        # forward yields a (sample,) tuple, matching NFT's transformer(...)[0].
-        return {
-            "hidden_states": latents,
-            "timestep": timestep,
-            "encoder_hidden_states": prompt_embeds,
-            "return_dict": False,
-        }
 
     def sync_previous_policy_adapter(self, *, decay: float) -> None:
         _copy_adapter_weights(self.transformer, src="default", dst="previous", decay=decay)

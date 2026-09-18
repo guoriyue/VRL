@@ -25,7 +25,6 @@ FLUX specifics vs SD3 (the reference family):
 
 from __future__ import annotations
 
-import math
 import random
 import sys
 from dataclasses import dataclass
@@ -68,10 +67,6 @@ class FluxSamplingState(GuidedDiffusionSamplingStateBase):
 
 class FluxModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
     """Diffusers-backed FLUX.1 t2i model.
-
-    The frozen ``previous`` LoRA mirror DiffusionNFT and V-GRPO evaluate the
-    behaviour policy through comes from ``DiffusionModelBase.apply_lora``
-    when requested by the algorithm contract; plain GRPO runs never attach it.
 
     Implements the backbone-runner protocol itself. FLUX.1-dev is
     guidance-distilled: a single transformer forward conditioned on a
@@ -130,12 +125,6 @@ class FluxModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
         # must unpack to here. Defaults are overwritten on the first prepare call.
         self._decode_height = 1024
         self._decode_width = 1024
-
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> FluxModel:
-        """Reject the previous-adapter config before paying the pipeline load."""
-        build.require_lora_for_previous_policy_adapter()
-        return super().from_build(build)
 
     def _set_dynamic_timesteps(self, num_steps: int, image_seq_len: int, device: Any) -> Any:
         """Set FLUX timesteps with the resolution-derived ``mu`` (diffusers parity)."""
@@ -369,9 +358,10 @@ class FluxModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
         """Project FLUX sampling state into per-sample trajectory replay tensors.
 
         ``latents_clean`` is the final (fully denoised) packed latent, captured at
-        decode time — it is the x0 the DiffusionNFT loss regresses toward. GRPO
-        ignores it (it reads observations/actions/log_probs instead); the small
-        extra per-sample tensor is the price of one family-neutral export path.
+        decode time: the clean x0 an objective may re-noise and evaluate through
+        ``replay_forward_with_latents``. The SDE replay ignores it (it reads
+        observations/actions/log_probs instead); the small extra per-sample
+        tensor is the price of one family-neutral export path.
         """
         return {
             "prompt_embeds": state.prompt_embeds,
@@ -425,87 +415,6 @@ class FluxModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
             width=width,
         )
 
-    # -- DiffusionNFT forward input ------------------------------------
-
-    def diffusion_nft_prepare_transformer_input(
-        self,
-        *,
-        latents: torch.Tensor,
-        prompt_embeds: torch.Tensor,
-        prompt_attention_mask: torch.Tensor | None,
-        pooled_prompt_embeds: torch.Tensor | None,
-        timestep: torch.Tensor,
-        num_frames: int,
-        height: int,
-        width: int,
-        guidance_scale: float | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Build raw FLUX transformer forward kwargs for the DiffusionNFT loss.
-
-        NFT calls ``transformer(**inputs)[0]`` directly on the unwrapped
-        transformer (no DiffusionBackboneCaller), so this returns exactly what
-        ``FluxTransformer2DModel.forward`` consumes: packed ``hidden_states``, the
-        rotary ``img_ids`` / ``txt_ids`` position grids, pooled CLIP projections,
-        and the guidance scalar (FLUX.1-dev is guidance-distilled). FLUX latents
-        stay PACKED ``[B, seq, C*4]`` through the NFT xt interpolation, so they
-        feed the transformer packed exactly as in ``forward_step``.
-        """
-        del prompt_attention_mask, num_frames, kwargs
-        device = latents.device
-        td = self._transformer_dtype()
-
-        # Recover the packed position grid (grid_h * grid_w == seq_len, with
-        # grid_h:grid_w == height:width) from the packed sequence length + the
-        # rollout aspect ratio. The replay/training model that runs this loss owns
-        # no FluxPipeline, so it cannot read vae_scale_factor; deriving the grid
-        # from seq_len + aspect is pipeline-free and exact for the 16-divisible
-        # FLUX resolutions. img_ids/txt_ids match what restore_eval_state rebuilds.
-        seq_len = int(latents.shape[1])
-        grid_w = round(math.sqrt(seq_len * float(width) / float(height)))
-        grid_h = seq_len // grid_w if grid_w else 0
-        if grid_w <= 0 or grid_h * grid_w != seq_len:
-            raise RuntimeError(
-                "FLUX DiffusionNFT could not recover a packed latent grid: "
-                f"seq_len={seq_len}, height={height}, width={width}",
-            )
-        img_ids = self._build_latent_image_ids(grid_h, grid_w, device, torch.float32)
-        text_ids = torch.zeros(prompt_embeds.shape[1], 3, device=device, dtype=torch.float32)
-
-        # FLUX's transformer multiplies its timestep input by 1000 internally; the
-        # rollout feeds t/1000 (forward_step) and the NFT loss passes the raw
-        # buffered timestep (the [0, 1000] flow-match grid), so apply the same
-        # /1000 here to land on the identical conditioning the rollout used.
-        ts = timestep.to(device=device, dtype=torch.float32)
-        if bool((ts > 1.0).any()):
-            ts = ts / 1000.0
-
-        guidance = None
-        if self._guidance_embeds:
-            # NFT's three forwards (previous / trainable / disable-adapter ref)
-            # share these kwargs, so any consistent guidance keeps the
-            # positive/negative decomposition sound; matching the rollout guidance
-            # keeps train/sample conditioning aligned. batch.context carries it
-            # (export_batch_context); fall back to the FLUX.1-dev default.
-            g = 3.5 if guidance_scale is None else float(guidance_scale)
-            guidance = torch.full((latents.shape[0],), g, device=device, dtype=td)
-
-        if pooled_prompt_embeds is None:
-            raise RuntimeError(
-                "FLUX DiffusionNFT requires pooled_prompt_embeds in the replay tensors",
-            )
-
-        return {
-            "hidden_states": latents.to(td),
-            "timestep": ts.to(td),
-            "encoder_hidden_states": prompt_embeds.to(td),
-            "pooled_projections": pooled_prompt_embeds.to(td),
-            "img_ids": img_ids,
-            "txt_ids": text_ids,
-            "guidance": guidance,
-            "return_dict": False,
-        }
-
     # -- decode_latents ------------------------------------------------
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
@@ -551,7 +460,6 @@ class FluxReplayModel(DiffusersReplayModelBase, FluxModel):
         asserts old==new log-prob, so any drift here surfaces immediately.)
         FLUX packs an 8x VAE + 2x2 patch grid: seq_len = (H // 16) * (W // 16).
         """
-        build.require_lora_for_previous_policy_adapter()
         sampling = build.sampling_config or {}
         num_steps = build.num_steps
         height, width = sampling.get("height"), sampling.get("width")

@@ -65,10 +65,21 @@ def check_cross_section_rules(root: RootConfig) -> None:
                 "for its frozen previous-policy adapter; full-parameter previous policies "
                 "are not implemented",
             )
-        if not root.model.supports_previous_adapter:
+        # The objectives re-noise the clean latent and evaluate it through the
+        # shared full-sequence replay forward (``replay_forward_with_latents``),
+        # so the family needs a trainer replay recipe on that regime. The
+        # timestep-grid domain is checked at the first loss, not here.
+        from vrl.models.families.registry import get_model_family_entry
+
+        entry = get_model_family_entry(str(root.model.family))
+        if (
+            entry.policy_semantics.generation_regime != "full_sequence"
+            or not entry.supports_policy_replay
+        ):
             raise ValueError(
-                f"algorithm.kind={kind} requires a previous-policy forward interface; "
-                f"model.family={root.model.family} does not support it",
+                f"algorithm.kind={kind} evaluates the clean latent through the "
+                "full-sequence denoise replay forward; "
+                f"model.family={root.model.family} does not provide one",
             )
 
     # ── algorithm.kl_reward_coef shapes rewards with the collected per-step KL.

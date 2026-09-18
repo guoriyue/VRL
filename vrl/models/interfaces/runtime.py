@@ -96,7 +96,7 @@ def register_checkpoint_owned_state(module: Any, names: Iterable[str]) -> None:
 
     Ordinary optimized parameters are derived from ``requires_grad`` and must
     not be registered. This stores only the exceptional state whose mutability
-    cannot be inferred, such as DiffusionNFT's frozen ``previous`` adapter.
+    cannot be inferred, such as a frozen ``previous`` policy adapter.
     """
 
     if isinstance(names, (str, bytes)):

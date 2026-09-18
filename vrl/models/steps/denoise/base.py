@@ -216,21 +216,30 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         batch: Any,
         timestep_idx: int,
         latents: Any,
+        *,
+        classifier_free_guidance: bool | None = None,
     ) -> dict[str, Any]:
         """One replay-shaped forward on CALLER latents at the step's conditioning.
 
         Same state rebuild as ``replay_forward`` — the trajectory's prompt
         conditioning and the step's own timestep — but the model input is the
-        caller's tensor instead of the stored x_t. This is the GRPO
-        diffusion-loss regularizer's entry: it noises CLEAN fine-tuning
-        latents and needs the model's prediction for them under the exact
-        schedule replay uses (no second sigma-domain conversion path).
+        caller's tensor instead of the stored x_t. Objectives that re-noise the
+        CLEAN latent themselves (the GRPO diffusion-loss regularizer, the
+        forward-process objectives) enter here so their prediction comes from
+        the exact schedule replay uses (no second sigma-domain conversion path).
+
+        ``classifier_free_guidance`` overrides the trajectory's recorded CFG
+        setting: ``False`` runs only the conditional branch, which is what an
+        objective evaluating the raw denoiser wants; ``None`` keeps the rollout's
+        own setting.
         """
 
         replay_tensors, batch_context, _ = self._replay_inputs_for_step(
             batch,
             timestep_idx,
         )
+        if classifier_free_guidance is not None:
+            batch_context["cfg"] = bool(classifier_free_guidance)
         state = self.restore_eval_state(
             replay_tensors,
             batch_context,
@@ -311,8 +320,8 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
 
         The named-adapter counterpart to :meth:`disable_adapter`; restores the
         ``"default"`` adapter on exit and switches on the module behind any
-        DDP / compile wrapper. Centralizing it here keeps algorithms (e.g. the
-        DiffusionNFT previous-policy branch) off ``transformer.set_adapter``
+        DDP / compile wrapper. Centralizing it here keeps algorithms (e.g. a
+        frozen previous-policy branch) off ``transformer.set_adapter``
         directly, so adapter control has one boundary that owns the model.
         """
 
@@ -486,10 +495,10 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
                 ),
             )
 
-    # Both DiffusionNFT and V-GRPO evaluate the behaviour policy through a
-    # frozen ``previous`` copy of the trainable adapter: forward-only under
-    # no_grad, refreshed by weight copy after each optimizer step, never
-    # optimized. Attach runs right after the normal LoRA attach.
+    # A build may request a frozen ``previous`` copy of the trainable adapter:
+    # forward-only under no_grad, refreshed by weight copy after each optimizer
+    # step, never optimized. Which objectives need one is decided at the
+    # config-to-build boundary; attach runs right after the normal LoRA attach.
 
     def attach_previous_policy_adapter(self, *, autocast_adapter_dtype: bool = True) -> None:
         """Build the frozen ``previous`` adapter on ``self.transformer``."""
@@ -518,9 +527,9 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
     def sync_previous_policy_adapter(self, *, decay: float = 0.0) -> None:
         """Refresh the ``previous`` adapter from the trainable ``default`` adapter.
 
-        Reached via getattr dispatch from the objectives' ``after_optimizer_step``
-        (vrl/algorithms/diffusion_nft.py, vrl/algorithms/v_grpo.py), not a
-        direct call — keep even though textual call-site searches miss it.
+        Reached via getattr dispatch from ``vrl/algorithms/previous_adapter.py``
+        (the objectives' ``after_optimizer_step``), not a direct call — keep
+        even though textual call-site searches miss it.
         """
 
         from vrl.models.steps.denoise.common import lora as _lora
@@ -708,9 +717,8 @@ class DiffusersPipelineModelBase(DiffusionModelBase):
     distilled-guidance detection, transformer swap, scheduler timestep init, and
     ``from_build`` — the pipeline load plus the freeze/placement of VAE and
     prompt encoders, driven by the three class declarations below. A family
-    overrides only where it genuinely differs (FLUX's dual-encoder discovery and
-    NFT guard, SANA's scheduler swap, wan's multi-transformer
-    ``trainable_modules``/LoRA, Predict2.5's NFT full-finetune guard).
+    overrides only where it genuinely differs (FLUX's dual-encoder discovery,
+    SANA's scheduler swap, wan's multi-transformer ``trainable_modules``/LoRA).
     Families NOT backed by a diffusers pipeline (echo's LTX wrapper, anima's
     single-file checkpoint) stay on ``DiffusionModelBase`` directly.
     """

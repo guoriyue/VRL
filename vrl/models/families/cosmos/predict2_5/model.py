@@ -1,4 +1,4 @@
-"""Cosmos Predict2.5 diffusers-backed model for DiffusionNFT RL."""
+"""Cosmos Predict2.5 diffusers-backed text-to-world model."""
 
 from __future__ import annotations
 
@@ -150,7 +150,7 @@ class CosmosPredict25SamplingState(GuidedDiffusionSamplingStateBase):
 
 
 class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
-    """Cosmos-Predict2.5 PredictBase model with DiffusionNFT training extras."""
+    """Cosmos-Predict2.5 PredictBase model behind the shared denoise runtime."""
 
     def __init__(
         self,
@@ -416,39 +416,6 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             fps=batch_context["fps"],
         )
 
-    def diffusion_nft_prepare_transformer_input(
-        self,
-        *,
-        latents: torch.Tensor,
-        prompt_embeds: torch.Tensor,
-        prompt_attention_mask: torch.Tensor | None,
-        pooled_prompt_embeds: torch.Tensor | None,
-        timestep: torch.Tensor,
-        num_frames: int,
-        height: int,
-        width: int,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        del prompt_attention_mask, pooled_prompt_embeds, kwargs
-        batch = latents.shape[0]
-        latent_frames = (num_frames - 1) // self.pipeline.vae_scale_factor_temporal + 1
-        latent_h = height // self.pipeline.vae_scale_factor_spatial
-        latent_w = width // self.pipeline.vae_scale_factor_spatial
-        cond_mask = torch.zeros(
-            (batch, 1, latent_frames, latent_h, latent_w),
-            dtype=latents.dtype,
-            device=latents.device,
-        )
-        padding_mask = latents.new_zeros(1, 1, height, width, dtype=latents.dtype)
-        return {
-            "hidden_states": latents,
-            "timestep": timestep,
-            "encoder_hidden_states": prompt_embeds,
-            "condition_mask": cond_mask,
-            "padding_mask": padding_mask,
-            "return_dict": False,
-        }
-
     def encode_video_to_latents(self, video: torch.Tensor) -> torch.Tensor:
         """Encode clean [0, 1] video into this checkpoint's latent domain.
 
@@ -522,36 +489,6 @@ class CosmosPredict25ReplayModel(DiffusersReplayModelBase, CosmosPredict25Model)
     # restore_eval_state is inherited from CosmosPredict25Model: it reads
     # ``self.scheduler``, which this replay model overrides to return its own
     # ``self._scheduler`` (the parent's property resolves to pipeline.scheduler).
-
-    def diffusion_nft_prepare_transformer_input(
-        self,
-        *,
-        latents: torch.Tensor,
-        prompt_embeds: torch.Tensor,
-        prompt_attention_mask: torch.Tensor | None,
-        pooled_prompt_embeds: torch.Tensor | None,
-        timestep: torch.Tensor,
-        num_frames: int,
-        height: int,
-        width: int,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        del prompt_attention_mask, pooled_prompt_embeds, num_frames, kwargs
-        batch, _, latent_frames, latent_h, latent_w = latents.shape
-        cond_mask = torch.zeros(
-            (batch, 1, latent_frames, latent_h, latent_w),
-            dtype=latents.dtype,
-            device=latents.device,
-        )
-        padding_mask = latents.new_zeros(1, 1, height, width, dtype=latents.dtype)
-        return {
-            "hidden_states": latents,
-            "timestep": timestep,
-            "encoder_hidden_states": prompt_embeds,
-            "condition_mask": cond_mask,
-            "padding_mask": padding_mask,
-            "return_dict": False,
-        }
 
 
 __all__ = [

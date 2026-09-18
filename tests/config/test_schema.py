@@ -46,10 +46,18 @@ def test_previous_policy_requirements_belong_to_algorithm(kind: str) -> None:
     parse_config(minimal_grpo_cfg(model=model))
     with pytest.raises(ValueError, match="full-parameter previous policies are not implemented"):
         parse_config(minimal_grpo_cfg(model=model, algorithm={"kind": kind}))
-    with pytest.raises(ValueError, match="previous-policy forward interface"):
+    # Any full-sequence family with a replay recipe qualifies; a chunk-autoregressive
+    # policy has no full-sequence replay forward to evaluate the clean latent through.
+    parse_config(
+        minimal_grpo_cfg(
+            model={"family": "sana", "use_lora": True},
+            algorithm={"kind": kind},
+        ),
+    )
+    with pytest.raises(ValueError, match="full-sequence denoise replay forward"):
         parse_config(
             minimal_grpo_cfg(
-                model={"family": "sana", "use_lora": True},
+                model={"family": "causvid", "use_lora": True},
                 algorithm={"kind": kind},
             ),
         )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any
 
 from pydantic import Field
 
@@ -12,8 +12,6 @@ from vrl.models.families.cosmos.config import CosmosVideoModelSection
 
 class CosmosPredict25ModelSection(CosmosVideoModelSection):
     """Cosmos Predict2.5 public model keys."""
-
-    supports_previous_adapter: ClassVar[bool] = True
 
     skip_text_encoder: Any = Field(
         default=None,

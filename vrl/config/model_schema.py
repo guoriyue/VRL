@@ -109,8 +109,6 @@ class ModelSection(ConfigBase):
         autocast_adapter_dtype=True,
         dropout=0.0,
     )
-    # Capability of the policy forward interface, not a request to allocate it.
-    supports_previous_adapter: ClassVar[bool] = False
 
     @classmethod
     def resolve_lora(cls, values: dict[str, Any] | LoraSection | None) -> LoraSection:

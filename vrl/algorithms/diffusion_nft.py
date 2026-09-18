@@ -10,6 +10,7 @@ from vrl.algorithms.config_contract import AlgorithmConfigContract
 from vrl.algorithms.previous_adapter import (
     flipped_advantage_losses,
     flow_time,
+    forward_process_prediction,
     sync_previous_policy_adapter,
 )
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -194,16 +195,6 @@ class DiffusionNFT:
                 f"have leading dims {advantages.shape[0]} and {x0.shape[0]}",
             )
 
-        transformer = getattr(model, "transformer", None)
-        if transformer is None:
-            raise RuntimeError("DiffusionNFT model must expose a transformer module")
-
-        prepare = getattr(model, "diffusion_nft_prepare_transformer_input", None)
-        if not callable(prepare):
-            raise RuntimeError(
-                "DiffusionNFT model must expose diffusion_nft_prepare_transformer_input(...)",
-            )
-
         t = flow_time(t_raw, x0, owner="DiffusionNFT")
         t = t.to(dtype=x0.dtype)
         t_expanded = t.view(-1, *([1] * (x0.ndim - 1)))
@@ -213,42 +204,31 @@ class DiffusionNFT:
         else:
             noise = noise.to(device=x0.device, dtype=torch.float32)
         xt = (1 - t_expanded) * x0.float() + t_expanded * noise
+        xt_input = xt.to(x0.dtype)
 
-        transformer_inputs = prepare(
-            latents=xt.to(x0.dtype),
-            prompt_embeds=prompt_embeds,
-            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
-            pooled_prompt_embeds=replay_tensors.get("pooled_prompt_embeds"),
-            timestep=t_raw,
-            num_frames=int(
-                batch.context.get(
-                    "num_frames",
-                    int(x0.shape[2]) if getattr(x0, "ndim", 0) >= 3 else 1,
-                )
-            ),
-            height=int(batch.context.get("height", 0)),
-            width=int(batch.context.get("width", 0)),
-            # Guidance-distilled families (FLUX.1-dev) need the rollout guidance
-            # scalar to rebuild the conditioning. Passed generically from
-            # batch.context; families that don't embed guidance (cosmos) absorb it
-            # via **kwargs.
-            guidance_scale=batch.context.get("guidance_scale"),
-        )
-
+        # Three evaluations of the family's own conditional forward at this
+        # trajectory step: the frozen behaviour policy, the trainable policy,
+        # and the adapter-free base as the KL reference.
         with (
             model.activate_adapter("previous"),
             torch.no_grad(),
             model_autocast(model, x0.device),
         ):
-            previous_prediction = transformer(**transformer_inputs)[0].detach()
+            previous_prediction = forward_process_prediction(
+                model, batch, timestep_index, xt_input, owner="DiffusionNFT"
+            ).detach()
         with model_autocast(model, x0.device):
-            forward_prediction = transformer(**transformer_inputs)[0]
+            forward_prediction = forward_process_prediction(
+                model, batch, timestep_index, xt_input, owner="DiffusionNFT"
+            )
         with (
             model.disable_adapter(),
             torch.no_grad(),
             model_autocast(model, x0.device),
         ):
-            ref_prediction = transformer(**transformer_inputs)[0].detach()
+            ref_prediction = forward_process_prediction(
+                model, batch, timestep_index, xt_input, owner="DiffusionNFT"
+            ).detach()
 
         # Advantages are already clamped to ±adv_clip_max upstream in
         # compute_advantages_from_tensors (group_relative_advantages). The final

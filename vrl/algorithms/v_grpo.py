@@ -40,10 +40,11 @@ What this module implements, and how it maps onto the trainer:
   ``||x_theta(z_t) - x_theta_old(z_t)||^2`` (``kl_coef``, Eq. 16) and optional
   advantage soft clipping ``eta * tanh(A / eta)`` (``adv_soft_clip``, Eq. 17).
 
-The forward-process model surface is the one DiffusionNFT introduced:
-``diffusion_nft_prepare_transformer_input`` (raw transformer kwargs for a
-noised clean latent) and the ``previous`` adapter with
-``sync_previous_policy_adapter``. A family that has both runs either objective.
+The model surface is the shared denoise replay contract, the same one
+DiffusionNFT consumes: ``replay_forward_with_latents`` (the family's conditional
+forward at a trajectory step on a caller-noised clean latent) and the
+``previous`` adapter with ``sync_previous_policy_adapter``. Any family with a
+full-sequence replay recipe runs either objective.
 """
 
 from __future__ import annotations
@@ -57,6 +58,7 @@ from vrl.algorithms.diffusion_nft import normalized_mse
 from vrl.algorithms.previous_adapter import (
     flipped_advantage_losses,
     flow_time,
+    forward_process_prediction,
     sync_previous_policy_adapter,
 )
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -188,16 +190,6 @@ class VGRPO:
                 "V-GRPO batch mismatch: latents_clean, prompt_embeds and advantages "
                 f"have leading dims {batch_size}, {prompt_embeds.shape[0]}, {advantages.shape[0]}",
             )
-        transformer = getattr(model, "transformer", None)
-        if transformer is None:
-            raise RuntimeError("V-GRPO model must expose a transformer module")
-        prepare = getattr(model, "diffusion_nft_prepare_transformer_input", None)
-        if not callable(prepare):
-            raise RuntimeError(
-                "V-GRPO model must expose diffusion_nft_prepare_transformer_input(...) "
-                "(the forward-process transformer input hook)",
-            )
-
         t = flow_time(t_raw, x0, owner="V-GRPO")
         t_expanded = t.view(-1, *([1] * (x0.ndim - 1)))
         noise = self._group_shared_noise(
@@ -206,30 +198,19 @@ class VGRPO:
             timestep_index=int(timestep_index),
         )
         xt = (1 - t_expanded) * x0.float() + t_expanded * noise
-        transformer_inputs = prepare(
-            latents=xt.to(x0.dtype),
-            prompt_embeds=prompt_embeds,
-            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
-            pooled_prompt_embeds=replay_tensors.get("pooled_prompt_embeds"),
-            timestep=t_raw,
-            num_frames=int(
-                batch.context.get(
-                    "num_frames",
-                    int(x0.shape[2]) if getattr(x0, "ndim", 0) >= 3 else 1,
-                )
-            ),
-            height=int(batch.context.get("height", 0)),
-            width=int(batch.context.get("width", 0)),
-            guidance_scale=batch.context.get("guidance_scale"),
-        )
+        xt_input = xt.to(x0.dtype)
         with (
             model.activate_adapter("previous"),
             torch.no_grad(),
             model_autocast(model, x0.device),
         ):
-            old_prediction = transformer(**transformer_inputs)[0].detach()
+            old_prediction = forward_process_prediction(
+                model, batch, timestep_index, xt_input, owner="V-GRPO"
+            ).detach()
         with model_autocast(model, x0.device):
-            prediction = transformer(**transformer_inputs)[0]
+            prediction = forward_process_prediction(
+                model, batch, timestep_index, xt_input, owner="V-GRPO"
+            )
 
         # x-prediction reparameterization of the rectified-flow velocity.
         x0_float = x0.float()

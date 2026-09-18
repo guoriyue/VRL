@@ -3,7 +3,8 @@
 Model construction and adapter installation use PEFT directly in
 ``DiffusionModelBase``. These operations remain VRL-owned: PEFT does not define
 the algorithms' copy/EMA schedule or checkpoint registration of mutable frozen
-parameters. Both DiffusionNFT and V-GRPO consume the frozen mirror.
+parameters. The objectives that consume the frozen mirror live under
+``vrl/algorithms``; nothing here depends on which one requested it.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ def copy_adapter_weights(
     """Copy (or EMA-blend) one PEFT adapter's params into another in place.
 
     ``decay=0`` is an exact copy; ``decay`` in (0, 1] is a soft update
-    ``dst <- decay*dst + (1-decay)*src`` (NFT ``weight_copy_decay``). Matches
+    ``dst <- decay*dst + (1-decay)*src`` (the objectives' ``weight_copy_decay``). Matches
     params by the ``.{src}.`` / ``.{dst}.`` marker PEFT puts in every adapter path.
     """
 
@@ -55,7 +56,7 @@ def copy_adapter_weights(
 def freeze_checkpoint_owned_adapter_params(module: Any, adapter: str) -> None:
     """Freeze a mutable PEFT adapter and register it for exact checkpoint resume.
 
-    Used for NFT's ``previous`` adapter: it is only forward-evaluated under
+    Used for the ``previous`` adapter: it is only forward-evaluated under
     no_grad and refreshed by weight copy (``sync_previous_policy_adapter``),
     never optimized. PEFT creates adapter params with ``requires_grad=True``, so
     without this DDP's reducer expects a gradient for them that the no_grad

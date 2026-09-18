@@ -549,13 +549,11 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
     assert bundle.model.boundary_ratio == 0.9
 
 
-def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
+def test_cosmos_predict25_replay_builder_is_pipeline_free(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The predict2.5 replay bundle is minimal (no pipeline, no raw handle) yet still exposes
-    ``diffusion_nft_prepare_transformer_input``, the surface DiffusionNFT needs from a replay
-    model.
-    """
+    """The predict2.5 replay bundle is minimal: no pipeline, no raw handle, and the
+    shared replay forward the objectives call is still reachable on the model."""
     from vrl.models.families.cosmos.predict2_5 import model as predict25_model
     from vrl.models.families.registry import get_model_family_entry
     from vrl.models.steps.denoise import build as _shared_build
@@ -583,7 +581,7 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
     )
 
     assert bundle.raw_handle is None
-    assert callable(bundle.model.diffusion_nft_prepare_transformer_input)
+    assert callable(bundle.model.replay_forward_with_latents)
     with pytest.raises(RuntimeError, match="pipeline"):
         _ = bundle.model.pipeline
 
