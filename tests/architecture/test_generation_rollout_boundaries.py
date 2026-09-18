@@ -14,6 +14,9 @@ _GENERATION_MODEL_IMPORT_FLOOR = (
     "vrl.models.families.registry",
     "vrl.models.interfaces",
     "vrl.models.loader",
+    # Residency/parking primitives are a shared runtime contract (rewards and
+    # trainers use them too), not a family implementation.
+    "vrl.models.parking",
 )
 
 

@@ -37,7 +37,6 @@ from vrl.generation.types import (
     GenerationRequest,
     GenerationSampleRow,
 )
-from vrl.models.steps.denoise.common.tensors import expand_tensor_to_batch
 from vrl.trajectory.storage import (
     TrajectoryStoragePolicy,
     trajectory_tensor_bytes,
@@ -47,6 +46,7 @@ from vrl.utils.cuda_memory import (
     reset_cuda_peak,
 )
 from vrl.utils.media import to_uint8
+from vrl.utils.tensors import expand_tensor_to_batch
 from vrl.utils.validation import require_int
 
 

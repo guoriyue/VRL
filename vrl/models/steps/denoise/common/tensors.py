@@ -6,26 +6,10 @@ from typing import Any
 
 import torch
 
-
-def expand_tensor_to_batch(
-    value: torch.Tensor,
-    batch_size: int,
-    *,
-    materialize: bool = False,
-) -> torch.Tensor:
-    """Match the leading batch dimension, broadcasting only singleton inputs.
-
-    Matching inputs are returned unchanged. On expansion, materialize=True
-    allocates independent contiguous rows; otherwise return a shared view.
-    """
-    if value.shape[0] == batch_size:
-        return value
-    if value.shape[0] != 1:
-        raise ValueError(
-            f"cannot broadcast tensor batch={value.shape[0]} to batch_size={batch_size}"
-        )
-    expanded = value.expand(batch_size, *value.shape[1:])
-    return expanded.clone(memory_format=torch.contiguous_format) if materialize else expanded
+# The batch expansion is layer-neutral (the generation executor applies it to
+# encoded prompt fields); it lives in vrl.utils and is re-exported here for the
+# family runners that read it next to the replay helpers.
+from vrl.utils.tensors import expand_tensor_to_batch
 
 
 def replay_tensor(
