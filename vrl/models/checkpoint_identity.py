@@ -678,6 +678,10 @@ def resolve_checkpoint_model_identity(
         source_is_file[source_name] = is_file
 
     build_values: dict[str, Any] = {}
+    if schema_cls.supports_previous_adapter:
+        build_values["nft_previous_adapter"] = schema_cls.resolve_lora(
+            model_config.get("lora"),
+        ).previous_adapter
     for source_name, members in active_members.items():
         if source_name not in sources:
             continue
@@ -725,6 +729,9 @@ def resolve_checkpoint_model_identity(
             raw_lora = values.get(field_name)
             if not isinstance(raw_lora, Mapping):
                 raise ValueError("model.use_lora=true requires a model.lora mapping")
+            # Include effective storage/mirror settings so explicit defaults
+            # and omitted family defaults describe the same checkpoint.
+            raw_lora = schema_cls.resolve_lora(dict(raw_lora)).model_dump(exclude_none=True)
             lora_values: dict[str, Any] = {}
             for lora_name, lora_field in LoraSection.model_fields.items():
                 lora_metadata = _field_metadata(
@@ -752,6 +759,16 @@ def resolve_checkpoint_model_identity(
                     field_name=f"model.lora.{lora_name}",
                     metadata=lora_metadata,
                 )
+            # These names are part of the persisted v1 identity, not config
+            # aliases. Keep existing checkpoints resumable after moving the
+            # public settings into model.lora.
+            lora_values.pop("previous_adapter", None)
+            adapter_dtype = lora_values.pop("parameter_dtype", None)
+            if adapter_dtype is not None:
+                build_values["lora_parameter_dtype"] = adapter_dtype
+            autocast = lora_values.pop("autocast_adapter_dtype")
+            if autocast != schema_cls.resolve_lora(None).autocast_adapter_dtype:
+                lora_values["autocast_adapter_dtype"] = autocast
             build_values["lora"] = lora_values
 
     return {

@@ -446,7 +446,6 @@ def test_echo_construction_dimensions_change_identity() -> None:
 @pytest.mark.parametrize(
     ("family", "included", "first", "second"),
     [
-        ("flux", "nft_previous_adapter", False, True),
         ("cosmos-predict2.5", "skip_text_encoder", False, True),
     ],
 )
@@ -468,18 +467,37 @@ def test_family_behavior_value_changes_identity(
 
 @pytest.mark.parametrize("family", ["wan_2_1", "wan_2_1_i2v"])
 def test_wan_adapter_storage_identity_is_opt_in(family: str) -> None:
-    values = {"family": family, "trainable_transformers": ["transformer"]}
-    baseline = resolve_checkpoint_model_identity(_build(**values))
+    values = {"family": family, "trainable_transformers": ["transformer"], "use_lora": True}
+    lora = {"rank": 8, "alpha": 16, "target_modules": ["to_q"]}
+    baseline = resolve_checkpoint_model_identity(_build(**values, lora=lora))
     explicit_default = resolve_checkpoint_model_identity(
-        _build(**values, lora_parameter_dtype=None),
+        _build(**values, lora={**lora, "parameter_dtype": None}),
     )
     fp32 = resolve_checkpoint_model_identity(
-        _build(**values, lora_parameter_dtype="float32"),
+        _build(**values, lora={**lora, "parameter_dtype": "float32"}),
     )
     assert baseline == explicit_default
     assert "lora_parameter_dtype" not in baseline["build"]
     assert fp32["build"]["lora_parameter_dtype"] == "float32"
     assert fp32 != baseline
+
+
+@pytest.mark.parametrize("field", ["previous_adapter", "autocast_adapter_dtype"])
+def test_lora_runtime_settings_change_identity(field: str) -> None:
+    lora = {"rank": 8, "alpha": 16, "target_modules": ["to_q"]}
+    identities = [
+        resolve_checkpoint_model_identity(
+            _build(family="flux", use_lora=True, lora={**lora, field: value}),
+        )
+        for value in (False, True)
+    ]
+    if field == "previous_adapter":
+        assert identities[0]["build"]["nft_previous_adapter"] is False
+        assert identities[1]["build"]["nft_previous_adapter"] is True
+    else:
+        assert identities[0]["build"]["lora"][field] is False
+        assert field not in identities[1]["build"]["lora"]
+    assert identities[0] != identities[1]
 
 
 def test_runtime_only_fields_do_not_change_wan_identity() -> None:
