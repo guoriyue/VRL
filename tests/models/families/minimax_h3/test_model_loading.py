@@ -245,8 +245,6 @@ def test_batch_executor_pins_one_sample_and_carries_only_the_prompt() -> None:
     passthrough = executor.expand_conditioning_to_batch(
         encoded=encoded,
         generation_request=request,
-        video_request=None,
-        params=params,
         batch=SimpleNamespace(prompt_index=0, sample_count=1),
     )
     assert passthrough["prompt_embeds"] is encoded["prompt_embeds"]

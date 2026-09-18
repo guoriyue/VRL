@@ -33,9 +33,9 @@ class DenoiseLoopResult:
     kl: Any
     prev_sample_means: Any | None = None
     ref_noise_preds: Any | None = None
-    # display/provenance-only: measured peak forwarded to optional runtime-debug
-    # telemetry after decode completes.
-    peak_memory_mb: float | None = None
+    # Batch-memory reading (occupancy at loop start plus the denoise peak),
+    # None off CUDA. The executor adds the decode peak and derives the
+    # runtime-debug peak display from it.
     memory: dict[str, int] | None = None
     # display/provenance-only: denoise-engine counters forwarded to optional
     # runtime-debug telemetry.
@@ -155,9 +155,7 @@ class DenoiseTrajectoryBuffers:
         self.log_probs[:, step_idx].copy_(
             sde_result.log_prob.detach(),
         )
-        self.timesteps[:, step_idx].copy_(
-            self._expand_timestep(timestep.detach()),
-        )
+        self.timesteps[:, step_idx].copy_(timestep.detach())
         if return_kl:
             self.kl[:, step_idx].copy_(
                 sde_result.log_prob.detach().abs(),
@@ -172,25 +170,6 @@ class DenoiseTrajectoryBuffers:
             self.ref_noise_preds[:, step_idx].copy_(
                 ref_noise_pred.detach(),
             )
-
-    def _expand_timestep(self, timestep: torch.Tensor) -> torch.Tensor:
-        batch_rows = self.timesteps.shape[0]
-        dtype = self.timesteps.dtype
-        device = self.timesteps.device
-        timestep = timestep.to(device=device, dtype=dtype)
-        if timestep.ndim == 0:
-            return timestep.expand(batch_rows)
-        if tuple(timestep.shape) == (batch_rows,):
-            return timestep
-        if timestep.numel() == 1:
-            return timestep.reshape(()).expand(batch_rows)
-        try:
-            return timestep.reshape(batch_rows)
-        except RuntimeError as exc:
-            raise ValueError(
-                "denoise timestep cannot be expanded to batch "
-                f"{batch_rows}: shape={tuple(timestep.shape)}",
-            ) from exc
 
 
 def run_denoise_loop(
@@ -263,7 +242,6 @@ def run_denoise_loop(
                         timestep.unsqueeze(0),
                         state.latents.float(),
                         prev_sample=next_latents.float(),
-                        return_dt=config.sde.return_kl,
                         noise_level=config.sde.noise_level,
                         sde_type=config.sde.sde_type,
                         step_index=step_idx,
@@ -280,7 +258,6 @@ def run_denoise_loop(
                             state.latents.float(),
                             generator=generator if in_sde_window else None,
                             deterministic=not in_sde_window,
-                            return_dt=config.sde.return_kl,
                             noise_level=config.sde.noise_level,
                             sde_type=config.sde.sde_type,
                             step_index=step_idx,
@@ -300,7 +277,6 @@ def run_denoise_loop(
                 )
 
     denoise_peak_bytes = cuda_peak_allocated_bytes()
-    peak_memory_mb = None if denoise_peak_bytes is None else denoise_peak_bytes / (1024 * 1024)
     memory = None
     if occupancy is not None and denoise_peak_bytes is not None:
         memory = {
@@ -317,7 +293,6 @@ def run_denoise_loop(
         kl=buffers.kl,
         prev_sample_means=buffers.prev_sample_means,
         ref_noise_preds=buffers.ref_noise_preds,
-        peak_memory_mb=peak_memory_mb,
         memory=memory,
         engine_counters={
             "diffusion_num_denoise_steps": num_steps_to_run,

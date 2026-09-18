@@ -132,8 +132,6 @@ class ReferenceConditionedBatches:
         *,
         encoded: dict[str, Any],
         generation_request: GenerationRequest,
-        video_request: DenoiseRequest,
-        params: Any,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         """Thread the active reference image into family prepare_sampling."""
@@ -254,11 +252,9 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
     ) -> DiffusionBatchResult:
         """Run the canonical diffusion batch flow and prepare its wire payload."""
 
-        return self._forward_batch(
+        return self.apply_wire_storage_policy(
             request,
-            batch,
-            execute_steps=None,
-            apply_wire_storage=True,
+            self._forward_batch(request, batch, execute_steps=None),
         )
 
     def forward_probe_batch(
@@ -271,12 +267,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         """Run a truncated canonical batch for startup memory sizing."""
 
         require_int(execute_steps, path="execute_steps", minimum=1)
-        return self._forward_batch(
-            request,
-            batch,
-            execute_steps=execute_steps,
-            apply_wire_storage=False,
-        )
+        return self._forward_batch(request, batch, execute_steps=execute_steps)
 
     def _forward_batch(
         self,
@@ -284,7 +275,6 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         batch: GenerationSampleBatch,
         *,
         execute_steps: int | None,
-        apply_wire_storage: bool,
     ) -> DiffusionBatchResult:
         from vrl.utils.profiling import profile_range
 
@@ -306,15 +296,11 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         batch_encoded = self.expand_conditioning_to_batch(
             encoded=encoded,
             generation_request=request,
-            video_request=video_request,
-            params=params,
             batch=batch,
         )
         prepare_kwargs = self.build_prepare_kwargs(
             encoded=encoded,
             generation_request=request,
-            video_request=video_request,
-            params=params,
             batch=batch,
         )
         config = self.build_denoise_config(params, batch)
@@ -340,11 +326,9 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
             batch=batch,
             config=config,
             denoise_result=denoise_result,
-            stage_durations=stage_durations,
         )
-        batch_result.stage_durations["decode"] = time.perf_counter() - started
-        if apply_wire_storage:
-            return self.apply_wire_storage_policy(request, batch_result)
+        stage_durations["decode"] = time.perf_counter() - started
+        batch_result.stage_durations = stage_durations
         return batch_result
 
     def apply_wire_storage_policy(
@@ -418,7 +402,6 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         batch: GenerationSampleBatch,
         config: DenoiseLoopConfig,
         denoise_result: DenoiseLoopResult,
-        stage_durations: dict[str, float] | None = None,
     ) -> DiffusionBatchResult:
         """Decode the final latents and pack one diffusion batch result."""
 
@@ -475,13 +458,11 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         context = dict(model.export_batch_context(state))
 
         decode_peak_bytes = cuda_peak_allocated_bytes()
-        decode_peak_mb = None if decode_peak_bytes is None else decode_peak_bytes / (1024 * 1024)
         memory = None
+        peak_memory_mb = None
         if denoise_result.memory is not None and decode_peak_bytes is not None:
             memory = {**denoise_result.memory, "decode_peak_bytes": decode_peak_bytes}
-        phase_peaks = [
-            peak for peak in (denoise_result.peak_memory_mb, decode_peak_mb) if peak is not None
-        ]
+            peak_memory_mb = max(memory["denoise_peak_bytes"], decode_peak_bytes) / (1024 * 1024)
 
         return DiffusionBatchResult(
             batch=batch,
@@ -492,9 +473,8 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
             video=video,
             replay_tensors=replay_tensors,
             context=context,
-            peak_memory_mb=max(phase_peaks) if phase_peaks else None,
+            peak_memory_mb=peak_memory_mb,
             memory=memory,
-            stage_durations=dict(stage_durations or {}),
             engine_counters={
                 **denoise_result.engine_counters,
                 "diffusion_replay_tensor_bytes": trajectory_tensor_bytes(replay_tensors),
@@ -534,13 +514,11 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         *,
         encoded: dict[str, Any],
         generation_request: GenerationRequest,
-        video_request: DenoiseRequest,
-        params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         """Expand already-encoded conditioning to this batch, preserving shared fields."""
 
-        del generation_request, video_request, params
+        del generation_request
         passthrough = set(self.batch_passthrough_keys)
         batch_encoded: dict[str, Any] = {}
         for key, value in encoded.items():
@@ -557,13 +535,11 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         *,
         encoded: dict[str, Any],
         generation_request: GenerationRequest,
-        video_request: DenoiseRequest,
-        params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any] | None:
         """Return additional family kwargs for model.prepare_sampling."""
 
-        del encoded, generation_request, video_request, params, batch
+        del encoded, generation_request, batch
         return None
 
 

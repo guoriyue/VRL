@@ -38,8 +38,7 @@ def test_diffusion_layout_always_builds_sde_math_params(denoise_mode: str) -> No
 
     assert params.denoise_mode == denoise_mode
     assert params.sde.sde_type == "flow_grpo"
-    assert params.sde_window_size == 0
-    assert params.sde_window_range == (0, 20)
+    assert params.sde_window is None
 
 
 def test_diffusion_layout_selects_request_owned_sde_window(
@@ -96,12 +95,7 @@ def test_diffusion_encoded_batch_preserves_shared_values_and_expands_samples() -
     shared_ids = torch.ones(5, 3)
     scalar = torch.tensor(2)
     metadata = ["shared"]
-    arguments = dict(
-        generation_request=_request(),
-        video_request=None,
-        params=None,
-        batch=GenerationSampleBatch(0, 0, 3),
-    )
+    arguments = dict(generation_request=_request(), batch=GenerationSampleBatch(0, 0, 3))
     result = executor.expand_conditioning_to_batch(
         encoded=dict(
             single=torch.ones(1, 2),
@@ -275,8 +269,6 @@ def test_cosmos_encoded_batch_reuses_text_expansion(negative):
     result = executor.expand_conditioning_to_batch(
         encoded={"prompt_embeds": torch.ones(1, 2), "negative_prompt_embeds": negative},
         generation_request=_request(),
-        video_request=None,
-        params=None,
         batch=GenerationSampleBatch(0, 0, 3),
     )
     assert torch.equal(result["prompt_embeds"], torch.ones(3, 2))
@@ -303,8 +295,6 @@ def test_single_sample_families_preserve_encoded_values(family):
     result = executor.expand_conditioning_to_batch(
         encoded=encoded,
         generation_request=_request(),
-        video_request=None,
-        params=None,
         batch=GenerationSampleBatch(0, 0, 1),
     )
     assert result is not encoded

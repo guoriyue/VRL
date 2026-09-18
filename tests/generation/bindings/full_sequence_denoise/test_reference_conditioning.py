@@ -93,15 +93,18 @@ def test_encode_and_prepare_share_the_loaded_reference(tmp_path, monkeypatch, fa
         inputs=[GenerationInput(prompt="prompt", reference_image=path)],
         samples_per_prompt=1,
     )
-    arguments = dict(
+    encoded = executor.encode_prompt_for_batch(
         generation_request=request,
         video_request=SimpleNamespace(negative_prompt=None),
         params=SimpleNamespace(text_encode_kwargs=lambda: {}),
         batch=_batch(0),
     )
-    encoded = executor.encode_prompt_for_batch(**arguments)
-    batch_encoded = executor.expand_conditioning_to_batch(encoded=encoded, **arguments)
-    prepare = executor.build_prepare_kwargs(encoded=encoded, **arguments)
+    batch_encoded = executor.expand_conditioning_to_batch(
+        encoded=encoded, generation_request=request, batch=_batch(0)
+    )
+    prepare = executor.build_prepare_kwargs(
+        encoded=encoded, generation_request=request, batch=_batch(0)
+    )
 
     assert opens == [path]
     assert prepare["reference_image"] is encoded["reference_image"]

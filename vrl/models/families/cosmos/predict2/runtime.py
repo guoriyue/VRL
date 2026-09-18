@@ -10,11 +10,10 @@ from typing import Any
 
 from vrl.generation.bindings.full_sequence_denoise import (
     DiffusionBatchExecutorBase,
-    DiffusionSamplingParams,
     ReferenceConditionedBatches,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.generation.types import DenoiseRequest, GenerationRequest
+from vrl.generation.types import GenerationRequest
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -33,8 +32,6 @@ class CosmosBatchExecutor(ReferenceConditionedBatches, DiffusionBatchExecutorBas
         *,
         encoded: dict[str, Any],
         generation_request: GenerationRequest,
-        video_request: DenoiseRequest,
-        params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         """Repeat Cosmos text embeds and pass reference image through unchanged."""
@@ -45,8 +42,6 @@ class CosmosBatchExecutor(ReferenceConditionedBatches, DiffusionBatchExecutorBas
                 "negative_prompt_embeds": encoded.get("negative_prompt_embeds"),
             },
             generation_request=generation_request,
-            video_request=video_request,
-            params=params,
             batch=batch,
         )
         batch_encoded["reference_image"] = (

@@ -22,8 +22,6 @@ class DiffusionSamplingParams:
     model_request: DenoiseRequest
     max_sequence_length: int | None
     sde: DenoiseSDEParams
-    sde_window_size: int
-    sde_window_range: tuple[int, int]
     denoise_mode: str
     teacache: TeaCacheConfig | None = None
     # Re-parses use request-owned randomness so split batches and retries
@@ -132,8 +130,6 @@ class DiffusionRequestLayout:
             model_request=model_request,
             max_sequence_length=max_sequence_length,
             sde=sde,
-            sde_window_size=options.sde_window_size,
-            sde_window_range=sde_window_range,
             denoise_mode=options.denoise_mode,
             teacache=options.teacache,
             sde_window=sde_window,
