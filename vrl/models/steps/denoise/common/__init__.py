@@ -11,11 +11,6 @@ from vrl.models.steps.denoise.common.latent_decode import (
     LatentDecodePlan,
     VaeDecodeMixin,
 )
-from vrl.models.steps.denoise.common.masked_prompt import (
-    MaskedPromptDenoiseModel,
-    MaskedPromptSamplingState,
-    TrainTimestepMaskedPromptSamplingState,
-)
 from vrl.models.steps.denoise.common.replay_tensors import (
     replay_tensor,
     shared_replay_tensor,
@@ -35,9 +30,6 @@ __all__ = [
     "DenoiseBackboneRunnerBase",
     "DenoiseBranch",
     "LatentDecodePlan",
-    "MaskedPromptDenoiseModel",
-    "MaskedPromptSamplingState",
-    "TrainTimestepMaskedPromptSamplingState",
     "VaeDecodeMixin",
     "broadcast_spatial_timestep",
     "expand_batch_timestep",

@@ -1,9 +1,35 @@
 # Functional duplicate sweep
 
-Status: batch 1 landed (2026-09-13); one-liner and one-statement-class audits the same day; batch 2 ("A1 and A2 not merged") 2026-09-13. Scope is functional duplication — two
+Status: batch 1 landed (2026-09-13); one-liner and one-statement-class audits the same day; batch 2 ("A1 and A2 not merged") 2026-09-13; boundary rule added and the masked-prompt base reversed 2026-09-17. Scope is functional duplication — two
 places computing the same thing under different names or framings — not
 textual repetition. Every candidate was read at the source, its call sites
 and tests, before deciding; each verdict below cites the paths.
+
+## Boundary: infrastructure is deduplicated, model glue is not
+
+Decided 2026-09-17 after the masked-prompt base (below) was reversed. The
+rule for every later batch:
+
+- **Infrastructure** — code a family calls but does not describe the model:
+  the CFG caller and branch packer (`DenoiseBackboneCaller`), pipeline
+  load/freeze/placement (`DiffusersPipelineModelBase`), LoRA attach, VAE
+  decode plans, timestep utilities, schedulers, replay-tensor helpers, the
+  SDE/DDIM log-prob math. One implementation; a second owner is a defect.
+- **Model glue** — the per-family `encode_prompt` / `prepare_sampling` /
+  `forward_step` / `build_branch` / trajectory export and restore, and the
+  family's sampling-state fields. Each family owns its copy, even when two
+  families' copies are line-for-line equal today. This is the SGLang /
+  vLLM / diffusers / transformers "one model, one file" convention: a
+  reader learns a family from one file, a checkpoint quirk in one family
+  cannot move another, and the next family is added by copying a file, not
+  by fitting a base. The AST-digest scan will keep flagging these; the
+  verdict is "model glue, kept".
+
+A shared base for model glue is justified only when the families share a
+**checkpoint contract**, not a call shape: the same transformer signature
+enforced by one upstream class (wan's t2v/i2v pair on one `WanTransformer`),
+or one replay stub set (`DiffusersReplayModelBase`). "These four pipelines
+happen to return the same tuple" is a call shape.
 
 ## Method
 
@@ -315,19 +341,29 @@ still carry the rest of the logic. Method: cluster every function of eight
 or more lines by the set of calls it makes (Jaccard >= 0.6 across different
 modules), then read each cluster. Landed, one commit each:
 
-- **Masked-prompt families** — `f3ebb5ff3`. SANA, PixArt-Sigma, Lumina2 and
-  Mochi shared `MaskedPromptCollectorMixin` for the trajectory boundary but
-  each still owned `encode_prompt`, `prepare_sampling` and `forward_step`
-  (4 x ~150 lines). Landed first as `MaskedPromptModelMixin`, then folded
-  with the collector mixin and `EncoderAttentionMaskRunnerBase` (the same
-  four families' branch mapping) into one base, `MaskedPromptDenoiseModel`:
-  three "mixins" that were only ever used together, by the same four
-  classes, are one class. A family lists it (after `VaeDecodeMixin` where
-  its decode is scale + shift), declares its encode kwargs/defaults and
-  overrides at most three hooks (`_sampling_scheduler`,
-  `_latent_shape_args`, `_backbone_timestep`).
-  632 lines removed, 301 added. The four backbone-parity tests (numeric
-  comparison against the diffusers pipelines) pass unchanged.
+- **Masked-prompt families** — `f3ebb5ff3`, then `dbeb242114`; **reversed
+  2026-09-17** (see the boundary rule above). SANA, PixArt-Sigma, Lumina2
+  and Mochi shared `MaskedPromptCollectorMixin` for the trajectory boundary
+  but each still owned `encode_prompt`, `prepare_sampling` and
+  `forward_step` (4 x ~150 lines). Landed first as
+  `MaskedPromptModelMixin`, then folded with the collector mixin and
+  `EncoderAttentionMaskRunnerBase` into one base, `MaskedPromptDenoiseModel`.
+  Net: 632 lines removed, 301 added, and the base ended up with **eight
+  extension points for four users** (`sampling_state_cls`,
+  `branch_extra_kwargs` — pixart only, `_default_max_sequence_length`,
+  `_default_guidance_scale`, `_pipeline_encode_kwargs`,
+  `_backbone_output_dtype` — sana only, `_sampling_scheduler`,
+  `_latent_shape_args` — mochi only, `_backbone_timestep`). A base that is
+  mostly hooks is model glue in disguise: reading pixart required reading
+  `masked_prompt.py`, and the fifth candidate (qwen_image: same
+  "sequence + mask, no pooled" shape, but `encoder_hidden_states_mask` +
+  `img_shapes`) already did not fit. The four families now list
+  `DiffusersPipelineModelBase, DenoiseBackboneRunnerBase` (plus
+  `VaeDecodeMixin` where decode is scale + shift) and carry their own
+  glue; the constants that were class knobs are literals at the call that
+  uses them, and the `num_train_timesteps` field lives only on the two
+  states (lumina2, mochi) whose transformer clock needs it. The family
+  sampling states keep their real fields instead of an empty subclass.
 - **Fail-closed record parsers** — `512f2c143`. `GroundedOcrConfig`,
   `OcrScoringPolicy`, `ImageSampling`, `GeneratorRuntimeIdentity` each
   re-implemented "mapping whose keys are exactly my fields".
@@ -373,6 +409,14 @@ tests/scripts/test_encode_sft_targets.py tests/scripts/test_anima_generate.py`
 `tests/architecture/test_generation_rollout_boundaries.py::test_generation_model_imports_stay_on_public_floor`,
 pre-existing from the parking consolidation (`memory_parking.py` importing
 `vrl.models.parking`), not touched here.
+
+Reversal sweep (2026-09-17, `CUDA_VISIBLE_DEVICES=""`):
+`tests/models/families/{sana,lumina2,mochi,pixart_sigma} tests/models/steps/denoise
+tests/models/interfaces tests/models/test_checkpoint_identity.py
+tests/models/test_loader.py tests/architecture` (same deselect) → 416 passed,
+1 skipped. The four backbone-parity tests are GPU-lane and were not re-run
+here; their bodies are unchanged and compare the family forward against the
+diffusers pipeline, so they are the check to run before the next GPU window.
 
 ## Next batch candidates
 

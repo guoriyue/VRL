@@ -33,23 +33,28 @@ PixArt-Sigma specifics vs SANA (the reference single-encoder t2i family):
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import random
+import sys
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any
 
 import torch
 
 from vrl.generation.types import DenoiseRequest
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
+    DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
+    GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
+    DenoiseBackboneCaller,
     DenoiseBackboneInput,
+    DenoiseBackboneRunnerBase,
     DenoiseBranch,
-    MaskedPromptDenoiseModel,
-    MaskedPromptSamplingState,
     VaeDecodeMixin,
+    expand_batch_timestep,
+    pack_eval_timestep,
 )
 
 # 512/1024-MS checkpoints train without micro-conditioning, but the
@@ -89,13 +94,24 @@ def pixart_ddim_scheduler(scheduler_config: Any, num_steps: int, device: Any) ->
 
 
 @dataclass
-class PixArtSigmaSamplingState(MaskedPromptSamplingState):
-    """Private PixArt-Sigma sampling state. Engine MUST NOT introspect."""
+class PixArtSigmaSamplingState(GuidedDenoiseSamplingStateBase):
+    """Private PixArt-Sigma sampling state. Engine MUST NOT introspect.
+
+    ``latents`` / ``timesteps`` / ``scheduler`` are the only fields the batch
+    executor may touch.
+    """
+
+    prompt_embeds: torch.Tensor
+    prompt_attention_mask: torch.Tensor | None
+    negative_prompt_embeds: torch.Tensor | None
+    negative_prompt_attention_mask: torch.Tensor | None
+    do_cfg: bool
 
 
 class PixArtSigmaModel(
     VaeDecodeMixin,
-    MaskedPromptDenoiseModel,
+    DiffusersPipelineModelBase,
+    DenoiseBackboneRunnerBase,
 ):
     """Diffusers-backed PixArt-Sigma t2i model (epsilon DDPM family).
 
@@ -107,25 +123,206 @@ class PixArtSigmaModel(
 
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
-    branch_extra_kwargs: ClassVar[Mapping[str, Any]] = {
-        "added_cond_kwargs": _ADDED_COND_KWARGS,
-    }
-    sampling_state_cls = PixArtSigmaSamplingState
-    _default_max_sequence_length = 300
-    _default_guidance_scale = 4.5
-    _pipeline_encode_kwargs: ClassVar[Mapping[str, Any]] = {
-        "num_images_per_prompt": 1,
-        # The True path imports bs4/ftfy, and RL datasets control their
-        # prompts anyway.
-        "clean_caption": False,
-    }
 
-    def _sampling_scheduler(self, request: DenoiseRequest) -> Any:
+    def build_branch(
+        self,
+        request: DenoiseBackboneInput,
+        branch: str,
+    ) -> DenoiseBranch:
+        """Map the branch's T5 embeds and attention mask into a branch call."""
+        if branch == "cond":
+            embeds = request.prompt_embeds
+            mask = request.extra.get("encoder_attention_mask")
+        else:
+            embeds = request.negative_prompt_embeds
+            mask = request.extra.get("negative_encoder_attention_mask")
+        return DenoiseBranch(
+            hidden_states=request.hidden_states,
+            timestep=request.timestep,
+            encoder_hidden_states=embeds,
+            # Both branches carry the SAME added_cond_kwargs value: the
+            # batched-CFG kwarg packer rejects branch-specific non-tensors.
+            extra_kwargs={
+                "encoder_attention_mask": mask,
+                "added_cond_kwargs": _ADDED_COND_KWARGS,
+            },
+        )
+
+    # -- encode_prompt -------------------------------------------------
+
+    def encode_prompt(
+        self,
+        prompt: str | list[str],
+        negative_prompt: str | list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Encode the prompt via T5-XXL to sequence embeds + padding mask (no pooled)."""
+        max_seq = kwargs.get("max_sequence_length", 300)
+        guidance_scale = kwargs.get("guidance_scale", 4.5)
+        do_cfg = guidance_scale > 1.0
+        neg = negative_prompt if negative_prompt is not None else ""
+
+        (
+            prompt_embeds,
+            prompt_attention_mask,
+            negative_prompt_embeds,
+            negative_prompt_attention_mask,
+        ) = self.pipeline.encode_prompt(
+            prompt=prompt,
+            negative_prompt=neg,
+            do_classifier_free_guidance=do_cfg,
+            num_images_per_prompt=1,
+            device=self._encoder_device(),
+            max_sequence_length=max_seq,
+            # The True path imports bs4/ftfy, and RL datasets control their
+            # prompts anyway.
+            clean_caption=False,
+        )
+
+        td = self.transformer.dtype
+        result: dict[str, Any] = {
+            "prompt_embeds": prompt_embeds.to(self.device, dtype=td),
+            "prompt_attention_mask": (
+                None if prompt_attention_mask is None else prompt_attention_mask.to(self.device)
+            ),
+        }
+        if do_cfg and negative_prompt_embeds is not None:
+            result["negative_prompt_embeds"] = negative_prompt_embeds.to(self.device, dtype=td)
+            result["negative_prompt_attention_mask"] = (
+                None
+                if negative_prompt_attention_mask is None
+                else negative_prompt_attention_mask.to(self.device)
+            )
+        return result
+
+    # -- prepare_sampling ----------------------------------------------
+
+    def prepare_sampling(
+        self,
+        request: DenoiseRequest,
+        encoded: dict[str, Any],
+        **kwargs: Any,
+    ) -> PixArtSigmaSamplingState:
+        """Build the per-request SamplingState for a denoise loop."""
+        del kwargs
+        pipe = self.pipeline
+        device = self.device
+
+        prompt_embeds = encoded["prompt_embeds"]
+        negative_prompt_embeds = encoded.get("negative_prompt_embeds")
+
         # The shipped DPM-Solver is NOT used: the RL scheduler is a DDIM built
         # from the same beta config (see :func:`pixart_ddim_scheduler`), so the
         # ddim eta-SDE's clip_sample=False requirement holds by construction.
-        return pixart_ddim_scheduler(
-            self.pipeline.scheduler.config, request.num_steps, self.device
+        scheduler = pixart_ddim_scheduler(pipe.scheduler.config, request.num_steps, device)
+
+        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
+        generator = torch.Generator(device=device)
+        generator.manual_seed(seed)
+
+        latents = pipe.prepare_latents(
+            prompt_embeds.shape[0],
+            pipe.transformer.config.in_channels,
+            request.height,
+            request.width,
+            torch.float32,
+            device,
+            generator,
+            None,
+        )
+        # No-op for DDIM (init_noise_sigma == 1.0); kept for pipeline parity.
+        latents = latents * scheduler.init_noise_sigma
+
+        return PixArtSigmaSamplingState(
+            latents=latents,
+            timesteps=scheduler.timesteps,
+            scheduler=scheduler,
+            prompt_embeds=prompt_embeds,
+            prompt_attention_mask=encoded.get("prompt_attention_mask"),
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_prompt_attention_mask=encoded.get("negative_prompt_attention_mask"),
+            guidance_scale=request.guidance_scale,
+            do_cfg=request.guidance_scale > 1.0 and negative_prompt_embeds is not None,
+        )
+
+    # -- forward_step --------------------------------------------------
+
+    def forward_step(
+        self,
+        state: PixArtSigmaSamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        """Transformer forward + batched CFG (raw integer timestep, no scaling)."""
+        t = state.timesteps[step_idx]
+        bsz = state.latents.shape[0]
+        td = self._transformer_dtype()
+
+        latent_input = state.latents.to(td)
+        timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device)
+        negative_embeds = (
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
+        )
+        output = DenoiseBackboneCaller(
+            self.transformer,
+            self,
+        )(
+            DenoiseBackboneInput(
+                hidden_states=latent_input,
+                timestep=timestep_batch,
+                prompt_embeds=state.prompt_embeds.to(td),
+                negative_prompt_embeds=negative_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=td,
+                extra={
+                    "encoder_attention_mask": state.prompt_attention_mask,
+                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
+                },
+            ),
+        )
+        return output.as_dict()
+
+    # -- trajectory boundary -------------------------------------------
+    # Masks and negative embeds are exported only when present, so the no-CFG
+    # path stays tensor-free and restore reads them back with ``.get``.
+
+    def export_batch_context(self, state: PixArtSigmaSamplingState) -> dict[str, Any]:
+        """Project sampling state into shared trajectory context."""
+        return {"guidance_scale": state.guidance_scale, "cfg": state.do_cfg}
+
+    def export_replay_tensors(self, state: PixArtSigmaSamplingState) -> dict[str, Any]:
+        """Project sampling state into per-sample trajectory tensors."""
+        tensors: dict[str, Any] = {"prompt_embeds": state.prompt_embeds}
+        for name in (
+            "prompt_attention_mask",
+            "negative_prompt_embeds",
+            "negative_prompt_attention_mask",
+        ):
+            value = getattr(state, name)
+            if value is not None:
+                tensors[name] = value
+        return tensors
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> PixArtSigmaSamplingState:
+        """Rebuild the sampling state from a batch slice for eval forward."""
+        negative_prompt_embeds = replay_tensors.get("negative_prompt_embeds")
+        return PixArtSigmaSamplingState(
+            latents=latents,
+            timesteps=pack_eval_timestep(replay_tensors["timesteps"], step_idx),
+            # forward_step never calls scheduler.step, so replay needs none.
+            scheduler=None,
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_prompt_attention_mask=replay_tensors.get("negative_prompt_attention_mask"),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
         )
 
     # -- backend ownership (called by runtime, not by collectors) -------
