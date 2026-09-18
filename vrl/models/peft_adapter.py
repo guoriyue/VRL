@@ -226,19 +226,16 @@ def load_trainable_lora_adapter(
 
 
 def peel_peft(module: Any) -> Any:
-    """Peel a PEFT wrapper (``base_model.model``) off ``module``, else return it.
+    """Return PEFT's base module, leaving other model types unchanged.
 
     PEFT replaces the target ``nn.Linear`` modules in place, so the peeled inner
-    module still routes through the LoRA layers. Cannot key off
-    ``hasattr(module, "base_model")`` alone: HF ``PreTrainedModel`` exposes
-    ``base_model`` as a property returning ``self`` even without a PEFT wrap, and
-    that object has no ``.model`` attr. Only peel when the PEFT inner path exists.
+    module still routes through the LoRA layers. Use the public PEFT API, not
+    the similarly named ``base_model`` attribute of unrelated HF models.
     """
 
-    inner = getattr(module, "base_model", None)
-    if inner is not None and hasattr(inner, "model") and inner.model is not module:
-        return inner.model
-    return module
+    from peft import PeftModel
+
+    return module.get_base_model() if isinstance(module, PeftModel) else module
 
 
 def disable_adapter_on(module: Any) -> contextlib.AbstractContextManager[None]:
@@ -251,13 +248,11 @@ def disable_adapter_on(module: Any) -> contextlib.AbstractContextManager[None]:
     - PEFT ``PeftModel.disable_adapter()`` — already a context manager;
     - diffusers ``PeftAdapterMixin`` ``disable_adapters()`` / ``enable_adapters()``.
 
-    The plural surface matters: ``WanTransformer3DModel`` / cosmos-predict2 carry
-    LoRA via ``PeftAdapterMixin.add_adapter`` and expose ONLY the plural pair, so
-    checking the singular method alone silently failed to disable the adapter —
-    the reference forward (e.g. the diffusion GRPO KL term in
-    ``rollouts/evaluators/denoise/sde_logprob.py``) then ran with the policy adapter
-    still on. A module exposing neither surface is genuinely adapter-less and
-    returns a null context.
+    Normal VRL construction wraps models with PEFT. The plural surface remains
+    supported for diffusers-native adapters supplied to the model interface;
+    checking only the singular method would silently run their reference
+    forward with the policy adapter still on. A module exposing neither surface
+    is genuinely adapter-less and returns a null context.
     """
 
     host = unwrap_compile_and_ddp(module)
