@@ -595,8 +595,12 @@ class FSDPConfig(ConfigBase):
     # lets timestep-routed multi-root models materialize only the active expert.
     cpu_offload: bool = False
 
-    # Replicate frozen parameters in their native dtype; shard only adapters.
-    # Requires precision_policy=none to retain the original training arithmetic.
+    # Shard only the trainable adapters; every rank keeps a full replica of the
+    # frozen base. Trades per-rank memory (the whole base on every card) for
+    # zero base all-gather traffic per step, so it suits small bases that fit
+    # beside the activations; a base that does not fit one card needs the
+    # default full sharding. Requires precision_policy=none so the replicated
+    # base keeps its native dtypes.
     shard_trainable_only: bool = False
 
     @model_validator(mode="after")
