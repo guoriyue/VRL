@@ -54,6 +54,53 @@ the workflow above.
 Both the training CLI and supervisor forward this same argument list. There is
 one loader, not a second configuration registry or per-model launcher.
 
+## LoRA configuration
+
+Adapter settings live under `model.lora`; `model.use_lora` selects adapter
+training versus full-parameter training. Model presets keep their existing
+rank, alpha, and target-module lists. Override those at launch, rather than
+adding a new model/reward preset:
+
+```bash
+model.use_lora=true model.lora.rank=32 model.lora.alpha=64 \
+model.lora.dropout=0.0 model.lora.init_lora_weights=gaussian
+```
+
+`ModelBuild.lora` resolves these settings into the shared `LoraSection`, then
+the shared model calls PEFT's `LoraConfig` and `get_peft_model` directly.
+There is no second adapter manager. This follows the separation in
+[Miles Diffusion's PEFT setup](https://github.com/radixark/miles_diffusion/blob/ebd55fc1e597520322e0225997552c0807e9293b/miles/backends/fsdp_utils/actor.py#L603):
+shared run inputs, with real family defaults kept separate.
+
+The lightweight family schemas own defaults: Gaussian initialization and
+PEFT adapter upcasting normally; Wan and CausVid retain `init_lora_weights=true`,
+and Wan retains `autocast_adapter_dtype=false` for weight-sync dtype parity.
+Both initialization choices start with zero B weights; the A distribution
+and RNG recipe differ. `path` loads a trainable PEFT adapter after topology
+validation. `parameter_dtype: float32` explicitly stores trainable adapters
+in FP32; with FSDP it requires `distributed.training.fsdp.precision_policy=none`.
+`autocast_adapter_dtype` is PEFT's storage upcast option, not forward autocast.
+
+Migration from the former layout:
+
+| Old setting | Current setting |
+| --- | --- |
+| `model.lora_parameter_dtype` | `model.lora.parameter_dtype` |
+| `model.nft_previous_adapter` | `model.lora.previous_adapter` |
+| `model.lora.init` (never consumed) | Remove it; use `model.lora.init_lora_weights` for initialization |
+
+The removed spellings are rejected, not silently aliased. The persisted v1
+checkpoint identity retains its original canonical keys, so this spelling
+change alone does not invalidate existing checkpoints. Historical run
+snapshots retain their original configuration and need these key migrations
+if relaunched. An explicit non-default adapter-upcast policy changes identity.
+
+Flux and SD3.5 support the optional frozen `previous_adapter`; Predict2.5
+requires it and remains LoRA-only. Other families reject this switch because
+they do not expose the required previous-policy forward interface. Adapter
+copying, checkpoint ownership, and model residency remain runtime concerns,
+not configuration-manager responsibilities.
+
 ## Validation tiers
 
 After composition every entrypoint parses the merged config through the same

@@ -71,7 +71,7 @@ class FluxModel(DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
 
     The frozen ``previous`` LoRA mirror DiffusionNFT and V-GRPO evaluate the
     behaviour policy through comes from ``DiffusionModelBase.apply_lora``
-    (``model.nft_previous_adapter: true``); plain GRPO runs never attach it.
+    (``model.lora.previous_adapter: true``); plain GRPO runs never attach it.
 
     Implements the backbone-runner protocol itself. FLUX.1-dev is
     guidance-distilled: a single transformer forward conditioned on a

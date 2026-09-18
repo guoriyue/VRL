@@ -2,7 +2,7 @@
 
 Every policy core on the workload list trains through peft's ``lora.Linear``.
 With an fp32 adapter over a bf16 base (peft's default upcast for Cosmos, SD3.5,
-Flux and Qwen-Image; ``model.lora_parameter_dtype: float32`` for Wan) its
+Flux and Qwen-Image; ``model.lora.parameter_dtype: float32`` for Wan) its
 forward is, per LoRA site::
 
     result = base(x)                          # bf16 [tokens, out]

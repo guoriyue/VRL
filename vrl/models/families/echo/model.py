@@ -110,8 +110,6 @@ class EchoSamplingState(DiffusionSamplingStateBase):
 class EchoModel(DiffusionModelBase):
     """Diffusers-free JoyAI-Echo video flow-matching policy."""
 
-    # Echo replay keeps the velocity model in its native dtype; mirror the family
-    # convention of casting the LoRA-wrapped transformer to the run dtype.
     def __init__(
         self,
         *,
