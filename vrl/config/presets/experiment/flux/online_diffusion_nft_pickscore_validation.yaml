@@ -3,10 +3,11 @@
 # DiffusionNFT is likelihood-free forward-process RL: no log-prob, no ratio. It
 # softly splits samples into positive/negative sets by optimality and regresses
 # reward-weighted flow-matching MSE, using a frozen previous-policy adapter
-# (SPRINT_diffusion_nft_validation). The NFT model interface was cosmos-only;
-# Phase A ported it to FLUX (diffusion_nft_prepare_transformer_input +
-# previous-policy adapter + sync), exercised by tests/models/flux/
-# test_diffusion_nft_interface.py. This is Phase B: the learning validation.
+# (SPRINT_diffusion_nft_validation). NFT reaches the model through the shared
+# denoise replay forward (replay_forward_with_latents) plus the previous-policy
+# adapter + sync; FLUX's adapter mirror is exercised by
+# tests/models/families/flux/test_previous_adapter_mirror.py. This is Phase B:
+# the learning validation.
 #
 # NFT-specific correctness judgements (highest signal first):
 #   1. lr=0 advantage-flip invariant (debug.first_step) — separates "weak signal"

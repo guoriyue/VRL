@@ -98,10 +98,15 @@ if relaunched. An explicit non-default adapter-upcast policy changes identity.
 The algorithm contract, not a model recipe, owns the previous-policy requirement.
 The current NFT and V-GRPO implementations require a frozen PEFT adapter and
 therefore reject full-parameter training. GRPO does not request that mirror.
-Flux, SD3.5, and Predict2.5 declare support for its forward interface; choosing
-one of these models alone never enables it. Predict2.5 uses the shared
-full-finetune path for other algorithms; this is not evidence of a validated
-full-parameter GPU training recipe.
+The objectives evaluate the re-noised clean latent through the shared
+`replay_forward_with_latents` (the same family forward the SDE replay uses,
+with classifier-free guidance forced off), so no family declares an
+objective-specific forward hook or capability flag: any full-sequence family
+with a trainer replay recipe is admitted, and a timestep grid that does not
+normalize into `[0, 1]` (Cosmos Predict2's EDM grid) fails at the first loss.
+Only SD3.5, Flux, and Predict2.5 have been exercised on this path. Predict2.5
+uses the shared full-finetune path for other algorithms; this is not evidence
+of a validated full-parameter GPU training recipe.
 
 The config-to-build boundary derives `ModelBuild.previous_policy_adapter`
 from the algorithm contract for both replay and rollout, retaining matching
