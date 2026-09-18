@@ -54,10 +54,6 @@ class LoraSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("value"),
     )
-    previous_adapter: bool | None = Field(
-        default=None,
-        json_schema_extra=checkpoint_identity_metadata("value"),
-    )
 
 
 class VaeDecodeMemorySection(ConfigBase):
@@ -112,10 +108,9 @@ class ModelSection(ConfigBase):
         init_lora_weights="gaussian",
         autocast_adapter_dtype=True,
         dropout=0.0,
-        previous_adapter=False,
     )
+    # Capability of the policy forward interface, not a request to allocate it.
     supports_previous_adapter: ClassVar[bool] = False
-    always_previous_adapter: ClassVar[bool] = False
 
     @classmethod
     def resolve_lora(cls, values: dict[str, Any] | LoraSection | None) -> LoraSection:
@@ -124,22 +119,13 @@ class ModelSection(ConfigBase):
         requested = (
             values if isinstance(values, LoraSection) else LoraSection.model_validate(values or {})
         )
-        resolved = LoraSection.model_validate(
+        return LoraSection.model_validate(
             {
                 **ModelSection.lora_defaults.model_dump(exclude_none=True),
                 **cls.lora_defaults.model_dump(exclude_none=True),
                 **requested.model_dump(exclude_none=True),
             }
         )
-        if cls.always_previous_adapter:
-            if requested.previous_adapter is False:
-                raise ValueError("this model recipe requires model.lora.previous_adapter=true")
-            resolved.previous_adapter = True
-        if resolved.previous_adapter and not (
-            cls.supports_previous_adapter or cls.always_previous_adapter
-        ):
-            raise ValueError("this model does not support model.lora.previous_adapter")
-        return resolved
 
     family: str = Field(
         json_schema_extra=checkpoint_identity_metadata("exclude"),
@@ -227,8 +213,6 @@ class ModelSection(ConfigBase):
         resolved = self.resolve_lora(self.lora)
         if resolved.parameter_dtype is not None and not self.use_lora:
             raise ValueError("model.lora.parameter_dtype requires model.use_lora=true")
-        if resolved.previous_adapter and not self.use_lora:
-            raise ValueError("model.lora.previous_adapter requires model.use_lora=true")
         return self
 
 

@@ -220,7 +220,7 @@ def test_cosmos_anima_keys_select_family_section() -> None:
 @pytest.mark.parametrize(
     ("family", "section_cls", "payload"),
     [
-        ("flux", FluxModelSection, {"use_lora": True, "lora": {"previous_adapter": True}}),
+        ("flux", FluxModelSection, {"use_lora": True, "lora": {"dropout": 0.1}}),
         (
             "echo",
             EchoModelSection,

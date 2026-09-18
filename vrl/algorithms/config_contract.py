@@ -1,4 +1,4 @@
-"""Import-light algorithm facts consumed by cross-section config rules."""
+"""Import-light algorithm requirements for validation and model construction."""
 
 from dataclasses import dataclass
 from typing import Literal
@@ -18,4 +18,7 @@ class AlgorithmConfigContract:
     needs_sde_rollout: bool
     supports_step_kl_reward: bool
     sft_source: Literal["unsupported", "latents", "preference_winner"]
+    # The current implementation stores the behavior policy in a frozen PEFT
+    # adapter. This is an objective requirement, not a model-family default.
+    requires_previous_adapter: bool = False
     consumed_sections: tuple[tuple[str, frozenset[str] | None], ...] | None = None

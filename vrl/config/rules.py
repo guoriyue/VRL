@@ -58,6 +58,19 @@ def check_cross_section_rules(root: RootConfig) -> None:
     kind = algo.kind
     rollout = root.rollout
 
+    if contract.requires_previous_adapter and root.model is not None:
+        if not root.model.use_lora:
+            raise ValueError(
+                f"algorithm.kind={kind} currently requires model.use_lora=true "
+                "for its frozen previous-policy adapter; full-parameter previous policies "
+                "are not implemented",
+            )
+        if not root.model.supports_previous_adapter:
+            raise ValueError(
+                f"algorithm.kind={kind} requires a previous-policy forward interface; "
+                f"model.family={root.model.family} does not support it",
+            )
+
     # ── algorithm.kl_reward_coef shapes rewards with the collected per-step KL.
     # An objective whose trajectory records no per-step KL would silently
     # ignore a positive coefficient.

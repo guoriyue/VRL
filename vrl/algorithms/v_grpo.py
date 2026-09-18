@@ -82,6 +82,7 @@ class VGRPOConfig:
         needs_sde_rollout=False,
         supports_step_kl_reward=True,
         sft_source="unsupported",
+        requires_previous_adapter=True,
     )
 
     eps: float = 1e-8

@@ -39,6 +39,31 @@ def test_fused_lora_branch_requires_enabled_adapters() -> None:
     assert parse_config(cfg).model.fused_lora_branch is True
 
 
+@pytest.mark.parametrize("kind", ["diffusion_nft", "v_grpo"])
+def test_previous_policy_requirements_belong_to_algorithm(kind: str) -> None:
+    model = {"family": "cosmos-predict2.5", "use_lora": False}
+    # The model supports full finetuning; these objectives currently do not.
+    parse_config(minimal_grpo_cfg(model=model))
+    with pytest.raises(ValueError, match="full-parameter previous policies are not implemented"):
+        parse_config(minimal_grpo_cfg(model=model, algorithm={"kind": kind}))
+    with pytest.raises(ValueError, match="previous-policy forward interface"):
+        parse_config(
+            minimal_grpo_cfg(
+                model={"family": "sana", "use_lora": True},
+                algorithm={"kind": kind},
+            ),
+        )
+
+
+def test_previous_adapter_is_not_a_user_model_setting() -> None:
+    with pytest.raises(ValueError, match=r"unknown model.lora.previous_adapter"):
+        parse_config(
+            minimal_grpo_cfg(
+                model={"family": "flux", "use_lora": True, "lora": {"previous_adapter": True}},
+            ),
+        )
+
+
 @pytest.mark.parametrize(
     ("path", "value"),
     [

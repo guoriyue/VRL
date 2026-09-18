@@ -1,7 +1,7 @@
 # V-GRPO (arXiv:2604.23380): GRPO on the ELBO / flow-matching likelihood
 # surrogate of the final sample. No evaluator, no per-step log-probs; the
 # behaviour policy is the frozen `previous` LoRA adapter
-# (model.lora.previous_adapter: true), refreshed after every optimizer step.
+# requested by the algorithm contract, refreshed after every optimizer step.
 algorithm:
   kind: v_grpo
   eps: 1.0e-8
