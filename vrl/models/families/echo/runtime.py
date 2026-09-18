@@ -118,14 +118,14 @@ class EchoBatchExecutor(DiffusionBatchExecutorBase):
         self,
         *,
         generation_request: GenerationRequest,
-        video_request: DenoiseRequest,
+        model_request: DenoiseRequest,
         params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         del params
         return self.model.encode_prompt(
             generation_request.inputs[batch.prompt_index].prompt,
-            video_request.negative_prompt or None,
+            model_request.negative_prompt or None,
         )
 
 

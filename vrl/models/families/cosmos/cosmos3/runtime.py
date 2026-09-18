@@ -63,18 +63,18 @@ class Cosmos3BatchExecutor(DiffusionBatchExecutorBase):
         self,
         *,
         generation_request: GenerationRequest,
-        video_request: DenoiseRequest,
+        model_request: DenoiseRequest,
         params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         return self.model.encode_prompt(
             generation_request.inputs[batch.prompt_index].prompt,
-            video_request.negative_prompt or None,
+            model_request.negative_prompt or None,
             guidance_scale=params.model_request.guidance_scale,
-            num_frames=video_request.frame_count,
-            height=video_request.height,
-            width=video_request.width,
-            fps=video_request.fps or 24,
+            num_frames=model_request.frame_count,
+            height=model_request.height,
+            width=model_request.width,
+            fps=model_request.fps or 24,
         )
 
 

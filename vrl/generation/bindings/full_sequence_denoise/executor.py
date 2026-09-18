@@ -113,7 +113,7 @@ class ReferenceConditionedBatches:
         self,
         *,
         generation_request: GenerationRequest,
-        video_request: DenoiseRequest,
+        model_request: DenoiseRequest,
         params: Any,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
@@ -122,7 +122,7 @@ class ReferenceConditionedBatches:
         reference_image = self._reference_image_for_batch(generation_request, batch)
         return self.model.encode_prompt(
             generation_request.inputs[batch.prompt_index].prompt,
-            video_request.negative_prompt or None,
+            model_request.negative_prompt or None,
             **params.text_encode_kwargs(),
             reference_image=reference_image,
         )
@@ -280,13 +280,12 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
 
         stage_durations: dict[str, float] = {}
         params = self.parse_sampling_params(request)
-        video_request = params.model_request
 
         started = time.perf_counter()
         with profile_range("generation.prompt_encode"):
             encoded = self.encode_prompt_for_batch(
                 generation_request=request,
-                video_request=video_request,
+                model_request=params.model_request,
                 params=params,
                 batch=batch,
             )
@@ -307,7 +306,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         if execute_steps is not None:
             config = replace(config, execute_steps=execute_steps)
         state = self.prepare_denoise_state(
-            request=video_request,
+            request=params.model_request,
             encoded=batch_encoded,
             config=config,
             prepare_kwargs=prepare_kwargs,
@@ -488,7 +487,7 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
         self,
         *,
         generation_request: GenerationRequest,
-        video_request: DenoiseRequest,
+        model_request: DenoiseRequest,
         params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
@@ -496,9 +495,9 @@ class DiffusionBatchExecutorBase(BatchExecutorBase):
 
         return self.model.encode_prompt(
             generation_request.inputs[batch.prompt_index].prompt,
-            video_request.negative_prompt or None,
+            model_request.negative_prompt or None,
             **params.text_encode_kwargs(),
-            request=video_request,
+            request=model_request,
         )
 
     # Encoded keys copied through UNREPEATED by the default expand_conditioning_to_batch.

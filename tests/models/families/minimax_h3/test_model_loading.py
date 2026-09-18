@@ -235,7 +235,7 @@ def test_batch_executor_pins_one_sample_and_carries_only_the_prompt() -> None:
     )
     encoded = executor.encode_prompt_for_batch(
         generation_request=request,
-        video_request=SimpleNamespace(negative_prompt="blurry"),
+        model_request=SimpleNamespace(negative_prompt="blurry"),
         params=params,
         batch=SimpleNamespace(prompt_index=0, sample_count=1),
     )

@@ -391,14 +391,14 @@ class _StageTrackingExecutor(DiffusionBatchExecutorBase):
         self,
         *,
         generation_request: GenerationRequest,
-        video_request: Any,
+        model_request: Any,
         params: Any,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         self.calls.append("encode")
         return super().encode_prompt_for_batch(
             generation_request=generation_request,
-            video_request=video_request,
+            model_request=model_request,
             params=params,
             batch=batch,
         )

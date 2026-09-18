@@ -81,10 +81,6 @@ def build_minimax_h3_replay_runtime_bundle(
     logger.info("Building minimax_h3 replay runtime bundle from %s", build.model_name_or_path)
     components = load_h3_replay_components(build, block_devices=block_devices)
     model = MiniMaxH3ReplayModel(**components)
-    if block_devices is not None:
-        # The training strategy must not collapse the dispatched base onto the
-        # root device when it places the trainable roots.
-        model.trainable_roots_preplaced = True
     num_steps = build.num_steps
     if num_steps is not None:
         model.set_num_steps(num_steps)
@@ -119,11 +115,11 @@ class MiniMaxH3BatchExecutor(DiffusionBatchExecutorBase):
         self,
         *,
         generation_request: GenerationRequest,
-        video_request: DenoiseRequest,
+        model_request: DenoiseRequest,
         params: DiffusionSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
-        del video_request  # distilled: no negative prompt
+        del model_request  # distilled: no negative prompt
         return self.model.encode_prompt(
             generation_request.inputs[batch.prompt_index].prompt,
             None,
