@@ -85,10 +85,9 @@ class _OwnerCollector(PromptCollectionFake):
     def release_scores(self) -> None:
         self.allow_score.set()
 
-    async def generate_rollout(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
-        prepared = prompts
-        prompts = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request) -> RolloutBatch:
+        prompts = request.inputs
+        kwargs = request.options
         self.collect_threads.append(threading.get_ident())
         prompt_list = list(prompts)
         return _batch(prompt_list, int(kwargs["group_size"]))
@@ -636,10 +635,9 @@ async def test_early_preview_generates_during_current_reward_and_preserves_versi
             self.generated: list[tuple[str, int]] = []
             self.preview_generated = threading.Event()
 
-        async def generate_rollout(self, prompts, **kwargs):
-            prepared = prompts
-            prompts = prepared.inputs
-            kwargs = prepared.options
+        async def generate_rollout(self, request):
+            prompts = request.inputs
+            kwargs = request.options
             prompt = prompts[0].prompt
             self.generated.append((prompt, kwargs["policy_version"]))
             result = await super().generate_rollout(
@@ -753,10 +751,9 @@ async def test_checkpointed_sampler_replays_preview_prompt_order_in_a_new_owner(
     class PromptCollector(_OwnerCollector):
         supports_reward_generation_overlap = True
 
-        async def generate_rollout(self, prompts, **kwargs):
-            prepared = prompts
-            prompts = prepared.inputs
-            kwargs = prepared.options
+        async def generate_rollout(self, request):
+            prompts = request.inputs
+            kwargs = request.options
             batch = await super().generate_rollout(
                 super().request_builder.build(prompts, **kwargs)
             )

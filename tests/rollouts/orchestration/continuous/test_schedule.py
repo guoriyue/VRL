@@ -92,10 +92,9 @@ class _Collector(PromptCollectionFake):
         self.shutdown_calls = 0
         self.shutdown_failures = 0
 
-    async def generate_rollout(self, inputs: Any, **kwargs: Any) -> RolloutBatch:
-        prepared = inputs
-        inputs = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request) -> RolloutBatch:
+        inputs = request.inputs
+        kwargs = request.options
         prompts = [getattr(item, "prompt", item) for item in inputs]
         self.calls.append({"prompts": prompts, **dict(kwargs)})
         return _batch(prompts, int(kwargs["group_size"]))
@@ -231,12 +230,9 @@ async def test_shutdown_failure_retries_cleanup_before_closing_owner() -> None:
 
 
 class _SlowCollector(_Collector):
-    async def generate_rollout(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
-        prepared = prompts
-        prompts = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request) -> RolloutBatch:
         await asyncio.sleep(0.02)
-        return await super().generate_rollout(super().request_builder.build(prompts, **kwargs))
+        return await super().generate_rollout(request)
 
 
 @pytest.mark.asyncio
@@ -512,9 +508,7 @@ class _FailingCollector(_Collector):
         super().__init__(runtime)
         self.message = message
 
-    async def generate_rollout(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
-        prepared = prompts
-        prompts = prepared.inputs
+    async def generate_rollout(self, request) -> RolloutBatch:
         raise RuntimeError(self.message)
 
 
@@ -776,9 +770,7 @@ class _StaleSlotCollector(_Collector):
     window: a typed StaleSlotDiscard, NOT a generation failure.
     """
 
-    async def generate_rollout(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
-        prepared = prompts
-        prompts = prepared.inputs
+    async def generate_rollout(self, request) -> RolloutBatch:
         raise StaleSlotDiscard("trainable-state slot evicted for policy_version=1")
 
 

@@ -61,10 +61,9 @@ class _Collector(CollectorControlFake):
     async def evaluate_rollout(self, batches):
         return list(batches)
 
-    async def generate_rollout(self, prompts, **kwargs):
-        prepared = prompts
-        prompts = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request):
+        prompts = request.inputs
+        kwargs = request.options
         self.calls += 1
         self.versions.append(kwargs.get("policy_version"))
         count = kwargs["group_size"]

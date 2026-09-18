@@ -33,16 +33,17 @@ class AnimaLLMAdapter(nn.Module):
         source_hidden_states: torch.Tensor,
         target_input_ids: torch.Tensor,
     ) -> torch.Tensor:
-        context = source_hidden_states
-        x = self.in_proj(self.embed(target_input_ids).to(context.dtype))
+        x = self.in_proj(self.embed(target_input_ids).to(source_hidden_states.dtype))
         position_ids = torch.arange(x.shape[1], device=x.device).unsqueeze(0)
-        position_ids_context = torch.arange(context.shape[1], device=x.device).unsqueeze(0)
+        position_ids_context = torch.arange(
+            source_hidden_states.shape[1], device=x.device
+        ).unsqueeze(0)
         position_embeddings = self.rotary_emb(x, position_ids)
         position_embeddings_context = self.rotary_emb(x, position_ids_context)
         for block in self.blocks:
             x = block(
                 x,
-                context,
+                source_hidden_states,
                 position_embeddings=position_embeddings,
                 position_embeddings_context=position_embeddings_context,
             )

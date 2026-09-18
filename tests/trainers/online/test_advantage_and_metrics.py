@@ -102,10 +102,8 @@ class TestAdvantageAndMetrics:
 
                 return list(pendings)
 
-            async def generate_rollout(self, prompts, **kwargs):
-                prepared = prompts
-                prompts = prepared.inputs
-                kwargs = prepared.options
+            async def generate_rollout(self, request):
+                kwargs = request.options
                 group_size = int(kwargs["group_size"])
                 rewards = []
                 for _ in range(group_size):
@@ -341,10 +339,9 @@ class TestAdvantageAndMetrics:
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
-            async def generate_rollout(self, prompts, **kwargs):
-                prepared = prompts
-                prompts = prepared.inputs
-                kwargs = prepared.options
+            async def generate_rollout(self, request):
+                prompts = request.inputs
+                kwargs = request.options
                 group_size = int(kwargs["group_size"])
                 prompts = list(prompts)
                 request = GenerationRequest(

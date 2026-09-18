@@ -37,10 +37,8 @@ class _Collector(CollectorControlFake):
     async def evaluate_rollout(self, pendings):
         return list(pendings)
 
-    async def generate_rollout(self, prompts, **kwargs):
-        prepared = prompts
-        prompts = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request):
+        kwargs = request.options
         group_size = int(kwargs["group_size"])
         return _diffusion_rollout_batch(
             rewards=torch.arange(group_size, dtype=torch.float32),

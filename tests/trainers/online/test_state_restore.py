@@ -289,10 +289,8 @@ class _ResumeCollector(CollectorControlFake):
     async def evaluate_rollout(self, pendings):
         return list(pendings)
 
-    async def generate_rollout(self, prompts, **kwargs):
-        prepared = prompts
-        prompts = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request):
+        kwargs = request.options
         import torch
 
         group_size = int(kwargs["group_size"])
@@ -308,12 +306,9 @@ class _SyncCountingCollector(_ResumeCollector):
         self.syncer = syncer
         self.seen_counts = seen_counts
 
-    async def generate_rollout(self, prompts, **kwargs):
-        prepared = prompts
-        prompts = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request):
         self.seen_counts.append(len(self.syncer.calls))
-        return await super().generate_rollout(super().request_builder.build(prompts, **kwargs))
+        return await super().generate_rollout(request)
 
 
 class _ResumeEvaluator:

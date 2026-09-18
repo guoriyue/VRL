@@ -70,10 +70,9 @@ class TestRewardUpdateFlow:
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
-            async def generate_rollout(self, inputs, **kwargs):
-                prepared = inputs
-                inputs = prepared.inputs
-                kwargs = prepared.options
+            async def generate_rollout(self, request):
+                inputs = request.inputs
+                kwargs = request.options
                 captured_inputs.extend(inputs)
                 captured_kwargs.append(dict(kwargs))
                 group_size = int(kwargs["group_size"])
@@ -181,10 +180,9 @@ class TestRewardUpdateFlow:
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
-            async def generate_rollout(self, prompts, **kwargs):
-                prepared = prompts
-                prompts = prepared.inputs
-                kwargs = prepared.options
+            async def generate_rollout(self, request):
+                prompts = request.inputs
+                kwargs = request.options
                 prompts = [getattr(item, "prompt", item) for item in prompts]
                 collect_calls.append(prompts)
                 group_size = int(kwargs["group_size"])
@@ -292,10 +290,9 @@ class TestRewardUpdateFlow:
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
-            async def generate_rollout(self, prompts, **kwargs):
-                prepared = prompts
-                prompts = prepared.inputs
-                kwargs = prepared.options
+            async def generate_rollout(self, request):
+                prompts = request.inputs
+                kwargs = request.options
                 prompts = [getattr(item, "prompt", item) for item in prompts]
                 collect_calls.append(list(prompts))
                 group_size = int(kwargs["group_size"])
@@ -621,10 +618,9 @@ class TestRewardUpdateFlow:
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
-            async def generate_rollout(self, prompts, **kwargs):
-                prepared = prompts
-                prompts = prepared.inputs
-                kwargs = prepared.options
+            async def generate_rollout(self, request):
+                prompts = request.inputs
+                kwargs = request.options
                 prompts = [getattr(item, "prompt", item) for item in prompts]
                 group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
@@ -736,10 +732,9 @@ class TestRewardUpdateFlow:
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
-            async def generate_rollout(self, prompts, **kwargs):
-                prepared = prompts
-                prompts = prepared.inputs
-                kwargs = prepared.options
+            async def generate_rollout(self, request):
+                prompts = request.inputs
+                kwargs = request.options
                 prompts = [getattr(item, "prompt", item) for item in prompts]
                 group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
@@ -862,10 +857,9 @@ def test_training_microbatch_size_splits_backward_and_preserves_gradient(monkeyp
         async def evaluate_rollout(self, pendings):
             return list(pendings)
 
-        async def generate_rollout(self, prompts, **kwargs):
-            prepared = prompts
-            prompts = prepared.inputs
-            kwargs = prepared.options
+        async def generate_rollout(self, request):
+            prompts = request.inputs
+            kwargs = request.options
             prompts = [getattr(item, "prompt", item) for item in prompts]
             group_size = int(kwargs["group_size"])
             batch_size = len(prompts) * group_size

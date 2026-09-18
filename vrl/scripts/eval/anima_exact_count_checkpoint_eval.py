@@ -332,10 +332,9 @@ def _build_reward_model(
 ) -> tuple[CodexImageQARewardModel, dict[str, Any]]:
     cfg = load_config(config_source)
     raw_kwargs = OmegaConf.select(cfg, "reward.kwargs.codex_image_qa", default=None)
-    plain_kwargs = OmegaConf.to_container(raw_kwargs, resolve=True)
-    if not isinstance(plain_kwargs, dict):
+    worker_config = OmegaConf.to_container(raw_kwargs, resolve=True)
+    if not isinstance(worker_config, dict):
         raise TypeError("config reward.kwargs.codex_image_qa must be a mapping")
-    worker_config = plain_kwargs
     # Training saves visual reward artifacts; this evaluator owns its report
     # tree and must not append into a training run's scored_rollouts directory.
     worker_config["scored_rollout_dir"] = ""

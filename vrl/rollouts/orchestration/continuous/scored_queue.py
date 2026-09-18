@@ -48,13 +48,12 @@ class ScoredRolloutQueue:
     def set_item_limit(self, max_items: int) -> None:
         """Resize for the installed batch window without discarding receipts."""
 
-        next_limit = max_items
-        if next_limit < len(self._items):
+        if max_items < len(self._items):
             raise RuntimeError(
                 "continuous ready queue item limit cannot shrink below resident items "
-                f"(ready={len(self._items)}, limit={next_limit})",
+                f"(ready={len(self._items)}, limit={max_items})",
             )
-        self.max_items = next_limit
+        self.max_items = max_items
 
     def put(self, item: ScoredRollout) -> None:
         """Append one item, failing before mutation when a hard cap is exceeded.

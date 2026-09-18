@@ -96,10 +96,9 @@ class _DeferredCollector(PromptCollectionFake):
         self.requires_driver_model_offload_for_reward = trainer_reward_handoff
         self.supports_reward_generation_overlap = supports_overlap
 
-    async def generate_rollout(self, inputs: list[Any], **kwargs: Any) -> Any:
-        prepared = inputs
-        inputs = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request) -> Any:
+        inputs = request.inputs
+        kwargs = request.options
         prompts = [getattr(item, "prompt", item) for item in inputs]
         self.events.append(f"generate:{','.join(prompts)}")
         batch = _batch(prompts, int(kwargs["group_size"]))
@@ -115,10 +114,9 @@ class _DeferredCollector(PromptCollectionFake):
 class _TrajectoryDeferredCollector(_DeferredCollector):
     """Deferred collector whose trainer and trajectory grouping never alias."""
 
-    async def generate_rollout(self, inputs: list[Any], **kwargs: Any) -> RolloutBatch:
-        prepared = inputs
-        inputs = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request) -> RolloutBatch:
+        inputs = request.inputs
+        kwargs = request.options
         prompts = [getattr(item, "prompt", item) for item in inputs]
         self.events.append(f"generate:{','.join(prompts)}")
         batch = _batch_with_trajectory(prompts, int(kwargs["group_size"]))
@@ -226,10 +224,9 @@ class _PhasedCollector(PromptCollectionFake):
     requires_driver_model_offload_for_reward = False
     supports_reward_generation_overlap = False
 
-    async def generate_rollout(self, inputs: list[Any], **kwargs: Any) -> _Unscored:
-        prepared = inputs
-        inputs = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request) -> _Unscored:
+        inputs = request.inputs
+        kwargs = request.options
         prompts = [getattr(item, "prompt", item) for item in inputs]
         return _Unscored(
             batch=_batch(prompts, int(kwargs["group_size"])),
@@ -294,10 +291,9 @@ class _StreamingCollector(_DeferredCollector):
         self.active_scores = 0
         self.max_active_scores = 0
 
-    async def generate_rollout(self, inputs: list[Any], **kwargs: Any) -> Any:
-        prepared = inputs
-        inputs = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request) -> Any:
+        inputs = request.inputs
+        kwargs = request.options
         prompts = [getattr(item, "prompt", item) for item in inputs]
         name = ",".join(prompts)
         self.events.append(f"generate_start:{name}")
@@ -347,10 +343,9 @@ class _TimedCollector(_DeferredCollector):
         )
         self.delay_s = delay_s
 
-    async def generate_rollout(self, inputs: list[Any], **kwargs: Any) -> Any:
-        prepared = inputs
-        inputs = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request) -> Any:
+        inputs = request.inputs
+        kwargs = request.options
         await asyncio.sleep(self.delay_s)
         return await super().generate_rollout(super().request_builder.build(inputs, **kwargs))
 

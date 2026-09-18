@@ -68,10 +68,9 @@ class _GatedCollector(PromptCollectionFake):
         self.generation_started = asyncio.Event()
         self.events: list[str] = []
 
-    async def generate_rollout(self, prompts: list[str], **kwargs: Any) -> _Unscored:
-        prepared = prompts
-        prompts = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request) -> _Unscored:
+        prompts = request.inputs
+        kwargs = request.options
         self.generation_started.set()
         self.events.append("generate_start")
         await self.allow_generate.wait()
@@ -178,10 +177,9 @@ class _FiniteCollector(PromptCollectionFake):
         self.max_active: dict[str, int] = {}
         self.calls: list[tuple[str, int | None, int, bool]] = []
 
-    async def generate_rollout(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
-        prepared = prompts
-        prompts = prepared.inputs
-        kwargs = prepared.options
+    async def generate_rollout(self, request) -> _Unscored:
+        prompts = request.inputs
+        kwargs = request.options
         prompt = str(getattr(prompts[0], "prompt", prompts[0]))
         attempt = self.attempts.get(prompt, 0) + 1
         self.attempts[prompt] = attempt
@@ -306,10 +304,9 @@ async def test_terminal_generation_error_is_not_retried_or_wrapped() -> None:
     )
 
     class _TerminalCollector(_GatedCollector):
-        async def generate_rollout(self, prompts: list[str], **kwargs: Any) -> _Unscored:
-            prepared = prompts
-            prompts = prepared.inputs
-            kwargs = prepared.options
+        async def generate_rollout(self, request) -> _Unscored:
+            prompts = request.inputs
+            kwargs = request.options
             del prompts, kwargs
             raise error
 
@@ -359,13 +356,9 @@ async def test_idle_health_failure_makes_next_collect_fatal_without_slot_retry()
 
         async def generate_rollout(
             self,
-            prompts: list[str],
-            **kwargs: Any,
+            request: Any,
         ) -> _Unscored:
-            prepared = prompts
-            prompts = prepared.inputs
-            kwargs = prepared.options
-            del prompts, kwargs
+            del request
             self.attempts += 1
             lifecycle.require_running("generate")
             raise AssertionError("closed runtime accepted generation")
@@ -412,10 +405,9 @@ async def test_cleanup_wrapper_around_terminal_error_is_not_retried() -> None:
     )
 
     class _TerminalCollector(_GatedCollector):
-        async def generate_rollout(self, prompts: list[str], **kwargs: Any) -> _Unscored:
-            prepared = prompts
-            prompts = prepared.inputs
-            kwargs = prepared.options
+        async def generate_rollout(self, request) -> _Unscored:
+            prompts = request.inputs
+            kwargs = request.options
             del prompts, kwargs
             raise wrapped
 
@@ -581,9 +573,8 @@ async def test_finite_prompt_batch_fails_before_mutation_at_queue_byte_limit() -
 @pytest.mark.asyncio
 async def test_finite_prompt_batch_fails_after_one_slot_exhausts_retry_budget() -> None:
     class _AlwaysFailCollector(_FiniteCollector):
-        async def generate_rollout(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
-            prepared = prompts
-            prompts = prepared.inputs
+        async def generate_rollout(self, request) -> _Unscored:
+            prompts = request.inputs
             prompt = str(getattr(prompts[0], "prompt", prompts[0]))
             self.attempts[prompt] = self.attempts.get(prompt, 0) + 1
             raise RuntimeError(f"deterministic failure for {prompt}")
@@ -634,10 +625,9 @@ async def test_prompt_batch_drain_times_out_when_collect_never_returns() -> None
 @pytest.mark.asyncio
 async def test_active_prompt_batch_fails_when_collect_is_cancelled() -> None:
     class _CancelledCollector(_FiniteCollector):
-        async def generate_rollout(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
-            prepared = prompts
-            prompts = prepared.inputs
-            kwargs = prepared.options
+        async def generate_rollout(self, request) -> _Unscored:
+            prompts = request.inputs
+            kwargs = request.options
             del prompts, kwargs
             raise asyncio.CancelledError
 
@@ -690,17 +680,14 @@ async def test_producer_stop_does_not_wait_forever_for_cancel_suppression() -> N
             self.cancelled = asyncio.Event()
             self.release = asyncio.Event()
 
-        async def generate_rollout(self, prompts: list[Any], **kwargs: Any) -> _Unscored:
-            prepared = prompts
-            prompts = prepared.inputs
-            kwargs = prepared.options
+        async def generate_rollout(self, request) -> _Unscored:
             self.started.set()
             while not self.release.is_set():
                 try:
                     await self.release.wait()
                 except asyncio.CancelledError:
                     self.cancelled.set()
-            return await super().generate_rollout(super().request_builder.build(prompts, **kwargs))
+            return await super().generate_rollout(request)
 
     collector = _CancellationResistantCollector()
     producer = _producer(collector, ScoredRolloutQueue(max_items=2))
@@ -1454,15 +1441,13 @@ async def test_failed_preview_preserves_current_until_head_advances() -> None:
             super().__init__()
             self.failed_payloads = []
 
-        async def generate_rollout(self, prompts, **kwargs):
-            prepared = prompts
-            prompts = prepared.inputs
-            kwargs = prepared.options
+        async def generate_rollout(self, request):
+            prompts = request.inputs
             if prompts[0].prompt == "bad":
                 payload = torch.zeros(256)
                 self.failed_payloads.append(weakref.ref(payload))
                 raise ValueError("preview generation failed")
-            return await super().generate_rollout(super().request_builder.build(prompts, **kwargs))
+            return await super().generate_rollout(request)
 
     collector = FailedPreview()
     collector.allow_score.clear()
@@ -1499,13 +1484,11 @@ async def test_terminal_runtime_failure_in_preview_still_stops_current() -> None
     class BrokenFleet(_GatedCollector):
         supports_reward_generation_overlap = True
 
-        async def generate_rollout(self, prompts, **kwargs):
-            prepared = prompts
-            prompts = prepared.inputs
-            kwargs = prepared.options
+        async def generate_rollout(self, request):
+            prompts = request.inputs
             if prompts[0].prompt == "bad":
                 raise root
-            return await super().generate_rollout(super().request_builder.build(prompts, **kwargs))
+            return await super().generate_rollout(request)
 
     collector = BrokenFleet()
     collector.allow_score.clear()

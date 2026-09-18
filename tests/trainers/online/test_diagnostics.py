@@ -129,10 +129,8 @@ class TestDiagnostics:
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
-            async def generate_rollout(self, prompts, **kwargs):
-                prepared = prompts
-                prompts = prepared.inputs
-                kwargs = prepared.options
+            async def generate_rollout(self, request):
+                kwargs = request.options
                 assert kwargs["runtime_debug"] is debug_enabled
                 group_size = int(kwargs["group_size"])
                 return _diffusion_rollout_batch(
@@ -344,10 +342,9 @@ class TestDiagnostics:
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
-            async def generate_rollout(self, prompts, **kwargs):
-                prepared = prompts
-                prompts = prepared.inputs
-                kwargs = prepared.options
+            async def generate_rollout(self, request):
+                prompts = request.inputs
+                kwargs = request.options
                 del prompts
                 group_size = int(kwargs["group_size"])
                 self.collections += 1

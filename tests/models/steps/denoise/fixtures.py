@@ -801,9 +801,8 @@ def build_tiny_minimax_h3_video_vae(
     from diffusers import AutoencoderKLMiniMaxH3
 
     torch.manual_seed(seed)
-    channels = TINY_MINIMAX_H3_LATENT_CHANNELS
     return AutoencoderKLMiniMaxH3(
-        latent_channels=channels,
+        latent_channels=TINY_MINIMAX_H3_LATENT_CHANNELS,
         block_out_channels=(8, 8, 8),
         layers_per_block=1,
         spatial_downsample_factors=(2, 2, 1),
@@ -814,8 +813,8 @@ def build_tiny_minimax_h3_video_vae(
         decoder_attention_head_dim=8,
         clip_length=TINY_MINIMAX_H3_VAE_CLIP_LENGTH,
         token_drop=TINY_MINIMAX_H3_VAE_TOKEN_DROP,
-        latents_mean=(latents_mean,) * channels,
-        latents_std=(latents_std,) * channels,
+        latents_mean=(latents_mean,) * TINY_MINIMAX_H3_LATENT_CHANNELS,
+        latents_std=(latents_std,) * TINY_MINIMAX_H3_LATENT_CHANNELS,
     )
 
 

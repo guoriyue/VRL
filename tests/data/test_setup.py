@@ -204,29 +204,28 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
             "episode_id": "000002",
         },
     ]
-    data_root = tmp_path
-    reference_dir = data_root / "video_world" / "references"
+    reference_dir = tmp_path / "video_world" / "references"
 
     rows = video_world.build_video_world_rows(
         episodes,
         reference_dir=reference_dir,
-        data_root=data_root,
+        data_root=tmp_path,
         source="bridge",
     )
 
     assert len(rows) == 2
     for row in rows:
         assert not os.path.isabs(row["reference_image"])
-        assert (data_root / row["reference_image"]).exists()
+        assert (tmp_path / row["reference_image"]).exists()
         assert row["task_type"] == "video2world"
         assert row["metadata"]["source"] == "bridge"
         assert row["metadata"]["conditioning"] == "first_frame"
 
-    manifest = data_root / "video_world" / "manifests" / "bridge_train.jsonl"
+    manifest = tmp_path / "video_world" / "manifests" / "bridge_train.jsonl"
     manifest.parent.mkdir(parents=True, exist_ok=True)
     write_jsonl(manifest, rows)
 
-    monkeypatch.setenv("VRL_DATA_ROOT", str(data_root))
+    monkeypatch.setenv("VRL_DATA_ROOT", str(tmp_path))
     examples = [
         resolve_prompt_example_references(example, allow_absolute=True)
         for example in load_prompt_dataset_index(manifest)

@@ -344,13 +344,12 @@ class _TrainingMicrobatch:
             )
         if batch_size <= 0:
             return []
-        slice_size = training_microbatch_size
-        if slice_size <= 0 or slice_size >= batch_size:
+        if training_microbatch_size <= 0 or training_microbatch_size >= batch_size:
             return [cls(batch=batch, advantages=advantages, loss_weight=1.0)]
 
         batches: list[_TrainingMicrobatch] = []
-        for start in range(0, batch_size, slice_size):
-            stop = min(start + slice_size, batch_size)
+        for start in range(0, batch_size, training_microbatch_size):
+            stop = min(start + training_microbatch_size, batch_size)
             selector = torch.arange(start, stop, device=batch.rewards.device)
             batches.append(
                 cls(
@@ -1503,14 +1502,12 @@ class OnlineTrainer:
             )
             # Early exit — still advance state + return metrics with zeros.
             self.state.step += 1
-            reward_mean = pre_filter_reward_mean
-            reward_std = pre_filter_reward_std
             return TrainStepMetrics(
                 loss=0.0,
                 policy_loss=0.0,
                 kl_penalty=0.0,
-                reward_mean=reward_mean,
-                reward_std=reward_std,
+                reward_mean=pre_filter_reward_mean,
+                reward_std=pre_filter_reward_std,
                 reward_components=reward_components,
                 advantage_mean=pre_filter_adv_mean,
                 grad_norm=0.0,
@@ -1567,9 +1564,8 @@ class OnlineTrainer:
                     "evaluator output must be TrajectorySignalBatch; "
                     f"got {type(_dbg_signals).__name__}",
                 )
-            _dbg_trajectory_signals = _dbg_signals
-            _dbg_log_prob = _dbg_trajectory_signals.primary.log_prob
-            _old_lp_0 = _dbg_trajectory_signals.primary.old_log_prob
+            _dbg_log_prob = _dbg_signals.primary.log_prob
+            _old_lp_0 = _dbg_signals.primary.old_log_prob
             _diff = (_dbg_log_prob - _old_lp_0).abs()
             _ratio = torch.exp(_dbg_log_prob - _old_lp_0)
             _old_lp_first = _old_lp_0.reshape(-1)[0]
@@ -1728,10 +1724,6 @@ class OnlineTrainer:
 
             self.state.global_step += 1
 
-        reward_mean = pre_filter_reward_mean
-        reward_std = pre_filter_reward_std
-        adv_mean = pre_filter_adv_mean
-
         # collect.* phase timings arrive inside iteration.stats: each collect
         # call owns its timings (no shared collector state), and the
         # schedule/consumer aggregates them per iteration. The trainer phases
@@ -1750,10 +1742,10 @@ class OnlineTrainer:
             self._write_phase_events(timer, step=metric_step)
 
         metrics = agg_metrics.build(
-            reward_mean=reward_mean,
-            reward_std=reward_std,
+            reward_mean=pre_filter_reward_mean,
+            reward_std=pre_filter_reward_std,
             reward_components=reward_components,
-            advantage_mean=adv_mean,
+            advantage_mean=pre_filter_adv_mean,
             adv_saturation=adv_saturation,
             adv_zero_rate=adv_zero_rate,
             group_size=group_size,

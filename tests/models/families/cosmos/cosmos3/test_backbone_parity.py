@@ -156,8 +156,9 @@ def test_prepare_sampling_packs_one_sample_from_the_real_pipeline_builders() -> 
     assert state.timesteps.numel() == _NUM_STEPS
     assert state.do_cfg is True
     _, _, latent_t, latent_h, latent_w = state.latents.shape
-    patch = TINY_COSMOS3_LATENT_PATCH_SIZE
-    assert state.num_noisy_vision_tokens == latent_t * (latent_h // patch) * (latent_w // patch)
+    assert state.num_noisy_vision_tokens == latent_t * (
+        latent_h // TINY_COSMOS3_LATENT_PATCH_SIZE
+    ) * (latent_w // TINY_COSMOS3_LATENT_PATCH_SIZE)
     for packed in (state.cond_packed_static, state.uncond_packed_static):
         assert set(packed) >= _PACKED_STATIC_TRANSFORMER_KWARGS
         assert packed["sequence_length"] == packed["und_len"] + packed["num_vision_tokens"]
