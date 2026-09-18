@@ -51,7 +51,7 @@ def test_probe_uses_existing_cosmos_lora_preset():
         args, get_model_family_entry("cosmos-predict2.5"), torch.device("cpu")
     )
     assert build.use_lora
-    assert build.lora["rank"] == 32
+    assert build.lora.rank == 32
     assert build.model_name_or_path == "/local/pinned/cosmos"
     assert build.model_config["skip_text_encoder"] is False
 

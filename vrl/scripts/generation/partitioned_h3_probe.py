@@ -138,7 +138,7 @@ def main() -> None:
         "prompt": args.prompt,
         "sampling": request.sampling,
         "encoder_layer": args.encoder_layer,
-        "lora": build.lora,
+        "lora": build.require_lora_config().model_dump(exclude_none=True),
         "generation_memory": preset.get("memory"),
         "placement": vars(placement),
         "policy_root": args.policy_root,

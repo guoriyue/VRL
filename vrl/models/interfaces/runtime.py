@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
+from vrl.config.model_schema import LoraSection
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.generation_memory import GenerationMemoryPolicy
 from vrl.models.interfaces.replay import RuntimeModel
@@ -350,54 +351,44 @@ class ModelBuild:
         """
         return bool((self.model_config or {}).get("use_lora", False))
 
-    @property
-    def lora_path(self) -> str | None:
-        """Resolved LoRA checkpoint path, or ``None`` when not loading one."""
-        lora = (self.model_config or {}).get("lora") or {}
-        return lora.get("path") or None
+    def _resolved_lora(self) -> LoraSection:
+        # Only the lightweight schema is imported, never the model/backend.
+        from vrl.models.families.registry import get_model_family_entry
+        from vrl.utils.config import import_from_path
+
+        entry = get_model_family_entry(self.family)
+        schema = import_from_path(entry.model_section_cls)
+        return schema.resolve_lora((self.model_config or {}).get("lora"))
 
     @property
-    def lora(self) -> dict[str, Any] | None:
-        """Curated LoRA config (``rank``/``alpha``/``target_modules`` + extras).
-
-        ``None`` when ``use_lora`` is off. Casts and the ``init_lora_weights`` /
-        ``dropout`` / ``init`` extras are carried from the raw ``model.lora``
-        block only when present, preserving per-family presence semantics.
-        Token-family config dataclasses own their resolved LoRA defaults.
-        """
+    def lora(self) -> LoraSection | None:
+        """Typed adapter settings, with the selected family's defaults applied."""
         if not self.use_lora:
             return None
-        lora = (self.model_config or {}).get("lora") or {}
-        config: dict[str, Any] = {
-            "rank": int(lora["rank"]),
-            "alpha": int(lora["alpha"]),
-            "target_modules": list(lora["target_modules"]),
-        }
-        for key in ("init_lora_weights", "dropout", "init"):
-            if key in lora:
-                config[key] = lora[key]
-        return config
+        return self._resolved_lora()
 
-    def require_lora_config(self) -> dict[str, Any]:
+    def require_lora_config(self) -> LoraSection:
         """Require the adapter configuration at a LoRA attach boundary."""
 
         config = self.lora
         if config is None:
             raise ValueError("LoRA runtime build requires model.lora configuration")
+        if config.rank is None or config.alpha is None or not config.target_modules:
+            raise ValueError("model.lora requires rank, alpha, and target_modules")
         return config
 
     @property
     def previous_policy_adapter_requested(self) -> bool:
         """Whether the model configuration requests a frozen previous adapter."""
 
-        return bool((self.model_config or {}).get("nft_previous_adapter", False))
+        return bool(self._resolved_lora().previous_adapter)
 
     def require_lora_for_previous_policy_adapter(self) -> None:
         """Reject an incompatible previous-adapter request before model loading."""
 
         if self.previous_policy_adapter_requested and not self.use_lora:
             raise RuntimeError(
-                "model.nft_previous_adapter requires LoRA (the frozen previous "
+                "model.lora.previous_adapter requires LoRA (the frozen previous "
                 "adapter is a PEFT adapter); set model.use_lora=true.",
             )
 
