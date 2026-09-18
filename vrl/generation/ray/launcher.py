@@ -337,7 +337,7 @@ class RayGenerationLauncher:
                 session_factory=session_factory,
                 initial_policy_version=launch_inputs.launch_contract.policy_version,
                 supports_weight_sync=worker.sync_trainable_state,
-                colocated=resources.colocated,
+                colocated=resources.lifecycle.park_trainer_for_rollout,
                 health_check_interval_s=worker.health_check_interval_s,
                 health_check_timeout_s=worker.health_check_timeout_s,
                 health_check_first_wait_s=worker.health_check_first_wait_s,

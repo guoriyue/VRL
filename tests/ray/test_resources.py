@@ -1354,3 +1354,80 @@ def test_cosmos_async_reward_recipe_resolves_resident_reward_overlap() -> None:
     # >=2 inflight groups is the invariant that lets rollout(N+1) produce while
     # reward(N) scores; assert the relation, not the literal value.
     assert typed.continuous.max_inflight_groups >= 2
+
+
+def test_offload_true_forces_parking_on_a_private_gpu() -> None:
+    """``offload.<role>: true`` parks a role that shares nothing."""
+    resolved = ResolvedDistributedResources.from_root(
+        parse_config(
+            _cfg(
+                {
+                    "visible_devices": [0, 1, 2],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1]},
+                    "reward": {"device": "gpu", "devices": [2]},
+                    "offload": {"train": True, "rollout": True, "reward": True},
+                },
+            )
+        ),
+    )
+
+    plan = resolved.lifecycle
+    assert not resolved.colocated
+    assert plan.offload_train and plan.offload_rollout and plan.offload_reward
+    assert plan.rollout_mode == "on_demand"
+    assert plan.park_trainer_for_rollout and plan.park_rollout_for_reward
+    assert plan.park_trainer_for_reward and plan.park_rollout_for_train
+
+
+def test_offload_false_on_a_shared_gpu_is_rejected() -> None:
+    """Sharing without parking is an OOM at the first handoff, so it fails at resolve."""
+    with pytest.raises(ValueError, match=r"offload\.rollout=false but the rollout role shares"):
+        ResolvedDistributedResources.from_root(
+            parse_config(
+                _cfg(
+                    {
+                        "visible_devices": [0],
+                        "trainer": {"devices": [0]},
+                        "rollout": {"devices": [0]},
+                        "offload": {"rollout": False},
+                    },
+                )
+            ),
+        )
+
+
+def test_offload_true_on_a_gpu_less_role_is_rejected() -> None:
+    with pytest.raises(ValueError, match=r"offload\.reward=true but the reward role owns no GPU"):
+        ResolvedDistributedResources.from_root(
+            parse_config(
+                _cfg(
+                    {
+                        "visible_devices": [0, 1],
+                        "trainer": {"devices": [0]},
+                        "rollout": {"devices": [1]},
+                        "reward": {"device": "cpu"},
+                        "offload": {"reward": True},
+                    },
+                )
+            ),
+        )
+
+
+def test_offload_auto_keeps_the_derived_plan() -> None:
+    resolved = ResolvedDistributedResources.from_root(
+        parse_config(
+            _cfg(
+                {
+                    "visible_devices": [0, 1],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1]},
+                    "offload": {"train": "auto", "rollout": "auto", "reward": "auto"},
+                },
+            )
+        ),
+    )
+
+    plan = resolved.lifecycle
+    assert not (plan.offload_train or plan.offload_rollout or plan.offload_reward)
+    assert plan.rollout_mode == "resident"
