@@ -204,8 +204,11 @@ class OffloadConfig:
     ``auto`` (default) offloads a role exactly when it shares a GPU with another
     role, as resolved from the device sets. ``true`` forces a role to park at
     every phase boundary even on a private card (trade time for headroom).
-    ``false`` on a role that shares a GPU is a configuration error, never a
-    silent override: sharing without parking is an OOM at the first handoff.
+    ``false`` declares the role resident: it never parks, and its neighbours
+    skip the parks they would do for it, because the operator asserts the two
+    fit on the card together (miles' 0.05-GPU colocated PickScore shape). That
+    assertion is the operator's; a wrong one is a runtime OOM, not a silent
+    reinterpretation by the resolver.
     """
 
     train: OffloadSetting = "auto"
@@ -240,7 +243,9 @@ class RayLifecyclePlan:
     forces it. The ``park_<role>_for_<phase>`` views name the boundary a park
     happens at; they are finer than the offload bits because a role can share
     with one neighbour but not the other (trainer+rollout on GPU 0, reward on
-    GPU 1 parks nothing around scoring). A forced role parks at every boundary.
+    GPU 1 parks nothing around scoring). A forced role parks at every boundary;
+    a resident role (``offload.<role>: false``) never parks and its neighbours
+    skip the parks they would do for it.
     """
 
     trainer: tuple[int, ...]
@@ -250,28 +255,52 @@ class RayLifecyclePlan:
     force_train: bool = False
     force_rollout: bool = False
     force_reward: bool = False
+    # ``offload.<role>: false`` — coexists with whoever shares its card.
+    resident_train: bool = False
+    resident_rollout: bool = False
+    resident_reward: bool = False
+
+    def _shares(self, role: str, other: str) -> bool:
+        """Whether ``role`` and ``other`` overlap AND neither is declared resident."""
+
+        flags = {
+            "trainer": "resident_train",
+            "rollout": "resident_rollout",
+            "reward": "resident_reward",
+        }
+        if getattr(self, flags[role]) or getattr(self, flags[other]):
+            return False
+        return bool(set(getattr(self, role)) & set(getattr(self, other)))
 
     # ── the three offload bits ────────────────────────────────────────
     @property
     def offload_train(self) -> bool:
         """Trainer parks its model/optimizer while rollout or reward use its GPU."""
 
-        return self.force_train or bool(set(self.trainer) & (set(self.rollout) | set(self.reward)))
+        return (
+            self.force_train
+            or self._shares("trainer", "rollout")
+            or self._shares("trainer", "reward")
+        )
 
     @property
     def offload_rollout(self) -> bool:
         """Rollout workers park (CuMem sleep) between phases; ``on_demand`` lease."""
 
-        return self.force_rollout or bool(
-            set(self.rollout) & (set(self.trainer) | set(self.reward))
+        return (
+            self.force_rollout
+            or self._shares("rollout", "trainer")
+            or self._shares("rollout", "reward")
         )
 
     @property
     def offload_reward(self) -> bool:
         """Reward parks after scoring: it sits on someone else's card."""
 
-        return self.force_reward or bool(
-            set(self.reward) & (set(self.trainer) | set(self.rollout))
+        return (
+            self.force_reward
+            or self._shares("reward", "trainer")
+            or self._shares("reward", "rollout")
         )
 
     # ── boundary views ────────────────────────────────────────────────
@@ -286,19 +315,19 @@ class RayLifecyclePlan:
     def park_trainer_for_rollout(self) -> bool:
         """Trainer parks its state for the generation phase."""
 
-        return self.force_train or bool(set(self.trainer) & set(self.rollout))
+        return self.force_train or self._shares("trainer", "rollout")
 
     @property
     def park_rollout_for_train(self) -> bool:
-        return self.force_rollout or bool(set(self.trainer) & set(self.rollout))
+        return self.force_rollout or self._shares("rollout", "trainer")
 
     @property
     def park_rollout_for_reward(self) -> bool:
-        return self.force_rollout or bool(set(self.rollout) & set(self.reward))
+        return self.force_rollout or self._shares("rollout", "reward")
 
     @property
     def park_trainer_for_reward(self) -> bool:
-        return self.force_train or bool(set(self.trainer) & set(self.reward))
+        return self.force_train or self._shares("trainer", "reward")
 
 
 @dataclass(frozen=True, slots=True)
@@ -575,37 +604,22 @@ class ResolvedDistributedResources:
             rollout=tuple(rollout_devices),
             reward=tuple(reward_execution_devices),
         )
-        forced: dict[str, bool] = {}
-        for role, setting, shares, owns_gpu in (
-            ("train", config.offload.train, lifecycle.offload_train, bool(trainer_devices)),
-            ("rollout", config.offload.rollout, lifecycle.offload_rollout, bool(rollout_devices)),
-            (
-                "reward",
-                config.offload.reward,
-                lifecycle.offload_reward,
-                bool(reward_execution_devices),
-            ),
+        overrides: dict[str, bool] = {}
+        for role, setting, owns_gpu in (
+            ("train", config.offload.train, bool(trainer_devices)),
+            ("rollout", config.offload.rollout, bool(rollout_devices)),
+            ("reward", config.offload.reward, bool(reward_execution_devices)),
         ):
             key = f"distributed.resources.offload.{role}"
             if setting == "auto":
                 continue
             if not isinstance(setting, bool):
                 raise ValueError(f"{key} must be auto, true or false; got {setting!r}")
-            if setting is False and shares:
-                raise ValueError(
-                    f"{key}=false but the {role} role shares a GPU with another role; "
-                    "a shared card must hand over between phases. Give the role its "
-                    "own GPU or drop the key.",
-                )
             if setting is True and not owns_gpu:
                 raise ValueError(f"{key}=true but the {role} role owns no GPU to offload")
-            forced[role] = setting is True
-        lifecycle = replace(
-            lifecycle,
-            force_train=forced.get("train", False),
-            force_rollout=forced.get("rollout", False),
-            force_reward=forced.get("reward", False),
-        )
+            overrides[f"force_{role}"] = setting is True
+            overrides[f"resident_{role}"] = setting is False
+        lifecycle = replace(lifecycle, **overrides)
         return cls(
             visible_devices=visible_devices,
             trainer_devices=trainer_devices,

@@ -1380,21 +1380,49 @@ def test_offload_true_forces_parking_on_a_private_gpu() -> None:
     assert plan.park_trainer_for_reward and plan.park_rollout_for_train
 
 
-def test_offload_false_on_a_shared_gpu_is_rejected() -> None:
-    """Sharing without parking is an OOM at the first handoff, so it fails at resolve."""
-    with pytest.raises(ValueError, match=r"offload\.rollout=false but the rollout role shares"):
-        ResolvedDistributedResources.from_root(
-            parse_config(
-                _cfg(
-                    {
-                        "visible_devices": [0],
-                        "trainer": {"devices": [0]},
-                        "rollout": {"devices": [0]},
-                        "offload": {"rollout": False},
-                    },
-                )
-            ),
-        )
+def test_offload_false_declares_a_resident_role_and_its_neighbours_skip_parking() -> None:
+    """A resident reward on the rollout card (miles' colocated PickScore shape):
+    the reward never parks and rollout no longer parks before scoring, while
+    the trainer/rollout handoff on the shared card is untouched."""
+    resolved = ResolvedDistributedResources.from_root(
+        parse_config(
+            _cfg(
+                {
+                    "visible_devices": [0],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [0]},
+                    "reward": {"device": "gpu", "gpu_pool": "rollout"},
+                    "offload": {"reward": False},
+                },
+            )
+        ),
+    )
+
+    plan = resolved.lifecycle
+    assert plan.resident_reward and not plan.offload_reward
+    assert not plan.park_rollout_for_reward and not plan.park_trainer_for_reward
+    assert plan.offload_rollout and plan.offload_train
+    assert plan.park_rollout_for_train and plan.park_trainer_for_rollout
+
+
+def test_offload_false_on_a_sharing_role_keeps_both_resident() -> None:
+    resolved = ResolvedDistributedResources.from_root(
+        parse_config(
+            _cfg(
+                {
+                    "visible_devices": [0],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [0]},
+                    "offload": {"rollout": False},
+                },
+            )
+        ),
+    )
+
+    plan = resolved.lifecycle
+    assert resolved.colocated
+    assert plan.rollout_mode == "resident"
+    assert not plan.offload_train and not plan.park_trainer_for_rollout
 
 
 def test_offload_true_on_a_gpu_less_role_is_rejected() -> None:
