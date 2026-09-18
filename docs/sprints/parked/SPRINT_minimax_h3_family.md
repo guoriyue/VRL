@@ -1,5 +1,7 @@
 # SPRINT: MiniMax-H3（Hailuo 3.0）家族接入 — 视频潜变量是动作，音频是确定性侧流
 
+> Parked 2026-09-17: waiting for a multi-GPU box with >=144 GB for real-weight validation (see §5). Code complete, CPU tiny-real green.
+
 **日期**: 2026-09-07  **状态**: 代码完成（CPU tiny-real 全绿），真机验证被硬件阻塞（见 §5）
 **触发**: 用户 "minmax recently has a cool video model can you find it and support it for me"
 **证据来源**: diffusers 0.40.0 源码（`modular_pipelines/minimax_h3/*`、

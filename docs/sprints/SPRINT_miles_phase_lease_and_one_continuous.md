@@ -1137,7 +1137,7 @@ engine/config source of truth，不能来自 `distributed.resources.rollout`，�
 - add superseded notes to:
   - `docs/sprints/done/SPRINT_single_gpu_continuous_rollout_debug.md`;
   - relevant single-GPU claims in
-    `docs/sprints/parked/SPRINT_async_rollout_train_overlap.md`;
+    `docs/sprints/planned/SPRINT_async_rollout_train_overlap.md`;
 - preserve completed docs as history; do not rewrite old result sections to pretend the old design never existed.
 
 ## 8. Definition of done

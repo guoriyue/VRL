@@ -389,5 +389,5 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 - `docs/sprints/parked/SPRINT_diffusion_native_transformer_executor.md`
 - `docs/sprints/parked/SPRINT_cross_request_step_scheduler.md`
 - `docs/sprints/reading/SPRINT_paged_trajectory_store.md`
-- `docs/sprints/parked/SPRINT_weight_sync_transport_seam.md`
+- `docs/sprints/planned/SPRINT_weight_sync_transport_seam.md`
 - `docs/sprints/done/SPRINT_slime_overlap_strategy.md`

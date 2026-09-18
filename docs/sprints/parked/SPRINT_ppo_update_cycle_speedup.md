@@ -1,5 +1,7 @@
 # SPRINT: PPO 训练相位提速（GRPO update cycle speedup, cosmos V2W 93f 单卡）
 
+> Parked 2026-09-17: waiting for a GPU free for a cosmos 480p/93f curve (P0 quality gate + P2 three-update gate). No progress since 2026-07-18.
+
 状态：**in progress（2026-07-18）**。P2 的 generation/replay chunk 解耦、运行时消费者与
 CPU 合约已经落地；P1 的 selective-checkpoint 分支已由 93f 单卡 OOM 探针关闭。P0 的真实输出质量门和 P2 的三次真实
 optimizer update GPU 门仍未完成，因此本文是 active Sprint，不能归档为 done。

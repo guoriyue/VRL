@@ -1,5 +1,7 @@
 # SPRINT PROGRAM: Agentic Visual RL
 
+> Parked 2026-09-17: the Janus-Pro pilot it starts from was deleted with the token-AR families (2026-09-16). Waiting for a non-AR agentic controller seam. §1's definition of "agentic" and the Sprint 1-3 gates are the reusable content; the agentic_image_* child sprints were deleted.
+
 状态：**planned / direction-decided（2026-07-11）**。第一项可执行工作是
 `SPRINT_janus_r1_agentic_credit_assignment.md`；后续通用 runtime、外部 controller 和联合训练均按
 各自的事件 gate 放在 `parked/`，不能平行开工。

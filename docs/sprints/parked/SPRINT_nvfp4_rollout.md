@@ -1,5 +1,7 @@
 # SPRINT: NVFP4 rollout（fp4 生成 + bf16 训练重放）
 
+> Parked 2026-09-17: waiting for a decision to spend GPU on the P2 SDE-logprob + reward-curve gate. The named probe `vrl/scripts/perf/fp8_rollout_drift_probe.py` no longer exists; re-point to `quantized_rollout_drift_probe.py` when reopened.
+
 状态：**in progress（P1 已落地，P2 待验收；2026-07-12）**。生产 runtime 已支持显式的
 BF16-base NVFP4 rollout、MLP-only targeting、weight-sync requantization、compile coverage，
 以及 fail-fast hardware/zero-swap gate。P2 仍需完成真实 MLP-only rollout 到 BF16 replay 的

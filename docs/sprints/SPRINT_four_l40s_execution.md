@@ -110,16 +110,16 @@ not replace them or narrow their scope; add newly discovered hardware gates.
    checkpoint/resume gates (`done/SPRINT_multi_gpu_training.md`).
 3. SD3.5 dedicated-rollout strict/continuous comparisons and repeatable recipe
    evidence (`planned/SPRINT_miles_recipe_evidence.md`,
-   `parked/SPRINT_async_rollout_train_overlap.md`).
+   `planned/SPRINT_async_rollout_train_overlap.md`).
 4. Real GPU weight-delivery verification and transport measurements
    (`planned/SPRINT_miles_weight_delivery_verification.md`).
 5. Wan 2.1 I2V real distributed update and checkpoint/resume
    (`planned/SPRINT_wan_2_1_i2v_proof_run.md`).
 6. Wan 2.2 dual-expert update, lifecycle evidence, and resume
-   (`planned/SPRINT_wan_2_2_proof_run.md`). Its historical disk blocker must be
+   (`parked/SPRINT_wan_2_2_proof_run.md`). Its historical disk blocker must be
    rechecked against the already-mounted NVMe, without formatting any device.
 7. Video training context parallelism numerical and memory gates
-   (`parked/SPRINT_video_context_parallel.md`).
+   (`planned/SPRINT_video_context_parallel.md`).
 8. Cosmos Predict2.5 numerical gates and full paper-shaped workload
    (`parked/SPRINT_cosmos_predict25_rl_paper_parity.md`). Preserve its stated
    batch, frames, resolution, and update budget; smoke is not completion.
@@ -1381,7 +1381,7 @@ No Codex GPU stage was launched, and the two-rank I2V resume remains queued.
 
 User requested this as the next step of the continuous experiment, without
 interrupting the running queue. Follow
-[SD3.5 continuous controlled follow-up](planned/SPRINT_sd35_continuous_controlled_followup.md):
+[SD3.5 continuous controlled follow-up](done/SPRINT_sd35_continuous_controlled_followup.md):
 integrate candidate `e11c04bc`, verify full-batch/streaming semantics and real
 worker weight delivery, then measure matched single-/multi-GPU throughput and
 paired learning results. Existing pre-fix runs remain diagnostic evidence.
@@ -1423,7 +1423,7 @@ Same seed, same prompts per epoch, `experiment/sd3_5/online_grpo_ocr_dedicated_3
   = 1.04x; step-1 phase_times 524 s vs 472 s. `queue_wait` 0 s, but evaluate
   slowed from 248 s to ~295 s while the CPU OCR reward ran in the background,
   eating half of the 127 s collect overlap. The Codex-side global_std
-  correction (see planned/SPRINT_sd35_continuous_controlled_followup.md) does
+  correction (see done/SPRINT_sd35_continuous_controlled_followup.md) does
   not change these mechanics.
 
 ### GPU claim (vrl-74, 2026-09-12 12:47 PDT)

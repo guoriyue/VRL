@@ -13,7 +13,7 @@ file:line 相对各自 repo root;我们的相对 `vrl/`。
 | [slime_cosmos_minibatch.md](slime_cosmos_minibatch.md) | mini-batch + **跨 rollout/train 的 mini-batch** |
 
 配套:逐系统深读在 [slime.md](slime.md) / [cosmos-rl.md](cosmos-rl.md);async overlap 的设计裁决(DiffusionNFT-locked)在
-`../parked/SPRINT_async_rollout_train_overlap.md`。
+`../planned/SPRINT_async_rollout_train_overlap.md`。
 
 ---
 

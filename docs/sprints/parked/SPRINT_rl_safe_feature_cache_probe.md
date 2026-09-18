@@ -55,7 +55,7 @@ ode_cached    : cached/skip/reuse, no PG log_prob
 ## References
 
 - `docs/sprints/done/SPRINT_rollout_vllm_migration.md`
-- `docs/sprints/parked/SPRINT_efficient_rollout_program.md`
+- `docs/sprints/info/SPRINT_efficient_rollout_program.md`
 - `vrl/generation/steps/denoise/teacache.py`
 - `vrl/generation/steps/denoise/loop.py`
 - `vrl/scripts/perf/teacache_drift_probe.py`

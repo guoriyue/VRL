@@ -1,6 +1,6 @@
 # SPRINT: 可训练权重的放置归训练策略所有（删除 `defer_trainable_device_move`）
 
-状态：已实施（未提交）。分支 `review/combined-20260916`。验证记录见 §7。
+状态：已完成。两步分别提交为 `ef61daca` 和 `ce645413`。验证记录见 §7、§8。
 
 ## 1. 问题
 

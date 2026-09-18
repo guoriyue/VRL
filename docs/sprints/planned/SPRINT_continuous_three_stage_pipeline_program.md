@@ -104,7 +104,7 @@ trainer 永远看不到 unscored 数据。
 
 ### Sprint 2 — Versioned two-batch lookahead
 
-[文档](../parked/SPRINT_continuous_versioned_lookahead.md)
+[文档](../planned/SPRINT_continuous_versioned_lookahead.md)
 
 触发：Sprint 1 完成。当前 recipe 已把 `prompts` 和 `next_prompts` 同时交给 schedule，本 sprint
 允许 owner 在当前 batch 尚未打分完成时就安装一个 next batch。窗口固定受 policy staleness 和
@@ -249,7 +249,7 @@ GPU duty 是诊断指标，不是单独的通过条件。允许短暂 kernel lau
 - [Continuous scheduler redesign](../done/SPRINT_continuous_scheduler_redesign.md)
 - [Slime overlap strategy](../done/SPRINT_slime_overlap_strategy.md)
 - [Reward service](../done/SPRINT_reward_service.md)
-- [Historical async rollout/train overlap](../parked/SPRINT_async_rollout_train_overlap.md)
+- [Historical async rollout/train overlap](../planned/SPRINT_async_rollout_train_overlap.md)
 - [Historical batched reward inference](../parked/SPRINT_reward_batched_inference.md)
 - [Rollout finalize overlap GA](SPRINT_rollout_finalize_overlap_ga.md)
 

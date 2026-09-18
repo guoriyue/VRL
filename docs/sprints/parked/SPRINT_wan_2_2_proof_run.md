@@ -1,5 +1,7 @@
 # SPRINT: Wan 2.2 A14B GRPO proof run（落地验证）
 
+> Parked 2026-09-17: waiting for the coordinated four-L40S GPU queue. `planned/SPRINT_wan22_grpo_throughput_weight_placement.md` already ran the A14B dual-expert GRPO and supersedes several gates here.
+
 ## Current execution state (2026-09-12 UTC)
 
 Status: **PLANNED: T2V/I2V caches ready, awaiting the coordinated GPU queue**.

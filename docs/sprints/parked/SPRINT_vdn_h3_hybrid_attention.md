@@ -1,5 +1,7 @@
 # SPRINT: VDN-H3 接入 — 把 hybrid window-softmax / linear attention 嫁接到已有的 minimax_h3 家族
 
+> Parked 2026-09-17: same event as minimax_h3_family (real weights + multi-GPU box, §5).
+
 **日期**: 2026-09-07  **状态**: code-complete，CPU tiny-real 全绿；真权重未验证（见 §5）
 **触发**: 用户 "can i add support for this model" → "please don't worry add full support
 for minimax h3 and this linear attention"

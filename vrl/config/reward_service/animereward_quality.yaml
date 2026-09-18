@@ -7,7 +7,7 @@
 # Run this from an environment pinned to transformers 4.49 + tokenizers 0.21 --
 # NOT the repo venv. The head is Mantis's Idefics2 fork, which predates the 5.x
 # cache API; 4.44 is too old to read this checkpoint's tokenizer.json. See
-# docs/sprints/SPRINT_anima_rl_5090.md.
+# docs/sprints/info/SPRINT_anima_rl_5090.md.
 #
 #   <pinned-env>/bin/python -m vrl.rewards.service.server \
 #     --config vrl/config/reward_service/animereward_quality.yaml

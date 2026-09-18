@@ -456,7 +456,7 @@ records the rule.
 
 ## Night sprint batch 0 (2026-09-13): baseline before the cleanup
 
-Plan: `docs/sprints/SPRINT_test_cleanup_night.md`. Branch at `origin/main`
+Plan: `docs/sprints/planned/SPRINT_test_cleanup_night.md`. Branch at `origin/main`
 (`b64baced`), venv synced to the lock (zero drift after upstream `78d2edc6`
 retired the editable `third_party` wrapper).
 
