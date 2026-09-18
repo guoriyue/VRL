@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 import torch.nn as nn
 
-from vrl.algorithms.advantages import all_reduce_sufficient_stats
+from vrl.algorithms.advantages import all_reduce_sufficient_stats, nonzero_advantage_mask
 from vrl.algorithms.base import Algorithm, ComponentAdvantageAlgorithm
 from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
@@ -64,16 +64,6 @@ if TYPE_CHECKING:
     from vrl.algorithms.trajectory import AlgorithmAdapter
 
 logger = logging.getLogger(__name__)
-
-
-def _nonzero_advantage_mask(advantages: torch.Tensor) -> torch.Tensor:
-    """Flow-GRPO's mask for samples with non-zero total advantage."""
-
-    adv_abs = advantages.detach().abs()
-    if adv_abs.dim() <= 1:
-        return adv_abs != 0
-    reduce_dims = tuple(range(1, adv_abs.dim()))
-    return adv_abs.sum(dim=reduce_dims) != 0
 
 
 def _global_reward_stats(rewards: Any) -> tuple[float, float]:
@@ -1045,7 +1035,7 @@ class OnlineTrainer:
         filtered_advs: list[torch.Tensor] = []
         if cfg.drop_zero_advantage:
             for b, adv_b in zip(all_batches, adv_split, strict=True):
-                mask = _nonzero_advantage_mask(adv_b)
+                mask = nonzero_advantage_mask(adv_b)
                 if not bool(mask.any()):
                     continue
                 if not bool(mask.all()):

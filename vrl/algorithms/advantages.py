@@ -6,6 +6,16 @@ from collections.abc import Mapping
 from typing import Any, ClassVar
 
 
+def nonzero_advantage_mask(advantages: Any) -> Any:
+    """Flow-GRPO's mask for samples with non-zero total advantage."""
+
+    adv_abs = advantages.detach().abs()
+    if adv_abs.dim() <= 1:
+        return adv_abs != 0
+    reduce_dims = tuple(range(1, adv_abs.dim()))
+    return adv_abs.sum(dim=reduce_dims) != 0
+
+
 def all_reduce_sufficient_stats(values: Any) -> tuple[Any, Any, Any]:
     """Cross-rank ``(Σx, Σx², n)`` in one SUM collective.
 
@@ -259,4 +269,4 @@ class GroupAdvantageEstimator:
     }
 
 
-__all__ = ["GroupAdvantageEstimator", "group_relative_advantages"]
+__all__ = ["GroupAdvantageEstimator", "group_relative_advantages", "nonzero_advantage_mask"]

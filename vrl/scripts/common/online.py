@@ -15,6 +15,7 @@ from typing import Any
 import torch
 from omegaconf import DictConfig
 
+from vrl.algorithms.advantages import nonzero_advantage_mask
 from vrl.config.builders import BuiltConfigs
 from vrl.config.schema import RootConfig
 from vrl.generation.ray.launcher import RayGenerationLauncher
@@ -27,7 +28,6 @@ from vrl.ray.resources import (
 )
 from vrl.rewards import RewardRuntime
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.batch.ops import nonzero_advantage_mask
 from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.orchestration import (
     RolloutSchedule,
