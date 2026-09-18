@@ -360,9 +360,6 @@ class _CausVidPolicyModel(DiffusionModelBase):
     # this class inherits).
     replay_indexes_timesteps: ClassVar[bool] = False
 
-    # Empty training adapters must initially preserve the base CausVid output.
-    lora_init_weights_default: ClassVar[Any] = True
-
     def __init__(
         self,
         *,

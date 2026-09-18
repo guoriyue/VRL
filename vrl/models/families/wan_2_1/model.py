@@ -32,7 +32,7 @@ import sys
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, ClassVar
+from typing import Any
 
 import torch
 
@@ -249,17 +249,6 @@ class WanT2VDiffusersModel(
                 (build.model_config or {}).get("expert_lifecycle_profiling", False),
             ),
         )
-
-    # Empty training adapters must initially preserve base Wan output.
-    lora_init_weights_default: ClassVar[Any] = True
-    # Adapters are created in the transformer's resolved dtype, not peft's
-    # default fp32 upcast: the FSDP actor policy stores every trainer parameter
-    # in the resolved low precision (update precision comes from the fp32-master
-    # optimizer on all topologies), so an fp32 adapter makes the rollout
-    # worker's runtime dtype diverge from the FSDP trainer's synced payload and
-    # load_trainable_state fails its strict dtype check (measured on the hpsv3
-    # fsdp 4-rank smoke, 2026-08-16).
-    lora_autocast_adapter_dtype: ClassVar[bool] = False
 
     def _defer_trainable_device_move(self, build: ModelBuild) -> bool:
         # Keep the full transformer on CPU for FSDP or pipeline CPU offload.

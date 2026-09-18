@@ -155,10 +155,9 @@ def test_wan_adapter_storage_preserves_frozen_base(
     before = base.detach().clone()
     pointer = base.data_ptr()
     build = lora_test_build(
-        _lora_values(0.0),
+        {**_lora_values(0.0), "parameter_dtype": adapter_dtype},
         family="wan_2_1",
         lora_path=None,
-        model_config={"lora_parameter_dtype": adapter_dtype},
     )
     if warm_start:
         source = _model()

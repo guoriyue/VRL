@@ -406,21 +406,8 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
 
     # ── LoRA ──────────────────────────────────────────────────────────
     # One attach implementation over ``trainable_modules`` + ``set_module_root``.
-    # A family declares only the three facts below; it never re-implements the
-    # PEFT call sequence (the per-family copies this replaced drifted on the
-    # adapter dtype, which is a weight-sync contract, not a family choice).
-
-    # Fresh-adapter init when ``model.lora.init_lora_weights`` is unset.
-    # ``True`` (PEFT's kaiming-uniform A / zero B) keeps the base output at
-    # step 0; the diffusers image families keep flow_grpo's gaussian init.
-    lora_init_weights_default: ClassVar[Any] = "gaussian"
-    # PEFT's fp32 adapter upcast. ``False`` constructs adapters in the
-    # transformer's resolved dtype so single-process, FSDP and rollout replicas
-    # stay byte-compatible at weight sync.
-    lora_autocast_adapter_dtype: ClassVar[bool] = True
-    # Always build the frozen ``previous`` mirror; other families opt in per run
-    # through ``model.nft_previous_adapter``.
-    lora_previous_policy_adapter: ClassVar[bool] = False
+    # Family schemas resolve adapter defaults before this shared PEFT sequence;
+    # placement stays here because the loaded model owns residency.
 
     def _defer_trainable_device_move(self, build: ModelBuild) -> bool:
         """Whether attach leaves the trainable roots where they were loaded.
@@ -450,7 +437,7 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         roots = self.trainable_modules
         if not roots:
             raise RuntimeError(f"{type(self).__name__} exposes no trainable module for LoRA")
-        lora_path = build.lora_path
+        lora_path = lora_config.path
         if lora_path and len(roots) != 1:
             raise ValueError(
                 "model.lora.path can only resume one trainable root; "
@@ -459,8 +446,6 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
         defer_device_move = self._defer_trainable_device_move(build) or bool(
             build.rollout is not None and build.precision.quantization,
         )
-        # Declared by WanModelSection only; every other section rejects the key.
-        adapter_dtype = (build.model_config or {}).get("lora_parameter_dtype")
         for name, module in roots.items():
             module.requires_grad_(False)
             if not defer_device_move:
@@ -469,42 +454,44 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
                 wrapped = load_trainable_lora_adapter(
                     module,
                     lora_path,
-                    expected_rank=lora_config["rank"],
-                    expected_alpha=lora_config["alpha"],
-                    expected_dropout=lora_config.get("dropout", 0.0),
-                    expected_target_modules=lora_config["target_modules"],
+                    expected_rank=lora_config.rank,
+                    expected_alpha=lora_config.alpha,
+                    expected_dropout=lora_config.dropout,
+                    expected_target_modules=lora_config.target_modules,
                     adapter_name="default",
-                    autocast_adapter_dtype=self.lora_autocast_adapter_dtype,
+                    autocast_adapter_dtype=lora_config.autocast_adapter_dtype,
                 )
                 wrapped.set_adapter("default")
             else:
                 wrapped = get_peft_model(
                     module,
                     LoraConfig(
-                        r=lora_config["rank"],
-                        lora_alpha=lora_config["alpha"],
-                        lora_dropout=lora_config.get("dropout", 0.0),
-                        init_lora_weights=lora_config.get(
-                            "init_lora_weights", self.lora_init_weights_default
-                        ),
-                        target_modules=lora_config["target_modules"],
+                        r=lora_config.rank,
+                        lora_alpha=lora_config.alpha,
+                        lora_dropout=lora_config.dropout,
+                        init_lora_weights=lora_config.init_lora_weights,
+                        target_modules=lora_config.target_modules,
                     ),
-                    autocast_adapter_dtype=self.lora_autocast_adapter_dtype,
+                    autocast_adapter_dtype=lora_config.autocast_adapter_dtype,
                 )
-            if adapter_dtype == "float32":
+            if lora_config.parameter_dtype == "float32":
                 for parameter in wrapped.parameters():
                     if parameter.requires_grad:
                         parameter.data = parameter.data.to(dtype=torch.float32)
             self.set_module_root(name, wrapped)
-        if self.lora_previous_policy_adapter or build.previous_policy_adapter_requested:
-            self.attach_previous_policy_adapter()
+        if lora_config.previous_adapter:
+            self.attach_previous_policy_adapter(
+                autocast_adapter_dtype=(
+                    lora_config.autocast_adapter_dtype or lora_config.parameter_dtype == "float32"
+                ),
+            )
 
     # Both DiffusionNFT and V-GRPO evaluate the behaviour policy through a
     # frozen ``previous`` copy of the trainable adapter: forward-only under
     # no_grad, refreshed by weight copy after each optimizer step, never
     # optimized. Attach runs right after the normal LoRA attach.
 
-    def attach_previous_policy_adapter(self) -> None:
+    def attach_previous_policy_adapter(self, *, autocast_adapter_dtype: bool = True) -> None:
         """Build the frozen ``previous`` adapter on ``self.transformer``."""
 
         from vrl.models.steps.denoise.common import lora as _lora
@@ -517,7 +504,13 @@ class DiffusionModelBase(ReplayRequestContract, nn.Module, ABC):
             config = deepcopy(transformer.peft_config["default"])
             config.init_lora_weights = "gaussian"
             config.inference_mode = False
-            transformer.add_adapter("previous", config)
+            # PEFT otherwise upcasts the mirror even when default stays bf16.
+            # Mirror creation must use the same effective storage policy.
+            transformer.add_adapter(
+                "previous",
+                config,
+                autocast_adapter_dtype=autocast_adapter_dtype,
+            )
         _lora.copy_adapter_weights(transformer, src="default", dst="previous")
         _lora.freeze_checkpoint_owned_adapter_params(transformer, "previous")
         transformer.set_adapter("default")

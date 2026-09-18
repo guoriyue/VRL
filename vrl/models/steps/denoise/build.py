@@ -64,8 +64,8 @@ def build_denoise_runtime_bundle(
         lora_config = build.require_lora_config()
         logger.info(
             "Applied LoRA (rank=%d, alpha=%d)",
-            lora_config["rank"],
-            lora_config["alpha"],
+            lora_config.rank,
+            lora_config.alpha,
         )
     # Quantize -> device move -> compile -> offload hooks -> VAE decode memory.
     # The whole sequence and its ordering constraints live in the pass layer.
@@ -125,21 +125,6 @@ def assemble_replay_bundle(
     )
 
 
-def _check_lora_only(entry, model_cls: type, build: ModelBuild) -> None:
-    """Fail a LoRA-only family before paying the transformer load.
-
-    A recipe that always builds the frozen ``previous`` PEFT mirror
-    (``DiffusionModelBase.lora_previous_policy_adapter``) cannot run as a full
-    finetune; the model class declares that fact, so no registry flag repeats it.
-    """
-
-    if getattr(model_cls, "lora_previous_policy_adapter", False) and not build.use_lora:
-        raise RuntimeError(
-            f"model family {entry.family!r} is LoRA-only (its recipe builds the "
-            "previous-policy adapter); set model.use_lora=true.",
-        )
-
-
 def build_family_runtime_bundle(
     build: ModelBuild,
     *,
@@ -165,7 +150,7 @@ def build_family_runtime_bundle(
             f"rollout build family {build.family!r} does not match entry {entry.family!r}",
         )
     model_cls = import_from_path(recipe.model_cls)
-    _check_lora_only(entry, model_cls, build)
+    build.require_lora_for_previous_policy_adapter()
     logger.info("Building %s runtime bundle (registry descriptor)", entry.family)
     return build_denoise_runtime_bundle(build, model_cls=model_cls)
 
@@ -194,7 +179,7 @@ def build_family_replay_runtime_bundle(
             "invoke its registered replay_runtime_builder instead",
         )
     replay_cls = import_from_path(recipe.replay_cls)
-    _check_lora_only(entry, replay_cls, build)
+    build.require_lora_for_previous_policy_adapter()
     logger.info(
         "Building %s replay runtime bundle (registry descriptor) from %s",
         entry.family,

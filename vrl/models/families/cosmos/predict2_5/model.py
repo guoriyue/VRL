@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 import sys
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal
+from typing import Any, Literal
 
 import torch
 
@@ -198,10 +198,6 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             device=build.device,
             synthetic_prompt_embeds=skip_text_encoder,
         )
-
-    # DiffusionNFT's forward-only "previous" mirror is part of this family's
-    # recipe, not a per-run switch: the base attach builds it on every LoRA run.
-    lora_previous_policy_adapter: ClassVar[bool] = True
 
     def apply_full_finetune(self, build: ModelBuild) -> None:
         del build
