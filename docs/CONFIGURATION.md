@@ -86,7 +86,7 @@ Migration from the former layout:
 | Old setting | Current setting |
 | --- | --- |
 | `model.lora_parameter_dtype` | `model.lora.parameter_dtype` |
-| `model.nft_previous_adapter` | `model.lora.previous_adapter` |
+| `model.nft_previous_adapter` / `model.lora.previous_adapter` | Remove; the algorithm contract requests the mirror automatically |
 | `model.lora.init` (never consumed) | Remove it; use `model.lora.init_lora_weights` for initialization |
 
 The removed spellings are rejected, not silently aliased. The persisted v1
@@ -95,11 +95,23 @@ change alone does not invalidate existing checkpoints. Historical run
 snapshots retain their original configuration and need these key migrations
 if relaunched. An explicit non-default adapter-upcast policy changes identity.
 
-Flux and SD3.5 support the optional frozen `previous_adapter`; Predict2.5
-requires it and remains LoRA-only. Other families reject this switch because
-they do not expose the required previous-policy forward interface. Adapter
-copying, checkpoint ownership, and model residency remain runtime concerns,
-not configuration-manager responsibilities.
+The algorithm contract, not a model recipe, owns the previous-policy requirement.
+The current NFT and V-GRPO implementations require a frozen PEFT adapter and
+therefore reject full-parameter training. GRPO does not request that mirror.
+Flux, SD3.5, and Predict2.5 declare support for its forward interface; choosing
+one of these models alone never enables it. Predict2.5 uses the shared
+full-finetune path for other algorithms; this is not evidence of a validated
+full-parameter GPU training recipe.
+
+The config-to-build boundary derives `ModelBuild.previous_policy_adapter`
+from the algorithm contract for both replay and rollout, retaining matching
+adapter layouts through Ray and resume. Evaluation using a full NFT/V-GRPO
+training config retains that layout; a model-only generation config has no
+mirror. Existing NFT checkpoint identities remain compatible. Predict2.5
+GRPO now has a different identity because it no longer carries the previously
+unconditional mirror; old GRPO checkpoints are intentionally not treated as
+an identical exact-resume topology. Adapter copying, checkpoint ownership,
+and model residency remain runtime concerns.
 
 ## Validation tiers
 
