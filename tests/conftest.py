@@ -291,7 +291,12 @@ def _no_implicit_cuda(request, monkeypatch):
     still patches ``is_available``/``device_count`` on top of this, as
     ``cuda_devices`` does.
     """
-    if request.node.get_closest_marker("gpu") is not None:
+    # ``e2e`` is the real-weights lane: it is GPU by definition (opt-in via
+    # WM_RUN_REAL_MODEL_TESTS) and must see the card too.
+    if (
+        request.node.get_closest_marker("gpu") is not None
+        or request.node.get_closest_marker("e2e") is not None
+    ):
         return
     try:
         import torch
