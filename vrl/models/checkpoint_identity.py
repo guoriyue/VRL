@@ -678,10 +678,15 @@ def resolve_checkpoint_model_identity(
         source_is_file[source_name] = is_file
 
     build_values: dict[str, Any] = {}
-    if schema_cls.supports_previous_adapter:
-        build_values["nft_previous_adapter"] = schema_cls.resolve_lora(
-            model_config.get("lora"),
-        ).previous_adapter
+    # Persisted v1 layout: Flux/SD3 recorded the mirror explicitly; Predict2.5
+    # implicitly always had one. Preserve old NFT identities, but distinguish
+    # new Predict2.5 runs without the mirror. This is format compatibility,
+    # never a decision about which adapters the model should construct.
+    previous_adapter = build.previous_policy_adapter
+    if build.family in ("flux", "sd3_5") or (
+        build.family == "cosmos-predict2.5" and not previous_adapter
+    ):
+        build_values["nft_previous_adapter"] = previous_adapter
     for source_name, members in active_members.items():
         if source_name not in sources:
             continue
@@ -762,7 +767,6 @@ def resolve_checkpoint_model_identity(
             # These names are part of the persisted v1 identity, not config
             # aliases. Keep existing checkpoints resumable after moving the
             # public settings into model.lora.
-            lora_values.pop("previous_adapter", None)
             adapter_dtype = lora_values.pop("parameter_dtype", None)
             if adapter_dtype is not None:
                 build_values["lora_parameter_dtype"] = adapter_dtype
