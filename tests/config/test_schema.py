@@ -18,7 +18,7 @@ from vrl.config.schema import (
 @pytest.mark.parametrize("family", ["cosmos-predict2", "cosmos-predict2.5"])
 def test_cosmos_video_accepts_frame_shared_adaln(family: str) -> None:
     cfg = parse_config(
-        minimal_grpo_cfg(model={"family": family, "frame_shared_adaln": True}),
+        minimal_grpo_cfg(model={"family": family, "frame_shared_adaln": True, "use_lora": True}),
     )
     assert cfg.model.model_dump()["frame_shared_adaln"] is True
 

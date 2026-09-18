@@ -189,7 +189,7 @@ def test_root_retains_selected_family_model_section_and_serializes_its_fields() 
 
 def test_cosmos_predict25_keys_select_family_section() -> None:
     cfg = OmegaConf.create(
-        {"model": {"family": "cosmos-predict2.5", "skip_text_encoder": True}},
+        {"model": {"family": "cosmos-predict2.5", "use_lora": True, "skip_text_encoder": True}},
     )
 
     assert unknown_keys(cfg) == []
@@ -220,7 +220,7 @@ def test_cosmos_anima_keys_select_family_section() -> None:
 @pytest.mark.parametrize(
     ("family", "section_cls", "payload"),
     [
-        ("flux", FluxModelSection, {"nft_previous_adapter": True}),
+        ("flux", FluxModelSection, {"use_lora": True, "lora": {"previous_adapter": True}}),
         (
             "echo",
             EchoModelSection,
@@ -263,17 +263,21 @@ def test_family_owned_denoise_keys_select_their_public_sections(
     parsed = parse_config(cfg)
     assert type(parsed.model) is section_cls
     assert parsed.model is not None
-    parsed_payload = parsed.model.model_dump()
+    parsed_payload = parsed.model.model_dump(exclude_unset=True)
     assert {key: parsed_payload[key] for key in payload} == payload
 
 
 def test_model_family_aliases_select_their_canonical_section_classes() -> None:
     for alias, family in _FAMILY_BY_ALIAS.items():
         canonical = parse_config(
-            OmegaConf.create({"model": {"family": family}}),
+            OmegaConf.create(
+                {"model": {"family": family, "use_lora": family == "cosmos-predict2.5"}}
+            ),
         )
         parsed_alias = parse_config(
-            OmegaConf.create({"model": {"family": alias}}),
+            OmegaConf.create(
+                {"model": {"family": alias, "use_lora": family == "cosmos-predict2.5"}}
+            ),
         )
 
         assert type(parsed_alias.model) is type(canonical.model)
@@ -302,7 +306,6 @@ def test_shared_nested_model_sections_preserve_explicit_falsy_presence() -> None
             "target_modules": [],
             "init_lora_weights": False,
             "dropout": 0.0,
-            "init": None,
         },
         "memory": {
             "vae_decode": {
@@ -374,10 +377,18 @@ def test_model_runtime_sections_follow_family_capabilities() -> None:
 
     for family, (supports_executor, supports_memory) in _MODEL_RUNTIME_CAPABILITY_MATRIX.items():
         executor_error = _parse_error(
-            {"family": family, "executor": {"max_sequence_length": 123}},
+            {
+                "family": family,
+                "use_lora": family == "cosmos-predict2.5",
+                "executor": {"max_sequence_length": 123},
+            },
         )
         memory_error = _parse_error(
-            {"family": family, "memory": {"vae_decode": {"tiling": True}}},
+            {
+                "family": family,
+                "use_lora": family == "cosmos-predict2.5",
+                "memory": {"vae_decode": {"tiling": True}},
+            },
         )
         if supports_executor:
             assert executor_error is None, family
@@ -401,6 +412,7 @@ def test_empty_model_runtime_sections_are_valid_for_every_family(
                 {
                     "model": {
                         "family": family,
+                        "use_lora": family == "cosmos-predict2.5",
                         "executor": empty_value,
                         "memory": empty_value,
                     },

@@ -35,7 +35,11 @@ if TYPE_CHECKING:
 def check_cross_section_rules(root: RootConfig) -> None:
     """Run every cross-section check against ``root``; the first violation raises."""
 
-    if getattr(root.model, "lora_parameter_dtype", None) == "float32":
+    if (
+        root.model is not None
+        and root.model.lora is not None
+        and root.model.lora.parameter_dtype == "float32"
+    ):
         training = root.distributed.training if root.distributed is not None else None
         if (
             training is not None
@@ -43,7 +47,7 @@ def check_cross_section_rules(root: RootConfig) -> None:
             and (training.fsdp is None or training.fsdp.precision_policy != "none")
         ):
             raise ValueError(
-                "model.lora_parameter_dtype=float32 requires "
+                "model.lora.parameter_dtype=float32 requires "
                 "distributed.training.fsdp.precision_policy=none to preserve frozen dtypes",
             )
 

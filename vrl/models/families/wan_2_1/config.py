@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
-from vrl.config.model_schema import ModelSection
+from vrl.config.model_schema import LoraSection, ModelSection
 from vrl.models.checkpoint_identity import (
     checkpoint_identity_metadata,
     require_remote_checkpoint_source_pin,
@@ -23,16 +23,12 @@ WanTransformerName = Literal["transformer", "transformer_2"]
 class WanModelSection(ModelSection):
     """Wan-specific public model keys."""
 
-    lora_parameter_dtype: Literal["float32"] | None = Field(
-        default=None,
-        json_schema_extra=checkpoint_identity_metadata("value"),
+    # Keep the established initialization/RNG recipe. No PEFT fp32 upcast:
+    # rollout adapters must match the FSDP actor's synchronized storage dtype.
+    lora_defaults: ClassVar[LoraSection] = LoraSection(
+        init_lora_weights=True,
+        autocast_adapter_dtype=False,
     )
-
-    @model_validator(mode="after")
-    def _require_lora_for_parameter_dtype(self) -> WanModelSection:
-        if self.lora_parameter_dtype is not None and not self.use_lora:
-            raise ValueError("model.lora_parameter_dtype requires model.use_lora=true")
-        return self
 
     expert_lifecycle_profiling: bool = Field(
         default=False,

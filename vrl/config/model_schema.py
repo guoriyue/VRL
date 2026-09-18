@@ -7,7 +7,7 @@ without importing torch, diffusers, or upstream model packages.
 
 from __future__ import annotations
 
-from typing import Any, Self
+from typing import Any, ClassVar, Literal, Self
 
 from pydantic import Field, model_validator
 
@@ -46,9 +46,17 @@ class LoraSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("value", default=0.0),
     )
-    init: str | bool | None = Field(
+    autocast_adapter_dtype: bool | None = Field(
         default=None,
-        json_schema_extra=checkpoint_identity_metadata("exclude"),
+        json_schema_extra=checkpoint_identity_metadata("value"),
+    )
+    parameter_dtype: Literal["float32"] | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("value"),
+    )
+    previous_adapter: bool | None = Field(
+        default=None,
+        json_schema_extra=checkpoint_identity_metadata("value"),
     )
 
 
@@ -97,6 +105,41 @@ class ModelExecutorSection(ConfigBase):
 
 class ModelSection(ConfigBase):
     """Keys shared by every registered model family."""
+
+    # Defaults belong to the lightweight family schema, not the loaded model.
+    # Target names/rank/alpha remain recipe inputs in the model presets.
+    lora_defaults: ClassVar[LoraSection] = LoraSection(
+        init_lora_weights="gaussian",
+        autocast_adapter_dtype=True,
+        dropout=0.0,
+        previous_adapter=False,
+    )
+    supports_previous_adapter: ClassVar[bool] = False
+    always_previous_adapter: ClassVar[bool] = False
+
+    @classmethod
+    def resolve_lora(cls, values: dict[str, Any] | LoraSection | None) -> LoraSection:
+        """Resolve explicit settings over family defaults without mutating either."""
+
+        requested = (
+            values if isinstance(values, LoraSection) else LoraSection.model_validate(values or {})
+        )
+        resolved = LoraSection.model_validate(
+            {
+                **ModelSection.lora_defaults.model_dump(exclude_none=True),
+                **cls.lora_defaults.model_dump(exclude_none=True),
+                **requested.model_dump(exclude_none=True),
+            }
+        )
+        if cls.always_previous_adapter:
+            if requested.previous_adapter is False:
+                raise ValueError("this model recipe requires model.lora.previous_adapter=true")
+            resolved.previous_adapter = True
+        if resolved.previous_adapter and not (
+            cls.supports_previous_adapter or cls.always_previous_adapter
+        ):
+            raise ValueError("this model does not support model.lora.previous_adapter")
+        return resolved
 
     family: str = Field(
         json_schema_extra=checkpoint_identity_metadata("exclude"),
@@ -165,7 +208,7 @@ class ModelSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
-    use_lora: Any = Field(
+    use_lora: bool | None = Field(
         default=None,
         json_schema_extra=checkpoint_identity_metadata("value", default=False),
     )
@@ -177,10 +220,15 @@ class ModelSection(ConfigBase):
     )
 
     @model_validator(mode="after")
-    def _validate_lora_fusion(self) -> Self:
+    def _validate_lora(self) -> Self:
         # Without adapters the pass cannot replace any LoRA branch.
         if self.fused_lora_branch and not self.use_lora:
             raise ValueError("model.fused_lora_branch requires model.use_lora=true")
+        resolved = self.resolve_lora(self.lora)
+        if resolved.parameter_dtype is not None and not self.use_lora:
+            raise ValueError("model.lora.parameter_dtype requires model.use_lora=true")
+        if resolved.previous_adapter and not self.use_lora:
+            raise ValueError("model.lora.previous_adapter requires model.use_lora=true")
         return self
 
 

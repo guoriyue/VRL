@@ -3,22 +3,24 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from vrl.config.model_schema import LoraSection, ModelSection
 from vrl.config.rules import check_cross_section_rules
 from vrl.models.families.wan_2_1.config import WanModelSection
 
 
-def test_fp32_adapter_schema_requires_lora() -> None:
+@pytest.mark.parametrize("section,family", [(WanModelSection, "wan_2_1"), (ModelSection, "sana")])
+def test_fp32_adapter_schema_requires_lora(section: type[ModelSection], family: str) -> None:
     with pytest.raises(ValidationError, match=r"requires model\.use_lora"):
-        WanModelSection(family="wan_2_1", use_lora=False, lora_parameter_dtype="float32")
-    model = WanModelSection(family="wan_2_1", use_lora=True, lora_parameter_dtype="float32")
-    assert model.lora_parameter_dtype == "float32"
-    assert WanModelSection(family="wan_2_1").lora_parameter_dtype is None
+        section(family=family, use_lora=False, lora={"parameter_dtype": "float32"})
+    model = section(family=family, use_lora=True, lora={"parameter_dtype": "float32"})
+    assert model.lora.parameter_dtype == "float32"
+    assert section.resolve_lora(None).parameter_dtype is None
 
 
 @pytest.mark.parametrize("dtype", ["bfloat16", "float16", "auto"])
 def test_adapter_schema_rejects_unsupported_dtype(dtype: str) -> None:
-    with pytest.raises(ValidationError, match="lora_parameter_dtype"):
-        WanModelSection(family="wan_2_1", use_lora=True, lora_parameter_dtype=dtype)
+    with pytest.raises(ValidationError, match="parameter_dtype"):
+        WanModelSection(family="wan_2_1", use_lora=True, lora={"parameter_dtype": dtype})
 
 
 @pytest.mark.parametrize("policy", [None, "actor", "none"])
@@ -28,7 +30,7 @@ def test_fp32_adapter_requires_preserving_fsdp_policy(
     dtype: str | None,
 ) -> None:
     root = SimpleNamespace(
-        model=SimpleNamespace(lora_parameter_dtype=dtype),
+        model=SimpleNamespace(lora=LoraSection(parameter_dtype=dtype)),
         algorithm=None,
         distributed=SimpleNamespace(
             training=SimpleNamespace(

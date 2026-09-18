@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import Field
 
-from vrl.config.model_schema import ModelSection
+from vrl.config.model_schema import LoraSection, ModelSection
 from vrl.models.checkpoint_identity import checkpoint_identity_metadata
 
 # Immutable upstream protocol values shared by schema defaults and runtime
@@ -18,6 +18,9 @@ CAUSVID_CHECKPOINT_FILE = "autoregressive_checkpoint/model.pt"
 
 class CausVidModelSection(ModelSection):
     """CausVid pinned source, Wan base, and released checkpoint keys."""
+
+    # Preserve the released recipe's A initialization and RNG behavior.
+    lora_defaults: ClassVar[LoraSection] = LoraSection(init_lora_weights=True)
 
     accept_noncommercial_license: bool = Field(
         default=False,

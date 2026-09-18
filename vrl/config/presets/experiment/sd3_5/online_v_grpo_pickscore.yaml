@@ -45,6 +45,7 @@ trainer:
     first_step: true              # the lr=0 advantage-antisymmetry invariant
 
 model:
-  nft_previous_adapter: true      # frozen theta_old mirror (LoraModelMixin)
+  lora:
+    previous_adapter: true  # Frozen theta_old mirror for V-GRPO.
   torch_compile:
     enable: false                 # adapter switching per forward; keep eager
