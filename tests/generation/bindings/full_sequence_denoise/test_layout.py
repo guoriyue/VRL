@@ -333,7 +333,7 @@ def test_unseeded_window_survives_serialized_batch_split_retry(monkeypatch):
 
 
 def test_batch_broadcast_preserves_view_and_materialized_storage_contracts():
-    from vrl.models.steps.denoise.common.tensors import expand_tensor_to_batch
+    from vrl.utils.tensors import expand_tensor_to_batch
 
     source = torch.tensor([[1.0, 2.0]], requires_grad=True)
     view = expand_tensor_to_batch(source, 3)

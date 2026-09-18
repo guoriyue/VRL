@@ -59,8 +59,8 @@ from vrl.models.steps.denoise import (
     ReplayRolloutStubs,
 )
 from vrl.models.steps.denoise.common import ChunkedLatentDecoder, LatentDecodePlan
-from vrl.models.steps.denoise.common.tensors import expand_tensor_to_batch
 from vrl.utils.logging import init_logger, kv
+from vrl.utils.tensors import expand_tensor_to_batch
 
 logger = init_logger(__name__)
 

@@ -18,8 +18,7 @@ from vrl.models.steps.denoise.common.masked_prompt import (
     MaskedPromptSamplingState,
     TrainTimestepMaskedPromptSamplingState,
 )
-from vrl.models.steps.denoise.common.tensors import (
-    expand_tensor_to_batch,
+from vrl.models.steps.denoise.common.replay_tensors import (
     replay_tensor,
     shared_replay_tensor,
 )
@@ -29,6 +28,7 @@ from vrl.models.steps.denoise.common.timestep import (
     pack_eval_timestep,
     set_mu_shifted_timesteps,
 )
+from vrl.utils.tensors import expand_tensor_to_batch
 
 __all__ = [
     "ChunkedLatentDecoder",

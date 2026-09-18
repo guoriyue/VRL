@@ -1,15 +1,10 @@
-"""Shared tensor helpers for diffusion family runners and replay paths."""
+"""Replay-tensor lookups shared by the diffusion families' ``restore_eval_state``."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import torch
-
-# The batch expansion is layer-neutral (the generation executor applies it to
-# encoded prompt fields); it lives in vrl.utils and is re-exported here for the
-# family runners that read it next to the replay helpers.
-from vrl.utils.tensors import expand_tensor_to_batch
 
 
 def replay_tensor(
@@ -35,8 +30,4 @@ def shared_replay_tensor(
     return value
 
 
-__all__ = [
-    "expand_tensor_to_batch",
-    "replay_tensor",
-    "shared_replay_tensor",
-]
+__all__ = ["replay_tensor", "shared_replay_tensor"]
