@@ -69,32 +69,6 @@ def flipped_advantage_losses(
     return _loss(advantages), _loss(-advantages)
 
 
-def forward_process_prediction(
-    model: Any,
-    batch: Any,
-    timestep_index: int,
-    latents: Any,
-    *,
-    owner: str,
-) -> Any:
-    """The family's conditional denoiser output for ``latents`` at a trajectory step.
-
-    Runs the same rebuilt replay state the SDE objectives use, on the caller's
-    re-noised clean latent instead of the stored ``x_t``, with classifier-free
-    guidance forced off: the objectives compare raw policy predictions, so an
-    uncond branch and the guidance combine would only add cost and bias. The
-    active adapter is whatever the caller switched on around this call.
-    """
-
-    forward = getattr(model, "replay_forward_with_latents", None)
-    if not callable(forward):
-        raise RuntimeError(
-            f"{owner} model must expose replay_forward_with_latents(batch, timestep_idx, "
-            "latents, classifier_free_guidance=...) (the shared denoise replay forward)",
-        )
-    return forward(batch, timestep_index, latents, classifier_free_guidance=False)["noise_pred"]
-
-
 def sync_previous_policy_adapter(model: Any, *, decay: float, owner: str) -> None:
     """Refresh the model's previous-policy adapter copy (EMA with ``decay``)."""
 
@@ -107,9 +81,4 @@ def sync_previous_policy_adapter(model: Any, *, decay: float, owner: str) -> Non
     sync(decay=float(decay))
 
 
-__all__ = [
-    "flipped_advantage_losses",
-    "flow_time",
-    "forward_process_prediction",
-    "sync_previous_policy_adapter",
-]
+__all__ = ["flipped_advantage_losses", "flow_time", "sync_previous_policy_adapter"]

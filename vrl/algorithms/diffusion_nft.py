@@ -10,7 +10,6 @@ from vrl.algorithms.config_contract import AlgorithmConfigContract
 from vrl.algorithms.previous_adapter import (
     flipped_advantage_losses,
     flow_time,
-    forward_process_prediction,
     sync_previous_policy_adapter,
 )
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -214,21 +213,21 @@ class DiffusionNFT:
             torch.no_grad(),
             model_autocast(model, x0.device),
         ):
-            previous_prediction = forward_process_prediction(
-                model, batch, timestep_index, xt_input, owner="DiffusionNFT"
-            ).detach()
+            previous_prediction = model.replay_forward_with_latents(
+                batch, timestep_index, xt_input, classifier_free_guidance=False
+            )["noise_pred"].detach()
         with model_autocast(model, x0.device):
-            forward_prediction = forward_process_prediction(
-                model, batch, timestep_index, xt_input, owner="DiffusionNFT"
-            )
+            forward_prediction = model.replay_forward_with_latents(
+                batch, timestep_index, xt_input, classifier_free_guidance=False
+            )["noise_pred"]
         with (
             model.disable_adapter(),
             torch.no_grad(),
             model_autocast(model, x0.device),
         ):
-            ref_prediction = forward_process_prediction(
-                model, batch, timestep_index, xt_input, owner="DiffusionNFT"
-            ).detach()
+            ref_prediction = model.replay_forward_with_latents(
+                batch, timestep_index, xt_input, classifier_free_guidance=False
+            )["noise_pred"].detach()
 
         # Advantages are already clamped to ±adv_clip_max upstream in
         # compute_advantages_from_tensors (group_relative_advantages). The final

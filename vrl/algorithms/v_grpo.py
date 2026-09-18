@@ -58,7 +58,6 @@ from vrl.algorithms.diffusion_nft import normalized_mse
 from vrl.algorithms.previous_adapter import (
     flipped_advantage_losses,
     flow_time,
-    forward_process_prediction,
     sync_previous_policy_adapter,
 )
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -204,13 +203,13 @@ class VGRPO:
             torch.no_grad(),
             model_autocast(model, x0.device),
         ):
-            old_prediction = forward_process_prediction(
-                model, batch, timestep_index, xt_input, owner="V-GRPO"
-            ).detach()
+            old_prediction = model.replay_forward_with_latents(
+                batch, timestep_index, xt_input, classifier_free_guidance=False
+            )["noise_pred"].detach()
         with model_autocast(model, x0.device):
-            prediction = forward_process_prediction(
-                model, batch, timestep_index, xt_input, owner="V-GRPO"
-            )
+            prediction = model.replay_forward_with_latents(
+                batch, timestep_index, xt_input, classifier_free_guidance=False
+            )["noise_pred"]
 
         # x-prediction reparameterization of the rectified-flow velocity.
         x0_float = x0.float()
