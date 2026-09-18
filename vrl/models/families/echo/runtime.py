@@ -29,8 +29,18 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 
-def build_echo_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
-    """Build the trainer replay bundle: Echo's velocity transformer only."""
+def build_echo_replay_runtime_bundle(
+    build: ModelBuild,
+    *,
+    materialize_weights: bool = True,
+) -> RuntimeBundle:
+    """Build the trainer replay bundle: Echo's velocity transformer only.
+
+    The vendored LTX wrapper loads its checkpoint whole, so every rank
+    materializes real weights regardless of ``materialize_weights``.
+    """
+
+    del materialize_weights
 
     from vrl.models.families.echo.config import resolve_echo_video_dimensions
 

@@ -16,19 +16,52 @@ def load_diffusers_transformer(
     class_name: str,
     *,
     subfolder: str = "transformer",
+    materialize_weights: bool = True,
 ) -> Any:
-    """Load only a diffusers transformer component from a model repository."""
+    """Load only a diffusers transformer component from a model repository.
+
+    ``materialize_weights=False`` builds the module from the repository's
+    config alone, with every parameter on the ``meta`` device and buffers
+    computed normally: the shape a sharded training strategy fills from the
+    primary rank's weights, so only one process ever reads the checkpoint into
+    host memory. Nothing under ``subfolder`` but its config is opened.
+    """
 
     import diffusers
 
-    load_kwargs = build.pretrained_kwargs
     transformer_cls = getattr(diffusers, class_name)
-    return transformer_cls.from_pretrained(
-        build.model_name_or_path,
-        subfolder=subfolder,
-        torch_dtype=build.parameter_dtype,
-        **load_kwargs,
+    if materialize_weights:
+        return transformer_cls.from_pretrained(
+            build.model_name_or_path,
+            subfolder=subfolder,
+            torch_dtype=build.parameter_dtype,
+            **build.pretrained_kwargs,
+        )
+    return skeleton_from_config(
+        transformer_cls,
+        transformer_cls.load_config(
+            build.model_name_or_path,
+            subfolder=subfolder,
+            **build.pretrained_kwargs,
+        ),
+        dtype=build.parameter_dtype,
     )
+
+
+def skeleton_from_config(model_cls: Any, config: Any, *, dtype: Any) -> Any:
+    """Construct ``model_cls`` from ``config`` with meta parameters and real buffers.
+
+    The parameter dtypes follow ``dtype`` the way a plain ``from_pretrained``
+    cast would; a strategy that later fills the skeleton from another rank
+    re-syncs any per-parameter exception (diffusers' fp32 pins) before
+    materializing storage.
+    """
+
+    from accelerate import init_empty_weights
+
+    with init_empty_weights(include_buffers=False):
+        model = model_cls.from_config(config)
+    return model.to(dtype=dtype)
 
 
 def load_diffusers_scheduler(
@@ -41,12 +74,11 @@ def load_diffusers_scheduler(
 
     import diffusers
 
-    load_kwargs = build.pretrained_kwargs
     scheduler_cls = getattr(diffusers, class_name)
     scheduler = scheduler_cls.from_pretrained(
         build.model_name_or_path,
         subfolder=subfolder,
-        **load_kwargs,
+        **build.pretrained_kwargs,
     )
     num_steps = build.num_steps
     # Dynamic-shifting schedulers (e.g. FLUX's FlowMatchEulerDiscreteScheduler)

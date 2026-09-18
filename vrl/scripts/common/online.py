@@ -954,7 +954,10 @@ async def run_online_recipe(
     resume_dir = resume_checkpoint.checkpoint_dir if resume_checkpoint is not None else None
 
     _host_memory.log("before_trainer_bundle_build")
-    bundle = resolved_model.materialize(context="replay bundle construction")
+    bundle = resolved_model.materialize(
+        context="replay bundle construction",
+        materialize_weights=strategy.materialize_weights,
+    )
     _host_memory.log("after_trainer_bundle_build")
     enable_transformer_gradient_checkpointing(bundle, built.root)
     model = require_runtime_model(

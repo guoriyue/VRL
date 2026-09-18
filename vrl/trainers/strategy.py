@@ -53,6 +53,17 @@ class Strategy(Protocol):
 
     context: DistributedTrainingContext
 
+    @property
+    def materialize_weights(self) -> bool:
+        """Whether this process must load the replay model with real weights.
+
+        Unsharded backends replicate the policy, so every rank loads it. FSDP
+        loads on the primary rank only; ``prepare_model`` fills the other
+        ranks' meta skeletons from it, so a checkpoint is read into host memory
+        once per node instead of once per rank.
+        """
+        ...
+
     def prepare_model(self, model: Any) -> Any:
         """Return the model the trainer should train (wrapped if the backend needs it).
 
@@ -271,6 +282,11 @@ class _UnshardedStateStrategy:
     Concrete strategies inherit this implementation mixin directly. ``Strategy``
     stays outside their MRO as the structural contract consumed by the trainer.
     """
+
+    @property
+    def materialize_weights(self) -> bool:
+        # Every rank holds the full unsharded tensors, so every rank loads them.
+        return True
 
     def place_trainable_roots(self, model: Any) -> None:
         """Move the policy's trainable roots onto this process's device.
@@ -522,6 +538,12 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
             self._mesh = build_fsdp_mesh(self.context, self._mesh_dims)
         return self._mesh
 
+    @property
+    def materialize_weights(self) -> bool:
+        # The primary rank reads the checkpoint; ``prepare_model`` fills every
+        # other rank's meta skeleton from it after sharding.
+        return self.context.is_primary
+
     def prepare_model(self, model: Any) -> Any:
         """Shard the policy's trainable transformer in place and return the policy."""
         from vrl.trainers.fsdp import (
@@ -533,6 +555,32 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         # Validate the trainable handles BEFORE touching the process group so a bad
         # model fails fast (mirrors DDPStrategy; the guard tests need no live PG).
         handles = _trainable_module_handles(model)
+        # Create the process group + bind this rank's cuda device up front, exactly
+        # like DDPStrategy. init_device_mesh would lazily auto-init a default group,
+        # but it would NOT bind the process's resolved rank-local CUDA device first,
+        # so the NCCL group and per-block fully_shard could bind the wrong card on a
+        # single-node multi-GPU box. Doing it here keeps the two strategies symmetric
+        # and the device choice explicit. No-op for single_process and when a group
+        # already exists (the CPU gloo test fixture pre-inits one).
+        backend = "gloo" if self.context.device.type == "cpu" else "nccl"
+        init_training_process_group(self.context, backend=backend)
+        mesh = self._ensure_mesh()
+
+        # A rank that built the replay model without weights (``materialize_weights``
+        # False) carries meta parameters; the primary rank's tensors are the source
+        # for every rank. Decided collectively so the fill is a matched collective.
+        skeleton = any(
+            p.is_meta for _name, handle, _writer in handles for p in handle.parameters()
+        )
+        fill_from_primary = bool(self.collectives.max_int(int(skeleton)))
+        sources: dict[str, dict[str, Any]] = {}
+        if fill_from_primary:
+            for name, handle, _writer in handles:
+                self._match_primary_dtypes(handle)
+                # Plain host tensors on the primary; fully_shard swaps the module's
+                # parameters for DTensors but leaves these references intact.
+                sources[name] = dict(handle.state_dict()) if self.context.is_primary else {}
+
         prepared_handles: list[tuple[str, nn.Module, Any, torch.dtype]] = []
         for name, handle, writer in handles:
             parameter_dtype = getattr(handle, "dtype", None)
@@ -566,16 +614,6 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
                     allow_cast=self._precision_policy == "actor",
                 )
             prepared_handles.append((name, handle, writer, parameter_dtype))
-        # Create the process group + bind this rank's cuda device up front, exactly
-        # like DDPStrategy. init_device_mesh would lazily auto-init a default group,
-        # but it would NOT bind the process's resolved rank-local CUDA device first,
-        # so the NCCL group and per-block fully_shard could bind the wrong card on a
-        # single-node multi-GPU box. Doing it here keeps the two strategies symmetric
-        # and the device choice explicit. No-op for single_process and when a group
-        # already exists (the CPU gloo test fixture pre-inits one).
-        backend = "gloo" if self.context.device.type == "cpu" else "nccl"
-        init_training_process_group(self.context, backend=backend)
-        mesh = self._ensure_mesh()
         if self.context_parallel:
             from vrl.trainers.context_parallel import enable_context_parallel
             from vrl.trainers.fsdp import build_context_parallel_mesh, unwrap_module
@@ -593,10 +631,12 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
                     ulysses_degree=self._ulysses_degree,
                     ring_degree=self._ring_degree,
                 )
-        for _name, handle, writer, parameter_dtype in prepared_handles:
-            if self._shard_trainable_only:
+        for name, handle, writer, parameter_dtype in prepared_handles:
+            if self._shard_trainable_only and not any(p.is_meta for p in handle.parameters()):
                 # fully_shard does not place ignored frozen parameters. The
                 # replay loader may have staged the entire transformer on CPU.
+                # A skeleton has no storage to move; ``_fill_from_primary``
+                # allocates it in place after sharding.
                 handle.to(device=self.context.device)
             wrapped = apply_fsdp(
                 handle,
@@ -613,8 +653,70 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
                     else None
                 ),
             )
+            if fill_from_primary:
+                self._fill_from_primary(wrapped, sources.pop(name))
             writer(wrapped)
         return model
+
+    def _match_primary_dtypes(self, handle: nn.Module) -> None:
+        """Give a skeleton the primary rank's per-tensor dtypes before it is filled.
+
+        A skeleton is cast uniformly to the build's parameter dtype; the loader
+        that read the checkpoint may have kept exceptions (diffusers' fp32 pins
+        under fp16). The fill copies values into the local dtype, so every rank
+        must agree on it first.
+        """
+
+        import torch.distributed as dist
+
+        names_and_dtypes = [
+            (name, tensor.dtype)
+            for name, tensor in (*handle.named_parameters(), *handle.named_buffers())
+        ]
+        payload = [names_and_dtypes if self.context.is_primary else None]
+        dist.broadcast_object_list(payload, src=0, group=cpu_coordination_group())
+        expected = dict(payload[0])
+        local = dict(names_and_dtypes)
+        if set(expected) != set(local):
+            raise ValueError(
+                "replay skeleton does not match the primary rank's model: "
+                f"only_on_primary={sorted(set(expected) - set(local))[:5]}, "
+                f"only_here={sorted(set(local) - set(expected))[:5]}",
+            )
+        if not self.context.is_primary:
+            for name, tensor in (*handle.named_parameters(), *handle.named_buffers()):
+                if tensor.dtype != expected[name]:
+                    tensor.data = tensor.data.to(dtype=expected[name])
+
+    def _fill_from_primary(self, wrapped: nn.Module, source: dict[str, Any]) -> None:
+        """Materialize a sharded skeleton and load the primary rank's full state.
+
+        Ranks that still hold meta tensors allocate real storage first
+        (``to_empty``: uninitialized parameters AND buffers). The parameters
+        then arrive through the same rank-0 broadcast checkpoint resume uses;
+        buffers are outside any state dict FSDP reshards, so they are broadcast
+        one by one over the CPU coordination group, which keeps this free of
+        backend and placement assumptions (offloaded shards, resident buffers).
+        """
+
+        import torch.distributed as dist
+
+        from vrl.trainers.fsdp import load_full_state_dict
+
+        if any(t.is_meta for t in (*wrapped.parameters(), *wrapped.buffers())):
+            wrapped.to_empty(device="cpu" if self._cpu_offload else self.context.device)
+            if self._cpu_offload:
+                # CPUOffloadPolicy manages parameters only; buffers must live
+                # on the compute device for forward.
+                for buffer in wrapped.buffers():
+                    buffer.data = buffer.data.to(self.context.device)
+        load_full_state_dict(wrapped, source, strict=True)
+        group = cpu_coordination_group()
+        for buffer in wrapped.buffers():
+            staged = buffer.detach().to("cpu")
+            dist.broadcast(staged, src=0, group=group)
+            with torch.no_grad():
+                buffer.copy_(staged.to(buffer.device))
 
     def backward(self, loss: torch.Tensor, *, grad_scaler: Any | None = None) -> None:
         # FSDP2 reduce-scatters gradients inside the backward hooks; the bf16 actor

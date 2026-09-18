@@ -521,7 +521,9 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
         _class_name: str,
         *,
         subfolder: str = "transformer",
+        materialize_weights: bool = True,
     ) -> _TinyTransformer:
+        del materialize_weights
         loaded_subfolders.append(subfolder)
         return _TinyTransformer()
 
@@ -598,7 +600,7 @@ def test_anima_replay_builder_uses_only_transformer_checkpoint(
     monkeypatch.setattr(
         runtime,
         "load_anima_transformer",
-        lambda _build: _TinyTransformer(),
+        lambda _build, **_kwargs: _TinyTransformer(),
     )
 
     bundle = runtime.build_anima_replay_runtime_bundle(

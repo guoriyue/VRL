@@ -29,7 +29,14 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 
-def build_cosmos3_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
+def build_cosmos3_replay_runtime_bundle(
+    build: ModelBuild,
+    *,
+    materialize_weights: bool = True,
+) -> RuntimeBundle:
+    """Cosmos3 replay loads real weights on every rank; no skeleton path yet."""
+
+    del materialize_weights
     from vrl.models.families.cosmos.cosmos3.model import Cosmos3ReplayModel
     from vrl.models.steps.denoise.build import assemble_replay_bundle
 

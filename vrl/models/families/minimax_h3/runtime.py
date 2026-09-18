@@ -34,12 +34,17 @@ DEFAULT_MAX_SEQUENCE_LENGTH = 512
 
 
 def load_h3_replay_components(
-    build: ModelBuild, *, block_devices: tuple[int, ...] | None = None
+    build: ModelBuild,
+    *,
+    block_devices: tuple[int, ...] | None = None,
+    materialize_weights: bool = True,
 ) -> dict[str, Any]:
     """Transformer + the two H3 schedulers as ``MiniMaxH3ReplayModel`` kwargs.
 
     Shared with VDN-H3, whose replay model is the same construction plus the
-    hybrid-attention graft applied afterwards.
+    hybrid-attention graft applied afterwards. ``materialize_weights=False``
+    loads a meta skeleton for a sharded strategy to fill; the block-partitioned
+    loader always materializes, since its device map is the placement.
     """
 
     from diffusers import MiniMaxH3Scheduler
@@ -48,7 +53,11 @@ def load_h3_replay_components(
     from vrl.models.loader import load_diffusers_transformer
 
     if block_devices is None:
-        transformer = load_diffusers_transformer(build, "MiniMaxH3Transformer3DModel")
+        transformer = load_diffusers_transformer(
+            build,
+            "MiniMaxH3Transformer3DModel",
+            materialize_weights=materialize_weights,
+        )
     else:
         from vrl.models.families.minimax_h3.placement import load_partitioned_transformer
 
@@ -71,7 +80,10 @@ def load_h3_replay_components(
 
 
 def build_minimax_h3_replay_runtime_bundle(
-    build: ModelBuild, *, block_devices: tuple[int, ...] | None = None
+    build: ModelBuild,
+    *,
+    block_devices: tuple[int, ...] | None = None,
+    materialize_weights: bool = True,
 ) -> RuntimeBundle:
     """Transformer + the two H3 schedulers; no VAE, no conditioner."""
 
@@ -79,7 +91,11 @@ def build_minimax_h3_replay_runtime_bundle(
     from vrl.models.steps.denoise.build import assemble_replay_bundle
 
     logger.info("Building minimax_h3 replay runtime bundle from %s", build.model_name_or_path)
-    components = load_h3_replay_components(build, block_devices=block_devices)
+    components = load_h3_replay_components(
+        build,
+        block_devices=block_devices,
+        materialize_weights=materialize_weights,
+    )
     model = MiniMaxH3ReplayModel(**components)
     num_steps = build.num_steps
     if num_steps is not None:

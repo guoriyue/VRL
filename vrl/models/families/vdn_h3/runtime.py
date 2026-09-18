@@ -23,8 +23,18 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 
-def build_vdn_h3_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
-    """Transformer + both H3 schedulers, with the hybrid graft applied."""
+def build_vdn_h3_replay_runtime_bundle(
+    build: ModelBuild,
+    *,
+    materialize_weights: bool = True,
+) -> RuntimeBundle:
+    """Transformer + both H3 schedulers, with the hybrid graft applied.
+
+    The graft loads the VDN checkpoint's branch weights into the backbone, so
+    every rank materializes real weights regardless of ``materialize_weights``.
+    """
+
+    del materialize_weights
 
     from vrl.models.families.vdn_h3.model import VDNH3ReplayModel
     from vrl.models.steps.denoise.build import assemble_replay_bundle

@@ -365,8 +365,14 @@ class ModelFamilyEntry:
             build = import_from_path(self.family_build.model_build_normalizer)(build)
         return build
 
-    def build_replay(self, build: Any) -> Any:
-        """Construct trainer replay through this entry's registered builder."""
+    def build_replay(self, build: Any, *, materialize_weights: bool = True) -> Any:
+        """Construct trainer replay through this entry's registered builder.
+
+        ``materialize_weights=False`` asks for a meta-parameter skeleton of the
+        trainable roots: the training strategy fills it from the primary rank
+        instead of every process reading the checkpoint. A family whose loader
+        cannot build one keeps loading real weights and says so in its builder.
+        """
 
         if build.family != self.family:
             raise ValueError(
@@ -380,10 +386,17 @@ class ModelFamilyEntry:
         if self.family_build.replay_runtime_builder is not None:
             from vrl.utils.config import import_from_path
 
-            return import_from_path(self.family_build.replay_runtime_builder)(build)
+            return import_from_path(self.family_build.replay_runtime_builder)(
+                build,
+                materialize_weights=materialize_weights,
+            )
         from vrl.models.steps.denoise.build import build_family_replay_runtime_bundle
 
-        return build_family_replay_runtime_bundle(build, entry=self)
+        return build_family_replay_runtime_bundle(
+            build,
+            entry=self,
+            materialize_weights=materialize_weights,
+        )
 
     def build_rollout(self, build: Any) -> Any:
         """Construct a rollout bundle from this entry's resolved model build."""

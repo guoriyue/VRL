@@ -183,3 +183,37 @@ def test_model_build_rejects_coerced_scheduler_step_count(num_steps):
     )
     with pytest.raises(ValueError, match=r"sampling.num_steps"):
         _ = build.num_steps
+
+
+def test_transformer_skeleton_reads_only_the_config(tmp_path, monkeypatch) -> None:
+    """``materialize_weights=False`` yields the checkpoint's topology with meta
+    parameters and real buffers, without opening any weight file."""
+    from tests.models.steps.denoise.fixtures import build_tiny_sd3_transformer
+    from vrl.models import loader
+
+    reference = build_tiny_sd3_transformer(seed=5)
+    reference.save_pretrained(tmp_path / "transformer")
+    build = ModelBuild(
+        model_name_or_path=str(tmp_path),
+        revision=None,
+        device=torch.device("cpu"),
+        parameter_dtype=torch.bfloat16,
+        family="sd3_5",
+        precision=RolePrecision("fp32", "ieee", outer_autocast=False),
+    )
+
+    def _no_weights(*_args, **_kwargs):
+        raise AssertionError("a skeleton must not read weights")
+
+    monkeypatch.setattr(type(reference), "from_pretrained", classmethod(_no_weights))
+
+    skeleton = loader.load_diffusers_transformer(
+        build, "SD3Transformer2DModel", materialize_weights=False
+    )
+
+    assert type(skeleton) is type(reference)
+    assert {n: tuple(t.shape) for n, t in skeleton.state_dict().items()} == {
+        n: tuple(t.shape) for n, t in reference.state_dict().items()
+    }
+    assert all(p.is_meta and p.dtype is torch.bfloat16 for p in skeleton.parameters())
+    assert all(not b.is_meta for b in skeleton.buffers())

@@ -14,7 +14,11 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 
-def build_anima_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
+def build_anima_replay_runtime_bundle(
+    build: ModelBuild,
+    *,
+    materialize_weights: bool = True,
+) -> RuntimeBundle:
     """Build the trainer replay bundle without Anima generation-only modules."""
 
     from diffusers import FlowMatchEulerDiscreteScheduler
@@ -31,7 +35,7 @@ def build_anima_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     num_steps = build.num_steps
 
     model = AnimaReplayModel(
-        transformer=load_anima_transformer(build),
+        transformer=load_anima_transformer(build, materialize_weights=materialize_weights),
         scheduler=scheduler,
         device=build.device,
         dtype=build.parameter_dtype,
@@ -47,13 +51,32 @@ def build_anima_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
     return assemble_replay_bundle(model, build)
 
 
-def load_anima_transformer(build: ModelBuild) -> Any:
+def load_anima_transformer(build: ModelBuild, *, materialize_weights: bool = True) -> Any:
+    """Anima's Cosmos transformer from its single-file checkpoint.
+
+    ``materialize_weights=False`` returns the meta-parameter skeleton of the
+    same fixed T2I topology (``vrl.models.loader.skeleton_from_config``) for a
+    sharded strategy to fill from its primary rank; the checkpoint file is not
+    opened.
+    """
+
     from safetensors.torch import load_file
 
     from vrl.models.families.cosmos.anima.model import (
+        _cosmos_t2i_transformer_config,
         _load_anima_transformer,
     )
 
+    if not materialize_weights:
+        from diffusers import CosmosTransformer3DModel
+
+        from vrl.models.loader import skeleton_from_config
+
+        return skeleton_from_config(
+            CosmosTransformer3DModel,
+            _cosmos_t2i_transformer_config(),
+            dtype=build.parameter_dtype,
+        )
     model_config = build.model_config or {}
     path = model_config.get("transformer_path") or _resolve_artifact(
         str(build.model_name_or_path or ""),

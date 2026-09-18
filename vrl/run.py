@@ -253,7 +253,6 @@ class ResolvedOnlineRun(ResolvedRun):
             if rollout.get("pipeline_offload_mode") == "none":
                 rollout.pop("pipeline_offload_mode")
 
-        profiler = generation.torch_profiler
         return RayGenerationLaunchInputs(
             launch_contract=GenerationRuntimeLaunchContract(
                 family=self.family.family,
@@ -261,7 +260,9 @@ class ResolvedOnlineRun(ResolvedRun):
                 expected_model_identity=replay_model.identity,
                 executor_kwargs=self.family.executor_kwargs(self.built.root),
                 policy_version=0,
-                torch_profiler={} if profiler is None else asdict(profiler),
+                torch_profiler={}
+                if generation.torch_profiler is None
+                else asdict(generation.torch_profiler),
                 # The typed trainer schedule is the source of truth for whether a
                 # worker may retain an older LoRA slot across non-draining sync.
                 versioned_weight_sync=(
@@ -374,11 +375,19 @@ class ResolvedModel:
     build: ModelBuild
     identity: dict[str, Any]
 
-    def materialize(self, *, context: str) -> RuntimeBundle:
-        """Build the resolved role and re-verify its checkpoint identity."""
+    def materialize(self, *, context: str, materialize_weights: bool = True) -> RuntimeBundle:
+        """Build the resolved role and re-verify its checkpoint identity.
+
+        ``materialize_weights`` is the training strategy's answer to whether
+        this process needs real weights (replay only): a sharded strategy loads
+        them on its primary rank and fills the other ranks' skeletons itself.
+        """
 
         if self.build.rollout is None:
-            bundle = self.entry.build_replay(self.build)
+            bundle = self.entry.build_replay(
+                self.build,
+                materialize_weights=materialize_weights,
+            )
         else:
             bundle = self.entry.build_rollout(self.build)
         loaded_identity = checkpoint_identity.resolve_checkpoint_model_identity(self.build)

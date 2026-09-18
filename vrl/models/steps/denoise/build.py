@@ -143,14 +143,14 @@ def build_family_runtime_bundle(
 
     if entry is None:
         entry = get_model_family_entry(build.family)
-    recipe = entry.family_build
-    if not isinstance(recipe, DenoiseFamilyBuild):
+    family_build = entry.family_build
+    if not isinstance(family_build, DenoiseFamilyBuild):
         raise ValueError(f"model family {entry.family!r} has no diffusion build descriptor")
     if build.family != entry.family:
         raise ValueError(
             f"rollout build family {build.family!r} does not match entry {entry.family!r}",
         )
-    model_cls = import_from_path(recipe.model_cls)
+    model_cls = import_from_path(family_build.model_cls)
     build.require_lora_for_previous_policy_adapter()
     logger.info("Building %s runtime bundle (registry descriptor)", entry.family)
     return build_denoise_runtime_bundle(build, model_cls=model_cls)
@@ -160,26 +160,31 @@ def build_family_replay_runtime_bundle(
     build: ModelBuild,
     *,
     entry,
+    materialize_weights: bool = True,
 ) -> RuntimeBundle:
-    """Build replay through a family's declarative diffusion recipe."""
+    """Build replay through a family's declarative diffusion recipe.
+
+    ``materialize_weights=False`` loads the transformer as a meta-parameter
+    skeleton for the training strategy to fill from its primary rank.
+    """
 
     from vrl.models.families.registry import DenoiseFamilyBuild
     from vrl.utils.config import import_from_path
 
     build.require_replay()
-    recipe = entry.family_build
-    if not isinstance(recipe, DenoiseFamilyBuild):
+    family_build = entry.family_build
+    if not isinstance(family_build, DenoiseFamilyBuild):
         raise ValueError(f"model family {entry.family!r} has no diffusion build descriptor")
     if build.family != entry.family:
         raise ValueError(
             f"replay build family {build.family!r} does not match entry {entry.family!r}",
         )
-    if recipe.replay_cls is None or recipe.transformer_classname is None:
+    if family_build.replay_cls is None or family_build.transformer_classname is None:
         raise ValueError(
             f"model family {entry.family!r} has no generic replay recipe; "
             "invoke its registered replay_runtime_builder instead",
         )
-    replay_cls = import_from_path(recipe.replay_cls)
+    replay_cls = import_from_path(family_build.replay_cls)
     build.require_lora_for_previous_policy_adapter()
     logger.info(
         "Building %s replay runtime bundle (registry descriptor) from %s",
@@ -187,10 +192,14 @@ def build_family_replay_runtime_bundle(
         build.model_name_or_path,
     )
     model = replay_cls(
-        transformer=load_diffusers_transformer(build, recipe.transformer_classname),
+        transformer=load_diffusers_transformer(
+            build,
+            family_build.transformer_classname,
+            materialize_weights=materialize_weights,
+        ),
         scheduler=(
-            load_diffusers_scheduler(build, recipe.scheduler_classname)
-            if recipe.scheduler_classname is not None
+            load_diffusers_scheduler(build, family_build.scheduler_classname)
+            if family_build.scheduler_classname is not None
             else load_flow_match_scheduler(build)
         ),
         device=build.device,

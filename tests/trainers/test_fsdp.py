@@ -74,6 +74,16 @@ def _fsdp_strategy(
     )
 
 
+def test_fsdp_materializes_weights_on_the_primary_rank_only() -> None:
+    """Rank 0 reads the checkpoint; every other rank builds a skeleton that
+    ``prepare_model`` fills, so host memory holds one copy per node."""
+    assert _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").materialize_weights
+    other = DistributedTrainingContext(
+        strategy="fsdp", rank=1, world_size=2, device=torch.device("cpu")
+    )
+    assert _fsdp_strategy(other, precision_policy="none").materialize_weights is False
+
+
 def _strategy_config(
     strategy: str,
     *,
@@ -743,7 +753,7 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
     monkeypatch.setattr(
         denoise_build,
         "load_diffusers_transformer",
-        lambda _build, _class_name: transformer,
+        lambda _build, _class_name, **_kwargs: transformer,
     )
     monkeypatch.setattr(
         denoise_build,

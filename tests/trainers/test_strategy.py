@@ -35,6 +35,11 @@ def test_default_context_is_single_process() -> None:
     )
 
 
+def test_single_process_materializes_weights_on_its_only_rank() -> None:
+    # Unsharded backends replicate the policy: nothing fills a skeleton later.
+    assert SingleProcessStrategy().materialize_weights is True
+
+
 def test_prepare_model_is_identity_for_single_process() -> None:
     model = nn.Linear(3, 1)
     assert SingleProcessStrategy().prepare_model(model) is model
