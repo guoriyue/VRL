@@ -199,13 +199,6 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             synthetic_prompt_embeds=skip_text_encoder,
         )
 
-    def apply_full_finetune(self, build: ModelBuild) -> None:
-        del build
-        raise RuntimeError(
-            "Cosmos Predict2.5 DiffusionNFT requires LoRA with default+previous "
-            "adapters; set model.use_lora=true.",
-        )
-
     def encode_prompt(
         self,
         prompt: str | list[str],

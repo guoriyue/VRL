@@ -16,11 +16,13 @@ from tests.models.steps.denoise.fixtures import (
     TINY_COSMOS_LATENT_SHAPE,
     TINY_COSMOS_TEXT_DIM,
     build_tiny_cosmos_transformer,
+    lora_test_build,
     record_forward_calls,
     stamp_model_precision,
 )
 from vrl.models.families.cosmos.predict2_5.model import (
     CosmosPredict25Model,
+    CosmosPredict25ReplayModel,
     CosmosPredict25SamplingState,
 )
 
@@ -78,3 +80,24 @@ def test_cosmos_predict25_forward_step_runs_real_unbatched_cfg() -> None:
     assert out["noise_pred"].shape == TINY_COSMOS_LATENT_SHAPE
     # Prompt response survives the cond_mask blend in the unconditioned region.
     assert not torch.allclose(cond, uncond)
+
+
+def test_predict25_full_finetune_supports_real_forward_backward() -> None:
+    transformer = build_tiny_cosmos_transformer()
+    transformer.requires_grad_(False)
+    model = CosmosPredict25ReplayModel(transformer=transformer, scheduler=object(), device="cpu")
+    build = lora_test_build({}, family="cosmos-predict2.5")
+    build.model_config = {"use_lora": False}
+    model.apply_full_finetune(build)
+    stamp_model_precision(model)
+
+    output = model.forward_step(_state(), 0)["noise_pred"]
+    output.square().mean().backward()
+
+    assert all(parameter.requires_grad for parameter in transformer.parameters())
+    gradients = [
+        parameter.grad for parameter in transformer.parameters() if parameter.grad is not None
+    ]
+    assert gradients
+    assert all(torch.isfinite(gradient).all() for gradient in gradients)
+    assert any(gradient.abs().sum() > 0 for gradient in gradients)

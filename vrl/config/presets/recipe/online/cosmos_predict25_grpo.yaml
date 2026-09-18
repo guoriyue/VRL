@@ -2,8 +2,8 @@
 # predict2_5 GRPO experiments. Mirrors /recipe/online/cosmos_predict2_grpo (same
 # flow-matching clip range + CPS SDE + group size) but dispatches to the
 # predict2.5 entrypoint — predict2.5 is text-to-world, so there is no
-# reference-image wiring, and the family is LoRA-only (apply_full_finetune
-# raises; the paper's full-param 3e-5 path needs multi-GPU + a separate sprint).
+# reference-image wiring. The bundled recipe uses LoRA; full-parameter GRPO
+# uses the shared finetune path and needs a separately validated memory plan.
 defaults:
   - /recipe/online/denoise_grpo
 

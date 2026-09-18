@@ -5,8 +5,8 @@
 # SPRINT_cosmos_predict25_rl_paper_parity §5.1.
 #
 # Known deviations from the paper (deliberate, documented there):
-# - LoRA 1e-4 instead of full-param 3e-5: predict2.5 is LoRA-only in this repo
-#   (apply_full_finetune raises) and full-param needs multi-GPU.
+# - LoRA 1e-4 instead of full-param 3e-5: this experiment retains its LoRA
+#   memory budget; full-parameter GPU training is not validated by this recipe.
 # - ppo_epochs 4 instead of a single pass: with ppo_epochs=1 the trust-region
 #   clip is identically zero (ratio==1; flux algo validation measured
 #   clip_fraction==0), so the GRPO mechanism would be dead.
