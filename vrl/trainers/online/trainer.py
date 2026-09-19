@@ -1459,7 +1459,7 @@ class OnlineTrainer:
         The schedule's post-update weight publication is asynchronous even though
         replay evaluation, backward, and the optimizer step are synchronous.
         """
-        from vrl.algorithms.trajectory import AlgorithmAdapter
+        from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
         from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
         from vrl.utils.profiling import profile_range
 
@@ -1635,6 +1635,19 @@ class OnlineTrainer:
                     defer_replay_tensors=defer_replay_tensor_move,
                 )
                 _dbg_adv = first_debug_batch.advantages.to(self.device)
+                # The probe reads the same replay tensors the loss does, but runs
+                # before the first loss call, where the adapter's contract gate
+                # would otherwise turn a missing family export into a bare
+                # KeyError deep inside the objective.
+                algorithm_adapter.validate_inputs(
+                    self.algorithm,
+                    AlgorithmInput(
+                        advantages=_dbg_adv,
+                        model=self.model,
+                        rollout_batch=_dbg_batch,
+                        timestep_index=0,
+                    ),
+                )
                 with (
                     torch.no_grad(),
                     profile_range("trainer.replay"),

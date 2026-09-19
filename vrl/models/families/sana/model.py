@@ -249,8 +249,17 @@ class SanaModel(
         return {"guidance_scale": state.guidance_scale, "cfg": state.do_cfg}
 
     def export_replay_tensors(self, state: SanaSamplingState) -> dict[str, Any]:
-        """Project sampling state into per-sample trajectory tensors."""
-        tensors: dict[str, Any] = {"prompt_embeds": state.prompt_embeds}
+        """Project sampling state into per-sample trajectory tensors.
+
+        ``latents_clean`` is the final (fully denoised) latent, captured at
+        decode time: the clean x0 a forward-process objective (DiffusionNFT,
+        V-GRPO) re-noises and evaluates through ``replay_forward_with_latents``.
+        The SDE replay ignores it.
+        """
+        tensors: dict[str, Any] = {
+            "prompt_embeds": state.prompt_embeds,
+            "latents_clean": state.latents.detach(),
+        }
         for name in (
             "prompt_attention_mask",
             "negative_prompt_embeds",
