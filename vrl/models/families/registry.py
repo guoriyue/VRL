@@ -287,6 +287,9 @@ class ModelFamilyEntry:
         if for_rollout:
             rollout = RolloutBuildOptions(
                 prompt_encoder_dtype=precision.prompt_encoder_dtype,
+                reference_policy=bool(
+                    root.rollout is not None and root.rollout.cache_ref_noise_pred
+                ),
             )
             model_memory = root.model.memory
             if model_memory is not None and model_memory.model_fields_set:

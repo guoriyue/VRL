@@ -164,10 +164,14 @@
   在 tiny 模型上 lr=0 invariant 通过；FSDP2 两卡 smoke。
 - **状态**：`vrl/models/policy_snapshot.py` + `DenoiseModelBase.previous_policy /
   reference_policy / sync_previous_policy`；PEFT 第二 adapter、`previous_policy_adapter`
-  build 字段、LoRA 门全部删除；tiny Wan 上 LoRA 与全参的 lr=0 invariant 都过
-  （`tests/algorithms`）。未做：FSDP2 两卡 smoke（DTensor 换入换出走的是 EMA 已验证的
-  `copy_` 路径，但没有在卡上跑过）；全参 rollout worker 的 `cache_ref_noise_pred`
-  现在会报"no reference policy"，需要 worker 侧在 build 时拍参考快照。
+  build 字段、LoRA 门全部删除。验证：tiny Wan 上 LoRA 与全参的 lr=0 invariant
+  （`tests/algorithms`）；FSDP2 两 rank gloo 分片上的换入/融合/拷贝
+  （`tests/trainers/test_fsdp_policy_snapshot.py`，另有单卡 nccl 的 gpu 版本）；
+  5090 上 FSDP2/nccl 全参 NFT invariant 通过。换入换出成本：2.04B bf16 参数
+  28 ms（一进一出）、`update(0.9)` 10 ms。全参 rollout worker 的
+  `cache_ref_noise_pred`：`rollout.reference_policy` 由
+  `rollout.cache_ref_noise_pred` 推导，build 时先拍参考快照再接 weight sync。
+  剩：多卡真实 FSDP2 训练 smoke（本机单卡做不了）。
 
 ---
 

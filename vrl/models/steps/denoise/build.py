@@ -78,6 +78,10 @@ def build_denoise_runtime_bundle(
     # Quantize -> device move -> compile -> offload hooks -> VAE decode memory.
     # The whole sequence and its ordering constraints live in the pass layer.
     apply_rollout_optimizations(model, build, before_compile=move_to_device)
+    if rollout.reference_policy:
+        # Before any weight sync lands: what is loaded now is the pre-training
+        # policy the cached reference forward must keep running.
+        model.attach_reference_policy()
 
     num_steps = build.num_steps
     if num_steps is not None:

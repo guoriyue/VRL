@@ -161,6 +161,10 @@ class RolloutBuildOptions:
     prompt_encoder_dtype: Any
     base_weight_sync: bool = True
     pipeline_offload_mode: PipelineOffloadMode = PipelineOffloadMode.NONE
+    # The rollout caches the reference noise prediction (rollout.cache_ref_noise_pred),
+    # so the worker must hold the pre-training policy: free under an adapter,
+    # one snapshot of the transformer for a full fine-tune.
+    reference_policy: bool = False
 
     def __post_init__(self) -> None:
         from vrl.models.dtypes import require_plain_dtype
@@ -173,6 +177,8 @@ class RolloutBuildOptions:
 
         if not isinstance(self.base_weight_sync, bool):
             raise TypeError("rollout base_weight_sync must be a bool")
+        if not isinstance(self.reference_policy, bool):
+            raise TypeError("rollout reference_policy must be a bool")
         object.__setattr__(
             self, "pipeline_offload_mode", PipelineOffloadMode(self.pipeline_offload_mode)
         )

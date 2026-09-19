@@ -44,10 +44,12 @@ class PolicySnapshot(nn.Module):
             raise ValueError(f"snapshot decay must be in [0, 1], got {decay}")
         live = [parameter.detach() for parameter in self._live]
         if decay == 0.0:
-            torch._foreach_copy_(self.shadows, live)
+            # Per tensor: DTensor (FSDP2) has no sharding rule for the fused
+            # _foreach_copy_, while copy_ and _foreach_lerp_ both have one.
+            for shadow, source in zip(self.shadows, live, strict=True):
+                shadow.copy_(source)
         else:
-            # DTensor shadows (FSDP2) take the fused call too: each shadow is a
-            # clone of its parameter, so the shardings match.
+            # Each shadow is a clone of its parameter, so the shardings match.
             torch._foreach_lerp_(self.shadows, live, 1.0 - decay)
 
     @contextlib.contextmanager
