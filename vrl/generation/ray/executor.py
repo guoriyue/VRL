@@ -23,7 +23,7 @@ from vrl.generation.execution.types import (
     BatchSizeProbeResult,
     GenerationBatchEnvelope,
     GenerationBatchResult,
-    PipelinedRequestOutOfMemory,
+    RequestBatchOutOfMemory,
     StagedBatchRefs,
     StaleSlotDiscard,
 )
@@ -31,7 +31,7 @@ from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.pipeline_protocol import (
     PipelinedProgressError,
-    PipelinedRequestProgress,
+    RequestBatchProgress,
 )
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.ray.actor_group import RayActorHandle
@@ -111,20 +111,20 @@ class RayGenerationExecutor:
     @staticmethod
     def _select_request_rank_result(
         results: list[Any],
-    ) -> StagedBatchRefs | PipelinedRequestOutOfMemory:
+    ) -> StagedBatchRefs | RequestBatchOutOfMemory:
         """Return an OOM reported by any rank; otherwise keep the primary's refs."""
 
         if not all(
-            isinstance(result, (StagedBatchRefs, PipelinedRequestOutOfMemory))
+            isinstance(result, (StagedBatchRefs, RequestBatchOutOfMemory))
             for result in results
         ):
             raise TypeError(
-                "pipelined engine ranks must return StagedBatchRefs or PipelinedRequestOutOfMemory"
+                "pipelined engine ranks must return StagedBatchRefs or RequestBatchOutOfMemory"
             )
         if any(result.request_id != results[0].request_id for result in results[1:]):
             raise RuntimeError("pipelined engine ranks returned different request identities")
         for result in results:
-            if isinstance(result, PipelinedRequestOutOfMemory):
+            if isinstance(result, RequestBatchOutOfMemory):
                 return result
         return results[0]
 
@@ -202,9 +202,9 @@ class RayGenerationExecutor:
             )
         assignments = list(generation_plan.assignments)
         engine_plan = generation_plan.engine_plan
-        pipelined_oom: PipelinedRequestOutOfMemory | None = None
+        pipelined_oom: RequestBatchOutOfMemory | None = None
         if self.pipelined and len(engine_plan.sample_batches) >= 2:
-            pipelined_result = await self._execute_request_pipelined(
+            pipelined_result = await self._execute_request_batches(
                 request,
                 engine_plan,
                 sample_rows,
@@ -393,12 +393,12 @@ class RayGenerationExecutor:
         )
         return output
 
-    async def _execute_request_pipelined(
+    async def _execute_request_batches(
         self,
         request: GenerationRequest,
         engine_plan: EnginePlan,
         sample_rows: list[GenerationSampleRow],
-    ) -> GenerationOutput | PipelinedRequestOutOfMemory:
+    ) -> GenerationOutput | RequestBatchOutOfMemory:
         """Per-request path (opt-in, ``pipelined=True``).
 
         Every engine receives its round-robin share of the request's batches in
@@ -423,7 +423,7 @@ class RayGenerationExecutor:
                 raise result
         refs_by_key: dict[str, Any] = {}
         for (engine, batches), result in zip(engine_batches, engine_results, strict=True):
-            if not isinstance(result, (StagedBatchRefs, PipelinedRequestOutOfMemory)):
+            if not isinstance(result, (StagedBatchRefs, RequestBatchOutOfMemory)):
                 raise TypeError(
                     "pipelined generation engine returned unsupported result "
                     f"{type(result).__name__}",
@@ -438,7 +438,7 @@ class RayGenerationExecutor:
                     "pipelined generation rank mismatch: "
                     f"{result.worker_id!r} is not a rank of engine {engine.engine_id!r}",
                 )
-            if isinstance(result, PipelinedRequestOutOfMemory):
+            if isinstance(result, RequestBatchOutOfMemory):
                 return result
             expected_keys = tuple(batch.batch_key for batch in batches)
             if result.batch_keys != expected_keys:
@@ -468,7 +468,7 @@ class RayGenerationExecutor:
         request: GenerationRequest,
         engine: RayGenerationEngine,
         batches: tuple[Any, ...],
-    ) -> StagedBatchRefs | PipelinedRequestOutOfMemory | StaleSlotDiscard:
+    ) -> StagedBatchRefs | RequestBatchOutOfMemory | StaleSlotDiscard:
         primary = engine.primary
         # Progress is a rank-0 read on the health concurrency group.
         progress = getattr(primary.actor, "pipelined_progress", None)
@@ -502,7 +502,7 @@ class RayGenerationExecutor:
                 job_index=0,
                 worker_id=engine.engine_id,
                 remote_method=engine.remote(
-                    "execute_request_pipelined", combine=self._select_request_rank_result
+                    "execute_request_batches", combine=self._select_request_rank_result
                 ),
                 payload=request,
                 keyword_args={"engine_plan": engine_plan},
@@ -641,7 +641,7 @@ class RayGenerationExecutor:
                 progress_ref = None
                 if snapshot is None:
                     continue
-                if not isinstance(snapshot, PipelinedRequestProgress):
+                if not isinstance(snapshot, RequestBatchProgress):
                     raise PipelinedProgressError(
                         f"pipelined rank returned invalid progress {type(snapshot).__name__}",
                     )

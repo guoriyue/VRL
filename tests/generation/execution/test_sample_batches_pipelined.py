@@ -13,7 +13,7 @@ import pytest
 from vrl.generation.bindings.full_sequence_denoise.executor import DenoiseBatchResult
 from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.generation.execution.types import BatchProduceFence
+from vrl.generation.execution.types import BatchCompletion
 from vrl.trajectory import device as device_module
 
 
@@ -95,11 +95,11 @@ def test_completion_fence_follows_each_copied_batch(monkeypatch) -> None:
         return result
 
     monkeypatch.setattr(device_module, "copy_tensor_tree_to_pinned_cpu", copy)
-    fences: list[BatchProduceFence] = []
+    completions: list[BatchCompletion] = []
 
-    def publish(fence: BatchProduceFence) -> None:
-        order.append(f"fence:{fence.completed_batches}")
-        fences.append(fence)
+    def publish(completion: BatchCompletion) -> None:
+        order.append(f"completion:{completion.completed_batches}")
+        completions.append(completion)
 
     output = _executor(lambda batch: ("result", batch)).execute_request_batches(
         "req",
@@ -108,9 +108,16 @@ def test_completion_fence_follows_each_copied_batch(monkeypatch) -> None:
     )
 
     assert output == [("result", "c0"), ("result", "c1"), ("result", "c2")]
-    assert [fence.completed_batches for fence in fences] == [1, 2, 3]
-    # A fence is published only after its batch's result is on the CPU.
-    assert order == ["copy:c0", "fence:1", "copy:c1", "fence:2", "copy:c2", "fence:3"]
+    assert [completion.completed_batches for completion in completions] == [1, 2, 3]
+    # A completion is published only after its batch's result is on the CPU.
+    assert order == [
+        "copy:c0",
+        "completion:1",
+        "copy:c1",
+        "completion:2",
+        "copy:c2",
+        "completion:3",
+    ]
 
 
 def test_single_batch_still_produces_and_copies() -> None:

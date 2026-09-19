@@ -1,4 +1,4 @@
-"""Ray wire protocol for observing single-worker pipeline progress."""
+"""Ray wire protocol for observing a worker's request-batch progress."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ from vrl.runtime_errors import TerminalRuntimeError
 
 
 @dataclass(frozen=True, slots=True)
-class PipelinedRequestProgress:
-    """Cross-concurrency-group progress for one pipelined request.
+class RequestBatchProgress:
+    """Cross-concurrency-group progress for one request's generation batches.
 
-    ``completed_batches`` is the continuous prefix whose recorded device-side
-    produce fences have completed. It never counts host-side CUDA enqueue as
-    completion; final teardown and gather retain the last stall window.
+    ``completed_batches`` counts the contiguous prefix that has finished its
+    CPU copy and staging. Enqueuing CUDA work alone does not count. The
+    finalizer's merge is a separate operation with its own deadline.
     """
 
     request_id: str
@@ -35,4 +35,4 @@ class PipelinedProgressError(TerminalRuntimeError):
     """The worker's pipelined progress stream violated its wire contract."""
 
 
-__all__ = ["PipelinedProgressError", "PipelinedRequestProgress"]
+__all__ = ["PipelinedProgressError", "RequestBatchProgress"]

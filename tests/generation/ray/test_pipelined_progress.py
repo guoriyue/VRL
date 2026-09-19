@@ -14,14 +14,14 @@ import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
 from tests.generation.ray._helpers import GatedRef, ResolvedRef
 from vrl.generation.execution.types import (
-    BatchProduceFence,
-    PipelinedRequestOutOfMemory,
+    BatchCompletion,
+    RequestBatchOutOfMemory,
 )
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.pipeline_protocol import (
     PipelinedProgressError,
-    PipelinedRequestProgress,
+    RequestBatchProgress,
 )
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_group import RayActorHandle
@@ -86,7 +86,7 @@ def test_ray_worker_reports_only_the_active_pipelined_request(monkeypatch) -> No
     worker = object.__new__(RayGenerationWorker)
     worker._pipelined_progress_lock = threading.Lock()
     worker._pipelined_progress = None
-    observed: list[PipelinedRequestProgress | None] = []
+    observed: list[RequestBatchProgress | None] = []
 
     class _Core:
         worker_id = "w0"
@@ -98,13 +98,13 @@ def test_ray_worker_reports_only_the_active_pipelined_request(monkeypatch) -> No
             engine_plan: Any,
             *,
             completion_callback: Any,
-            stage_batch: Any,
+            stage_batch_result: Any,
         ) -> list[str]:
             observed.append(worker.pipelined_progress(request.request_id))
-            completion_callback(BatchProduceFence(completed_batches=1))
+            completion_callback(BatchCompletion(completed_batches=1))
             observed.append(worker.pipelined_progress(request.request_id))
-            completion_callback(BatchProduceFence(completed_batches=2))
-            return [stage_batch(batch) for batch in engine_plan.sample_batches]
+            completion_callback(BatchCompletion(completed_batches=2))
+            return [stage_batch_result(batch) for batch in engine_plan.sample_batches]
 
     worker.core = _Core()
     request = SimpleNamespace(request_id="req-progress", policy_version=None)
@@ -118,7 +118,7 @@ def test_ray_worker_reports_only_the_active_pipelined_request(monkeypatch) -> No
         "vrl.generation.ray.worker.ray.put", lambda payload: f"ref:{payload.batch_key}"
     )
 
-    result = worker.execute_request_pipelined(request, plan)
+    result = worker.execute_request_batches(request, plan)
 
     assert result.batch_keys == ("c0", "c1")
     assert result.batch_refs == ("ref:c0", "ref:c1")
@@ -143,13 +143,13 @@ async def test_remote_pipelined_worker_requires_progress_endpoint() -> None:
         [
             RayActorHandle(
                 worker_id="w0",
-                actor=SimpleNamespace(execute_request_pipelined=_RemoteMethod()),
+                actor=SimpleNamespace(execute_request_batches=_RemoteMethod()),
             ),
         ],
     )
 
     with pytest.raises(PipelinedProgressError, match="requires rank progress"):
-        await executor._execute_request_pipelined(
+        await executor._execute_request_batches(
             SimpleNamespace(request_id="req-missing-progress"),
             SimpleNamespace(sample_batches=("c0", "c1")),
             [],
@@ -180,7 +180,7 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
         def remote(request: Any, **_kwargs: Any) -> ResolvedRef:
             pipeline_calls.append(request.request_id)
             return ResolvedRef(
-                PipelinedRequestOutOfMemory(
+                RequestBatchOutOfMemory(
                     request_id=request.request_id,
                     worker_id="w0",
                     error="expected fallback",
@@ -199,7 +199,7 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
             RayActorHandle(
                 worker_id="w0",
                 actor=SimpleNamespace(
-                    execute_request_pipelined=_PipelineMethod(),
+                    execute_request_batches=_PipelineMethod(),
                     pipelined_progress=_ProgressMethod(),
                 ),
             ),
@@ -215,7 +215,7 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
     await first_submitted.wait()
 
     pipelined = asyncio.create_task(
-        executor._execute_request_pipelined(
+        executor._execute_request_batches(
             SimpleNamespace(request_id="req-admission"),
             SimpleNamespace(sample_batches=("c0", "c1")),
             [],
@@ -230,7 +230,7 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
     gate.set()
     assert await first == [(0, "first")]
     result = await pipelined
-    assert isinstance(result, PipelinedRequestOutOfMemory)
+    assert isinstance(result, RequestBatchOutOfMemory)
     assert pipeline_calls == ["req-admission"]
     assert deadlines == [
         "rollout.generation.batch",
@@ -328,7 +328,7 @@ async def test_pipelined_progress_resets_the_stall_deadline() -> None:
         if progress_calls == 2:
             result_ready.set()
         return ResolvedRef(
-            PipelinedRequestProgress(
+            RequestBatchProgress(
                 request_id=request_id,
                 completed_batches=min(progress_calls, 2),
                 total_batches=2,
@@ -361,7 +361,7 @@ async def test_short_stall_budget_queries_progress_before_initial_expiry() -> No
         if progress_calls == 2:
             result_ready.set()
         return ResolvedRef(
-            PipelinedRequestProgress(
+            RequestBatchProgress(
                 request_id=request_id,
                 completed_batches=min(progress_calls, 2),
                 total_batches=2,
@@ -399,7 +399,7 @@ async def test_pipelined_progress_reset_preserves_initial_deadline_identity(
         nonlocal progress_calls
         progress_calls += 1
         return ResolvedRef(
-            PipelinedRequestProgress(
+            RequestBatchProgress(
                 request_id=request_id,
                 completed_batches=1,
                 total_batches=2,
@@ -444,7 +444,7 @@ async def test_pipelined_stall_cancels_the_result_ref(
 
     def progress_remote(request_id: str) -> ResolvedRef:
         return ResolvedRef(
-            PipelinedRequestProgress(
+            RequestBatchProgress(
                 request_id=request_id,
                 completed_batches=0,
                 total_batches=2,
@@ -487,7 +487,7 @@ async def test_pipelined_stall_polling_does_not_accelerate_near_deadline(
         nonlocal progress_calls
         progress_calls += 1
         return ResolvedRef(
-            PipelinedRequestProgress(
+            RequestBatchProgress(
                 request_id=request_id,
                 completed_batches=0,
                 total_batches=2,
@@ -618,7 +618,7 @@ async def test_pipelined_result_cancels_a_losing_progress_rpc(
         ([object()], "invalid progress"),
         (
             [
-                PipelinedRequestProgress(
+                RequestBatchProgress(
                     request_id="wrong-request",
                     completed_batches=0,
                     total_batches=2,
@@ -628,7 +628,7 @@ async def test_pipelined_result_cancels_a_losing_progress_rpc(
         ),
         (
             [
-                PipelinedRequestProgress(
+                RequestBatchProgress(
                     request_id="req-protocol",
                     completed_batches=0,
                     total_batches=3,
@@ -638,12 +638,12 @@ async def test_pipelined_result_cancels_a_losing_progress_rpc(
         ),
         (
             [
-                PipelinedRequestProgress(
+                RequestBatchProgress(
                     request_id="req-protocol",
                     completed_batches=1,
                     total_batches=2,
                 ),
-                PipelinedRequestProgress(
+                RequestBatchProgress(
                     request_id="req-protocol",
                     completed_batches=0,
                     total_batches=2,

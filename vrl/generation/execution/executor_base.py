@@ -10,7 +10,7 @@ from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
     execute_generation_batches,
 )
-from vrl.generation.execution.types import BatchCompletionCallback, BatchProduceFence
+from vrl.generation.execution.types import BatchCompletion, BatchCompletionCallback
 from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
 from vrl.generation.types import (
     GenerationOutput,
@@ -33,8 +33,9 @@ class BatchExecutorBase:
       shared via ``EnginePlan.from_request``'s single width fallback.
     - ``execute_request_batches`` runs ALL of a request's batches on one
       worker in one call, copying each result to pinned CPU memory (and
-      staging it, when asked) before the next batch is produced; bindings
-      that expose it wrap it in their own ``forward_plan_pipelined``.
+      staging it, when asked) before the next batch is produced. Ray uses
+      this entry directly; ``forward_plan_pipelined`` wraps it only for local
+      execution and merge equivalence tests.
     - ``merge_generation_batches`` delegates to the gatherer injected by the composition
       root that already owns the family registry entry. The neutral execution
       layer never looks family identity up again.
@@ -66,7 +67,7 @@ class BatchExecutorBase:
         batches: Sequence[GenerationSampleBatch],
         *,
         completion_callback: BatchCompletionCallback | None = None,
-        stage_result: Callable[[BatchPayload], Any] | None = None,
+        stage_batch_result: Callable[[BatchPayload], Any] | None = None,
     ) -> list[Any]:
         """Produce a request's batches in order on this worker, one RPC for all.
 
@@ -82,14 +83,14 @@ class BatchExecutorBase:
         overlap recovered nothing (6735 ms serial vs 6729 ms overlapped), so the
         loop keeps the plain synchronous copy.
 
-        ``stage_result`` runs on each copied batch result and its return value is
+        ``stage_batch_result`` runs on each copied batch result and its return value is
         what the loop keeps: the Ray rank passes ``ray.put`` so the loop returns
         object-store references instead of payloads. Staging is NOT overlapped
         with the next batch's compute either; the pinned copy synchronizes the
         device first, so the order within one request is strictly compute, copy,
         stage, next batch. What staging buys is that the rank's return value is
         small and the merge runs elsewhere, so THIS request's finalize overlaps
-        the NEXT request's generation. ``completion_callback`` receives one fence
+        the NEXT request's generation. ``completion_callback`` receives one completion
         per batch, after that batch's result is staged. Results stay in batch
         order.
         """
@@ -101,11 +102,11 @@ class BatchExecutorBase:
             result = self.forward_batch(request, batch)
             if result is not None:
                 result = copy_tensor_tree_to_pinned_cpu(result)
-                if stage_result is not None:
-                    result = stage_result(result)
+                if stage_batch_result is not None:
+                    result = stage_batch_result(result)
             results.append(result)
             if completion_callback is not None:
-                completion_callback(BatchProduceFence(completed_batches=idx + 1))
+                completion_callback(BatchCompletion(completed_batches=idx + 1))
         return results
 
     def merge_generation_batches(

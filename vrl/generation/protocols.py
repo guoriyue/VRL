@@ -45,11 +45,11 @@ if TYPE_CHECKING:
         BatchSizeProbeResult,
         GenerationBatchEnvelope,
         GenerationBatchResult,
-        PipelinedRequestOutOfMemory,
+        RequestBatchOutOfMemory,
         StagedBatchRefs,
         WorkerMemoryParkingSnapshot,
     )
-    from vrl.generation.ray.pipeline_protocol import PipelinedRequestProgress
+    from vrl.generation.ray.pipeline_protocol import RequestBatchProgress
     from vrl.generation.types import (
         GenerationOutput,
         GenerationRequest,
@@ -156,13 +156,13 @@ class GenerationRankActor(Protocol):
         max_samples: int,
     ) -> BatchSizeProbeResult: ...
 
-    def execute_request_pipelined(
+    def execute_request_batches(
         self,
         request: GenerationRequest,
         engine_plan: EnginePlan,
-    ) -> StagedBatchRefs | PipelinedRequestOutOfMemory: ...
+    ) -> StagedBatchRefs | RequestBatchOutOfMemory: ...
 
-    def pipelined_progress(self, request_id: str) -> PipelinedRequestProgress | None: ...
+    def pipelined_progress(self, request_id: str) -> RequestBatchProgress | None: ...
 
 
 @runtime_checkable

@@ -13,8 +13,8 @@ import pytest
 from tests.generation.execution._helpers import launch_contract
 from vrl.generation.execution.memory_parking import WorkerMemoryParking
 from vrl.generation.execution.types import (
-    BatchProduceFence,
-    PipelinedRequestOutOfMemory,
+    BatchCompletion,
+    RequestBatchOutOfMemory,
     StaleSlotDiscard,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
@@ -48,19 +48,19 @@ class _Executor:
         batches,
         *,
         completion_callback=None,
-        stage_result=None,
+        stage_batch_result=None,
     ):
-        self.calls.append((request, batches, stage_result))
+        self.calls.append((request, batches, stage_batch_result))
         if self.error is not None:
             raise self.error
         results = []
         for index, batch in enumerate(batches):
             result = ("produced", batch)
-            if stage_result is not None:
-                result = stage_result(result)
+            if stage_batch_result is not None:
+                result = stage_batch_result(result)
             results.append(result)
             if completion_callback is not None:
-                completion_callback(BatchProduceFence(completed_batches=index + 1))
+                completion_callback(BatchCompletion(completed_batches=index + 1))
         return results
 
 
@@ -102,7 +102,7 @@ def test_slot_mode_with_live_slot_activates_and_runs() -> None:
 
 
 def test_worker_core_forwards_completion_callback_and_stage_hook() -> None:
-    fences: list[BatchProduceFence] = []
+    completions: list[BatchCompletion] = []
     staged: list[tuple[str, str]] = []
 
     def stage(result):
@@ -119,13 +119,13 @@ def test_worker_core_forwards_completion_callback_and_stage_hook() -> None:
         core,
         _request(5),
         _PLAN,
-        completion_callback=fences.append,
-        stage_batch=stage,
+        completion_callback=completions.append,
+        stage_batch_result=stage,
     )
 
     assert output == ["ref:b0", "ref:b1"]
     assert staged == [("produced", "b0"), ("produced", "b1")]
-    assert [fence.completed_batches for fence in fences] == [1, 2]
+    assert [completion.completed_batches for completion in completions] == [1, 2]
 
 
 def test_slot_mode_with_evicted_slot_raises_stale_discard_and_does_not_run() -> None:
@@ -191,7 +191,7 @@ def test_cuda_oom_clears_worker_state_and_returns_typed_retry(monkeypatch) -> No
         completion_callback=_NOOP_CB,
     )
 
-    assert result == PipelinedRequestOutOfMemory(
+    assert result == RequestBatchOutOfMemory(
         request_id="r",
         worker_id="w0",
         error="CUDA out of memory while pipelining request",

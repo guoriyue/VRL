@@ -21,7 +21,7 @@ from vrl.generation.execution.types import (
     BatchMemoryReading,
     GenerationBatchEnvelope,
     GenerationBatchResult,
-    PipelinedRequestOutOfMemory,
+    RequestBatchOutOfMemory,
     StagedBatchRefs,
     StaleSlotDiscard,
 )
@@ -514,16 +514,16 @@ class _RoutingWorker:
         del request_id
         return None
 
-    def execute_request_pipelined(
+    def execute_request_batches(
         self,
         request,
         engine_plan,
-    ) -> StagedBatchRefs | PipelinedRequestOutOfMemory:
+    ) -> StagedBatchRefs | RequestBatchOutOfMemory:
         self.request_calls.append(request.request_id)
         self.request_batches.append([batch.batch_key for batch in engine_plan.sample_batches])
         request_id = self.pipeline_request_id_override or request.request_id
         if self.pipeline_oom:
-            return PipelinedRequestOutOfMemory(
+            return RequestBatchOutOfMemory(
                 request_id=request_id,
                 worker_id=self.pipeline_worker_id_override or self.worker_id,
                 error=_OOM_MESSAGE,
@@ -568,7 +568,7 @@ def _routing_executor(batches, workers, *, pipelined, finalizer=None):
                     actor=FakeRayActor(
                         w,
                         "execute_batch",
-                        "execute_request_pipelined",
+                        "execute_request_batches",
                         "pipelined_progress",
                     ),
                 ),
@@ -601,7 +601,7 @@ def _routing_executor(batches, workers, *, pipelined, finalizer=None):
 @pytest.mark.asyncio
 async def test_pipelined_routes_single_worker_to_per_request_path() -> None:
     """pipelined=True + one worker => the whole request runs via the per-request
-    path (execute_request_pipelined) and its staged references are merged by
+    path (execute_request_batches) and its staged references are merged by
     the finalizer, NOT per-batch dispatch and NOT a driver-side gather."""
 
     batches = [

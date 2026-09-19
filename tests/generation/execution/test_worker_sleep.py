@@ -103,7 +103,7 @@ _PLAN = SimpleNamespace(sample_batches=("b0",))
 
 class _PipelinedExecutor(_Executor):
     def execute_request_batches(
-        self, request: Any, batches: Any, *, completion_callback: Any, stage_result: Any
+        self, request: Any, batches: Any, *, completion_callback: Any, stage_batch_result: Any
     ) -> Any:
         return [(request, batches)]
 
@@ -599,7 +599,7 @@ def test_partial_slot_activation_failure_is_not_returned_as_retryable_result() -
 
 
 def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
-    from vrl.generation.execution.types import PipelinedRequestOutOfMemory
+    from vrl.generation.execution.types import RequestBatchOutOfMemory
     from vrl.generation.types import GenerationRequest
 
     class _OomPipelinedExecutor(_PipelinedExecutor):
@@ -609,7 +609,7 @@ def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
             _batches: Any,
             *,
             completion_callback: Any,
-            stage_result: Any,
+            stage_batch_result: Any,
         ) -> Any:
             raise RuntimeError("CUDA out of memory")
 
@@ -628,7 +628,7 @@ def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
 
     result = core.execute_request_batches(request, _PLAN, completion_callback=_NOOP_CB)
 
-    assert isinstance(result, PipelinedRequestOutOfMemory)
+    assert isinstance(result, RequestBatchOutOfMemory)
     assert model.reset_calls == 1
 
 

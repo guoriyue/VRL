@@ -24,7 +24,7 @@ from vrl.generation.execution.types import (
     BatchSizeProbeTrial,
     GenerationBatchEnvelope,
     GenerationBatchResult,
-    PipelinedRequestOutOfMemory,
+    RequestBatchOutOfMemory,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
@@ -592,16 +592,16 @@ class GenerationWorkerCore:
         engine_plan: EnginePlan,
         *,
         completion_callback: BatchCompletionCallback,
-        stage_batch: Callable[[Any], Any] | None = None,
-    ) -> list[Any] | PipelinedRequestOutOfMemory:
+        stage_batch_result: Callable[[Any], Any] | None = None,
+    ) -> list[Any] | RequestBatchOutOfMemory:
         """Run ALL of a request's batches on THIS worker in one call.
 
         Removes the per-batch Ray round trip, result pickling, and worker
         prologue that per-batch dispatch leaves the GPU idle through. Returns the
-        per-batch results in batch order, each passed through ``stage_batch``
+        per-batch results in batch order, each passed through ``stage_batch_result``
         when given (the Ray rank stages them into the object store); merging is
         not this worker's job. After a CUDA OOM it clears partial request state
-        and returns ``PipelinedRequestOutOfMemory`` for driver-side retry.
+        and returns ``RequestBatchOutOfMemory`` for driver-side retry.
 
         Version safety mirrors ``execute_batch`` but at the REQUEST level (every
         batch shares ``request.policy_version``): slot mode serves the request from
@@ -648,7 +648,7 @@ class GenerationWorkerCore:
                 request,
                 engine_plan.sample_batches,
                 completion_callback=completion_callback,
-                stage_result=stage_batch,
+                stage_batch_result=stage_batch_result,
             )
         except RuntimeError as error:
             self._memory_parking.recover_after_execution_error(model, error)
@@ -664,7 +664,7 @@ class GenerationWorkerCore:
                 traceback.clear_frames(error_traceback)
                 error.__traceback__ = None
             release_cuda_memory()
-            return PipelinedRequestOutOfMemory(
+            return RequestBatchOutOfMemory(
                 request_id=request.request_id,
                 worker_id=self.worker_id,
                 error=error_text,

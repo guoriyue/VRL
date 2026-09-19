@@ -221,15 +221,15 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         *,
         completion_callback: BatchCompletionCallback | None = None,
     ) -> GenerationOutput:
-        """Per-request variant of forward_plan: every batch of the request runs
-        on this worker in one call, each result copied to pinned CPU memory
-        before the next batch is produced. BIT-EXACT to forward_plan: the same
-        per-batch stage methods (via forward_batch) and the SAME order-preserving
-        merge_generation_batches, so the gathered output is identical; only the
-        per-batch dispatch overhead disappears.
+        """Local execution and merge with a CPU handoff after each generation batch.
 
-        The Ray worker calls this per request (all of a request's batches on one
-        worker) instead of dispatching one forward_batch RPC per batch.
+        Kept as the local equivalence-test entrypoint: it runs the same
+        ``forward_batch`` and order-preserving gather as ``forward_plan``, but
+        copies each batch to pinned CPU memory before producing the next one.
+        The historical name does not imply overlapping copies and computation.
+
+        Ray workers call ``execute_request_batches`` directly and stage the
+        results for a separate finalizer; they do not use this local merge path.
         """
 
         batches = self.execute_request_batches(

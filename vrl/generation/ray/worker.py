@@ -9,17 +9,17 @@ import ray
 
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import (
-    BatchProduceFence,
+    BatchCompletion,
     BatchSizeProbeResult,
     GenerationBatchEnvelope,
     GenerationBatchResult,
-    PipelinedRequestOutOfMemory,
+    RequestBatchOutOfMemory,
     StagedBatchRefs,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.generation.ray.pipeline_protocol import PipelinedRequestProgress
+from vrl.generation.ray.pipeline_protocol import RequestBatchProgress
 from vrl.generation.ray.reward_media import reference_reward_media
 from vrl.generation.ray.tensor_wire import register_tensor_wire_serializer
 from vrl.generation.types import GenerationRequest
@@ -56,7 +56,7 @@ class RayGenerationWorker:
             rank_group=launch_inputs.rank_group,
         )
         self._pipelined_progress_lock = threading.Lock()
-        self._pipelined_progress: PipelinedRequestProgress | None = None
+        self._pipelined_progress: RequestBatchProgress | None = None
 
     @ray.method(concurrency_group=HEALTH_CONCURRENCY_GROUP)
     def health(self) -> str:
@@ -151,11 +151,11 @@ class RayGenerationWorker:
             max_samples=max_samples,
         )
 
-    def execute_request_pipelined(
+    def execute_request_batches(
         self,
         request: GenerationRequest,
         engine_plan: EnginePlan,
-    ) -> StagedBatchRefs | PipelinedRequestOutOfMemory:
+    ) -> StagedBatchRefs | RequestBatchOutOfMemory:
         """Run all of the plan's batches on this rank in one call.
 
         Each batch payload is staged into the object store right after its host
@@ -174,13 +174,13 @@ class RayGenerationWorker:
                     "pipelined worker received overlapping requests "
                     f"{self._pipelined_progress.request_id!r} and {request_id!r}",
                 )
-            self._pipelined_progress = PipelinedRequestProgress(
+            self._pipelined_progress = RequestBatchProgress(
                 request_id=request_id,
                 completed_batches=0,
                 total_batches=total_batches,
             )
 
-        def record_completion(fence: BatchProduceFence) -> None:
+        def record_completion(completion: BatchCompletion) -> None:
             with self._pipelined_progress_lock:
                 current = self._pipelined_progress
                 if current is None or current.request_id != request_id:
@@ -188,21 +188,21 @@ class RayGenerationWorker:
                         f"pipelined progress lost active request {request_id!r}",
                     )
                 expected = current.completed_batches + 1
-                if fence.completed_batches != expected:
+                if completion.completed_batches != expected:
                     raise RuntimeError(
-                        "pipelined completion fences must register one batch at a time "
+                        "batch completion notifications must register one batch at a time "
                         f"(request_id={request_id!r}, previous="
-                        f"{expected - 1}, actual={fence.completed_batches})",
+                        f"{expected - 1}, actual={completion.completed_batches})",
                     )
-                if fence.completed_batches > total_batches:
+                if completion.completed_batches > total_batches:
                     raise RuntimeError(
-                        "pipelined completion fence exceeds request batch count "
+                        "batch completion exceeds request batch count "
                         f"(request_id={request_id!r}, total={total_batches}, "
-                        f"actual={fence.completed_batches})",
+                        f"actual={completion.completed_batches})",
                     )
-                self._pipelined_progress = PipelinedRequestProgress(
+                self._pipelined_progress = RequestBatchProgress(
                     request_id=request_id,
-                    completed_batches=fence.completed_batches,
+                    completed_batches=completion.completed_batches,
                     total_batches=total_batches,
                 )
 
@@ -212,12 +212,12 @@ class RayGenerationWorker:
                 request,
                 engine_plan,
                 completion_callback=record_completion,
-                stage_batch=ray.put if primary else _discard_payload,
+                stage_batch_result=ray.put if primary else _discard_payload,
             )
         finally:
             with self._pipelined_progress_lock:
                 self._pipelined_progress = None
-        if isinstance(staged, PipelinedRequestOutOfMemory):
+        if isinstance(staged, RequestBatchOutOfMemory):
             return staged
         if len(staged) != total_batches:
             raise RuntimeError(
@@ -244,7 +244,7 @@ class RayGenerationWorker:
     def pipelined_progress(
         self,
         request_id: str,
-    ) -> PipelinedRequestProgress | None:
+    ) -> RequestBatchProgress | None:
         """Report strict batch progress without joining the busy default group."""
 
         with self._pipelined_progress_lock:

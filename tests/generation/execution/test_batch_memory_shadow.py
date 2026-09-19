@@ -24,8 +24,8 @@ from vrl.generation.execution.batch_memory import (
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
+    BatchCompletion,
     BatchMemoryReading,
-    BatchProduceFence,
     BatchSizeProbeResult,
     BatchSizeProbeTrial,
     GenerationBatchEnvelope,
@@ -49,7 +49,7 @@ GB = 1024**3
 def test_execution_counts_reject_nonintegers(field, value):
     with pytest.raises(ValueError, match=field):
         if field == "completed_batches":
-            BatchProduceFence(completed_batches=value)
+            BatchCompletion(completed_batches=value)
         elif field == "n":
             BatchSizeProbeTrial(n=value, oom=True, label="probe")
         else:

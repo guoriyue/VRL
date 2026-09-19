@@ -4,7 +4,7 @@ The wire vocabulary of the driver <-> Ray-worker boundary: envelopes, batch
 results, parking snapshots, and probe verdicts are the payloads serialized
 across it, so they live apart from both the driver runtime and the worker
 core that exchange them. Two members deliberately do NOT cross the wire:
-``BatchProduceFence`` stays in-process because CUDA events cannot ride Ray,
+``BatchCompletion`` is an in-process callback notification with no CUDA event,
 and ``StaleSlotDiscard`` is raised worker-side but caught by the continuous
 rollout producer (vrl/rollouts/orchestration/continuous/producer.py) — a
 cross-package handshake that forces it into shared neutral ground. Config
@@ -42,24 +42,22 @@ ParkingBackend = Literal["cpu_only", "cpu_offload", "cumem"]
 
 
 @dataclass(frozen=True, slots=True)
-class BatchProduceFence:
+class BatchCompletion:
     """One batch of a per-request worker loop has finished and is on the CPU.
 
     The loop copies each batch's result to host memory synchronously before
-    publishing the fence, so a fence never refers to in-flight device work.
+    publishing the completion, so a completion never refers to in-flight device work.
     """
 
     completed_batches: int
 
     def __post_init__(self) -> None:
-        require_int(
-            self.completed_batches, path="batch produce fence completed_batches", minimum=1
-        )
+        require_int(self.completed_batches, path="batch completion completed_batches", minimum=1)
 
 
 # Keep the exported alias as its historical runtime value; a ``type`` statement
 # would replace it with a TypeAliasType and needlessly change public introspection.
-BatchCompletionCallback: TypeAlias = Callable[[BatchProduceFence], None]  # noqa: UP040
+BatchCompletionCallback: TypeAlias = Callable[[BatchCompletion], None]  # noqa: UP040
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,7 +323,9 @@ class GenerationBatchResult:
 
 @dataclass(frozen=True, slots=True)
 class StagedBatchRefs:
-    """Typed worker response for a per-request run: one object-store reference per batch.
+    """Successful worker response: one Ray object-store reference per generation batch.
+
+    References are handles used to retrieve stored results, not the results themselves.
 
     The rank stages each batch payload with ``ray.put`` right after its pinned
     host copy (compute, copy, stage, next batch: staging is not overlapped
@@ -346,13 +346,13 @@ class StagedBatchRefs:
     def __post_init__(self) -> None:
         if len(self.batch_keys) != len(self.batch_refs):
             raise ValueError(
-                "pipelined batch references must pair one key with one reference; "
+                "staged batch references must pair one key with one reference; "
                 f"got {len(self.batch_keys)} keys and {len(self.batch_refs)} references",
             )
 
 
 @dataclass(frozen=True, slots=True)
-class PipelinedRequestOutOfMemory:
+class RequestBatchOutOfMemory:
     """Typed worker response that asks the driver to retry through batch admission.
 
     If a whole-request run OOMs, the worker must first discard its partial
@@ -366,16 +366,16 @@ class PipelinedRequestOutOfMemory:
 
 
 __all__ = [
+    "BatchCompletion",
     "BatchCompletionCallback",
     "BatchMemoryReading",
     "BatchPlacementStrategy",
-    "BatchProduceFence",
     "BatchSizeProbeResult",
     "BatchSizeProbeTrial",
     "GenerationBatchEnvelope",
     "GenerationBatchResult",
     "ParkingBackend",
-    "PipelinedRequestOutOfMemory",
+    "RequestBatchOutOfMemory",
     "StagedBatchRefs",
     "StaleSlotDiscard",
     "WorkerMemoryParkingSnapshot",
