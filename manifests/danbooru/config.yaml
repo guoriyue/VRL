@@ -1,35 +1,20 @@
-# Danbooru anime / safety tag taxonomy for in-place dataset generation.
+# Danbooru anime tag vocabulary and safety taxonomy for in-place dataset generation.
 #
 # Single source of truth for the anime-tag vocabularies and bucket weights used
 # by vrl/scripts/data/danbooru/config.py. Extracted from workflow-level ALL_CAPS data
 # so the filter / bucket vocabulary can be reviewed and tuned (e.g. by data
 # curators) without editing Python. The script loads this at import time and
-# exposes the same constant names (EXCLUDE_TAGS, POSE_TAGS, SAFETY_RISK_TAGS, ...).
+# exposes the same constant names (POSE_TAGS, SAFETY_RISK_TAGS, ...).
 #
 # On load (see danbooru/config.py): list-valued *_tags / *_labels become
-# set or tuple to match prior runtime types; subject_tags / pose_tags /
-# default_bucket_weights stay dict. Order is preserved for readable diffs.
+# set or tuple to match prior runtime types; subject_tags / pose_tags stay dict. Order is preserved for readable diffs.
 
-anatomy:
-  # Tags that disqualify a full-body anatomy candidate.
-  exclude_tags:
-    - cropped
-    - portrait
-    - upper_body
-    - cowboy_shot
-    - multiple_girls
-    - multiple_boys
-    - text
-    - watermark
-    - lowres
-  # Excludes tolerated when the bucket is specifically hand-focused.
-  hand_focus_allowed_exclude_tags:
-    - upper_body
-    - cowboy_shot
+tags:
   # Subject tag -> prompt phrase. Keys also drive SUBJECT_PROMPT_TAGS.
   subject_tags:
     "1girl": single anime girl
     "1boy": single anime boy
+  # Pose tag -> prompt phrase.
   # Pose tag -> prompt phrase.
   pose_tags:
     standing: standing
@@ -50,55 +35,6 @@ anatomy:
     bent_over: bent over
     standing_on_one_leg: standing on one leg
     stretching: stretching
-  hand_tags:
-    - hands
-    - hand
-    - hand_up
-    - outstretched_arm
-    - arms_up
-    - arms_behind_back
-    - waving
-    - holding
-    - hand_focus
-    - reaching
-    - spread_fingers
-    - open_hand
-    - clenched_hand
-    - clenched_hands
-    - interlocked_fingers
-    - finger_gun
-    - peace_sign
-    - v
-    - salute
-  # Subset of hand_tags that marks a hand-focused composition.
-  hand_focus_bucket_tags:
-    - hand_focus
-    - spread_fingers
-    - open_hand
-    - clenched_hand
-    - clenched_hands
-    - interlocked_fingers
-    - finger_gun
-    - peace_sign
-    - v
-    - salute
-  feet_tags:
-    - feet
-    - foot
-    - barefoot
-    - boots
-    - shoes
-    - sneakers
-    - sandals
-  arm_tags:
-    - arms
-    - arm
-    - arms_up
-    - outstretched_arm
-    - arms_behind_back
-    - crossed_arms
-    - arm_up
-    - arm_support
   clothing_tags:
     - boots
     - shoes
@@ -118,37 +54,6 @@ anatomy:
     - street
     - indoors
     - outdoors
-  action_bucket_tags:
-    - dancing
-    - fighting_stance
-    - dynamic_pose
-    - action_pose
-    - jumping
-    - kicking
-    - high_kick
-    - squatting
-    - crouching
-    - all_fours
-    - bent_over
-    - standing_on_one_leg
-    - stretching
-    - holding_weapon
-    - holding_sword
-    - holding_gun
-    - dual_wielding
-  # Sampling weight per anatomy bucket (tunable knob).
-  default_bucket_weights:
-    hands_visible: 0.14
-    hand_focus: 0.10
-    action_pose: 0.16
-    running: 0.08
-    walking: 0.10
-    kneeling: 0.10
-    standing_front: 0.07
-    feet_visible: 0.07
-    sitting_full_body: 0.07
-    arms_visible: 0.08
-    standing_side: 0.03
   # Appearance/clothing/view anchors appended to prompts.
   prompt_anchor_tags:
     - long_hair
@@ -215,6 +120,7 @@ anatomy:
     - serious
     - open_mouth
     - closed_mouth
+
 
 safety:
   # Danbooru ratings to sample for the safety set (tunable knob).

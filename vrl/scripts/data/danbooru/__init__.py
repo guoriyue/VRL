@@ -1,7 +1,7 @@
 """CLI composition for Danbooru-derived dataset builders.
 
 Implementation ownership lives in the submodules (``metadata`` parsing,
-``anatomy``/``safety`` prompts, image ``assets``, ``config`` constants,
+``safety`` prompts, ``config`` constants,
 ``cli`` composition). This package exports only the setup-CLI surface;
 everything else is imported from its owning submodule — the former
 flat-module re-export facade had no external callers left.

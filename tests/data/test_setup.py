@@ -11,7 +11,6 @@ from PIL import Image
 
 from vrl.config.schema import DataConfig
 from vrl.scripts.data import bootstrap, setup, video_world
-from vrl.scripts.data.danbooru import assets as danbooru_assets
 from vrl.trainers.data.artifacts import (
     resolve_prompt_example_references,
     resolve_required_reference_images_,
@@ -159,7 +158,7 @@ def test_for_experiment_plan_covers_every_mixture_source(tmp_path: Path) -> None
         {
             "loader": "prompt_manifest",
             "manifest": {
-                "manifests/danbooru/anatomy/train_prompts.jsonl": 6800,
+                "manifests/danbooru/safety/train_c_adherence.jsonl": 6800,
                 "manifests/danbooru/safety/train.jsonl": 1200,
             },
         },
@@ -167,7 +166,7 @@ def test_for_experiment_plan_covers_every_mixture_source(tmp_path: Path) -> None
     )
 
     assert [step["path"] for step in plan["steps"]] == [
-        "manifests/danbooru/anatomy/train_prompts.jsonl",
+        "manifests/danbooru/safety/train_c_adherence.jsonl",
         "manifests/danbooru/safety/train.jsonl",
     ]
     assert plan["ready"] is False
@@ -284,76 +283,6 @@ def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path
     assert rows[0]["metadata"]["source_repo"] == "lerobot/droid_100"
 
 
-# NOTE: the bare ``download_danbooru_images`` selection path is owned by
-# ``test_danbooru.py::test_download_danbooru_images_downloads_only_positive_selection``.
-# This module only covers the ``setup.main`` CLI wiring that sits on top of it.
-@pytest.mark.real_cover(
-    None,
-    why=(
-        "the patched http_download stands in for an HTTP GET against danbooru.donmai.us; a "
-        "test that reaches the live site is neither reproducible nor free, and what is "
-        "asserted here is the setup.main CLI wiring above it"
-    ),
-    tracked_in="docs/sprints/done/SPRINT_tier-policy-and-real-cover-labels.md",
-)
-def test_anime_positives_prepares_both_manifests_end_to_end(monkeypatch, tmp_path: Path) -> None:
-    """The CLI writes both the positives and hand-crop manifests in one pass."""
-    metadata = tmp_path / "posts.jsonl"
-    rows = [
-        {
-            "id": 1,
-            "score": 50,
-            "tag_string": "1girl solo full_body standing",
-            "file_ext": "jpg",
-            "file_url": "https://example.test/1.jpg",
-        },
-        {
-            "id": 2,
-            "score": 1,
-            "tag_string": "1girl solo upper_body",
-            "file_ext": "jpg",
-            "file_url": "https://example.test/2.jpg",
-        },
-    ]
-    metadata.write_text(
-        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
-        encoding="utf-8",
-    )
-    image_root = tmp_path / "images"
-    positives = tmp_path / "positive_images.jsonl"
-    hand_crops = tmp_path / "hand_crops.jsonl"
-
-    def fake_fetch(url: str, target: Path) -> None:
-        target.write_bytes(b"fake-image-bytes")
-
-    monkeypatch.setattr(danbooru_assets, "http_download", fake_fetch)
-
-    setup.main(
-        [
-            "anime-positives",
-            "--metadata",
-            str(metadata),
-            "--image-root",
-            str(image_root),
-            "--output",
-            str(positives),
-            "--hand-crops-output",
-            str(hand_crops),
-            "--fetch-images",
-        ],
-    )
-
-    pos_rows = [json.loads(line) for line in positives.read_text().splitlines() if line.strip()]
-    assert len(pos_rows) == 1
-    assert pos_rows[0]["post_id"] == 1
-    assert (image_root / "1.jpg").exists()
-    assert not (image_root / "2.jpg").exists()
-
-    crop_rows = [json.loads(line) for line in hand_crops.read_text().splitlines() if line.strip()]
-    assert len(crop_rows) == 1
-    assert crop_rows[0]["labels"] == ["hand_ok"]
-
-
 def test_for_experiment_plan_marks_committed_manifest_ready(tmp_path: Path) -> None:
     """A committed prompt manifest marks the experiment's dataset plan ready, with its row count
     and no fetch command.
@@ -385,19 +314,19 @@ def test_for_experiment_plan_flags_pickapic_download(tmp_path: Path) -> None:
 
 
 def test_for_experiment_plan_flags_missing_manifest_with_command(tmp_path: Path) -> None:
-    """A missing Danbooru manifest leaves the plan not ready and names the ``anime-prompts``
+    """A missing Danbooru manifest leaves the plan not ready and names the ``anime-safety-prompts``
     command that produces it.
     """
     plan = bootstrap.resolve_experiment_dataset_plan(
         {
             "loader": "prompt_manifest",
-            "manifest": "manifests/danbooru/anatomy/train_prompts.jsonl",
+            "manifest": "manifests/danbooru/safety/train.jsonl",
         },
         repo_root=tmp_path,
     )
 
     assert plan["ready"] is False
-    assert "anime-prompts" in plan["steps"][0]["get"]
+    assert "anime-safety-prompts" in plan["steps"][0]["get"]
 
 
 def test_for_experiment_resolves_real_wan_experiment(capsys) -> None:

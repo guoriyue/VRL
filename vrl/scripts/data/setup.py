@@ -8,8 +8,7 @@ downloads into. No generic artifact-manifest framework lives here.
 
     python -m vrl.scripts.data.setup <command>
 
-Commands: pickapic, anime-prompts, anime-safety-prompts, anime-positives,
-anime-fetch-images, videophy-i2v, video-world-bridge, video-world-targets,
+Commands: pickapic, anime-safety-prompts, videophy-i2v, video-world-bridge, video-world-targets,
 jrdb-targets, derive-text-video-targets, for-experiment, init-dirs.
 """
 
@@ -34,7 +33,6 @@ from vrl.scripts.data import (
 # module docstring rules that out); keep it local rather than a per-dataset protocol.
 _INIT_DIRS_BY_DATASET = {
     "pickapic": ("pickapic",),
-    "anime": ("danbooru/images", "danbooru/hand_crops"),
     "video-world": ("video_world/references", "video_world/targets"),
 }
 
