@@ -48,18 +48,17 @@ class RolloutWorkerHealthMonitor:
         *,
         interval_s: float,
         timeout_s: float,
-        first_wait_s: float = 0.0,
     ) -> None:
         self._runtime = runtime
         self._interval_s = float(interval_s)
         self._timeout_s = float(timeout_s)
-        self._first_wait_s = float(first_wait_s)
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._paused = threading.Event()
         self._transition_lock = threading.Lock()
+        # Bumped on every resume: a probe issued before a pause must not fail
+        # the fleet that came back after it.
         self._resume_epoch = 0
-        self._completed_grace_epoch = -1
 
     def start(self) -> bool:
         """Start probing. Returns False when monitoring is disabled or running."""
@@ -99,8 +98,6 @@ class RolloutWorkerHealthMonitor:
             self._paused.set()
 
     def resume(self) -> None:
-        # Re-arm the grace period on every resume: workers woken from host RAM
-        # need time to restore before they can answer a probe.
         with self._transition_lock:
             self._resume_epoch += 1
             self._paused.clear()
@@ -110,23 +107,9 @@ class RolloutWorkerHealthMonitor:
             with self._transition_lock:
                 paused = self._paused.is_set()
                 resume_epoch = self._resume_epoch
-                needs_grace = self._completed_grace_epoch != resume_epoch
             if paused:
                 self._stop.wait(timeout=0.5)
                 continue
-            if needs_grace:
-                if self._first_wait_s > 0 and self._stop.wait(timeout=self._first_wait_s):
-                    return
-                with self._transition_lock:
-                    if (
-                        self._stop.is_set()
-                        or self._paused.is_set()
-                        or self._resume_epoch != resume_epoch
-                    ):
-                        # A new resume owns a complete grace period; never let an
-                        # older wait consume or shorten it.
-                        continue
-                    self._completed_grace_epoch = resume_epoch
             self._run_probes(resume_epoch=resume_epoch)
             self._stop.wait(timeout=self._interval_s)
 

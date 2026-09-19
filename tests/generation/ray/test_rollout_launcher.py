@@ -85,7 +85,6 @@ def _worker_config(**overrides: Any) -> RolloutWorkerConfig:
         "cpus_per_worker": 0.5,
         "health_check_interval_s": 30.0,
         "health_check_timeout_s": 30.0,
-        "health_check_first_wait_s": 0.0,
         "worker_rpc_timeout_s": 30.0,
         "generation_stall_timeout_s": 30.0,
         "pipelined": False,

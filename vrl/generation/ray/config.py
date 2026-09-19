@@ -26,7 +26,6 @@ class RolloutWorkerConfig:
     cpus_per_worker: float
     health_check_interval_s: float
     health_check_timeout_s: float
-    health_check_first_wait_s: float
     worker_rpc_timeout_s: float
     generation_stall_timeout_s: float
     # Opt-in per-request rollout: each engine runs its round-robin share of a
@@ -42,8 +41,6 @@ class RolloutWorkerConfig:
             not math.isfinite(self.health_check_timeout_s) or self.health_check_timeout_s <= 0
         ):
             raise ValueError("health_check_timeout_s must be finite and > 0 when enabled")
-        if not math.isfinite(self.health_check_first_wait_s) or self.health_check_first_wait_s < 0:
-            raise ValueError("health_check_first_wait_s must be finite and >= 0")
         if not math.isfinite(self.worker_rpc_timeout_s) or self.worker_rpc_timeout_s <= 0:
             raise ValueError("worker_rpc_timeout_s must be finite and > 0")
         if (

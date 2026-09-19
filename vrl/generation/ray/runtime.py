@@ -52,7 +52,6 @@ class RayGenerationRuntime:
         colocated: bool = False,
         health_check_interval_s: float = 0.0,
         health_check_timeout_s: float = 30.0,
-        health_check_first_wait_s: float = 0.0,
     ) -> None:
         if session is None and session_factory is None:
             raise ValueError(
@@ -86,7 +85,6 @@ class RayGenerationRuntime:
             self,
             interval_s=health_check_interval_s,
             timeout_s=health_check_timeout_s,
-            first_wait_s=health_check_first_wait_s,
         )
 
     @property

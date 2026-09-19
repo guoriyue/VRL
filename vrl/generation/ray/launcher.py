@@ -350,7 +350,6 @@ class RayGenerationLauncher:
                 colocated=resources.lifecycle.park_trainer_for_rollout,
                 health_check_interval_s=worker.health_check_interval_s,
                 health_check_timeout_s=worker.health_check_timeout_s,
-                health_check_first_wait_s=worker.health_check_first_wait_s,
             )
             runtime.start_health_monitoring()
             return runtime

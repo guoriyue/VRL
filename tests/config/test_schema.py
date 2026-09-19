@@ -99,7 +99,6 @@ def test_rollout_health_check_defaults_and_accepts_override() -> None:
     default = parse_config(minimal_grpo_cfg(distributed={"rollout": {}}))
     assert default.distributed.rollout.health_check_interval_s == 30.0
     assert default.distributed.rollout.health_check_timeout_s == 30.0
-    assert default.distributed.rollout.health_check_first_wait_s == 0.0
     assert default.distributed.rollout.worker_rpc_timeout_s == 600.0
     assert default.distributed.rollout.generation_stall_timeout_s == 3600.0
 
@@ -108,7 +107,6 @@ def test_rollout_health_check_defaults_and_accepts_override() -> None:
             "rollout": {
                 "health_check_interval_s": 12.5,
                 "health_check_timeout_s": 7.5,
-                "health_check_first_wait_s": 2.5,
                 "worker_rpc_timeout_s": 3600.0,
                 "generation_stall_timeout_s": 1200.0,
             }
@@ -117,7 +115,6 @@ def test_rollout_health_check_defaults_and_accepts_override() -> None:
     rollout = parse_config(cfg).distributed.rollout
     assert rollout.health_check_interval_s == 12.5
     assert rollout.health_check_timeout_s == 7.5
-    assert rollout.health_check_first_wait_s == 2.5
     assert rollout.worker_rpc_timeout_s == 3600.0
     assert rollout.generation_stall_timeout_s == 1200.0
 
@@ -141,7 +138,6 @@ def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
     section_fields = set(RolloutRuntimeSection.model_fields)
     config_fields = {f.name for f in dataclasses.fields(RolloutWorkerConfig)}
     assert section_fields == config_fields
-    assert "health_check_first_wait_s" in section_fields
     assert "worker_rpc_timeout_s" in section_fields
     assert "generation_stall_timeout_s" in section_fields
 
@@ -173,7 +169,6 @@ def test_rollout_health_check_interval_le_zero_disables_probe() -> None:
     [
         ("health_check_interval_s", float("nan"), r"health_check_interval_s must be finite"),
         ("health_check_timeout_s", 0.0, r"health_check_timeout_s must be finite and > 0"),
-        ("health_check_first_wait_s", -1.0, r"health_check_first_wait_s must be finite and >= 0"),
         ("worker_rpc_timeout_s", float("inf"), r"worker_rpc_timeout_s must be finite and > 0"),
         ("generation_stall_timeout_s", 0.0, r"generation_stall_timeout_s must be finite and > 0"),
     ],

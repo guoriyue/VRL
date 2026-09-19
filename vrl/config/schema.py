@@ -676,7 +676,6 @@ class RolloutRuntimeSection(ConfigBase):
     # the supervisor's bounded restart policy.
     health_check_interval_s: float = 30.0
     health_check_timeout_s: float = 30.0
-    health_check_first_wait_s: float = 0.0
     # rank level: opaque control-plane calls expose no useful progress. Bound
     # startup, metadata, capability, and weight acknowledgements independently.
     worker_rpc_timeout_s: float = 600.0
@@ -704,10 +703,6 @@ class RolloutRuntimeSection(ConfigBase):
             raise ValueError(
                 "distributed.rollout.health_check_timeout_s must be finite and > 0 "
                 "when health checking is enabled",
-            )
-        if not math.isfinite(self.health_check_first_wait_s) or self.health_check_first_wait_s < 0:
-            raise ValueError(
-                "distributed.rollout.health_check_first_wait_s must be finite and >= 0",
             )
         if not math.isfinite(self.worker_rpc_timeout_s) or self.worker_rpc_timeout_s <= 0:
             raise ValueError(

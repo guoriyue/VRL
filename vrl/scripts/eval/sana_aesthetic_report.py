@@ -584,11 +584,16 @@ def _erase_meaningless_spelling(
                     f"ambiguous SANA config at {'.'.join(path)}: both {old!r} and {new!r}"
                 )
             renamed_section[new] = renamed_section.pop(old)
-    # Batch placement lost its strategy knob in 2026-09 (round-robin is the only
-    # placement); historical configs may still carry either spelling.
+    # Knobs removed in 2026-09: the batch placement strategy (round-robin is the
+    # only placement) and the health monitor's post-resume grace; historical
+    # configs may still carry them.
     rollout_section = _section(actual, "distributed", "rollout")
     if isinstance(rollout_section, dict):
-        for removed in ("chunk_placement_strategy", "batch_placement_strategy"):
+        for removed in (
+            "chunk_placement_strategy",
+            "batch_placement_strategy",
+            "health_check_first_wait_s",
+        ):
             rollout_section.pop(removed, None)
 
     # Historical online configs stored collection counts rather than sizes.

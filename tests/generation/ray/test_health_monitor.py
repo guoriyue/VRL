@@ -97,39 +97,6 @@ class _BlockingFailureRay(_FakeRay):
         return ref.behaviour
 
 
-class _ControlledStopEvent:
-    """Expose two first-wait windows without sleeping in the test."""
-
-    def __init__(self, *, grace_timeout: float) -> None:
-        self._event = threading.Event()
-        self._grace_timeout = grace_timeout
-        self._lock = threading.Lock()
-        self._grace_calls = 0
-        self.grace_started = (threading.Event(), threading.Event())
-        self.release_grace = (threading.Event(), threading.Event())
-
-    def clear(self) -> None:
-        self._event.clear()
-
-    def is_set(self) -> bool:
-        return self._event.is_set()
-
-    def set(self) -> None:
-        self._event.set()
-
-    def wait(self, timeout: float | None = None) -> bool:
-        if timeout == self._grace_timeout:
-            with self._lock:
-                index = self._grace_calls
-                self._grace_calls += 1
-            if index < len(self.grace_started):
-                self.grace_started[index].set()
-                if not self.release_grace[index].wait(timeout=1):
-                    raise AssertionError("test did not release the health grace period")
-                return self._event.is_set()
-        return self._event.wait(timeout=timeout)
-
-
 def _runtime(*actors: _Actor) -> Any:
     return SimpleNamespace(
         _owned_ranks=[
@@ -140,7 +107,7 @@ def _runtime(*actors: _Actor) -> Any:
 
 
 def _monitor(runtime: Any, **kwargs: Any) -> RolloutWorkerHealthMonitor:
-    defaults = {"interval_s": 0.01, "timeout_s": 0.5, "first_wait_s": 0.0}
+    defaults = {"interval_s": 0.01, "timeout_s": 0.5}
     defaults.update(kwargs)
     return RolloutWorkerHealthMonitor(runtime, **defaults)
 
@@ -350,39 +317,6 @@ def test_stop_ignores_an_in_flight_probe_failure(
     assert monitor._thread is None
     assert runtime.lifecycle.phase is RuntimePhase.RUNNING
     assert ray.killed == []
-
-
-@_SCRIPTED_RAY_WIRE
-def test_resume_during_first_wait_restarts_the_complete_grace_period(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A newer wake cannot consume an older activation's partial grace."""
-
-    actor = _Actor("rollout-0")
-    ray = _FakeRay([actor])
-    _install_ray(monkeypatch, ray)
-    monitor = _monitor(_runtime(actor), first_wait_s=5.0)
-    controlled_stop = _ControlledStopEvent(grace_timeout=5.0)
-    monitor._stop = controlled_stop
-
-    assert monitor.start() is True
-    monitor.resume()
-    assert controlled_stop.grace_started[0].wait(timeout=1)
-    monitor.pause()
-    monitor.resume()
-    controlled_stop.release_grace[0].set()
-    assert controlled_stop.grace_started[1].wait(timeout=1)
-
-    assert actor.health.calls == 0
-    stop_thread = threading.Thread(target=monitor.stop)
-    stop_thread.start()
-    assert controlled_stop.wait(timeout=1)
-    controlled_stop.release_grace[1].set()
-    stop_thread.join(timeout=1)
-
-    assert not stop_thread.is_alive()
-    assert actor.health.calls == 0
-    assert monitor._thread is None
 
 
 @_SCRIPTED_RAY_WIRE
