@@ -12,7 +12,7 @@ from typing import Any
 from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
 from vrl.generation.execution.rank_group import RankGroupSpec
 from vrl.generation.ray.config import RayGenerationConfig
-from vrl.generation.ray.engine import RayGenerationEngine, rank_handles
+from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
@@ -237,7 +237,7 @@ class RayGenerationLauncher:
             )
             supports_non_draining_weight_sync = self._all_ranks_support_versioned_slots(
                 ray,
-                rank_handles(engines),
+                [rank for engine in engines for rank in engine.ranks],
                 weight_sync=weight_sync,
                 worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
             )

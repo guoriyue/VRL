@@ -6,7 +6,7 @@ import asyncio
 import uuid
 from typing import Any, Protocol
 
-from vrl.generation.ray.engine import RayGenerationEngine, uniform_rank_result
+from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.dependencies import require_ray
 from vrl.utils.deadline import require_timeout
@@ -31,7 +31,7 @@ class RayGenerationWeightSync:
     """Broadcast ``update_weights`` to every rank of every generation engine.
 
     The engine call fans out to all its ranks and requires their version
-    echoes to agree (``uniform_rank_result``); this layer then validates the
+    echoes to agree (``RayGenerationEngine.remote_uniform``); this layer then validates the
     agreed echo against the expected version per engine. ``verify_content`` is
     an opt-in acceptance probe: every rank must read back the installed parameters
     before returning that echo. Normal sync does not pay for device readback.
@@ -90,10 +90,7 @@ class RayGenerationWeightSync:
             RayActorJob(
                 job_index=job_index,
                 worker_id=engine.engine_id,
-                remote_method=engine.remote(
-                    "update_weights",
-                    combine=uniform_rank_result("update_weights"),
-                ),
+                remote_method=engine.remote_uniform("update_weights"),
                 payload=shared_state_ref,
                 keyword_args={"policy_version": policy_version, **verification},
             )
@@ -149,7 +146,7 @@ class RayGenerationWeightSync:
                 RayActorJob(
                     job_index=index,
                     worker_id=engine.engine_id,
-                    remote_method=engine.remote(method, combine=uniform_rank_result(method)),
+                    remote_method=engine.remote_uniform(method),
                     payload=shared,
                     keyword_args=kwargs,
                 )

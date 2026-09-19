@@ -16,12 +16,7 @@ from tests.generation.ray._helpers import ResolvedRef
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import GenerationBatchResult, WorkerMemoryParkingSnapshot
 from vrl.generation.protocols import GenerationRankActor
-from vrl.generation.ray.engine import (
-    EngineCallRef,
-    RayGenerationEngine,
-    rank_handles,
-    uniform_rank_result,
-)
+from vrl.generation.ray.engine import EngineCallRef, RayGenerationEngine
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_group import RayActorHandle
 
@@ -85,7 +80,7 @@ async def test_single_rank_returns_the_raw_rank_ref() -> None:
     raw = ResolvedRef("only")
     engine = _engine(calls, {"r0": raw})
 
-    ref = engine.remote("execute_batch")("payload")
+    ref = engine.execute_batch()("payload")
 
     # No aggregate wrapper for the degenerate case: identical to pre-engine
     # behavior byte-for-byte (completion/cancellation timing included).
@@ -150,7 +145,7 @@ async def test_any_rank_failure_fails_the_engine_call_and_cancels_siblings() -> 
     engine_module.cancel_ray_refs = _record_cancel
     try:
         with pytest.raises(RuntimeError, match="rank r1 died"):
-            await engine.remote("execute_batch")("payload")
+            await engine.execute_batch()("payload")
     finally:
         engine_module.cancel_ray_refs = original
 
@@ -163,20 +158,14 @@ async def test_any_rank_failure_fails_the_engine_call_and_cancels_siblings() -> 
 async def test_uniform_combine_requires_every_rank_to_agree() -> None:
     calls: list[tuple[str, tuple, dict]] = []
     agree = _engine(calls, {"r0": ResolvedRef(7), "r1": ResolvedRef(7)}, method="update_weights")
-    result = await agree.remote(
-        "update_weights",
-        combine=uniform_rank_result("update_weights"),
-    )("state", policy_version=7)
+    result = await agree.remote_uniform("update_weights")("state", policy_version=7)
     assert result == 7
 
     disagree = _engine(
         calls, {"r0": ResolvedRef(7), "r1": ResolvedRef(6)}, method="update_weights"
     )
     with pytest.raises(RuntimeError, match="ranks disagree on update_weights"):
-        await disagree.remote(
-            "update_weights",
-            combine=uniform_rank_result("update_weights"),
-        )("state", policy_version=7)
+        await disagree.remote_uniform("update_weights")("state", policy_version=7)
 
 
 @pytest.mark.asyncio
@@ -217,16 +206,6 @@ def test_engine_requires_at_least_one_unique_rank() -> None:
         RayGenerationEngine("engine-0", [handle, handle])
 
 
-def test_rank_handles_flattens_in_engine_order() -> None:
-    first = RayActorHandle(worker_id="a", actor=object())
-    second = RayActorHandle(worker_id="b", actor=object())
-    engines = [
-        RayGenerationEngine("e0", [first]),
-        RayGenerationEngine("e1", [second]),
-    ]
-    assert rank_handles(engines) == [first, second]
-
-
 def test_rank_actor_satisfies_the_rank_protocol() -> None:
     """The engine's method-name strings cannot drift from the actor surface."""
 
@@ -238,10 +217,16 @@ def test_rank_actor_satisfies_the_rank_protocol() -> None:
     assert missing == []
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("results", [[3, 3.0], [1, True], [3.0, 3]])
-def test_uniform_ack_requires_matching_types(results) -> None:
+async def test_uniform_ack_requires_matching_types(results) -> None:
+    engine = _engine(
+        [],
+        {"r0": ResolvedRef(results[0]), "r1": ResolvedRef(results[1])},
+        method="update_weights",
+    )
     with pytest.raises(RuntimeError, match="ranks disagree"):
-        uniform_rank_result("update_weights")(results)
+        await engine.remote_uniform("update_weights")("state")
 
 
 @pytest.mark.asyncio
@@ -255,9 +240,7 @@ async def test_generation_combiner_retains_nonprimary_error_payload(failure):
         "request", "r1", good.batch, output=None, error=failure, stale_slot=failure == "stale"
     )
     engine = _engine([], {"r0": ResolvedRef(good), "r1": ResolvedRef(bad)})
-    result = await engine.remote("execute_batch", combine=GenerationBatchResult.from_rank_results)(
-        "payload"
-    )
+    result = await engine.execute_batch()("payload")
     assert result is bad
 
 
@@ -338,7 +321,7 @@ async def test_batch_combines_metrics_from_every_rank_without_mutating_primary()
     first = _batch_result("r0", rank_metrics={"r0": {"peak_memory_mb": 10}})
     second = _batch_result("r1", rank_metrics={"r1": {"peak_memory_mb": 20}})
     engine = _engine([], {"r0": ResolvedRef(first), "r1": ResolvedRef(second)})
-    result = await engine.remote("execute_batch")("payload")
+    result = await engine.execute_batch()("payload")
     assert result.rank_metrics == {"r0": {"peak_memory_mb": 10}, "r1": {"peak_memory_mb": 20}}
     assert first.rank_metrics == {"r0": {"peak_memory_mb": 10}}
     assert result.worker_id == "r0"
@@ -350,7 +333,7 @@ async def test_nonprimary_batch_failure_is_not_hidden(failure: dict) -> None:
     first = _batch_result("r0")
     second = _batch_result("r1", **failure)
     engine = _engine([], {"r0": ResolvedRef(first), "r1": ResolvedRef(second)})
-    assert await engine.remote("execute_batch")("payload") is second
+    assert await engine.execute_batch()("payload") is second
 
 
 @pytest.mark.asyncio
@@ -361,4 +344,4 @@ async def test_batch_rejects_inconsistent_rank_identity(field: str, value: Any) 
     setattr(second, field, value)
     engine = _engine([], {"r0": ResolvedRef(first), "r1": ResolvedRef(second)})
     with pytest.raises(RuntimeError, match="engine ranks returned different"):
-        await engine.remote("execute_batch")("payload")
+        await engine.execute_batch()("payload")

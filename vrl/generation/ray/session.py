@@ -7,7 +7,7 @@ import logging
 from typing import Any
 
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
-from vrl.generation.ray.engine import RayGenerationEngine, rank_handles
+from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.ray.dependencies import kill_actors, kill_failures_error, require_ray
@@ -58,7 +58,7 @@ class RayGenerationSession:
                 "Ray generation and weight sync must share one actor dispatcher",
             )
         self.engines = list(owned_engines)
-        self.rank_handles = rank_handles(self.engines)
+        self.rank_handles = [rank for engine in self.engines for rank in engine.ranks]
         engine_ids = tuple(engine.engine_id for engine in self.engines)
         if len(set(engine_ids)) != len(engine_ids):
             raise RuntimeError(f"duplicate generation engine ids: {engine_ids}")

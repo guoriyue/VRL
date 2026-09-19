@@ -252,9 +252,7 @@ class RayGenerationExecutor:
                 RayActorJob(
                     job_index=job_index,
                     worker_id=engine.engine_id,
-                    remote_method=engine.remote(
-                        "execute_batch", combine=GenerationBatchResult.from_rank_results
-                    ),
+                    remote_method=engine.execute_batch(),
                     payload=assignment.envelope,
                 ),
             )
@@ -657,9 +655,7 @@ class RayGenerationExecutor:
                         RayActorJob(
                             job_index=len(retry_jobs),
                             worker_id=engine.engine_id,
-                            remote_method=engine.remote(
-                                "execute_batch", combine=GenerationBatchResult.from_rank_results
-                            ),
+                            remote_method=engine.execute_batch(),
                             payload=child_envelope,
                         ),
                     )
@@ -707,9 +703,7 @@ class RayGenerationExecutor:
                     "dynamic batch placement requires Ray actor ranks; "
                     f"engine {engine.engine_id!r} has no remote execute_batch",
                 )
-            methods[engine.engine_id] = engine.remote(
-                "execute_batch", combine=GenerationBatchResult.from_rank_results
-            )
+            methods[engine.engine_id] = engine.execute_batch()
         return methods
 
 

@@ -66,22 +66,6 @@ class EngineCallRef:
         return results[0] if self._combine is None else self._combine(results)
 
 
-def uniform_rank_result(method_name: str) -> Callable[[list[Any]], Any]:
-    """Combine that requires every rank to agree — e.g. the update_weights
-    version echo: ranks that installed different policy versions mean the
-    engine is internally inconsistent and must fail loud."""
-
-    def combine(results: list[Any]) -> Any:
-        first = results[0]
-        if any(type(result) is not type(first) or result != first for result in results[1:]):
-            raise RuntimeError(
-                f"engine ranks disagree on {method_name} result: {results!r}",
-            )
-        return first
-
-    return combine
-
-
 class RayGenerationEngine:
     """Driver-side engine object over its rank actor handles.
 
@@ -131,17 +115,38 @@ class RayGenerationEngine:
         if len(self.ranks) == 1:
             return getattr(self.ranks[0].actor, method_name).remote
 
-        if combine is None and method_name == "execute_batch":
-            combine = partial(
-                GenerationBatchResult.from_rank_results,
-                expected_worker_ids=[rank.worker_id for rank in self.ranks],
-            )
-
         def submit(*args: Any, **kwargs: Any) -> EngineCallRef:
             refs = self._submit_rank_calls(method_name, *args, **kwargs)
             return EngineCallRef(refs, combine=combine)
 
         return submit
+
+    def execute_batch(self) -> Callable[..., Any]:
+        """``execute_batch`` submitter: the ranks' results fold into one
+        ``GenerationBatchResult``, each rank vouched for by its own worker id."""
+
+        return self.remote(
+            "execute_batch",
+            combine=partial(
+                GenerationBatchResult.from_rank_results,
+                expected_worker_ids=[rank.worker_id for rank in self.ranks],
+            ),
+        )
+
+    def remote_uniform(self, method_name: str) -> Callable[..., Any]:
+        """Submitter for a call every rank must answer identically — e.g. the
+        ``update_weights`` version echo: ranks that installed different policy
+        versions mean the engine is internally inconsistent and must fail loud."""
+
+        def combine(results: list[Any]) -> Any:
+            first = results[0]
+            if any(type(result) is not type(first) or result != first for result in results[1:]):
+                raise RuntimeError(
+                    f"engine ranks disagree on {method_name} result: {results!r}",
+                )
+            return first
+
+        return self.remote(method_name, combine=combine)
 
     def _submit_rank_calls(self, method_name: str, *args: Any, **kwargs: Any) -> list[Any]:
         """Own rank refs until the complete fan-out can be handed to its waiter."""
@@ -188,15 +193,4 @@ class RayGenerationEngine:
         await asyncio.gather(*self._submit_rank_calls("wake"))
 
 
-def rank_handles(engines: Sequence[RayGenerationEngine]) -> list[RayActorHandle]:
-    """Flat rank view for the lifecycle machinery (kill, liveness, metadata)."""
-
-    return [rank for engine in engines for rank in engine.ranks]
-
-
-__all__ = [
-    "EngineCallRef",
-    "RayGenerationEngine",
-    "rank_handles",
-    "uniform_rank_result",
-]
+__all__ = ["EngineCallRef", "RayGenerationEngine"]
