@@ -114,10 +114,6 @@ class VGRPO(PreviousAdapterObjective):
     is REINFORCE with a group baseline, which is the paper's Stage-1 recipe.
     """
 
-    name = "V-GRPO"
-    invariant_event = "first_step_v_grpo_invariant"
-    invariant_name = "advantage_antisymmetry"
-
     def __init__(self, config: VGRPOConfig | None = None) -> None:
         self.config = config or VGRPOConfig()
         # Advances with the optimizer so the group-shared noise changes across
@@ -288,12 +284,32 @@ class VGRPO(PreviousAdapterObjective):
 
     # -- lifecycle ------------------------------------------------------------
 
-    def _invariant_residual(self, loss: float, flipped_loss: float) -> float:
-        # With previous == default the ratio is 1, so the objective is linear
-        # in the advantage: loss(A) + loss(-A) == 2 * kl_term == 0.
-        return abs(loss + flipped_loss)
+    def first_step_invariant_check(
+        self,
+        *,
+        model: Any,
+        batch: Any,
+        advantages: Any,
+        timestep_index: int = 0,
+        threshold: float = 1.0e-6,
+    ) -> dict[str, Any]:
+        """lr=0 invariant: with previous == default the ratio is 1, so the objective
+        is linear in the advantage and ``loss(A) + loss(-A) == 2 * kl_term == 0``."""
 
-    def _after_previous_adapter_sync(self, global_step: int) -> None:
+        loss, flipped_loss = self._flipped_advantage_losses(
+            model, batch, advantages, timestep_index
+        )
+        abs_diff = abs(loss + flipped_loss)
+        return {
+            "loss": loss,
+            "flipped_loss": flipped_loss,
+            "abs_diff": abs_diff,
+            "threshold": threshold,
+            "passed": abs_diff <= threshold,
+        }
+
+    def after_optimizer_step(self, model: Any, global_step: int) -> None:
+        super().after_optimizer_step(model, global_step)
         # Advance the group-noise counter so the shared noise changes across
         # updates while staying fixed within one.
         self._update_counter = int(global_step) + 1

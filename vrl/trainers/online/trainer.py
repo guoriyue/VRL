@@ -1640,22 +1640,25 @@ class OnlineTrainer:
                         advantages=_dbg_adv,
                         timestep_index=0,
                     )
+                _algorithm_name = type(self.algorithm).__name__
                 logger.info(
-                    "DEBUG first-step %s: abs_diff=%.3e (threshold %.1e)",
-                    _invariant["event"],
+                    "DEBUG first-step %s advantage-flip invariant: abs_diff=%.3e (threshold %.1e)",
+                    _algorithm_name,
                     _invariant["abs_diff"],
                     _invariant["threshold"],
                 )
                 if not _invariant.get("passed", True):
                     logger.warning(
-                        "first-step %s invariant violated: abs_diff %.3e > %.1e. "
+                        "first-step %s advantage-flip invariant violated: abs_diff %.3e > %.1e. "
                         "The collection-time training signal is untrustworthy; "
                         "suspect replay-side conditioning/scheduler-domain drift.",
-                        _invariant["invariant"],
+                        _algorithm_name,
                         _invariant["abs_diff"],
                         _invariant["threshold"],
                     )
                 first_step_debug_record = {
+                    "event": "first_step_invariant",
+                    "algorithm": _algorithm_name,
                     **_invariant,
                     "trainer_step": int(self.state.step),
                     "global_step": int(self.state.global_step),

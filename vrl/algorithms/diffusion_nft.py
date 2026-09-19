@@ -44,10 +44,6 @@ class DiffusionNFT(PreviousAdapterObjective):
     against the previous-policy adapter the parent refreshes every step.
     """
 
-    name = "DiffusionNFT"
-    invariant_event = "first_step_nft_invariant"
-    invariant_name = "advantage_flip"
-
     def __init__(self, config: DiffusionNFTConfig | None = None) -> None:
         self.config = config or DiffusionNFTConfig()
 
@@ -65,9 +61,28 @@ class DiffusionNFT(PreviousAdapterObjective):
             global_std=cfg.global_std,
         )
 
-    def _invariant_residual(self, loss: float, flipped_loss: float) -> float:
-        # Flipping advantages must not change the loss.
-        return abs(loss - flipped_loss)
+    def first_step_invariant_check(
+        self,
+        *,
+        model: Any,
+        batch: Any,
+        advantages: Any,
+        timestep_index: int = 0,
+        threshold: float = 1.0e-6,
+    ) -> dict[str, Any]:
+        """lr=0 invariant: flipping the advantages must not change the loss."""
+
+        loss, flipped_loss = self._flipped_advantage_losses(
+            model, batch, advantages, timestep_index
+        )
+        abs_diff = abs(loss - flipped_loss)
+        return {
+            "loss": loss,
+            "flipped_loss": flipped_loss,
+            "abs_diff": abs_diff,
+            "threshold": threshold,
+            "passed": abs_diff <= threshold,
+        }
 
     def compute_loss(
         self,

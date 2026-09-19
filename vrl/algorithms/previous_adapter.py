@@ -17,15 +17,11 @@ flag.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any
 
 
 class PreviousAdapterObjective:
     """Replay-branch objective whose behaviour policy is the previous adapter."""
-
-    name: ClassVar[str]
-    invariant_event: ClassVar[str]
-    invariant_name: ClassVar[str]
 
     uses_evaluator = False
     # Replay-branch contract (AlgorithmAdapter.validate_inputs): these
@@ -91,7 +87,7 @@ class PreviousAdapterObjective:
             t = t / 1000.0
         if bool((t > 1.0).any()) or bool((t < 0.0).any()):
             raise RuntimeError(
-                f"{self.name} timestep grid must normalize into [0, 1]; got "
+                f"{type(self).__name__} timestep grid must normalize into [0, 1]; got "
                 f"min={float(t.min()):.4g}, max={float(t.max()):.4g} after the /1000 "
                 "heuristic. EDM-scale timestep grids are not supported by this normalization.",
             )
@@ -99,28 +95,21 @@ class PreviousAdapterObjective:
 
     # -- lr=0 first-step invariant -------------------------------------
 
-    def _invariant_residual(self, loss: float, flipped_loss: float) -> float:
-        """How far ``(loss(A), loss(-A))`` is from the objective's flip invariant."""
-
-        raise NotImplementedError
-
-    def first_step_invariant_check(
+    def _flipped_advantage_losses(
         self,
-        *,
         model: Any,
         batch: Any,
         advantages: Any,
-        timestep_index: int = 0,
-        threshold: float = 1.0e-6,
-    ) -> dict[str, Any]:
-        """Evaluate the loss under ``A`` and ``-A`` with one seeded RNG and score the residual.
+        timestep_index: int,
+    ) -> tuple[float, float]:
+        """``(loss(A), loss(-A))`` under one seeded RNG.
 
         With the previous adapter freshly synced the objective is exactly
         invariant (NFT) or antisymmetric (V-GRPO) under flipping the
-        advantages; ratio-style parity cannot see this, so the trainer's
-        debug.first_step branch calls this optional protocol method instead.
-        The RNG is forked and seeded so both evaluations draw the same noise
-        when the trajectory carries none.
+        advantages; ratio-style parity cannot see this, so each objective's
+        ``first_step_invariant_check`` scores this pair. The RNG is forked and
+        seeded so both evaluations draw the same noise when the trajectory
+        carries none.
         """
 
         import torch
@@ -131,37 +120,21 @@ class PreviousAdapterObjective:
                 loss, _ = self.compute_batch_timestep_loss(model, batch, timestep_index, adv)
             return float(loss.detach().float().item())
 
-        loss = _loss(advantages)
-        flipped_loss = _loss(-advantages)
-        residual = self._invariant_residual(loss, flipped_loss)
-        return {
-            "event": self.invariant_event,
-            "invariant": self.invariant_name,
-            "loss": loss,
-            "flipped_loss": flipped_loss,
-            "abs_diff": residual,
-            "threshold": threshold,
-            "passed": residual <= threshold,
-        }
+        return _loss(advantages), _loss(-advantages)
 
     # -- previous-adapter refresh --------------------------------------
 
     def after_optimizer_step(self, model: Any, global_step: int) -> None:
         """Refresh the previous-policy adapter (EMA with ``weight_copy_decay``)."""
 
+        del global_step
         sync = getattr(model, "sync_previous_policy_adapter", None)
         if not callable(sync):
             raise RuntimeError(
-                f"{self.name} model must expose sync_previous_policy_adapter(decay=...) "
-                "for previous-policy refresh",
+                f"{type(self).__name__} model must expose "
+                "sync_previous_policy_adapter(decay=...) for previous-policy refresh",
             )
         sync(decay=float(self.config.weight_copy_decay))
-        self._after_previous_adapter_sync(global_step)
-
-    def _after_previous_adapter_sync(self, global_step: int) -> None:
-        """Per-step state the objective advances once the refresh landed; default none."""
-
-        del global_step
 
 
 __all__ = ["PreviousAdapterObjective"]

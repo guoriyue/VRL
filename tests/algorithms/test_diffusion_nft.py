@@ -410,7 +410,6 @@ def test_first_step_invariant_check_passes_when_previous_synced() -> None:
         timestep_index=0,
     )
 
-    assert record["event"] == "first_step_nft_invariant"
     assert record["passed"] is True
     assert record["abs_diff"] <= record["threshold"]
     assert record["loss"] == pytest.approx(record["flipped_loss"], abs=1e-6)

@@ -230,7 +230,6 @@ def test_first_step_invariant_holds_when_previous_is_synced() -> None:
         model=_synced_model(), batch=batch, advantages=torch.tensor([2.0]), timestep_index=0
     )
 
-    assert record["event"] == "first_step_v_grpo_invariant"
     assert record["passed"] is True
     assert record["loss"] == pytest.approx(-record["flipped_loss"], abs=1e-6)
 
