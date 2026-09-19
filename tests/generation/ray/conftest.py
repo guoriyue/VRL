@@ -64,7 +64,7 @@ def _worker_setup_hook(repo_root: str) -> Any:
             def replay_forward(self, batch: Any, timestep_idx: int = 0, **kwargs: Any) -> Any:
                 raise NotImplementedError("Ray launcher test never calls replay_forward")
 
-            def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
+            def reference_policy(self) -> contextlib.AbstractContextManager[None]:
                 return contextlib.nullcontext()
 
             def load_trainable_state(self, state_dict: dict[str, Any]) -> None:

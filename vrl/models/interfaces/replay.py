@@ -97,8 +97,8 @@ class ReplayModel(Protocol):
         """Replay recorded trajectory actions under the current model."""
         ...
 
-    def disable_adapter(self) -> AbstractContextManager[None]:
-        """Temporarily disable adapters, or return a no-op context."""
+    def reference_policy(self) -> AbstractContextManager[None]:
+        """Run the forward with the reference (pre-training) weights."""
         ...
 
 

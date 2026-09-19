@@ -186,7 +186,7 @@ def test_cached_ref_skips_the_ref_forward() -> None:
 
 def test_cached_ref_matches_fresh_ref_forward() -> None:
     """Cache holding the same value the ref forward produces is bit-identical."""
-    # The model's ref forward (disable_adapter) returns zeros_like; store zeros.
+    # The model's ref forward (reference_policy) returns zeros_like; store zeros.
     cached = _CountingReplayModel()
     fresh = _CountingReplayModel()
     evaluator = DenoiseSDELogProbEvaluator(_Scheduler())
@@ -258,7 +258,7 @@ class _CountingReplayModel(DenoiseModelBase):
         del batch_context, step_idx
         return SimpleNamespace(latents=latents, timesteps=replay_tensors["timesteps"])
 
-    def disable_adapter(self) -> Any:
+    def reference_policy(self) -> Any:
         return nullcontext()
 
     def replay_forward(

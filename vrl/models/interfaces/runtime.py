@@ -96,7 +96,7 @@ def register_checkpoint_owned_state(module: Any, names: Iterable[str]) -> None:
 
     Ordinary optimized parameters are derived from ``requires_grad`` and must
     not be registered. This stores only the exceptional state whose mutability
-    cannot be inferred, such as a frozen ``previous`` policy adapter.
+    cannot be inferred.
     """
 
     if isinstance(names, (str, bytes)):
@@ -250,9 +250,6 @@ class ModelBuild:
     # A primitive mapping is accepted only at the Ray wire boundary.
     precision: RolePrecision | Mapping[str, Any]
     model_config: dict[str, Any] | None = None
-    # Resolved from the objective's contract, never a model/YAML setting.
-    # Carry the same adapter topology across replay, rollout, and resume.
-    previous_policy_adapter: bool = False
     sampling_config: dict[str, Any] | None = None
     # Resolved generation-only model memory policy. A primitive mapping is
     # accepted only at the Ray wire boundary and normalized immediately.
@@ -369,15 +366,6 @@ class ModelBuild:
         if config.rank is None or config.alpha is None or not config.target_modules:
             raise ValueError("model.lora requires rank, alpha, and target_modules")
         return config
-
-    def require_lora_for_previous_policy_adapter(self) -> None:
-        """Reject an incompatible previous-adapter request before model loading."""
-
-        if self.previous_policy_adapter and not self.use_lora:
-            raise RuntimeError(
-                "the algorithm's previous-policy adapter requires LoRA; "
-                "full-parameter previous policies are not implemented",
-            )
 
     @property
     def num_steps(self) -> int | None:

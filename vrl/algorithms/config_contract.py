@@ -18,7 +18,9 @@ class AlgorithmConfigContract:
     needs_sde_rollout: bool
     supports_step_kl_reward: bool
     sft_source: Literal["unsupported", "latents", "preference_winner"]
-    # The current implementation stores the behavior policy in a frozen PEFT
-    # adapter. This is an objective requirement, not a model-family default.
-    requires_previous_adapter: bool = False
+    # Objective requirements on the model's other policies (``previous_policy``:
+    # last step's weights, refreshed after every optimizer step;
+    # ``reference_policy``: the pre-training weights). Never a family default.
+    requires_previous_policy: bool = False
+    requires_reference_policy: bool = False
     consumed_sections: tuple[tuple[str, frozenset[str] | None], ...] | None = None

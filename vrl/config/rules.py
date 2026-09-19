@@ -58,13 +58,7 @@ def check_cross_section_rules(root: RootConfig) -> None:
     kind = algo.kind
     rollout = root.rollout
 
-    if contract.requires_previous_adapter and root.model is not None:
-        if not root.model.use_lora:
-            raise ValueError(
-                f"algorithm.kind={kind} currently requires model.use_lora=true "
-                "for its frozen previous-policy adapter; full-parameter previous policies "
-                "are not implemented",
-            )
+    if contract.requires_previous_policy and root.model is not None:
         # The objectives re-noise the clean latent and evaluate it through the
         # shared full-sequence replay forward (``replay_forward_with_latents``),
         # so the family needs a trainer replay recipe on that regime. The

@@ -7,8 +7,8 @@ over the requested one.
 
 The helpers below :func:`load_trainable_lora_adapter` act on an *already attached*
 adapter: :func:`peel_peft` reaches the wrapped inner module, while
-:func:`disable_adapter_on` / :func:`activate_adapter_on` switch the adapter for a
-reference or previous-policy forward pass.
+:func:`disable_adapter_on` switches the adapter off for a base-weights forward
+pass; :func:`has_adapter_on` says whether there is one to switch.
 """
 
 from __future__ import annotations
@@ -242,8 +242,8 @@ def disable_adapter_on(module: Any) -> contextlib.AbstractContextManager[None]:
     """Context manager disabling ``module``'s LoRA/PEFT adapter, or a no-op when absent.
 
     Used for the reference (adapter-off) forward pass. Switches on the module
-    behind any DDP/``torch.compile`` wrapper (same reason as
-    :func:`activate_adapter_on`) and covers both adapter-disable surfaces:
+    behind any DDP/``torch.compile`` wrapper (the wrappers do not
+    proxy PEFT's adapter switches, but wrap the same underlying module) and covers both adapter-disable surfaces:
 
     - PEFT ``PeftModel.disable_adapter()`` — already a context manager;
     - diffusers ``PeftAdapterMixin`` ``disable_adapters()`` / ``enable_adapters()``.
@@ -313,42 +313,18 @@ def _plural_adapter_disable_flags(module: Any) -> tuple[bool, ...]:
     return tuple(flags)
 
 
-def activate_adapter_on(module: Any, name: str) -> contextlib.AbstractContextManager[None]:
-    """Context manager activating PEFT adapter ``name``, restoring ``"default"`` on exit.
-
-    The named-adapter sibling of :func:`disable_adapter_on`, used for the
-    previous-policy forward pass. The adapter is switched on the module *behind*
-    any DDP / ``torch.compile`` wrapper: those wrappers do not proxy PEFT's
-    ``set_adapter``, but they wrap the same underlying module, so the switch is
-    visible to the wrapped grad forward too. ``set_adapter`` exists on both the
-    PEFT ``PeftModel`` and the diffusers ``PeftAdapterMixin`` surfaces. Unlike
-    *disabling* — a sensible no-op on an adapter-less module — activating a
-    *named* adapter requires one, so a module without ``set_adapter`` raises
-    rather than silently forwarding the wrong weights.
-    """
+def has_adapter_on(module: Any) -> bool:
+    """Whether ``module`` (behind any DDP / compile wrapper) carries a PEFT adapter."""
 
     host = unwrap_compile_and_ddp(module)
-    set_adapter = getattr(host, "set_adapter", None)
-    if not callable(set_adapter):
-        raise RuntimeError(
-            f"cannot activate adapter {name!r}: {type(host).__name__} has no "
-            "set_adapter(); attach a PEFT adapter before requesting it",
-        )
-
-    @contextlib.contextmanager
-    def _activated() -> Iterator[None]:
-        set_adapter(name)
-        try:
-            yield
-        finally:
-            set_adapter("default")
-
-    return _activated()
+    if callable(getattr(host, "disable_adapter", None)):
+        return True
+    return _has_plural_adapter_loaded(host)
 
 
 __all__ = [
-    "activate_adapter_on",
     "disable_adapter_on",
+    "has_adapter_on",
     "load_trainable_lora_adapter",
     "peel_peft",
 ]

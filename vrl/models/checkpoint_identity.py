@@ -678,15 +678,6 @@ def resolve_checkpoint_model_identity(
         source_is_file[source_name] = is_file
 
     build_values: dict[str, Any] = {}
-    # Persisted v1 layout: Flux/SD3 recorded the mirror explicitly; Predict2.5
-    # implicitly always had one. Preserve old NFT identities, but distinguish
-    # new Predict2.5 runs without the mirror. This is format compatibility,
-    # never a decision about which adapters the model should construct.
-    previous_adapter = build.previous_policy_adapter
-    if build.family in ("flux", "sd3_5") or (
-        build.family == "cosmos-predict2.5" and not previous_adapter
-    ):
-        build_values["nft_previous_adapter"] = previous_adapter
     for source_name, members in active_members.items():
         if source_name not in sources:
             continue

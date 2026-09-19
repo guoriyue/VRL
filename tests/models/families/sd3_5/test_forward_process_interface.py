@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from tests.models.steps.denoise.fixtures import (
@@ -163,36 +164,67 @@ def test_replay_tensors_carry_the_final_latent_for_the_forward_process_objective
     assert exported["latents_clean"].requires_grad is False
 
 
-def _peft_default_only_replay_model() -> SD3_5ReplayModel:
-    from peft import LoraConfig, get_peft_model
+def _replay_model(trainable: str) -> SD3_5ReplayModel:
+    """A replay model (no pipeline) whose trainable weights are a LoRA adapter or the DiT."""
 
     base = build_tiny_sd3_transformer()
-    base.requires_grad_(False)
-    peft_t = get_peft_model(
-        base,
-        LoraConfig(r=4, lora_alpha=8, init_lora_weights="gaussian", target_modules=_LORA_TARGETS),
-    )
-    return SD3_5ReplayModel(transformer=peft_t, scheduler=None, device="cpu")
+    if trainable == "lora":
+        from peft import LoraConfig, get_peft_model
+
+        base.requires_grad_(False)
+        base = get_peft_model(
+            base,
+            LoraConfig(
+                r=4, lora_alpha=8, init_lora_weights="gaussian", target_modules=_LORA_TARGETS
+            ),
+        )
+    else:
+        base.requires_grad_(True)
+    return SD3_5ReplayModel(transformer=base, scheduler=None, device="cpu")
 
 
-def test_previous_policy_adapter_attaches_frozen_and_syncs_through_the_shared_mixin() -> None:
-    """The replay model (no pipeline) reaches ``DenoiseModelBase``'s attach/sync:
-    a frozen ``previous`` mirror seeded from ``default`` and refreshed on sync."""
-    model = _peft_default_only_replay_model()
-    model.attach_previous_policy_adapter()
-
-    named = dict(model.transformer.named_parameters())
-    previous = {n: p for n, p in named.items() if ".previous." in n}
-    assert previous and all(not p.requires_grad for p in previous.values())
-    assert any(".default." in n and p.requires_grad for n, p in named.items())
-    a_name = next(n for n in previous if "lora_A" in n)
-    d_name = a_name.replace(".previous.", ".default.")
-    assert torch.allclose(named[a_name], named[d_name])
+@pytest.mark.parametrize("trainable", ["lora", "full"])
+def test_previous_policy_is_a_snapshot_of_the_trainable_weights(trainable: str) -> None:
+    """``DenoiseModelBase`` owns the previous policy for both trainable shapes:
+    a snapshot taken at the first sync, swapped in for the forward, refreshed
+    on sync; the live weights are untouched outside the context."""
+    model = _replay_model(trainable)
+    parameter = next(p for p in model.parameters() if p.requires_grad)
+    model.sync_previous_policy()
+    synced = parameter.detach().clone()
     with torch.no_grad():
-        named[d_name].add_(1.0)
-    assert not torch.allclose(named[a_name], named[d_name])
+        parameter.add_(1.0)
 
-    model.sync_previous_policy_adapter(decay=0.0)
+    with model.previous_policy():
+        assert torch.equal(parameter, synced)
+    assert torch.equal(parameter, synced + 1.0)
 
-    assert torch.allclose(named[a_name], named[d_name])
-    assert model.transformer.active_adapter == "default"
+    model.sync_previous_policy(decay=0.5)
+    with model.previous_policy():
+        assert torch.allclose(parameter, synced + 0.5)
+    assert torch.equal(parameter, synced + 1.0)
+    if trainable == "lora":
+        assert model.transformer.active_adapter == "default"
+
+
+def test_reference_policy_is_the_base_under_an_adapter_and_a_snapshot_otherwise() -> None:
+    from peft.tuners.lora import LoraLayer
+
+    lora = _replay_model("lora")
+    lora.attach_reference_policy()
+    assert lora._modules.get("_reference_policy") is None
+    with lora.reference_policy():
+        layers = [m for m in lora.transformer.modules() if isinstance(m, LoraLayer)]
+        assert layers and all(layer.disable_adapters for layer in layers)
+
+    full = _replay_model("full")
+    with pytest.raises(RuntimeError, match="no reference policy"):
+        full.reference_policy()
+    full.attach_reference_policy()
+    parameter = next(p for p in full.parameters() if p.requires_grad)
+    start = parameter.detach().clone()
+    with torch.no_grad():
+        parameter.add_(1.0)
+    with full.reference_policy():
+        assert torch.equal(parameter, start)
+    assert torch.equal(parameter, start + 1.0)

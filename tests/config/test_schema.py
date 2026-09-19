@@ -40,11 +40,15 @@ def test_fused_lora_branch_requires_enabled_adapters() -> None:
 
 @pytest.mark.parametrize("kind", ["diffusion_nft", "v_grpo"])
 def test_previous_policy_requirements_belong_to_algorithm(kind: str) -> None:
-    model = {"family": "cosmos-predict2.5", "use_lora": False}
-    # The model supports full finetuning; these objectives currently do not.
-    parse_config(minimal_grpo_cfg(model=model))
-    with pytest.raises(ValueError, match="full-parameter previous policies are not implemented"):
-        parse_config(minimal_grpo_cfg(model=model, algorithm={"kind": kind}))
+    # Whether the policy is a LoRA adapter or the whole transformer is the
+    # model's business: both admit the previous-policy objectives.
+    for use_lora in (False, True):
+        parse_config(
+            minimal_grpo_cfg(
+                model={"family": "cosmos-predict2.5", "use_lora": use_lora},
+                algorithm={"kind": kind},
+            ),
+        )
     # Any full-sequence family with a replay recipe qualifies; a chunk-autoregressive
     # policy has no full-sequence replay forward to evaluate the clean latent through.
     parse_config(

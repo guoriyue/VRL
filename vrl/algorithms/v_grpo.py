@@ -26,7 +26,7 @@ What this module implements, and how it maps onto the trainer:
   while pairs still change from update to update.
 - **Adaptive loss weighting.** Both losses are the x-prediction MSE normalized
   by its own detached mean absolute error (``normalized_mse``, Eq. 14).
-- **Behaviour policy = the frozen ``previous`` LoRA adapter**, refreshed after
+- **Behaviour policy = the model's previous policy**, refreshed after
   every optimizer step (``after_optimizer_step``) like DiffusionNFT. With
   ``ppo_epochs: 1`` that is exactly the paper's ``theta_old``; with more
   gradient steps per rollout it is the previous *step's* policy.
@@ -42,8 +42,8 @@ What this module implements, and how it maps onto the trainer:
 
 The model surface is the shared denoise replay contract, the same one
 DiffusionNFT consumes: ``replay_forward_with_latents`` (the family's conditional
-forward at a trajectory step on a caller-noised clean latent) and the
-``previous`` adapter with ``sync_previous_policy_adapter``. Any family with a
+forward at a trajectory step on a caller-noised clean latent) and
+``previous_policy`` / ``sync_previous_policy``. Any family with a
 full-sequence replay recipe runs either objective.
 """
 
@@ -54,7 +54,7 @@ from typing import Any, ClassVar
 
 from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.config_contract import AlgorithmConfigContract
-from vrl.algorithms.previous_adapter import PreviousAdapterObjective
+from vrl.algorithms.previous_policy import PreviousPolicyObjective
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.models.precision import model_autocast
@@ -78,7 +78,7 @@ class VGRPOConfig:
         needs_sde_rollout=False,
         supports_step_kl_reward=True,
         sft_source="unsupported",
-        requires_previous_adapter=True,
+        requires_previous_policy=True,
     )
 
     eps: float = 1e-8
@@ -106,7 +106,7 @@ class VGRPOConfig:
             )
 
 
-class VGRPO(PreviousAdapterObjective):
+class VGRPO(PreviousPolicyObjective):
     """Variational GRPO objective on the forward-process replay branch.
 
     The ratio is a real trust region only when a second gradient step runs on
@@ -186,7 +186,7 @@ class VGRPO(PreviousAdapterObjective):
         xt = (1 - t_expanded) * x0.float() + t_expanded * noise
         xt_input = xt.to(x0.dtype)
         with (
-            model.activate_adapter("previous"),
+            model.previous_policy(),
             torch.no_grad(),
             model_autocast(model, x0.device),
         ):

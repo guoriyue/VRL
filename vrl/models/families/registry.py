@@ -319,10 +319,6 @@ class ModelFamilyEntry:
             family=self.family,
             precision=role_precision,
             model_config=model_config,
-            previous_policy_adapter=(
-                root.algorithm is not None
-                and root.algorithm.hyperparameters.config_contract.requires_previous_adapter
-            ),
             sampling_config=sampling_config,
             generation_memory=generation_memory,
             rollout=rollout,

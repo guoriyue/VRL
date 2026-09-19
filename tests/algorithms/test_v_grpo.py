@@ -1,9 +1,9 @@
 """Loss-correctness tests for V-GRPO (algorithms/v_grpo.py).
 
 Same harness as the DiffusionNFT tests: a tiny real ``WanTransformer3DModel``
-behind real PEFT ``default`` / ``previous`` adapters and a real ``TrajectoryBatch``
-from the production builder, so the two forwards the objective runs differ
-because their LoRA weights genuinely differ. The math is not re-derived: the
+(behind a PEFT adapter or trained fully) and a real ``TrajectoryBatch`` from the
+production builder, so the two forwards the objective runs differ because their
+weights genuinely differ. The math is not re-derived: the
 sign tests take one real optimizer step and assert its direction, and the
 lr=0 invariant is checked on the objective's own output.
 """
@@ -44,7 +44,7 @@ def _batch(*, timestep: float | tuple[float, ...] = 500.0, seed: int = 1234):
 
 def _synced_model():
     model = _build_model()
-    model.sync_previous_policy_adapter(decay=0.0)
+    model.sync_previous_policy()
     return model
 
 
@@ -204,19 +204,22 @@ def test_noise_is_shared_within_a_group_and_fresh_across_groups_and_updates() ->
     assert not torch.equal(next_update[0], same_group[0])
 
 
-def test_after_optimizer_step_syncs_previous_and_advances_the_noise_counter() -> None:
-    model = _build_model()
-    named = dict(model.transformer.named_parameters())
-    a_name = next(n for n in named if ".previous." in n and "lora_A" in n)
-    d_name = a_name.replace(".previous.", ".default.")
+@pytest.mark.parametrize("trainable", ["lora", "full"])
+def test_after_optimizer_step_syncs_previous_and_advances_the_noise_counter(
+    trainable: str,
+) -> None:
+    model = _build_model(trainable)
+    model.sync_previous_policy()
+    parameter = next(p for p in model.parameters() if p.requires_grad)
+    synced = parameter.detach().clone()
     with torch.no_grad():
-        named[d_name].add_(1.0)
-    assert not torch.allclose(named[a_name], named[d_name])
+        parameter.add_(1.0)
     objective = VGRPO(VGRPOConfig(weight_copy_decay=0.0))
 
     objective.after_optimizer_step(model, global_step=7)
 
-    assert torch.allclose(named[a_name], named[d_name])
+    with model.previous_policy():
+        assert torch.equal(parameter, synced + 1.0)
     assert objective._update_counter == 8
 
 

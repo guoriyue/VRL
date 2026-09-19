@@ -104,7 +104,7 @@ class _ReplayModel:
         )
 
     @contextmanager
-    def disable_adapter(self) -> Iterator[None]:
+    def reference_policy(self) -> Iterator[None]:
         self.adapter_disable_count += 1
         self.adapter_disabled = True
         try:

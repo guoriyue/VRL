@@ -290,7 +290,7 @@ class _TinyRuntimeModel(nn.Module):
     def replay_forward(self, *_args: Any, **_kwargs: Any) -> Any:
         return None
 
-    def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
+    def reference_policy(self) -> contextlib.AbstractContextManager[None]:
         return contextlib.nullcontext()
 
     def load_trainable_state(self, state_dict: dict[str, Any]) -> Any:

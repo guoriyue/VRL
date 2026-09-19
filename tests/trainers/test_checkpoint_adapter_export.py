@@ -15,6 +15,7 @@ from tests.trainers._checkpoint_helpers import (
     _PublishableModule,
     _Trainer,
 )
+from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.trainers.checkpointing import (
     CHECKPOINT_META_NAME,
     LORA_WEIGHTS_NAME,
@@ -400,10 +401,6 @@ def test_adapter_export_selects_default_and_excludes_frozen_previous(tmp_path) -
     # former can legitimately be missing, so only the former guards the skip.
     peft = pytest.importorskip("peft")
 
-    from vrl.models.steps.denoise.common.lora import (
-        freeze_checkpoint_owned_adapter_params,
-    )
-
     class _Base(nn.Module):
         def __init__(self) -> None:
             super().__init__()
@@ -415,7 +412,13 @@ def test_adapter_export_selects_default_and_excludes_frozen_previous(tmp_path) -
     config = peft.LoraConfig(r=2, lora_alpha=4, target_modules=["lin"])
     module = peft.get_peft_model(_Base(), config)
     module.add_adapter("previous", config)
-    freeze_checkpoint_owned_adapter_params(module, "previous")
+    # A frozen adapter registered as checkpoint-owned state: excluded from the
+    # rollout export, kept in the checkpoint.
+    frozen = [name for name, _ in module.named_parameters() if ".previous." in name]
+    for name, parameter in module.named_parameters():
+        if name in frozen:
+            parameter.requires_grad_(False)
+    register_checkpoint_owned_state(module, frozen)
     with torch.no_grad():
         for name, parameter in module.named_parameters():
             if ".default." in name:

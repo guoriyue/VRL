@@ -561,6 +561,11 @@ class OnlineTrainer:
         # fully_shard wrapping for FSDP2. Done before optimizer / grad-scaler / EMA
         # so they bind to the (possibly sharded) parameters the strategy returns.
         self.model = self._strategy.prepare_model(self.model)
+        # The reference is the policy as it stands here — after sharding, before
+        # any checkpoint restore — so a full fine-tune snapshots pre-training
+        # weights on the sharded layout and an adapter costs nothing.
+        if self.ref_model is self.model:
+            self.model.attach_reference_policy()
         # Sinks for the per-step phase timings (recording decoupled from
         # emitting). The log line stays the human-facing view; the jsonl file is
         # the complete machine-readable view. metrics.csv exposes only the

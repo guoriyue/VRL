@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 
 from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.config_contract import AlgorithmConfigContract
-from vrl.algorithms.previous_adapter import PreviousAdapterObjective
+from vrl.algorithms.previous_policy import PreviousPolicyObjective
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.models.precision import model_autocast
@@ -21,7 +21,8 @@ class DiffusionNFTConfig:
         needs_sde_rollout=True,
         supports_step_kl_reward=True,
         sft_source="unsupported",
-        requires_previous_adapter=True,
+        requires_previous_policy=True,
+        requires_reference_policy=True,
     )
 
     eps: float = 1e-8
@@ -33,7 +34,7 @@ class DiffusionNFTConfig:
     weight_copy_decay: float = 0.0
 
 
-class DiffusionNFT(PreviousAdapterObjective):
+class DiffusionNFT(PreviousPolicyObjective):
     """DiffusionNFT-style GRPO objective.
 
     This objective does not consume evaluator log-prob signals. It trains from
@@ -41,7 +42,7 @@ class DiffusionNFT(PreviousAdapterObjective):
     video-level rewards. This algorithm is diffusion-specific and owns its
     model-forward objective assembly. Likelihood-free: it computes no
     importance-sampling ratio, and its positive/negative decomposition is taken
-    against the previous-policy adapter the parent refreshes every step.
+    against the previous policy the parent refreshes every step.
     """
 
     def __init__(self, config: DiffusionNFTConfig | None = None) -> None:
@@ -153,9 +154,9 @@ class DiffusionNFT(PreviousAdapterObjective):
 
         # Three evaluations of the family's own conditional forward at this
         # trajectory step: the frozen behaviour policy, the trainable policy,
-        # and the adapter-free base as the KL reference.
+        # and the pre-training reference for the KL term.
         with (
-            model.activate_adapter("previous"),
+            model.previous_policy(),
             torch.no_grad(),
             model_autocast(model, x0.device),
         ):
@@ -167,7 +168,7 @@ class DiffusionNFT(PreviousAdapterObjective):
                 batch, timestep_index, xt_input, classifier_free_guidance=False
             )["noise_pred"]
         with (
-            model.disable_adapter(),
+            model.reference_policy(),
             torch.no_grad(),
             model_autocast(model, x0.device),
         ):

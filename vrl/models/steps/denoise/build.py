@@ -158,7 +158,6 @@ def build_family_runtime_bundle(
             f"rollout build family {build.family!r} does not match entry {entry.family!r}",
         )
     model_cls = import_from_path(family_build.model_cls)
-    build.require_lora_for_previous_policy_adapter()
     logger.info("Building %s runtime bundle (registry descriptor)", entry.family)
     return build_denoise_runtime_bundle(build, model_cls=model_cls)
 
@@ -192,7 +191,6 @@ def build_family_replay_runtime_bundle(
             "invoke its registered replay_runtime_builder instead",
         )
     replay_cls = import_from_path(family_build.replay_cls)
-    build.require_lora_for_previous_policy_adapter()
     logger.info(
         "Building %s replay runtime bundle (registry descriptor) from %s",
         entry.family,

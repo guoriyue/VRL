@@ -182,7 +182,7 @@ class _ReplayModel(DenoiseModelBase):
         del batch_context, step_idx
         return type("State", (), {"latents": latents, "timesteps": replay_tensors["timesteps"]})()
 
-    def disable_adapter(self) -> Any:
+    def reference_policy(self) -> Any:
         return nullcontext()
 
     def replay_forward(

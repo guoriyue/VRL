@@ -31,7 +31,7 @@ class _TinyRuntimeModel:
     def replay_forward(self, batch: Any, timestep_idx: int = 0, **kwargs: Any) -> ReplayResult:
         raise NotImplementedError("Ray worker idempotency test never replays")
 
-    def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
+    def reference_policy(self) -> contextlib.AbstractContextManager[None]:
         return contextlib.nullcontext()
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> None:

@@ -70,10 +70,8 @@ def test_previous_adapter_follows_algorithm_for_both_build_roles(family, kind) -
             precision=precision,
             for_rollout=for_rollout,
         )
-        assert build.previous_policy_adapter is (kind in ("diffusion_nft", "v_grpo"))
         # Ray reconstructs the same build from the dataclass payload.
         restored = ModelBuild(**asdict(build))
-        assert restored.previous_policy_adapter == build.previous_policy_adapter
         identities.append(resolve_checkpoint_model_identity(restored))
     assert identities[0] == identities[1]
 

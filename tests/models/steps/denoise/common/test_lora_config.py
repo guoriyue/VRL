@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-import torch
 from torch import nn
 
 from tests.models.steps.denoise.fixtures import lora_test_build
@@ -48,77 +47,6 @@ def _lora_values(dropout: float | None) -> dict[str, Any]:
     if dropout is not None:
         values["dropout"] = dropout
     return values
-
-
-@pytest.mark.parametrize(
-    ("configured_dropout", "expected_dropout"),
-    ((0.35, 0.35), (None, 0.0)),
-)
-def test_shared_fresh_adapter_preserves_effective_dropout(
-    configured_dropout: float | None,
-    expected_dropout: float,
-) -> None:
-    policy = _Policy()
-    policy.apply_lora(
-        lora_test_build(
-            _lora_values(configured_dropout),
-            family="sd3_5",
-        ),
-    )
-
-    assert policy.transformer.peft_config["default"].lora_dropout == expected_dropout
-
-
-@pytest.mark.parametrize(
-    ("configured_dropout", "expected_dropout"),
-    ((0.35, 0.35), (None, 0.0)),
-)
-def test_previous_adapter_config_preserves_effective_dropout(
-    configured_dropout: float | None,
-    expected_dropout: float,
-) -> None:
-    policy = _Policy()
-    policy.apply_lora(lora_test_build(_lora_values(configured_dropout), family="sd3_5"))
-    policy.attach_previous_policy_adapter()
-
-    config = policy.transformer.peft_config
-    assert config["previous"] is not config["default"]
-    assert config["previous"].lora_dropout == expected_dropout
-    assert config["previous"].r == config["default"].r
-    assert config["previous"].target_modules == config["default"].target_modules
-
-
-@pytest.mark.parametrize(
-    "autocast,parameter_dtype,expected_dtype",
-    [
-        (True, None, torch.float32),
-        (False, None, torch.bfloat16),
-        (False, "float32", torch.float32),
-    ],
-)
-def test_previous_adapter_matches_trainable_storage(
-    autocast, parameter_dtype, expected_dtype
-) -> None:
-    policy = _Policy()
-    policy.transformer.to(dtype=torch.bfloat16)
-    policy.apply_lora(
-        lora_test_build(
-            {
-                **_lora_values(None),
-                "autocast_adapter_dtype": autocast,
-                "parameter_dtype": parameter_dtype,
-            },
-            family="flux",
-            previous_policy_adapter=True,
-        ),
-    )
-    parameters = dict(policy.transformer.named_parameters())
-    for name, parameter in parameters.items():
-        if ".default." in name:
-            previous = parameters[name.replace(".default.", ".previous.")]
-            assert parameter.dtype == previous.dtype == expected_dtype
-            torch.testing.assert_close(previous, parameter, rtol=0, atol=0)
-            assert not previous.requires_grad
 
 
 def test_shared_warm_start_validates_effective_topology(

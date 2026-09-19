@@ -24,27 +24,12 @@ def _build(model_config: dict | None) -> ModelBuild:
 
 
 @pytest.mark.parametrize("model_config", [None, {}, {"use_lora": False}])
-def test_disabled_lora_has_no_attach_config_or_previous_request(model_config) -> None:
+def test_disabled_lora_has_no_attach_config(model_config) -> None:
     build = _build(model_config)
 
     assert build.lora is None
-    assert not build.previous_policy_adapter
-    build.require_lora_for_previous_policy_adapter()
     with pytest.raises(ValueError, match=r"requires model\.lora configuration"):
         build.require_lora_config()
-
-
-@pytest.mark.parametrize("use_lora", [False, True])
-def test_previous_adapter_admission_reads_build_requirement(use_lora: bool) -> None:
-    build = _build({"use_lora": use_lora})
-    build.previous_policy_adapter = True
-
-    assert build.previous_policy_adapter
-    if use_lora:
-        build.require_lora_for_previous_policy_adapter()
-    else:
-        with pytest.raises(RuntimeError, match="requires LoRA"):
-            build.require_lora_for_previous_policy_adapter()
 
 
 @pytest.mark.parametrize(
@@ -65,7 +50,6 @@ def test_required_lora_config_resolves_defaults_and_path(extras) -> None:
         }
     )
     assert build.require_lora_config().path == "/adapter"
-    assert not build.previous_policy_adapter
 
 
 @pytest.mark.parametrize("family", FAMILY_REGISTRY)
@@ -79,5 +63,4 @@ def test_family_lora_defaults_are_resolved_by_the_build(family: str) -> None:
         True if family in {"wan_2_1", "wan_2_1_i2v", "causvid"} else "gaussian"
     )
     assert config.autocast_adapter_dtype is (family not in {"wan_2_1", "wan_2_1_i2v"})
-    assert not build.previous_policy_adapter
     assert config.dropout == 0.0

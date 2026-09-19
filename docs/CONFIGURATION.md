@@ -78,7 +78,7 @@ Migration from the former layout:
 | Old setting | Current setting |
 | --- | --- |
 | `model.lora_parameter_dtype` | `model.lora.parameter_dtype` |
-| `model.nft_previous_adapter` / `model.lora.previous_adapter` | Remove; the algorithm contract requests the mirror automatically |
+| `model.nft_previous_adapter` / `model.lora.previous_adapter` | Remove; the algorithm contract requests the previous policy |
 | `model.lora.init` (never consumed) | Remove it; use `model.lora.init_lora_weights` for initialization |
 
 The removed spellings are rejected, not silently aliased. The persisted v1
@@ -87,30 +87,36 @@ change alone does not invalidate existing checkpoints. Historical run
 snapshots retain their original configuration and need these key migrations
 if relaunched. An explicit non-default adapter-upcast policy changes identity.
 
-The algorithm contract, not a model recipe, owns the previous-policy requirement.
-The current NFT and V-GRPO implementations require a frozen PEFT adapter and
-therefore reject full-parameter training. GRPO does not request that mirror.
-The objectives evaluate the re-noised clean latent through the shared
-`replay_forward_with_latents` (the same family forward the SDE replay uses,
-with classifier-free guidance forced off), so no family declares an
-objective-specific forward hook or capability flag: any full-sequence family
-with a trainer replay recipe is admitted, and a timestep grid that does not
-normalize into `[0, 1]` (Cosmos Predict2's EDM grid) fails at the first loss.
-Only SD3.5, Flux, and Predict2.5 have been exercised on this path. Predict2.5
-uses the shared full-finetune path for other algorithms; this is not evidence
-of a validated full-parameter GPU training recipe.
+The algorithm contract, not a model recipe, owns the previous-policy and
+reference-policy requirements (`requires_previous_policy`,
+`requires_reference_policy`; GRPO's reference follows `kl_coef > 0`). The
+model serves both from `DenoiseModelBase.previous_policy()` /
+`reference_policy()` as snapshots of whatever is trainable, so a LoRA adapter
+and a full fine-tune run the same objective code: NFT and V-GRPO admit
+`model.use_lora=false`. The objectives evaluate the re-noised clean latent
+through the shared `replay_forward_with_latents` (the same family forward the
+SDE replay uses, with classifier-free guidance forced off), so no family
+declares an objective-specific forward hook or capability flag: any
+full-sequence family with a trainer replay recipe is admitted, and a timestep
+grid that does not normalize into `[0, 1]` (Cosmos Predict2's EDM grid) fails
+at the first loss. Only SD3.5, Flux, and Predict2.5 have been exercised on
+this path with LoRA; the full-parameter path is covered by CPU tests only.
 
-The config-to-build boundary derives `ModelBuild.previous_policy_adapter`
-from the algorithm contract for both replay and rollout, retaining matching
-adapter layouts through Ray and resume. Evaluation using a full NFT/V-GRPO
-training config retains that layout; a model-only generation config has no
-mirror. Existing NFT checkpoint identities remain compatible. Predict2.5
-GRPO now has a different identity because it no longer carries the previously
-unconditional mirror; old GRPO checkpoints are intentionally not treated as
-an identical exact-resume topology. Adapter copying, checkpoint ownership,
-and model residency remain runtime concerns.
+The previous policy is a snapshot taken at the first sync and refreshed after
+every optimizer step; it is never checkpointed (a resumed run starts it from
+the restored weights). The reference is the pre-training policy: under an
+adapter the base weights (nothing copied), otherwise a snapshot the trainer
+takes after sharding and before any checkpoint restore. Neither snapshot is
+part of checkpoint identity.
 
 ## Validation tiers
+
+`model.memory` fields and types are validated by the shared schema. The family
+registry does not maintain a second list of allowed memory fields. Support is
+checked when building the rollout model: CPU residency must be honored by the
+loader, and VAE decode options require an actual VAE memory target. Unsupported
+options therefore fail during model construction, potentially after loading
+weights. MAGI-1 rejects these options at its subprocess builder boundary.
 
 After composition every entrypoint parses the merged config through the same
 typed boundary, and validation is split into three tiers, one module and one

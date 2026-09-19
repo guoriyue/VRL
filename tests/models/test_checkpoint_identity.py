@@ -27,7 +27,6 @@ def _build(
     family: str = "sana",
     path: str = "example/model",
     revision: str | None = _COMMIT,
-    previous_policy_adapter: bool = False,
     **model_config: object,
 ) -> SimpleNamespace:
     return SimpleNamespace(
@@ -35,7 +34,6 @@ def _build(
         model_name_or_path=path,
         revision=revision,
         model_config=model_config,
-        previous_policy_adapter=previous_policy_adapter,
     )
 
 
@@ -425,24 +423,6 @@ def test_lora_storage_autocast_changes_identity() -> None:
     assert identities[0]["build"]["lora"][field] is False
     assert field not in identities[1]["build"]["lora"]
     assert identities[0] != identities[1]
-
-
-@pytest.mark.parametrize("family", ["flux", "sd3_5", "cosmos-predict2.5"])
-def test_previous_policy_requirement_preserves_legacy_identity(family: str) -> None:
-    lora = {"rank": 8, "alpha": 16, "target_modules": ["to_q"]}
-    without, with_previous = [
-        resolve_checkpoint_model_identity(
-            _build(family=family, use_lora=True, lora=lora, previous_policy_adapter=value),
-        )
-        for value in (False, True)
-    ]
-    assert without["build"]["nft_previous_adapter"] is False
-    if family == "cosmos-predict2.5":
-        # Predict2.5 previously always attached the mirror without recording a key.
-        assert "nft_previous_adapter" not in with_previous["build"]
-    else:
-        assert with_previous["build"]["nft_previous_adapter"] is True
-    assert without != with_previous
 
 
 def test_runtime_only_fields_do_not_change_wan_identity() -> None:

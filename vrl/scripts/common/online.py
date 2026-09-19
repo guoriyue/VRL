@@ -1039,14 +1039,18 @@ async def run_online_recipe(
         collector.set_generation_runtime(generation_runtime)
         _host_memory.log("after_rollout_backend_build")
 
-        # Only evaluator-backed objectives consume a KL reference. With LoRA, the
-        # policy itself supplies the base-model reference through adapter disabling.
+        # The policy model supplies its own reference (``reference_policy``): the
+        # base weights under an adapter, a pre-training snapshot otherwise. Only
+        # objectives that read a reference ask for one.
         ref_model = None
+        contract = built.root.algorithm.hyperparameters.config_contract
         if algorithm_and_evaluator.evaluator is not None:
             # Algorithm configs without evaluator KL legitimately omit kl_coef.
             kl_coef = float(getattr(built.algorithm, "kl_coef", 0.0) or 0.0)
-            if built.root.model.use_lora and kl_coef > 0:
+            if kl_coef > 0:
                 ref_model = bundle.model
+        if contract.requires_reference_policy:
+            ref_model = bundle.model
         # The strategy built during preflight is the single owner of trainable-state
         # export for both rollout weight sync and checkpointing. prepare_model
         # (called once in the trainer) creates any process group and wraps the

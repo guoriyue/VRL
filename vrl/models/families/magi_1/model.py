@@ -483,6 +483,11 @@ class Magi1SubprocessModel(torch.nn.Module):
 
         yield
 
+    def reference_policy(self) -> contextlib.AbstractContextManager[None]:
+        """Generation-only: the policy never moves, so it is its own reference."""
+
+        return contextlib.nullcontext()
+
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
         if state_dict:
             raise RuntimeError(self._generation_only_error())

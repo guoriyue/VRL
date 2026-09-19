@@ -223,7 +223,7 @@ def run_denoise_loop(
                 if buffers.ref_noise_preds is not None:
                     with (
                         profile_range("generation.ref_denoise_forward"),
-                        model.disable_adapter(),
+                        model.reference_policy(),
                     ):
                         ref_step_output = model.forward_step(state, step_idx)
                     ref_noise_pred = ref_step_output["noise_pred"]

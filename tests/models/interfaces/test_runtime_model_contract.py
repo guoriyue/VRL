@@ -44,7 +44,7 @@ class _MinimalRuntimeModel:
             },
         )
 
-    def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
+    def reference_policy(self) -> contextlib.AbstractContextManager[None]:
         return contextlib.nullcontext()
 
     def load_trainable_state(self, state_dict: dict[str, Any]) -> None:
@@ -103,7 +103,7 @@ class _DiffusionModelBaseStub(DenoiseModelBase):
         return None
 
     @contextlib.contextmanager
-    def disable_adapter(self) -> Iterator[None]:
+    def reference_policy(self) -> Iterator[None]:
         yield
 
 

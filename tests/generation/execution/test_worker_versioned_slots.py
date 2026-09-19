@@ -40,7 +40,7 @@ class _SlotModel:
     def replay_forward(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
-    def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
+    def reference_policy(self) -> contextlib.AbstractContextManager[None]:
         return contextlib.nullcontext()
 
     def load_trainable_state(self, state_dict: Any) -> None:
@@ -68,7 +68,7 @@ class _PlainModel:
     def replay_forward(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
-    def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
+    def reference_policy(self) -> contextlib.AbstractContextManager[None]:
         return contextlib.nullcontext()
 
     def load_trainable_state(self, state_dict: Any) -> None:

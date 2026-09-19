@@ -629,25 +629,6 @@ def test_disable_adapter_preserves_already_disabled_diffusers_lora_state() -> No
     runtime.transformer.enable_adapters()
 
 
-def test_activate_adapter_sets_named_adapter_and_restores_default() -> None:
-    """activate_adapter routes to transformer.set_adapter and restores 'default'."""
-    runtime = _ModelBaseStub()
-
-    with runtime.activate_adapter("previous"):
-        assert runtime.transformer.active_adapter == "previous"
-
-    assert runtime.transformer.active_adapter == "default"
-
-
-def test_activate_adapter_without_set_adapter_raises() -> None:
-    """Activating a named adapter on a module that cannot is a loud misconfig."""
-    runtime = _ModelBaseStub()
-    runtime._set_transformer(nn.Linear(2, 2))  # plain module, no set_adapter
-
-    with pytest.raises(RuntimeError, match="set_adapter"), runtime.activate_adapter("previous"):
-        pass
-
-
 def test_load_trainable_state_accepts_trainable_keys() -> None:
     """A state whose keys are exactly the ``transformer.``-prefixed trainable keys loads into the
     transformer in place.

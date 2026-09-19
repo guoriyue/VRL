@@ -295,8 +295,8 @@ def gather_checkpoint_state_dict(module: nn.Module) -> dict[str, Any]:
 
     DCP exposes the sharded state mapping without materializing full tensors.
     Selection happens before ``DTensor.full_tensor()``, so frozen base weights
-    never enter an all-gather while exceptional frozen mutable state (for
-    example DiffusionNFT's ``previous`` adapter) is still checkpointed.
+    never enter an all-gather while registered frozen mutable state is still
+    checkpointed.
     """
 
     from torch.distributed.checkpoint.state_dict import (

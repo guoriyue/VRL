@@ -1,7 +1,7 @@
-"""Shared parent of the previous-policy-adapter objectives (DiffusionNFT, V-GRPO).
+"""Shared parent of the previous-policy objectives (DiffusionNFT, V-GRPO).
 
-Both objectives train a LoRA policy against a frozen "previous" copy of the
-adapter, refresh that copy after every optimizer step, and evaluate the
+Both objectives train against a frozen copy of the previous step's policy,
+refresh that copy after every optimizer step, and evaluate the
 denoiser at an interpolated ``x_t`` on flow time ``t`` in ``[0, 1]``. Their
 lr=0 first-step invariants differ (NFT's loss is symmetric under flipping the
 advantages, V-GRPO's antisymmetric) but both need the same seeded double
@@ -10,7 +10,8 @@ evaluation.
 The model surface they consume is the shared denoise replay contract, nothing
 objective-specific: ``replay_forward_with_latents`` evaluates the family's own
 conditional forward at a trajectory step on caller-supplied latents, and the
-``previous`` adapter is switched through ``activate_adapter``. Which families
+previous policy is switched in through ``previous_policy``. Whether that policy
+is a LoRA adapter or the whole transformer is the model's business. Which families
 qualify is a registry fact (a full-sequence replay recipe), not a per-family
 flag.
 """
@@ -20,8 +21,8 @@ from __future__ import annotations
 from typing import Any
 
 
-class PreviousAdapterObjective:
-    """Replay-branch objective whose behaviour policy is the previous adapter."""
+class PreviousPolicyObjective:
+    """Replay-branch objective whose behaviour policy is the previous step's weights."""
 
     uses_evaluator = False
     # Replay-branch contract (AlgorithmAdapter.validate_inputs): these
@@ -32,7 +33,7 @@ class PreviousAdapterObjective:
     required_signal_keys: tuple[str, ...] = ()
     needs_kl_intermediates = False
     requires_active_trust_region = False
-    # The behaviour policy is the previous adapter refreshed every optimizer
+    # The behaviour policy is the previous policy refreshed every optimizer
     # step, not the policy that generated a stale rollout: training on rollouts
     # from a superseded policy would score them against the wrong theta_old
     # (and NFT, being likelihood-free, has no importance ratio to absorb the
@@ -104,7 +105,7 @@ class PreviousAdapterObjective:
     ) -> tuple[float, float]:
         """``(loss(A), loss(-A))`` under one seeded RNG.
 
-        With the previous adapter freshly synced the objective is exactly
+        With the previous policy freshly synced the objective is exactly
         invariant (NFT) or antisymmetric (V-GRPO) under flipping the
         advantages; ratio-style parity cannot see this, so each objective's
         ``first_step_invariant_check`` scores this pair. The RNG is forked and
@@ -122,19 +123,13 @@ class PreviousAdapterObjective:
 
         return _loss(advantages), _loss(-advantages)
 
-    # -- previous-adapter refresh --------------------------------------
+    # -- previous-policy refresh ---------------------------------------
 
     def after_optimizer_step(self, model: Any, global_step: int) -> None:
-        """Refresh the previous-policy adapter (EMA with ``weight_copy_decay``)."""
+        """Refresh the previous policy (EMA with ``weight_copy_decay``)."""
 
         del global_step
-        sync = getattr(model, "sync_previous_policy_adapter", None)
-        if not callable(sync):
-            raise RuntimeError(
-                f"{type(self).__name__} model must expose "
-                "sync_previous_policy_adapter(decay=...) for previous-policy refresh",
-            )
-        sync(decay=float(self.config.weight_copy_decay))
+        model.sync_previous_policy(decay=float(self.config.weight_copy_decay))
 
 
-__all__ = ["PreviousAdapterObjective"]
+__all__ = ["PreviousPolicyObjective"]

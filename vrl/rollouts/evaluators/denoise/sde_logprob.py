@@ -49,8 +49,8 @@ class DenoiseSDELogProbEvaluator(ReplayEvaluatorBase):
         Replay forward ownership lives on the family model. ``model`` must
         satisfy the trainer-facing ReplayModel contract.
 
-        When ref_model is the same object as model (LoRA scenario),
-        uses ``disable_adapter()`` to get base-model predictions —
+        When ref_model is the same object as model, the model's
+        ``reference_policy()`` supplies the reference predictions —
         matching flow_grpo train_wan2_1.py:940.
         """
         import torch
@@ -113,16 +113,13 @@ class DenoiseSDELogProbEvaluator(ReplayEvaluatorBase):
             with torch.no_grad():
                 ref_noise_pred = cached_ref_noise_pred
                 if ref_noise_pred is None and ref_model is not None:
-                    # ReplayModel.disable_adapter() may be a no-op for non-adapter
-                    # models. A distinct frozen reference still comes through
-                    # the explicit ref_model path.
-                    use_adapter_disable = ref_model is model
+                    # The policy model stands in for its own reference through
+                    # reference_policy(); a distinct frozen model runs as is.
                     ctx = (
-                        model.disable_adapter()
-                        if use_adapter_disable
+                        model.reference_policy()
+                        if ref_model is model
                         else contextlib.nullcontext()
                     )
-
                     with ctx:
                         ref_fwd = ref_model.replay_forward(
                             batch,

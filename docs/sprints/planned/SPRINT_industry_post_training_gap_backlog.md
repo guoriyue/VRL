@@ -142,7 +142,7 @@
   有）分层均值。
 - **验收**：同一 eval 产物能回算出三种口径；不改训练。
 
-## L. previous policy 脱离 LoRA（NFT / V-GRPO 全参） ★★
+## L. previous policy 脱离 LoRA（NFT / V-GRPO 全参） ★★ — 代码已落地 2026-09-19，待 GPU 验证
 
 - **出处**：A–K 之外的内部缺口。工业界（Seedream、Seedance、HunyuanImage、
   Qwen-Image）全部全参后训练；VRL 里 NFT 与 V-GRPO 是仅有的两个不依赖
@@ -162,6 +162,12 @@
      改名 `PreviousPolicyObjective`。
 - **验收**：SD3.5 LoRA 上 NFT 的 first-step invariant 与现状数值一致；全参 NFT
   在 tiny 模型上 lr=0 invariant 通过；FSDP2 两卡 smoke。
+- **状态**：`vrl/models/policy_snapshot.py` + `DenoiseModelBase.previous_policy /
+  reference_policy / sync_previous_policy`；PEFT 第二 adapter、`previous_policy_adapter`
+  build 字段、LoRA 门全部删除；tiny Wan 上 LoRA 与全参的 lr=0 invariant 都过
+  （`tests/algorithms`）。未做：FSDP2 两卡 smoke（DTensor 换入换出走的是 EMA 已验证的
+  `copy_` 路径，但没有在卡上跑过）；全参 rollout worker 的 `cache_ref_noise_pred`
+  现在会报"no reference policy"，需要 worker 侧在 build 时拍参考快照。
 
 ---
 

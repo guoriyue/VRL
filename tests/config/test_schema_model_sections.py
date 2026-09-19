@@ -136,7 +136,6 @@ def test_wan_boundary_ratio_is_source_derived_not_public_config() -> None:
 @pytest.mark.parametrize(
     ("family", "field"),
     [
-        ("sana", "nft_previous_adapter"),
         ("cosmos-predict2", "skip_text_encoder"),
     ],
 )

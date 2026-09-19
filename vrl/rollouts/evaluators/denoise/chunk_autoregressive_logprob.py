@@ -57,7 +57,7 @@ class ChunkAutoregressiveDenoiseLogProbEvaluator(ReplayEvaluatorBase):
             same_model = ref_model is model
             with (
                 torch.no_grad(),
-                model.disable_adapter() if same_model else contextlib.nullcontext(),
+                model.reference_policy() if same_model else contextlib.nullcontext(),
             ):
                 reference = ref_model.replay_forward(
                     batch,

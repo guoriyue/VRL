@@ -1,15 +1,15 @@
 """Loss-correctness tests for DiffusionNFT (algorithms/diffusion_nft.py).
 
 DiffusionNFT runs the ``uses_evaluator=False`` trainer branch — a completely
-separate code path from every GRPO test, involving a previous-policy adapter
-forward and a reference forward. A sign error here would train in reverse with
-nothing catching it.
+separate code path from every GRPO test, involving a previous-policy forward
+and a reference forward. A sign error here would train in reverse with nothing
+catching it.
 
-These tests use real collaborators, not stand-ins: a tiny real ``WanTransformer3DModel``
-wrapped in real PEFT LoRA (``default`` + ``previous`` adapters, exactly as the
-production model does in ``cosmos/predict2_5/model.py``), and a real
-``TrajectoryBatch`` built by the production ``build_diffusion_trajectory``. So the
-three NFT branches differ because their LoRA weights genuinely differ, and the
+These tests use real collaborators, not stand-ins: a tiny real ``WanTransformer3DModel``,
+either behind a real PEFT LoRA adapter or trained fully (the objective must not
+tell the two apart), and a real ``TrajectoryBatch`` built by the production
+``build_diffusion_trajectory``. So the three NFT branches differ because their
+weights genuinely differ, and the
 gradient that drives training flows through real attention parameters. The math
 is not re-derived anywhere — the tests take one real optimizer step and assert
 its *direction*: a good sample must pull the forward prediction toward the
@@ -37,7 +37,6 @@ from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.config.precision import RolePrecision
 from vrl.generation.types import DenoiseRequest, GenerationRequest, GenerationSampleRow
 from vrl.models.steps.denoise import DenoiseModelBase
-from vrl.models.steps.denoise.common.lora import copy_adapter_weights as _copy_adapter_weights
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.builders import build_diffusion_trajectory
 
@@ -83,12 +82,11 @@ def test_diffusion_nft_advantages_match_grpo_contract(global_std: bool) -> None:
 
 
 class _NFTModel(DenoiseModelBase):
-    """Holds a real PEFT-wrapped Wan DiT behind the production adapter boundary.
+    """Holds a real Wan DiT behind the production policy boundary.
 
-    ``transformer`` is a genuine ``WanTransformer3DModel`` carrying real
-    ``default`` and ``previous`` LoRA adapters, so ``set_adapter`` /
-    ``disable_adapters`` route to actually-different weights. ``sync_previous_policy_adapter``
-    delegates to the same ``_copy_adapter_weights`` the production model uses.
+    ``transformer`` is a genuine ``WanTransformer3DModel``; ``previous_policy`` /
+    ``reference_policy`` / ``sync_previous_policy`` are the inherited
+    ``DenoiseModelBase`` implementations, so this double adds nothing to them.
 
     The objectives reach the transformer only through the shared replay
     contract (``replay_forward_with_latents`` -> ``restore_eval_state`` ->
@@ -152,14 +150,18 @@ class _NFTModel(DenoiseModelBase):
     def decode_latents(self, latents: Any) -> Any:
         raise NotImplementedError
 
-    def sync_previous_policy_adapter(self, *, decay: float) -> None:
-        _copy_adapter_weights(self.transformer, src="default", dst="previous", decay=decay)
 
+def _build_model(trainable: str = "lora") -> _NFTModel:
+    """A tiny real Wan DiT, trained through a LoRA adapter or fully."""
 
-def _build_model() -> _NFTModel:
-    """A tiny real Wan DiT carrying distinct default/previous LoRA adapters."""
-
-    return _NFTModel(add_lora_adapters(build_tiny_wan_transformer()))
+    transformer = build_tiny_wan_transformer()
+    if trainable == "lora":
+        add_lora_adapters(transformer)
+    else:
+        transformer.requires_grad_(True)
+    model = _NFTModel(transformer)
+    model.attach_reference_policy()
+    return model
 
 
 def _build_batch(
@@ -372,30 +374,35 @@ def test_advantage_scale_must_be_positive() -> None:
         )
 
 
-def test_after_optimizer_step_syncs_previous_adapter() -> None:
-    # after_optimizer_step must refresh the previous adapter from the trainable
-    # one. With decay=0 the previous weights become an exact copy of default.
-    model = _build_model()
-    named = dict(model.transformer.named_parameters())
-    a_name = next(n for n in named if ".previous." in n and "lora_A" in n)
-    d_name = a_name.replace(".previous.", ".default.")
-    # Perturb default so it differs from previous before the sync.
+@pytest.mark.parametrize("trainable", ["lora", "full"])
+def test_after_optimizer_step_syncs_the_previous_policy(trainable: str) -> None:
+    """The previous policy is the trainable weights as of the last sync; with
+    ``weight_copy_decay=0`` a sync makes it an exact copy."""
+    model = _build_model(trainable)
+    model.sync_previous_policy()
+    parameter = next(p for p in model.parameters() if p.requires_grad)
+    synced = parameter.detach().clone()
     with torch.no_grad():
-        named[d_name].add_(1.0)
-    assert not torch.allclose(named[a_name], named[d_name])
+        parameter.add_(1.0)
+
+    with model.previous_policy():
+        assert torch.equal(parameter, synced)
+    assert torch.equal(parameter, synced + 1.0)
 
     DiffusionNFT(DiffusionNFTConfig(weight_copy_decay=0.0)).after_optimizer_step(
         model,
         global_step=7,
     )
-    assert torch.allclose(named[a_name], named[d_name])
+    with model.previous_policy():
+        assert torch.equal(parameter, synced + 1.0)
 
 
-def test_first_step_invariant_check_passes_when_previous_synced() -> None:
+@pytest.mark.parametrize("trainable", ["lora", "full"])
+def test_first_step_invariant_check_passes_when_previous_synced(trainable: str) -> None:
     """Advantage-flip invariant holds with previous freshly synced (lr=0 gate)."""
 
-    model = _build_model()
-    model.sync_previous_policy_adapter(decay=0.0)
+    model = _build_model(trainable)
+    model.sync_previous_policy()
     batch = _build_batch(
         x0=torch.randn(_LATENT_SHAPE),
         noise=torch.randn(_LATENT_SHAPE),
@@ -442,7 +449,7 @@ def test_edm_scale_timestep_grid_fails_loudly() -> None:
 def test_lr_zero_reward_channel_is_inert() -> None:
     """Checks the NFT analog of the GRPO ratio==1 invariant.
 
-    With the previous adapter synced to the trainable one (the lr=0 /
+    With the previous policy synced to the trainable one (the lr=0 /
     just-synced state), forward == previous, so positive and negative
     branch losses coincide and the advantage mix cannot move the policy
     loss: flipping the advantage sign must leave the loss bit-identical.

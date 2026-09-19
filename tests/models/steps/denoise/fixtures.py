@@ -23,7 +23,6 @@ def lora_test_build(
     family: str,
     lora_path: str | None = None,
     model_config: dict[str, Any] | None = None,
-    previous_policy_adapter: bool = False,
 ) -> ModelBuild:
     """A real CPU replay build for adapter tests, without checkpoint loading."""
 
@@ -34,7 +33,6 @@ def lora_test_build(
         parameter_dtype=torch.float32,
         family=family,
         precision=RolePrecision("fp32", "ieee"),
-        previous_policy_adapter=previous_policy_adapter,
         model_config={
             **(model_config or {}),
             "use_lora": True,
@@ -354,15 +352,15 @@ def build_tiny_wan_i2v_transformer(*, seed: int = 0) -> Any:
 def add_lora_adapters(
     transformer: Any,
     *,
-    names: tuple[str, ...] = ("default", "previous"),
+    names: tuple[str, ...] = ("default",),
     rank: int = 4,
     seed: int = 0,
 ) -> Any:
     """Attach independently gaussian-init LoRA adapters via diffusers' native API.
 
     Uses ``PeftAdapterMixin.add_adapter`` (not ``get_peft_model``) so the model
-    exposes the ``disable_adapters`` / ``enable_adapters`` / ``set_adapter`` surface
-    DiffusionNFT drives. One shared RNG stream seeds all adapters, so they end up
+    exposes the ``disable_adapters`` / ``enable_adapters`` surface the reference
+    forward drives. One shared RNG stream seeds all adapters, so they end up
     with distinct weights; the first name is left active.
     """
 

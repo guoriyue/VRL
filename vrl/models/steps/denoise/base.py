@@ -12,7 +12,6 @@ import contextlib
 import functools
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -27,7 +26,8 @@ from vrl.models.interfaces import (
     ReplaySegmentResult,
 )
 from vrl.models.interfaces.runtime import ModelBuild
-from vrl.models.peft_adapter import activate_adapter_on, disable_adapter_on
+from vrl.models.peft_adapter import disable_adapter_on, has_adapter_on
+from vrl.models.policy_snapshot import PolicySnapshot
 from vrl.models.precision import model_autocast
 from vrl.models.weight_utils import (
     TrainableStateSlots,
@@ -315,17 +315,61 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
 
         return disable_adapter_on(self._require_transformer())
 
-    def activate_adapter(self, name: str) -> contextlib.AbstractContextManager[None]:
-        """Activate the named LoRA/PEFT adapter for a forward pass.
+    # -- policies other than the trainable one ---------------------------
+    # The behaviour policy of the previous-policy objectives and the KL
+    # reference are snapshots of whatever is trainable — a LoRA adapter or the
+    # whole transformer — so the objectives never learn which one it is.
 
-        The named-adapter counterpart to :meth:`disable_adapter`; restores the
-        ``"default"`` adapter on exit and switches on the module behind any
-        DDP / compile wrapper. Centralizing it here keeps algorithms (e.g. a
-        frozen previous-policy branch) off ``transformer.set_adapter``
-        directly, so adapter control has one boundary that owns the model.
+    def _trainable_parameters(self) -> list[torch.nn.Parameter]:
+        return [parameter for parameter in self.parameters() if parameter.requires_grad]
+
+    def _has_adapter(self) -> bool:
+        return any(has_adapter_on(module) for module in self.trainable_modules.values())
+
+    def sync_previous_policy(self, *, decay: float = 0.0) -> None:
+        """Refresh the previous policy from the live one (``decay`` blends, 0 copies).
+
+        The first call takes the snapshot, so a policy whose objective never
+        syncs before its first loss step sees ``previous == current`` there.
         """
 
-        return activate_adapter_on(self._require_transformer(), name)
+        snapshot = self._modules.get("_previous_policy")
+        if snapshot is None:
+            self.add_module("_previous_policy", PolicySnapshot(self._trainable_parameters()))
+            return
+        snapshot.update(decay)
+
+    def previous_policy(self) -> contextlib.AbstractContextManager[None]:
+        """Run the forward with the previous policy's weights."""
+
+        if self._modules.get("_previous_policy") is None:
+            self.sync_previous_policy()
+        return self._modules["_previous_policy"].active()
+
+    def attach_reference_policy(self) -> None:
+        """Pin the current trainable weights as the KL reference.
+
+        With an adapter attached the base weights already are the reference
+        (``disable_adapter``), so nothing is copied; a full fine-tune keeps a
+        snapshot of the transformer as it stood before training.
+        """
+
+        if self._has_adapter():
+            return
+        self.add_module("_reference_policy", PolicySnapshot(self._trainable_parameters()))
+
+    def reference_policy(self) -> contextlib.AbstractContextManager[None]:
+        """Run the forward with the reference (pre-training) weights."""
+
+        snapshot = self._modules.get("_reference_policy")
+        if snapshot is not None:
+            return snapshot.active()
+        if self._has_adapter():
+            return self.disable_adapter()
+        raise RuntimeError(
+            f"{type(self).__name__} has no reference policy: a full fine-tune must "
+            "attach_reference_policy() before training starts",
+        )
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
         """Load trainable transformer weights from ``transformer.*`` sync keys."""
@@ -475,53 +519,6 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
                     if parameter.requires_grad:
                         parameter.data = parameter.data.to(dtype=torch.float32)
             self.set_module_root(name, wrapped)
-        if build.previous_policy_adapter:
-            self.attach_previous_policy_adapter(
-                autocast_adapter_dtype=(
-                    lora_config.autocast_adapter_dtype or lora_config.parameter_dtype == "float32"
-                ),
-            )
-
-    # A build may request a frozen ``previous`` copy of the trainable adapter:
-    # forward-only under no_grad, refreshed by weight copy after each optimizer
-    # step, never optimized. Which objectives need one is decided at the
-    # config-to-build boundary; attach runs right after the normal LoRA attach.
-
-    def attach_previous_policy_adapter(self, *, autocast_adapter_dtype: bool = True) -> None:
-        """Build the frozen ``previous`` adapter on ``self.transformer``."""
-
-        from vrl.models.steps.denoise.common import lora as _lora
-
-        transformer = self.transformer
-        if "previous" not in transformer.peft_config:
-            # The installed adapter owns its effective topology. Keep the
-            # existing Gaussian initialization/RNG behavior before copying;
-            # never repeat a base-changing initializer for a frozen mirror.
-            config = deepcopy(transformer.peft_config["default"])
-            config.init_lora_weights = "gaussian"
-            config.inference_mode = False
-            # PEFT otherwise upcasts the mirror even when default stays bf16.
-            # Mirror creation must use the same effective storage policy.
-            transformer.add_adapter(
-                "previous",
-                config,
-                autocast_adapter_dtype=autocast_adapter_dtype,
-            )
-        _lora.copy_adapter_weights(transformer, src="default", dst="previous")
-        _lora.freeze_checkpoint_owned_adapter_params(transformer, "previous")
-        transformer.set_adapter("default")
-
-    def sync_previous_policy_adapter(self, *, decay: float = 0.0) -> None:
-        """Refresh the ``previous`` adapter from the trainable ``default`` adapter.
-
-        Reached via getattr dispatch from ``vrl/algorithms/previous_adapter.py``
-        (the objectives' ``after_optimizer_step``), not a direct call — keep
-        even though textual call-site searches miss it.
-        """
-
-        from vrl.models.steps.denoise.common import lora as _lora
-
-        _lora.copy_adapter_weights(self.transformer, src="default", dst="previous", decay=decay)
 
     def apply_full_finetune(self, build: ModelBuild) -> None:
         """Mark the transformer fully trainable (no-LoRA path)."""
