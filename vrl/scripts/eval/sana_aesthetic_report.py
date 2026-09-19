@@ -50,7 +50,10 @@ _LIVE_ENTRYPOINT = "vrl.scripts.train:train_online"
 # Digest of the bundled canonical preset after the 2026-08 sharing-grammar
 # simplification (allow_overlap retired, default-valued resource spellings
 # dropped from the preset chain; sharing derives from device-set intersections).
-CANONICAL_PROTOCOL_SHA256 = "d7bc7f2848d5a443e5156bf8ffcaf693190ac24419b745e0a07511a540ae6c5a"
+# 2026-09-19: the committed manifests moved from datasets/ to manifests/; the
+# prompt files themselves are unchanged (resolve_protocol_manifests still
+# checks their registered content).
+CANONICAL_PROTOCOL_SHA256 = "4618de7df44085f9d544398e405ffd305b03afa763f17fa9b027b36bde0e8f64"
 TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"
 EVAL_MANIFEST_SHA256 = "10c70e8af2ae16b0d76eb9da0f53801485ab0a3bae83e605d310faa9b16bfcdd"
 TRAIN_PROMPT_COUNT = 192
@@ -584,6 +587,15 @@ def _erase_meaningless_spelling(
                     f"ambiguous SANA config at {'.'.join(path)}: both {old!r} and {new!r}"
                 )
             renamed_section[new] = renamed_section.pop(old)
+    # 2026-09-19 directory rename: the committed manifests moved from datasets/
+    # to manifests/ with unchanged content; historical resolved configs still
+    # spell the old path.
+    data_section = _section(actual, "data")
+    if isinstance(data_section, dict):
+        for key in ("manifest", "eval_manifest", "source_report"):
+            value = data_section.get(key)
+            if isinstance(value, str) and value.startswith("datasets/"):
+                data_section[key] = "manifests/" + value[len("datasets/") :]
     # Knobs removed in 2026-09: the batch placement strategy (round-robin is the
     # only placement) and the health monitor's post-resume grace; historical
     # configs may still carry them.
