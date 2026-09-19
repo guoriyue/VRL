@@ -4,7 +4,7 @@ Each block pairs a judge's evaluation prompt with the regex/pattern that parses
 its fixed output format; prompt and parser define one grammar and must change in
 lockstep, which is why they live side by side here instead of inside the model
 modules. Consumers: ``vrl.rewards.models.videoscore2`` /
-``cosmos3_reasoner`` / ``unified_reward_video`` / ``videocon_physics``. The
+``unified_reward_video`` / ``videocon_physics``. The
 UnifiedReward and VideoCon templates follow the upstream inference scripts
 those checkpoints ship with; treat every string as checkpoint-calibrated —
 rewording a prompt silently shifts the score distribution.
@@ -34,31 +34,6 @@ VIDEOSCORE2_SCORE_REGEX = re.compile(
     r"visual quality:\s*(\d+).*?"
     r"text-to-video alignment:\s*(\d+).*?"
     r"physical/common-sense consistency:\s*(\d+)",
-    re.IGNORECASE | re.DOTALL,
-)
-
-COSMOS3_SYSTEM_PROMPT = (
-    "You are an expert evaluator of robot-manipulation and physical-interaction "
-    "videos. Judge the video on four axes, each an integer from 1 to 5: "
-    "(1) task success - does the action complete the instructed goal; "
-    "(2) contact realism - grasps, contacts and forces are physically believable; "
-    "(3) temporal consistency - object identity and motion are stable across frames; "
-    "(4) physical plausibility - no clipping, teleporting, or physics violations. "
-    "Reason briefly, then output the final line exactly as: "
-    "task success: <s>; contact realism: <c>, temporal consistency: <t>, "
-    "physical plausibility: <p>"
-)
-COSMOS3_USER_TEMPLATE = (
-    "Task instruction: {prompt}\n"
-    "Please output in this format:\n"
-    "task success: <s>; contact realism: <c>, temporal consistency: <t>, "
-    "physical plausibility: <p>"
-)
-COSMOS3_SCORE_REGEX = re.compile(
-    r"task success:\s*(\d+).*?"
-    r"contact realism:\s*(\d+).*?"
-    r"temporal consistency:\s*(\d+).*?"
-    r"physical plausibility:\s*(\d+)",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -100,9 +75,6 @@ VIDEOCON_SEMANTIC_TEMPLATE = (
 )
 
 __all__ = [
-    "COSMOS3_SCORE_REGEX",
-    "COSMOS3_SYSTEM_PROMPT",
-    "COSMOS3_USER_TEMPLATE",
     "UNIFIED_REWARD_VIDEO_AXIS_PATTERNS",
     "UNIFIED_REWARD_VIDEO_PROBLEM_TEMPLATE",
     "VIDEOCON_PHYSICS_TEMPLATE",

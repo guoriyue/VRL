@@ -4,9 +4,6 @@
 [submodule "third_party/joyai_echo"]
 	path = third_party/joyai_echo
 	url = https://github.com/jd-opensource/JoyAI-Echo.git
-[submodule "third_party/PhyMotion"]
-	path = third_party/PhyMotion
-	url = https://github.com/h6kplus/PhyMotion
 [submodule "third_party/VMBench"]
 	path = third_party/VMBench
 	url = https://github.com/AMAP-ML/VMBench

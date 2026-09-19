@@ -1,7 +1,7 @@
 """The shared Qwen-VL judge prelude on a tiny real generative Qwen2-VL.
 
 ``QwenVLVideoJudge`` owns processor + model loading, the chat turn, the
-processor call, generation, and decoding for VideoScore2 and the Cosmos3
+processor call, generation, and decoding for VideoScore2 and the
 reasoner. A ~35K-parameter ``Qwen2VLForConditionalGeneration`` written with
 ``save_pretrained`` (``tests/rewards/fixtures.py``) drives the real path on CPU;
 only the judge's own text is substituted where a score line is needed.
@@ -48,23 +48,6 @@ def _videoscore2(judge_repo: Path, **overrides):
     from vrl.rewards.models.videoscore2 import VideoScore2Model
 
     return VideoScore2Model({**_WORKER_CONFIG, "model_path": str(judge_repo), **overrides})
-
-
-def _cosmos3(judge_repo: Path, monkeypatch: pytest.MonkeyPatch):
-    """The Cosmos3 judge over the tiny Qwen2-VL: only the model class differs."""
-
-    from transformers import AutoModelForImageTextToText, Qwen3VLForConditionalGeneration
-
-    from vrl.rewards.models.cosmos3_reasoner import Cosmos3ReasonerRewardModel
-
-    monkeypatch.setattr(
-        Qwen3VLForConditionalGeneration,
-        "from_pretrained",
-        staticmethod(AutoModelForImageTextToText.from_pretrained),
-    )
-    return Cosmos3ReasonerRewardModel(
-        {**_WORKER_CONFIG, "model_path": str(judge_repo), "checkpoint_layout": "remapped"},
-    )
 
 
 def test_judge_loads_offline_and_runs_the_real_video_pipeline(
@@ -122,44 +105,3 @@ def test_videoscore2_parses_hard_scores_from_the_generated_text(
     assert seen["do_sample"] is True
     assert seen["temperature"] == pytest.approx(1e-6)
     assert seen["max_new_tokens"] == 8
-
-
-def test_cosmos3_reasoner_shares_the_prelude_and_decodes_greedily(
-    judge_repo: Path,
-    clip: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    judge = _cosmos3(judge_repo, monkeypatch)
-    answer = judge.tokenizer.encode(
-        "task success: 2; contact realism: 3; temporal consistency: 4; physical plausibility: 5",
-        add_special_tokens=False,
-    )
-    seen: dict[str, object] = {}
-
-    def fake_generate(**kwargs):
-        seen.update(kwargs)
-        return SimpleNamespace(
-            sequences=torch.cat([kwargs["input_ids"], torch.tensor([answer])], dim=1),
-        )
-
-    monkeypatch.setattr(judge.model, "generate", fake_generate)
-
-    scores = judge._score_video(str(clip), "pick up the cup")
-
-    assert scores["task_success"] == 2.0
-    assert scores["physical_plausibility"] == 5.0
-    assert scores["overall"] == pytest.approx(3.5)
-    assert seen["do_sample"] is False
-
-
-def test_cosmos3_reasoner_keeps_its_checkpoint_layout_guards(tmp_path: Path) -> None:
-    from vrl.rewards.models.cosmos3_reasoner import Cosmos3ReasonerRewardModel
-
-    with pytest.raises(ValueError, match="checkpoint_layout='remapped'"):
-        Cosmos3ReasonerRewardModel({**_WORKER_CONFIG, "model_path": str(tmp_path)})
-    with pytest.raises(ValueError, match="non-empty"):
-        Cosmos3ReasonerRewardModel({**_WORKER_CONFIG, "checkpoint_layout": "remapped"})
-    with pytest.raises(FileNotFoundError, match="model_path missing"):
-        Cosmos3ReasonerRewardModel(
-            {**_WORKER_CONFIG, "checkpoint_layout": "remapped", "model_path": str(tmp_path / "x")},
-        )

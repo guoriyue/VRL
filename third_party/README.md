@@ -22,7 +22,6 @@ upstream archive, its patch, the Space assets and its dependency stack.
 | ---------------- | ------------------------------------------------------------ |
 | `joyai_echo`     | `ltx_core`, `ltx_pipelines`, `ltx_distillation`              |
 | `videophy`       | `mplug_owl_video`                                            |
-| `PhyMotion`      | _(not imported — run via CLI)_ `astrolabe.rewards` via `vrl/scripts/eval/phymotion_score.py` |
 | `VMBench`        | _(not imported — run via CLI)_ motion-eval benchmark; fold scores in with `--merge-json` |
 | `DynamicEval`    | _(not imported — run via CLI)_ dynamic-scene eval; fold scores in with `--merge-json` |
 | `CausVid`        | `causvid` causal-Wan model/runtime (in-process; released weights are non-commercial) |
@@ -37,10 +36,9 @@ checkpoint revision is separately pinned in the model preset); MAGI-1 source
 and weights are Apache-2.0.
 
 Not every vendored repo is exposed through `//third_party:vendored`: it lists
-only submodules that `vrl/` **imports** in-process. The three motion-eval
-benchmarks above are invoked as external commands (their own CLIs, or the
-PhyMotion bridge run in PhyMotion's own conda env), so they are vendored to pin
-the code but stay off the import path.
+only submodules that `vrl/` **imports** in-process. The two motion-eval
+benchmarks above are invoked as external commands (their own CLIs), so they
+are vendored to pin the code but stay off the import path.
 
 ## Adding a new vendored dependency
 

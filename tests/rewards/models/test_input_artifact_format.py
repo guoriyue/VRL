@@ -15,12 +15,10 @@ from vrl.rewards.models.base import FileRewardModel
     [
         ("hpsv3", "HPSv3Model"),
         ("kling_video_reward", "KlingVideoRewardModel"),
-        ("phymotion", "PhyMotionModel"),
         ("unified_reward_video", "UnifiedRewardVideoModel"),
         ("videocon_physics", "VideoConPhysicsModel"),
         ("qwen_vl_judge", "QwenVLVideoJudge"),
         ("videoscore2", "VideoScore2Model"),
-        ("cosmos3_reasoner", "Cosmos3ReasonerRewardModel"),
         ("robotics_video_reward", "RoboticsVideoRewardModel"),
     ],
 )

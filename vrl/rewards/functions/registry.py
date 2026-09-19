@@ -53,7 +53,6 @@ def get_reward(name: str) -> type[RewardFunction]:
 def _register_builtins() -> None:
     from vrl.rewards.functions.aesthetic import AestheticReward
     from vrl.rewards.functions.animereward_quality import AnimeRewardQualityReward
-    from vrl.rewards.functions.cosmos3_reasoner import Cosmos3ReasonerReward
     from vrl.rewards.functions.countgd import CountGDReward
     from vrl.rewards.functions.geneval import GenEvalReward
     from vrl.rewards.functions.geneval_owl import GenEvalOwlReward
@@ -64,7 +63,6 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.motion_dynamics import MotionDynamicsReward
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
     from vrl.rewards.functions.ocr import OCRReward
-    from vrl.rewards.functions.phymotion import PhyMotionReward
     from vrl.rewards.functions.pickscore import PickScoreReward
     from vrl.rewards.functions.robotics_video_reward import RoboticsVideoReward
     from vrl.rewards.functions.target_dino_similarity import TargetDinoSimilarityReward
@@ -95,11 +93,9 @@ def _register_builtins() -> None:
             "robotics_video_reward": RoboticsVideoReward,
             "hpsv3": HPSv3Reward,
             "kling_video_reward": KlingVideoReward,
-            "cosmos3_reasoner": Cosmos3ReasonerReward,
             "videocon_physics": VideoConPhysicsReward,
             "videoscore2": VideoScore2Reward,
             "unified_reward_video": UnifiedRewardVideoReward,
-            "phymotion": PhyMotionReward,
         }
     )
 
