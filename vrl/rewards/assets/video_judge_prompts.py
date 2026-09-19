@@ -3,8 +3,7 @@
 Each block pairs a judge's evaluation prompt with the regex/pattern that parses
 its fixed output format; prompt and parser define one grammar and must change in
 lockstep, which is why they live side by side here instead of inside the model
-modules. Consumers: ``vrl.rewards.models.videoscore2`` /
-``unified_reward_video`` / ``videocon_physics``. The
+modules. Consumers: ``vrl.rewards.models.unified_reward_video`` / ``videocon_physics``. The
 UnifiedReward and VideoCon templates follow the upstream inference scripts
 those checkpoints ship with; treat every string as checkpoint-calibrated —
 rewording a prompt silently shifts the score distribution.
@@ -13,29 +12,6 @@ rewording a prompt silently shifts the score distribution.
 from __future__ import annotations
 
 import re
-
-VIDEOSCORE2_SYSTEM_PROMPT = (
-    "You are an expert for evaluating AI-generated videos from three dimensions: "
-    "(1) visual quality - clarity, smoothness, artifacts; "
-    "(2) text-to-video alignment - fidelity to the prompt; "
-    "(3) physical/common-sense consistency - naturalness and physics plausibility. "
-    "Reason briefly, then output the final line exactly as: "
-    "visual quality: <v_score>; text-to-video alignment: <t_score>, "
-    "physical/common-sense consistency: <p_score>, "
-    "where each score is an integer from 1 to 5."
-)
-VIDEOSCORE2_USER_TEMPLATE = (
-    "Video prompt: {prompt}\n"
-    "Please output in this format:\n"
-    "visual quality: <v_score>; text-to-video alignment: <t_score>, "
-    "physical/common-sense consistency: <p_score>"
-)
-VIDEOSCORE2_SCORE_REGEX = re.compile(
-    r"visual quality:\s*(\d+).*?"
-    r"text-to-video alignment:\s*(\d+).*?"
-    r"physical/common-sense consistency:\s*(\d+)",
-    re.IGNORECASE | re.DOTALL,
-)
 
 UNIFIED_REWARD_VIDEO_PROBLEM_TEMPLATE = (
     "You are presented with a generated video and its associated text caption. "
@@ -79,7 +55,4 @@ __all__ = [
     "UNIFIED_REWARD_VIDEO_PROBLEM_TEMPLATE",
     "VIDEOCON_PHYSICS_TEMPLATE",
     "VIDEOCON_SEMANTIC_TEMPLATE",
-    "VIDEOSCORE2_SCORE_REGEX",
-    "VIDEOSCORE2_SYSTEM_PROMPT",
-    "VIDEOSCORE2_USER_TEMPLATE",
 ]

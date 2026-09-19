@@ -51,7 +51,7 @@ def resolve_model_root(
 ) -> Path:
     """Return a local checkpoint dir: ``model_path`` if set, else snapshot_download.
 
-    Shared by the reward judges that wrap ready public models (videoscore2,
+    Shared by the reward judges that wrap ready public models (
     unified_reward_video, videocon_physics). Kling keeps its
     own resolver: it pins a revision, wraps download failures in a RuntimeError
     with recovery hints, and validates the checkpoint layout.

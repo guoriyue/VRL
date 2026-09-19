@@ -1,6 +1,6 @@
 """Model-backed reward functions as thin in-memory inference-runtime adapters.
 
-HPSv3, VideoScore2, Kling VideoReward and UnifiedReward-2.0 are all
+HPSv3, Kling VideoReward and UnifiedReward-2.0 are all
 zero-method subclasses of ``ModelRewardFunction``: they only pin a
 model factory, a debug basename and their defaults. Every behavior asserted
 here -- media forwarding, ``score_key`` selection, the missing-key and
@@ -10,7 +10,7 @@ module pins that shared contract for all four wrappers, so a wrapper that
 starts overriding the adapter shows up as a red test rather than as an
 untested divergence.
 
-Model-side parsing (VideoScore2 rubric text, UnifiedReward axis scales) and
+Model-side parsing (UnifiedReward axis scales) and
 the debug-row schema stay in their own modules; they are not shared behavior.
 """
 
@@ -29,7 +29,6 @@ from vrl.config.schema import RewardConfig
 from vrl.rewards.functions.hpsv3 import HPSv3Reward
 from vrl.rewards.functions.kling_video_reward import KlingVideoReward
 from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
-from vrl.rewards.functions.videoscore2 import VideoScore2Reward
 from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.types import RewardSample
 
@@ -52,19 +51,6 @@ _CASES = [
         "top_frame_mean",
         "frame_mean",
         {"top_frame_mean": 9.5, "frame_mean": 7.25, "frame_min": 1.5},
-    ),
-    _Case(
-        VideoScore2Reward,
-        "videoscore2",
-        {"reward_model_name": "TIGER-Lab/VideoScore2@main"},
-        "physical_common_sense",
-        "visual_quality",
-        {
-            "visual_quality": 4.0,
-            "text_alignment": 2.5,
-            "physical_common_sense": 3.25,
-            "overall": 3.25,
-        },
     ),
     _Case(
         KlingVideoReward,

@@ -17,8 +17,6 @@ from vrl.rewards.models.base import FileRewardModel
         ("kling_video_reward", "KlingVideoRewardModel"),
         ("unified_reward_video", "UnifiedRewardVideoModel"),
         ("videocon_physics", "VideoConPhysicsModel"),
-        ("qwen_vl_judge", "QwenVLVideoJudge"),
-        ("videoscore2", "VideoScore2Model"),
         ("robotics_video_reward", "RoboticsVideoRewardModel"),
     ],
 )

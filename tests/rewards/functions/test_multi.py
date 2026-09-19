@@ -14,7 +14,7 @@ from vrl.rewards.base import (
 from vrl.rewards.functions.registry import (
     MultiReward,
 )
-from vrl.rewards.functions.videoscore2 import VideoScore2Reward
+from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
 from vrl.rewards.runtime import InProcessRewardScorer, RewardFunctionRuntime
 from vrl.rewards.service.client import HttpRewardScorer
 from vrl.rewards.service.server import RewardService
@@ -422,13 +422,13 @@ def test_from_dict_validates_zero_weight_observation_components() -> None:
 
 def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) -> None:
     reward = MultiReward.from_dict(
-        {"videoscore2": 1.0},
+        {"unified_reward_video": 1.0},
         device="cuda:0",
         inference_configs={
-            "videoscore2": RewardInferenceConfig(
+            "unified_reward_video": RewardInferenceConfig(
                 kind="http",
                 endpoint="http://reward:8300",
-                expected_model="videoscore2-v1",
+                expected_model="unified-reward-v1",
             ),
         },
         memory_parking_required=False,
@@ -570,11 +570,11 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
             ),
         )
 
-    remote_a = VideoScore2Reward(
+    remote_a = UnifiedRewardVideoReward(
         reward_name="a",
         scorer=_client(),
     )
-    remote_b = VideoScore2Reward(
+    remote_b = UnifiedRewardVideoReward(
         reward_name="b",
         scorer=_client(),
     )
@@ -602,13 +602,13 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
 
 def test_mixed_runtime_components_fail_closed_for_generation_overlap(tmp_path) -> None:
     reward = MultiReward.from_dict(
-        {"videoscore2": 1.0, "ocr": 0.5},
+        {"unified_reward_video": 1.0, "ocr": 0.5},
         device="cpu",
         inference_configs={
-            "videoscore2": RewardInferenceConfig(
+            "unified_reward_video": RewardInferenceConfig(
                 kind="http",
                 endpoint="http://reward:8300",
-                expected_model="videoscore2-v1",
+                expected_model="unified-reward-v1",
             ),
             "ocr": RewardInferenceConfig(kind="in_process"),
         },
@@ -621,18 +621,18 @@ def test_mixed_runtime_components_fail_closed_for_generation_overlap(tmp_path) -
 def test_http_reward_rejects_local_worker_config() -> None:
     with pytest.raises(ValueError, match="belongs to the standalone reward service"):
         MultiReward.from_dict(
-            {"videoscore2": 1.0},
+            {"unified_reward_video": 1.0},
             device="cpu",
             reward_kwargs={
-                "videoscore2": {
+                "unified_reward_video": {
                     "worker_config": {"device": "cuda:0"},
                 },
             },
             inference_configs={
-                "videoscore2": RewardInferenceConfig(
+                "unified_reward_video": RewardInferenceConfig(
                     kind="http",
                     endpoint="http://reward:8300",
-                    expected_model="videoscore2-v1",
+                    expected_model="unified-reward-v1",
                 ),
             },
         )
@@ -674,10 +674,10 @@ def test_ray_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:
     from vrl.rewards.ray import RayRewardPlacement, RayRewardScorer
 
     reward = MultiReward.from_dict(
-        {"videoscore2": 1.0},
+        {"unified_reward_video": 1.0},
         device="cuda:0",
         memory_parking_required=True,
-        inference_configs={"videoscore2": RewardInferenceConfig(kind="ray")},
+        inference_configs={"unified_reward_video": RewardInferenceConfig(kind="ray")},
         ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"),
     )
     scorer = reward.rewards[0][2].scorer

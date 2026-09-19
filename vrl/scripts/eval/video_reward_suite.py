@@ -12,7 +12,7 @@ Reads a directory of ``.mp4`` files plus a prompt manifest and emits
   ``vbench_*`` columns stay present but empty and a warning is logged. The exact
   per-video JSON schema is confirmed by the Phase A availability gate.
 
-The repo-owned VideoScore2 judge plugs in behind ``--videoscore2``, emitting
+Repo-owned video reward models can plug in behind CLI flags, emitting
 ``vs2_<key>`` columns. Other external benchmarks (VMBench, VBench-2.0,
 DynamicEval) are run via their own CLIs and folded in with ``--merge-json
 prefix=path`` — a per-video ``{filename: {metric: score}}`` JSON — so the suite
@@ -92,11 +92,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to VBench_full_info.json (required by VBench when --vbench-dims is set).",
     )
     parser.add_argument("--no-kling", action="store_true", help="Skip Kling scoring.")
-    parser.add_argument(
-        "--videoscore2",
-        action="store_true",
-        help="Also score with VideoScore2 (downloads/loads the 7B judge).",
-    )
     parser.add_argument(
         "--merge-json",
         action="append",
@@ -322,11 +317,8 @@ def _optional_reward_models(args: argparse.Namespace) -> dict[str, Any]:
     """
 
     device = "cuda:0" if (args.device == "auto" and torch.cuda.is_available()) else args.device
+    del device
     models: dict[str, Any] = {}
-    if args.videoscore2:
-        from vrl.rewards.models.videoscore2 import VideoScore2Model
-
-        models["vs2"] = VideoScore2Model({"device": device, "dtype": "bfloat16"})
     return models
 
 

@@ -26,14 +26,14 @@ an operator-owned service instead, with typed transport config in the
 ```yaml
 reward:
   components:
-    videoscore2: 1.0
+    unified_reward_video: 1.0
   inference:
-    videoscore2:
+    unified_reward_video:
       kind: http
       endpoint: http://reward.internal:8300
       timeout_s: 1800
-      expected_model: videoscore2-v1
-      expected_model_version: VideoScore2@pinned-revision
+      expected_model: unified-reward-2.0
+      expected_model_version: UnifiedReward-2.0@pinned-revision
 ```
 
 `reward.kwargs.<component>` holds constructor arguments only; transport config
@@ -152,8 +152,7 @@ signal. In particular, Kling VideoReward's `overall_reward` is
 `VQ + MQ + TA`, so it already includes prompt/text alignment.
 
 The aggregate score key differs per reward: it is `overall_reward` in Kling
-VideoReward, `overall` in VideoCon-Physics, and `overall` in VideoScore2 (the
-mean of its three axes). Each reward keeps its own deliberate vocabulary — see
+VideoReward, and `overall` in VideoCon-Physics. Each reward keeps its own deliberate vocabulary — see
 the per-reward score-key table below.
 
 Use these conventions for compound video recipes:
@@ -164,8 +163,6 @@ Use these conventions for compound video recipes:
 | Motion or physics compound | `kling_video_reward` | `motion_quality` | Keeps Kling focused on motion and avoids duplicating prompt-alignment rewards. |
 | Visual-quality compound | `kling_video_reward` | `visual_quality` | Keeps Kling focused on visual quality. |
 | Physical commonsense | `videocon_physics` | `physical_commonsense` | Avoids mixing VideoCon semantic adherence into prompt-alignment rewards. |
-| Physical/common-sense judge | `videoscore2` | `physical_common_sense` | VideoScore2's naturalness/physics axis; pair with Kling `motion_quality` instead of duplicating text alignment. |
-| Visual-quality judge | `videoscore2` | `visual_quality` | VideoScore2's clarity/artifact axis as a learned second opinion to Kling `visual_quality`. |
 | Rubric / cloth-physics judge | `unified_reward_video` | `physics` | UnifiedReward-2.0's physics axis; steer it at the dress/skirt question via `worker_config.rubric_path`. |
 | Robot V2W perceptual anchor | `target_dino_similarity` | `target_dino_similarity` | Frozen-DINOv2 cosine + temporal term vs manifest `target_video` / `target_image`; keeps frames on the real-image manifold. Zero-training (pretrained). |
 | Robot V2W motion guard | `motion_dynamics` | `motion_dynamics` | RAFT optical-flow Dynamic Degree; a hard floor under static/blur collapse. |

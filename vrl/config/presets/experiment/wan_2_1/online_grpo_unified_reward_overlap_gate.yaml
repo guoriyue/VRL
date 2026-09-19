@@ -1,4 +1,4 @@
-# Wan 2.1 1.3B + remote VideoScore2 generation/reward overlap acceptance gate.
+# Wan 2.1 1.3B + remote UnifiedReward generation/reward overlap acceptance gate.
 #
 # This is a reusable scheduling gate, not a production training recipe. It is the
 # workload for the A/B/C acceptance in docs/sprints/done/SPRINT_reward_service.md
@@ -108,7 +108,7 @@ reward:
       expected_model: unified-reward-overlap-gate
 
 trainer:
-  output_dir: outputs/wan_videoscore2_overlap_gate
+  output_dir: outputs/wan_unified_reward_overlap_gate
   total_epochs: 5
   # No periodic checkpoints: the gate measures wall-clock, and writing state
   # every epoch adds I/O that differs across arms only by run length. The final

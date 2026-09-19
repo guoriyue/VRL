@@ -925,12 +925,12 @@ def test_http_only_reward_owns_no_local_resource_or_handoff() -> None:
                     # owns its accelerator externally and must not reserve GPU2.
                     "reward": {"device": "gpu", "devices": [2]},
                 },
-                reward_components={"videoscore2": 1.0},
+                reward_components={"unified_reward_video": 1.0},
                 reward_inference={
-                    "videoscore2": {
+                    "unified_reward_video": {
                         "kind": "http",
                         "endpoint": "http://reward:8300",
-                        "expected_model": "videoscore2-v1",
+                        "expected_model": "unified-reward-v1",
                     },
                 },
             )
@@ -956,12 +956,12 @@ def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> N
                     "rollout": {"devices": [1]},
                     "reward": {"device": "cpu"},
                 },
-                reward_components={"ocr": 0.5, "videoscore2": 0.5},
+                reward_components={"ocr": 0.5, "unified_reward_video": 0.5},
                 reward_inference={
-                    "videoscore2": {
+                    "unified_reward_video": {
                         "kind": "http",
                         "endpoint": "http://reward:8300",
-                        "expected_model": "videoscore2-v1",
+                        "expected_model": "unified-reward-v1",
                     },
                 },
             )

@@ -203,31 +203,31 @@ def test_reward_http_inference_config_is_typed_beside_open_component_kwargs() ->
 
     cfg = RewardConfig.model_validate(
         {
-            "components": {"videoscore2": 1.0},
-            "kwargs": {"videoscore2": {"artifact_dir": "/shared/artifacts"}},
+            "components": {"unified_reward_video": 1.0},
+            "kwargs": {"unified_reward_video": {"artifact_dir": "/shared/artifacts"}},
             "inference": {
-                "videoscore2": {
+                "unified_reward_video": {
                     "kind": "http",
                     "endpoint": "http://reward:8300",
-                    "expected_model": "videoscore2-v1",
+                    "expected_model": "unified-reward-v1",
                 },
             },
         },
     )
 
-    assert cfg.inference["videoscore2"].kind == "http"
+    assert cfg.inference["unified_reward_video"].kind == "http"
 
 
 def test_reward_inference_rejects_unknown_field() -> None:
     with pytest.raises(ValueError, match=r"reward\.inference\..* fields: .*unknown="):
         RewardConfig.model_validate(
             {
-                "components": {"videoscore2": 1.0},
+                "components": {"unified_reward_video": 1.0},
                 "inference": {
-                    "videoscore2": {
+                    "unified_reward_video": {
                         "kind": "http",
                         "endpoint": "http://reward:8300",
-                        "expected_model": "videoscore2-v1",
+                        "expected_model": "unified-reward-v1",
                         "service_url": "http://legacy",
                     },
                 },
@@ -239,12 +239,12 @@ def test_reward_inference_rejects_unknown_component() -> None:
     with pytest.raises(ValueError, match="unknown component"):
         RewardConfig.model_validate(
             {
-                "components": {"videoscore2": 1.0},
+                "components": {"unified_reward_video": 1.0},
                 "inference": {
                     "typo_component": {
                         "kind": "http",
                         "endpoint": "http://reward:8300",
-                        "expected_model": "videoscore2-v1",
+                        "expected_model": "unified-reward-v1",
                     },
                 },
             },

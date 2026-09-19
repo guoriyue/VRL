@@ -29,7 +29,7 @@ Two preconditions this script checks rather than assumes:
 Usage:
 
     python -m vrl.scripts.perf.reward_overlap_benchmark \\
-      --config experiment/wan_2_1/online_grpo_videoscore2_overlap \\
+      --config experiment/wan_2_1/online_grpo_unified_reward_overlap_gate \\
       --repeats 5 --iterations 6 --warmup-iterations 2 \\
       --out outputs/perf/reward_overlap
 

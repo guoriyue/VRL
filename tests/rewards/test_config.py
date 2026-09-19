@@ -58,14 +58,14 @@ def test_unknown_inference_key_is_rejected_from_typed_source() -> None:
 def test_component_inference_configs_resolve_independently() -> None:
     cfg = {
         "reward": {
-            "components": {"ocr": 0.25, "videoscore2": 0.75},
+            "components": {"ocr": 0.25, "unified_reward_video": 0.75},
             "inference": {
-                "videoscore2": {
+                "unified_reward_video": {
                     "kind": "http",
                     "endpoint": "http://reward:8300",
                     "timeout_s": 90,
-                    "expected_model": "videoscore2-v1",
-                    "expected_model_version": "VideoScore2@unit-revision",
+                    "expected_model": "unified-reward-v1",
+                    "expected_model_version": "UnifiedReward@unit-revision",
                 },
             },
         },
@@ -76,12 +76,12 @@ def test_component_inference_configs_resolve_independently() -> None:
     ).inference_configs
 
     assert resolved["ocr"].kind == "ray"
-    assert resolved["videoscore2"] == RewardInferenceConfig(
+    assert resolved["unified_reward_video"] == RewardInferenceConfig(
         kind="http",
         endpoint="http://reward:8300",
         timeout_s=90,
-        expected_model="videoscore2-v1",
-        expected_model_version="VideoScore2@unit-revision",
+        expected_model="unified-reward-v1",
+        expected_model_version="UnifiedReward@unit-revision",
     )
 
 

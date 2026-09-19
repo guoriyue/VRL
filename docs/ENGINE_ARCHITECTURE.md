@@ -198,7 +198,6 @@ classDiagram
     CumemRewardFunction <|-- PickScoreReward
     ModelRewardFunction <|-- KlingVideoReward
     ModelRewardFunction <|-- RoboticsVideoReward
-    ModelRewardFunction <|-- VideoScore2Reward
     ModelRewardFunction <|-- VideoConPhysicsReward
     ModelRewardFunction <|-- UnifiedRewardVideoReward
 ```
@@ -253,7 +252,7 @@ classDiagram
 | `TorchRewardModel` | `LazyTorchModule` | Adds the media-scoring loop (`score_media`). |
 | `AestheticRewardModel`, `PickScoreRewardModel` | `TorchRewardModel` | CLIP-head scorers. |
 | `MotionDynamicsModel`, `TargetDinoSimilarityModel` | `LazyTorchModule` | RAFT optical flow; DINO similarity. |
-| `KlingVideoRewardModel` (+ `KlingQwen2VLRewardModel(Qwen2VLForConditionalGeneration)`), `VideoScore2Model`, `RoboticsVideoRewardModel`, `UnifiedRewardVideoModel`, `VideoConPhysicsModel`, `OCRRewardModel`, `NSFWSafetyRewardModel` | plain classes | Satisfy `RewardModel` structurally; built by `model_factory` dotted paths from the launch contract. |
+| `KlingVideoRewardModel` (+ `KlingQwen2VLRewardModel(Qwen2VLForConditionalGeneration)`), `RoboticsVideoRewardModel`, `UnifiedRewardVideoModel`, `VideoConPhysicsModel`, `OCRRewardModel`, `NSFWSafetyRewardModel` | plain classes | Satisfy `RewardModel` structurally; built by `model_factory` dotted paths from the launch contract. |
 
 ---
 
