@@ -80,14 +80,7 @@ class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
     cfg_base = "cond"
 
     # -- backend ownership (called by runtime, not by collectors) -------
-    _pipeline_classname = "FluxPipeline"
     _frozen_encoder_names = ("text_encoder", "text_encoder_2")
-    # FLUX.1-dev's T5-XXL encoder is ~9.4 GB and the transformer is ~24 GB
-    # (bf16); together they exceed a single 32 GB card. The encoders feed only
-    # the one-shot encode_prompt, so park them on CPU (the enable_model_cpu_offload
-    # discipline) and leave the whole card for the denoiser. encode_prompt runs
-    # them on their own device and moves the embeds to the GPU.
-    _prompt_encoder_on_cpu = True
 
     def build_branch(
         self,

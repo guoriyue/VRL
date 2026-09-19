@@ -48,6 +48,21 @@ from vrl.models.interfaces.generation_memory import (
 # canonical family. Production derives executor support from its binding and
 # records memory support as target-section names; the test intentionally does
 # not derive either expected value from those production fields.
+_SHARED_LOADER_FAMILIES = frozenset(
+    {
+        "sd3_5",
+        "flux",
+        "qwen_image",
+        "sana",
+        "lumina2",
+        "hunyuan_video",
+        "mochi",
+        "hunyuan_image",
+        "pixart_sigma",
+        "cogvideox",
+    }
+)
+
 _MODEL_RUNTIME_CAPABILITY_MATRIX = {
     "sd3_5": (True, True),
     "causvid": (False, False),
@@ -291,9 +306,11 @@ def test_model_runtime_capability_matrix_covers_every_registered_family() -> Non
         entry = get_model_family_entry(family)
 
         assert (entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR) is supports_executor
-        assert entry.runtime_capabilities.supported_model_memory_sections == (
-            frozenset({"vae_decode"}) if supports_memory else frozenset()
-        )
+        sections = entry.runtime_capabilities.supported_model_memory_sections
+        assert ("vae_decode" in sections) is supports_memory
+        # Host placement of frozen components is the shared diffusers loader's;
+        # families with their own from_build do not advertise it.
+        assert ("cpu_resident" in sections) is (family in _SHARED_LOADER_FAMILIES)
 
 
 def test_shared_nested_model_sections_preserve_explicit_falsy_presence() -> None:

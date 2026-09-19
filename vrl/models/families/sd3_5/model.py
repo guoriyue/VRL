@@ -90,11 +90,7 @@ class SD3_5Model(
     cfg_base = "uncond"
 
     # -- backend ownership (called by runtime, not by collectors) -------
-    _pipeline_classname = "StableDiffusion3Pipeline"
     _frozen_encoder_names = ("text_encoder", "text_encoder_2", "text_encoder_3")
-    # T5-XXL plus two CLIP encoders still fit beside the 2B/8B MMDiT; keep them
-    # on-device (no CPU offload dance like Qwen-Image's 15 GB VL).
-    _prompt_encoder_on_cpu = False
 
     # -- encode_prompt -------------------------------------------------
 

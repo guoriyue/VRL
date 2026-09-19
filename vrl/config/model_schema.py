@@ -67,6 +67,9 @@ class ModelMemorySection(ConfigBase):
     """Target-keyed generation memory configuration."""
 
     vae_decode: VaeDecodeMemorySection | None = None
+    # Frozen pipeline components (``model_index.json`` keys such as
+    # ``text_encoder``) kept on the host for the rollout; default: all on GPU.
+    cpu_resident: list[str] | None = None
 
 
 # Runtime capabilities and generation-memory targets share this public section

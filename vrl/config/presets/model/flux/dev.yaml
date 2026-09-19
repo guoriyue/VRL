@@ -8,6 +8,11 @@ model:
   revision: 3de623fc3c33e44ffbe2bad470d0f45bccf2eb21
 
   memory:
+    # CLIP + T5-XXL do not fit beside the 12B transformer on a 32 GB card.
+    # Runs on the host; drop this on a card with room for both.
+    cpu_resident:
+      - text_encoder
+      - text_encoder_2
     # Sliced/tiled VAE decode: the image VAE conv stack OOMs on batched decode
     # at scale (same scale gate as sd3_5); slicing decodes per-image.
     vae_decode:

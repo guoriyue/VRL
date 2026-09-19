@@ -326,10 +326,7 @@ class PixArtSigmaModel(
         )
 
     # -- backend ownership (called by runtime, not by collectors) -------
-    _pipeline_classname = "PixArtSigmaPipeline"
     _frozen_encoder_names = ("text_encoder",)
-    # T5-XXL (~9.5 GB bf16); park on CPU (Qwen-Image discipline).
-    _prompt_encoder_on_cpu = True
 
     def postprocess_branch(
         self,

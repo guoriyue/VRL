@@ -10,6 +10,11 @@ model:
   revision: e8c2aaa66fe3742a32c11a6766aecbf07c56e773
 
   memory:
+    # The two encoders do not fit beside the 13B DiT on a 32 GB card.
+    # Runs on the host; drop this on a card with room for both.
+    cpu_resident:
+      - text_encoder
+      - text_encoder_2
     vae_decode:
       tiling: true
       slicing: true

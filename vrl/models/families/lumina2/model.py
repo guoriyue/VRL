@@ -289,10 +289,7 @@ class Lumina2Model(
         )
 
     # -- backend ownership (called by runtime, not by collectors) -------
-    _pipeline_classname = "Lumina2Pipeline"
     _frozen_encoder_names = ("text_encoder",)
-    # Gemma-2-2B co-resides with the 2.6B DiT; keep it on-device.
-    _prompt_encoder_on_cpu = False
 
     def postprocess_branch(
         self,

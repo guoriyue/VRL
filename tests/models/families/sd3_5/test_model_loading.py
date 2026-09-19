@@ -25,7 +25,7 @@ def test_sd3_fp32_runtime_loads_frozen_components_without_fp32_peak(monkeypatch)
     straight into the rollout prompt-encoder dtype through the per-component ``torch_dtype``
     mapping, so no fp32 encoder copy is ever materialized.
     """
-    from diffusers import StableDiffusion3Pipeline
+    from diffusers import DiffusionPipeline
 
     calls: list[dict[str, Any]] = []
     pipeline = _FakePipeline()
@@ -35,7 +35,7 @@ def test_sd3_fp32_runtime_loads_frozen_components_without_fp32_peak(monkeypatch)
         return pipeline
 
     monkeypatch.setattr(
-        StableDiffusion3Pipeline,
+        DiffusionPipeline,
         "from_pretrained",
         staticmethod(fake_from_pretrained),
     )

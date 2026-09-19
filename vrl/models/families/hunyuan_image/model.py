@@ -99,16 +99,7 @@ class HunyuanImageModel(
     cfg_base = "uncond"
 
     # -- backend ownership (called by runtime, not by collectors) -------
-    _pipeline_classname = "HunyuanImagePipeline"
     _frozen_encoder_names = ("text_encoder", "text_encoder_2")
-    # The Qwen2.5-VL-7B encoder is ~16.6 GB bf16; with the ~35 GB 17B
-    # transformer it cannot co-reside on a 32 GB card, so it is parked on
-    # CPU (Qwen-Image discipline). The 0.9 GB byT5 glyph encoder joins it
-    # because HunyuanImagePipeline.encode_prompt runs BOTH encoders on one
-    # ``device`` argument — splitting devices would need reimplementing the
-    # pipeline's private glyph extraction/zero-fill path. byT5 only runs
-    # for quoted glyph text, so the CPU forward is a negligible one-shot.
-    _prompt_encoder_on_cpu = True
 
     def build_branch(
         self,

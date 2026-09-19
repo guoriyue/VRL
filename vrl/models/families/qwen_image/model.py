@@ -81,13 +81,7 @@ class QwenImageModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
     cfg_normalization = True
 
     # -- backend ownership (called by runtime, not by collectors) -------
-    _pipeline_classname = "QwenImagePipeline"
     _frozen_encoder_names = ("text_encoder",)
-    # Qwen-Image's Qwen2.5-VL text encoder is ~15 GB (bf16); with the ~20 GB+
-    # transformer it cannot co-reside on a 32 GB card. The encoder feeds only the
-    # one-shot encode_prompt, so park it on CPU (enable_model_cpu_offload
-    # discipline); encode_prompt runs it there and moves embeds to the GPU.
-    _prompt_encoder_on_cpu = True
 
     def build_branch(
         self,

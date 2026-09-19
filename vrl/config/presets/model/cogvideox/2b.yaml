@@ -9,6 +9,10 @@ model:
   revision: 1137dacfc2c9c012bed6a0793f4ecf2ca8e7ba01
 
   memory:
+    # T5-XXL (~9.5 GB bf16) is parked on the host to leave room for video latents.
+    # Runs on the host; drop this on a card with room for both.
+    cpu_resident:
+      - text_encoder
     vae_decode:
       tiling: true
       slicing: true

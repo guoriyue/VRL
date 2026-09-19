@@ -72,14 +72,7 @@ class HunyuanVideoModel(
     _decode_output_layout = "video_btchw"
 
     # -- backend ownership (called by runtime, not by collectors) -------
-    _pipeline_classname = "HunyuanVideoPipeline"
     _frozen_encoder_names = ("text_encoder", "text_encoder_2")
-    # The LLaVA-LLaMA-3-8B encoder is ~15 GB bf16; with the 25 GB 13B
-    # transformer it cannot co-reside on a 32 GB card. It feeds only the
-    # one-shot encode_prompt, so park it on CPU (Qwen-Image discipline). The
-    # pipeline's encode_prompt drives BOTH encoders on one device, so the tiny
-    # CLIP-L pooled encoder parks with it rather than mixing devices in one call.
-    _prompt_encoder_on_cpu = True
 
     def build_branch(
         self,

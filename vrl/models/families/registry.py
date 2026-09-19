@@ -40,6 +40,9 @@ TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS = (
 # This is a family capability selection, not the global schema namespace:
 # adding a future memory section must not silently grant it to every VAE family.
 _VAE_DECODE_MEMORY_SECTIONS = frozenset({"vae_decode"})
+# Families on the shared DiffusersPipelineModelBase loader also honor
+# model.memory.cpu_resident (host placement of frozen pipeline components).
+_DIFFUSERS_PIPELINE_MEMORY_SECTIONS = _VAE_DECODE_MEMORY_SECTIONS | {"cpu_resident"}
 
 
 class GenerationParkingProfile(Enum):
@@ -320,24 +323,27 @@ class ModelFamilyEntry:
                 prompt_encoder_dtype=precision.prompt_encoder_dtype,
             )
             model_memory = root.model.memory
-            if model_memory is not None and "vae_decode" in model_memory.model_fields_set:
+            if model_memory is not None and model_memory.model_fields_set:
                 from vrl.models.interfaces.generation_memory import (
                     GenerationMemoryPolicy,
                     VaeDecodeMemory,
                 )
 
-                vae_decode = model_memory.vae_decode
-                generation_memory = GenerationMemoryPolicy(
-                    vae_decode=VaeDecodeMemory(
+                vae_decode = None
+                if "vae_decode" in model_memory.model_fields_set:
+                    vae_decode = VaeDecodeMemory(
                         **(
                             {}
-                            if vae_decode is None
-                            else vae_decode.model_dump(
+                            if model_memory.vae_decode is None
+                            else model_memory.vae_decode.model_dump(
                                 mode="python",
                                 exclude_none=True,
                             )
                         ),
-                    ),
+                    )
+                generation_memory = GenerationMemoryPolicy(
+                    vae_decode=vae_decode,
+                    cpu_resident=tuple(model_memory.cpu_resident or ()),
                 )
         build = ModelBuild(
             model_name_or_path=str(model_path),
@@ -529,7 +535,7 @@ _register_model_family(
         runtime_capabilities=GenerationRuntimeCapabilities(
             supports_torch_compile=True,
             memory_parking=GenerationParkingProfile.CUMEM,
-            supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
+            supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
             sequence_parallel_installer=(
                 "vrl.models.sequence_parallel:install_sd3_sequence_parallel"
             ),
@@ -589,6 +595,7 @@ _register_model_family(
             replay_cls="vrl.models.families.flux.model:FluxReplayModel",
             transformer_classname="FluxTransformer2DModel",
         ),
+        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -606,6 +613,7 @@ _register_model_family(
             replay_cls="vrl.models.families.qwen_image.model:QwenImageReplayModel",
             transformer_classname="QwenImageTransformer2DModel",
         ),
+        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -620,6 +628,7 @@ _register_model_family(
             replay_cls="vrl.models.families.sana.model:SanaReplayModel",
             transformer_classname="SanaTransformer2DModel",
         ),
+        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -634,6 +643,7 @@ _register_model_family(
             replay_cls="vrl.models.families.lumina2.model:Lumina2ReplayModel",
             transformer_classname="Lumina2Transformer2DModel",
         ),
+        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -648,6 +658,7 @@ _register_model_family(
             replay_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoReplayModel",
             transformer_classname="HunyuanVideoTransformer3DModel",
         ),
+        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -662,6 +673,7 @@ _register_model_family(
             replay_cls="vrl.models.families.mochi.model:MochiReplayModel",
             transformer_classname="MochiTransformer3DModel",
         ),
+        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -676,6 +688,7 @@ _register_model_family(
             replay_cls="vrl.models.families.hunyuan_image.model:HunyuanImageReplayModel",
             transformer_classname="HunyuanImageTransformer2DModel",
         ),
+        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -694,6 +707,7 @@ _register_model_family(
             # the rollout's DDIM ladder via pixart_ddim_scheduler.
             scheduler_classname="DDIMScheduler",
         ),
+        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -711,6 +725,7 @@ _register_model_family(
             # same ladder the rollout sampled (sde_type=ddim).
             scheduler_classname="CogVideoXDDIMScheduler",
         ),
+        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 

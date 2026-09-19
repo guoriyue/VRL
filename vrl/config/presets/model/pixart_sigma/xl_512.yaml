@@ -8,6 +8,12 @@ model:
   path: PixArt-alpha/PixArt-Sigma-XL-2-512-MS
   revision: e102b3591cc82e97071b8b4cb90d834d0c487207
 
+  memory:
+    # T5-XXL (~9.5 GB bf16) does not fit beside the DiT on a 32 GB card.
+    # Runs on the host; drop this on a card with room for both.
+    cpu_resident:
+      - text_encoder
+
   use_lora: true
   lora:
     rank: 16

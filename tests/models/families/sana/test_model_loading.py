@@ -35,7 +35,7 @@ def _build(parameter_dtype: torch.dtype) -> ModelBuild:
 
 
 def _load(monkeypatch: pytest.MonkeyPatch, parameter_dtype: torch.dtype) -> tuple[Any, Any, Any]:
-    from diffusers import SanaPipeline
+    from diffusers import DiffusionPipeline
 
     pipeline = SimpleNamespace(
         transformer=build_tiny_sana_transformer(),
@@ -50,7 +50,7 @@ def _load(monkeypatch: pytest.MonkeyPatch, parameter_dtype: torch.dtype) -> tupl
         calls.append({"model_name_or_path": model_name_or_path, **kwargs})
         return pipeline
 
-    monkeypatch.setattr(SanaPipeline, "from_pretrained", staticmethod(fake_from_pretrained))
+    monkeypatch.setattr(DiffusionPipeline, "from_pretrained", staticmethod(fake_from_pretrained))
     model = SanaModel.from_build(_build(parameter_dtype))
     return model, pipeline, calls
 

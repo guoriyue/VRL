@@ -30,8 +30,15 @@ class GenerationMemoryPolicy:
     # A primitive mapping is accepted only when reconstructing the nested
     # dataclass from a Ray ``asdict(ModelBuild)`` payload.
     vae_decode: VaeDecodeMemory | Mapping[str, Any] | None = None
+    # Pipeline component names (``model_index.json`` keys) the loader keeps on
+    # the host; everything else lives on the compute device.
+    cpu_resident: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        cpu_resident = tuple(self.cpu_resident)
+        if any(not isinstance(name, str) or not name for name in cpu_resident):
+            raise TypeError("GenerationMemoryPolicy.cpu_resident must hold component names")
+        object.__setattr__(self, "cpu_resident", cpu_resident)
         if isinstance(self.vae_decode, Mapping):
             object.__setattr__(
                 self,

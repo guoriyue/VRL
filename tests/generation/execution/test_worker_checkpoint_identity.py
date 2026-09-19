@@ -71,6 +71,7 @@ def test_worker_rehydrates_generation_memory_before_family_build(monkeypatch, tm
     )
     assert inputs.launch_contract.model_build["generation_memory"] == {
         "vae_decode": {"tiling": True, "slicing": False},
+        "cpu_resident": (),
     }
     pipeline = TinySanaPipeline()
     pipeline.install(monkeypatch, tmp_path / "sana-snapshot")

@@ -127,10 +127,7 @@ class CogVideoXModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
     cfg_base = "uncond"
 
     # -- backend ownership (called by runtime, not by collectors) -------
-    _pipeline_classname = "CogVideoXPipeline"
     _frozen_encoder_names = ("text_encoder",)
-    # T5-XXL (~9.5 GB bf16); park on CPU (Qwen-Image discipline).
-    _prompt_encoder_on_cpu = True
 
     def build_branch(
         self,

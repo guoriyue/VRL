@@ -684,9 +684,12 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
         if not isinstance(components, Mapping):
             raise TypeError("diffusion pipeline.components must be a mapping for frozen offload")
         registered = {id(module) for module in self.modules()}
+        cpu_resident = getattr(self, "_cpu_resident", frozenset())
         moved: set[int] = set()
-        for module in components.values():
+        for name, module in components.items():
             if not isinstance(module, nn.Module) or id(module) in registered:
+                continue
+            if name in cpu_resident:
                 continue
             if id(module) not in moved:
                 moved.add(id(module))
@@ -754,18 +757,13 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
         return self.pipeline
 
     # -- backend ownership -------------------------------------------------
-    # The three facts that differ between families whose loading is otherwise
-    # byte-identical. Declaring them (instead of copying ``from_build``) is how a
-    # family opts into the shared loader below.
-
-    # Resolved with ``getattr(diffusers, name)`` — the same by-name mechanism
-    # ``vrl.models.loader.load_diffusers_transformer`` uses for components.
-    _pipeline_classname: str = ""
+    # The pipeline class comes from the checkpoint's ``model_index.json``
+    # (``DiffusionPipeline.from_pretrained``); a family only names the
+    # components the shared loader freezes and places besides the VAE.
     _frozen_encoder_names: tuple[str, ...] = ("text_encoder",)
-    # Deliberately has NO default: whether the prompt encoder co-resides with the
-    # transformer or is parked on CPU is a per-family memory decision, and the
-    # comment that justifies it needs an anchor on the family itself.
-    _prompt_encoder_on_cpu: bool
+    # Component names ``from_build`` left on the host (``model.memory.cpu_resident``);
+    # parking's wake never moves them back onto the GPU.
+    _cpu_resident: frozenset[str] = frozenset()
 
     @classmethod
     def _pipeline_load_dtypes(
@@ -798,38 +796,50 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
 
     @classmethod
     def from_build(cls, build: ModelBuild) -> DiffusersPipelineModelBase:
-        """Load the family pipeline and freeze everything but the transformer."""
+        """Load the family pipeline and freeze everything but the transformer.
 
-        import diffusers
+        Frozen components live on the compute device unless
+        ``model.memory.cpu_resident`` names them; a named component stays on
+        the host and runs there (``encode_prompt`` reads its device back), which
+        is the trade a card too small for transformer + encoder makes.
+        """
 
-        if not cls._pipeline_classname:
-            raise NotImplementedError(
-                f"{cls.__name__} must declare _pipeline_classname (and the two "
-                "sibling declarations) or override from_build",
-            )
-        pipeline_cls = getattr(diffusers, cls._pipeline_classname)
+        from diffusers import DiffusionPipeline
+
         # Prompt encoders follow the rollout-only precision policy; the VAE stays
         # family-owned fp32 below because decode fidelity is a separate concern.
         prompt_encoder_dtype, load_kwargs = cls._pipeline_load_dtypes(
             build,
             build.parameter_dtype,
         )
-        pipeline = pipeline_cls.from_pretrained(
+        pipeline = DiffusionPipeline.from_pretrained(
             build.model_name_or_path,
             **load_kwargs,
         )
+        memory = build.generation_memory
+        cpu_resident = frozenset(() if memory is None else memory.cpu_resident)
+        unknown = sorted(name for name in cpu_resident if getattr(pipeline, name, None) is None)
+        if unknown:
+            raise ValueError(
+                f"model.memory.cpu_resident names component(s) {unknown} that "
+                f"{type(pipeline).__name__} does not ship",
+            )
         pipeline.vae.requires_grad_(False)
-        encoder_device = "cpu" if cls._prompt_encoder_on_cpu else build.device
         for name in cls._frozen_encoder_names:
             encoder = getattr(pipeline, name, None)
             if encoder is not None:
                 encoder.requires_grad_(False)
-                encoder.to(encoder_device, dtype=prompt_encoder_dtype)
-        pipeline.vae.to(build.device, dtype=torch.float32)
-        return cls(
+                encoder.to(
+                    "cpu" if name in cpu_resident else build.device,
+                    dtype=prompt_encoder_dtype,
+                )
+        pipeline.vae.to("cpu" if "vae" in cpu_resident else build.device, dtype=torch.float32)
+        model = cls(
             pipeline=pipeline,
             device=build.device,
         )
+        model._cpu_resident = cpu_resident
+        return model
 
     def set_num_steps(self, n: int) -> None:
         """Initialize the scheduler timesteps for sampling.

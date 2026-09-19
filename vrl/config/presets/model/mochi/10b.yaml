@@ -8,6 +8,10 @@ model:
   revision: 14be5fcea23095ed330cb214647916a451e38b6e
 
   memory:
+    # T5-XXL (~9.5 GB bf16) + the 20 GB 10B transformer exceed a 32 GB card.
+    # Runs on the host; drop this on a card with room for both.
+    cpu_resident:
+      - text_encoder
     vae_decode:
       tiling: true
       slicing: true

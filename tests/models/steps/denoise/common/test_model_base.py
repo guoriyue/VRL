@@ -25,7 +25,7 @@ from vrl.models.families.mochi.model import MochiModel
 from vrl.models.families.sana.model import SanaModel
 from vrl.models.families.sd3_5.model import SD3_5Model
 from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
-from vrl.models.interfaces import ReplayResult
+from vrl.models.interfaces import GenerationMemoryPolicy, ReplayResult
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 from vrl.models.steps.denoise import DenoiseModelBase
 from vrl.rollouts.batch import RolloutBatch
@@ -160,7 +160,7 @@ class _LoadedPipeline:
         self.text_encoder = RecordingModule()
 
 
-def _bare_build() -> ModelBuild:
+def _bare_build(**memory: Any) -> ModelBuild:
     return ModelBuild(
         model_name_or_path="genmo/mochi-1-preview",
         revision=None,
@@ -169,28 +169,52 @@ def _bare_build() -> ModelBuild:
         family="mochi",
         precision=RolePrecision("bf16", "tf32"),
         rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.float16),
+        generation_memory=GenerationMemoryPolicy(**memory) if memory else None,
     )
 
 
-def test_shared_from_build_parks_the_prompt_encoder_off_device(monkeypatch) -> None:
-    """``_prompt_encoder_on_cpu`` is the only thing that decides encoder placement."""
-    from diffusers import MochiPipeline
+def _load_pipeline(monkeypatch: Any, pipeline: Any) -> None:
+    from diffusers import DiffusionPipeline
 
-    pipeline = _LoadedPipeline()
     monkeypatch.setattr(
-        MochiPipeline,
+        DiffusionPipeline,
         "from_pretrained",
         staticmethod(lambda *args, **kwargs: pipeline),
     )
+
+
+def test_shared_from_build_places_frozen_components_on_the_compute_device(monkeypatch) -> None:
+    """Default residency: encoder at the rollout prompt dtype, VAE fp32, both on device."""
+    pipeline = _LoadedPipeline()
+    _load_pipeline(monkeypatch, pipeline)
 
     model = MochiModel.from_build(_bare_build())
 
     assert model.pipeline is pipeline
     assert pipeline.text_encoder.requires_grad_enabled is False
-    assert pipeline.text_encoder.to_calls == [("cpu", torch.float16)]
-    # The VAE never follows the encoder: fp32 on the compute device, always.
+    assert pipeline.text_encoder.to_calls == [("cuda:0", torch.float16)]
     assert pipeline.vae.requires_grad_enabled is False
     assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]
+
+
+def test_shared_from_build_keeps_cpu_resident_components_on_the_host(monkeypatch) -> None:
+    """``model.memory.cpu_resident`` is the only thing that parks a frozen component."""
+    pipeline = _LoadedPipeline()
+    _load_pipeline(monkeypatch, pipeline)
+
+    model = MochiModel.from_build(_bare_build(cpu_resident=("text_encoder",)))
+
+    assert pipeline.text_encoder.to_calls == [("cpu", torch.float16)]
+    # The VAE never follows the encoder: fp32 on the compute device.
+    assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]
+    assert model._cpu_resident == frozenset({"text_encoder"})
+
+
+def test_shared_from_build_rejects_an_unknown_cpu_resident_component(monkeypatch) -> None:
+    _load_pipeline(monkeypatch, _LoadedPipeline())
+
+    with pytest.raises(ValueError, match="cpu_resident names component"):
+        MochiModel.from_build(_bare_build(cpu_resident=("text_encoder_2",)))
 
 
 def test_shared_from_build_skips_an_absent_declared_encoder(monkeypatch) -> None:
@@ -199,14 +223,8 @@ def test_shared_from_build_skips_an_absent_declared_encoder(monkeypatch) -> None
     The loop reads encoders with ``getattr(..., None)``, so a checkpoint that
     ships fewer encoders than the family declares is a skip, not a crash.
     """
-    from diffusers import StableDiffusion3Pipeline
-
     pipeline = _LoadedPipeline()  # only ``text_encoder``, not _2 / _3
-    monkeypatch.setattr(
-        StableDiffusion3Pipeline,
-        "from_pretrained",
-        staticmethod(lambda *args, **kwargs: pipeline),
-    )
+    _load_pipeline(monkeypatch, pipeline)
 
     model = SD3_5Model.from_build(_bare_build())
 
@@ -246,11 +264,11 @@ def test_sana_swaps_the_shipped_dpm_solver_for_flow_match_and_keeps_its_shift(
     return empty at the first-step parity gate, and accepting FlowMatch's
     default shift=1 instead of the checkpoint's 3 produced colour blocks.
     """
-    from diffusers import FlowMatchEulerDiscreteScheduler, SanaPipeline
+    from diffusers import DiffusionPipeline, FlowMatchEulerDiscreteScheduler
 
     pipeline = _sana_pipeline()
     monkeypatch.setattr(
-        SanaPipeline,
+        DiffusionPipeline,
         "from_pretrained",
         staticmethod(lambda *args, **kwargs: pipeline),
     )
@@ -259,7 +277,7 @@ def test_sana_swaps_the_shipped_dpm_solver_for_flow_match_and_keeps_its_shift(
 
     assert isinstance(model.scheduler, FlowMatchEulerDiscreteScheduler)
     assert float(model.scheduler.config.shift) == 3.0
-    # Gemma-2-2B co-resides with the DiT: the shared loader must not park it.
+    # No cpu_resident in the build: the encoder lands on the compute device.
     assert pipeline.text_encoder.to_calls == [("cuda:0", torch.float16)]
     assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]
     assert pipeline.vae.requires_grad_enabled is False
@@ -267,7 +285,7 @@ def test_sana_swaps_the_shipped_dpm_solver_for_flow_match_and_keeps_its_shift(
 
 def test_sana_applies_the_saturation_clamp_only_off_fp16(monkeypatch) -> None:
     """The clamp exists because non-fp16 SANA attention overflows; fp16 needs none."""
-    from diffusers import SanaPipeline
+    from diffusers import DiffusionPipeline
 
     clamped: list[type] = []
     monkeypatch.setattr(
@@ -276,7 +294,7 @@ def test_sana_applies_the_saturation_clamp_only_off_fp16(monkeypatch) -> None:
         classmethod(lambda cls, transformer: clamped.append(transformer)),
     )
     monkeypatch.setattr(
-        SanaPipeline,
+        DiffusionPipeline,
         "from_pretrained",
         staticmethod(lambda *args, **kwargs: _sana_pipeline()),
     )

@@ -671,6 +671,7 @@ def test_generation_launch_inputs_project_resolved_generation_memory() -> None:
             "tiling": True,
             "slicing": False,
         },
+        "cpu_resident": (),
     }
     assert "memory" not in model_build["model_config"]
 

@@ -108,13 +108,13 @@ class TinySanaPipeline:
         return SimpleNamespace(images=images)
 
     def install(self, monkeypatch: Any, snapshot: Path, *, on_load: Any = None) -> None:
-        """Serve this pipeline for ``SanaPipeline.from_pretrained(snapshot)``.
+        """Serve this pipeline for ``DiffusionPipeline.from_pretrained(snapshot)``.
 
         The HF load is the one external boundary; ``on_load`` lets a test act
         while the model is being constructed (e.g. mutate the snapshot tree).
         """
 
-        from diffusers import SanaPipeline
+        from diffusers import DiffusionPipeline
 
         def from_pretrained(path: Any, **_kwargs: Any) -> TinySanaPipeline:
             assert Path(str(path)).resolve() == snapshot.resolve(), path
@@ -123,7 +123,7 @@ class TinySanaPipeline:
                 on_load()
             return self
 
-        monkeypatch.setattr(SanaPipeline, "from_pretrained", staticmethod(from_pretrained))
+        monkeypatch.setattr(DiffusionPipeline, "from_pretrained", staticmethod(from_pretrained))
 
 
 def write_tiny_sana_snapshot(path: Path) -> Path:

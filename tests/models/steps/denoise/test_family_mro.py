@@ -8,9 +8,8 @@ pinned by MRO owner rather than by behavior:
   in the MRO, so deleting its own override resolves back to the syncing version
   and every LoRA attach / torch.compile on the replay path raises "does not own
   a diffusers pipeline" — on the FSDP/DDP trainer path, far from the edit.
-- ``from_build`` on ``DiffusersPipelineModelBase`` is driven by three class
-  declarations. A family that declares none of them and also does not override
-  ``from_build`` would only fail when a real checkpoint load is attempted.
+- ``from_build`` on ``DiffusersPipelineModelBase`` is the shared diffusers
+  loader; a family not backed by a diffusers pipeline must own its own.
 """
 
 from __future__ import annotations
@@ -33,12 +32,6 @@ _UNREGISTERED_REPLAY_CLASSES = (
     "vrl.models.families.cosmos.anima.model:AnimaReplayModel",
     "vrl.models.families.minimax_h3.model:MiniMaxH3ReplayModel",
     "vrl.models.families.vdn_h3.model:VDNH3ReplayModel",
-)
-
-_LOADING_DECLARATIONS = (
-    "_pipeline_classname",
-    "_frozen_encoder_names",
-    "_prompt_encoder_on_cpu",
 )
 
 
@@ -75,32 +68,13 @@ def _replay_model_classes() -> list[Any]:
 
 
 @pytest.mark.parametrize("model_cls", _denoise_model_classes())
-def test_family_either_declares_its_pipeline_load_or_owns_from_build(
+def test_family_without_a_diffusers_pipeline_owns_from_build(
     model_cls: type[DenoiseModelBase],
 ) -> None:
-    """No family may fall through to the shared loader without declaring its inputs."""
+    """Only diffusers-pipeline families may inherit the shared loader."""
 
     if not issubclass(model_cls, DiffusersPipelineModelBase):
         assert _owner(model_cls, "from_build") is model_cls
-        return
-
-    if not model_cls._pipeline_classname:
-        assert _owner(model_cls, "from_build") is not DiffusersPipelineModelBase, (
-            f"{model_cls.__name__} inherits the shared from_build but declares no "
-            "_pipeline_classname; it would raise on the first real load"
-        )
-        return
-
-    import diffusers
-
-    declaring = _owner(model_cls, "_pipeline_classname")
-    for name in _LOADING_DECLARATIONS:
-        assert _owner(model_cls, name) is declaring, (
-            f"{model_cls.__name__} must declare {name} on the same class as "
-            "_pipeline_classname; the memory decision and the pipeline it applies "
-            "to belong together"
-        )
-    assert hasattr(diffusers, model_cls._pipeline_classname)
 
 
 def test_wan_i2v_replay_takes_forward_math_from_i2v_and_plumbing_from_t2v_replay() -> None:

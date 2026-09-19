@@ -284,11 +284,7 @@ class SanaModel(
         )
 
     # -- backend ownership (called by runtime, not by collectors) -------
-    _pipeline_classname = "SanaPipeline"
     _frozen_encoder_names = ("text_encoder",)
-    # Gemma-2-2B is small enough to co-reside with the 1.6B DiT; keep it
-    # on-device (no CPU offload dance like Qwen-Image's 15 GB VL).
-    _prompt_encoder_on_cpu = False
 
     # -- backend ownership (called by runtime, not by collectors) -------
 

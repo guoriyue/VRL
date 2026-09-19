@@ -9,6 +9,11 @@ model:
   revision: 7e7b7a177de58591aeaffca0929f4765003d7ced
 
   memory:
+    # The two encoders do not fit beside the 17B DiT on a 32 GB card.
+    # Runs on the host; drop this on a card with room for both.
+    cpu_resident:
+      - text_encoder
+      - text_encoder_2
     # 32x image VAE decode at 2K-native scale is memory-heavy; tile + slice.
     vae_decode:
       tiling: true
