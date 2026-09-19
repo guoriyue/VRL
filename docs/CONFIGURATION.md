@@ -260,7 +260,7 @@ the sprint report. Retired code/config/text-data paths identify members in
 Moved datasets, media, and probes retain their repository-relative layout under
 that archive directory's `files/`; see its `README.md` for the exact inventory.
 
-CountGD person counting, grounded OCR, and tag adherence remain available. They
+Grounded OCR and tag adherence remain available. They
 accept image artifacts and task metadata independently of the generator; no
 family-specific person research dataset is required by the framework. Generator independence
 does not establish reward accuracy or resistance to reward hacking on every image

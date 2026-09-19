@@ -36,7 +36,6 @@ def test_path_consuming_model_declares_mp4_without_loading(module_name, class_na
         ("target_dino_similarity", "TargetDinoSimilarityModel"),
         ("idm_action_following", "ActionFollowingIDMModel"),
         ("ocr", "OCRRewardModel"),
-        ("countgd", "CountGDModel"),
         ("wd_tagger", "WDTaggerRewardModel"),
         ("nsfw_safety", "NSFWSafetyRewardModel"),
         ("geneval_owl", "GenEvalOwlRewardModel"),

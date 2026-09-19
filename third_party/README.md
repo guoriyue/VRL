@@ -13,9 +13,6 @@ un-packaged source root under `imports`, which puts them on the import path of
 every `vrl` Bazel target; the main repo (`vrl/`) needs no `sys.path` injection.
 `make setup` (repo root) fetches the submodules.
 
-`countgd/` is not a submodule: it is the Bazel package that pins the CountGD
-upstream archive, its patch, the Space assets and its dependency stack.
-
 ## Current vendored packages
 
 | submodule        | exposes                                                       |

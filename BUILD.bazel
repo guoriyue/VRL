@@ -1,5 +1,4 @@
 load("@vrl_pypi//:requirements.bzl", "all_requirements")
-load("@vrl_pypi_countgd//:requirements.bzl", countgd_requirements = "all_requirements")
 load("@vrl_pypi_videoeval//:requirements.bzl", videoeval_requirements = "all_requirements")
 load("@vrl_pypi_vllm//:requirements.bzl", vllm_requirements = "all_requirements")
 load("@rules_python//python:defs.bzl", "py_binary", "py_test")
@@ -20,13 +19,6 @@ vrl_library(
 vrl_library(
     name = "vrl_vllm",
     requirements = vllm_requirements,
-)
-
-# The same sources against the qualified CountGD stack (transformers 4.48,
-# numpy 1.26, torch cu128) for the CPU counting reward service.
-vrl_library(
-    name = "vrl_countgd",
-    requirements = countgd_requirements,
 )
 
 # The same sources against the VBench evaluation stack (transformers 4.33.2;
