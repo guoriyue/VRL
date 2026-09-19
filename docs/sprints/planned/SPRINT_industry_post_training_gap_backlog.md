@@ -11,13 +11,15 @@
 
 ---
 
-## A. 多 reward 的 advantage 级合成 ★★★
+## A. 多 reward 的 advantage 级合成 ★★★ — 已有（2026-09-19 核对）
 
 - **出处**：DanceGRPO `A_i = Σ_k (r_i^k − μ^k)/σ^k`；Flow-Factory 的 GDPO 式逐 reward
   归一；MixGRPO 等权多 reward "更稳"；DanceGRPO 教训：HPS 单独用出油腻伪影，要 CLIP
   一起。Seedance 三 RM 也是 composite。
-- **VRL 现状**：`MultiReward` 出加权总分，分量原始分数已在 `RewardOutput.components`
-  里；`GroupAdvantageEstimator` 只见总分。
+- **VRL 现状（核对后修正）**：已经实现。`algorithm.advantage_combine:
+  normalized_sum` 走 `GroupAdvantageEstimator._normalize_components_then_sum`，
+  trainer 的 `_compute_rollout_advantages` 把 `merge_reward_scores` 的分量送给
+  `compute_advantages_from_components`；分量的组统计走同一处。没有 preset 开它。
 - **做什么**：
   1. 把 `components` 从 collector 一路带到 `RolloutBatch`（核对是否已带）。
   2. `GroupAdvantageConfig` 加 `advantage_aggregation: Literal["weighted_sum",
@@ -26,7 +28,7 @@
 - **验收**：两路合成在单 reward 时数值相同（回归测试）；双 reward 合成的 advantage
   等于各自归一之和；`tests/algorithms` 通过。
 
-## B. 组内共享初始噪声 ★★★
+## B. 组内共享初始噪声 ★★★ — 已落地 2026-09-19
 
 - **出处**：DanceGRPO——视频上不共享会发散并加剧 hacking；Flash-GRPO 的"同组同
   timestep"思路同源。
@@ -34,6 +36,11 @@
 - **做什么**：`rollout.group_shared_noise: bool`（默认 False 保持现状）；在
   full_sequence_denoise 的 executor 按 prompt 组派生同一初始 latent（组内样本索引
   不进种子）。SDE 的每步噪声仍各自独立。
+- **落地**：`DenoiseSamplingParams.group_noise_seed`（sampling seed 或请求自带的
+  `sde_window_seed`，加盐）→ `initial_noise_seed(prompt_index)` →
+  `DenoiseLoopConfig.initial_noise_seed`；`prepare_denoise_state` 用它做 generator
+  seed（不加 batch 偏移）并把第 0 行广播到整个 batch，所以同 prompt 的每个 batch
+  都是同一个 latent。只覆盖 full-sequence denoise 家族。
 - **验收**：开启时同组样本第 0 步 latent 逐位相等、不同组不等；关闭时行为不变
   （`tests/generation` 有现成 layout 测试可扩）。
 
@@ -65,12 +72,14 @@
   组统计（μ/σ 用整池算）。
 - **验收**：keep_top=keep_bottom=G/2 时等价于不筛；单测覆盖组统计不受筛选影响。
 
-## E. 训练步数少于推理步数（denoising reduction） ★★
+## E. 训练步数少于推理步数（denoising reduction） ★★ — 已落地 2026-09-19
 
 - **出处**：Flow-GRPO 训练 T=10、推理 T=40，4× 无损；SRPO 训练 25 / 推理 50。
 - **VRL 现状**：`sampling.num_steps` 只有一份；`config/schema.py` 里没有 eval 级
   sampling 覆盖。
 - **做什么**：加 `eval.sampling.num_steps` 覆盖，其余继承训练 sampling。
+- **落地**：`RootConfig.eval.sampling.num_steps`；`resolve_eval_sampling` 的优先级
+  是 CLI > `eval.sampling` > `sampling`，所有 checkpoint eval 脚本共用它。
 - **验收**：训练 10 步、eval 40 步的配置能过 `tests/config` 的 schema 校验并实际生效。
 
 ## F. 通用 VLM "Yes 概率" 图像 RM ★★
