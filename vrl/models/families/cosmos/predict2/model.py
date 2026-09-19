@@ -211,7 +211,8 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersPipelineModelBase):
             )
 
         pipeline.set_progress_bar_config(disable=True)
-        cpu_resident = cls.freeze_pipeline_components(
+        cls.freeze_pipeline_components(pipeline)
+        cpu_resident = cls.place_pipeline_components(
             pipeline, build, prompt_encoder_dtype=prompt_dtype
         )
         model = cls(

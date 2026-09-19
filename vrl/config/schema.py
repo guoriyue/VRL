@@ -444,9 +444,8 @@ def _parse_model_section(value: Any) -> ModelSection | None:
         parsed = section_cls.revalidate(payload, section="model")
 
     entry = get_model_family_entry(str(parsed.family))
-    entry.validate_model_runtime_sections(
+    entry.validate_model_executor(
         executor_config=parsed.executor,
-        memory_config=parsed.memory,
     )
     return parsed
 

@@ -1,6 +1,6 @@
 """Family-scoped model sections: which keys each family owns, how aliases and
 sibling families select their section class, and the per-family runtime
-capability contract (executor / memory sections)."""
+executor capability contract and shared memory schema."""
 
 from __future__ import annotations
 
@@ -43,51 +43,28 @@ from vrl.models.interfaces.generation_memory import (
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-# This independent fixture pins the public capability contract for every
-# canonical family. Production derives executor support from its binding and
-# records memory support as target-section names; the test intentionally does
-# not derive either expected value from those production fields.
-# Families whose loader runs DiffusersPipelineModelBase.freeze_pipeline_components
-# and therefore honor model.memory.cpu_resident.
-_SHARED_FREEZE_FAMILIES = frozenset(
-    {
-        "sd3_5",
-        "flux",
-        "qwen_image",
-        "sana",
-        "lumina2",
-        "hunyuan_video",
-        "mochi",
-        "hunyuan_image",
-        "pixart_sigma",
-        "cogvideox",
-        "cosmos-predict2",
-        "cosmos-predict2.5",
-        "cosmos3",
-    }
-)
-
-_MODEL_RUNTIME_CAPABILITY_MATRIX = {
-    "sd3_5": (True, True),
-    "causvid": (False, False),
-    "magi_1": (False, False),
-    "flux": (True, True),
-    "qwen_image": (True, True),
-    "sana": (True, True),
-    "lumina2": (True, True),
-    "hunyuan_video": (True, True),
-    "mochi": (True, True),
-    "hunyuan_image": (True, True),
-    "pixart_sigma": (True, True),
-    "cogvideox": (True, True),
-    "wan_2_1": (True, True),
-    "wan_2_1_i2v": (False, True),
-    "cosmos-predict2": (False, True),
-    "cosmos-predict2.5": (False, True),
-    "cosmos3": (False, True),
-    "minimax_h3": (False, True),
-    "vdn_h3": (False, True),
-    "echo": (False, False),
+# Independent fixture for the shared executor configuration boundary.
+_MODEL_EXECUTOR_CAPABILITIES = {
+    "sd3_5": True,
+    "causvid": False,
+    "magi_1": False,
+    "flux": True,
+    "qwen_image": True,
+    "sana": True,
+    "lumina2": True,
+    "hunyuan_video": True,
+    "mochi": True,
+    "hunyuan_image": True,
+    "pixart_sigma": True,
+    "cogvideox": True,
+    "wan_2_1": True,
+    "wan_2_1_i2v": False,
+    "cosmos-predict2": False,
+    "cosmos-predict2.5": False,
+    "cosmos3": False,
+    "minimax_h3": False,
+    "vdn_h3": False,
+    "echo": False,
 }
 
 
@@ -284,15 +261,12 @@ def test_model_family_aliases_select_their_canonical_section_classes() -> None:
 
 
 def test_model_runtime_capability_matrix_covers_every_registered_family() -> None:
-    assert set(_MODEL_RUNTIME_CAPABILITY_MATRIX) == set(FAMILY_REGISTRY)
+    assert set(_MODEL_EXECUTOR_CAPABILITIES) == set(FAMILY_REGISTRY)
 
-    for family, (supports_executor, supports_memory) in _MODEL_RUNTIME_CAPABILITY_MATRIX.items():
+    for family, supports_executor in _MODEL_EXECUTOR_CAPABILITIES.items():
         entry = get_model_family_entry(family)
 
         assert (entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR) is supports_executor
-        sections = entry.runtime_capabilities.supported_model_memory_sections
-        assert ("vae_decode" in sections) is supports_memory
-        assert ("cpu_resident" in sections) is (family in _SHARED_FREEZE_FAMILIES)
 
 
 def test_shared_nested_model_sections_preserve_explicit_falsy_presence() -> None:
@@ -348,6 +322,7 @@ def test_generation_memory_schema_and_policy_share_one_field_vocabulary() -> Non
     ("model_fragment", "path"),
     [
         ({"lora": {"rnak": 16}}, "model.lora.rnak"),
+        ({"memory": {"transformer_offload": True}}, "model.memory.transformer_offload"),
         (
             {"memory": {"vae_decode": {"tileing": True}}},
             "model.memory.vae_decode.tileing",
@@ -371,10 +346,10 @@ def _parse_error(model: dict[str, object]) -> str | None:
     return None
 
 
-def test_model_runtime_sections_follow_family_capabilities() -> None:
-    """``model.executor`` / ``model.memory`` parse only for families that consume them."""
+def test_executor_support_is_family_specific_but_memory_uses_the_shared_schema() -> None:
+    """Memory field shapes parse here; actual support is checked during model build."""
 
-    for family, (supports_executor, supports_memory) in _MODEL_RUNTIME_CAPABILITY_MATRIX.items():
+    for family, supports_executor in _MODEL_EXECUTOR_CAPABILITIES.items():
         executor_error = _parse_error(
             {
                 "family": family,
@@ -393,19 +368,14 @@ def test_model_runtime_sections_follow_family_capabilities() -> None:
             assert executor_error is None, family
         else:
             assert executor_error == f"model family {family!r} does not support model.executor"
-        if supports_memory:
-            assert memory_error is None, family
-        else:
-            assert memory_error == (
-                f"model family {family!r} does not support model.memory section(s): vae_decode"
-            )
+        assert memory_error is None, family
 
 
 @pytest.mark.parametrize("empty_value", [None, {}])
 def test_empty_model_runtime_sections_are_valid_for_every_family(
     empty_value: object,
 ) -> None:
-    for family in _MODEL_RUNTIME_CAPABILITY_MATRIX:
+    for family in _MODEL_EXECUTOR_CAPABILITIES:
         parsed = parse_config(
             OmegaConf.create(
                 {

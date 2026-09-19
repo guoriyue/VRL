@@ -30,6 +30,7 @@ from vrl.models.families.magi_1.runtime import (
     Magi1BatchExecutor,
     build_magi_1_runtime_bundle,
 )
+from vrl.models.interfaces.generation_memory import GenerationMemoryPolicy, VaeDecodeMemory
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
 
@@ -304,6 +305,29 @@ def test_runtime_bundle_has_no_trainable_state_and_replay_fails(
         bundle.model.replay_forward(object())
     with bundle.model.disable_adapter():
         pass
+
+
+@pytest.mark.parametrize(
+    "memory",
+    [
+        GenerationMemoryPolicy(vae_decode=VaeDecodeMemory(tiling=True)),
+        GenerationMemoryPolicy(cpu_resident=("text_encoder",)),
+    ],
+)
+def test_subprocess_builder_rejects_memory_options_before_loading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory: GenerationMemoryPolicy
+) -> None:
+    from dataclasses import replace
+
+    config, _ = _installation(tmp_path)
+    build = replace(_build(config, rollout=True), generation_memory=memory)
+
+    def unexpected_load(*args, **kwargs):
+        pytest.fail("unsupported memory options must fail before model loading")
+
+    monkeypatch.setattr(Magi1SubprocessModel, "from_build", unexpected_load)
+    with pytest.raises(ValueError, match=r"MAGI-1 does not support model\.memory"):
+        build_magi_1_runtime_bundle(build)
 
 
 def test_disabled_compile_is_accepted_but_enabled_compile_fails_early(

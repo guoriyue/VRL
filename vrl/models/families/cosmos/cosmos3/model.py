@@ -104,7 +104,8 @@ class Cosmos3Model(CosmosReplayForward, DiffusersPipelineModelBase):
         pipeline.set_progress_bar_config(disable=True)
         # No separate text encoder: the joint transformer consumes raw Qwen2 ids,
         # so the frozen set is the VAE.
-        cpu_resident = cls.freeze_pipeline_components(
+        cls.freeze_pipeline_components(pipeline)
+        cpu_resident = cls.place_pipeline_components(
             pipeline, build, prompt_encoder_dtype=prompt_dtype
         )
         pipeline.transformer.to(build.device, dtype=build.parameter_dtype)

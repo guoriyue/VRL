@@ -797,12 +797,27 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
     @staticmethod
     def freeze_pipeline_components(
         pipeline: Any,
+        *,
+        trainable: tuple[str, ...] = ("transformer",),
+    ) -> None:
+        """Disable gradients for non-trainable modules without moving or casting them."""
+
+        components = pipeline.components
+        if not isinstance(components, Mapping):
+            raise TypeError("diffusion pipeline.components must be a mapping")
+        for name, module in components.items():
+            if name not in trainable and isinstance(module, nn.Module):
+                module.requires_grad_(False)
+
+    @staticmethod
+    def place_pipeline_components(
+        pipeline: Any,
         build: ModelBuild,
         *,
         prompt_encoder_dtype: torch.dtype,
         trainable: tuple[str, ...] = ("transformer",),
     ) -> frozenset[str]:
-        """Freeze and place every module component of ``pipeline`` but ``trainable``.
+        """Set devices and dtypes for non-trainable modules without changing gradients.
 
         The rule every pipeline-backed loader shares: the VAE is a fp32
         fidelity boundary, every other frozen module takes the rollout
@@ -828,7 +843,6 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
         for name, module in components.items():
             if name in trainable or not isinstance(module, nn.Module):
                 continue
-            module.requires_grad_(False)
             module.to(
                 "cpu" if name in cpu_resident else build.device,
                 dtype=torch.float32 if name == "vae" else prompt_encoder_dtype,
@@ -849,7 +863,8 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
             build.model_name_or_path,
             **load_kwargs,
         )
-        cpu_resident = cls.freeze_pipeline_components(
+        cls.freeze_pipeline_components(pipeline)
+        cpu_resident = cls.place_pipeline_components(
             pipeline,
             build,
             prompt_encoder_dtype=prompt_encoder_dtype,

@@ -28,6 +28,12 @@ def build_magi_1_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
             f"MAGI-1 rollout builder received family {build.family!r}",
         )
     _validate_magi_1_precision(build)
+    memory = build.generation_memory
+    if memory is not None and (memory.vae_decode is not None or memory.cpu_resident):
+        raise ValueError(
+            "MAGI-1 does not support model.memory options: its official runtime "
+            "owns component placement and VAE decode in an isolated subprocess",
+        )
     if build.use_lora:
         raise RuntimeError(
             "MAGI-1 does not support VRL-managed LoRA: its official runtime is "

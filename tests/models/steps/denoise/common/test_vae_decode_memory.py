@@ -395,32 +395,22 @@ def test_targetless_in_process_runtime_rejects_direct_model_build_memory(
     bundle = entry.build_rollout(_direct_rollout_build(family, memory=None))
     assert isinstance(bundle.model, _TargetlessRuntimeModel)
 
+    from dataclasses import replace
+
+    with pytest.raises(RuntimeError, match=r"did not honor model\.memory\.cpu_resident"):
+        entry.build_rollout(
+            replace(
+                _direct_rollout_build(family, memory=None),
+                generation_memory=GenerationMemoryPolicy(cpu_resident=("text_encoder",)),
+            ),
+        )
+
     with pytest.raises(
         ValueError,
         match=r"unsupported model\.memory section\(s\) vae_decode.*<none>",
     ):
         entry.build_rollout(
             _direct_rollout_build(family, memory={"vae_decode": {"tiling": True}}),
-        )
-
-
-def test_non_vae_runtime_families_keep_memory_at_the_registered_boundary() -> None:
-    family = "magi_1"
-    from vrl.models.families.registry import get_model_family_entry
-
-    entry = get_model_family_entry(family)
-    entry.validate_model_runtime_sections(
-        executor_config=None,
-        memory_config=None,
-    )
-    entry.validate_model_runtime_sections(
-        executor_config={},
-        memory_config={},
-    )
-    with pytest.raises(ValueError, match=r"does not support model\.memory"):
-        entry.validate_model_runtime_sections(
-            executor_config=None,
-            memory_config={"vae_decode": {}},
         )
 
 

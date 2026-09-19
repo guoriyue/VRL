@@ -22,7 +22,6 @@ from vrl.models.families.names import (
 from vrl.models.families.registry import (
     FAMILY_REGISTRY,
     DenoiseFamilyBuild,
-    GenerationRuntimeCapabilities,
     get_model_family_entry,
 )
 from vrl.models.interfaces.generation_memory import (
@@ -196,16 +195,6 @@ def test_denoise_model_build_requires_a_nonempty_path(path) -> None:
             root,
             "cpu",
             precision=precision,
-        )
-
-
-def test_generation_runtime_capabilities_reject_unknown_memory_sections() -> None:
-    with pytest.raises(
-        ValueError,
-        match=r"unknown model.memory section\(s\): transformer_offload",
-    ):
-        GenerationRuntimeCapabilities(
-            supported_model_memory_sections=frozenset({"transformer_offload"}),
         )
 
 

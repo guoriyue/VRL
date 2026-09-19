@@ -191,6 +191,35 @@ def _load_pipeline(monkeypatch: Any, pipeline: Any) -> None:
     )
 
 
+def test_freeze_pipeline_components_does_not_move_or_cast_modules() -> None:
+    pipeline = _LoadedPipeline()
+
+    MochiModel.freeze_pipeline_components(pipeline)
+
+    assert pipeline.transformer.requires_grad_enabled is None
+    assert pipeline.vae.requires_grad_enabled is False
+    assert pipeline.text_encoder.requires_grad_enabled is False
+    for module in pipeline.components.values():
+        assert module.to_calls == []
+        assert module.dtype is None
+
+
+def test_place_pipeline_components_does_not_change_gradients() -> None:
+    pipeline = _LoadedPipeline()
+
+    cpu_resident = MochiModel.place_pipeline_components(
+        pipeline,
+        _bare_build(cpu_resident=("text_encoder",)),
+        prompt_encoder_dtype=torch.float16,
+    )
+
+    assert cpu_resident == frozenset({"text_encoder"})
+    assert pipeline.transformer.to_calls == []
+    assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]
+    assert pipeline.text_encoder.to_calls == [("cpu", torch.float16)]
+    assert all(module.requires_grad_enabled is None for module in pipeline.components.values())
+
+
 def test_shared_from_build_places_frozen_components_on_the_compute_device(monkeypatch) -> None:
     """Default residency: encoder at the rollout prompt dtype, VAE fp32, both on device."""
     pipeline = _LoadedPipeline()

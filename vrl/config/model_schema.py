@@ -72,12 +72,6 @@ class ModelMemorySection(ConfigBase):
     cpu_resident: list[str] | None = None
 
 
-# Runtime capabilities and generation-memory targets share this public section
-# namespace. Derive it from the typed structure so adding a section cannot leave
-# a stale hand-maintained allow-list behind.
-MODEL_MEMORY_SECTIONS: tuple[str, ...] = tuple(ModelMemorySection.model_fields)
-
-
 class TorchCompileSection(ConfigBase):
     """Transformer compile inputs consumed by ``ModelBuild.torch_compile``."""
 
@@ -218,7 +212,6 @@ class ModelSection(ConfigBase):
 
 
 __all__ = [
-    "MODEL_MEMORY_SECTIONS",
     "LoraSection",
     "ModelExecutorSection",
     "ModelMemorySection",

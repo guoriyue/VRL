@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
 
-from vrl.config.model_schema import MODEL_MEMORY_SECTIONS
 from vrl.models.families.names import (
     normalize_model_family,
 )
@@ -37,12 +36,6 @@ VIDEO_SAMPLING_SECTION_CLS = "vrl.config.sampling_schema:VideoSamplingSection"
 TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS = (
     "vrl.config.sampling_schema:TextEncodedVideoSamplingSection"
 )
-# This is a family capability selection, not the global schema namespace:
-# adding a future memory section must not silently grant it to every VAE family.
-_VAE_DECODE_MEMORY_SECTIONS = frozenset({"vae_decode"})
-# The shared DiffusersPipelineModelBase loader also honors
-# model.memory.cpu_resident (host placement of frozen pipeline components).
-_DIFFUSERS_PIPELINE_MEMORY_SECTIONS = _VAE_DECODE_MEMORY_SECTIONS | {"cpu_resident"}
 
 
 class GenerationParkingProfile(Enum):
@@ -69,23 +62,12 @@ class GenerationRuntimeCapabilities:
     # drift. The launch preflight gate and the rank program both read it.
     sequence_parallel_installer: str | None = None
     memory_parking: GenerationParkingProfile = GenerationParkingProfile.MODEL
-    supported_model_memory_sections: frozenset[str] = field(default_factory=frozenset)
 
     @property
     def supports_multi_gpu_engine(self) -> bool:
         """Derived: a family is multi-GPU capable iff it ships an installer."""
 
         return self.sequence_parallel_installer is not None
-
-    def __post_init__(self) -> None:
-        unsupported = sorted(
-            self.supported_model_memory_sections - frozenset(MODEL_MEMORY_SECTIONS),
-        )
-        if unsupported:
-            raise ValueError(
-                "generation runtime capabilities declare unknown model.memory "
-                f"section(s): {', '.join(unsupported)}",
-            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,13 +180,12 @@ class ModelFamilyEntry:
                 "sequence_parallel_installer.",
             )
 
-    def validate_model_runtime_sections(
+    def validate_model_executor(
         self,
         *,
         executor_config: Any | None,
-        memory_config: Any | None,
     ) -> None:
-        """Reject model runtime blocks that this family cannot consume."""
+        """Reject executor options when the family does not use the shared executor."""
 
         from vrl.utils.config import plain_mapping
 
@@ -213,24 +194,9 @@ class ModelFamilyEntry:
             if executor_config is None
             else plain_mapping(executor_config, field_name="model.executor")
         )
-        memory = (
-            {}
-            if memory_config is None
-            else plain_mapping(memory_config, field_name="model.memory")
-        )
-
         if executor and self.executor_cls != GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
             raise ValueError(
                 f"model family {self.family!r} does not support model.executor",
-            )
-
-        unsupported_memory = sorted(
-            set(memory) - self.runtime_capabilities.supported_model_memory_sections,
-        )
-        if unsupported_memory:
-            raise ValueError(
-                f"model family {self.family!r} does not support model.memory "
-                f"section(s): {', '.join(unsupported_memory)}",
             )
 
     def executor_kwargs(self, root: RootConfig) -> dict[str, Any]:
@@ -448,7 +414,6 @@ def _full_sequence_denoise_entry(
     executor_cls: str | None = None,
     build: DenoiseFamilyBuild,
     runtime_capabilities: GenerationRuntimeCapabilities | None = None,
-    supported_model_memory_sections: frozenset[str] | None = None,
 ) -> ModelFamilyEntry:
     # Default dispatch: the shared generic executor. Families with real
     # per-batch logic pass their own executor_cls. Per-family executor config
@@ -456,25 +421,10 @@ def _full_sequence_denoise_entry(
     # ``executor`` block, read wholesale at launch — not here.
     if executor_cls is None:
         executor_cls = GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
-    if runtime_capabilities is not None and supported_model_memory_sections is not None:
-        raise ValueError(
-            "full-sequence denoise entry must declare memory support either "
-            "inside runtime_capabilities or through supported_model_memory_sections",
-        )
     if runtime_capabilities is None:
-        if supported_model_memory_sections is None:
-            # The generic executor runs a DiffusersPipelineModelBase family on
-            # the shared loader; a family that owns its from_build passes the
-            # VAE-only set explicitly.
-            supported_model_memory_sections = (
-                _DIFFUSERS_PIPELINE_MEMORY_SECTIONS
-                if executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
-                else frozenset()
-            )
         runtime_capabilities = GenerationRuntimeCapabilities(
             supports_torch_compile=True,
             memory_parking=GenerationParkingProfile.CUMEM,
-            supported_model_memory_sections=supported_model_memory_sections,
         )
     return ModelFamilyEntry(
         family=family,
@@ -538,7 +488,6 @@ _register_model_family(
         runtime_capabilities=GenerationRuntimeCapabilities(
             supports_torch_compile=True,
             memory_parking=GenerationParkingProfile.CUMEM,
-            supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
             sequence_parallel_installer=(
                 "vrl.models.sequence_parallel:install_sd3_sequence_parallel"
             ),
@@ -743,8 +692,6 @@ _register_model_family(
                 "vrl.models.families.wan_2_1.config:normalize_wan_model_build"
             ),
         ),
-        # Family-owned from_build: no host placement of frozen components.
-        supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
     ),
 )
 
@@ -755,7 +702,6 @@ _register_model_family(
         model_section_cls="vrl.models.families.wan_2_1.config:WanModelSection",
         sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.wan_2_1.runtime:Wan_2_1I2VBatchExecutor",
-        supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.wan_2_1.model:WanI2VDiffusersModel",
             replay_cls="vrl.models.families.wan_2_1.model:WanI2VReplayModel",
@@ -775,7 +721,6 @@ _register_model_family(
         model_section_cls="vrl.models.families.cosmos.config:CosmosVideoModelSection",
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosBatchExecutor",
-        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cosmos.predict2.model:CosmosPredict2Model",
             replay_cls="vrl.models.families.cosmos.predict2.model:CosmosPredict2ReplayModel",
@@ -795,7 +740,6 @@ _register_model_family(
         executor_cls=(
             "vrl.models.families.cosmos.predict2_5.runtime:CosmosPredict25BatchExecutor"
         ),
-        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
             model_cls=("vrl.models.families.cosmos.predict2_5.model:CosmosPredict25Model"),
             replay_cls=("vrl.models.families.cosmos.predict2_5.model:CosmosPredict25ReplayModel"),
@@ -814,7 +758,6 @@ _register_model_family(
         model_section_cls="vrl.models.families.vdn_h3.config:VDNH3ModelSection",
         sampling_section_cls="vrl.config.sampling_schema:MiniMaxH3SamplingSection",
         executor_cls="vrl.models.families.vdn_h3.runtime:VDNH3BatchExecutor",
-        supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.vdn_h3.model:VDNH3Model",
             replay_runtime_builder=(
@@ -831,7 +774,6 @@ _register_model_family(
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls="vrl.config.sampling_schema:MiniMaxH3SamplingSection",
         executor_cls="vrl.models.families.minimax_h3.runtime:MiniMaxH3BatchExecutor",
-        supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.minimax_h3.model:MiniMaxH3Model",
             replay_runtime_builder=(
@@ -848,7 +790,6 @@ _register_model_family(
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.cosmos3.runtime:Cosmos3BatchExecutor",
-        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cosmos.cosmos3.model:Cosmos3Model",
             replay_runtime_builder=(
@@ -865,7 +806,6 @@ _register_model_family(
         model_section_cls="vrl.models.families.echo.config:EchoModelSection",
         sampling_section_cls="vrl.config.sampling_schema:EchoSamplingSection",
         executor_cls="vrl.models.families.echo.runtime:EchoBatchExecutor",
-        supported_model_memory_sections=frozenset(),
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.echo.model:EchoModel",
             replay_runtime_builder=(
