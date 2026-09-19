@@ -90,7 +90,7 @@ class Cosmos3Model(CosmosReplayForward, DiffusersPipelineModelBase):
         # Lazy: the optional cosmos extra must not be imported at module load.
         from diffusers import Cosmos3OmniPipeline
 
-        _, kwargs = cls._pipeline_load_dtypes(
+        prompt_dtype, kwargs = cls._pipeline_load_dtypes(
             build,
             build.parameter_dtype,
         )
@@ -102,16 +102,19 @@ class Cosmos3Model(CosmosReplayForward, DiffusersPipelineModelBase):
                 **kwargs,
             )
         pipeline.set_progress_bar_config(disable=True)
-        if hasattr(pipeline, "vae"):
-            pipeline.vae.requires_grad_(False)
-            pipeline.vae.to(build.device, dtype=torch.float32)
-        # No separate text encoder: the joint transformer consumes raw Qwen2 ids.
+        # No separate text encoder: the joint transformer consumes raw Qwen2 ids,
+        # so the frozen set is the VAE.
+        cpu_resident = cls.freeze_pipeline_components(
+            pipeline, build, prompt_encoder_dtype=prompt_dtype
+        )
         pipeline.transformer.to(build.device, dtype=build.parameter_dtype)
         logger.info(
             "loaded Cosmos3 omni generator %s",
             kv(path=build.model_name_or_path, device=build.device, dtype=build.parameter_dtype),
         )
-        return cls(pipeline=pipeline, device=build.device)
+        model = cls(pipeline=pipeline, device=build.device)
+        model._cpu_resident = cpu_resident
+        return model
 
     # ---- encode ----
     def encode_prompt(

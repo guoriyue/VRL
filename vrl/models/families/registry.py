@@ -775,7 +775,7 @@ _register_model_family(
         model_section_cls="vrl.models.families.cosmos.config:CosmosVideoModelSection",
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosBatchExecutor",
-        supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
+        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cosmos.predict2.model:CosmosPredict2Model",
             replay_cls="vrl.models.families.cosmos.predict2.model:CosmosPredict2ReplayModel",
@@ -795,7 +795,7 @@ _register_model_family(
         executor_cls=(
             "vrl.models.families.cosmos.predict2_5.runtime:CosmosPredict25BatchExecutor"
         ),
-        supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
+        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
             model_cls=("vrl.models.families.cosmos.predict2_5.model:CosmosPredict25Model"),
             replay_cls=("vrl.models.families.cosmos.predict2_5.model:CosmosPredict25ReplayModel"),
@@ -848,7 +848,7 @@ _register_model_family(
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.cosmos3.runtime:Cosmos3BatchExecutor",
-        supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
+        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cosmos.cosmos3.model:Cosmos3Model",
             replay_runtime_builder=(

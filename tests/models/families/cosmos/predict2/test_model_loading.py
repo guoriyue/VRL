@@ -48,6 +48,14 @@ class _FakePipeline:
     def set_progress_bar_config(self, *, disable: bool) -> None:
         self.progress_bar_disabled = disable
 
+    @property
+    def components(self) -> dict[str, Any]:
+        return {
+            "transformer": self.transformer,
+            "vae": self.vae,
+            "text_encoder": self.text_encoder,
+        }
+
 
 def _ensure_transformers_importable() -> None:
     """Inject a minimal ``transformers`` stub when the real one is absent.

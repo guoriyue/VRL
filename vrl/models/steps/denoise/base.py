@@ -794,26 +794,24 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
         }
         return prompt_encoder_dtype, load_kwargs
 
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> DiffusersPipelineModelBase:
-        """Load the family pipeline and freeze every module but the transformer.
+    @staticmethod
+    def freeze_pipeline_components(
+        pipeline: Any,
+        build: ModelBuild,
+        *,
+        prompt_encoder_dtype: torch.dtype,
+        trainable: tuple[str, ...] = ("transformer",),
+    ) -> frozenset[str]:
+        """Freeze and place every module component of ``pipeline`` but ``trainable``.
 
-        Frozen components live on the compute device unless
-        ``model.memory.cpu_resident`` names them; a named component stays on
-        the host and runs there (``encode_prompt`` reads its device back), which
-        is the trade a card too small for transformer + encoder makes.
+        The rule every pipeline-backed loader shares: the VAE is a fp32
+        fidelity boundary, every other frozen module takes the rollout
+        encoder dtype, and a component named by ``model.memory.cpu_resident``
+        stays on the host (it runs there; ``encode_prompt`` reads its device
+        back). Returns the cpu-resident set for the model to remember, so
+        parking's wake leaves those components alone.
         """
 
-        from diffusers import DiffusionPipeline
-
-        prompt_encoder_dtype, load_kwargs = cls._pipeline_load_dtypes(
-            build,
-            build.parameter_dtype,
-        )
-        pipeline = DiffusionPipeline.from_pretrained(
-            build.model_name_or_path,
-            **load_kwargs,
-        )
         components = pipeline.components
         if not isinstance(components, Mapping):
             raise TypeError("diffusion pipeline.components must be a mapping")
@@ -828,14 +826,34 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
                 f"{type(pipeline).__name__} does not ship as modules",
             )
         for name, module in components.items():
-            if name == "transformer" or not isinstance(module, nn.Module):
+            if name in trainable or not isinstance(module, nn.Module):
                 continue
             module.requires_grad_(False)
             module.to(
                 "cpu" if name in cpu_resident else build.device,
-                # The VAE is a family-owned fp32 fidelity boundary, not a prompt encoder.
                 dtype=torch.float32 if name == "vae" else prompt_encoder_dtype,
             )
+        return cpu_resident
+
+    @classmethod
+    def from_build(cls, build: ModelBuild) -> DiffusersPipelineModelBase:
+        """Load the family pipeline and freeze every module but the transformer."""
+
+        from diffusers import DiffusionPipeline
+
+        prompt_encoder_dtype, load_kwargs = cls._pipeline_load_dtypes(
+            build,
+            build.parameter_dtype,
+        )
+        pipeline = DiffusionPipeline.from_pretrained(
+            build.model_name_or_path,
+            **load_kwargs,
+        )
+        cpu_resident = cls.freeze_pipeline_components(
+            pipeline,
+            build,
+            prompt_encoder_dtype=prompt_encoder_dtype,
+        )
         model = cls(
             pipeline=pipeline,
             device=build.device,

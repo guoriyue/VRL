@@ -211,14 +211,15 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersPipelineModelBase):
             )
 
         pipeline.set_progress_bar_config(disable=True)
-        pipeline.vae.requires_grad_(False)
-        pipeline.text_encoder.requires_grad_(False)
-        pipeline.vae.to(build.device, dtype=torch.float32)
-        pipeline.text_encoder.to(build.device, dtype=prompt_dtype)
-        return cls(
+        cpu_resident = cls.freeze_pipeline_components(
+            pipeline, build, prompt_encoder_dtype=prompt_dtype
+        )
+        model = cls(
             pipeline=pipeline,
             device=build.device,
         )
+        model._cpu_resident = cpu_resident
+        return model
 
     # -- encode_prompt -------------------------------------------------
 

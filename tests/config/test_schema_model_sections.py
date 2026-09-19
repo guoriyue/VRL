@@ -48,7 +48,9 @@ from vrl.models.interfaces.generation_memory import (
 # canonical family. Production derives executor support from its binding and
 # records memory support as target-section names; the test intentionally does
 # not derive either expected value from those production fields.
-_SHARED_LOADER_FAMILIES = frozenset(
+# Families whose loader runs DiffusersPipelineModelBase.freeze_pipeline_components
+# and therefore honor model.memory.cpu_resident.
+_SHARED_FREEZE_FAMILIES = frozenset(
     {
         "sd3_5",
         "flux",
@@ -60,6 +62,9 @@ _SHARED_LOADER_FAMILIES = frozenset(
         "hunyuan_image",
         "pixart_sigma",
         "cogvideox",
+        "cosmos-predict2",
+        "cosmos-predict2.5",
+        "cosmos3",
     }
 )
 
@@ -308,9 +313,7 @@ def test_model_runtime_capability_matrix_covers_every_registered_family() -> Non
         assert (entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR) is supports_executor
         sections = entry.runtime_capabilities.supported_model_memory_sections
         assert ("vae_decode" in sections) is supports_memory
-        # Host placement of frozen components is the shared diffusers loader's;
-        # families with their own from_build do not advertise it.
-        assert ("cpu_resident" in sections) is (family in _SHARED_LOADER_FAMILIES)
+        assert ("cpu_resident" in sections) is (family in _SHARED_FREEZE_FAMILIES)
 
 
 def test_shared_nested_model_sections_preserve_explicit_falsy_presence() -> None:
