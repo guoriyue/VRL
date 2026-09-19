@@ -24,7 +24,6 @@ from vrl.generation.execution.batch_memory import (
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
-    BatchCompletion,
     BatchMemoryReading,
     BatchSizeProbeResult,
     BatchSizeProbeTrial,
@@ -43,14 +42,10 @@ GB = 1024**3
 
 
 @pytest.mark.parametrize("value", [True, 1.5, float("nan")])
-@pytest.mark.parametrize(
-    "field", ["completed_batches", "n", "samples_per_generation_batch", "budget_bytes"]
-)
+@pytest.mark.parametrize("field", ["n", "samples_per_generation_batch", "budget_bytes"])
 def test_execution_counts_reject_nonintegers(field, value):
     with pytest.raises(ValueError, match=field):
-        if field == "completed_batches":
-            BatchCompletion(completed_batches=value)
-        elif field == "n":
+        if field == "n":
             BatchSizeProbeTrial(n=value, oom=True, label="probe")
         else:
             kwargs = {"samples_per_generation_batch": 1, "budget_bytes": 0, "trials": ()}

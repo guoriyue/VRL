@@ -3,9 +3,8 @@
 The wire vocabulary of the driver <-> Ray-worker boundary: envelopes, batch
 results, parking snapshots, and probe verdicts are the payloads serialized
 across it, so they live apart from both the driver runtime and the worker
-core that exchange them. Two members deliberately do NOT cross the wire:
-``BatchCompletion`` is an in-process callback notification with no CUDA event,
-and ``StaleSlotDiscard`` is raised worker-side but caught by the continuous
+core that exchange them. ``StaleSlotDiscard`` does not cross the wire: it is
+raised worker-side but caught by the continuous
 rollout producer (vrl/rollouts/orchestration/continuous/producer.py) — a
 cross-package handshake that forces it into shared neutral ground. Config
 parsing imports the ``Literal`` aliases, so this module stays torch-free at
@@ -41,23 +40,10 @@ BatchPlacementStrategy = Literal["round_robin", "dynamic"]
 ParkingBackend = Literal["cpu_only", "cpu_offload", "cumem"]
 
 
-@dataclass(frozen=True, slots=True)
-class BatchCompletion:
-    """One batch of a per-request worker loop has finished and is on the CPU.
-
-    The loop copies each batch's result to host memory synchronously before
-    publishing the completion, so a completion never refers to in-flight device work.
-    """
-
-    completed_batches: int
-
-    def __post_init__(self) -> None:
-        require_int(self.completed_batches, path="batch completion completed_batches", minimum=1)
-
-
+# The callback receives the cumulative number of completed generation batches.
 # Keep the exported alias as its historical runtime value; a ``type`` statement
 # would replace it with a TypeAliasType and needlessly change public introspection.
-BatchCompletionCallback: TypeAlias = Callable[[BatchCompletion], None]  # noqa: UP040
+BatchCompletionCallback: TypeAlias = Callable[[int], None]  # noqa: UP040
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,7 +352,6 @@ class RequestBatchOutOfMemory:
 
 
 __all__ = [
-    "BatchCompletion",
     "BatchCompletionCallback",
     "BatchMemoryReading",
     "BatchPlacementStrategy",

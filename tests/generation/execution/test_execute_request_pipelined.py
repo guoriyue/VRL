@@ -13,7 +13,6 @@ import pytest
 from tests.generation.execution._helpers import launch_contract
 from vrl.generation.execution.memory_parking import WorkerMemoryParking
 from vrl.generation.execution.types import (
-    BatchCompletion,
     RequestBatchOutOfMemory,
     StaleSlotDiscard,
 )
@@ -60,7 +59,7 @@ class _Executor:
                 result = stage_batch_result(result)
             results.append(result)
             if completion_callback is not None:
-                completion_callback(BatchCompletion(completed_batches=index + 1))
+                completion_callback(index + 1)
         return results
 
 
@@ -102,7 +101,7 @@ def test_slot_mode_with_live_slot_activates_and_runs() -> None:
 
 
 def test_worker_core_forwards_completion_callback_and_stage_hook() -> None:
-    completions: list[BatchCompletion] = []
+    completions: list[int] = []
     staged: list[tuple[str, str]] = []
 
     def stage(result):
@@ -125,7 +124,7 @@ def test_worker_core_forwards_completion_callback_and_stage_hook() -> None:
 
     assert output == ["ref:b0", "ref:b1"]
     assert staged == [("produced", "b0"), ("produced", "b1")]
-    assert [completion.completed_batches for completion in completions] == [1, 2]
+    assert completions == [1, 2]
 
 
 def test_slot_mode_with_evicted_slot_raises_stale_discard_and_does_not_run() -> None:

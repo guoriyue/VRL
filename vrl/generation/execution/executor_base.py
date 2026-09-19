@@ -10,7 +10,7 @@ from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
     execute_generation_batches,
 )
-from vrl.generation.execution.types import BatchCompletion, BatchCompletionCallback
+from vrl.generation.execution.types import BatchCompletionCallback
 from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
 from vrl.generation.types import (
     GenerationOutput,
@@ -106,7 +106,7 @@ class BatchExecutorBase:
                     result = stage_batch_result(result)
             results.append(result)
             if completion_callback is not None:
-                completion_callback(BatchCompletion(completed_batches=idx + 1))
+                completion_callback(idx + 1)
         return results
 
     def merge_generation_batches(

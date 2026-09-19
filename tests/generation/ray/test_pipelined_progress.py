@@ -14,7 +14,6 @@ import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
 from tests.generation.ray._helpers import GatedRef, ResolvedRef
 from vrl.generation.execution.types import (
-    BatchCompletion,
     RequestBatchOutOfMemory,
 )
 from vrl.generation.ray.engine import RayGenerationEngine
@@ -101,9 +100,9 @@ def test_ray_worker_reports_only_the_active_pipelined_request(monkeypatch) -> No
             stage_batch_result: Any,
         ) -> list[str]:
             observed.append(worker.pipelined_progress(request.request_id))
-            completion_callback(BatchCompletion(completed_batches=1))
+            completion_callback(1)
             observed.append(worker.pipelined_progress(request.request_id))
-            completion_callback(BatchCompletion(completed_batches=2))
+            completion_callback(2)
             return [stage_batch_result(batch) for batch in engine_plan.sample_batches]
 
     worker.core = _Core()

@@ -9,7 +9,6 @@ import ray
 
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import (
-    BatchCompletion,
     BatchSizeProbeResult,
     GenerationBatchEnvelope,
     GenerationBatchResult,
@@ -180,7 +179,7 @@ class RayGenerationWorker:
                 total_batches=total_batches,
             )
 
-        def record_completion(completion: BatchCompletion) -> None:
+        def record_completion(completed_batches: int) -> None:
             with self._pipelined_progress_lock:
                 current = self._pipelined_progress
                 if current is None or current.request_id != request_id:
@@ -188,21 +187,21 @@ class RayGenerationWorker:
                         f"pipelined progress lost active request {request_id!r}",
                     )
                 expected = current.completed_batches + 1
-                if completion.completed_batches != expected:
+                if completed_batches != expected:
                     raise RuntimeError(
                         "batch completion notifications must register one batch at a time "
                         f"(request_id={request_id!r}, previous="
-                        f"{expected - 1}, actual={completion.completed_batches})",
+                        f"{expected - 1}, actual={completed_batches})",
                     )
-                if completion.completed_batches > total_batches:
+                if completed_batches > total_batches:
                     raise RuntimeError(
                         "batch completion exceeds request batch count "
                         f"(request_id={request_id!r}, total={total_batches}, "
-                        f"actual={completion.completed_batches})",
+                        f"actual={completed_batches})",
                     )
                 self._pipelined_progress = RequestBatchProgress(
                     request_id=request_id,
-                    completed_batches=completion.completed_batches,
+                    completed_batches=completed_batches,
                     total_batches=total_batches,
                 )
 

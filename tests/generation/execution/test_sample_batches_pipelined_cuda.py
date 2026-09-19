@@ -15,7 +15,6 @@ from vrl.generation.bindings.full_sequence_denoise.executor import (  # noqa: E4
 )
 from vrl.generation.execution.executor_base import BatchExecutorBase  # noqa: E402
 from vrl.generation.execution.sample_batches import GenerationSampleBatch  # noqa: E402
-from vrl.generation.execution.types import BatchCompletion  # noqa: E402
 
 pytestmark = pytest.mark.gpu
 
@@ -94,11 +93,11 @@ def test_pipelined_moves_real_slots_batch_result_to_cpu() -> None:
     assert [result.context["batch"] for result in results] == [0, 1]
 
 
-def test_real_cuda_fences_follow_copied_batches() -> None:
-    completions: list[BatchCompletion] = []
+def test_real_cuda_completion_counts_follow_copied_batches() -> None:
+    completions: list[int] = []
 
     _executor(_produce).execute_request_batches(
         "req", [0, 1], completion_callback=completions.append
     )
 
-    assert [completion.completed_batches for completion in completions] == [1, 2]
+    assert completions == [1, 2]
