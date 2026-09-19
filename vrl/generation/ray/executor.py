@@ -364,8 +364,7 @@ class RayGenerationExecutor:
         if runtime_debug_on:
             rank_by_id = {rank.worker_id: rank for engine in self.engines for rank in engine.ranks}
             for result in results:
-                metrics_by_rank = result.rank_metrics or {result.worker_id: result.metrics}
-                for worker_id, metrics in metrics_by_rank.items():
+                for worker_id, metrics in result.rank_metrics.items():
                     rank = rank_by_id[worker_id]
                     rank_debug_rows.append(
                         {

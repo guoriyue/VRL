@@ -313,12 +313,13 @@ def test_generation_combiner_rejects_rank_identity_disagreement(field):
     other = replace(good, worker_id="r1", **{field: values[field]})
     with pytest.raises(RuntimeError, match="engine ranks returned different"):
         GenerationBatchResult.from_rank_results([good, other])
-    other = replace(good, worker_id="r1", metrics={"peak_memory_mb": 20})
+    good = replace(good, rank_metrics={"r0": {"peak_memory_mb": 10}})
+    other = replace(good, worker_id="r1", rank_metrics={"r1": {"peak_memory_mb": 20}})
     result = GenerationBatchResult.from_rank_results([good, other])
     assert result.worker_id == good.worker_id
     assert result.output is good.output
-    assert result.rank_metrics == {"r0": good.metrics, "r1": other.metrics}
-    assert good.rank_metrics == {}
+    assert result.rank_metrics == {"r0": {"peak_memory_mb": 10}, "r1": {"peak_memory_mb": 20}}
+    assert good.rank_metrics == {"r0": {"peak_memory_mb": 10}}
 
 
 def _batch_result(worker_id: str, **kwargs: Any) -> GenerationBatchResult:
@@ -334,12 +335,12 @@ def _batch_result(worker_id: str, **kwargs: Any) -> GenerationBatchResult:
 
 @pytest.mark.asyncio
 async def test_batch_combines_metrics_from_every_rank_without_mutating_primary() -> None:
-    first = _batch_result("r0", metrics={"peak_memory_mb": 10})
-    second = _batch_result("r1", metrics={"peak_memory_mb": 20})
+    first = _batch_result("r0", rank_metrics={"r0": {"peak_memory_mb": 10}})
+    second = _batch_result("r1", rank_metrics={"r1": {"peak_memory_mb": 20}})
     engine = _engine([], {"r0": ResolvedRef(first), "r1": ResolvedRef(second)})
     result = await engine.remote("execute_batch")("payload")
-    assert result.rank_metrics == {"r0": first.metrics, "r1": second.metrics}
-    assert first.rank_metrics == {}
+    assert result.rank_metrics == {"r0": {"peak_memory_mb": 10}, "r1": {"peak_memory_mb": 20}}
+    assert first.rank_metrics == {"r0": {"peak_memory_mb": 10}}
     assert result.worker_id == "r0"
 
 

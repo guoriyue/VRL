@@ -345,7 +345,7 @@ class GenerationWorkerCore:
                     worker_id=self.worker_id,
                     batch=batch,
                     output=None,
-                    metrics=self._batch_metrics(runtime_debug=runtime_debug),
+                    rank_metrics=self._rank_metrics(runtime_debug=runtime_debug),
                     policy_version=expected_version,
                     error=(f"trainable-state slot evicted for policy_version={expected_version}"),
                     stale_slot=True,
@@ -356,7 +356,7 @@ class GenerationWorkerCore:
                 worker_id=self.worker_id,
                 batch=batch,
                 output=None,
-                metrics=self._batch_metrics(runtime_debug=runtime_debug),
+                rank_metrics=self._rank_metrics(runtime_debug=runtime_debug),
                 policy_version=self._policy_version,
                 error=(
                     "policy_version mismatch: "
@@ -379,7 +379,7 @@ class GenerationWorkerCore:
                 batch=batch,
                 output=self._copy_output_to_cpu(output),
                 memory=memory,
-                metrics=self._batch_metrics(
+                rank_metrics=self._rank_metrics(
                     runtime_debug=runtime_debug,
                     batch_output=output,
                 ),
@@ -393,7 +393,7 @@ class GenerationWorkerCore:
                 worker_id=self.worker_id,
                 batch=batch,
                 output=None,
-                metrics=self._batch_metrics(runtime_debug=runtime_debug),
+                rank_metrics=self._rank_metrics(runtime_debug=runtime_debug),
                 policy_version=result_version,
                 error=str(exc),
             )
@@ -705,12 +705,14 @@ class GenerationWorkerCore:
             logger.exception("generation batch execution failed")
             raise
 
-    def _batch_metrics(
+    def _rank_metrics(
         self,
         *,
         runtime_debug: bool,
         batch_output: Any | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, dict[str, Any]]:
+        """This rank's runtime-debug diagnostics, keyed by its worker id."""
+
         if not runtime_debug or batch_output is None:
             return {}
 
@@ -745,7 +747,7 @@ class GenerationWorkerCore:
         if peak_memory_mb is not None:
             metrics["peak_memory_mb"] = float(peak_memory_mb)
 
-        return metrics
+        return {self.worker_id: metrics}
 
     @staticmethod
     def _batch_memory_reading(batch_output: Any) -> BatchMemoryReading | None:

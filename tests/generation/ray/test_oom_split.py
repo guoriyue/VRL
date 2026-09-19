@@ -248,7 +248,7 @@ async def test_nonprimary_oom_retries_whole_engine_and_reports_every_rank() -> N
 
         def remote(self, envelope: GenerationBatchEnvelope) -> ResolvedRef:
             result = self.worker.execute_batch(envelope)
-            result.metrics = {"peak_memory_mb": self.peak}
+            result.rank_metrics = {result.worker_id: {"peak_memory_mb": self.peak}}
             return ResolvedRef(result)
 
     ranks = [

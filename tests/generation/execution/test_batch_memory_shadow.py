@@ -474,8 +474,7 @@ def test_worker_forwards_batch_memory_without_runtime_debug() -> None:
     assert result.error is None
     assert result.memory == _reading()
     assert result.output.memory is None
-    assert "batch_memory" not in result.metrics
-    assert "engine_counters" not in result.metrics
+    assert result.rank_metrics == {}
 
 
 def test_cuda_occupancy_is_absent_only_without_cuda(monkeypatch) -> None:

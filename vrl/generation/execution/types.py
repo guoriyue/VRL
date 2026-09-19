@@ -269,9 +269,6 @@ class GenerationBatchResult:
     # display/provenance-only: worker-local measurements folded into optional
     # runtime-debug telemetry after batch execution.
     memory: BatchMemoryReading | None = None
-    # display/provenance-only: family/worker diagnostics requested explicitly by
-    # GenerationRequest.runtime_debug.
-    metrics: dict[str, Any] = field(default_factory=dict)
     policy_version: int | None = None
     error: str | None = None
     # Set when the batch could not run because the worker no longer retains a
@@ -280,13 +277,13 @@ class GenerationBatchResult:
     # real generation failure so the caller counts it as a stale discard, not an
     # error — see SPRINT_shadow_model_weight_sync.md.
     stale_slot: bool = False
-    # display/provenance-only: per-rank worker metrics of a multi-rank engine,
-    # keyed by worker_id and filled by the driver-side engine combine (a
-    # single-rank result leaves it empty and ``metrics`` is the whole story).
-    # Read only by runtime_debug telemetry: the executor's per-rank debug rows
-    # and the sequence-parallel acceptance report's per-rank peak memory. No
-    # control flow keys off it; behaviour (failure priority, policy version)
-    # is decided in the combine itself.
+    # display/provenance-only: worker diagnostics requested explicitly by
+    # GenerationRequest.runtime_debug, keyed by worker_id. A worker reports its
+    # own rank; the driver-side combine of a multi-rank engine merges every
+    # rank's entry. Read only by runtime_debug telemetry: the executor's
+    # per-rank debug rows and the sequence-parallel acceptance report's
+    # per-rank peak memory. No control flow keys off it; behaviour (failure
+    # priority, policy version) is decided in the combine itself.
     rank_metrics: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
@@ -303,7 +300,7 @@ class GenerationBatchResult:
         terminal failure on any rank wins over another rank's retryable OOM or
         graceful stale-slot discard, and keeps the reporting rank's identity, so
         the executor's stale-slot and OOM handling still sees it; otherwise the
-        primary rank's payload carries every rank's metrics.
+        primary rank's payload carries every rank's metrics entry.
         """
 
         if not all(isinstance(result, cls) for result in rank_results):
@@ -331,7 +328,11 @@ class GenerationBatchResult:
             raise RuntimeError("generation engine ranks returned different policy versions")
         return replace(
             first,
-            rank_metrics={result.worker_id: result.metrics for result in rank_results},
+            rank_metrics={
+                worker_id: metrics
+                for result in rank_results
+                for worker_id, metrics in result.rank_metrics.items()
+            },
         )
 
 

@@ -24,9 +24,10 @@ def test_batch_output_debug_metrics_includes_stage_memory_and_counters() -> None
     )
 
     worker = object.__new__(GenerationWorkerCore)
-    metrics = worker._batch_metrics(runtime_debug=True, batch_output=output)
+    worker.worker_id = "rollout-0"
+    metrics = worker._rank_metrics(runtime_debug=True, batch_output=output)
 
-    assert metrics == {
+    assert metrics["rollout-0"] == {
         "stage_durations_s": {"denoise": 1.25, "decode": 0.5},
         "engine_counters": {
             "diffusion_samples_per_generation_batch": 8,
@@ -45,5 +46,5 @@ def test_disabled_debug_does_not_read_batch_properties() -> None:
             raise AssertionError("disabled debug must not inspect batch metrics")
 
     worker = object.__new__(GenerationWorkerCore)
-    assert worker._batch_metrics(runtime_debug=False, batch_output=UnreadableOutput()) == {}
-    assert worker._batch_metrics(runtime_debug=True, batch_output=None) == {}
+    assert worker._rank_metrics(runtime_debug=False, batch_output=UnreadableOutput()) == {}
+    assert worker._rank_metrics(runtime_debug=True, batch_output=None) == {}
