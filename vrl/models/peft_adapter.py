@@ -7,8 +7,8 @@ over the requested one.
 
 The helpers below :func:`load_trainable_lora_adapter` act on an *already attached*
 adapter: :func:`peel_peft` reaches the wrapped inner module, while
-:func:`disable_adapter_on` switches the adapter off for a base-weights forward
-pass; :func:`has_adapter_on` says whether there is one to switch.
+:func:`temporarily_disable_lora` switches the adapter off for a base-weights forward
+pass; :func:`has_lora_adapter` says whether there is one to switch.
 """
 
 from __future__ import annotations
@@ -238,7 +238,7 @@ def peel_peft(module: Any) -> Any:
     return module.get_base_model() if isinstance(module, PeftModel) else module
 
 
-def disable_adapter_on(module: Any) -> contextlib.AbstractContextManager[None]:
+def temporarily_disable_lora(module: Any) -> contextlib.AbstractContextManager[None]:
     """Context manager disabling ``module``'s LoRA/PEFT adapter, or a no-op when absent.
 
     Used for the reference (adapter-off) forward pass. Switches on the module
@@ -313,7 +313,7 @@ def _plural_adapter_disable_flags(module: Any) -> tuple[bool, ...]:
     return tuple(flags)
 
 
-def has_adapter_on(module: Any) -> bool:
+def has_lora_adapter(module: Any) -> bool:
     """Whether ``module`` (behind any DDP / compile wrapper) carries a PEFT adapter."""
 
     host = unwrap_compile_and_ddp(module)
@@ -323,8 +323,8 @@ def has_adapter_on(module: Any) -> bool:
 
 
 __all__ = [
-    "disable_adapter_on",
-    "has_adapter_on",
+    "has_lora_adapter",
     "load_trainable_lora_adapter",
     "peel_peft",
+    "temporarily_disable_lora",
 ]

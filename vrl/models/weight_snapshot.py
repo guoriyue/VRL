@@ -20,14 +20,14 @@ import torch
 from torch import nn
 
 
-class PolicySnapshot(nn.Module):
+class TrainableWeightsSnapshot(nn.Module):
     """Shadow copies of ``parameters`` plus the swap that makes them the live weights."""
 
     def __init__(self, parameters: Iterable[torch.Tensor]) -> None:
         super().__init__()
         self._live = list(parameters)
         if not self._live:
-            raise ValueError("PolicySnapshot needs at least one parameter")
+            raise ValueError("TrainableWeightsSnapshot needs at least one parameter")
         for index, parameter in enumerate(self._live):
             self.register_buffer(f"shadow_{index}", parameter.detach().clone(), persistent=False)
 
@@ -70,4 +70,4 @@ class PolicySnapshot(nn.Module):
             shadow.copy_(held)
 
 
-__all__ = ["PolicySnapshot"]
+__all__ = ["TrainableWeightsSnapshot"]

@@ -26,9 +26,9 @@ from vrl.models.interfaces import (
     ReplaySegmentResult,
 )
 from vrl.models.interfaces.runtime import ModelBuild
-from vrl.models.peft_adapter import disable_adapter_on, has_adapter_on
-from vrl.models.policy_snapshot import PolicySnapshot
+from vrl.models.peft_adapter import has_lora_adapter, temporarily_disable_lora
 from vrl.models.precision import model_autocast
+from vrl.models.weight_snapshot import TrainableWeightsSnapshot
 from vrl.models.weight_utils import (
     TrainableStateSlots,
     load_weights_into,
@@ -313,18 +313,18 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
     def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
         """Disable LoRA/adapters, or return a no-op context when absent."""
 
-        return disable_adapter_on(self._require_transformer())
+        return temporarily_disable_lora(self._require_transformer())
 
     # -- policies other than the trainable one ---------------------------
-    # The behaviour policy of the previous-policy objectives and the KL
-    # reference are snapshots of whatever is trainable — a LoRA adapter or the
-    # whole transformer — so the objectives never learn which one it is.
+    # Previous policies snapshot the trainable weights. The KL reference uses
+    # the base model with LoRA disabled, or a snapshot for full fine-tuning.
+    # Objectives use the same policy interface in either case.
 
     def _trainable_parameters(self) -> list[torch.nn.Parameter]:
         return [parameter for parameter in self.parameters() if parameter.requires_grad]
 
     def _has_adapter(self) -> bool:
-        return any(has_adapter_on(module) for module in self.trainable_modules.values())
+        return any(has_lora_adapter(module) for module in self.trainable_modules.values())
 
     def sync_previous_policy(self, *, decay: float = 0.0) -> None:
         """Refresh the previous policy from the live one (``decay`` blends, 0 copies).
@@ -335,7 +335,9 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
 
         snapshot = self._modules.get("_previous_policy")
         if snapshot is None:
-            self.add_module("_previous_policy", PolicySnapshot(self._trainable_parameters()))
+            self.add_module(
+                "_previous_policy", TrainableWeightsSnapshot(self._trainable_parameters())
+            )
             return
         snapshot.update(decay)
 
@@ -349,17 +351,20 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
     def attach_reference_policy(self) -> None:
         """Pin the current trainable weights as the KL reference.
 
-        With an adapter attached the base weights already are the reference
-        (``disable_adapter``), so nothing is copied; a full fine-tune keeps a
-        snapshot of the transformer as it stood before training.
+        With LoRA attached, the reference is the base model with LoRA disabled,
+        so nothing is copied. This excludes any warm-started LoRA weights.
+        A full fine-tune keeps a snapshot of the trainable weights as they
+        stood when this method was called, before training.
         """
 
         if self._has_adapter():
             return
-        self.add_module("_reference_policy", PolicySnapshot(self._trainable_parameters()))
+        self.add_module(
+            "_reference_policy", TrainableWeightsSnapshot(self._trainable_parameters())
+        )
 
     def reference_policy(self) -> contextlib.AbstractContextManager[None]:
-        """Run the forward with the reference (pre-training) weights."""
+        """Use the LoRA-disabled base model or the saved full-fine-tuning reference."""
 
         snapshot = self._modules.get("_reference_policy")
         if snapshot is not None:

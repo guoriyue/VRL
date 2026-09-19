@@ -44,8 +44,8 @@ from vrl.models.families.wan_2_1.config import (
 )
 from vrl.models.interfaces.runtime import ModelBuild, PipelineOffloadMode
 from vrl.models.peft_adapter import (
-    disable_adapter_on,
     peel_peft,
+    temporarily_disable_lora,
 )
 from vrl.models.steps.denoise import (
     DenoiseModelBase,
@@ -334,7 +334,7 @@ class WanT2VDiffusersModel(
     def disable_adapter(self) -> Iterator[None]:
         with contextlib.ExitStack() as stack:
             for module in self.trainable_modules.values():
-                stack.enter_context(disable_adapter_on(module))
+                stack.enter_context(temporarily_disable_lora(module))
             yield
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:

@@ -1,6 +1,6 @@
 """The previous / reference policies under FSDP2: snapshots of sharded parameters.
 
-``PolicySnapshot`` clones each rank's shard, swaps it in place for a forward and
+``TrainableWeightsSnapshot`` clones each rank's shard, swaps it in place for a forward and
 blends it with a fused lerp, so it must work on the DTensors ``fully_shard``
 leaves behind — across ranks, not just on one. Two gloo ranks shard a toy
 transformer on CPU on every run; the same body runs on one nccl rank when a
@@ -49,7 +49,7 @@ def _run_snapshot_round_trip(
 ) -> None:
     from torch.distributed.tensor import DTensor
 
-    from vrl.models.policy_snapshot import PolicySnapshot
+    from vrl.models.weight_snapshot import TrainableWeightsSnapshot
     from vrl.trainers.fsdp import apply_fsdp, build_fsdp_mesh, mixed_precision_policy
 
     os.environ["MASTER_ADDR"] = "127.0.0.1"
@@ -72,7 +72,7 @@ def _run_snapshot_round_trip(
         trainable = [p for p in model.parameters() if p.requires_grad]
         inputs = torch.arange(16, dtype=torch.float32, device=device).reshape(2, 8) / 16
 
-        snapshot = PolicySnapshot(trainable)
+        snapshot = TrainableWeightsSnapshot(trainable)
         sharded = all(isinstance(p, DTensor) for p in trainable) and all(
             isinstance(shadow, DTensor) for shadow in snapshot.shadows
         )

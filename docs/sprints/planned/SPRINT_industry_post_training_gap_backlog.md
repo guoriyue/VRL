@@ -162,11 +162,11 @@
      改名 `PreviousPolicyObjective`。
 - **验收**：SD3.5 LoRA 上 NFT 的 first-step invariant 与现状数值一致；全参 NFT
   在 tiny 模型上 lr=0 invariant 通过；FSDP2 两卡 smoke。
-- **状态**：`vrl/models/policy_snapshot.py` + `DenoiseModelBase.previous_policy /
+- **状态**：`vrl/models/weight_snapshot.py` + `DenoiseModelBase.previous_policy /
   reference_policy / sync_previous_policy`；PEFT 第二 adapter、`previous_policy_adapter`
   build 字段、LoRA 门全部删除。验证：tiny Wan 上 LoRA 与全参的 lr=0 invariant
   （`tests/algorithms`）；FSDP2 两 rank gloo 分片上的换入/融合/拷贝
-  （`tests/trainers/test_fsdp_policy_snapshot.py`，另有单卡 nccl 的 gpu 版本）；
+  （`tests/trainers/test_fsdp_weight_snapshot.py`，另有单卡 nccl 的 gpu 版本）；
   5090 上 FSDP2/nccl 全参 NFT invariant 通过。换入换出成本：2.04B bf16 参数
   28 ms（一进一出）、`update(0.9)` 10 ms。`rollout.cache_ref_noise_pred`
   （GRPO 族的 ref-forward 缓存，没有任何 preset 用）连同它在 rollout 侧要求的
