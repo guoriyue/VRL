@@ -34,6 +34,7 @@ class DenoiseRequestOptions:
     sde_window_size: int = 0
     sde_window_range: tuple[int, int] | None = None
     return_prev_sample_mean: bool = False
+    group_shared_noise: bool = False
     teacache: TeaCacheConfig | None = None
 
     def __post_init__(self) -> None:
@@ -82,6 +83,7 @@ class DenoiseRequestOptions:
                 "denoise_mode",
                 "noise_level",
                 "return_prev_sample_mean",
+                "group_shared_noise",
             ):
                 value = getattr(rollout, name)
                 if value is not None:
@@ -141,6 +143,9 @@ class DenoiseLoopConfig:
     sde_window: tuple[int, int] | None
     denoise_mode: DenoiseMode = "sde"
     teacache: TeaCacheConfig | None = None
+    # Set when the request shares one initial latent per prompt group: the
+    # generator seed every batch of this prompt draws from (no batch offset).
+    initial_noise_seed: int | None = None
     # Memory probes may execute fewer steps while retaining full buffer allocation.
     execute_steps: int | None = None
 

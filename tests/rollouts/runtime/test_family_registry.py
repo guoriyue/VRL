@@ -480,3 +480,18 @@ def test_denoise_family_build_descriptors_have_one_explicit_replay_mode() -> Non
             assert build.replay_runtime_builder
             assert callable(import_from_path(build.replay_runtime_builder))
             assert build.replay_unavailable_reason is None
+
+
+def test_group_shared_noise_reaches_the_request_options() -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {"family": "sd3_5"},
+            "sampling": {"width": 512, "height": 512, "num_steps": 10, "guidance_scale": 4.5},
+            "rollout": {"group_shared_noise": True, "sde": {"type": "flow_grpo"}},
+        },
+    )
+
+    rollout = RolloutCollectorConfig.from_root(parse_config(cfg))
+
+    assert rollout.denoise.group_shared_noise is True
+    assert "group_shared_noise" not in rollout.request_sampling

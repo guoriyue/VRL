@@ -356,6 +356,13 @@ class RolloutConfig(ConfigBase):
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
+    # reader: vrl/generation/bindings/full_sequence_denoise/layout.py — every
+    # sample of a prompt group starts the denoise from the same initial latent
+    # (DanceGRPO); the SDE step noise stays per sample.
+    group_shared_noise: StrictBool | None = Field(
+        default=None,
+        json_schema_extra={"runtime_owner": "generation_request"},
+    )
     # reader: generation planner (batch_placement.py) + diffusion layout. int =
     # fixed batch size; "auto" = the Ray runtime's startup batch-size probe
     # resolves it before the first request (SPRINT_chunk_size_probe; Ray-only,

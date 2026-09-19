@@ -57,6 +57,45 @@ def test_initial_noise_uses_batch_offset_without_mutating_request(seed: int | No
         assert not torch.equal(states[0].latents, states[1].latents)
 
 
+def test_group_shared_initial_noise_is_one_latent_per_prompt_across_batches() -> None:
+    """With ``initial_noise_seed`` set, every row of every batch of the prompt starts
+    from the same latent — the seed is not offset by the batch position and row 0
+    is broadcast over the batch — while a different prompt seed gives a different one."""
+    request = DenoiseRequest(
+        width=128, height=128, frame_count=1, num_steps=1, guidance_scale=1.0, seed=None
+    )
+
+    class PreparingModel:
+        def __init__(self) -> None:
+            self.rows = 4
+
+        def prepare_sampling(self, batch_request, encoded):
+            del encoded
+            generator = torch.Generator().manual_seed(batch_request.seed)
+            return _State(
+                torch.randn(self.rows, 8, generator=generator), torch.tensor([1.0]), _Scheduler()
+            )
+
+    executor = _Executor(PreparingModel())
+
+    def prepare(start: int, count: int, seed: int) -> torch.Tensor:
+        executor.model.rows = count
+        config = DenoiseLoopConfig(
+            sample_start=start,
+            sample_count=count,
+            seed=None,
+            sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo"),
+            sde_window=None,
+            initial_noise_seed=seed,
+        )
+        return executor.prepare_denoise_state(request=request, encoded={}, config=config).latents
+
+    first, second = prepare(0, 4, 21), prepare(4, 2, 21)
+    assert all(torch.equal(row, first[0]) for row in first)
+    assert torch.equal(second[0], first[0]) and torch.equal(second[1], first[0])
+    assert not torch.equal(prepare(0, 4, 22)[0], first[0])
+
+
 def test_diffusion_executor_base_satisfies_probe_protocol() -> None:
     """The probe's ``samples_per_generation_batch: auto`` diffusion-only gate keys off this."""
     assert issubclass(DenoiseBatchExecutorBase, BatchSizeProbeExecutor)

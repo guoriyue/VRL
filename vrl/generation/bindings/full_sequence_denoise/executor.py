@@ -210,6 +210,7 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
             sde_window=params.sde_window,
             denoise_mode=params.denoise_mode,
             teacache=params.teacache,
+            initial_noise_seed=params.initial_noise_seed(batch.prompt_index),
         )
 
     def forward_plan_pipelined(
@@ -359,7 +360,11 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         from vrl.utils.profiling import profile_range
 
         model = self.model
-        if request.seed is not None:
+        if config.initial_noise_seed is not None:
+            # Every batch of the prompt group draws from one seed, so its first
+            # row is the group's latent regardless of the batch width.
+            request = replace(request, seed=config.initial_noise_seed)
+        elif request.seed is not None:
             # Match the denoise generator's batch offset. Reusing the request
             # seed makes every one-sample native batch start from identical noise.
             request = replace(request, seed=request.seed + config.sample_start)
@@ -371,6 +376,9 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
                 "Diffusion denoise batch produced "
                 f"{batch_rows} rows, expected {config.sample_count}",
             )
+        if config.initial_noise_seed is not None:
+            with torch.no_grad():
+                state.latents[1:] = state.latents[:1]
         return state
 
     def run_denoise_steps(

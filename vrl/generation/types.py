@@ -96,8 +96,9 @@ class GenerationRequest:
     # Rollout-owned denoise knobs (rollout.* / rollout.sde.*), projected once by
     # the collector. ``None`` on hand-built requests means the option defaults.
     denoise: DenoiseRequestOptions | None = None
-    # Request-owned fallback randomness for SDE windows only. Copies sent to
-    # separate workers retain it without imposing a latent-noise sampling seed.
+    # Request-owned fallback randomness for the SDE window and the group-shared
+    # initial latent. Copies sent to separate workers retain it without imposing
+    # a latent-noise sampling seed.
     sde_window_seed: int | None = None
     runtime_debug: bool = False
     policy_version: int | None = None
@@ -182,7 +183,7 @@ class GenerationRequest:
             require_int(self.sde_window_seed, path="GenerationRequest.sde_window_seed", minimum=0)
         elif (
             self.denoise is not None
-            and self.denoise.sde_window_size > 0
+            and (self.denoise.sde_window_size > 0 or self.denoise.group_shared_noise)
             and self.sampling.get("seed") is None
         ):
             self.sde_window_seed = random.getrandbits(64)
