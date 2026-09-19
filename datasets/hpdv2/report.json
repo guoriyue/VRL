@@ -1,0 +1,32 @@
+{
+  "dataset": "hpdv2",
+  "files": {
+    "train": {
+      "path": "datasets/hpdv2/train.txt",
+      "row_count": 103672,
+      "source_row_count": 103672,
+      "duplicate_prompt_count": 0,
+      "unique_prompt_count": 103672,
+      "sha256": "ef8c64c74fc1d18802996dec2324a4f5d7175043105de720b2eb64f7e82221ff"
+    },
+    "test": {
+      "path": "datasets/hpdv2/test.txt",
+      "row_count": 242,
+      "source_row_count": 242,
+      "duplicate_prompt_count": 0,
+      "unique_prompt_count": 242,
+      "sha256": "7d009dc73b77a896eb6daf0ae10ec077412cf096fc9fca195c0958ab627de489"
+    }
+  },
+  "source": {
+    "type": "huggingface_dataset",
+    "repo_id": "rockdu/miles-diffusion-datasets",
+    "revision": "0e8958fa9560bf6b228165db3ce92eab48169542",
+    "subset": "hpdv2",
+    "field": "input",
+    "upstream": "HPDv2 (Human Preference Dataset v2, Wu et al. 2023) prompts as packaged by miles_diffusion"
+  },
+  "prompt_overlap": {
+    "train_test": 0
+  }
+}
