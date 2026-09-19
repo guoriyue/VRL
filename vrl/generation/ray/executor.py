@@ -115,8 +115,7 @@ class RayGenerationExecutor:
         """Return an OOM reported by any rank; otherwise keep the primary's refs."""
 
         if not all(
-            isinstance(result, (StagedBatchRefs, RequestBatchOutOfMemory))
-            for result in results
+            isinstance(result, (StagedBatchRefs, RequestBatchOutOfMemory)) for result in results
         ):
             raise TypeError(
                 "pipelined engine ranks must return StagedBatchRefs or RequestBatchOutOfMemory"
@@ -225,26 +224,12 @@ class RayGenerationExecutor:
                 pipelined_oom.error,
             )
         engine_by_id = {engine.engine_id: engine for engine in self.engines}
-        strategy = self.planner.strategy
         runtime_debug_on = request.runtime_debug
         remote_jobs: list[RayActorJob] = []
         result_pairs: list[tuple[int, GenerationBatchResult]] = []
         schedule_rows: list[dict[str, Any]] = []
 
         for job_index, assignment in enumerate(assignments):
-            if assignment.engine_id is None:
-                # Dynamic placement: binding happens in the actor pool. The
-                # estimated cost becomes the submission priority (LPT).
-                remote_jobs.append(
-                    RayActorJob(
-                        job_index=job_index,
-                        worker_id=None,
-                        remote_method=None,
-                        payload=assignment.envelope,
-                        priority=assignment.estimated_cost,
-                    ),
-                )
-                continue
             engine = engine_by_id[assignment.engine_id]
             remote_jobs.append(
                 RayActorJob(
@@ -256,15 +241,11 @@ class RayGenerationExecutor:
             )
 
         if remote_jobs:
-            worker_methods = None
-            if any(job.worker_id is None for job in remote_jobs):
-                worker_methods = self._remote_engine_methods()
             result_pairs.extend(
                 await self.actor_dispatcher.run(
                     remote_jobs,
                     operation="rollout.generation.batch",
                     call_timeout_s=self.generation_stall_timeout_s,
-                    worker_methods=worker_methods,
                     schedule=schedule_rows if runtime_debug_on else None,
                 ),
             )
@@ -334,8 +315,6 @@ class RayGenerationExecutor:
                 {
                     "batch_key": assignment.batch.batch_key,
                     "sample_count": assignment.batch.sample_count,
-                    "assignment_strategy": strategy,
-                    "estimated_cost": assignment.estimated_cost,
                     "assigned_worker": by_index[job_index]["worker_id"],
                     "queue_wait_s": by_index[job_index]["queue_wait_s"],
                     "execution_s": by_index[job_index]["execution_s"],
@@ -346,13 +325,11 @@ class RayGenerationExecutor:
         if runtime_debug_on:
             for row in schedule_summary:
                 logger.info(
-                    "ray batch schedule [%s]: batch=%s worker=%s samples=%d "
-                    "cost=%.0f queue_wait=%.3fs exec=%.3fs",
-                    strategy,
+                    "ray batch schedule: batch=%s worker=%s samples=%d "
+                    "queue_wait=%.3fs exec=%.3fs",
                     row["batch_key"],
                     row["assigned_worker"],
                     row["sample_count"],
-                    row["estimated_cost"],
                     row["queue_wait_s"],
                     row["execution_s"],
                 )
@@ -791,20 +768,6 @@ class RayGenerationExecutor:
                 f"(rank={result.worker_id}, batch={result.batch.batch_key}, "
                 f"expected={expected_request_id!r}, actual={result.request_id!r})",
             )
-
-    def _remote_engine_methods(self) -> dict[str, Any]:
-        """Collect per-engine execute_batch submitters for pull-based dispatch."""
-
-        methods: dict[str, Any] = {}
-        for engine in self.engines:
-            probe = getattr(engine.primary.actor, "execute_batch", None)
-            if not callable(getattr(probe, "remote", None)):
-                raise RuntimeError(
-                    "dynamic batch placement requires Ray actor ranks; "
-                    f"engine {engine.engine_id!r} has no remote execute_batch",
-                )
-            methods[engine.engine_id] = engine.execute_batch()
-        return methods
 
 
 __all__ = ["RayGenerationExecutor"]

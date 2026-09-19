@@ -573,7 +573,6 @@ def _erase_meaningless_spelling(
     # pre-rename keys; translate them so only real behavioral drift is visible.
     for path, old, new in (
         (("rollout",), "samples_per_chunk", "samples_per_generation_batch"),
-        (("distributed", "rollout"), "chunk_placement_strategy", "batch_placement_strategy"),
         (("actor",), "replay_samples_per_chunk", "training_microbatch_size"),
         (("actor",), "samples_per_replay_batch", "training_microbatch_size"),
         (("actor",), "microbatch_size", "prompts_per_collection"),
@@ -585,6 +584,12 @@ def _erase_meaningless_spelling(
                     f"ambiguous SANA config at {'.'.join(path)}: both {old!r} and {new!r}"
                 )
             renamed_section[new] = renamed_section.pop(old)
+    # Batch placement lost its strategy knob in 2026-09 (round-robin is the only
+    # placement); historical configs may still carry either spelling.
+    rollout_section = _section(actual, "distributed", "rollout")
+    if isinstance(rollout_section, dict):
+        for removed in ("chunk_placement_strategy", "batch_placement_strategy"):
+            rollout_section.pop(removed, None)
 
     # Historical online configs stored collection counts rather than sizes.
     actor = _section(actual, "actor")

@@ -89,7 +89,7 @@ def _request() -> GenerationRequest:
     )
 
 
-def _executor(ray: Any, strategy: str) -> tuple[RayGenerationExecutor, list[Any]]:
+def _executor(ray: Any) -> tuple[RayGenerationExecutor, list[Any]]:
     actor_cls = ray.remote(num_cpus=0)(_ChunkWorker)
     actors = [actor_cls.remote(worker_id) for worker_id in ("w0", "w1")]
     engines = [
@@ -100,7 +100,7 @@ def _executor(ray: Any, strategy: str) -> tuple[RayGenerationExecutor, list[Any]
         for worker_id, actor in zip(("w0", "w1"), actors, strict=True)
     ]
     executor = RayGenerationExecutor(
-        DistributedExecutionPlanner(strategy=strategy),  # type: ignore[arg-type]
+        DistributedExecutionPlanner(),
         engines,
         _ListGatherer(),
         actor_dispatcher=RayActorDispatcher(("w0", "w1")),
@@ -121,7 +121,7 @@ def test_real_ray_executor_round_robin_gathers_every_chunk_in_order(local_ray) -
     """Plan-time binding over a real wire: each of the four batches comes back
     from the worker it was bound to, and the gather is still ordered by batch."""
 
-    executor, actors = _executor(local_ray, "round_robin")
+    executor, actors = _executor(local_ray)
     try:
         output = asyncio.run(executor.execute(_request()))
 
@@ -131,27 +131,6 @@ def test_real_ray_executor_round_robin_gathers_every_chunk_in_order(local_ray) -
         # Round-robin binds before dispatch, so real scheduling cannot move these.
         assert [row["assigned_worker"] for row in schedule] == ["w0", "w1", "w0", "w1"]
         assert [row["batch_key"] for row in schedule] == _EXPECTED_CHUNK_KEYS
-    finally:
-        for actor in actors:
-            local_ray.kill(actor, no_restart=True)
-
-
-def test_real_ray_executor_dynamic_gathers_every_chunk_in_order(local_ray) -> None:
-    """Pull dispatch over a real wire: which worker takes which batch is up to
-    the live cluster, but every batch is executed exactly once and the gather
-    order is still the plan's."""
-
-    executor, actors = _executor(local_ray, "dynamic")
-    try:
-        output = asyncio.run(executor.execute(_request()))
-
-        assert [entry["batch_key"] for entry in output.output] == _EXPECTED_CHUNK_KEYS
-        assert output.runtime_debug is not None
-        schedule = output.runtime_debug["chunk_schedule"]
-        assert sorted(row["batch_key"] for row in schedule) == _EXPECTED_CHUNK_KEYS
-        assert all(row["assignment_strategy"] == "dynamic" for row in schedule)
-        # Every batch landed on a real worker of this fleet -- no unbound rows.
-        assert {row["assigned_worker"] for row in schedule} <= {"w0", "w1"}
     finally:
         for actor in actors:
             local_ray.kill(actor, no_restart=True)

@@ -81,7 +81,6 @@ def test_previous_adapter_is_not_a_user_model_setting() -> None:
         ("algorithm.kind", "qpo"),
         ("rollout.denoise_mode", "bogus"),
         ("distributed.training.strategy", "deepspeed"),
-        ("distributed.rollout.batch_placement_strategy", "work_stealing"),
         ("data.loader", "s3_loader"),
     ],
 )

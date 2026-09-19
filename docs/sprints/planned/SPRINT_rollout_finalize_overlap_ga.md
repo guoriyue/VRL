@@ -141,3 +141,14 @@ finalizer 启动用例、`tests/rollouts/orchestration/test_prompt_collection.py
 - 多 engine 下 finalizer 的读取不总是本地：注释改为如实说明，按数据位置选
   finalizer 留待测量。
 - `execute`/`_execute`、`probe_batch_sizes`/`_probe_batch_sizes` 两层转发合并。
+
+### 2026-09-19：删除 `batch_placement_strategy: dynamic`
+
+一个 request 内的所有批来自同一个 prompt 组，形状与步数相同，耗时天然相等，
+事先轮流分配已经均衡；`dynamic`（拉取式派发加 LPT 排序）自 parked 的
+`SPRINT_generation_scheduler` 起就写明"单 worker 下等价、收益为零、多卡再测"，
+之后的多卡 perf sprint 没有测它，也没有 preset 启用过。现已删除：配置键
+`distributed.rollout.batch_placement_strategy`、`DeviceAssignment.estimated_cost`、
+`RayActorJob.priority` 与 LPT 排序、executor 的未绑定派发分支。dispatcher 的
+"未绑定 job 交给空闲 worker"机制保留，因为 per-request 路径的 finalizer 靠它
+准入。历史 resolved config 里的旧键在 SANA eval 对比时直接丢弃。

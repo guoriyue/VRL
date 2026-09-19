@@ -234,9 +234,7 @@ class RayGenerationLauncher:
                 finalizer_handles = list(finalizer_group.handles)
 
             executor = RayGenerationExecutor(
-                DistributedExecutionPlanner(
-                    strategy=worker.batch_placement_strategy,
-                ),
+                DistributedExecutionPlanner(),
                 engines,
                 launch_inputs.gatherer,
                 actor_dispatcher=actor_dispatcher,

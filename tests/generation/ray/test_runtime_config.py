@@ -465,10 +465,6 @@ def test_launcher_capability_failure_kills_candidate_actor_group(
     assert caught.value is query_error
     assert actor_group.shutdown_calls == 1
 
-    # Invalid values are now rejected at the typed schema boundary
-    # (RolloutRuntimeSection Literal) at parse time, not in RayGenerationConfig —
-    # see tests/config/test_schema.py::test_unknown_batch_placement_strategy_raises.
-
 
 def test_worker_defaults_and_explicit_override_project_from_public_schema() -> None:
     default = _ray_config(_cfg()).worker
@@ -484,7 +480,6 @@ def test_worker_defaults_and_explicit_override_project_from_public_schema() -> N
     cfg.distributed.rollout.generation_stall_timeout_s = 1200.0
     cfg.distributed.rollout.sync_trainable_state = False
     cfg.distributed.rollout.pipelined = True
-    cfg.distributed.rollout.batch_placement_strategy = "dynamic"
     override = _ray_config(cfg).worker
 
     assert override.cpus_per_worker == 2.5
@@ -492,7 +487,6 @@ def test_worker_defaults_and_explicit_override_project_from_public_schema() -> N
     assert override.generation_stall_timeout_s == 1200.0
     assert override.sync_trainable_state is False
     assert override.pipelined is True
-    assert override.batch_placement_strategy == "dynamic"
 
 
 def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) -> None:

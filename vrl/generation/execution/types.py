@@ -36,7 +36,6 @@ class StaleSlotDiscard(Exception):
     """
 
 
-BatchPlacementStrategy = Literal["round_robin", "dynamic"]
 ParkingBackend = Literal["cpu_only", "cpu_offload", "cumem"]
 
 
@@ -354,7 +353,6 @@ class RequestBatchOutOfMemory:
 __all__ = [
     "BatchCompletionCallback",
     "BatchMemoryReading",
-    "BatchPlacementStrategy",
     "BatchSizeProbeResult",
     "BatchSizeProbeTrial",
     "GenerationBatchEnvelope",

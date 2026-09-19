@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
     from vrl.models.interfaces.runtime import RuntimeBundle
 
-from vrl.generation.execution.types import BatchPlacementStrategy
 from vrl.ray.resources import (
     ResolvedDistributedResources,
 )
@@ -33,11 +32,6 @@ class RolloutWorkerConfig:
     # Opt-in per-request rollout: each engine runs its round-robin share of a
     # request's batches in one RPC and stages the payloads for a finalizer.
     pipelined: bool
-    # Batch->worker binding: "round_robin" binds at plan time (baseline);
-    # "dynamic" binds at dispatch time (pull + LPT). Equivalent for 1 worker.
-    # Allowed-set rejection is at the typed schema boundary (RolloutRuntimeSection);
-    # DistributedExecutionPlanner repeats it for direct runtime construction.
-    batch_placement_strategy: BatchPlacementStrategy
     # Plain on/off. True keeps rollout workers resynced to the trained policy (the
     # syncer flattens whatever is trainable — lora or full-param); False disables it.
     # Defaults ON: online runs train the policy the rollout workers must resync, so

@@ -992,7 +992,6 @@ def test_generate_images_rejects_materialized_source_drift_before_generation(
     "path,old,new",
     [
         (("rollout",), "samples_per_chunk", "samples_per_generation_batch"),
-        (("distributed", "rollout"), "chunk_placement_strategy", "batch_placement_strategy"),
         (("actor",), "replay_samples_per_chunk", "training_microbatch_size"),
     ],
 )

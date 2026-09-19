@@ -31,18 +31,16 @@ class RayActorJob:
 
     ``worker_id``/``remote_method`` may be left ``None`` for pull-based
     dispatch: the pool then binds the job to whichever worker from
-    ``worker_methods`` has a free slot (least inflight first). ``priority``
-    orders submission (higher first, stable for ties) — with pull dispatch
-    this implements LPT: submit expensive batches first so no worker is left
-    finishing one large job at the tail. ``keyword_args`` carries the small
-    number of actor methods whose wire contract is not one positional payload.
+    ``worker_methods`` has a free slot (least inflight first); the per-request
+    finalizers are dispatched this way. Jobs are submitted in caller order.
+    ``keyword_args`` carries the small number of actor methods whose wire
+    contract is not one positional payload.
     """
 
     job_index: int
     worker_id: str | None
     remote_method: Any
     payload: Any
-    priority: float = 0.0
     keyword_args: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -146,9 +144,7 @@ class RayActorDispatcher:
                     f"{invalid_worker_methods}",
                 )
 
-        # Stable sort: equal priorities (the static path always submits 0.0)
-        # preserve caller order bit-for-bit.
-        pending = deque(sorted(jobs, key=lambda job: -job.priority))
+        pending = deque(jobs)
         ref_to_job: dict[Any, tuple[int, str]] = {}
         result_pairs: list[tuple[int, Any]] = []
         pool_started = time.perf_counter()

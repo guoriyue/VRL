@@ -46,7 +46,9 @@ def test_http_endpoint_is_an_origin_without_embedded_credentials(
 
 
 def test_unknown_inference_key_is_rejected_from_typed_source() -> None:
-    with pytest.raises(ValueError, match=r"reward\.inference\.x fields: .*unknown=\[.service_url.\]"):
+    with pytest.raises(
+        ValueError, match=r"reward\.inference\.x fields: .*unknown=\[.service_url.\]"
+    ):
         RewardInferenceConfig.from_mapping(
             {"kind": "in_process", "service_url": "http://legacy"},
             context="reward.inference.x",

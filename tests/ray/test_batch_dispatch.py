@@ -1,9 +1,9 @@
 """Deterministic tests for batch placement and pull-based actor dispatch.
 
 These use awaitable fake refs so completion order is fully controlled — no Ray
-runtime, no slow markers. They pin the Track A contract:
-round_robin keeps plan-time binding bit-for-bit; dynamic binds at dispatch
-time (pull + LPT) and never changes gather order.
+runtime, no slow markers. They pin the dispatch contract:
+plan-time round-robin binding is kept bit-for-bit, and pull dispatch (used by
+the per-request finalizers) never changes gather order.
 
 The fakes are a controlled clock, not a Ray protocol fake, and the ``real_cover``
 labels below name what covers each half for real: the dispatch loop's ObjectRef
@@ -190,36 +190,6 @@ def test_pull_dispatch_lets_fast_worker_take_more_chunks() -> None:
     # w0 completes first every time, so it pulls every queued batch.
     assert fast.received == ["batch-0", "batch-2", "batch-3"]
     assert slow.received == ["batch-1"]
-
-
-@_CONTROLLED_CLOCK
-def test_lpt_priority_orders_submission() -> None:
-    """Checks higher-priority (more expensive) batches are submitted first."""
-    worker = _FakeWorker("w0", speed_rank_base=0)
-    jobs = [
-        RayActorJob(
-            job_index=0, worker_id=None, remote_method=None, payload="small", priority=1.0
-        ),
-        RayActorJob(
-            job_index=1, worker_id=None, remote_method=None, payload="large", priority=10.0
-        ),
-        RayActorJob(
-            job_index=2, worker_id=None, remote_method=None, payload="medium", priority=5.0
-        ),
-    ]
-
-    pairs = asyncio.run(
-        RayActorDispatcher(("w0",)).run(
-            jobs,
-            operation="test.actor_job",
-            call_timeout_s=30.0,
-            worker_methods={"w0": worker.remote},
-        ),
-    )
-
-    assert worker.received == ["large", "medium", "small"]
-    # Gather order stays by job_index regardless of submission order.
-    assert [index for index, _ in pairs] == [0, 1, 2]
 
 
 def test_unbound_jobs_without_worker_methods_fail_loudly() -> None:
@@ -694,42 +664,13 @@ def test_round_robin_planner_binds_workers_at_plan_time() -> None:
 
     worker_ids = [assignment.engine_id for assignment in plan.assignments]
     assert worker_ids == ["w0", "w1", "w0", "w1"]
-    assert all(a.estimated_cost > 0 for a in plan.assignments)
-
-
-def test_dynamic_planner_leaves_chunks_unbound_with_costs() -> None:
-    """Checks dynamic strategy defers binding and carries cost estimates."""
-    planner = DistributedExecutionPlanner(strategy="dynamic")
-    request = _request(num_steps=10, samples=8, sbs=2)
-    plan = planner.plan_with_engine(request, _worker_ids(2))
-
-    assert all(a.engine_id is None for a in plan.assignments)
-    assert len(plan.assignments) == 4
-    assert all(a.estimated_cost > 0 for a in plan.assignments)
     assert all(a.batch is a.envelope.batch for a in plan.assignments)
-    # Batch identity and order (the gather contract) are untouched.
-    assert [a.batch.sample_start for a in plan.assignments] == [0, 2, 4, 6]
-
-
-def test_planner_cost_uses_steps_axis() -> None:
-    """Checks the cost hint scales with samples x steps."""
-    request = _request(num_steps=35, samples=4, sbs=4)
-    plan = DistributedExecutionPlanner().plan_with_engine(request, _worker_ids(1))
-
-    assignment = plan.assignments[0]
-    assert assignment.estimated_cost == assignment.batch.sample_count * 35
-
-
-def test_planner_rejects_unknown_strategy() -> None:
-    """Checks the strategy vocabulary is closed."""
-    with pytest.raises(ValueError, match="round_robin"):
-        DistributedExecutionPlanner(strategy="work_stealing")  # type: ignore[arg-type]
 
 
 # ----------------------------------------------------- executor end to end
 
 
-# Carried by the three `execute` tests. Their fake actor is called in-process, so
+# Carried by the two `execute` tests. Their fake actor is called in-process, so
 # no envelope is ever pickled: a field that became unserializable (a lambda, an
 # open handle, a torch device reference) would pass here and break on production's
 # first batch. That crossing is what the twins named here run for real; the
@@ -792,7 +733,7 @@ class _ListGatherer:
         )
 
 
-def _executor(strategy: str, actors: list[_FakeActor]) -> RayGenerationExecutor:
+def _executor(actors: list[_FakeActor]) -> RayGenerationExecutor:
     engines = [
         RayGenerationEngine(
             actor.worker_id,
@@ -801,7 +742,7 @@ def _executor(strategy: str, actors: list[_FakeActor]) -> RayGenerationExecutor:
         for actor in actors
     ]
     return RayGenerationExecutor(
-        DistributedExecutionPlanner(strategy=strategy),  # type: ignore[arg-type]
+        DistributedExecutionPlanner(),
         engines,
         _ListGatherer(),
         actor_dispatcher=RayActorDispatcher(
@@ -844,7 +785,7 @@ async def test_batch_size_probe_shares_actor_admission_with_explicit_generation(
             )
 
     actor.probe_batch_size = _Probe()
-    executor = _executor("round_robin", [actor])
+    executor = _executor([actor])
     request = _request(samples=2, sbs=1)
     probe = asyncio.create_task(
         executor.probe_batch_sizes(request, max_samples=8),
@@ -877,7 +818,7 @@ async def test_batch_size_probe_shares_actor_admission_with_explicit_generation(
 async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
     """Checks config strategy round_robin reaches the actual dispatch."""
     actors = [_FakeActor("w0", 0), _FakeActor("w1", 100)]
-    executor = _executor("round_robin", actors)
+    executor = _executor(actors)
 
     request = _request(num_steps=10, samples=8, sbs=2)
     output = await executor.execute(request)
@@ -889,39 +830,7 @@ async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
     schedule = output.runtime_debug["chunk_schedule"]
     assert [row["assigned_worker"] for row in schedule] == ["w0", "w1", "w0", "w1"]
     for row in schedule:
-        assert row["assignment_strategy"] == "round_robin"
         assert row["sample_count"] == 2
-        # Cost follows the source formula (samples x num_steps), not a literal.
-        assert row["estimated_cost"] == row["sample_count"] * request.sampling["num_steps"]
-
-
-@_CONTROLLED_CLOCK_OVER_A_REAL_WIRE
-@pytest.mark.asyncio
-async def test_executor_dynamic_dispatches_by_pull() -> None:
-    """Checks config strategy dynamic actually changes worker placement."""
-    actors = [_FakeActor("w0", 0), _FakeActor("w1", 100)]
-    executor = _executor("dynamic", actors)
-
-    output = await executor.execute(_request(num_steps=10, samples=8, sbs=2))
-
-    # The fast worker pulls every queued batch once the slow one is busy.
-    assert len(actors[0].executed) == 3
-    assert len(actors[1].executed) == 1
-    assert output.runtime_debug is not None
-    schedule = output.runtime_debug["chunk_schedule"]
-    assert all(row["assignment_strategy"] == "dynamic" for row in schedule)
-    by_worker = {
-        worker: sum(1 for row in schedule if row["assigned_worker"] == worker)
-        for worker in ("w0", "w1")
-    }
-    assert by_worker == {"w0": 3, "w1": 1}
-    # Gather order is untouched by dynamic placement.
-    assert [entry["batch_key"] for entry in output.output] == [
-        "prompt:0:samples:0:2",
-        "prompt:0:samples:2:4",
-        "prompt:0:samples:4:6",
-        "prompt:0:samples:6:8",
-    ]
 
 
 @_CONTROLLED_CLOCK_OVER_A_REAL_WIRE
@@ -929,7 +838,7 @@ async def test_executor_dynamic_dispatches_by_pull() -> None:
 async def test_executor_runtime_debug_exposes_chunk_schedule() -> None:
     """Checks runtime_debug surfaces per-batch placement telemetry."""
     actors = [_FakeActor("w0", 0), _FakeActor("w1", 100)]
-    executor = _executor("round_robin", actors)
+    executor = _executor(actors)
     request = _request(num_steps=10, samples=8, sbs=2)
     request.runtime_debug = True
 
@@ -942,8 +851,6 @@ async def test_executor_runtime_debug_exposes_chunk_schedule() -> None:
         assert {
             "batch_key",
             "sample_count",
-            "assignment_strategy",
-            "estimated_cost",
             "assigned_worker",
             "queue_wait_s",
             "execution_s",

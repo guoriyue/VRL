@@ -20,9 +20,6 @@
 #     /base/rollout/orchestration=continuous \
 #     trainer.rollout_orchestration.continuous.max_inflight_groups=8 \
 #     trainer.output_dir=outputs/sd3_5_ocr_dedicated_3x1/continuous
-#   python -m vrl.scripts.train --config experiment/sd3_5/online_grpo_ocr_dedicated_3x1 \
-#     distributed.rollout.batch_placement_strategy=dynamic \
-#     trainer.output_dir=outputs/sd3_5_ocr_dedicated_3x1/dynamic
 defaults:
   - /experiment/sd3_5/online_grpo_ocr
   - /base/rollout/orchestration/strict

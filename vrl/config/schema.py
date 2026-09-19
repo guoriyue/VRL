@@ -46,7 +46,6 @@ from vrl.config.reward_inference import (
     RewardInferenceConfig,
 )
 from vrl.config.sampling_schema import SamplingSection
-from vrl.generation.execution.types import BatchPlacementStrategy
 from vrl.models.families.registry import get_model_family_entry
 from vrl.ray.resources import (
     DistributedResourceConfig,
@@ -659,11 +658,7 @@ class RolloutRuntimeSection(ConfigBase):
     reader: vrl/generation/ray/config.py RayGenerationConfig.from_root. Release
     scheduling and colocation are NOT declared here: colocation lives in
     distributed.resources.rollout.gpu_pool=trainer (mirrors reward.gpu_pool),
-    and release scheduling is derived from GPU topology.
-    batch_placement_strategy is a user-facing allow-list
-    Literal: RayGenerationConfig is a plain dataclass whose annotations do not
-    enforce, so this typed boundary is where a bad value is rejected (the runtime
-    DistributedExecutionPlanner guard covers direct construction). sync_trainable_state
+    and release scheduling is derived from GPU topology. sync_trainable_state
     is a plain on/off: True keeps rollout engines resynced to the trained policy
     (the syncer flattens whatever is trainable — lora or full-param), False
     disables the weight syncer.
@@ -671,8 +666,7 @@ class RolloutRuntimeSection(ConfigBase):
     Each knob belongs to one layer of the engine/rank split (an engine is one
     replica; a rank is one per-GPU worker actor inside it):
     rank level: cpus_per_worker, health_check_*, worker_rpc_timeout_s.
-    engine level: generation_stall_timeout_s, batch_placement_strategy,
-    sync_trainable_state, pipelined.
+    engine level: generation_stall_timeout_s, sync_trainable_state, pipelined.
     """
 
     # rank level: CPU grant per rank actor (Ray num_cpus).
@@ -692,8 +686,6 @@ class RolloutRuntimeSection(ConfigBase):
     # hour covers the observed ~30-minute cold compile plus a 733-second Cosmos
     # batch with margin; opaque control calls retain their tighter budget above.
     generation_stall_timeout_s: float = 3600.0
-    # engine level: batch -> engine binding strategy.
-    batch_placement_strategy: BatchPlacementStrategy = "round_robin"
     sync_trainable_state: bool = True
     # Optional tensor bytes per wire chunk; receiver staging still holds full state.
     update_weight_buffer_size: int | None = Field(default=None, ge=1, strict=True)
@@ -743,8 +735,7 @@ class DistributedSection(ConfigBase):
     # consuming dataclass is the section type, so pydantic validates it here.
     resources: DistributedResourceConfig | None = None
     # reader: vrl/generation/ray/config.py RayGenerationConfig.from_root (worker
-    # runtime knobs). batch_placement_strategy / sync_trainable_state Literals reject
-    # bad values here at parse time. Colocation lives in resources.rollout.gpu_pool.
+    # runtime knobs). Colocation lives in resources.rollout.gpu_pool.
     rollout: RolloutRuntimeSection | None = None
     # readers: vrl/trainers/distributed.py DistributedTrainingContext.from_root (rank/device)
     # + vrl/ray/resources.py strategy-aware trainer GPU validation
