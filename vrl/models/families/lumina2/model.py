@@ -183,8 +183,6 @@ class Lumina2Model(
             generator,
             None,
         )
-        # No-op for FlowMatchEuler (init_noise_sigma == 1.0); kept for pipeline parity.
-        latents = latents * scheduler.init_noise_sigma
 
         return Lumina2SamplingState(
             latents=latents,

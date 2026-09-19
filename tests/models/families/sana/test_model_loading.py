@@ -92,3 +92,38 @@ def test_from_build_reapplies_the_fp16_saturation_clamp_off_fp16(monkeypatch) ->
     _, pipeline, _ = _load(monkeypatch, torch.float32)
 
     assert _linear_attn_processor_names(pipeline.transformer) == {"_SaturatedLinearAttnProcessor"}
+
+
+def test_prepare_sampling_runs_on_the_swapped_flow_match_scheduler(monkeypatch) -> None:
+    """The rollout state is built on the scheduler ``from_build`` installed.
+
+    FlowMatchEuler has no ``init_noise_sigma`` (DDPM-era API); a prepare that
+    still read it only failed on the first real rollout batch.
+    """
+    from vrl.generation.types import DenoiseRequest
+
+    model, pipeline, _ = _load(monkeypatch, torch.float32)
+    pipeline.prepare_latents = (
+        lambda batch, channels, height, width, dtype, device, generator, _latents: torch.randn(
+            (batch, channels, height // 32, width // 32), generator=generator, dtype=dtype
+        )
+    )
+    pipeline.transformer.to(torch.float32)
+    model._device = torch.device("cpu")
+    hidden = pipeline.transformer.config.caption_channels
+    encoded = {
+        "prompt_embeds": torch.zeros(2, 4, hidden),
+        "prompt_attention_mask": torch.ones(2, 4),
+    }
+
+    state = model.prepare_sampling(
+        DenoiseRequest(
+            num_steps=3, guidance_scale=1.0, height=64, width=64, frame_count=1, seed=1
+        ),
+        encoded,
+    )
+
+    assert state.latents.shape == (2, pipeline.transformer.config.in_channels, 2, 2)
+    assert state.timesteps.shape == (3,)
+    assert state.do_cfg is False
+    assert state.scheduler is model.pipeline.scheduler
