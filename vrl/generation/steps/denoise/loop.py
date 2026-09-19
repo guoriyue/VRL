@@ -30,7 +30,6 @@ class DenoiseLoopResult:
     latents: Any
     log_probs: Any
     timesteps: Any
-    kl: Any
     prev_sample_means: Any | None = None
     # Batch-memory reading (occupancy at loop start plus the denoise peak),
     # None off CUDA. The executor adds the decode peak and derives the
@@ -66,7 +65,6 @@ class DenoiseTrajectoryBuffers:
     latents: torch.Tensor
     log_probs: torch.Tensor
     timesteps: torch.Tensor
-    kl: torch.Tensor
     prev_sample_means: torch.Tensor | None = None
 
     @classmethod
@@ -105,7 +103,6 @@ class DenoiseTrajectoryBuffers:
                 dtype=timestep_dtype,
                 device=device,
             ),
-            kl=torch.empty((batch_rows, num_steps), dtype=torch.float32, device=device),
             prev_sample_means=(
                 torch.empty(
                     (batch_rows, num_steps, *latent_shape),
@@ -136,7 +133,6 @@ class DenoiseTrajectoryBuffers:
         action: torch.Tensor,
         timestep: torch.Tensor,
         sde_result: SDEStepResult,
-        return_kl: bool,
     ) -> None:
         """Write detached values; copy_ casts into each buffer's allocated dtype."""
         self.latents[:, step_idx + 1].copy_(action.detach())
@@ -144,12 +140,6 @@ class DenoiseTrajectoryBuffers:
             sde_result.log_prob.detach(),
         )
         self.timesteps[:, step_idx].copy_(timestep.detach())
-        if return_kl:
-            self.kl[:, step_idx].copy_(
-                sde_result.log_prob.detach().abs(),
-            )
-        else:
-            self.kl[:, step_idx].zero_()
         if self.prev_sample_means is not None:
             self.prev_sample_means[:, step_idx].copy_(
                 sde_result.prev_sample_mean.detach(),
@@ -247,7 +237,6 @@ def run_denoise_loop(
                     action=next_latents,
                     timestep=timestep,
                     sde_result=sde_result,
-                    return_kl=config.sde.return_kl,
                 )
 
     denoise_peak_bytes = cuda_peak_allocated_bytes()
@@ -264,7 +253,6 @@ def run_denoise_loop(
         latents=buffers.latents,
         log_probs=buffers.log_probs,
         timesteps=buffers.timesteps,
-        kl=buffers.kl,
         prev_sample_means=buffers.prev_sample_means,
         memory=memory,
         engine_counters={
@@ -274,7 +262,6 @@ def run_denoise_loop(
             "diffusion_action_bytes": trajectory_tensor_bytes(buffers.actions),
             "diffusion_old_logprob_bytes": trajectory_tensor_bytes(buffers.log_probs),
             "diffusion_timestep_bytes": trajectory_tensor_bytes(buffers.timesteps),
-            "diffusion_kl_bytes": trajectory_tensor_bytes(buffers.kl),
             "diffusion_denoise_mode": config.denoise_mode,
             **(teacache.counters() if teacache is not None else {}),
         },

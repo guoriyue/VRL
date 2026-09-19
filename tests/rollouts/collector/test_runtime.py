@@ -28,10 +28,8 @@ from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import CollectorRequest, GenerationRequestBuilder
 from vrl.rollouts.stats import RolloutStats
 from vrl.trajectory.builders import (
-    build_chunk_autoregressive_denoise_trajectory,
     build_diffusion_trajectory,
 )
-from vrl.trajectory.reader import TrajectoryReader
 from vrl.trajectory.storage import TrajectoryStoragePolicy
 from vrl.trajectory.views import RewardInputSpec
 
@@ -105,7 +103,6 @@ class _Runtime:
             actions=actions,
             old_log_prob=torch.zeros(batch_size, 2),
             timesteps=torch.zeros(batch_size, 2),
-            kl=torch.zeros(batch_size, 2),
             replay_tensors={"prompt_ids": torch.ones(batch_size, 3, dtype=torch.long)},
             context={"collector": "test"},
         )
@@ -908,55 +905,6 @@ def test_reward_output_rejects_missing_or_unsupported_output_ref(
             output,
             RolloutBatchBuildContext(metadata={}),
         ).reward_outputs()
-
-
-def test_chunk_denoise_kl_reward_sums_chunk_and_transition_axes() -> None:
-    """Latent Gaussian trajectories use denoise packing and per-sample KL."""
-
-    request = GenerationRequest(
-        request_id="batch-request",
-        family="causvid",
-        task="text_to_video",
-        inputs=["p0"],
-        samples_per_prompt=2,
-    )
-    sample_rows = _sample_rows(request)
-    batch_size, chunk_count, transition_count = 2, 2, 3
-    policy_shape = (batch_size, chunk_count, transition_count)
-    trajectory = build_chunk_autoregressive_denoise_trajectory(
-        request=request,
-        sample_rows=sample_rows,
-        observations=torch.zeros(*policy_shape, 1),
-        actions=torch.ones(*policy_shape, 1),
-        old_log_prob=torch.zeros(policy_shape),
-        mask=torch.ones(policy_shape),
-        timesteps=torch.zeros(policy_shape),
-        finalized_chunk_latents=torch.zeros(batch_size, chunk_count, 1),
-        replay_tensors={},
-        context={},
-        kl=torch.stack(
-            (
-                torch.ones(chunk_count, transition_count),
-                torch.full((chunk_count, transition_count), 2.0),
-            )
-        ),
-    )
-    output = GenerationOutput(
-        output=torch.zeros(batch_size, 3, 2, 2),
-        trajectory=trajectory,
-    )
-
-    packed = TrajectoryRolloutBatchBuilder(
-        output,
-        RolloutBatchBuildContext(metadata={}, kl_reward_coef=0.25),
-    ).build(torch.tensor([10.0, 20.0]))
-
-    reader = TrajectoryReader.from_batch(packed)
-    assert reader.role_value("denoise", "observation").shape[:3] == policy_shape
-    assert reader.role_value("denoise", "action").shape[:3] == policy_shape
-    assert packed.rewards.tolist() == pytest.approx([8.5, 17.0])
-    assert packed.trajectory is not None
-    assert packed.trajectory.primary_segment == "denoise"
 
 
 def test_collector_forwards_reference_metadata_to_request() -> None:

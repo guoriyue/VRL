@@ -37,7 +37,7 @@ def test_initial_noise_uses_batch_offset_without_mutating_request(seed: int | No
             sample_start=start,
             sample_count=1,
             seed=seed,
-            sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo", return_kl=False),
+            sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo"),
             sde_window=None,
             denoise_mode="native",
         )
@@ -86,7 +86,6 @@ def test_native_denoise_mode_uses_scheduler_step() -> None:
             sde=DenoiseSDEParams(
                 noise_level=0.7,
                 sde_type="flow_grpo",
-                return_kl=False,
             ),
             sde_window=None,
             denoise_mode="native",

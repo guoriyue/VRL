@@ -19,7 +19,6 @@ class DiffusionNFTConfig:
 
     config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
         needs_sde_rollout=True,
-        supports_step_kl_reward=True,
         sft_source="unsupported",
         requires_previous_policy=True,
         requires_reference_policy=True,

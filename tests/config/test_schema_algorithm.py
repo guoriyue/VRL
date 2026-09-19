@@ -66,37 +66,6 @@ def test_algorithm_dispatch_covers_schema_kind_vocabulary() -> None:
     assert all(algorithm_config_class(kind) for kind in kinds)
 
 
-def test_positive_kl_reward_coef_is_accepted_for_diffusion_rollouts() -> None:
-    cfg = minimal_grpo_cfg()
-    cfg.algorithm.kl_reward_coef = 0.25
-
-    assert parse_config(cfg).algorithm.kl_reward_coef == 0.25
-
-
-def test_positive_kl_reward_coef_rejects_trajectories_without_step_kl() -> None:
-    cfg = OmegaConf.create(
-        {"algorithm": {"kind": "diffusion_dpo", "kl_reward_coef": 0.25}},
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=r"algorithm\.kl_reward_coef > 0 requires a diffusion rollout trajectory",
-    ):
-        parse_config(cfg)
-
-
-@pytest.mark.parametrize("value", [-0.1, float("nan")])
-def test_kl_reward_coef_rejects_invalid_public_values(value: object) -> None:
-    cfg = minimal_grpo_cfg()
-    cfg.algorithm.kl_reward_coef = value
-
-    with pytest.raises(
-        ValueError,
-        match=r"algorithm\.kl_reward_coef must be a finite number >= 0",
-    ):
-        parse_config(cfg)
-
-
 def test_grpo_requires_valid_sde_type() -> None:
     cfg = minimal_grpo_cfg()
     cfg.rollout.sde.type = "euler"

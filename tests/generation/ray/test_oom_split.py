@@ -209,7 +209,6 @@ async def test_failed_gather_rejects_misaligned_media_references() -> None:
                 latents=torch.ones(1, 3, 3),
                 log_probs=torch.zeros(1, 2),
                 timesteps=torch.ones(1, 2),
-                kl=torch.zeros(1, 2),
                 video=media,
                 replay_tensors={},
                 context={"model_family": "sd3_5"},

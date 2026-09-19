@@ -97,7 +97,6 @@ class DenoiseRequestLayout:
         sde = DenoiseSDEParams(
             noise_level=options.noise_level,
             sde_type=options.sde_type or self.sde_type,
-            return_kl=options.return_kl,
             return_prev_sample_mean=options.return_prev_sample_mean,
         )
         if max_sequence_length is not None:

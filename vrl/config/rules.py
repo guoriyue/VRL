@@ -26,8 +26,6 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from vrl.config.algorithm import resolve_kl_reward_coef
-
 if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
 
@@ -75,15 +73,6 @@ def check_cross_section_rules(root: RootConfig) -> None:
                 "full-sequence denoise replay forward; "
                 f"model.family={root.model.family} does not provide one",
             )
-
-    # ── algorithm.kl_reward_coef shapes rewards with the collected per-step KL.
-    # An objective whose trajectory records no per-step KL would silently
-    # ignore a positive coefficient.
-    if resolve_kl_reward_coef(algo.kl_reward_coef) > 0.0 and not contract.supports_step_kl_reward:
-        raise ValueError(
-            "algorithm.kl_reward_coef > 0 requires a diffusion rollout trajectory "
-            f"with collected per-step KL; algorithm.kind={kind!r} does not provide one",
-        )
 
     # ── Sections and explicit fields outside the algorithm's declared surface.
     # An empty allowed set permits only an empty section; a None entry forbids

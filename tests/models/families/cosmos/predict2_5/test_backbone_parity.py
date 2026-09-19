@@ -152,7 +152,6 @@ def test_replay_forward_on_caller_latents_feeds_the_step_sigma() -> None:
         actions=torch.zeros(b, steps, *TINY_COSMOS_LATENT_SHAPE[1:]),
         old_log_prob=torch.zeros(b, steps),
         timesteps=scheduler.timesteps.to(torch.float32).repeat(b, 1),
-        kl=torch.zeros(b, steps),
         replay_tensors={
             "prompt_embeds": torch.randn(b, 3, TINY_COSMOS_TEXT_DIM),
             "negative_prompt_embeds": torch.randn(b, 3, TINY_COSMOS_TEXT_DIM),

@@ -79,7 +79,6 @@ def test_pipelined_moves_real_slots_batch_result_to_cpu() -> None:
             latents=tensors["obs"],
             log_probs=None,
             timesteps=None,
-            kl=None,
             video=tensors["scalar"],
             replay_tensors={},
             context={"batch": batch},

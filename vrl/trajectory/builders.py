@@ -38,7 +38,6 @@ def build_diffusion_trajectory(
     actions: Any,
     old_log_prob: Any,
     timesteps: Any,
-    kl: Any,
     replay_tensors: dict[str, Any],
     context: dict[str, Any],
 ) -> TrajectoryBatch:
@@ -74,12 +73,6 @@ def build_diffusion_trajectory(
         "timesteps": TrajectoryTensor(
             "timesteps",
             timesteps,
-            ("sample", "denoise"),
-            "replay_input",
-        ),
-        "kl": TrajectoryTensor(
-            "kl",
-            kl,
             ("sample", "denoise"),
             "replay_input",
         ),
@@ -162,7 +155,6 @@ def build_chunk_autoregressive_denoise_trajectory(
     finalized_chunk_latents: Any,
     replay_tensors: dict[str, TrajectoryTensor],
     context: dict[str, Any],
-    kl: Any | None = None,
 ) -> TrajectoryBatch:
     """Build a trainable chunk-autoregressive denoise trajectory.
 
@@ -194,14 +186,6 @@ def build_chunk_autoregressive_denoise_trajectory(
         finalized_chunk_latents,
         (batch_size, chunk_count),
     )
-    if kl is None:
-        kl = torch.zeros_like(old_log_prob)
-    else:
-        validate_shape_prefix(
-            "kl",
-            kl,
-            (batch_size, chunk_count, transition_count),
-        )
 
     transition_axes = ("sample", "temporal_chunk", "denoise_transition")
     tensors: dict[str, TrajectoryTensor] = {
@@ -232,12 +216,6 @@ def build_chunk_autoregressive_denoise_trajectory(
         "timesteps": TrajectoryTensor(
             "timesteps",
             timesteps,
-            transition_axes,
-            "replay_input",
-        ),
-        "kl": TrajectoryTensor(
-            "kl",
-            kl,
             transition_axes,
             "replay_input",
         ),

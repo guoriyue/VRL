@@ -369,7 +369,6 @@ class TestAdvantageAndMetrics:
                     actions=actions,
                     old_log_prob=torch.zeros(batch_size, 2),
                     timesteps=torch.zeros(batch_size, 2),
-                    kl=torch.zeros(batch_size, 2),
                     replay_tensors={},
                     context={"model_family": "sd3_5"},
                 )

@@ -34,7 +34,6 @@ class ChunkAutoregressiveDenoiseResult:
     old_log_prob: Any | None = None
     mask: Any | None = None
     timesteps: Any | None = None
-    kl: Any | None = None
     finalized_chunk_latents: Any | None = None
     # Values and producer-declared axes travel together across the wire.
     replay_tensors: dict[str, TrajectoryTensor] = field(default_factory=dict)
@@ -98,8 +97,6 @@ class ChunkAutoregressiveDenoiseResult:
             validate_shape_prefix(
                 f"batch {field_name}", getattr(self, field_name), transition_prefix
             )
-        if self.kl is not None:
-            validate_shape_prefix("batch kl", self.kl, transition_prefix)
         validate_shape_prefix(
             "batch finalized_chunk_latents",
             self.finalized_chunk_latents,

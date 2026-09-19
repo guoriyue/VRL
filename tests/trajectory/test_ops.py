@@ -64,7 +64,6 @@ def _trajectory(
         actions=actions,
         old_log_prob=torch.zeros(samples, step_count),
         timesteps=torch.zeros(samples, step_count),
-        kl=torch.zeros(samples, step_count),
         replay_tensors={"prompt_ids": torch.ones(samples, 3, dtype=torch.long)},
         context={},
     )

@@ -309,7 +309,6 @@ def _diffusion_chunk(
         latents=torch.full((1, 3, 1), value),
         log_probs=torch.full((1, 2), value + 2),
         timesteps=torch.arange(2).view(1, 2),
-        kl=torch.full((1, 2), value + 3),
         video=torch.full((1, 3, 4, 4), value),
         replay_tensors={},
         context=context,
@@ -355,7 +354,7 @@ def test_replay_gather_rejects_dtype_promotion_that_changes_integer_values() -> 
         )
 
 
-@pytest.mark.parametrize("field", ["latents", "log_probs", "timesteps", "kl", "video"])
+@pytest.mark.parametrize("field", ["latents", "log_probs", "timesteps", "video"])
 def test_diffusion_gather_rejects_mixed_field_dtypes(field) -> None:
     request = _request(cfg=False)
     batches = _diffusion_batches({"model_family": "sd3_5"})

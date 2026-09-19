@@ -247,7 +247,6 @@ def _denoise_batch(replay_tensors: dict) -> object:
         actions=torch.ones(2, 4, 3) * 0.5,
         old_log_prob=torch.zeros(2, 4),
         timesteps=torch.zeros(2, 4),
-        kl=torch.zeros(2, 4),
         replay_tensors=replay_tensors,
         context={"guidance_scale": 1.0, "cfg": False, "model_family": "wan_2_1"},
     )

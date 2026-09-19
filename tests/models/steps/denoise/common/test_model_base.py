@@ -521,7 +521,6 @@ def test_replay_forward_returns_typed_replay_result() -> None:
         actions=actions,
         old_log_prob=old_log_prob,
         timesteps=torch.tensor([[1, 0], [1, 0]]),
-        kl=torch.zeros(2, 2),
         replay_tensors={"prompt_embeds": torch.zeros(2, 3, 4)},
         context={"scheduler": "stub"},
     )

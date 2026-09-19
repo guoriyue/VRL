@@ -76,7 +76,6 @@ def _batch_with_sentinel_timestep_tensors() -> tuple[RolloutBatch, list[_NoFullM
         actions=torch.ones(2, 2, 3) * 0.5,
         old_log_prob=old_log_prob,
         timesteps=torch.tensor([[0.0, 1.0], [0.0, 1.0]]),
-        kl=torch.zeros(2, 2),
         replay_tensors={},
         context={"guidance_scale": 1.0, "cfg": False, "model_family": "sd3_5"},
     )

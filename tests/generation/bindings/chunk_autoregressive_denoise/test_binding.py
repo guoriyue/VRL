@@ -56,7 +56,6 @@ def test_trainable_trajectory_declares_temporal_chunk_and_transition_axes() -> N
         "temporal_chunk",
         "denoise_transition",
     )
-    assert torch.count_nonzero(segment.tensors["kl"].value) == 0
     assert trajectory.context == {"model_family": "causvid"}
 
 
@@ -255,7 +254,7 @@ def _generation_only_result(
     )
 
 
-@pytest.mark.parametrize("field_name", ["actions", "kl", "finalized_chunk_latents"])
+@pytest.mark.parametrize("field_name", ["actions", "finalized_chunk_latents"])
 def test_gatherer_rejects_result_with_misaligned_trajectory_axes(field_name: str) -> None:
     request = _request()
     batches = [_trainable_result(10.0, sample_start=0), _trainable_result(20.0, sample_start=1)]

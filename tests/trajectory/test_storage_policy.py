@@ -103,7 +103,6 @@ def _trajectory():
         actions=torch.tensor([[[1.0], [2.0]], [[3.0], [4.0]]]),
         old_log_prob=old_log_prob,
         timesteps=torch.zeros(2, 2),
-        kl=torch.zeros(2, 2),
         replay_tensors={"prompt_ids": torch.ones(2, 3, dtype=torch.long)},
         context={"model_family": "sd3_5"},
     )

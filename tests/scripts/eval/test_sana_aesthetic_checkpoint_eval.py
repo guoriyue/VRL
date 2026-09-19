@@ -419,7 +419,6 @@ def _historical_fullparam_config() -> DictConfig:
     )
     assert isinstance(raw, dict)
 
-    raw["algorithm"]["kl_reward_coef"] = 0.0
     raw["data"]["preprocessing"]["target_text"] = "none"
     raw["distributed"]["rollout"].update(
         {
@@ -487,7 +486,6 @@ def test_parity_threshold_rejects_ambiguous_old_and_live_keys() -> None:
 @pytest.mark.parametrize(
     ("path", "value"),
     [
-        ("algorithm.kl_reward_coef", 0.1),
         ("rollout.trajectory_storage.unexpected", True),
         ("precision.training.dtype", "bf16"),
     ],
@@ -541,7 +539,7 @@ def test_main_runs_the_protocol_gate_before_touching_the_run(monkeypatch, tmp_pa
     produce — and nothing may be generated after it.
     """
 
-    run_dir = _write_protocol_run(tmp_path, drift=("algorithm.kl_reward_coef", 0.1))
+    run_dir = _write_protocol_run(tmp_path, drift=("precision.training.dtype", "bf16"))
     monkeypatch.setattr(
         checkpoint_eval,
         "_generate_images",

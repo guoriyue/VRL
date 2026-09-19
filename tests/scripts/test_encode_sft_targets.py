@@ -24,11 +24,7 @@ def test_target_preflight_uses_artifact_root_and_target_identity(tmp_path) -> No
         PromptExample(prompt="same instruction", target_video="targets/b.mp4"),
     ]
 
-    targets = _resolve_clean_targets(
-        examples,
-        data_root=root,
-        allow_absolute=False,
-    )
+    targets = _resolve_clean_targets(examples, data_root=root)
 
     assert [key for key, _, _ in targets] == ["targets/a.mp4", "targets/b.mp4"]
     assert [path for _, path, _ in targets] == [
@@ -39,21 +35,20 @@ def test_target_preflight_uses_artifact_root_and_target_identity(tmp_path) -> No
 
 
 def test_target_preflight_rejects_duplicate_target_identity(tmp_path) -> None:
-    target = tmp_path / "target.mp4"
-    target.touch()
+    (tmp_path / "target.mp4").touch()
     examples = [
-        PromptExample(prompt="first", target_video=str(target)),
-        PromptExample(prompt="second", target_video=str(target)),
+        PromptExample(prompt="first", target_video="target.mp4"),
+        PromptExample(prompt="second", target_video="target.mp4"),
     ]
 
     with pytest.raises(ValueError, match="repeats clean target"):
-        _resolve_clean_targets(examples, data_root=None, allow_absolute=True)
+        _resolve_clean_targets(examples, data_root=tmp_path)
 
 
 def test_target_preflight_rejects_missing_file(tmp_path) -> None:
     example = PromptExample(prompt="missing", target_video="targets/missing.mp4")
     with pytest.raises(FileNotFoundError, match="does not exist"):
-        _resolve_clean_targets([example], data_root=tmp_path, allow_absolute=False)
+        _resolve_clean_targets([example], data_root=tmp_path)
 
 
 def test_video_geometry_rejects_short_target(monkeypatch) -> None:

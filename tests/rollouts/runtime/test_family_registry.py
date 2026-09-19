@@ -358,7 +358,7 @@ def test_rollout_config_is_projected_from_yaml() -> None:
                 },
                 "trajectory_storage": {"device": "cpu", "dtype": "float16"},
             },
-            "algorithm": {"kind": "grpo", "kl_reward_coef": 0.25},
+            "algorithm": {"kind": "grpo"},
         },
     )
 
@@ -373,10 +373,8 @@ def test_rollout_config_is_projected_from_yaml() -> None:
         sde_type="flow_grpo",
         sde_window_size=0,
         sde_window_range=(0, 10),
-        return_kl=True,
     )
     assert "noise_level" not in rollout.request_sampling
-    assert rollout.kl_reward_coef == pytest.approx(0.25)
     assert rollout.trajectory_storage == TrajectoryStoragePolicy(
         device="cpu",
         dtype="float16",
@@ -422,7 +420,7 @@ def test_request_sampling_projects_only_generation_owned_rollout_values() -> Non
                 "samples_per_generation_batch": 8,
                 "sde": {"type": "flow_grpo", "window_range": [0, 10]},
             },
-            "algorithm": {"kind": "grpo", "kl_reward_coef": 0.0},
+            "algorithm": {"kind": "grpo"},
         },
     )
 
@@ -434,8 +432,7 @@ def test_request_sampling_projects_only_generation_owned_rollout_values() -> Non
     assert rollout.denoise is not None
     assert rollout.denoise.sde_type == "flow_grpo"
     assert rollout.denoise.sde_window_range == (0, 10)
-    assert rollout.denoise.return_kl is False
-    for driver_key in ("kl_reward_coef", "n_samples_per_prompt", "prompts_per_batch"):
+    for driver_key in ("n_samples_per_prompt", "prompts_per_batch"):
         assert driver_key not in sampling
     assert "trajectory_storage" not in sampling
     assert rollout.trajectory_storage == TrajectoryStoragePolicy()

@@ -24,11 +24,6 @@ def test_every_algorithm_declares_non_configurable_facts(kind: str) -> None:
     ("changes", "algorithm_fields", "error"),
     [
         ({"needs_sde_rollout": True}, {}, r"rollout.sde.type"),
-        (
-            {"supports_step_kl_reward": False},
-            {"kl_reward_coef": 0.1},
-            r"does not provide one",
-        ),
     ],
 )
 def test_rules_follow_declared_facts_without_changing_kind(

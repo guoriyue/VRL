@@ -29,7 +29,6 @@ class RolloutBatchBuildContext:
 
     metadata: dict[str, Any]
     device: Any | None = None
-    kl_reward_coef: float = 0.0
     trajectory_storage_policy: TrajectoryStoragePolicy = field(
         default_factory=TrajectoryStoragePolicy,
     )
@@ -156,14 +155,8 @@ class TrajectoryRolloutBatchBuilder:
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
         observations = segment.role_tensor("observation").value
-        kl_tensor = segment.tensors["kl"].value
         device = observations.device
-
-        if self.context.kl_reward_coef > 0:
-            kl_per_sample = kl_tensor.reshape(kl_tensor.shape[0], -1).sum(dim=1)
-            rewards_adjusted = rewards_raw.to(device) - self.context.kl_reward_coef * kl_per_sample
-        else:
-            rewards_adjusted = rewards_raw.to(device)
+        rewards_adjusted = rewards_raw.to(device)
 
         rollout_context = dict(self.trajectory.context)
         if self.context.metadata:

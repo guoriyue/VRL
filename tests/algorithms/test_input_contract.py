@@ -78,7 +78,6 @@ def _nft_batch(*, latents_clean: torch.Tensor | None) -> RolloutBatch:
         actions=torch.zeros(_BATCH, 1, *_LATENT_SHAPE[1:]),
         old_log_prob=log_prob,
         timesteps=torch.full((_BATCH, 1), 500.0),
-        kl=torch.zeros(_BATCH, 1),
         replay_tensors=replay_tensors,
         context={"num_frames": 1, "height": 4, "width": 4},
     )

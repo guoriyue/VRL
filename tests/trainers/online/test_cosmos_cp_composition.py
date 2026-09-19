@@ -143,7 +143,6 @@ class _Collector(CollectorControlFake):
             actions=torch.stack(actions, dim=1),
             old_log_prob=old,
             timesteps=torch.stack(times, dim=1),
-            kl=torch.zeros_like(old),
             replay_tensors=replay,
             context=context,
         )

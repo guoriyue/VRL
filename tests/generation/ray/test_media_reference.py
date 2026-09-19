@@ -28,7 +28,6 @@ def _batch(start=0, count=2):
         latents=torch.ones(count, 3, 3),
         log_probs=torch.zeros(count, 2),
         timesteps=torch.ones(count, 2),
-        kl=torch.zeros(count, 2),
         video=torch.full((count, 3, 4, 4), 128, dtype=torch.uint8),
         replay_tensors={},
         context={"model_family": "sd3_5"},

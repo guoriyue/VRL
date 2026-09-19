@@ -62,7 +62,6 @@ class DenoiseBatchResult:
     latents: Any
     log_probs: Any
     timesteps: Any
-    kl: Any
     # Decoded media (uint8), or sample-ordered references from a Ray actor.
     video: Any
     replay_tensors: dict[str, Any]
@@ -344,7 +343,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         batch_result.latents = policy.apply_to_value(batch_result.latents)
         batch_result.log_probs = policy.apply_to_value(batch_result.log_probs)
         batch_result.timesteps = policy.apply_to_value(batch_result.timesteps)
-        batch_result.kl = policy.apply_to_value(batch_result.kl)
         batch_result.replay_tensors = policy.apply_to_value(batch_result.replay_tensors)
         return batch_result
 
@@ -454,7 +452,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
             latents=denoise_result.latents,
             log_probs=denoise_result.log_probs,
             timesteps=denoise_result.timesteps,
-            kl=denoise_result.kl,
             video=video,
             replay_tensors=replay_tensors,
             context=context,

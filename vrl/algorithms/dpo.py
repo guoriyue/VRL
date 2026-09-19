@@ -37,7 +37,6 @@ class DiffusionDPOConfig:
 
     config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
         needs_sde_rollout=False,
-        supports_step_kl_reward=False,
         sft_source="preference_winner",
         consumed_sections=(
             (

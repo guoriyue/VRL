@@ -24,7 +24,6 @@ def reader() -> TrajectoryReader:
         actions=torch.zeros(2, 3, 2),
         old_log_prob=torch.zeros(2, 3),
         timesteps=torch.zeros(2, 3),
-        kl=torch.zeros(2, 3),
         replay_tensors={"prompt_embeds": torch.ones(2, 4, 8)},
         context={},
     )

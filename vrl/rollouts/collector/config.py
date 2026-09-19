@@ -15,7 +15,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from vrl.config.algorithm import resolve_kl_reward_coef
 from vrl.config.schema import generation_request_rollout_fields
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.trajectory.storage import TrajectoryStoragePolicy
@@ -31,7 +30,6 @@ class RolloutCollectorConfig:
     request_sampling: dict[str, Any] = field(default_factory=dict)
     samples_per_generation_batch: int | Literal["auto"] | None = None
     denoise: DenoiseRequestOptions | None = None
-    kl_reward_coef: float = 0.0
     trajectory_storage: TrajectoryStoragePolicy = field(
         default_factory=TrajectoryStoragePolicy,
     )
@@ -72,21 +70,13 @@ class RolloutCollectorConfig:
         samples_per_generation_batch = (
             rollout.samples_per_generation_batch if rollout is not None else None
         )
-        kl_reward_coef = resolve_kl_reward_coef(
-            algorithm.kl_reward_coef if algorithm is not None else None,
-        )
         trajectory_storage = (
             rollout.trajectory_storage if rollout is not None else None
         ) or TrajectoryStoragePolicy()
         return cls(
             request_sampling=request_sampling,
             samples_per_generation_batch=samples_per_generation_batch,
-            denoise=DenoiseRequestOptions.from_sections(
-                rollout,
-                sampling,
-                kl_reward_coef=kl_reward_coef,
-            ),
-            kl_reward_coef=kl_reward_coef,
+            denoise=DenoiseRequestOptions.from_sections(rollout, sampling),
             trajectory_storage=trajectory_storage,
         )
 

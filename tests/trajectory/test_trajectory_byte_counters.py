@@ -17,7 +17,6 @@ def test_byte_counter_counts_trajectory_tensor_leaves() -> None:
     actions = torch.ones(1, 2, 4, dtype=torch.float32)
     old_log_prob = torch.zeros(1, 2, dtype=torch.float32)
     timesteps = torch.zeros(1, 2, dtype=torch.float32)
-    kl = torch.zeros(1, 2, dtype=torch.float32)
     prompt_ids = torch.ones(1, 3, dtype=torch.long)
     trajectory = build_diffusion_trajectory(
         request=GenerationRequest(
@@ -39,7 +38,6 @@ def test_byte_counter_counts_trajectory_tensor_leaves() -> None:
         actions=actions,
         old_log_prob=old_log_prob,
         timesteps=timesteps,
-        kl=kl,
         replay_tensors={"prompt_ids": prompt_ids},
         context={},
     )
@@ -53,7 +51,6 @@ def test_byte_counter_counts_trajectory_tensor_leaves() -> None:
             old_log_prob,
             old_log_prob,
             timesteps,
-            kl,
             prompt_ids,
         )
     )

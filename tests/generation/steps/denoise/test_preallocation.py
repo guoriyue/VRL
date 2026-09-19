@@ -20,7 +20,7 @@ from vrl.trajectory.storage import TrajectoryStoragePolicy
 
 def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> None:
     """Preallocated buffers take the latent's shape, dtype and device for observations and
-    actions, fp32 for log-probs and KL, and the state's timestep dtype.
+    actions, fp32 for log-probs, and the state's timestep dtype.
     """
     state = _state(batch=2, steps=3, latent_shape=(4, 5), dtype=torch.float16)
 
@@ -35,8 +35,6 @@ def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> 
     assert buffers.log_probs.dtype == torch.float32
     assert buffers.timesteps.shape == (2, 3)
     assert buffers.timesteps.dtype == state.timesteps.dtype
-    assert buffers.kl.shape == (2, 3)
-    assert buffers.kl.dtype == torch.float32
     assert buffers.observations.device == state.latents.device
 
 
@@ -48,7 +46,7 @@ def test_record_step_casts_into_allocated_buffers_without_gradients(dtype, devic
     state = _state(batch=2, steps=1, dtype=dtype)
     state.latents = state.latents.to(device)
     state.timesteps = state.timesteps.to(device)
-    config = _config(return_kl=True)
+    config = _config()
     config = replace(
         config,
         sde=replace(config.sde, return_prev_sample_mean=True),
@@ -64,7 +62,6 @@ def test_record_step_casts_into_allocated_buffers_without_gradients(dtype, devic
         action=values,
         timestep=state.timesteps[0],
         sde_result=SDEStepResult(values, log_prob, values, None),
-        return_kl=True,
     )
     for output in (
         buffers.observations,
@@ -75,9 +72,7 @@ def test_record_step_casts_into_allocated_buffers_without_gradients(dtype, devic
         torch.testing.assert_close(output[:, 0], values.detach().to(dtype), rtol=0, atol=0)
         assert not output.requires_grad
     torch.testing.assert_close(buffers.log_probs[:, 0], log_prob.detach())
-    torch.testing.assert_close(buffers.kl[:, 0], log_prob.detach().abs())
     assert not buffers.log_probs.requires_grad
-    assert not buffers.kl.requires_grad
 
 
 def test_observations_and_actions_are_adjacent_views_of_one_latent_path() -> None:
@@ -96,7 +91,6 @@ def test_observations_and_actions_are_adjacent_views_of_one_latent_path() -> Non
             action=action,
             timestep=state.timesteps[step_idx],
             sde_result=SDEStepResult(action, action[:, 0], action, None),
-            return_kl=False,
         )
 
     assert buffers.observations.data_ptr() == buffers.latents.data_ptr()
@@ -129,14 +123,12 @@ def test_preallocate_denoise_buffers_rejects_sample_count_mismatch() -> None:
         )
 
 
-@pytest.mark.parametrize("return_kl", [False, True])
-def test_run_denoise_steps_writes_preallocated_buffers(return_kl: bool) -> None:
-    """``run_denoise_steps`` fills the preallocated buffers in place: per-step timesteps, KL only
-    when requested (zeros otherwise), and engine counters for steps, batch width and
+def test_run_denoise_steps_writes_preallocated_buffers() -> None:
+    """``run_denoise_steps`` fills the preallocated buffers in place: per-step timesteps and engine counters for steps, batch width and
     observation bytes.
     """
     executor = _Executor()
-    config = _config(sample_count=2, return_kl=return_kl)
+    config = _config(sample_count=2)
 
     result = executor.run_denoise_steps(
         state=_state(batch=2, steps=2, latent_shape=(3,)),
@@ -147,12 +139,7 @@ def test_run_denoise_steps_writes_preallocated_buffers(return_kl: bool) -> None:
     assert result.actions.shape == (2, 2, 3)
     assert result.log_probs.shape == (2, 2)
     assert result.timesteps.shape == (2, 2)
-    assert result.kl.shape == (2, 2)
     assert torch.equal(result.timesteps[0], torch.tensor([0.0, 1.0]))
-    if return_kl:
-        assert torch.count_nonzero(result.kl).item() > 0
-    else:
-        assert torch.count_nonzero(result.kl).item() == 0
     assert result.engine_counters["diffusion_num_denoise_steps"] == 2
     assert result.engine_counters["diffusion_samples_per_generation_batch"] == 2
     assert result.engine_counters["diffusion_observation_bytes"] == (
@@ -294,7 +281,7 @@ def test_denoise_config_rejects_empty_sample_batch() -> None:
         replace(_config(), sample_count=0)
 
 
-def _config(*, sample_count: int = 2, return_kl: bool = False) -> DenoiseLoopConfig:
+def _config(*, sample_count: int = 2) -> DenoiseLoopConfig:
     return DenoiseLoopConfig(
         sample_start=0,
         sample_count=sample_count,
@@ -302,7 +289,6 @@ def _config(*, sample_count: int = 2, return_kl: bool = False) -> DenoiseLoopCon
         sde=DenoiseSDEParams(
             noise_level=1.0,
             sde_type="flow_grpo",
-            return_kl=return_kl,
         ),
         sde_window=(0, 0),
     )

@@ -44,7 +44,7 @@ class DenoiseBatchGatherer:
             sample_rows,
             cast("Sequence[DenoiseBatchResult]", batches),
             # Decoded media or boxed references are validated separately below.
-            row_fields=("latents", "log_probs", "timesteps", "kl"),
+            row_fields=("latents", "log_probs", "timesteps"),
         )
 
         # One storage for the denoise path: concatenate it once and hand the
@@ -66,7 +66,6 @@ class DenoiseBatchGatherer:
         timesteps_tensor = concatenate_sample_values(
             [batch.timesteps for batch in ordered_batches], name="timesteps"
         )
-        kl_tensor = concatenate_sample_values([batch.kl for batch in ordered_batches], name="kl")
         video = gather_batch_media(ordered_batches)
         replay_tensors = gather_replay_tensors(
             [batch.replay_tensors for batch in ordered_batches],
@@ -86,7 +85,6 @@ class DenoiseBatchGatherer:
             actions=actions,
             old_log_prob=log_probs,
             timesteps=timesteps_tensor,
-            kl=kl_tensor,
             replay_tensors=replay_tensors,
             context=rollout_context,
         )

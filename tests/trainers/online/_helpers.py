@@ -126,7 +126,6 @@ def _diffusion_rollout_batch(
         actions=actions,
         old_log_prob=old_log_prob,
         timesteps=timesteps,
-        kl=torch.zeros_like(old_log_prob),
         replay_tensors={},
         context=batch_context,
     )

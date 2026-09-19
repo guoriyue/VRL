@@ -16,7 +16,6 @@ class AlgorithmConfigContract:
     """
 
     needs_sde_rollout: bool
-    supports_step_kl_reward: bool
     sft_source: Literal["unsupported", "latents", "preference_winner"]
     # Objective requirements on the model's other policies (``previous_policy``:
     # last step's weights, refreshed after every optimizer step;

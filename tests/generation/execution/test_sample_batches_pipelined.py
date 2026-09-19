@@ -201,7 +201,6 @@ def test_pinned_copy_preserves_slots_dataclass_and_waits_once(monkeypatch) -> No
         latents=sources[0],
         log_probs=None,
         timesteps=sources[1],
-        kl=None,
         video=sources[2],
         replay_tensors={"latents": sources[3]},
         context={"prompt": "p"},

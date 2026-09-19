@@ -60,7 +60,6 @@ def _chunk() -> DenoiseBatchResult:
         latents=torch.ones(1, 3, 3, dtype=torch.float32),
         log_probs=torch.ones(1, 2, dtype=torch.float32) * 3,
         timesteps=torch.arange(2, dtype=torch.float32).view(1, 2),
-        kl=torch.ones(1, 2, dtype=torch.float32) * 4,
         video=torch.ones(1, 3, 4, 4, dtype=torch.float32),
         replay_tensors={},
         context={"guidance_scale": 4.5, "cfg": False, "model_family": "sd3_5"},

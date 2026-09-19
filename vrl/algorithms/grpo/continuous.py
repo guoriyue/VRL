@@ -67,7 +67,6 @@ class GRPOConfig(ClippedPolicyConfig):
 
     config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
         needs_sde_rollout=True,
-        supports_step_kl_reward=True,
         sft_source="latents",
     )
 
@@ -334,7 +333,6 @@ class FlashGRPOConfig(GRPOConfig):
 
     config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
         needs_sde_rollout=True,
-        supports_step_kl_reward=True,
         sft_source="unsupported",
     )
 
@@ -467,7 +465,6 @@ class FlowDPPOConfig(GroupAdvantageConfig):
 
     config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
         needs_sde_rollout=True,
-        supports_step_kl_reward=True,
         sft_source="unsupported",
     )
 
@@ -606,7 +603,6 @@ class GRPOGuardConfig(GroupAdvantageConfig):
 
     config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
         needs_sde_rollout=True,
-        supports_step_kl_reward=True,
         sft_source="unsupported",
     )
 

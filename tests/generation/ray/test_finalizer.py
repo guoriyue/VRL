@@ -25,7 +25,6 @@ def _batch(start: int, count: int) -> DenoiseBatchResult:
         latents=torch.full((count, 3, 3), float(start)),
         log_probs=torch.zeros(count, 2),
         timesteps=torch.ones(count, 2),
-        kl=torch.zeros(count, 2),
         video=torch.full((count, 3, 4, 4), 128, dtype=torch.uint8),
         replay_tensors={},
         context={"model_family": "sd3_5"},

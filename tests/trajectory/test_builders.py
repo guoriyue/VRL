@@ -40,7 +40,6 @@ def test_builder_rejects_tensor_rows_that_disagree_with_sample_rows() -> None:
             actions=torch.zeros(2, 2, 1),
             old_log_prob=torch.zeros(2, 2),
             timesteps=torch.zeros(2, 2),
-            kl=torch.zeros(2, 2),
             replay_tensors={},
             context={},
         )
@@ -67,7 +66,6 @@ def test_diffusion_replay_extras_only_declare_sample_axis_when_sample_aligned(ca
         actions=torch.zeros(2, 2, 1),
         old_log_prob=old_log_prob,
         timesteps=torch.zeros(2, 2),
-        kl=torch.zeros_like(old_log_prob),
         replay_tensors={
             "per_sample": torch.tensor([1.0, 2.0]),
             "scalar_tensor": torch.tensor(1.0),
@@ -107,7 +105,6 @@ def _structural_trajectories() -> list[tuple[str, TrajectoryBatch, dict[str, int
         actions=torch.ones(*diffusion_policy_shape, 1),
         old_log_prob=torch.zeros(diffusion_policy_shape),
         timesteps=torch.zeros(diffusion_policy_shape),
-        kl=torch.zeros(diffusion_policy_shape),
         replay_tensors={},
         context={},
     )

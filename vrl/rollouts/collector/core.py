@@ -308,7 +308,6 @@ class RolloutCollector:
         # self.config already holds these as resolved, typed fields (frozen for the
         # batch). Read them directly — feeding the typed trajectory_storage policy
         # back through TrajectoryStoragePolicy.from_config raised TypeError.
-        kl_reward_coef = self.config.kl_reward_coef
         trajectory_storage_policy = self.config.trajectory_storage
         builders = []
         for rollout in unscored:
@@ -325,7 +324,6 @@ class RolloutCollector:
                 # moves the completed batch to its device later; creating reward
                 # tensors here on the trainer GPU would race backward.
                 device="cpu",
-                kl_reward_coef=kl_reward_coef,
                 trajectory_storage_policy=trajectory_storage_policy,
             )
             builders.append(TrajectoryRolloutBatchBuilder(rollout.output, context))

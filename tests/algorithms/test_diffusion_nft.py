@@ -200,7 +200,6 @@ def _build_batch(
         actions=torch.zeros(_BATCH, timestep_count, *_LATENT_SHAPE[1:]),
         old_log_prob=log_prob,
         timesteps=torch.tensor(timestep_values).repeat(_BATCH, 1),
-        kl=torch.zeros(_BATCH, timestep_count),
         replay_tensors={
             "latents_clean": x0,
             "prompt_embeds": prompt_embeds,

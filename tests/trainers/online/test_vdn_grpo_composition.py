@@ -94,7 +94,6 @@ class _Collector(CollectorControlFake):
             actions=self.last_actions,
             old_log_prob=torch.cat([result.log_probs for result in results]),
             timesteps=torch.cat([result.timesteps for result in results]),
-            kl=torch.cat([result.kl for result in results]),
             replay_tensors={
                 key: torch.cat([result.replay_tensors[key] for result in results])
                 for key in results[0].replay_tensors

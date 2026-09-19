@@ -48,13 +48,6 @@ class ChunkAutoregressiveDenoiseGatherer:
         context = gather_batch_context([batch.context for batch in ordered])
 
         if ordered[0].has_trainable_trajectory:
-            kl_values = [batch.kl for batch in ordered]
-            if all(value is None for value in kl_values):
-                kl = None
-            elif any(value is None for value in kl_values):
-                raise ValueError("optional batch field 'kl' must be present on all results")
-            else:
-                kl = concatenate_sample_values(kl_values, name="kl")
             trajectory = build_chunk_autoregressive_denoise_trajectory(
                 request=request,
                 sample_rows=rows,
@@ -71,7 +64,6 @@ class ChunkAutoregressiveDenoiseGatherer:
                 timesteps=concatenate_sample_values(
                     [batch.timesteps for batch in ordered], name="timesteps"
                 ),
-                kl=kl,
                 finalized_chunk_latents=concatenate_sample_values(
                     [batch.finalized_chunk_latents for batch in ordered],
                     name="finalized_chunk_latents",

@@ -542,7 +542,6 @@ def _erase_meaningless_spelling(
 
     from dataclasses import fields as dataclass_fields
 
-    from vrl.config.algorithm import resolve_kl_reward_coef
     from vrl.config.schema import RolloutRuntimeSection
     from vrl.trajectory.storage import TrajectoryStoragePolicy
 
@@ -624,12 +623,6 @@ def _erase_meaningless_spelling(
     # Defaults come from their live owners so a changed default cannot silently
     # keep validating stale runs.
     default_equivalent: list[tuple[tuple[str, ...], str, Any, Any]] = [
-        (
-            ("algorithm",),
-            "kl_reward_coef",
-            resolve_kl_reward_coef(None),
-            resolve_kl_reward_coef,
-        ),
         (("data", "preprocessing"), "target_text", "none", None),
         (
             ("rollout",),

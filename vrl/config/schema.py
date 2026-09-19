@@ -37,7 +37,7 @@ from pydantic import (
 )
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
-from vrl.config.algorithm import algorithm_config_class, resolve_kl_reward_coef
+from vrl.config.algorithm import algorithm_config_class
 from vrl.config.base import ConfigBase, _extract_error_message
 from vrl.config.data import DataLoaderName, manifest_sources, resolve_data_loader
 from vrl.config.model_schema import ModelSection
@@ -145,8 +145,6 @@ class AlgorithmConfig(ConfigBase):
     (``vrl.config.algorithm.algorithm_config_class``); every other YAML key is
     validated against that dataclass — unknown keys, missing required fields,
     its ``__post_init__`` — and the built instance lands in ``hyperparameters``.
-    ``kl_reward_coef`` is collector-owned rather than an algorithm field, so it
-    stays on the section.
     """
 
     kind: Literal[
@@ -159,20 +157,10 @@ class AlgorithmConfig(ConfigBase):
         "diffusion_nft",
         "v_grpo",
     ]
-    # Collector-owned reward-shaping coefficient over the collected per-step KL;
-    # objectives whose trajectories carry no KL tensor reject a positive value.
-    kl_reward_coef: float | None = None
     # The runtime dataclass selected by ``kind`` (e.g. GRPOConfig), built from
     # the remaining keys of this section. ``build_configs`` hands it to the
     # trainer as ``BuiltConfigs.algorithm``.
     hyperparameters: Any = None
-
-    @field_validator("kl_reward_coef", mode="before")
-    @classmethod
-    def _validate_kl_reward_coef(cls, value: object | None) -> float | None:
-        if value is None:
-            return None
-        return resolve_kl_reward_coef(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -184,7 +172,7 @@ class AlgorithmConfig(ConfigBase):
             hyper_cls = algorithm_config_class(str(payload.get("kind")))
         except ValueError:
             return payload  # the ``kind`` Literal reports the authoritative error
-        section = {key: payload[key] for key in ("kind", "kl_reward_coef") if key in payload}
+        section = {key: payload[key] for key in ("kind",) if key in payload}
         rest = {key: inner for key, inner in payload.items() if key not in section}
         prebuilt = rest.pop("hyperparameters", None)
         if isinstance(prebuilt, hyper_cls) and not rest:
@@ -255,8 +243,6 @@ class DataConfig(ConfigBase):
     sft_latents: str | None = None
     max_train_samples: StrictInt | None = None
     task_type: str | None = None
-    # readers: data/eval tooling and the dataset provenance gate (trainers/data/provenance.py).
-    allow_absolute_artifact_paths: StrictBool | None = None
     artifact_data_root: str | None = None
     source_report: str | None = None
 

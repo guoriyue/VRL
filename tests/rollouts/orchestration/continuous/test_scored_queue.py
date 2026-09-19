@@ -143,7 +143,6 @@ def test_batch_byte_estimate_counts_trajectory_without_flat_aliases_twice() -> N
         actions=torch.ones(1, 2, 4),
         old_log_prob=torch.zeros(1, 2),
         timesteps=torch.zeros(1, 2),
-        kl=torch.zeros(1, 2),
         replay_tensors={"prompt_ids": torch.tensor([[3, 4, 5]], dtype=torch.long)},
         context={},
     )

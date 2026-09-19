@@ -117,7 +117,6 @@ def _resolve_clean_targets(
     examples: list[Any],
     *,
     data_root: str | Path | None,
-    allow_absolute: bool,
 ) -> list[tuple[str, str, str]]:
     """Resolve and validate stable target identities before loading a model."""
 
@@ -140,7 +139,6 @@ def _resolve_clean_targets(
         resolved = resolve_prompt_example_artifacts(
             example,
             data_root=data_root,
-            allow_absolute=allow_absolute,
         )
         resolved_target = Path(str(getattr(resolved, target.field)))
         if not resolved_target.is_file():
@@ -195,12 +193,7 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("the training manifest resolved to zero examples")
 
     data_root = root.data.artifact_data_root if root.data is not None else None
-    allow_absolute = bool(root.data.allow_absolute_artifact_paths) if root.data else False
-    targets = _resolve_clean_targets(
-        examples,
-        data_root=data_root,
-        allow_absolute=allow_absolute,
-    )
+    targets = _resolve_clean_targets(examples, data_root=data_root)
 
     # Use the same resolved family entry and build path as rollout workers.
     # CUDA follows the experiment's rollout precision. CPU explicitly promotes

@@ -29,7 +29,6 @@ def _denoise_batch() -> tuple[RolloutBatch, torch.Tensor, torch.Tensor]:
         actions=torch.ones(2, 2, 1),
         old_log_prob=old_log_prob,
         timesteps=torch.zeros(2, 2),
-        kl=torch.zeros(2, 2),
         replay_tensors={},
         context={"model_family": "sd3_5"},
     )

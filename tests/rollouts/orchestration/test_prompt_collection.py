@@ -74,7 +74,6 @@ def _batch_with_trajectory(prompts: list[str], group_size: int) -> RolloutBatch:
         actions=torch.zeros(batch_size, 1, 1),
         old_log_prob=torch.zeros(batch_size, 1),
         timesteps=torch.zeros(batch_size, 1),
-        kl=torch.zeros(batch_size, 1),
         replay_tensors={},
         context={},
     )

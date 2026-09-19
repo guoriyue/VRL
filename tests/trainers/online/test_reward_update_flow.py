@@ -1108,7 +1108,6 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         actions=actions,
         old_log_prob=torch.zeros(4, 2),
         timesteps=torch.zeros(4, 2),
-        kl=torch.zeros(4, 2),
         replay_tensors={},
         context={"model_family": "sd3_5"},
     )

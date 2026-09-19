@@ -81,7 +81,6 @@ def _cfg_rollout_batch(
         actions=torch.zeros(_BATCH, 1, *TINY_SD3_LATENT_SHAPE[1:]),
         old_log_prob=torch.zeros(_BATCH, 1),
         timesteps=torch.full((_BATCH, 1), timestep),
-        kl=torch.zeros(_BATCH, 1),
         replay_tensors={
             "prompt_embeds": prompt_embeds,
             "pooled_prompt_embeds": pooled,

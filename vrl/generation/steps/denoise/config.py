@@ -33,7 +33,6 @@ class DenoiseRequestOptions:
     sde_type: SdeType | None = None
     sde_window_size: int = 0
     sde_window_range: tuple[int, int] | None = None
-    return_kl: bool = False
     return_prev_sample_mean: bool = False
     teacache: TeaCacheConfig | None = None
 
@@ -70,14 +69,11 @@ class DenoiseRequestOptions:
         cls,
         rollout: RolloutConfig | None,
         sampling: SamplingSection | None,
-        *,
-        kl_reward_coef: float,
     ) -> DenoiseRequestOptions:
         """Project rollout.* / rollout.sde.* / sampling.teacache into the typed options.
 
         Only YAML-declared values are passed, so the option defaults stay the single
-        source. ``return_kl`` is derived: KL rollout signals are recorded exactly
-        when an SDE block exists and the KL reward coefficient is on.
+        source.
         """
 
         values: dict[str, Any] = {}
@@ -97,7 +93,6 @@ class DenoiseRequestOptions:
                     values["sde_window_size"] = sde.window_size
                 if sde.window_range is not None:
                     values["sde_window_range"] = tuple(sde.window_range)
-                values["return_kl"] = kl_reward_coef > 0.0
         teacache = getattr(sampling, "teacache", None)
         if teacache is not None:
             # Bool flows as-is; the mapping form is the section minus unset keys, so
@@ -132,7 +127,6 @@ class DenoiseSDEParams:
 
     noise_level: float
     sde_type: str
-    return_kl: bool
     return_prev_sample_mean: bool = False
 
 
