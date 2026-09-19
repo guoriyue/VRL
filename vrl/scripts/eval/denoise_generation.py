@@ -20,7 +20,7 @@ from vrl.generation.types import DenoiseRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.source_integrity import runtime_source_tree_sha256
 from vrl.utils.media import to_pil_image
-from vrl.utils.validation import require_exact_dataclass_fields
+from vrl.utils.validation import require_mapping_keys
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -84,7 +84,7 @@ class ImageSampling:
     ) -> ImageSampling:
         """Build sampling values from one persisted record, rejecting missing or unknown keys."""
 
-        return cls(**require_exact_dataclass_fields(cls, value, what=what))
+        return cls(**require_mapping_keys(value, (field.name for field in fields(cls)), what=what))
 
     def to_record(self) -> dict[str, int | float]:
         """Serialize with keys derived from the typed source of truth."""
@@ -151,7 +151,9 @@ class GeneratorRuntimeIdentity:
         """Parse one fail-closed persisted runtime record."""
 
         try:
-            return cls(**require_exact_dataclass_fields(cls, value, what=what))
+            return cls(
+                **require_mapping_keys(value, (field.name for field in fields(cls)), what=what)
+            )
         except ValueError as error:
             raise ValueError(f"{what}: {error}") from error
 
