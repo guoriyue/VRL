@@ -125,3 +125,19 @@ finalizer 启动用例、`tests/rollouts/orchestration/test_prompt_collection.py
 
 仍未做：P0 的 nsys 归因（本批的收益上限仍要在真实 Cosmos run 上量）；共卡场景
 的逐组打分节奏。
+
+### 同日复审后的整理
+
+- 名字与注释：批次循环改名 `execute_request_batches`，结果类型改名
+  `StagedBatchRefs`；注释改为如实描述——request 内部的顺序是"算一批、拷贝、
+  `ray.put`、下一批"，staging 与下一批计算**不**重叠，重叠发生在本 request 的
+  finalize 与下一个 request 的生成之间。`pipelined` 配置键与 actor 方法名未动。
+- 生成与评分两个决策分开：`CollectionSchedule.resolve` 各自给出 `scoring`
+  （整批 / 逐组串行 / 逐组流式）和 `submit_next_generation_early`；后者只在
+  逐组串行对照臂关闭，不依赖 `pipelined`，也不依赖 reward 隔离。
+- finalizer 准入：合并调用改经 `RayActorDispatcher`（每个 finalizer 一个槽位、
+  FIFO、拿到槽位后才起算 deadline），并有"前一个合并慢、后一个排队"的测试。
+  队列上限与 GPU 派发一样未设，没有证据前不加。
+- 多 engine 下 finalizer 的读取不总是本地：注释改为如实说明，按数据位置选
+  finalizer 留待测量。
+- `execute`/`_execute`、`probe_batch_sizes`/`_probe_batch_sizes` 两层转发合并。

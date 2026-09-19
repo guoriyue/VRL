@@ -21,8 +21,8 @@ from vrl.generation.execution.types import (
     BatchMemoryReading,
     GenerationBatchEnvelope,
     GenerationBatchResult,
-    PipelinedBatchRefs,
     PipelinedRequestOutOfMemory,
+    StagedBatchRefs,
     StaleSlotDiscard,
 )
 from vrl.generation.ray.engine import RayGenerationEngine
@@ -518,7 +518,7 @@ class _RoutingWorker:
         self,
         request,
         engine_plan,
-    ) -> PipelinedBatchRefs | PipelinedRequestOutOfMemory:
+    ) -> StagedBatchRefs | PipelinedRequestOutOfMemory:
         self.request_calls.append(request.request_id)
         self.request_batches.append([batch.batch_key for batch in engine_plan.sample_batches])
         request_id = self.pipeline_request_id_override or request.request_id
@@ -529,7 +529,7 @@ class _RoutingWorker:
                 error=_OOM_MESSAGE,
             )
         keys = tuple(batch.batch_key for batch in engine_plan.sample_batches)
-        return PipelinedBatchRefs(
+        return StagedBatchRefs(
             request_id=request_id,
             worker_id=self.pipeline_worker_id_override or self.worker_id,
             batch_keys=keys,

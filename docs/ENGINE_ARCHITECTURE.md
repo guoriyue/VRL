@@ -96,7 +96,7 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 | `GenerationSampleBatch`, `SampleAlignedValues`, `BatchResultWithIdentity` (`sample_batches.py`) | The batch coordinate system: a batch is a slice of samples (`prompt_index`, `sample_start`, `sample_count`), not a time segment. `SampleAlignedValues` slices per-sample tensors consistently. |
 | `GenerationBatchEnvelope` / `GenerationBatchResult` (`execution/types.py`) | The wire pair around one dispatched batch. |
 | `BatchSizeProbeTrial` / `BatchSizeProbeResult`, `BatchMemoryReading`, `AffinePeakFit` | Auto-sizing telemetry: probe trials fit an affine peak-memory model to pick the widest safe batch. |
-| `BatchProduceFence`, `PipelinedBatchRefs`, `StaleSlotDiscard`, `PipelinedRequestOutOfMemory` | Per-request execution coordination (progress fences, staged batch references) and failure signaling. |
+| `BatchProduceFence`, `StagedBatchRefs`, `StaleSlotDiscard`, `PipelinedRequestOutOfMemory` | Per-request execution coordination (progress fences, staged batch references) and failure signaling. |
 
 ### 2.4 Executor ladder (bindings × families)
 

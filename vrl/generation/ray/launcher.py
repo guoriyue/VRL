@@ -213,8 +213,10 @@ class RayGenerationLauncher:
             finalizer_handles: list[RayActorHandle] = []
             if worker.pipelined:
                 # One CPU finalizer per engine, pinned to the engine's primary
-                # bundle so staged payloads are read from the local object
-                # store. It reserves no CPU: bundles are sized for the rank.
+                # bundle. That keeps the merge local for a single-engine fleet;
+                # with several engines a request's payloads come from every
+                # engine, so part of the input crosses nodes either way. It
+                # reserves no CPU: bundles are sized for the rank.
                 finalizer_group = RayActorGroup.launch(
                     worker_cls=RayGenerationFinalizer,
                     worker_configs=[launch_inputs.gatherer for _ in engine_ids],

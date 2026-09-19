@@ -232,7 +232,7 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         worker) instead of dispatching one forward_batch RPC per batch.
         """
 
-        batches = self.forward_batches_pipelined(
+        batches = self.execute_request_batches(
             request,
             plan.sample_batches,
             completion_callback=completion_callback,

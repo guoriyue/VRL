@@ -45,8 +45,8 @@ if TYPE_CHECKING:
         BatchSizeProbeResult,
         GenerationBatchEnvelope,
         GenerationBatchResult,
-        PipelinedBatchRefs,
         PipelinedRequestOutOfMemory,
+        StagedBatchRefs,
         WorkerMemoryParkingSnapshot,
     )
     from vrl.generation.ray.pipeline_protocol import PipelinedRequestProgress
@@ -160,7 +160,7 @@ class GenerationRankActor(Protocol):
         self,
         request: GenerationRequest,
         engine_plan: EnginePlan,
-    ) -> PipelinedBatchRefs | PipelinedRequestOutOfMemory: ...
+    ) -> StagedBatchRefs | PipelinedRequestOutOfMemory: ...
 
     def pipelined_progress(self, request_id: str) -> PipelinedRequestProgress | None: ...
 

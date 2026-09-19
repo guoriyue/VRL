@@ -586,7 +586,7 @@ class GenerationWorkerCore:
             trials=tuple(trials),
         )
 
-    def execute_request_pipelined(
+    def execute_request_batches(
         self,
         request: GenerationRequest,
         engine_plan: EnginePlan,
@@ -614,7 +614,7 @@ class GenerationWorkerCore:
         from vrl.generation.execution.types import StaleSlotDiscard
 
         self._memory_parking.require_active(
-            "execute_request_pipelined",
+            "execute_request_batches",
             executor=self.executor,
         )
         self.load_policy()
@@ -637,10 +637,10 @@ class GenerationWorkerCore:
                 f"expected={expected_version}, actual={self._policy_version}",
             )
         assert self.executor is not None
-        forward_batches = getattr(self.executor, "forward_batches_pipelined", None)
+        forward_batches = getattr(self.executor, "execute_request_batches", None)
         if not callable(forward_batches):
             raise TypeError(
-                f"{type(self.executor).__name__} must implement forward_batches_pipelined(...) "
+                f"{type(self.executor).__name__} must implement execute_request_batches(...) "
                 "for per-request execution",
             )
         try:

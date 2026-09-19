@@ -1,4 +1,4 @@
-"""forward_batches_pipelined runs a request's batches in order on one worker and
+"""execute_request_batches runs a request's batches in order on one worker and
 returns the same per-batch results as running each batch serially. Each result
 is copied to pinned CPU memory before the next batch is produced, so at most
 one batch's payload is on the GPU at a time; batches are independent."""
@@ -32,7 +32,7 @@ def test_pipelined_results_equal_serial_in_batch_order() -> None:
     def produce(batch):
         return ("denoised", batch)
 
-    pipelined = _executor(produce).forward_batches_pipelined(
+    pipelined = _executor(produce).execute_request_batches(
         "req",
         ["c0", "c1", "c2", "c3"],
     )
@@ -55,7 +55,7 @@ def test_every_batch_produced_exactly_once() -> None:
         return ("r", batch)
 
     batches = [f"c{i}" for i in range(5)]
-    out = _executor(produce).forward_batches_pipelined("req", batches)
+    out = _executor(produce).execute_request_batches("req", batches)
 
     assert produced == batches  # produced in order, once each
     assert len(out) == len(batches)
@@ -74,7 +74,7 @@ def test_each_batch_is_copied_to_cpu_before_the_next_is_produced(monkeypatch) ->
 
     monkeypatch.setattr(device_module, "copy_tensor_tree_to_pinned_cpu", copy)
 
-    out = _executor(produce).forward_batches_pipelined("req", ["c0", "c1", "c2"])
+    out = _executor(produce).execute_request_batches("req", ["c0", "c1", "c2"])
 
     assert out == [("host", "c0"), ("host", "c1"), ("host", "c2")]
     assert operations == [
@@ -101,7 +101,7 @@ def test_completion_fence_follows_each_copied_batch(monkeypatch) -> None:
         order.append(f"fence:{fence.completed_batches}")
         fences.append(fence)
 
-    output = _executor(lambda batch: ("result", batch)).forward_batches_pipelined(
+    output = _executor(lambda batch: ("result", batch)).execute_request_batches(
         "req",
         ["c0", "c1", "c2"],
         completion_callback=publish,
@@ -114,7 +114,7 @@ def test_completion_fence_follows_each_copied_batch(monkeypatch) -> None:
 
 
 def test_single_batch_still_produces_and_copies() -> None:
-    out = _executor(lambda batch: ("p", batch)).forward_batches_pipelined(
+    out = _executor(lambda batch: ("p", batch)).execute_request_batches(
         "req",
         ["only"],
     )
@@ -122,7 +122,7 @@ def test_single_batch_still_produces_and_copies() -> None:
 
 
 def test_empty_batches_returns_empty() -> None:
-    out = _executor(lambda batch: batch).forward_batches_pipelined(
+    out = _executor(lambda batch: batch).execute_request_batches(
         "req",
         [],
     )
@@ -146,7 +146,7 @@ def test_produce_error_propagates_after_earlier_batches_were_copied(monkeypatch)
     monkeypatch.setattr(device_module, "copy_tensor_tree_to_pinned_cpu", copy)
 
     with pytest.raises(RuntimeError, match="CUDA out of memory"):
-        _executor(produce).forward_batches_pipelined("req", ["c0", "c1"])
+        _executor(produce).execute_request_batches("req", ["c0", "c1"])
 
     assert produced == ["c0", "c1"]
     assert copied == [("result", "c0")]

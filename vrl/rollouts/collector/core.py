@@ -85,6 +85,58 @@ class RewardCollectionMode(str, Enum):  # noqa: UP042
     PER_GROUP_STREAMING = "per_group_streaming"
 
 
+@dataclass(frozen=True, slots=True)
+class CollectionSchedule:
+    """The two independent scheduling decisions of one strict collection.
+
+    ``scoring`` answers "score once for the whole collection, or per group,
+    and if per group, may a score overlap the next generation?". It is the
+    reward-side decision and depends on the collector's overlap capability.
+
+    ``submit_next_generation_early`` answers "is the next group's generation
+    request submitted before the current group's output is awaited?". It is
+    the generation-side decision. The engine admits one request at a time, so
+    an early submission only removes the gap between two requests: the next
+    one starts the moment the current one's batches are staged, while the
+    current one is merged and scored. It does not depend on the per-request
+    (``pipelined``) engine path, nor on reward isolation. Only the
+    per-group-serial acceptance control arm turns it off, because that arm
+    exists to keep every stage strictly sequential.
+    """
+
+    scoring: RewardCollectionMode
+    submit_next_generation_early: bool
+
+    @classmethod
+    def resolve(
+        cls,
+        *,
+        overlap_capable: bool,
+        reward_mode: RewardCollectionMode | None,
+    ) -> CollectionSchedule:
+        # Only the collector's capability may enable per-group scoring: the
+        # acceptance override can restrict a capable collector, but cannot grant
+        # the runtime isolation needed to alternate generation and scoring safely.
+        if reward_mode is None:
+            scoring = (
+                RewardCollectionMode.PER_GROUP_STREAMING
+                if overlap_capable
+                else RewardCollectionMode.BATCHED_SERIAL
+            )
+        elif reward_mode is not RewardCollectionMode.BATCHED_SERIAL and not overlap_capable:
+            raise ValueError(
+                f"reward collection mode {reward_mode.value!r} requires the collector's "
+                "reward/generation overlap capability (async scoring plus verified "
+                "accelerator isolation); it cannot be forced on",
+            )
+        else:
+            scoring = reward_mode
+        return cls(
+            scoring=scoring,
+            submit_next_generation_early=scoring is not RewardCollectionMode.PER_GROUP_SERIAL,
+        )
+
+
 class PromptCollectionCleanupError(RuntimeError):
     """Generation failed while an in-flight reward task also failed to settle."""
 
@@ -490,25 +542,14 @@ class RolloutCollector:
 
         generated_groups: list[RolloutGenerationResult] = []
         scored_batches: list[RolloutBatch] = []
-        # The collector combines topology and reward-runtime execution semantics.
-        # Only its capability may enable per-group collection: the acceptance
-        # override can restrict a capable collector, but cannot grant the runtime
-        # isolation needed to alternate generation and scoring safely.
-        overlap_capable = bool(self.supports_reward_generation_overlap)
-        if reward_mode is None:
-            mode = (
-                RewardCollectionMode.PER_GROUP_STREAMING
-                if overlap_capable
-                else RewardCollectionMode.BATCHED_SERIAL
-            )
-        elif reward_mode is not RewardCollectionMode.BATCHED_SERIAL and not overlap_capable:
-            raise ValueError(
-                f"reward collection mode {reward_mode.value!r} requires the collector's "
-                "reward/generation overlap capability (async scoring plus verified "
-                "accelerator isolation); it cannot be forced on",
-            )
-        else:
-            mode = reward_mode
+        # The collector combines topology and reward-runtime execution semantics
+        # into two separate decisions: how scoring is scheduled, and whether the
+        # next generation is submitted early. See CollectionSchedule.
+        schedule = CollectionSchedule.resolve(
+            overlap_capable=bool(self.supports_reward_generation_overlap),
+            reward_mode=reward_mode,
+        )
+        mode = schedule.scoring
         per_group_scoring = mode is not RewardCollectionMode.BATCHED_SERIAL
         score_task: asyncio.Task[list[RolloutBatch]] | None = None
 
@@ -558,11 +599,9 @@ class RolloutCollector:
                 name="rollout-reward-score",
             )
 
-        # One generation ahead: the next group's request is submitted before this
-        # group's output is awaited, so the engine admits its batches the moment
-        # this group's are staged, while this group is merged and scored. The
-        # per-group-serial control arm keeps every stage strictly sequential.
-        prefetch_generation = mode is not RewardCollectionMode.PER_GROUP_SERIAL
+        # Generation-side decision (see CollectionSchedule): keep one request
+        # submitted ahead so the engine never idles between two groups.
+        prefetch_generation = schedule.submit_next_generation_early
         pending_generation: tuple[asyncio.Task[UnscoredRollout], float] | None = None
 
         def start_generation(

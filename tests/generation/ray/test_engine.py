@@ -258,10 +258,10 @@ def test_generation_combiner_prioritizes_terminal_errors_over_retry_and_discard(
 
 @pytest.mark.asyncio
 async def test_pipeline_combiner_retains_nonprimary_oom_payload():
-    from vrl.generation.execution.types import PipelinedBatchRefs, PipelinedRequestOutOfMemory
+    from vrl.generation.execution.types import PipelinedRequestOutOfMemory, StagedBatchRefs
     from vrl.generation.ray.executor import RayGenerationExecutor
 
-    good = PipelinedBatchRefs("r", "r0", ("b0",), ("ref-0",))
+    good = StagedBatchRefs("r", "r0", ("b0",), ("ref-0",))
     bad = PipelinedRequestOutOfMemory("r", "r1", "CUDA out of memory")
     engine = _engine(
         [], {"r0": ResolvedRef(good), "r1": ResolvedRef(bad)}, method="execute_request_pipelined"

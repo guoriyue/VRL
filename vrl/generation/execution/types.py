@@ -324,14 +324,15 @@ class GenerationBatchResult:
 
 
 @dataclass(frozen=True, slots=True)
-class PipelinedBatchRefs:
+class StagedBatchRefs:
     """Typed worker response for a per-request run: one object-store reference per batch.
 
-    The rank stages each batch payload with ``ray.put`` as soon as its pinned
-    host copy is ready, while the next batch is still denoising, so the payloads
-    never travel inside the actor's return value and the GPU worker is free the
-    moment its last batch is staged. The driver hands the references to a
-    finalizer actor, which merges them off the GPU worker's critical path.
+    The rank stages each batch payload with ``ray.put`` right after its pinned
+    host copy (compute, copy, stage, next batch: staging is not overlapped
+    within the request), so the payloads never travel inside the actor's return
+    value and the rank is free the moment its last batch is staged. The driver
+    hands the references to a finalizer actor, which merges them while the rank
+    already generates the next request.
     Non-primary ranks of a multi-rank engine run the same loop for its
     collectives but stage nothing and report empty tuples.
     """
@@ -374,8 +375,8 @@ __all__ = [
     "GenerationBatchEnvelope",
     "GenerationBatchResult",
     "ParkingBackend",
-    "PipelinedBatchRefs",
     "PipelinedRequestOutOfMemory",
+    "StagedBatchRefs",
     "StaleSlotDiscard",
     "WorkerMemoryParkingSnapshot",
 ]

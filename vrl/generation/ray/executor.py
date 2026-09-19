@@ -23,8 +23,8 @@ from vrl.generation.execution.types import (
     BatchSizeProbeResult,
     GenerationBatchEnvelope,
     GenerationBatchResult,
-    PipelinedBatchRefs,
     PipelinedRequestOutOfMemory,
+    StagedBatchRefs,
     StaleSlotDiscard,
 )
 from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
@@ -83,13 +83,20 @@ class RayGenerationExecutor:
         self.pipelined = bool(pipelined)
         # The per-request path stages batch payloads in the object store and
         # merges them on a finalizer actor, never on the rank or the driver.
+        # Finalizers get the same admission as engines: one slot each, FIFO
+        # waiters, and a call's deadline starts only once it holds a slot, so
+        # a request queued behind a slow merge does not burn its budget waiting.
         self.finalizers = tuple(finalizers)
         if self.pipelined and not self.finalizers:
             raise ValueError(
                 "pipelined Ray generation requires at least one finalizer actor "
                 "to merge staged batch payloads",
             )
-        self._next_finalizer = 0
+        self._finalizer_dispatcher = (
+            RayActorDispatcher(tuple(finalizer.worker_id for finalizer in self.finalizers))
+            if self.finalizers
+            else None
+        )
 
     def _engine_for_result_id(self, worker_id: str) -> RayGenerationEngine | None:
         """Map a result's producing rank id (or an engine id) to its engine."""
@@ -101,32 +108,18 @@ class RayGenerationExecutor:
                 return engine
         return None
 
-    async def execute(self, request: GenerationRequest) -> GenerationOutput:
-        """Execute one request.
-
-        Admission is the fleet dispatcher's: each engine exposes one slot with
-        FIFO waiters, and a call's stall deadline starts only after its slot is
-        acquired, so a later request never spends its budget queued behind an
-        earlier one. Requests may therefore be submitted concurrently; the
-        per-request path releases an engine's slot as soon as its batches are
-        staged, before the request is merged.
-        """
-
-        return await self._execute(request)
-
     @staticmethod
     def _select_request_rank_result(
         results: list[Any],
-    ) -> PipelinedBatchRefs | PipelinedRequestOutOfMemory:
+    ) -> StagedBatchRefs | PipelinedRequestOutOfMemory:
         """Return an OOM reported by any rank; otherwise keep the primary's refs."""
 
         if not all(
-            isinstance(result, (PipelinedBatchRefs, PipelinedRequestOutOfMemory))
+            isinstance(result, (StagedBatchRefs, PipelinedRequestOutOfMemory))
             for result in results
         ):
             raise TypeError(
-                "pipelined engine ranks must return PipelinedBatchRefs or "
-                "PipelinedRequestOutOfMemory"
+                "pipelined engine ranks must return StagedBatchRefs or PipelinedRequestOutOfMemory"
             )
         if any(result.request_id != results[0].request_id for result in results[1:]):
             raise RuntimeError("pipelined engine ranks returned different request identities")
@@ -143,14 +136,6 @@ class RayGenerationExecutor:
     ) -> list[BatchSizeProbeResult]:
         """Probe every engine through the same actor admission as generation."""
 
-        return await self._probe_batch_sizes(request, max_samples=max_samples)
-
-    async def _probe_batch_sizes(
-        self,
-        request: GenerationRequest,
-        *,
-        max_samples: int,
-    ) -> list[BatchSizeProbeResult]:
         for engine in self.engines:
             if len(engine.ranks) != 1:
                 raise ValueError(
@@ -193,7 +178,17 @@ class RayGenerationExecutor:
                 )
         return results
 
-    async def _execute(self, request: GenerationRequest) -> GenerationOutput:
+    async def execute(self, request: GenerationRequest) -> GenerationOutput:
+        """Execute one request.
+
+        Admission is the fleet dispatcher's: each engine exposes one slot with
+        FIFO waiters, and a call's stall deadline starts only after its slot is
+        acquired, so a later request never spends its budget queued behind an
+        earlier one. Requests may therefore be submitted concurrently; the
+        per-request path releases an engine's slot as soon as its batches are
+        staged, before the request is merged.
+        """
+
         import time
 
         from vrl.utils.profiling import profile_range
@@ -428,7 +423,7 @@ class RayGenerationExecutor:
                 raise result
         refs_by_key: dict[str, Any] = {}
         for (engine, batches), result in zip(engine_batches, engine_results, strict=True):
-            if not isinstance(result, (PipelinedBatchRefs, PipelinedRequestOutOfMemory)):
+            if not isinstance(result, (StagedBatchRefs, PipelinedRequestOutOfMemory)):
                 raise TypeError(
                     "pipelined generation engine returned unsupported result "
                     f"{type(result).__name__}",
@@ -473,7 +468,7 @@ class RayGenerationExecutor:
         request: GenerationRequest,
         engine: RayGenerationEngine,
         batches: tuple[Any, ...],
-    ) -> PipelinedBatchRefs | PipelinedRequestOutOfMemory | StaleSlotDiscard:
+    ) -> StagedBatchRefs | PipelinedRequestOutOfMemory | StaleSlotDiscard:
         primary = engine.primary
         # Progress is a rank-0 read on the health concurrency group.
         progress = getattr(primary.actor, "pipelined_progress", None)
@@ -536,29 +531,42 @@ class RayGenerationExecutor:
         sample_rows: list[GenerationSampleRow],
         batch_refs: list[Any],
     ) -> GenerationOutput:
-        """Merge staged batch references on the next finalizer actor."""
+        """Merge staged batch references on whichever finalizer is free.
 
-        finalizer = self.finalizers[self._next_finalizer % len(self.finalizers)]
-        self._next_finalizer += 1
-        deadline = RayCallDeadline(
-            "rollout.generation.finalize",
-            self.generation_stall_timeout_s,
-            context=f"finalizer={finalizer.worker_id}, request_id={request.request_id}",
+        With several engines a request's references come from every engine, so
+        the chosen finalizer reads part of its input from other nodes' object
+        stores; per-engine placement only guarantees locality for single-engine
+        fleets. Choosing by data location is a measurement away, not a design
+        decision taken here.
+        """
+
+        dispatcher = self._finalizer_dispatcher
+        if dispatcher is None:
+            raise RuntimeError("per-request generation has no finalizer to merge on")
+        pairs = await dispatcher.run(
+            [
+                RayActorJob(
+                    job_index=0,
+                    worker_id=None,
+                    remote_method=None,
+                    payload=request,
+                    keyword_args={
+                        "sample_rows": list(sample_rows),
+                        "batch_refs": list(batch_refs),
+                    },
+                ),
+            ],
+            operation="rollout.generation.finalize",
+            call_timeout_s=self.generation_stall_timeout_s,
+            worker_methods={
+                finalizer.worker_id: finalizer.actor.merge_request.remote
+                for finalizer in self.finalizers
+            },
         )
-        ref = finalizer.actor.merge_request.remote(request, list(sample_rows), list(batch_refs))
-        task = asyncio.ensure_future(ref)
-        try:
-            output = await asyncio.wait_for(task, timeout=deadline.remaining_s())
-        except TimeoutError as cause:
-            cancel_ray_refs(None, [ref], root_error=None)
-            raise deadline.timeout_error() from cause
-        except asyncio.CancelledError:
-            cancel_ray_refs(None, [ref], root_error=None)
-            raise
+        output = pairs[0][1]
         if not isinstance(output, GenerationOutput):
             raise TypeError(
-                f"finalizer {finalizer.worker_id!r} returned {type(output).__name__}, "
-                "expected GenerationOutput",
+                f"finalizer returned {type(output).__name__}, expected GenerationOutput",
             )
         if output.request_id != request.request_id:
             raise RuntimeError(

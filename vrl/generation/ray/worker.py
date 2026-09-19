@@ -13,8 +13,8 @@ from vrl.generation.execution.types import (
     BatchSizeProbeResult,
     GenerationBatchEnvelope,
     GenerationBatchResult,
-    PipelinedBatchRefs,
     PipelinedRequestOutOfMemory,
+    StagedBatchRefs,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
@@ -155,15 +155,15 @@ class RayGenerationWorker:
         self,
         request: GenerationRequest,
         engine_plan: EnginePlan,
-    ) -> PipelinedBatchRefs | PipelinedRequestOutOfMemory:
+    ) -> StagedBatchRefs | PipelinedRequestOutOfMemory:
         """Run all of the plan's batches on this rank in one call.
 
-        Each batch payload is staged into the object store as soon as its host
-        copy is ready, so the returned value carries only references and this
-        rank is free for the next request the moment its last batch is staged.
-        A non-primary rank of a multi-rank engine stages nothing. See
-        GenerationWorkerCore.execute_request_pipelined for version safety and
-        the typed OOM retry.
+        Each batch payload is staged into the object store right after its host
+        copy, so the returned value carries only references and this rank is
+        free for the next request the moment its last batch is staged. A
+        non-primary rank of a multi-rank engine stages nothing. See
+        GenerationWorkerCore.execute_request_batches for version safety and the
+        typed OOM retry.
         """
 
         request_id = str(request.request_id)
@@ -208,7 +208,7 @@ class RayGenerationWorker:
 
         primary = self._is_primary_rank
         try:
-            staged = self.core.execute_request_pipelined(
+            staged = self.core.execute_request_batches(
                 request,
                 engine_plan,
                 completion_callback=record_completion,
@@ -225,14 +225,14 @@ class RayGenerationWorker:
                 f"for a {total_batches}-batch plan",
             )
         if not primary:
-            return PipelinedBatchRefs(
+            return StagedBatchRefs(
                 request_id=request_id,
                 worker_id=self.core.worker_id,
                 batch_keys=(),
                 batch_refs=(),
                 policy_version=request.policy_version,
             )
-        return PipelinedBatchRefs(
+        return StagedBatchRefs(
             request_id=request_id,
             worker_id=self.core.worker_id,
             batch_keys=tuple(batch.batch_key for batch in engine_plan.sample_batches),

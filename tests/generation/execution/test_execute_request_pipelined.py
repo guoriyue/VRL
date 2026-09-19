@@ -1,4 +1,4 @@
-"""Version-safety of GenerationWorkerCore.execute_request_pipelined (the
+"""Version-safety of GenerationWorkerCore.execute_request_batches (the
 per-request path) — it must enforce the SAME slot / stale-slot /
 version-mismatch guarantees as execute_batch, at the request level, so a stale
 request is never run + trained off-policy. The core returns the staged
@@ -42,7 +42,7 @@ class _Executor:
         self.error = error
         self.calls: list[tuple] = []
 
-    def forward_batches_pipelined(
+    def execute_request_batches(
         self,
         request,
         batches,
@@ -92,7 +92,7 @@ def test_slot_mode_with_live_slot_activates_and_runs() -> None:
     ex = _Executor(model)
     core = _core(executor=ex, uses_slots=True, policy_version=9)
 
-    out = GenerationWorkerCore.execute_request_pipelined(
+    out = GenerationWorkerCore.execute_request_batches(
         core, _request(7), _PLAN, completion_callback=_NOOP_CB
     )
 
@@ -115,7 +115,7 @@ def test_worker_core_forwards_completion_callback_and_stage_hook() -> None:
         policy_version=5,
     )
 
-    output = GenerationWorkerCore.execute_request_pipelined(
+    output = GenerationWorkerCore.execute_request_batches(
         core,
         _request(5),
         _PLAN,
@@ -134,7 +134,7 @@ def test_slot_mode_with_evicted_slot_raises_stale_discard_and_does_not_run() -> 
     core = _core(executor=ex, uses_slots=True, policy_version=9)
 
     with pytest.raises(StaleSlotDiscard):
-        GenerationWorkerCore.execute_request_pipelined(
+        GenerationWorkerCore.execute_request_batches(
             core, _request(7), _PLAN, completion_callback=_NOOP_CB
         )
     assert ex.calls == []  # never ran => never trained off-policy
@@ -145,7 +145,7 @@ def test_non_slot_version_mismatch_raises_and_does_not_run() -> None:
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
     with pytest.raises(RuntimeError, match="policy_version mismatch"):
-        GenerationWorkerCore.execute_request_pipelined(
+        GenerationWorkerCore.execute_request_batches(
             core, _request(6), _PLAN, completion_callback=_NOOP_CB
         )
     assert ex.calls == []
@@ -155,7 +155,7 @@ def test_non_slot_matching_version_runs() -> None:
     ex = _Executor(_Model(set()))
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
-    out = GenerationWorkerCore.execute_request_pipelined(
+    out = GenerationWorkerCore.execute_request_batches(
         core, _request(5), _PLAN, completion_callback=_NOOP_CB
     )
     assert out == [("produced", "b0"), ("produced", "b1")]
@@ -166,7 +166,7 @@ def test_no_expected_version_runs_unconditionally() -> None:
     ex = _Executor(_Model(set()))
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
-    out = GenerationWorkerCore.execute_request_pipelined(
+    out = GenerationWorkerCore.execute_request_batches(
         core, _request(None), _PLAN, completion_callback=_NOOP_CB
     )
     assert out == [("produced", "b0"), ("produced", "b1")]
@@ -184,7 +184,7 @@ def test_cuda_oom_clears_worker_state_and_returns_typed_retry(monkeypatch) -> No
     )
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
-    result = GenerationWorkerCore.execute_request_pipelined(
+    result = GenerationWorkerCore.execute_request_batches(
         core,
         _request(5),
         _PLAN,
@@ -209,7 +209,7 @@ def test_non_oom_pipeline_error_propagates_without_cleanup(monkeypatch) -> None:
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
     with pytest.raises(RuntimeError, match="scheduler state is invalid"):
-        GenerationWorkerCore.execute_request_pipelined(
+        GenerationWorkerCore.execute_request_batches(
             core,
             _request(5),
             _PLAN,

@@ -13,6 +13,7 @@ from tests.rollouts.collector._helpers import PromptCollectionFake
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.core import (
+    CollectionSchedule,
     PromptCollectionCleanupError,
     RewardCollectionMode,
     RolloutGenerationResult,
@@ -572,6 +573,55 @@ async def test_generation_failure_cancels_and_settles_inflight_score(
 
     assert collector.active_scores == 0
     assert collector.score_cancelled.is_set()
+
+
+@pytest.mark.parametrize(
+    ("overlap_capable", "reward_mode", "scoring", "early"),
+    [
+        (True, None, RewardCollectionMode.PER_GROUP_STREAMING, True),
+        (False, None, RewardCollectionMode.BATCHED_SERIAL, True),
+        (True, RewardCollectionMode.BATCHED_SERIAL, RewardCollectionMode.BATCHED_SERIAL, True),
+        (
+            True,
+            RewardCollectionMode.PER_GROUP_SERIAL,
+            RewardCollectionMode.PER_GROUP_SERIAL,
+            False,
+        ),
+        (
+            True,
+            RewardCollectionMode.PER_GROUP_STREAMING,
+            RewardCollectionMode.PER_GROUP_STREAMING,
+            True,
+        ),
+    ],
+)
+def test_collection_schedule_keeps_generation_and_scoring_decisions_apart(
+    overlap_capable: bool,
+    reward_mode: RewardCollectionMode | None,
+    scoring: RewardCollectionMode,
+    early: bool,
+) -> None:
+    """Scoring follows capability and override; early generation is on unless
+    the serial control arm asks for a fully sequential collection."""
+
+    schedule = CollectionSchedule.resolve(
+        overlap_capable=overlap_capable,
+        reward_mode=reward_mode,
+    )
+
+    assert schedule.scoring is scoring
+    assert schedule.submit_next_generation_early is early
+
+
+@pytest.mark.parametrize(
+    "reward_mode",
+    [RewardCollectionMode.PER_GROUP_SERIAL, RewardCollectionMode.PER_GROUP_STREAMING],
+)
+def test_collection_schedule_cannot_force_per_group_scoring_without_capability(
+    reward_mode: RewardCollectionMode,
+) -> None:
+    with pytest.raises(ValueError, match="cannot be forced on"):
+        CollectionSchedule.resolve(overlap_capable=False, reward_mode=reward_mode)
 
 
 async def _settle(hops: int = 20) -> None:

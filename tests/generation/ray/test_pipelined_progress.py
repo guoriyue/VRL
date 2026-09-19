@@ -92,7 +92,7 @@ def test_ray_worker_reports_only_the_active_pipelined_request(monkeypatch) -> No
         worker_id = "w0"
         rank_group_spec = None
 
-        def execute_request_pipelined(
+        def execute_request_batches(
             self,
             request: Any,
             engine_plan: Any,
@@ -236,6 +236,83 @@ async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
         "rollout.generation.batch",
         "rollout.generation.pipelined",
     ]
+
+
+@pytest.mark.asyncio
+async def test_finalize_gets_its_deadline_only_after_a_finalizer_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A request whose merge queues behind a slow one does not burn its budget
+    waiting: the finalizer has one slot, FIFO waiters, and the deadline starts
+    at admission, exactly like the engines."""
+
+    import time
+
+    from vrl.generation.types import GenerationOutput
+    from vrl.trajectory.types import TrajectoryBatch
+
+    executor = _executor(timeout_s=5.0)
+    first_gate = asyncio.Event()
+    merges: list[str] = []
+    deadline_starts: list[float] = []
+    real_deadline = actor_pool_module.RayCallDeadline
+
+    def recording_deadline(operation: str, *args: Any, **kwargs: Any) -> Any:
+        assert operation == "rollout.generation.finalize"
+        deadline_starts.append(time.perf_counter())
+        return real_deadline(operation, *args, **kwargs)
+
+    def _output(request: Any) -> GenerationOutput:
+        return GenerationOutput(
+            output=[],
+            trajectory=TrajectoryBatch(
+                request_id=request.request_id,
+                family="test",
+                task="t2i",
+                sample_rows=[],
+                axes={},
+                segments={},
+            ),
+        )
+
+    class _MergeMethod:
+        @staticmethod
+        def remote(request: Any, **_kwargs: Any) -> Any:
+            merges.append(request.request_id)
+            if request.request_id == "slow":
+                return GatedRef(first_gate, _output(request))
+            return ResolvedRef(_output(request))
+
+    monkeypatch.setattr(actor_pool_module, "RayCallDeadline", recording_deadline)
+    executor.finalizers = (
+        RayActorHandle(
+            worker_id="finalize-0", actor=SimpleNamespace(merge_request=_MergeMethod())
+        ),
+    )
+    executor._finalizer_dispatcher = RayActorDispatcher(("finalize-0",))
+
+    slow = asyncio.create_task(
+        executor._finalize_request(SimpleNamespace(request_id="slow"), [], ["ref-a"]),
+    )
+    await asyncio.sleep(0)
+    queued = asyncio.create_task(
+        executor._finalize_request(SimpleNamespace(request_id="queued"), [], ["ref-b"]),
+    )
+    await asyncio.sleep(0.05)
+
+    # The queued merge is neither submitted nor on the clock while the slow
+    # one holds the finalizer's slot.
+    assert merges == ["slow"]
+    assert len(deadline_starts) == 1
+    assert not queued.done()
+
+    released_at = time.perf_counter()
+    first_gate.set()
+    assert (await slow).request_id == "slow"
+    assert (await queued).request_id == "queued"
+    assert merges == ["slow", "queued"]
+    assert len(deadline_starts) == 2
+    assert deadline_starts[1] >= released_at
 
 
 @pytest.mark.asyncio

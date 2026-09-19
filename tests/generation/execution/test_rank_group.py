@@ -71,7 +71,7 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
             for iteration in range(2):
                 torch.manual_seed(rank + iteration * 100)
                 random.seed(rank + iteration * 100)
-                output = core.execute_request_pipelined(
+                output = core.execute_request_batches(
                     GenerationRequest("r", "sd3_5", "t2i", ["p"], 1),
                     None,
                     [],

@@ -4,8 +4,9 @@ The GPU rank stages each batch into the object store as it is produced and
 returns only references. Merging (the gatherer's concatenation and trajectory
 build) and boxing the reward media then run here, in a process without a model,
 so the rank is free for the next request while this one is assembled. One
-finalizer is launched per engine, pinned to the engine's primary bundle so the
-staged payloads are read from the local object store.
+finalizer is launched per engine, pinned to the engine's primary bundle; the
+executor hands each request to whichever finalizer is free, so with several
+engines the merge reads part of its input from other nodes' object stores.
 """
 
 from __future__ import annotations

@@ -102,7 +102,7 @@ _PLAN = SimpleNamespace(sample_batches=("b0",))
 
 
 class _PipelinedExecutor(_Executor):
-    def forward_batches_pipelined(
+    def execute_request_batches(
         self, request: Any, batches: Any, *, completion_callback: Any, stage_result: Any
     ) -> Any:
         return [(request, batches)]
@@ -327,11 +327,11 @@ def test_parked_worker_rejects_execution_until_wake() -> None:
     request = GenerationRequest("r", "sd3_5", "t2i", ["p"], 1, policy_version=1)
 
     core.sleep()
-    with pytest.raises(RuntimeError, match=r"parked.*refusing execute_request_pipelined"):
-        core.execute_request_pipelined(request, _PLAN, completion_callback=_NOOP_CB)
+    with pytest.raises(RuntimeError, match=r"parked.*refusing execute_request_batches"):
+        core.execute_request_batches(request, _PLAN, completion_callback=_NOOP_CB)
 
     core.wake()
-    assert core.execute_request_pipelined(request, _PLAN, completion_callback=_NOOP_CB) == [
+    assert core.execute_request_batches(request, _PLAN, completion_callback=_NOOP_CB) == [
         (request, _PLAN.sample_batches),
     ]
 
@@ -603,7 +603,7 @@ def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
     from vrl.generation.types import GenerationRequest
 
     class _OomPipelinedExecutor(_PipelinedExecutor):
-        def forward_batches_pipelined(
+        def execute_request_batches(
             self,
             _request: Any,
             _batches: Any,
@@ -626,7 +626,7 @@ def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
         policy_version=1,
     )
 
-    result = core.execute_request_pipelined(request, _PLAN, completion_callback=_NOOP_CB)
+    result = core.execute_request_batches(request, _PLAN, completion_callback=_NOOP_CB)
 
     assert isinstance(result, PipelinedRequestOutOfMemory)
     assert model.reset_calls == 1
@@ -793,7 +793,7 @@ def test_generation_execution_does_not_reenter_one_shot_cumem_scope(
     core.load_policy()
     request = GenerationRequest("r", "sd3_5", "t2i", ["p"], 1, policy_version=1)
 
-    result = core.execute_request_pipelined(request, _PLAN, completion_callback=_NOOP_CB)
+    result = core.execute_request_batches(request, _PLAN, completion_callback=_NOOP_CB)
 
     assert result == [(request, _PLAN.sample_batches)]
     assert fake.pool_tags == ["vrl:generation:rollout-0:weights"]

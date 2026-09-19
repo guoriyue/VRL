@@ -1,4 +1,4 @@
-"""REAL-CUDA equality of forward_batches_pipelined against serial produce + copy:
+"""REAL-CUDA equality of execute_request_batches against serial produce + copy:
 produce() does an actual GPU matmul so there is in-flight work the synchronous
 pinned copy must wait on, and we assert torch.equal versus serial produce and
 ``.cpu()``. A copy that returned before the kernel finished, or one that
@@ -53,7 +53,7 @@ def test_pipelined_equals_serial_real_cuda() -> None:
     batches = [0, 1, 2, 3, 4, 5]
 
     serial = _serial(batches)
-    pipelined = _executor(_produce).forward_batches_pipelined("req", batches)
+    pipelined = _executor(_produce).execute_request_batches("req", batches)
 
     assert len(pipelined) == len(serial)
     for idx, (sp, pp) in enumerate(zip(serial, pipelined, strict=True)):
@@ -66,7 +66,7 @@ def test_pipelined_equals_serial_real_cuda() -> None:
 def test_pipelined_preserves_batch_order_real_cuda() -> None:
     # Distinct seeds => distinct values; the result list must stay in batch order.
     batches = [10, 20, 30, 40]
-    pipelined = _executor(_produce).forward_batches_pipelined("req", batches)
+    pipelined = _executor(_produce).execute_request_batches("req", batches)
     expected = [_produce(c)["scalar"].cpu() for c in batches]
     for got, exp in zip(pipelined, expected, strict=True):
         assert torch.equal(got["scalar"], exp)
@@ -86,7 +86,7 @@ def test_pipelined_moves_real_slots_batch_result_to_cpu() -> None:
             context={"batch": batch},
         )
 
-    results = _executor(_produce_batch).forward_batches_pipelined("req", [0, 1])
+    results = _executor(_produce_batch).execute_request_batches("req", [0, 1])
 
     assert all(isinstance(result, DenoiseBatchResult) for result in results)
     assert all(result.latents.device.type == "cpu" for result in results)
@@ -97,6 +97,6 @@ def test_pipelined_moves_real_slots_batch_result_to_cpu() -> None:
 def test_real_cuda_fences_follow_copied_batches() -> None:
     fences: list[BatchProduceFence] = []
 
-    _executor(_produce).forward_batches_pipelined("req", [0, 1], completion_callback=fences.append)
+    _executor(_produce).execute_request_batches("req", [0, 1], completion_callback=fences.append)
 
     assert [fence.completed_batches for fence in fences] == [1, 2]
