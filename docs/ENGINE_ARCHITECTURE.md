@@ -189,7 +189,6 @@ classDiagram
     InferenceRewardFunction <|-- CumemRewardFunction
     CumemRewardFunction <|-- ModelRewardFunction
     RewardFunction <|-- MultiReward
-    RewardFunction <|-- GenEvalReward
     InferenceRewardFunction <|-- NSFWSafetyReward
     InferenceRewardFunction <|-- OCRReward
     InferenceRewardFunction <|-- MotionDynamicsReward
@@ -228,7 +227,6 @@ classDiagram
   aggregates both capability flags with `all()` across components (one
   blocking or unverified component makes the composite blocking/unverified)
   and fans lifecycle calls out to children with retryable teardown.
-- **`GenEvalReward`** — pure scoring function, no inference transport.
 
 ### 3.3 Runtime and scorer transports
 

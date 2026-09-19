@@ -3,7 +3,7 @@
 This module owns the deterministic adversarial candidate battery and the
 fail-closed acceptance policy. Transport, artifact materialization, and CLI
 reporting stay in the probe scripts that import it
-(``unified_reward_robotics_discrimination_probe`` / ``idm_discrimination_probe``).
+(``unified_reward_robotics_discrimination_probe``).
 """
 
 from __future__ import annotations

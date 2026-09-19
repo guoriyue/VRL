@@ -52,10 +52,8 @@ def get_reward(name: str) -> type[RewardFunction]:
 
 def _register_builtins() -> None:
     from vrl.rewards.functions.aesthetic import AestheticReward
-    from vrl.rewards.functions.geneval import GenEvalReward
     from vrl.rewards.functions.geneval_owl import GenEvalOwlReward
     from vrl.rewards.functions.hpsv3 import HPSv3Reward
-    from vrl.rewards.functions.idm_action_following import ActionFollowingReward
     from vrl.rewards.functions.image_sharpness import ImageSharpnessReward
     from vrl.rewards.functions.kling_video_reward import KlingVideoReward
     from vrl.rewards.functions.motion_dynamics import MotionDynamicsReward
@@ -71,9 +69,7 @@ def _register_builtins() -> None:
     _REWARD_REGISTRY.update(
         {
             "aesthetic": AestheticReward,
-            "idm_action_following": ActionFollowingReward,
             "image_sharpness": ImageSharpnessReward,
-            "geneval": GenEvalReward,
             "geneval_owl": GenEvalOwlReward,
             "nsfw_safety": NSFWSafetyReward,
             "ocr": OCRReward,

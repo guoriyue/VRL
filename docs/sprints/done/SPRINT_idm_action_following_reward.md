@@ -1,6 +1,6 @@
 # SPRINT: IDM action-following reward —— 在低维动作空间给 V2W 世界模型打分
 
-状态：**in progress（2026-08-22：Phase 1-2 落地，Phase 3 探针首轮 FAIL，回炉中）**。
+状态：**已关闭（2026-09-19）**。Phase 3 判别探针两轮 FAIL 后未再推进；reward、IDM 训练脚本和探针已从仓库删除（自训判官不符合 ready-model reward 原则）。下文保留为测量记录。原状态：in progress（2026-08-22：Phase 1-2 落地，Phase 3 探针首轮 FAIL，回炉中）。
 首轮实测（droid_1.0.1，360 clip / 11,520 帧对，0.36M IDM，cartesian_velocity+gripper 7 维）：
 探针排序方向正确（exact 0.650 最高，frame_shuffle 0.439 最低，wrong_clip 0.504、reverse
 0.497 低于 exact），但 static_frozen 0.593 / perceptual_blur 0.598 落在 exact 的 0.1 内 =

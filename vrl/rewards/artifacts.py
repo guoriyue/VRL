@@ -213,7 +213,7 @@ def _artifact_provenance(metadata: dict[str, Any]) -> dict[str, Any]:
     The rule replaces a hand-curated key list: the disk artifact rides a JSON
     wire to the reward service, so only JSON-scalar provenance (task type,
     reference/target paths, source ids) can cross — tensors, PIL images, and
-    nested payloads (e.g. geneval dicts) are in-memory-transport data by
+    nested payloads (e.g. GenEval metadata dicts) are in-memory-transport data by
     nature. A predicate cannot forget a newly added provenance key.
     """
 

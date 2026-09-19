@@ -1,9 +1,0 @@
-# GenEval reward adapter. The actual evaluator must be provided by import path.
-reward:
-  components:
-    geneval: 1.0
-  kwargs:
-    geneval:
-      import_path: ""
-      artifact_dir: ${trainer.output_dir}/geneval_artifacts
-      debug_dir: ${trainer.output_dir}/geneval_reward_debug

@@ -349,29 +349,28 @@ def _shared_reward_cfg(component: str) -> object:
 
 def test_shared_reward_capability_fails_before_component_construction(monkeypatch) -> None:
     """An unsupported trainer-shared reward fails before its model constructor."""
-    from vrl.rewards.functions.geneval import GenEvalReward
+    from vrl.rewards.base import RewardFunction
+    from vrl.rewards.functions import registry as reward_registry
 
-    constructed = False
+    class _PlainReward(RewardFunction):
+        """A plugin reward with no memory-parking capability."""
 
-    def fail_if_constructed(self, *args, **kwargs):
-        del self, args, kwargs
-        nonlocal constructed
-        constructed = True
-        raise AssertionError("component construction must not run")
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+            raise AssertionError("component construction must not run")
 
-    monkeypatch.setattr(GenEvalReward, "__init__", fail_if_constructed)
-    cfg = _shared_reward_cfg("geneval")
+    reward_registry._register_builtins()
+    monkeypatch.setitem(reward_registry._REWARD_REGISTRY, "plain", _PlainReward)
+    cfg = _shared_reward_cfg("plain")
 
-    with pytest.raises(ValueError, match="geneval"):
+    with pytest.raises(ValueError, match="plain"):
         build_reward_function(
             resolve_reward_inputs(
-                _built_reward({"geneval": 1.0}, {"geneval": {}}),
+                _built_reward({"plain": 1.0}, {"plain": {}}),
                 ResolvedDistributedResources.from_root(parse_config(cfg)),
                 trainer_device="cuda:0",
             ),
         )
-
-    assert constructed is False
 
 
 def test_reward_config_rejects_yaml_lifecycle_override() -> None:

@@ -11,6 +11,7 @@ from vrl.rewards.base import (
     RewardCleanupError,
     RewardFunction,
 )
+from vrl.rewards.functions import registry as reward_registry
 from vrl.rewards.functions.registry import (
     MultiReward,
 )
@@ -478,14 +479,24 @@ def test_in_process_ocr_reward_keeps_media_in_memory() -> None:
     assert reward.scoring_is_nonblocking is False
 
 
-def test_http_reward_rejects_inmemory_artifact_component() -> None:
-    # geneval delegates to an external callable and has no artifact transport.
+class _PlainReward(RewardFunction):
+    """A plugin reward outside the model-factory contract (no remote transport)."""
+
+
+@pytest.fixture
+def plain_reward(monkeypatch):
+    reward_registry._register_builtins()
+    monkeypatch.setitem(reward_registry._REWARD_REGISTRY, "plain", _PlainReward)
+    return "plain"
+
+
+def test_http_reward_rejects_inmemory_artifact_component(plain_reward) -> None:
     with pytest.raises(ValueError, match="no remote model-factory contract"):
         MultiReward.from_dict(
-            {"geneval": 1.0},
+            {plain_reward: 1.0},
             device="cpu",
             inference_configs={
-                "geneval": RewardInferenceConfig(
+                plain_reward: RewardInferenceConfig(
                     kind="http",
                     endpoint="http://reward:8300",
                     expected_model="aesthetic-v1",
@@ -661,12 +672,12 @@ def test_ray_ocr_reward_gets_an_actor_scorer_with_its_knobs(tmp_path) -> None:
     assert scorer._launch.device == "cpu"
 
 
-def test_ray_kind_rejects_rewards_without_a_worker_factory() -> None:
+def test_ray_kind_rejects_rewards_without_a_worker_factory(plain_reward) -> None:
     with pytest.raises(ValueError, match="no remote model-factory contract"):
         MultiReward.from_dict(
-            {"geneval": 1.0},
+            {plain_reward: 1.0},
             device="cpu",
-            inference_configs={"geneval": RewardInferenceConfig(kind="ray")},
+            inference_configs={plain_reward: RewardInferenceConfig(kind="ray")},
         )
 
 
@@ -719,7 +730,6 @@ def test_multiple_gpu_reward_actors_divide_the_owned_bundle() -> None:
         ("geneval_owl", "cuda:0", {}),
         ("motion_dynamics", "cuda:0", {"worker_config": {"num_frames": 4}}),
         ("target_dino_similarity", "cuda:0", {"worker_config": {"num_frames": 4}}),
-        ("idm_action_following", "cuda:0", {}),
     ],
 )
 def test_every_model_reward_can_run_as_a_ray_actor(tmp_path, name, device, kwargs) -> None:

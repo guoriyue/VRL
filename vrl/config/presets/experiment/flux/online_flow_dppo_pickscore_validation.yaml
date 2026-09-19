@@ -15,7 +15,7 @@
 # sprint's scope. pickscore is the sprint's documented runnable-today fallback
 # (a learned preference reward, all-local CLIP-H + PickScore_v1), so it still
 # validates the trust-region MECHANISM (the point of this run). Swap back to
-# /reward/geneval + /dataset/geneval once a geneval scorer is wired.
+# /reward/geneval_owl + /dataset/geneval for the GenEval-style rubric.
 #
 # Short-probe run (the chosen validation depth):
 #   CUDA_VISIBLE_DEVICES=0 vrl-train \
