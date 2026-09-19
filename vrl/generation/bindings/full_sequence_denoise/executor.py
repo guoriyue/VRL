@@ -425,14 +425,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
                 **replay_tensors,
                 "old_prev_sample_mean": denoise_result.prev_sample_means,
             }
-        # Frozen reference noise_pred per step (cache_ref_noise_pred). Lands under
-        # the denoise segment like old_log_prob; the SDE evaluator reads it at
-        # replay via replay_tensor_dict("denoise") to skip the ref forward.
-        if denoise_result.ref_noise_preds is not None:
-            replay_tensors = {
-                **replay_tensors,
-                "ref_noise_pred": denoise_result.ref_noise_preds,
-            }
         # The stochastic-window bounds [lo, hi) actually used for this batch's
         # rollout, one row per sample so chunk concatenation is trivial. The
         # trainer's timestep_selection="sde_window" reads it to train exactly

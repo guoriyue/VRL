@@ -98,50 +98,31 @@ class DenoiseSDELogProbEvaluator(ReplayEvaluatorBase):
         ref_prev_sample_mean = None
         ref_sqrt_neg_dt = None
 
-        # Reference model signal for KL. The ref forward is frozen, so generation
-        # can cache its noise_pred (sampling.cache_ref_noise_pred). When present we
-        # run the same sde_step_with_logprob on the cached tensor instead of
-        # rerunning the ref forward every ppo_epoch (Lever D); the math is
-        # identical, only the transformer forward is skipped.
-        if signal_request.need_ref:
-            stored_ref_noise_pred = replay.get("ref_noise_pred")
-            cached_ref_noise_pred = (
-                move_value_to_device(stored_ref_noise_pred[:, timestep_idx], device)
-                if stored_ref_noise_pred is not None
-                else None
-            )
+        # Reference model signal for KL: the reference forward at this step.
+        if signal_request.need_ref and ref_model is not None:
             with torch.no_grad():
-                ref_noise_pred = cached_ref_noise_pred
-                if ref_noise_pred is None and ref_model is not None:
-                    # The policy model stands in for its own reference through
-                    # reference_policy(); a distinct frozen model runs as is.
-                    ctx = (
-                        model.reference_policy()
-                        if ref_model is model
-                        else contextlib.nullcontext()
-                    )
-                    with ctx:
-                        ref_fwd = ref_model.replay_forward(
-                            batch,
-                            timestep_idx,
-                        ).require_segment("denoise")
-                    ref_noise_pred = ref_fwd.require_value("noise_pred")
-
-                if cached_ref_noise_pred is not None or ref_model is not None:
-                    ref_result = flow_matching_math.sde_step_with_logprob(
-                        self.scheduler,
-                        ref_noise_pred,
-                        t,
-                        observations,
-                        prev_sample=actions,
-                        return_dt=signal_request.need_kl_intermediates,
-                        noise_level=self.noise_level,
-                        sde_type=self.sde_type,
-                        math_dtype=self.math_dtype,
-                    )
-                    ref_log_prob = ref_result.log_prob
-                    ref_prev_sample_mean = ref_result.prev_sample_mean
-                    ref_sqrt_neg_dt = ref_result.sqrt_neg_dt
+                # The policy model stands in for its own reference through
+                # reference_policy(); a distinct frozen model runs as is.
+                ctx = model.reference_policy() if ref_model is model else contextlib.nullcontext()
+                with ctx:
+                    ref_fwd = ref_model.replay_forward(
+                        batch,
+                        timestep_idx,
+                    ).require_segment("denoise")
+                ref_result = flow_matching_math.sde_step_with_logprob(
+                    self.scheduler,
+                    ref_fwd.require_value("noise_pred"),
+                    t,
+                    observations,
+                    prev_sample=actions,
+                    return_dt=signal_request.need_kl_intermediates,
+                    noise_level=self.noise_level,
+                    sde_type=self.sde_type,
+                    math_dtype=self.math_dtype,
+                )
+                ref_log_prob = ref_result.log_prob
+                ref_prev_sample_mean = ref_result.prev_sample_mean
+                ref_sqrt_neg_dt = ref_result.sqrt_neg_dt
 
         # Rollout-time proposal mean for this step, captured at generation
         # (return_prev_sample_mean) and replayed back unchanged. Trust-region

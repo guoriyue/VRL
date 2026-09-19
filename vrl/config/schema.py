@@ -371,13 +371,6 @@ class RolloutConfig(ConfigBase):
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
-    # reader: vrl/generation/bindings/full_sequence_denoise/layout.py — opt-in to caching
-    # the frozen reference (LoRA-disabled) noise_pred at collect, so KL replay never
-    # reruns the ref forward. Lossless: replay applies the same sde_step_with_logprob.
-    cache_ref_noise_pred: StrictBool | None = Field(
-        default=None,
-        json_schema_extra={"runtime_owner": "generation_request"},
-    )
     # reader: generation planner (batch_placement.py) + diffusion layout. int =
     # fixed batch size; "auto" = the Ray runtime's startup batch-size probe
     # resolves it before the first request (SPRINT_chunk_size_probe; Ray-only,

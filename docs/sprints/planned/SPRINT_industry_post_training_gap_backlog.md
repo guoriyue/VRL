@@ -168,9 +168,9 @@
   （`tests/algorithms`）；FSDP2 两 rank gloo 分片上的换入/融合/拷贝
   （`tests/trainers/test_fsdp_policy_snapshot.py`，另有单卡 nccl 的 gpu 版本）；
   5090 上 FSDP2/nccl 全参 NFT invariant 通过。换入换出成本：2.04B bf16 参数
-  28 ms（一进一出）、`update(0.9)` 10 ms。全参 rollout worker 的
-  `cache_ref_noise_pred`：`rollout.reference_policy` 由
-  `rollout.cache_ref_noise_pred` 推导，build 时先拍参考快照再接 weight sync。
+  28 ms（一进一出）、`update(0.9)` 10 ms。`rollout.cache_ref_noise_pred`
+  （GRPO 族的 ref-forward 缓存，没有任何 preset 用）连同它在 rollout 侧要求的
+  参考快照一起删除；reference forward 只在 trainer 的 replay 里算。
   剩：多卡真实 FSDP2 训练 smoke（本机单卡做不了）。
 
 ---

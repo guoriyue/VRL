@@ -35,7 +35,6 @@ class DenoiseRequestOptions:
     sde_window_range: tuple[int, int] | None = None
     return_kl: bool = False
     return_prev_sample_mean: bool = False
-    cache_ref_noise_pred: bool = False
     teacache: TeaCacheConfig | None = None
 
     def __post_init__(self) -> None:
@@ -87,7 +86,6 @@ class DenoiseRequestOptions:
                 "denoise_mode",
                 "noise_level",
                 "return_prev_sample_mean",
-                "cache_ref_noise_pred",
             ):
                 value = getattr(rollout, name)
                 if value is not None:
@@ -136,7 +134,6 @@ class DenoiseSDEParams:
     sde_type: str
     return_kl: bool
     return_prev_sample_mean: bool = False
-    cache_ref_noise_pred: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -99,7 +99,6 @@ class DenoiseRequestLayout:
             sde_type=options.sde_type or self.sde_type,
             return_kl=options.return_kl,
             return_prev_sample_mean=options.return_prev_sample_mean,
-            cache_ref_noise_pred=options.cache_ref_noise_pred,
         )
         if max_sequence_length is not None:
             max_sequence_length = require_int(

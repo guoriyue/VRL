@@ -252,8 +252,6 @@ class ResolvedOnlineRun(ResolvedRun):
             # default. Only a selected residency mode needs to cross Ray.
             if rollout.get("pipeline_offload_mode") == "none":
                 rollout.pop("pipeline_offload_mode")
-            if not rollout.get("reference_policy"):
-                rollout.pop("reference_policy", None)
 
         return RayGenerationLaunchInputs(
             launch_contract=GenerationRuntimeLaunchContract(

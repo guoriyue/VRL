@@ -51,7 +51,7 @@ def test_record_step_casts_into_allocated_buffers_without_gradients(dtype, devic
     config = _config(return_kl=True)
     config = replace(
         config,
-        sde=replace(config.sde, return_prev_sample_mean=True, cache_ref_noise_pred=True),
+        sde=replace(config.sde, return_prev_sample_mean=True),
     )
     buffers = DenoiseTrajectoryBuffers.allocate(state=state, config=config)
     values = torch.tensor(
@@ -65,13 +65,11 @@ def test_record_step_casts_into_allocated_buffers_without_gradients(dtype, devic
         timestep=state.timesteps[0],
         sde_result=SDEStepResult(values, log_prob, values, None),
         return_kl=True,
-        ref_noise_pred=values,
     )
     for output in (
         buffers.observations,
         buffers.actions,
         buffers.prev_sample_means,
-        buffers.ref_noise_preds,
     ):
         assert output.dtype == dtype
         torch.testing.assert_close(output[:, 0], values.detach().to(dtype), rtol=0, atol=0)

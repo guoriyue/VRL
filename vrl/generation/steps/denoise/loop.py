@@ -32,7 +32,6 @@ class DenoiseLoopResult:
     timesteps: Any
     kl: Any
     prev_sample_means: Any | None = None
-    ref_noise_preds: Any | None = None
     # Batch-memory reading (occupancy at loop start plus the denoise peak),
     # None off CUDA. The executor adds the decode peak and derives the
     # runtime-debug peak display from it.
@@ -69,7 +68,6 @@ class DenoiseTrajectoryBuffers:
     timesteps: torch.Tensor
     kl: torch.Tensor
     prev_sample_means: torch.Tensor | None = None
-    ref_noise_preds: torch.Tensor | None = None
 
     @classmethod
     def allocate(
@@ -117,15 +115,6 @@ class DenoiseTrajectoryBuffers:
                 if config.sde.return_prev_sample_mean
                 else None
             ),
-            ref_noise_preds=(
-                torch.empty(
-                    (batch_rows, num_steps, *latent_shape),
-                    dtype=latents.dtype,
-                    device=device,
-                )
-                if config.sde.cache_ref_noise_pred
-                else None
-            ),
         )
 
     @property
@@ -148,7 +137,6 @@ class DenoiseTrajectoryBuffers:
         timestep: torch.Tensor,
         sde_result: SDEStepResult,
         return_kl: bool,
-        ref_noise_pred: torch.Tensor | None = None,
     ) -> None:
         """Write detached values; copy_ casts into each buffer's allocated dtype."""
         self.latents[:, step_idx + 1].copy_(action.detach())
@@ -165,10 +153,6 @@ class DenoiseTrajectoryBuffers:
         if self.prev_sample_means is not None:
             self.prev_sample_means[:, step_idx].copy_(
                 sde_result.prev_sample_mean.detach(),
-            )
-        if self.ref_noise_preds is not None:
-            self.ref_noise_preds[:, step_idx].copy_(
-                ref_noise_pred.detach(),
             )
 
 
@@ -219,15 +203,6 @@ def run_denoise_loop(
                     if teacache is not None:
                         teacache.cache_noise_pred(noise_pred)
 
-                ref_noise_pred = None
-                if buffers.ref_noise_preds is not None:
-                    with (
-                        profile_range("generation.ref_denoise_forward"),
-                        model.reference_policy(),
-                    ):
-                        ref_step_output = model.forward_step(state, step_idx)
-                    ref_noise_pred = ref_step_output["noise_pred"]
-
                 if config.denoise_mode == "native":
                     with profile_range("generation.scheduler_step"):
                         next_latents = state.scheduler.step(
@@ -273,7 +248,6 @@ def run_denoise_loop(
                     timestep=timestep,
                     sde_result=sde_result,
                     return_kl=config.sde.return_kl,
-                    ref_noise_pred=ref_noise_pred,
                 )
 
     denoise_peak_bytes = cuda_peak_allocated_bytes()
@@ -292,7 +266,6 @@ def run_denoise_loop(
         timesteps=buffers.timesteps,
         kl=buffers.kl,
         prev_sample_means=buffers.prev_sample_means,
-        ref_noise_preds=buffers.ref_noise_preds,
         memory=memory,
         engine_counters={
             "diffusion_num_denoise_steps": num_steps_to_run,
@@ -302,11 +275,6 @@ def run_denoise_loop(
             "diffusion_old_logprob_bytes": trajectory_tensor_bytes(buffers.log_probs),
             "diffusion_timestep_bytes": trajectory_tensor_bytes(buffers.timesteps),
             "diffusion_kl_bytes": trajectory_tensor_bytes(buffers.kl),
-            "diffusion_ref_noise_pred_bytes": (
-                trajectory_tensor_bytes(buffers.ref_noise_preds)
-                if buffers.ref_noise_preds is not None
-                else 0
-            ),
             "diffusion_denoise_mode": config.denoise_mode,
             **(teacache.counters() if teacache is not None else {}),
         },
