@@ -152,8 +152,10 @@ class DiffusionNFT(PreviousPolicyObjective):
         xt_input = xt.to(x0.dtype)
 
         # Three evaluations of the family's own conditional forward at this
-        # trajectory step: the frozen behaviour policy, the trainable policy,
-        # and the pre-training reference for the KL term.
+        # trajectory step: the frozen behaviour policy, the pre-training
+        # reference for the KL term, and — last — the trainable policy. The two
+        # frozen policies swap weights in place, so they run before the live
+        # forward whose graph backward will read.
         with (
             model.previous_policy(),
             torch.no_grad(),
@@ -162,10 +164,6 @@ class DiffusionNFT(PreviousPolicyObjective):
             previous_prediction = model.replay_forward_with_latents(
                 batch, timestep_index, xt_input, classifier_free_guidance=False
             )["noise_pred"].detach()
-        with model_autocast(model, x0.device):
-            forward_prediction = model.replay_forward_with_latents(
-                batch, timestep_index, xt_input, classifier_free_guidance=False
-            )["noise_pred"]
         with (
             model.reference_policy(),
             torch.no_grad(),
@@ -174,6 +172,10 @@ class DiffusionNFT(PreviousPolicyObjective):
             ref_prediction = model.replay_forward_with_latents(
                 batch, timestep_index, xt_input, classifier_free_guidance=False
             )["noise_pred"].detach()
+        with model_autocast(model, x0.device):
+            forward_prediction = model.replay_forward_with_latents(
+                batch, timestep_index, xt_input, classifier_free_guidance=False
+            )["noise_pred"]
 
         # Advantages are already clamped to ±adv_clip_max upstream in
         # compute_advantages_from_tensors (group_relative_advantages). The final

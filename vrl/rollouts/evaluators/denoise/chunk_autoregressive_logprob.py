@@ -43,15 +43,8 @@ class ChunkAutoregressiveDenoiseLogProbEvaluator(ReplayEvaluatorBase):
             signal_request = SignalRequest()
 
         request = ReplayRequest(segment_names=("denoise",))
-        current = model.replay_forward(batch, request=request).require_segment("denoise")
-        log_prob = self._flatten_actions(current.require_value("log_probs"))
-
-        reader = TrajectoryReader.from_batch(batch)
-        old_log_prob = self._flatten_actions(
-            reader.role_value("denoise", "old_log_prob"),
-        )
-        mask = self._flatten_actions(reader.role_value("denoise", "mask"))
-
+        # Reference first: a policy standing in for its own reference swaps its
+        # weights in place, which must precede the live forward's graph.
         ref_log_prob = None
         if signal_request.need_ref and ref_model is not None:
             same_model = ref_model is model
@@ -64,6 +57,15 @@ class ChunkAutoregressiveDenoiseLogProbEvaluator(ReplayEvaluatorBase):
                     request=request,
                 ).require_segment("denoise")
             ref_log_prob = self._flatten_actions(reference.require_value("log_probs"))
+
+        current = model.replay_forward(batch, request=request).require_segment("denoise")
+        log_prob = self._flatten_actions(current.require_value("log_probs"))
+
+        reader = TrajectoryReader.from_batch(batch)
+        old_log_prob = self._flatten_actions(
+            reader.role_value("denoise", "old_log_prob"),
+        )
+        mask = self._flatten_actions(reader.role_value("denoise", "mask"))
 
         return TrajectorySignalBuilder(batch).single_segment(
             segment_name="denoise",

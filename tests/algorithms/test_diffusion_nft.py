@@ -238,7 +238,8 @@ def _default_forward(
 ) -> torch.Tensor:
     """Run the trainable (default-adapter) forward on a known xt."""
 
-    model.transformer.set_adapter("default")
+    if getattr(model.transformer, "peft_config", None):
+        model.transformer.set_adapter("default")
     return model.transformer(
         hidden_states=xt,
         timestep=timestep,
@@ -247,7 +248,9 @@ def _default_forward(
     )[0]
 
 
-def _step_distances(*, advantage: float) -> tuple[float, float, torch.Tensor]:
+def _step_distances(
+    *, advantage: float, trainable: str = "lora"
+) -> tuple[float, float, torch.Tensor]:
     """One real backward+SGD step on the LoRA weights; report the distance of the
     default-adapter forward prediction to the reconstruction target before vs
     after. KL is off so only the policy term drives the sign.
@@ -269,7 +272,7 @@ def _step_distances(*, advantage: float) -> tuple[float, float, torch.Tensor]:
     xt = (1 - t) * x0 + t * noise
     t_raw = torch.full((_BATCH,), timestep)
 
-    model = _build_model()
+    model = _build_model(trainable)
     batch = _build_batch(x0=x0, noise=noise, prompt_embeds=prompt_embeds, timestep=timestep)
 
     before = float((_default_forward(model, xt, prompt_embeds, t_raw).detach() - target).norm())
@@ -280,11 +283,13 @@ def _step_distances(*, advantage: float) -> tuple[float, float, torch.Tensor]:
         0,
         torch.tensor([advantage]),
     )
-    trainable = [p for p in model.transformer.parameters() if p.requires_grad]
-    opt = torch.optim.SGD(trainable, lr=50.0)
+    parameters = [p for p in model.transformer.parameters() if p.requires_grad]
+    # LoRA weights sit at gaussian init and need a large step to move the
+    # forward; the full transformer moves under a small one.
+    opt = torch.optim.SGD(parameters, lr=50.0 if trainable == "lora" else 0.05)
     opt.zero_grad()
     loss.backward()
-    grad = torch.cat([p.grad.flatten() for p in trainable if p.grad is not None])
+    grad = torch.cat([p.grad.flatten() for p in parameters if p.grad is not None])
     opt.step()
 
     after = float((_default_forward(model, xt, prompt_embeds, t_raw).detach() - target).norm())
@@ -320,18 +325,21 @@ def test_nft_returns_only_objective_owned_step_metrics() -> None:
     assert metrics.phase_times == {}
 
 
-def test_positive_advantage_trains_toward_reconstruction() -> None:
+@pytest.mark.parametrize("trainable", ["lora", "full"])
+def test_positive_advantage_trains_toward_reconstruction(trainable: str) -> None:
     # A good sample (high positive advantage) must pull the forward prediction
-    # TOWARD the velocity that reconstructs the clean latent.
-    before, after, grad = _step_distances(advantage=5.0)
-    assert grad.abs().sum() > 0  # non-degenerate gradient through real LoRA params
+    # TOWARD the velocity that reconstructs the clean latent. The full-parameter
+    # case also proves backward survives the two in-place policy swaps.
+    before, after, grad = _step_distances(advantage=5.0, trainable=trainable)
+    assert grad.abs().sum() > 0  # non-degenerate gradient through real params
     assert after < before
 
 
-def test_negative_advantage_trains_away_from_reconstruction() -> None:
+@pytest.mark.parametrize("trainable", ["lora", "full"])
+def test_negative_advantage_trains_away_from_reconstruction(trainable: str) -> None:
     # A bad sample (negative advantage) must push the forward prediction AWAY
     # from the reconstruction target — the opposite sign.
-    before, after, _ = _step_distances(advantage=-5.0)
+    before, after, _ = _step_distances(advantage=-5.0, trainable=trainable)
     assert after > before
 
 

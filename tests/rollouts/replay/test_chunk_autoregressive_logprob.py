@@ -67,8 +67,11 @@ def test_reference_replay_does_not_build_a_gradient_graph(shared_reference) -> N
         .primary
     )
 
-    assert model.grad_modes[0] is True
-    assert reference.grad_modes[-1] is False
+    # The reference forward (no grad) precedes the live one (grad): a policy
+    # standing in for its own reference swaps weights in place, which must not
+    # touch the live forward's graph.
+    assert model.grad_modes[-1] is True
+    assert reference.grad_modes[0] is False
     assert signal.log_prob.requires_grad
     assert not signal.ref_log_prob.requires_grad
     (signal.log_prob - signal.ref_log_prob).sum().backward()

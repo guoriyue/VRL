@@ -341,7 +341,11 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
         snapshot.update(decay)
 
     def previous_policy(self) -> contextlib.AbstractContextManager[None]:
-        """Run the forward with the previous policy's weights."""
+        """Run the forward with the previous policy's weights.
+
+        Swaps the trainable weights in place: run it before the trainable
+        forward of the same loss, never between that forward and its backward.
+        """
 
         if self._modules.get("_previous_policy") is None:
             self.sync_previous_policy()
@@ -363,7 +367,11 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
         )
 
     def reference_policy(self) -> contextlib.AbstractContextManager[None]:
-        """Use the LoRA-disabled base model or the saved full-fine-tuning reference."""
+        """Use the LoRA-disabled base model or the saved full-fine-tuning reference.
+
+        The full-fine-tuning case swaps the trainable weights in place (see
+        ``previous_policy``): run it before the trainable forward.
+        """
 
         snapshot = self._modules.get("_reference_policy")
         if snapshot is not None:

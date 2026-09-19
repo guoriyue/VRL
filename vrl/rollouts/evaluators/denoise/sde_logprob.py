@@ -63,6 +63,22 @@ class DenoiseSDELogProbEvaluator(ReplayEvaluatorBase):
 
         reader = TrajectoryReader.from_batch(batch)
 
+        # The reference forward runs FIRST: a policy standing in for its own
+        # reference swaps its weights in place for the duration, which must not
+        # happen while the live forward's graph is waiting for backward.
+        ref_noise_pred = None
+        if signal_request.need_ref and ref_model is not None:
+            with torch.no_grad():
+                # The policy model stands in for its own reference through
+                # reference_policy(); a distinct frozen model runs as is.
+                ctx = model.reference_policy() if ref_model is model else contextlib.nullcontext()
+                with ctx:
+                    ref_fwd = ref_model.replay_forward(
+                        batch,
+                        timestep_idx,
+                    ).require_segment("denoise")
+                ref_noise_pred = ref_fwd.require_value("noise_pred")
+
         fwd = model.replay_forward(batch, timestep_idx).require_segment("denoise")
         noise_pred = fwd.require_value("noise_pred")
         device = getattr(noise_pred, "device", None)
@@ -98,31 +114,21 @@ class DenoiseSDELogProbEvaluator(ReplayEvaluatorBase):
         ref_prev_sample_mean = None
         ref_sqrt_neg_dt = None
 
-        # Reference model signal for KL: the reference forward at this step.
-        if signal_request.need_ref and ref_model is not None:
-            with torch.no_grad():
-                # The policy model stands in for its own reference through
-                # reference_policy(); a distinct frozen model runs as is.
-                ctx = model.reference_policy() if ref_model is model else contextlib.nullcontext()
-                with ctx:
-                    ref_fwd = ref_model.replay_forward(
-                        batch,
-                        timestep_idx,
-                    ).require_segment("denoise")
-                ref_result = flow_matching_math.sde_step_with_logprob(
-                    self.scheduler,
-                    ref_fwd.require_value("noise_pred"),
-                    t,
-                    observations,
-                    prev_sample=actions,
-                    return_dt=signal_request.need_kl_intermediates,
-                    noise_level=self.noise_level,
-                    sde_type=self.sde_type,
-                    math_dtype=self.math_dtype,
-                )
-                ref_log_prob = ref_result.log_prob
-                ref_prev_sample_mean = ref_result.prev_sample_mean
-                ref_sqrt_neg_dt = ref_result.sqrt_neg_dt
+        if ref_noise_pred is not None:
+            ref_result = flow_matching_math.sde_step_with_logprob(
+                self.scheduler,
+                ref_noise_pred,
+                t,
+                observations,
+                prev_sample=actions,
+                return_dt=signal_request.need_kl_intermediates,
+                noise_level=self.noise_level,
+                sde_type=self.sde_type,
+                math_dtype=self.math_dtype,
+            )
+            ref_log_prob = ref_result.log_prob
+            ref_prev_sample_mean = ref_result.prev_sample_mean
+            ref_sqrt_neg_dt = ref_result.sqrt_neg_dt
 
         # Rollout-time proposal mean for this step, captured at generation
         # (return_prev_sample_mean) and replayed back unchanged. Trust-region

@@ -42,8 +42,8 @@ def _batch(*, timestep: float | tuple[float, ...] = 500.0, seed: int = 1234):
     )
 
 
-def _synced_model():
-    model = _build_model()
+def _synced_model(trainable: str = "lora"):
+    model = _build_model(trainable)
     model.sync_previous_policy()
     return model
 
@@ -67,7 +67,13 @@ def test_v_grpo_advantages_share_the_grpo_group_contract(global_std: bool) -> No
 # ------------------------------------------------------------ objective sign
 
 
-def _step_distances(*, advantage: float, config: VGRPOConfig | None = None, lr: float = 2.0):
+def _step_distances(
+    *,
+    advantage: float,
+    config: VGRPOConfig | None = None,
+    lr: float = 2.0,
+    trainable: str = "lora",
+):
     """One real SGD step; distance of the default forward to the reconstruction
     velocity ``noise - x0`` at the objective's own ``x_t`` before vs after.
 
@@ -81,7 +87,7 @@ def _step_distances(*, advantage: float, config: VGRPOConfig | None = None, lr: 
     cfg = config or VGRPOConfig(adv_soft_clip=None, kl_coef=0.0)
     objective = VGRPO(cfg)
     x0, prompt_embeds, batch = _batch()
-    model = _synced_model()
+    model = _synced_model(trainable)
     noise = objective._group_shared_noise(x0, group_ids=batch.group_ids, timestep_index=0)
     t = 0.5
     xt = (1 - t) * x0 + t * noise
@@ -99,14 +105,22 @@ def _step_distances(*, advantage: float, config: VGRPOConfig | None = None, lr: 
     return before, after, grad
 
 
-def test_positive_advantage_pulls_the_prediction_toward_reconstruction() -> None:
-    before, after, grad = _step_distances(advantage=5.0)
+@pytest.mark.parametrize("trainable", ["lora", "full"])
+def test_positive_advantage_pulls_the_prediction_toward_reconstruction(trainable: str) -> None:
+    before, after, grad = _step_distances(
+        advantage=5.0, trainable=trainable, lr=2.0 if trainable == "lora" else 0.05
+    )
     assert grad.abs().sum() > 0
     assert after < before
 
 
-def test_negative_advantage_pushes_the_prediction_away_from_reconstruction() -> None:
-    before, after, _ = _step_distances(advantage=-5.0)
+@pytest.mark.parametrize("trainable", ["lora", "full"])
+def test_negative_advantage_pushes_the_prediction_away_from_reconstruction(
+    trainable: str,
+) -> None:
+    before, after, _ = _step_distances(
+        advantage=-5.0, trainable=trainable, lr=2.0 if trainable == "lora" else 0.05
+    )
     assert after > before
 
 

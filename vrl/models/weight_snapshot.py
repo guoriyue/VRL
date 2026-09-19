@@ -54,7 +54,13 @@ class TrainableWeightsSnapshot(nn.Module):
 
     @contextlib.contextmanager
     def active(self) -> Iterator[None]:
-        """Run with the shadows as the live weights; the swap is in place, one tensor at a time."""
+        """Run with the shadows as the live weights.
+
+        The swap is in place, one tensor at a time, and bumps the parameters'
+        version counters: enter it only while no autograd graph through the
+        live parameters is still waiting for its backward — every frozen-policy
+        forward runs before the trainable one.
+        """
 
         self._swap()
         try:
