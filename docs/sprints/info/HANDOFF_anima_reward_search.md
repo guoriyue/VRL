@@ -195,7 +195,7 @@ that fails the screen -- that is what the previous three months did.
 
 ## Where the evidence lives
 
-- `docs/sprints/SPRINT_anima_geneval_spatial_rl.md` -- the whole investigation:
+- `docs/sprints/info/SPRINT_anima_geneval_spatial_rl.md` -- the whole investigation:
   sections 6.11 (noise root cause), 7 (the three defects), 7.5 (granularity and
   transfer measurements), 8 (dense reward result), 8.4 (eyeball review of the
   hack), 9 (anime-craft target and the contrast-selection lesson).

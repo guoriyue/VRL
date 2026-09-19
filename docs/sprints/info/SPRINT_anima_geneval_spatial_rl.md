@@ -1,6 +1,6 @@
 # SPRINT: Anima 空间关系 / 属性绑定 RL（GenEval 规则奖励）
 
-状态：进行中（2026-09-06 起）。前置：`SPRINT_anima_rl_target_search.md` §11.7 把 target C
+状态：**已关闭为记录（2026-09-19）**。`ac53ecb5` 删除了 cosmos-predict2-anima 家族及其 `anima_preview3` 入口，本文的探测无法再复现；保留为测量档案（§9.3 的 t=+11.27 是最后一个结果）。前置：`SPRINT_anima_rl_target_search.md` §11.7 把 target C
 （标签遵循）记为 null 并关线。
 
 ## 0. 为什么是这个目标

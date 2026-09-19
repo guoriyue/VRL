@@ -10,4 +10,4 @@ py_binary(
     deps = ["//:vrl"],
 )
 
-exports_files(["anima_exact_count_eval.py", "serve.py", "service_smoke_test.py"])
+exports_files(["serve.py", "service_smoke_test.py"])
