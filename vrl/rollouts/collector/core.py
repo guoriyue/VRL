@@ -558,15 +558,39 @@ class RolloutCollector:
                 name="rollout-reward-score",
             )
 
+        # One generation ahead: the next group's request is submitted before this
+        # group's output is awaited, so the engine admits its batches the moment
+        # this group's are staged, while this group is merged and scored. The
+        # per-group-serial control arm keeps every stage strictly sequential.
+        prefetch_generation = mode is not RewardCollectionMode.PER_GROUP_SERIAL
+        pending_generation: tuple[asyncio.Task[UnscoredRollout], float] | None = None
+
+        def start_generation(
+            request: CollectorRequest,
+        ) -> tuple[asyncio.Task[UnscoredRollout], float]:
+            return (
+                asyncio.create_task(self.generate_rollout(request), name="rollout-generate"),
+                time.perf_counter(),
+            )
+
         try:
-            for request, prompt_indices in self.build_generation_requests(
-                prompts=prompts,
-                group_size=group_size,
-                runtime_debug=runtime_debug,
-                policy_version=policy_version,
-            ):
-                started = time.perf_counter()
-                unscored = await self.generate_rollout(request)
+            planned = list(
+                self.build_generation_requests(
+                    prompts=prompts,
+                    group_size=group_size,
+                    runtime_debug=runtime_debug,
+                    policy_version=policy_version,
+                ),
+            )
+            for index, (request, prompt_indices) in enumerate(planned):
+                if pending_generation is None:
+                    generation, started = start_generation(request)
+                else:
+                    generation, started = pending_generation
+                    pending_generation = None
+                if prefetch_generation and index + 1 < len(planned):
+                    pending_generation = start_generation(planned[index + 1][0])
+                unscored = await generation
                 generated = RolloutGenerationResult(
                     unscored, prompt_indices, started, time.perf_counter()
                 )
@@ -585,6 +609,21 @@ class RolloutCollector:
                 )
         except BaseException as root_cause:
             cleanup_errors: list[BaseException] = []
+            prefetched = pending_generation
+            pending_generation = None
+            if prefetched is not None:
+                # The group after the failed one may already be generating.
+                # Cancel it so the engine is not left running a request nobody
+                # will score; its own failure is a cleanup error, not the cause.
+                prefetched_task, _ = prefetched
+                prefetched_task.cancel()
+                prefetch_results = await asyncio.gather(prefetched_task, return_exceptions=True)
+                cleanup_errors.extend(
+                    result
+                    for result in prefetch_results
+                    if isinstance(result, BaseException)
+                    and not isinstance(result, asyncio.CancelledError)
+                )
             task = score_task
             score_task = None
             if task is not None:

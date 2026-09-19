@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import traceback
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -33,7 +33,7 @@ from vrl.generation.protocols import (
     GenerationBatchExecutor,
     GenerationBatchGatherer,
 )
-from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
+from vrl.generation.types import GenerationRequest
 from vrl.models.interfaces import require_runtime_model
 from vrl.trajectory.device import copy_tensor_tree_to_pinned_cpu
 from vrl.utils.config import import_from_path
@@ -590,17 +590,18 @@ class GenerationWorkerCore:
         self,
         request: GenerationRequest,
         engine_plan: EnginePlan,
-        sample_rows: Sequence[GenerationSampleRow],
         *,
         completion_callback: BatchCompletionCallback,
-    ) -> GenerationOutput | PipelinedRequestOutOfMemory:
-        """Run ALL of a request's batches on THIS worker in one call
-        (``forward_plan_pipelined``), removing the per-batch Ray round trip,
-        result pickling, and worker prologue that per-batch dispatch leaves the
-        GPU idle through. Single-worker only (all the request's batches must be
-        here). Returns the gathered ``GenerationOutput``; after a CUDA OOM it
-        clears partial request state and returns ``PipelinedRequestOutOfMemory``
-        for driver-side retry.
+        stage_batch: Callable[[Any], Any] | None = None,
+    ) -> list[Any] | PipelinedRequestOutOfMemory:
+        """Run ALL of a request's batches on THIS worker in one call.
+
+        Removes the per-batch Ray round trip, result pickling, and worker
+        prologue that per-batch dispatch leaves the GPU idle through. Returns the
+        per-batch results in batch order, each passed through ``stage_batch``
+        when given (the Ray rank stages them into the object store); merging is
+        not this worker's job. After a CUDA OOM it clears partial request state
+        and returns ``PipelinedRequestOutOfMemory`` for driver-side retry.
 
         Version safety mirrors ``execute_batch`` but at the REQUEST level (every
         batch shares ``request.policy_version``): slot mode serves the request from
@@ -636,20 +637,19 @@ class GenerationWorkerCore:
                 f"expected={expected_version}, actual={self._policy_version}",
             )
         assert self.executor is not None
-        forward_plan_pipelined = getattr(self.executor, "forward_plan_pipelined", None)
-        if not callable(forward_plan_pipelined):
+        forward_batches = getattr(self.executor, "forward_batches_pipelined", None)
+        if not callable(forward_batches):
             raise TypeError(
-                f"{type(self.executor).__name__} must implement forward_plan_pipelined(...) "
-                "for per-request pipelined execution",
+                f"{type(self.executor).__name__} must implement forward_batches_pipelined(...) "
+                "for per-request execution",
             )
         try:
-            output = forward_plan_pipelined(
+            return forward_batches(
                 request,
-                sample_rows,
-                engine_plan,
+                engine_plan.sample_batches,
                 completion_callback=completion_callback,
+                stage_result=stage_batch,
             )
-            return output
         except RuntimeError as error:
             self._memory_parking.recover_after_execution_error(model, error)
             if not is_cuda_out_of_memory(error):

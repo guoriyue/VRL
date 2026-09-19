@@ -21,6 +21,7 @@ from vrl.generation.execution.types import (
     BatchMemoryReading,
     GenerationBatchEnvelope,
     GenerationBatchResult,
+    PipelinedBatchRefs,
     PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
 )
@@ -488,6 +489,7 @@ class _RoutingWorker:
     pipeline_oom: bool = False
     pipeline_request_id_override: str | None = None
     pipeline_worker_id_override: str | None = None
+    request_batches: list[list[str]] = field(default_factory=list)
 
     def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
         self.batch_calls.append(envelope.batch.batch_key)
@@ -516,9 +518,9 @@ class _RoutingWorker:
         self,
         request,
         engine_plan,
-        sample_rows,
-    ) -> GenerationOutput | PipelinedRequestOutOfMemory:
+    ) -> PipelinedBatchRefs | PipelinedRequestOutOfMemory:
         self.request_calls.append(request.request_id)
+        self.request_batches.append([batch.batch_key for batch in engine_plan.sample_batches])
         request_id = self.pipeline_request_id_override or request.request_id
         if self.pipeline_oom:
             return PipelinedRequestOutOfMemory(
@@ -526,10 +528,27 @@ class _RoutingWorker:
                 worker_id=self.pipeline_worker_id_override or self.worker_id,
                 error=_OOM_MESSAGE,
             )
+        keys = tuple(batch.batch_key for batch in engine_plan.sample_batches)
+        return PipelinedBatchRefs(
+            request_id=request_id,
+            worker_id=self.pipeline_worker_id_override or self.worker_id,
+            batch_keys=keys,
+            batch_refs=tuple(f"ref:{self.worker_id}:{key}" for key in keys),
+        )
+
+
+@dataclass
+class _RoutingFinalizer:
+    """Records the staged references it is asked to merge."""
+
+    merges: list[list[str]] = field(default_factory=list)
+
+    def merge_request(self, request, sample_rows, batch_refs) -> GenerationOutput:
+        self.merges.append(list(batch_refs))
         return GenerationOutput(
-            output=[{"pipelined": True}],
+            output=[{"pipelined": True, "refs": list(batch_refs)}],
             trajectory=TrajectoryBatch(
-                request_id=request_id,
+                request_id=request.request_id,
                 family=request.family,
                 task=request.task,
                 sample_rows=list(sample_rows),
@@ -539,7 +558,7 @@ class _RoutingWorker:
         )
 
 
-def _routing_executor(batches, workers, *, pipelined):
+def _routing_executor(batches, workers, *, pipelined, finalizer=None):
     engines = [
         RayGenerationEngine(
             w.worker_id,
@@ -557,6 +576,15 @@ def _routing_executor(batches, workers, *, pipelined):
         )
         for w in workers
     ]
+    finalizers = []
+    if pipelined:
+        finalizer = finalizer or _RoutingFinalizer()
+        finalizers = [
+            RayActorHandle(
+                worker_id="finalize-0",
+                actor=FakeRayActor(finalizer, "merge_request"),
+            ),
+        ]
     return RayGenerationExecutor(
         planner=_StaticPlanner(batches=batches),
         engines=engines,
@@ -566,38 +594,97 @@ def _routing_executor(batches, workers, *, pipelined):
         ),
         generation_stall_timeout_s=30.0,
         pipelined=pipelined,
+        finalizers=finalizers,
     )
 
 
 @pytest.mark.asyncio
 async def test_pipelined_routes_single_worker_to_per_request_path() -> None:
     """pipelined=True + one worker => the whole request runs via the per-request
-    pipelined path (execute_request_pipelined), NOT per-batch dispatch."""
+    path (execute_request_pipelined) and its staged references are merged by
+    the finalizer, NOT per-batch dispatch and NOT a driver-side gather."""
 
     batches = [
         GenerationSampleBatch(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(2)
     ]
     worker = _RoutingWorker(worker_id="w0")
-    executor = _routing_executor(batches, [worker], pipelined=True)
+    finalizer = _RoutingFinalizer()
+    executor = _routing_executor(batches, [worker], pipelined=True, finalizer=finalizer)
 
     output = await executor.execute(_request(4, samples_per_generation_batch=2))
 
     assert worker.request_calls == ["req-oom"]
     assert worker.batch_calls == []
-    assert output.output == [{"pipelined": True}]
+    expected_refs = [f"ref:w0:{_key(0, 2)}", f"ref:w0:{_key(2, 2)}"]
+    assert finalizer.merges == [expected_refs]
+    assert output.output == [{"pipelined": True, "refs": expected_refs}]
 
 
-def test_pipelined_rejects_multiple_engines_at_executor_construction() -> None:
-    """Direct executor callers get the same fail-fast guard as config users."""
+@pytest.mark.asyncio
+async def test_pipelined_splits_batches_over_engines_and_merges_once() -> None:
+    """Every engine runs its round-robin share in one call; the finalizer
+    receives the references in plan order regardless of which engine staged them."""
 
+    batches = [
+        GenerationSampleBatch(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(4)
+    ]
+    workers = [_RoutingWorker(worker_id=f"w{i}") for i in range(2)]
+    finalizer = _RoutingFinalizer()
+    executor = _routing_executor(batches, workers, pipelined=True, finalizer=finalizer)
+
+    output = await executor.execute(_request(8, samples_per_generation_batch=2))
+
+    assert workers[0].request_batches == [[_key(0, 2), _key(4, 2)]]
+    assert workers[1].request_batches == [[_key(2, 2), _key(6, 2)]]
+    assert all(worker.batch_calls == [] for worker in workers)
+    assert finalizer.merges == [
+        [
+            f"ref:w0:{_key(0, 2)}",
+            f"ref:w1:{_key(2, 2)}",
+            f"ref:w0:{_key(4, 2)}",
+            f"ref:w1:{_key(6, 2)}",
+        ],
+    ]
+    assert output.request_id == "req-oom"
+
+
+@pytest.mark.asyncio
+async def test_pipelined_oom_on_one_engine_retries_the_request_per_batch() -> None:
+    batches = [
+        GenerationSampleBatch(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(4)
+    ]
+    workers = [_RoutingWorker(worker_id="w0"), _RoutingWorker(worker_id="w1", pipeline_oom=True)]
+    finalizer = _RoutingFinalizer()
+    executor = _routing_executor(batches, workers, pipelined=True, finalizer=finalizer)
+
+    output = await executor.execute(_request(8, samples_per_generation_batch=2))
+
+    assert [worker.request_calls for worker in workers] == [["req-oom"], ["req-oom"]]
+    assert finalizer.merges == []
+    assert sorted(workers[0].batch_calls + workers[1].batch_calls) == sorted(
+        batch.batch_key for batch in batches
+    )
+    assert len(output.output) == 4
+
+
+def test_pipelined_requires_a_finalizer_at_executor_construction() -> None:
     batches = [
         GenerationSampleBatch(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(2)
     ]
-    workers = [_RoutingWorker(worker_id=f"w{i}") for i in range(2)]
-    with pytest.raises(ValueError, match="requires exactly one rollout engine"):
-        _routing_executor(batches, workers, pipelined=True)
-
-    assert all(not worker.request_calls and not worker.batch_calls for worker in workers)
+    worker = _RoutingWorker(worker_id="w0")
+    engine = RayGenerationEngine(
+        "w0",
+        [RayActorHandle(worker_id="w0", actor=FakeRayActor(worker, "execute_batch"))],
+    )
+    with pytest.raises(ValueError, match="requires at least one finalizer"):
+        RayGenerationExecutor(
+            planner=_StaticPlanner(batches=batches),
+            engines=[engine],
+            gatherer=_CoverageGatherer(),
+            actor_dispatcher=RayActorDispatcher(("w0",)),
+            generation_stall_timeout_s=30.0,
+            pipelined=True,
+        )
 
 
 @pytest.mark.asyncio

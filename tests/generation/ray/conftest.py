@@ -70,7 +70,15 @@ def _worker_setup_hook(repo_root: str) -> Any:
             def load_trainable_state(self, state_dict: dict[str, Any]) -> None:
                 self.loaded_state = dict(state_dict)
 
-        class TinyChunkExecutor:
+        from vrl.generation.execution.executor_base import BatchExecutorBase
+
+        class TinyChunkExecutor(BatchExecutorBase):
+            """Model-free executor: a batch's payload is its own coordinates.
+
+            Enough to drive the real dispatch paths (per-batch and per-request
+            with staged references) through real actors without a model.
+            """
+
             family = "sd3_5"
             task = "t2i"
 
@@ -80,18 +88,15 @@ def _worker_setup_hook(repo_root: str) -> Any:
                 *,
                 gatherer: Any | None = None,
             ) -> None:
+                super().__init__(gatherer=gatherer)
                 self.model = model
-                self.gatherer = gatherer
 
-            def forward_batch(self, *args: Any, **kwargs: Any) -> Any:
-                raise NotImplementedError(
-                    "Ray launcher test only verifies worker construction",
-                )
-
-            def merge_generation_batches(self, *args: Any, **kwargs: Any) -> Any:
-                raise NotImplementedError(
-                    "Ray launcher test only verifies worker construction",
-                )
+            def forward_batch(self, request: Any, batch: Any) -> Any:
+                return {
+                    "request_id": request.request_id,
+                    "batch_key": batch.batch_key,
+                    "samples": batch.sample_count,
+                }
 
         def build_tiny_rollout(_entry: Any, build: Any) -> RuntimeBundle:
             assert str(build.device) == "cpu"

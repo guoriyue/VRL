@@ -324,13 +324,39 @@ class GenerationBatchResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PipelinedBatchRefs:
+    """Typed worker response for a per-request run: one object-store reference per batch.
+
+    The rank stages each batch payload with ``ray.put`` as soon as its pinned
+    host copy is ready, while the next batch is still denoising, so the payloads
+    never travel inside the actor's return value and the GPU worker is free the
+    moment its last batch is staged. The driver hands the references to a
+    finalizer actor, which merges them off the GPU worker's critical path.
+    Non-primary ranks of a multi-rank engine run the same loop for its
+    collectives but stage nothing and report empty tuples.
+    """
+
+    request_id: str
+    worker_id: str
+    batch_keys: tuple[str, ...]
+    batch_refs: tuple[Any, ...]
+    policy_version: int | None = None
+
+    def __post_init__(self) -> None:
+        if len(self.batch_keys) != len(self.batch_refs):
+            raise ValueError(
+                "pipelined batch references must pair one key with one reference; "
+                f"got {len(self.batch_keys)} keys and {len(self.batch_refs)} references",
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class PipelinedRequestOutOfMemory:
     """Typed worker response that asks the driver to retry through batch admission.
 
-    A whole-request pipeline can retain two batches while overlapping teardown and
-    compute. If that larger residency OOMs, the worker must first discard its
-    partial request state, then return this response so the driver can use the
-    normal per-batch CPU handoff and split-on-OOM path.
+    If a whole-request run OOMs, the worker must first discard its partial
+    request state, then return this response so the driver can use the normal
+    per-batch CPU handoff and split-on-OOM path.
     """
 
     request_id: str
@@ -348,6 +374,7 @@ __all__ = [
     "GenerationBatchEnvelope",
     "GenerationBatchResult",
     "ParkingBackend",
+    "PipelinedBatchRefs",
     "PipelinedRequestOutOfMemory",
     "StaleSlotDiscard",
     "WorkerMemoryParkingSnapshot",

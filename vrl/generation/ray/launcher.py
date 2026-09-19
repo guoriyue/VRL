@@ -14,6 +14,7 @@ from vrl.generation.execution.rank_group import RankGroupSpec
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
+from vrl.generation.ray.finalizer import RayGenerationFinalizer
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
@@ -137,12 +138,6 @@ class RayGenerationLauncher:
         # about where an engine's ranks live.
         gpus_per_engine = config.resources.rollout_gpus_per_engine
         engine_count = len(placement.engine_bundle_groups(gpus_per_engine))
-        if worker.pipelined and engine_count != 1:
-            raise ValueError(
-                "pipelined Ray generation requires exactly one rollout engine; "
-                f"received {engine_count}. Per-engine request "
-                "pipelining is not implemented.",
-            )
         ray = require_ray()
         if self.init_ray and not ray.is_initialized():
             ray.init(**self.ray_init_kwargs)
@@ -180,6 +175,7 @@ class RayGenerationLauncher:
                 for rank_idx in range(gpus_per_engine)
             ]
         actor_group: RayActorGroup | None = None
+        finalizer_group: RayActorGroup | None = None
         try:
             actor_group = RayActorGroup.launch(
                 worker_cls=RayGenerationWorker,
@@ -214,6 +210,26 @@ class RayGenerationLauncher:
             actor_dispatcher = RayActorDispatcher(
                 tuple(engine.engine_id for engine in engines),
             )
+            finalizer_handles: list[RayActorHandle] = []
+            if worker.pipelined:
+                # One CPU finalizer per engine, pinned to the engine's primary
+                # bundle so staged payloads are read from the local object
+                # store. It reserves no CPU: bundles are sized for the rank.
+                finalizer_group = RayActorGroup.launch(
+                    worker_cls=RayGenerationFinalizer,
+                    worker_configs=[launch_inputs.gatherer for _ in engine_ids],
+                    worker_ids=[f"{engine_id}.finalize" for engine_id in engine_ids],
+                    num_cpus=0,
+                    num_gpus=0,
+                    rpc_timeout_s=worker.worker_rpc_timeout_s,
+                    operation_prefix="rollout.finalize",
+                    placement_group=placement_group,
+                    bundle_indices=[
+                        bundle_indices[engine_idx * gpus_per_engine]
+                        for engine_idx in range(engine_count)
+                    ],
+                )
+                finalizer_handles = list(finalizer_group.handles)
 
             executor = RayGenerationExecutor(
                 DistributedExecutionPlanner(
@@ -224,6 +240,7 @@ class RayGenerationLauncher:
                 actor_dispatcher=actor_dispatcher,
                 generation_stall_timeout_s=worker.generation_stall_timeout_s,
                 pipelined=worker.pipelined,
+                finalizers=finalizer_handles,
             )
             weight_sync = (
                 RayGenerationWeightSync(
@@ -246,11 +263,14 @@ class RayGenerationLauncher:
                 weight_sync=weight_sync,
                 owned_engines=engines,
                 supports_non_draining_weight_sync=supports_non_draining_weight_sync,
+                owned_finalizers=finalizer_handles,
             )
         except BaseException as error:
-            if actor_group is not None:
+            for group in (actor_group, finalizer_group):
+                if group is None:
+                    continue
                 try:
-                    actor_group.shutdown()
+                    group.shutdown()
                 except BaseException as cleanup_error:
                     error.add_note(
                         f"rollout startup actor cleanup also failed: {cleanup_error!r}",

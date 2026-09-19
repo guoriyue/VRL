@@ -46,6 +46,7 @@ def _executor(*, timeout_s: float = 1.0) -> RayGenerationExecutor:
         actor_dispatcher=RayActorDispatcher(("w0",)),
         generation_stall_timeout_s=timeout_s,
         pipelined=True,
+        finalizers=[RayActorHandle(worker_id="finalize-0", actor=object())],
     )
 
 
@@ -81,35 +82,47 @@ async def _await_pipelined_through_dispatcher(
     )
 
 
-def test_ray_worker_reports_only_the_active_pipelined_request() -> None:
+def test_ray_worker_reports_only_the_active_pipelined_request(monkeypatch) -> None:
     worker = object.__new__(RayGenerationWorker)
     worker._pipelined_progress_lock = threading.Lock()
     worker._pipelined_progress = None
     observed: list[PipelinedRequestProgress | None] = []
 
     class _Core:
+        worker_id = "w0"
+        rank_group_spec = None
+
         def execute_request_pipelined(
             self,
             request: Any,
             engine_plan: Any,
-            sample_rows: Any,
             *,
             completion_callback: Any,
-        ) -> str:
-            del engine_plan, sample_rows
+            stage_batch: Any,
+        ) -> list[str]:
             observed.append(worker.pipelined_progress(request.request_id))
             completion_callback(BatchProduceFence(completed_batches=1))
             observed.append(worker.pipelined_progress(request.request_id))
             completion_callback(BatchProduceFence(completed_batches=2))
-            return "complete"
+            return [stage_batch(batch) for batch in engine_plan.sample_batches]
 
     worker.core = _Core()
-    request = SimpleNamespace(request_id="req-progress")
-    plan = SimpleNamespace(sample_batches=("c0", "c1"))
+    request = SimpleNamespace(request_id="req-progress", policy_version=None)
+    plan = SimpleNamespace(
+        sample_batches=(
+            SimpleNamespace(batch_key="c0"),
+            SimpleNamespace(batch_key="c1"),
+        ),
+    )
+    monkeypatch.setattr(
+        "vrl.generation.ray.worker.ray.put", lambda payload: f"ref:{payload.batch_key}"
+    )
 
-    result = worker.execute_request_pipelined(request, plan, [])
+    result = worker.execute_request_pipelined(request, plan)
 
-    assert result == "complete"
+    assert result.batch_keys == ("c0", "c1")
+    assert result.batch_refs == ("ref:c0", "ref:c1")
+    assert result.worker_id == "w0"
     assert [snapshot.completed_batches for snapshot in observed if snapshot is not None] == [0, 1]
     assert all(snapshot.total_batches == 2 for snapshot in observed if snapshot is not None)
     assert worker.pipelined_progress("req-progress") is None
@@ -596,61 +609,3 @@ async def test_pipelined_progress_protocol_failure_is_terminal_and_cancels_resul
         )
 
     assert result_ref in cancelled
-
-
-@pytest.mark.asyncio
-async def test_pipelined_executor_queues_requests_before_starting_deadline() -> None:
-    executor = _executor()
-    first_can_finish = asyncio.Event()
-    first_entered = asyncio.Event()
-    entered: list[str] = []
-
-    async def execute_unlocked(request: Any) -> str:
-        entered.append(request.request_id)
-        if request.request_id == "first":
-            first_entered.set()
-            await first_can_finish.wait()
-        return request.request_id
-
-    executor._execute = execute_unlocked
-    first = asyncio.create_task(executor.execute(SimpleNamespace(request_id="first")))
-    await first_entered.wait()
-    second = asyncio.create_task(executor.execute(SimpleNamespace(request_id="second")))
-    await asyncio.sleep(0)
-
-    assert entered == ["first"]
-    first_can_finish.set()
-    assert await asyncio.gather(first, second) == ["first", "second"]
-    assert entered == ["first", "second"]
-
-
-@pytest.mark.asyncio
-async def test_cancelling_pipelined_lock_wait_does_not_mark_submitted_work() -> None:
-    executor = _executor()
-    first_can_finish = asyncio.Event()
-    first_entered = asyncio.Event()
-    entered: list[str] = []
-
-    async def execute_unlocked(request: Any) -> str:
-        entered.append(request.request_id)
-        if request.request_id == "first":
-            first_entered.set()
-            await first_can_finish.wait()
-        return request.request_id
-
-    executor._execute = execute_unlocked
-    first = asyncio.create_task(executor.execute(SimpleNamespace(request_id="first")))
-    await first_entered.wait()
-    waiting = asyncio.create_task(executor.execute(SimpleNamespace(request_id="waiting")))
-    await asyncio.sleep(0)
-    waiting.cancel()
-
-    with pytest.raises(asyncio.CancelledError) as caught:
-        await waiting
-    assert caught.value.__cause__ is None
-    assert entered == ["first"]
-
-    first_can_finish.set()
-    assert await first == "first"
-    assert await executor.execute(SimpleNamespace(request_id="third")) == "third"
-    assert entered == ["first", "third"]

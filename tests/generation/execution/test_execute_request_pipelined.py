@@ -1,22 +1,17 @@
 """Version-safety of GenerationWorkerCore.execute_request_pipelined (the
-per-request stage-overlap path) — it must enforce the SAME slot / stale-slot /
+per-request path) — it must enforce the SAME slot / stale-slot /
 version-mismatch guarantees as execute_batch, at the request level, so a stale
-request is never run + trained off-policy."""
+request is never run + trained off-policy. The core returns the staged
+per-batch payloads; merging belongs to the finalizer."""
 
 from __future__ import annotations
 
 from types import SimpleNamespace
 
 import pytest
-import torch
 
 from tests.generation.execution._helpers import launch_contract
-from vrl.generation.bindings.full_sequence_denoise import (
-    DenoiseBatchGatherer,
-    DenoiseBatchResult,
-)
 from vrl.generation.execution.memory_parking import WorkerMemoryParking
-from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
     BatchProduceFence,
     PipelinedRequestOutOfMemory,
@@ -26,6 +21,7 @@ from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.types import GenerationRequest
 
 _NOOP_CB = lambda *args, **kwargs: None  # noqa: E731 — sites that do not assert on it
+_PLAN = SimpleNamespace(sample_batches=("b0", "b1"))
 
 
 class _Model:
@@ -46,20 +42,26 @@ class _Executor:
         self.error = error
         self.calls: list[tuple] = []
 
-    def forward_plan_pipelined(
+    def forward_batches_pipelined(
         self,
         request,
-        sample_rows,
-        plan,
+        batches,
         *,
         completion_callback=None,
+        stage_result=None,
     ):
-        self.calls.append((request, sample_rows, plan))
+        self.calls.append((request, batches, stage_result))
         if self.error is not None:
             raise self.error
-        if completion_callback is not None:
-            completion_callback(BatchProduceFence(completed_batches=1))
-        return "GATHERED_OUTPUT"
+        results = []
+        for index, batch in enumerate(batches):
+            result = ("produced", batch)
+            if stage_result is not None:
+                result = stage_result(result)
+            results.append(result)
+            if completion_callback is not None:
+                completion_callback(BatchProduceFence(completed_batches=index + 1))
+        return results
 
 
 def _core(*, executor, uses_slots: bool, policy_version: int | None):
@@ -91,16 +93,22 @@ def test_slot_mode_with_live_slot_activates_and_runs() -> None:
     core = _core(executor=ex, uses_slots=True, policy_version=9)
 
     out = GenerationWorkerCore.execute_request_pipelined(
-        core, _request(7), "plan", "rows", completion_callback=_NOOP_CB
+        core, _request(7), _PLAN, completion_callback=_NOOP_CB
     )
 
-    assert out == "GATHERED_OUTPUT"
+    assert out == [("produced", "b0"), ("produced", "b1")]
     assert model.activated == [7]  # served from the REQUEST's version slot, not 9
     assert len(ex.calls) == 1
 
 
-def test_worker_core_forwards_pipelined_completion_callback() -> None:
+def test_worker_core_forwards_completion_callback_and_stage_hook() -> None:
     fences: list[BatchProduceFence] = []
+    staged: list[tuple[str, str]] = []
+
+    def stage(result):
+        staged.append(result)
+        return f"ref:{result[1]}"
+
     core = _core(
         executor=_Executor(_Model(set())),
         uses_slots=False,
@@ -110,43 +118,14 @@ def test_worker_core_forwards_pipelined_completion_callback() -> None:
     output = GenerationWorkerCore.execute_request_pipelined(
         core,
         _request(5),
-        "plan",
-        "rows",
+        _PLAN,
         completion_callback=fences.append,
+        stage_batch=stage,
     )
 
-    assert output == "GATHERED_OUTPUT"
-    assert fences == [BatchProduceFence(completed_batches=1)]
-
-
-def test_pipelined_core_keeps_media_tensor_for_ray_adapter():
-    request = GenerationRequest(
-        "r",
-        "sd3_5",
-        "t2i",
-        ["p"],
-        1,
-        reward_media_refs=True,
-    )
-    batch = DenoiseBatchResult(
-        batch=GenerationSampleBatch(0, 0, 1),
-        latents=torch.ones(1, 3, 3),
-        log_probs=torch.zeros(1, 2),
-        timesteps=torch.ones(1, 2),
-        kl=torch.zeros(1, 2),
-        video=torch.full((1, 3, 4, 4), 0.5),
-        replay_tensors={},
-        context={"model_family": "sd3_5"},
-    )
-    gathered = DenoiseBatchGatherer().merge_generation_batches(
-        request, request.sample_rows(), [batch]
-    )
-    executor = SimpleNamespace(forward_plan_pipelined=lambda *args, **kwargs: gathered)
-    core = _core(executor=executor, uses_slots=False, policy_version=None)
-    output = core.execute_request_pipelined(
-        request, "plan", request.sample_rows(), completion_callback=_NOOP_CB
-    )
-    assert torch.equal(output.output, batch.video)
+    assert output == ["ref:b0", "ref:b1"]
+    assert staged == [("produced", "b0"), ("produced", "b1")]
+    assert [fence.completed_batches for fence in fences] == [1, 2]
 
 
 def test_slot_mode_with_evicted_slot_raises_stale_discard_and_does_not_run() -> None:
@@ -156,7 +135,7 @@ def test_slot_mode_with_evicted_slot_raises_stale_discard_and_does_not_run() -> 
 
     with pytest.raises(StaleSlotDiscard):
         GenerationWorkerCore.execute_request_pipelined(
-            core, _request(7), "plan", "rows", completion_callback=_NOOP_CB
+            core, _request(7), _PLAN, completion_callback=_NOOP_CB
         )
     assert ex.calls == []  # never ran => never trained off-policy
 
@@ -167,7 +146,7 @@ def test_non_slot_version_mismatch_raises_and_does_not_run() -> None:
 
     with pytest.raises(RuntimeError, match="policy_version mismatch"):
         GenerationWorkerCore.execute_request_pipelined(
-            core, _request(6), "plan", "rows", completion_callback=_NOOP_CB
+            core, _request(6), _PLAN, completion_callback=_NOOP_CB
         )
     assert ex.calls == []
 
@@ -177,9 +156,9 @@ def test_non_slot_matching_version_runs() -> None:
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
     out = GenerationWorkerCore.execute_request_pipelined(
-        core, _request(5), "plan", "rows", completion_callback=_NOOP_CB
+        core, _request(5), _PLAN, completion_callback=_NOOP_CB
     )
-    assert out == "GATHERED_OUTPUT"
+    assert out == [("produced", "b0"), ("produced", "b1")]
     assert len(ex.calls) == 1
 
 
@@ -188,9 +167,9 @@ def test_no_expected_version_runs_unconditionally() -> None:
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
     out = GenerationWorkerCore.execute_request_pipelined(
-        core, _request(None), "plan", "rows", completion_callback=_NOOP_CB
+        core, _request(None), _PLAN, completion_callback=_NOOP_CB
     )
-    assert out == "GATHERED_OUTPUT"
+    assert out == [("produced", "b0"), ("produced", "b1")]
 
 
 def test_cuda_oom_clears_worker_state_and_returns_typed_retry(monkeypatch) -> None:
@@ -208,8 +187,7 @@ def test_cuda_oom_clears_worker_state_and_returns_typed_retry(monkeypatch) -> No
     result = GenerationWorkerCore.execute_request_pipelined(
         core,
         _request(5),
-        "plan",
-        "rows",
+        _PLAN,
         completion_callback=_NOOP_CB,
     )
 
@@ -234,8 +212,7 @@ def test_non_oom_pipeline_error_propagates_without_cleanup(monkeypatch) -> None:
         GenerationWorkerCore.execute_request_pipelined(
             core,
             _request(5),
-            "plan",
-            "rows",
+            _PLAN,
             completion_callback=_NOOP_CB,
         )
 

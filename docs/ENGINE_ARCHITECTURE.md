@@ -76,7 +76,8 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 | `RayGenerationRuntime` | The public lifecycle: admission, which failure is terminal, staged policy installs while inactive (`_PendingPolicyInstall`), activate/offload semantics. Implements `GenerationRuntime`. |
 | `RayGenerationSession` | The concrete resources of one launched fleet: worker handles, sleep/wake (memory parking with validated `WorkerMemoryParkingSnapshot` evidence), graceful policy release, kill-and-retain cleanup. Owns no public lifecycle. |
 | `RayGenerationLauncher` / `RayGenerationLaunchInputs` | Building the fleet: placement, actor construction from the launch contract. |
-| `RayGenerationExecutor` | Driver-side dispatch of sample batches to worker actors (through `RayActorDispatcher`), including pipelined execution and OOM-split handling. |
+| `RayGenerationExecutor` | Driver-side dispatch of sample batches to worker actors (through `RayActorDispatcher`), including the per-request path (`pipelined`: each engine runs its share of a request in one call and stages payloads in the object store) and OOM-split handling. |
+| `RayGenerationFinalizer` (`ray/finalizer.py`) | CPU actor, one per engine, that merges a request's staged batch references through the gatherer and boxes reward media, off the GPU rank's critical path. |
 | `GenerationWeightSync` (protocol) / `RayGenerationWeightSync` | Pushing trainer state into rollout workers (`push_to_rollout_workers(state_ref, policy_version)`), versioned slots for continuous mode. |
 | `RolloutWorkerHealthMonitor` / `RolloutWorkerUnreachable(TerminalRuntimeError)` | Bounded health probes; an unreachable worker is terminal. |
 | `PipelinedRequestProgress` / `PipelinedProgressError(TerminalRuntimeError)` | Cross-actor progress accounting for pipelined requests. |
@@ -95,7 +96,7 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 | `GenerationSampleBatch`, `SampleAlignedValues`, `BatchResultWithIdentity` (`sample_batches.py`) | The batch coordinate system: a batch is a slice of samples (`prompt_index`, `sample_start`, `sample_count`), not a time segment. `SampleAlignedValues` slices per-sample tensors consistently. |
 | `GenerationBatchEnvelope` / `GenerationBatchResult` (`execution/types.py`) | The wire pair around one dispatched batch. |
 | `BatchSizeProbeTrial` / `BatchSizeProbeResult`, `BatchMemoryReading`, `AffinePeakFit` | Auto-sizing telemetry: probe trials fit an affine peak-memory model to pick the widest safe batch. |
-| `BatchProduceFence`, `QueryableCompletion`, `StaleSlotDiscard`, `PipelinedRequestOutOfMemory` | Pipelined-execution coordination and failure signaling. |
+| `BatchProduceFence`, `PipelinedBatchRefs`, `StaleSlotDiscard`, `PipelinedRequestOutOfMemory` | Per-request execution coordination (progress fences, staged batch references) and failure signaling. |
 
 ### 2.4 Executor ladder (bindings × families)
 

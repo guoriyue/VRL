@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.sample_batches import (
@@ -65,7 +66,8 @@ class BatchExecutorBase:
         batches: Sequence[GenerationSampleBatch],
         *,
         completion_callback: BatchCompletionCallback | None = None,
-    ) -> list[BatchPayload]:
+        stage_result: Callable[[BatchPayload], Any] | None = None,
+    ) -> list[Any]:
         """Produce a request's batches in order on this worker, one RPC for all.
 
         What this saves over per-batch dispatch is the per-batch Ray round trip,
@@ -80,17 +82,23 @@ class BatchExecutorBase:
         overlap recovered nothing (6735 ms serial vs 6729 ms overlapped), so the
         loop keeps the plain synchronous copy.
 
-        ``completion_callback`` receives one fence per batch, after that batch's
-        result is on the CPU. Results stay in batch order.
+        ``stage_result`` runs on each copied batch result and its return value is
+        what the loop keeps (the Ray rank passes ``ray.put`` so a payload enters
+        the object store while the next batch denoises); without it the copied
+        payloads are returned as they are. ``completion_callback`` receives one
+        fence per batch, after that batch's result is staged. Results stay in
+        batch order.
         """
 
         from vrl.trajectory.device import copy_tensor_tree_to_pinned_cpu
 
-        results: list[BatchPayload] = []
+        results: list[Any] = []
         for idx, batch in enumerate(batches):
             result = self.forward_batch(request, batch)
             if result is not None:
                 result = copy_tensor_tree_to_pinned_cpu(result)
+                if stage_result is not None:
+                    result = stage_result(result)
             results.append(result)
             if completion_callback is not None:
                 completion_callback(BatchProduceFence(completed_batches=idx + 1))

@@ -567,24 +567,25 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
     assert session.executor.actor_dispatcher is session.weight_sync.actor_dispatcher
 
 
-def test_pipelined_rejects_multiple_resolved_engines() -> None:
+def test_pipelined_accepts_multiple_resolved_engines() -> None:
     cfg = _resource_cfg(trainer_devices=[0], rollout_devices=[1, 2])
     cfg.distributed.rollout.pipelined = True
 
-    with pytest.raises(ValueError, match="requires exactly one rollout engine"):
-        RayGenerationConfig.from_root(
-            parse_config(cfg),
-            resources=ResolvedDistributedResources.from_root(parse_config(cfg)),
-        )
-
-
-def test_pipelined_rejects_multiple_placement_bundles_before_ray_start(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        "vrl.generation.ray.launcher.require_ray",
-        lambda: pytest.fail("Ray must not start before pipeline placement validation"),
+    config = RayGenerationConfig.from_root(
+        parse_config(cfg),
+        resources=ResolvedDistributedResources.from_root(parse_config(cfg)),
     )
+
+    assert config.worker.pipelined is True
+    assert config.resources.rollout_num_engines == 2
+
+
+def test_pipelined_launch_adds_one_finalizer_per_engine(monkeypatch) -> None:
+    """The per-request path launches a CPU finalizer beside every engine,
+    pinned to the engine's primary bundle and reserving no CPU or GPU."""
+
+    import vrl.generation.ray.launcher as launcher_module
+
     cfg = _launch_cfg()
     cfg.distributed.rollout = {
         "pipelined": True,
@@ -603,18 +604,54 @@ def test_pipelined_rejects_multiple_placement_bundles_before_ray_start(
         ),
         gatherer=entry.new_gatherer(),
     )
-    placement = RolePlacement(
-        placement_group=object(),
-        bundle_indices=(0, 1),
-        expected_gpu_ids=(),
+    launches: list[dict[str, Any]] = []
+
+    class _Group:
+        def __init__(self, worker_ids: list[str]) -> None:
+            self.handles = [
+                SimpleNamespace(worker_id=worker_id, node_ip="node", gpu_ids=(), actor=object())
+                for worker_id in worker_ids
+            ]
+
+        @staticmethod
+        def shutdown() -> None:
+            return None
+
+    def capture_launch(**kwargs: Any) -> _Group:
+        launches.append(kwargs)
+        return _Group(list(kwargs["worker_ids"]))
+
+    monkeypatch.setattr(launcher_module, "require_ray", lambda: object())
+    monkeypatch.setattr(launcher_module.RayActorGroup, "launch", staticmethod(capture_launch))
+    monkeypatch.setattr(
+        RayGenerationLauncher,
+        "_all_ranks_support_versioned_slots",
+        lambda *_args, **_kwargs: False,
     )
 
-    with pytest.raises(ValueError, match="exactly one rollout engine"):
-        RayGenerationLauncher(init_ray=False)._launch_session(
-            config,
-            launch_inputs,
-            placement=placement,
-        )
+    session = RayGenerationLauncher(init_ray=False)._launch_session(
+        config,
+        launch_inputs,
+        placement=RolePlacement(
+            placement_group=object(),
+            bundle_indices=(3, 5),
+            expected_gpu_ids=(),
+        ),
+    )
+
+    assert [launch["worker_cls"].__name__ for launch in launches] == [
+        "RayGenerationWorker",
+        "RayGenerationFinalizer",
+    ]
+    finalize = launches[1]
+    assert finalize["worker_ids"] == ["rollout-0.finalize", "rollout-1.finalize"]
+    assert finalize["num_cpus"] == 0
+    assert finalize["num_gpus"] == 0
+    assert finalize["bundle_indices"] == [3, 5]
+    assert finalize["operation_prefix"] == "rollout.finalize"
+    assert "startup_method" not in finalize
+    assert [handle.worker_id for handle in session.finalizer_handles] == finalize["worker_ids"]
+    assert session.executor.finalizers == tuple(session.finalizer_handles)
 
 
 def test_generation_launch_inputs_project_model_compile_and_precision() -> None:

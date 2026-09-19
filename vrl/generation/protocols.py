@@ -45,6 +45,7 @@ if TYPE_CHECKING:
         BatchSizeProbeResult,
         GenerationBatchEnvelope,
         GenerationBatchResult,
+        PipelinedBatchRefs,
         PipelinedRequestOutOfMemory,
         WorkerMemoryParkingSnapshot,
     )
@@ -159,8 +160,7 @@ class GenerationRankActor(Protocol):
         self,
         request: GenerationRequest,
         engine_plan: EnginePlan,
-        sample_rows: Sequence[GenerationSampleRow],
-    ) -> GenerationOutput | PipelinedRequestOutOfMemory: ...
+    ) -> PipelinedBatchRefs | PipelinedRequestOutOfMemory: ...
 
     def pipelined_progress(self, request_id: str) -> PipelinedRequestProgress | None: ...
 

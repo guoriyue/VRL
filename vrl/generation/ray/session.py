@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.weight_sync import GenerationWeightSync
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.dependencies import kill_actors, kill_failures_error, require_ray
 from vrl.utils.deadline import OperationDeadline
 
@@ -42,6 +44,7 @@ class RayGenerationSession:
         owned_engines: list[RayGenerationEngine],
         *,
         supports_non_draining_weight_sync: bool = False,
+        owned_finalizers: Sequence[RayActorHandle] = (),
     ) -> None:
         if executor is None:
             raise ValueError("Ray generation session requires an executor")
@@ -65,6 +68,8 @@ class RayGenerationSession:
         rank_ids = tuple(rank.worker_id for rank in self.rank_handles)
         if len(set(rank_ids)) != len(rank_ids):
             raise RuntimeError(f"duplicate generation rank ids: {rank_ids}")
+        # Finalizers hold no policy: they are killed with the ranks, never released.
+        self.finalizer_handles = list(owned_finalizers)
         self.supports_non_draining_weight_sync = bool(
             supports_non_draining_weight_sync,
         )
@@ -126,7 +131,7 @@ class RayGenerationSession:
     async def close(self, *, force: bool) -> None:
         """Release rank policies, kill actors, and retain failed handles."""
 
-        if not self.rank_handles:
+        if not self.rank_handles and not self.finalizer_handles:
             return
         if force:
             self.force_close()
@@ -171,15 +176,24 @@ class RayGenerationSession:
             self.kill_engines()
 
     def kill_engines(self) -> None:
-        """Synchronously kill every rank actor and retain handles that fail."""
+        """Synchronously kill every rank and finalizer actor; retain handles that fail."""
 
-        if not self.rank_handles:
+        if not self.rank_handles and not self.finalizer_handles:
             return
         ray = require_ray()
-        failures = kill_actors(ray, [rank.actor for rank in self.rank_handles])
+        failures = kill_actors(
+            ray,
+            [rank.actor for rank in self.rank_handles]
+            + [finalizer.actor for finalizer in self.finalizer_handles],
+        )
         failed_actor_ids = {id(actor) for actor, _ in failures}
         self.rank_handles[:] = [
             rank for rank in self.rank_handles if id(rank.actor) in failed_actor_ids
+        ]
+        self.finalizer_handles[:] = [
+            finalizer
+            for finalizer in self.finalizer_handles
+            if id(finalizer.actor) in failed_actor_ids
         ]
         # Once shutdown starts, engines are no longer executable. Retry cleanup
         # through the retained rank handles without rebuilding partial engines.

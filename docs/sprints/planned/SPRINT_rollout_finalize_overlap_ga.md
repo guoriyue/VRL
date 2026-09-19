@@ -88,3 +88,40 @@ actor 池。他们三个层次全靠进程分离，没有线程或 CUDA 流。
 本 sprint 剩余部分的前提不变：循环结束后 `merge_generation_batches` 与 Ray
 序列化仍在 GPU worker 进程内串行，P0 的 nsys 归因才决定是否值得把它们搬出
 worker（附录 B 的 CPU actor 形状）。
+
+## 2026-09-18 更新（二）：合并出 GPU worker，request 之间不再串行
+
+同日第二批改动把上一节"剩余部分"里的进程拆分做掉了，形状与附录 B 一致，
+未新增配置键。
+
+- **合并与序列化出 GPU worker。** `pipelined=true` 时，rank 在循环里每批
+  `ray.put` 一次（`forward_batches_pipelined` 的 `stage_result` 钩子），返回的是
+  `PipelinedBatchRefs`（每批一个 object ref），不再在 rank 进程里
+  `merge_generation_batches` 也不再把整条轨迹 pickle 进返回值。合并跑在每个
+  engine 旁边一个 `RayGenerationFinalizer`（`vrl/generation/ray/finalizer.py`，
+  `num_cpus=0`，钉在该 engine 的 primary bundle 上）：`ray.get` 各批、gatherer
+  合并并构建轨迹、把 reward media 装箱成 `MediaReference`。rank 在最后一批
+  staged 之后即空闲。
+- **driver 侧反序列化。** driver 现在收到的是 finalizer 返回的一个
+  `GenerationOutput`（tensor wire 带外字节），不再在 per-batch 路径之外多做一次
+  合并。训练进程仍要把最终轨迹读进内存一次，这一步与之前相同。
+- **Reward 按组打分。** 核实后发现 strict 模式早已有 `PER_GROUP_STREAMING`
+  （`vrl/rollouts/collector/core.py`，reward 隔离验证通过时默认启用）。本批未改；
+  共卡（reward 与 rollout 时分同一张卡）仍是 `BATCHED_SERIAL`，逐组打分意味着
+  逐组 park/wake，是否值得需要按配置测量，没有证据前不动。
+- **下一个 request 立即开始。** 两处：① `RayGenerationExecutor` 去掉了 driver
+  侧的单飞 asyncio 锁，准入交给 dispatcher 的每 engine 一个槽位（deadline 在拿到
+  槽位后才起算，语义不变）；② strict 模式的 `prepare_training_batches` 提前一组
+  提交下一次生成（`PER_GROUP_SERIAL` 对照臂除外），使 engine 在上一组的批 staged
+  后立刻接到下一组，与该组的合并、打分重叠。continuous 模式本就并发提交，自动受益。
+- **多 engine。** `pipelined` 不再要求恰好一个 engine：每个 engine 按 round-robin
+  拿到自己那份批，一次 RPC 跑完，finalizer 按 plan 顺序合并所有 engine 的 refs。
+  任一 engine 返回 OOM 则整个 request 退回逐批拆分路径。
+
+测试：`tests/generation/ray/test_finalizer.py`（含真实 Ray 往返）、
+`test_oom_split.py` 的多 engine 与 OOM 回退用例、`test_runtime_config.py` 的
+finalizer 启动用例、`tests/rollouts/orchestration/test_prompt_collection.py` 的
+提前提交与取消用例。
+
+仍未做：P0 的 nsys 归因（本批的收益上限仍要在真实 Cosmos run 上量）；共卡场景
+的逐组打分节奏。

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Sequence
 from typing import Any
 
 import ray
@@ -14,16 +13,17 @@ from vrl.generation.execution.types import (
     BatchSizeProbeResult,
     GenerationBatchEnvelope,
     GenerationBatchResult,
+    PipelinedBatchRefs,
     PipelinedRequestOutOfMemory,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.pipeline_protocol import PipelinedRequestProgress
+from vrl.generation.ray.reward_media import reference_reward_media
 from vrl.generation.ray.tensor_wire import register_tensor_wire_serializer
-from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
+from vrl.generation.types import GenerationRequest
 from vrl.ray.dependencies import current_gpu_ids, current_node_ip
-from vrl.utils.media_reference import MediaReference
 
 # Ray binds methods to a concurrency group by name across two separate APIs --
 # @ray.method here and ray.remote(concurrency_groups=...) at actor creation --
@@ -131,26 +131,13 @@ class RayGenerationWorker:
     def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
         result = self.core.execute_batch(envelope)
         if result.output is not None and not result.error:
-            self._reference_reward_media(result.output, envelope.request)
+            reference_reward_media(result.output, envelope.request, primary=self._is_primary_rank)
         return result
 
-    def _reference_reward_media(self, output: Any, request: GenerationRequest) -> None:
-        """Keep online media in the object store, boxed until the reward actor reads it."""
-
-        if not request.reward_media_refs:
-            return
+    @property
+    def _is_primary_rank(self) -> bool:
         rank_group = self.core.rank_group_spec
-        if rank_group is not None and rank_group.group_rank != 0:
-            # Engine combination only keeps the primary payload. No redundant
-            # object-store media or tensor serialization on discarded ranks.
-            output.reward_media = None
-            return
-        media = output.reward_media
-        ref = ray.put(media)
-        output.reward_media = [
-            MediaReference(ref, index, nbytes=sample.numel() * sample.element_size())
-            for index, sample in enumerate(media)
-        ]
+        return rank_group is None or rank_group.group_rank == 0
 
     def probe_batch_size(
         self,
@@ -168,23 +155,24 @@ class RayGenerationWorker:
         self,
         request: GenerationRequest,
         engine_plan: EnginePlan,
-        sample_rows: Sequence[GenerationSampleRow],
-    ) -> GenerationOutput | PipelinedRequestOutOfMemory:
-        """Run all of a request's batches on this worker in one call; returns a
-        gathered output or typed OOM retry. See
-        GenerationWorkerCore.execute_request_pipelined."""
+    ) -> PipelinedBatchRefs | PipelinedRequestOutOfMemory:
+        """Run all of the plan's batches on this rank in one call.
+
+        Each batch payload is staged into the object store as soon as its host
+        copy is ready, so the returned value carries only references and this
+        rank is free for the next request the moment its last batch is staged.
+        A non-primary rank of a multi-rank engine stages nothing. See
+        GenerationWorkerCore.execute_request_pipelined for version safety and
+        the typed OOM retry.
+        """
+
         request_id = str(request.request_id)
         total_batches = len(engine_plan.sample_batches)
         with self._pipelined_progress_lock:
             if self._pipelined_progress is not None:
-                active_request_id = (
-                    self._pipelined_progress.request_id
-                    if self._pipelined_progress is not None
-                    else "unknown"
-                )
                 raise RuntimeError(
                     "pipelined worker received overlapping requests "
-                    f"{active_request_id!r} and {request_id!r}",
+                    f"{self._pipelined_progress.request_id!r} and {request_id!r}",
                 )
             self._pipelined_progress = PipelinedRequestProgress(
                 request_id=request_id,
@@ -218,19 +206,39 @@ class RayGenerationWorker:
                     total_batches=total_batches,
                 )
 
+        primary = self._is_primary_rank
         try:
-            output = self.core.execute_request_pipelined(
+            staged = self.core.execute_request_pipelined(
                 request,
                 engine_plan,
-                sample_rows,
                 completion_callback=record_completion,
+                stage_batch=ray.put if primary else _discard_payload,
             )
-            if isinstance(output, GenerationOutput):
-                self._reference_reward_media(output, request)
-            return output
         finally:
             with self._pipelined_progress_lock:
                 self._pipelined_progress = None
+        if isinstance(staged, PipelinedRequestOutOfMemory):
+            return staged
+        if len(staged) != total_batches:
+            raise RuntimeError(
+                f"pipelined worker {self.core.worker_id} staged {len(staged)} batches "
+                f"for a {total_batches}-batch plan",
+            )
+        if not primary:
+            return PipelinedBatchRefs(
+                request_id=request_id,
+                worker_id=self.core.worker_id,
+                batch_keys=(),
+                batch_refs=(),
+                policy_version=request.policy_version,
+            )
+        return PipelinedBatchRefs(
+            request_id=request_id,
+            worker_id=self.core.worker_id,
+            batch_keys=tuple(batch.batch_key for batch in engine_plan.sample_batches),
+            batch_refs=tuple(staged),
+            policy_version=request.policy_version,
+        )
 
     @ray.method(concurrency_group=HEALTH_CONCURRENCY_GROUP)
     def pipelined_progress(
@@ -244,6 +252,13 @@ class RayGenerationWorker:
             if progress is None or progress.request_id != request_id:
                 return None
             return progress
+
+
+def _discard_payload(payload: Any) -> None:
+    """Non-primary ranks keep nothing: the engine result is the primary's."""
+
+    del payload
+    return None
 
 
 __all__ = ["RayGenerationWorker"]

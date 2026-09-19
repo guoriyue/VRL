@@ -2,16 +2,18 @@
 
 The per-request slice of the Ray adapter: split one ``EnginePlan`` across the
 engine fleet, await the batch RPCs (with stall deadlines and pipelined
-progress probing), and reassemble outputs through the model-free gatherer.
-It deliberately owns no lifecycle — admission, terminal failure, and shutdown
-belong to ``RayGenerationRuntime``, while the live actors and this executor
-are held together by ``RayGenerationSession``.
+progress probing), and reassemble outputs through the model-free gatherer,
+driver-side for per-batch dispatch or on a finalizer actor for the per-request
+path. It deliberately owns no lifecycle — admission, terminal failure, and
+shutdown belong to ``RayGenerationRuntime``, while the live actors and this
+executor are held together by ``RayGenerationSession``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -21,6 +23,7 @@ from vrl.generation.execution.types import (
     BatchSizeProbeResult,
     GenerationBatchEnvelope,
     GenerationBatchResult,
+    PipelinedBatchRefs,
     PipelinedRequestOutOfMemory,
     StaleSlotDiscard,
 )
@@ -31,6 +34,7 @@ from vrl.generation.ray.pipeline_protocol import (
     PipelinedRequestProgress,
 )
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
+from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.operation_deadline import (
     RayCallDeadline,
@@ -58,15 +62,10 @@ class RayGenerationExecutor:
         actor_dispatcher: RayActorDispatcher,
         generation_stall_timeout_s: float,
         pipelined: bool = False,
+        finalizers: Sequence[RayActorHandle] = (),
     ) -> None:
         if not engines:
             raise ValueError("RayGenerationExecutor requires at least one engine")
-        if pipelined and len(engines) != 1:
-            raise ValueError(
-                "pipelined Ray generation requires exactly one rollout engine; "
-                f"received {len(engines)}. Per-engine request pipelining is not "
-                "implemented.",
-            )
         self.planner = planner
         self.engines = list(engines)
         self.gatherer = gatherer
@@ -81,13 +80,16 @@ class RayGenerationExecutor:
             generation_stall_timeout_s,
             name="generation_stall_timeout_s",
         )
-        # Config validation rejects multi-engine use; this constructor repeats the
-        # guard for callers that construct executors directly.
         self.pipelined = bool(pipelined)
-        # A synchronous single-rank actor cannot execute two pipelined requests
-        # concurrently. Queue them on the driver so a later request does not spend
-        # its stall budget waiting behind an earlier, legitimately long request.
-        self._pipelined_request_lock = asyncio.Lock() if self.pipelined else None
+        # The per-request path stages batch payloads in the object store and
+        # merges them on a finalizer actor, never on the rank or the driver.
+        self.finalizers = tuple(finalizers)
+        if self.pipelined and not self.finalizers:
+            raise ValueError(
+                "pipelined Ray generation requires at least one finalizer actor "
+                "to merge staged batch payloads",
+            )
+        self._next_finalizer = 0
 
     def _engine_for_result_id(self, worker_id: str) -> RayGenerationEngine | None:
         """Map a result's producing rank id (or an engine id) to its engine."""
@@ -100,26 +102,31 @@ class RayGenerationExecutor:
         return None
 
     async def execute(self, request: GenerationRequest) -> GenerationOutput:
-        """Execute with single-flight admission for the pipelined worker."""
+        """Execute one request.
 
-        lock = self._pipelined_request_lock
-        if lock is None:
-            return await self._execute(request)
-        async with lock:
-            return await self._execute(request)
+        Admission is the fleet dispatcher's: each engine exposes one slot with
+        FIFO waiters, and a call's stall deadline starts only after its slot is
+        acquired, so a later request never spends its budget queued behind an
+        earlier one. Requests may therefore be submitted concurrently; the
+        per-request path releases an engine's slot as soon as its batches are
+        staged, before the request is merged.
+        """
+
+        return await self._execute(request)
 
     @staticmethod
     def _select_request_rank_result(
         results: list[Any],
-    ) -> GenerationOutput | PipelinedRequestOutOfMemory:
-        """Return an OOM reported by any rank; otherwise keep primary output."""
+    ) -> PipelinedBatchRefs | PipelinedRequestOutOfMemory:
+        """Return an OOM reported by any rank; otherwise keep the primary's refs."""
 
         if not all(
-            isinstance(result, (GenerationOutput, PipelinedRequestOutOfMemory))
+            isinstance(result, (PipelinedBatchRefs, PipelinedRequestOutOfMemory))
             for result in results
         ):
             raise TypeError(
-                "pipelined engine ranks must return GenerationOutput or PipelinedRequestOutOfMemory"
+                "pipelined engine ranks must return PipelinedBatchRefs or "
+                "PipelinedRequestOutOfMemory"
             )
         if any(result.request_id != results[0].request_id for result in results[1:]):
             raise RuntimeError("pipelined engine ranks returned different request identities")
@@ -136,11 +143,7 @@ class RayGenerationExecutor:
     ) -> list[BatchSizeProbeResult]:
         """Probe every engine through the same actor admission as generation."""
 
-        lock = self._pipelined_request_lock
-        if lock is None:
-            return await self._probe_batch_sizes(request, max_samples=max_samples)
-        async with lock:
-            return await self._probe_batch_sizes(request, max_samples=max_samples)
+        return await self._probe_batch_sizes(request, max_samples=max_samples)
 
     async def _probe_batch_sizes(
         self,
@@ -401,16 +404,76 @@ class RayGenerationExecutor:
         engine_plan: EnginePlan,
         sample_rows: list[GenerationSampleRow],
     ) -> GenerationOutput | PipelinedRequestOutOfMemory:
-        """Single-engine stage-overlap path (opt-in, ``pipelined=True``):
-        the whole request's batches run software-pipelined on one engine
-        (``forward_plan_pipelined``), returning the already-gathered
-        GenerationOutput. The pipeline keeps depth 1 (about two batches resident),
-        so a typed OOM response falls back to the normal per-batch dispatch and
-        split admission path. Version safety is enforced in the rank (slot
-        activation / StaleSlotDiscard); a stale request raises and is counted as a
-        graceful discard upstream, never trained off-policy."""
+        """Per-request path (opt-in, ``pipelined=True``).
 
-        engine = self.engines[0]
+        Every engine receives its round-robin share of the request's batches in
+        ONE call and stages each batch payload into the object store as it is
+        produced; a finalizer actor then merges the references into the
+        ``GenerationOutput`` off the ranks' critical path. A typed OOM from any
+        engine falls back to the normal per-batch dispatch and split admission
+        path. Version safety is enforced in the rank (slot activation /
+        StaleSlotDiscard); a stale request raises and is counted as a graceful
+        discard upstream, never trained off-policy.
+        """
+
+        engine_batches = self._engine_batch_subsets(engine_plan)
+        engine_results = await self._gather_cancel_on_error(
+            [
+                self._execute_engine_pipelined(request, engine, batches)
+                for engine, batches in engine_batches
+            ],
+        )
+        for result in engine_results:
+            if isinstance(result, StaleSlotDiscard):
+                raise result
+        refs_by_key: dict[str, Any] = {}
+        for (engine, batches), result in zip(engine_batches, engine_results, strict=True):
+            if not isinstance(result, (PipelinedBatchRefs, PipelinedRequestOutOfMemory)):
+                raise TypeError(
+                    "pipelined generation engine returned unsupported result "
+                    f"{type(result).__name__}",
+                )
+            if result.request_id != request.request_id:
+                raise RuntimeError(
+                    "pipelined generation request_id mismatch: "
+                    f"{result.request_id!r} != {request.request_id!r}",
+                )
+            if result.worker_id not in {rank.worker_id for rank in engine.ranks}:
+                raise RuntimeError(
+                    "pipelined generation rank mismatch: "
+                    f"{result.worker_id!r} is not a rank of engine {engine.engine_id!r}",
+                )
+            if isinstance(result, PipelinedRequestOutOfMemory):
+                return result
+            expected_keys = tuple(batch.batch_key for batch in batches)
+            if result.batch_keys != expected_keys:
+                raise RuntimeError(
+                    f"pipelined engine {engine.engine_id!r} staged batches "
+                    f"{result.batch_keys} for plan {expected_keys}",
+                )
+            refs_by_key.update(zip(result.batch_keys, result.batch_refs, strict=True))
+        ordered_refs = [refs_by_key[batch.batch_key] for batch in engine_plan.sample_batches]
+        return await self._finalize_request(request, sample_rows, ordered_refs)
+
+    def _engine_batch_subsets(
+        self,
+        engine_plan: EnginePlan,
+    ) -> list[tuple[RayGenerationEngine, tuple[Any, ...]]]:
+        """Round-robin the plan's batches over the engines; skip idle engines."""
+
+        subsets: list[tuple[RayGenerationEngine, tuple[Any, ...]]] = []
+        for index, engine in enumerate(self.engines):
+            batches = tuple(engine_plan.sample_batches[index :: len(self.engines)])
+            if batches:
+                subsets.append((engine, batches))
+        return subsets
+
+    async def _execute_engine_pipelined(
+        self,
+        request: GenerationRequest,
+        engine: RayGenerationEngine,
+        batches: tuple[Any, ...],
+    ) -> PipelinedBatchRefs | PipelinedRequestOutOfMemory | StaleSlotDiscard:
         primary = engine.primary
         # Progress is a rank-0 read on the health concurrency group.
         progress = getattr(primary.actor, "pipelined_progress", None)
@@ -419,6 +482,7 @@ class RayGenerationExecutor:
             raise PipelinedProgressError(
                 "pipelined Ray generation requires rank progress reporting",
             )
+        engine_plan = EnginePlan(sample_batches=batches)
 
         async def await_pipelined_result(
             result_ref: Any,
@@ -429,7 +493,7 @@ class RayGenerationExecutor:
                     result_ref=result_ref,
                     progress_remote=progress_remote,
                     request_id=request.request_id,
-                    total_batches=len(engine_plan.sample_batches),
+                    total_batches=len(batches),
                     initial_deadline=initial_deadline,
                 )
             except StaleSlotDiscard as error:
@@ -438,7 +502,7 @@ class RayGenerationExecutor:
                 # public executor re-raises the typed discard.
                 return error
 
-        result = await self.actor_dispatcher.run_one(
+        return await self.actor_dispatcher.run_one(
             RayActorJob(
                 job_index=0,
                 worker_id=engine.engine_id,
@@ -446,34 +510,62 @@ class RayGenerationExecutor:
                     "execute_request_pipelined", combine=self._select_request_rank_result
                 ),
                 payload=request,
-                keyword_args={
-                    "engine_plan": engine_plan,
-                    "sample_rows": sample_rows,
-                },
+                keyword_args={"engine_plan": engine_plan},
             ),
             operation="rollout.generation.pipelined",
             call_timeout_s=self.generation_stall_timeout_s,
             await_result=await_pipelined_result,
         )
-        if isinstance(result, StaleSlotDiscard):
-            raise result
-        if not isinstance(result, (GenerationOutput, PipelinedRequestOutOfMemory)):
+
+    @staticmethod
+    async def _gather_cancel_on_error(coroutines: list[Any]) -> list[Any]:
+        """Await all engine calls; a failure cancels the siblings before raising."""
+
+        tasks = [asyncio.ensure_future(coroutine) for coroutine in coroutines]
+        try:
+            return list(await asyncio.gather(*tasks))
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+    async def _finalize_request(
+        self,
+        request: GenerationRequest,
+        sample_rows: list[GenerationSampleRow],
+        batch_refs: list[Any],
+    ) -> GenerationOutput:
+        """Merge staged batch references on the next finalizer actor."""
+
+        finalizer = self.finalizers[self._next_finalizer % len(self.finalizers)]
+        self._next_finalizer += 1
+        deadline = RayCallDeadline(
+            "rollout.generation.finalize",
+            self.generation_stall_timeout_s,
+            context=f"finalizer={finalizer.worker_id}, request_id={request.request_id}",
+        )
+        ref = finalizer.actor.merge_request.remote(request, list(sample_rows), list(batch_refs))
+        task = asyncio.ensure_future(ref)
+        try:
+            output = await asyncio.wait_for(task, timeout=deadline.remaining_s())
+        except TimeoutError as cause:
+            cancel_ray_refs(None, [ref], root_error=None)
+            raise deadline.timeout_error() from cause
+        except asyncio.CancelledError:
+            cancel_ray_refs(None, [ref], root_error=None)
+            raise
+        if not isinstance(output, GenerationOutput):
             raise TypeError(
-                f"pipelined generation engine returned unsupported result {type(result).__name__}",
+                f"finalizer {finalizer.worker_id!r} returned {type(output).__name__}, "
+                "expected GenerationOutput",
             )
-        if result.request_id != request.request_id:
+        if output.request_id != request.request_id:
             raise RuntimeError(
-                "pipelined generation request_id mismatch: "
-                f"{result.request_id!r} != {request.request_id!r}",
+                "finalized generation request_id mismatch: "
+                f"{output.request_id!r} != {request.request_id!r}",
             )
-        if isinstance(result, PipelinedRequestOutOfMemory) and result.worker_id not in {
-            rank.worker_id for rank in engine.ranks
-        }:
-            raise RuntimeError(
-                "pipelined generation rank mismatch: "
-                f"{result.worker_id!r} is not a rank of engine {engine.engine_id!r}",
-            )
-        return result
+        return output
 
     async def _await_pipelined_result(
         self,

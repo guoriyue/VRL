@@ -192,6 +192,30 @@ async def test_close_releases_policies_then_kills_workers(
 
 
 @pytest.mark.asyncio
+async def test_close_kills_finalizers_without_releasing_a_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import vrl.generation.ray.session as session_module
+
+    rank = _Actor("rollout-0")
+    finalizer = object()
+    ray = _Ray()
+    monkeypatch.setattr(session_module, "require_ray", lambda: ray)
+    session = RayGenerationSession(
+        _Executor(),
+        None,
+        [RayGenerationEngine("rollout-0", [RayActorHandle(worker_id="rollout-0", actor=rank)])],
+        owned_finalizers=[RayActorHandle(worker_id="rollout-0.finalize", actor=finalizer)],
+    )
+
+    await session.close(force=False)
+
+    assert rank.release_policy.calls == 1
+    assert ray.killed == [rank, finalizer]
+    assert session.finalizer_handles == []
+
+
+@pytest.mark.asyncio
 async def test_close_retains_only_actor_handles_that_failed_to_die(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

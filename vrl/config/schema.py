@@ -719,11 +719,11 @@ class RolloutRuntimeSection(ConfigBase):
     sync_trainable_state: bool = True
     # Optional tensor bytes per wire chunk; receiver staging still holds full state.
     update_weight_buffer_size: int | None = Field(default=None, ge=1, strict=True)
-    # engine level: opt-in single-engine per-request rollout. All of a request's
-    # batches run on the one worker in a single RPC instead of one RPC per
-    # batch. Config resolution rejects multiple engines; requests with fewer
-    # than two batches use the standard per-batch path, and an OOM inside the
-    # request loop falls back to that path's split-and-retry behavior.
+    # engine level: opt-in per-request rollout. Each engine runs its share of a
+    # request's batches in a single RPC instead of one RPC per batch, staging
+    # each payload in the object store for a CPU finalizer actor to merge.
+    # Requests with fewer than two batches use the standard per-batch path, and
+    # an OOM inside the request loop falls back to that path's split-and-retry.
     pipelined: bool = False
 
     @model_validator(mode="after")

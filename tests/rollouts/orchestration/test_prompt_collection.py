@@ -300,9 +300,11 @@ class _StreamingCollector(_DeferredCollector):
         if name == "p1":
             await self.score_started.wait()
             self.events.append("generation_overlapped_score:p1")
-            self.finish_score.set()
             if self.fail_generation:
+                # Fail while p0's score is still in flight: the collector must
+                # cancel that score, not let it finish first.
                 raise RuntimeError("generation failed")
+            self.finish_score.set()
         await asyncio.sleep(0)
         self.events.append(f"generate_done:{name}")
         batch = _batch(prompts, int(kwargs["group_size"]))
@@ -342,11 +344,15 @@ class _TimedCollector(_DeferredCollector):
             supports_overlap=supports_overlap,
         )
         self.delay_s = delay_s
+        # One engine: a prefetched request queues behind the running one, as
+        # the Ray dispatcher's per-engine slot does in production.
+        self._engine = asyncio.Lock()
 
     async def generate_rollout(self, request) -> Any:
         inputs = request.inputs
         kwargs = request.options
-        await asyncio.sleep(self.delay_s)
+        async with self._engine:
+            await asyncio.sleep(self.delay_s)
         return await super().generate_rollout(super().request_builder.build(inputs, **kwargs))
 
     async def evaluate_rollout(self, pendings: list[Any]) -> list[RolloutBatch]:
@@ -566,6 +572,146 @@ async def test_generation_failure_cancels_and_settles_inflight_score(
 
     assert collector.active_scores == 0
     assert collector.score_cancelled.is_set()
+
+
+async def _settle(hops: int = 20) -> None:
+    """Let every ready task run; the loop under test has several awaits per group."""
+
+    for _ in range(hops):
+        await asyncio.sleep(0)
+
+
+class _EngineOrderCollector(_DeferredCollector):
+    """Records when each generation is submitted and when it completes."""
+
+    def __init__(self, *, supports_overlap: bool) -> None:
+        super().__init__(
+            rollout_reward_handoff=False,
+            trainer_reward_handoff=False,
+            supports_overlap=supports_overlap,
+        )
+        self.release: dict[str, asyncio.Event] = {}
+
+    async def generate_rollout(self, request) -> Any:
+        prompts = [getattr(item, "prompt", item) for item in request.inputs]
+        name = ",".join(prompts)
+        self.events.append(f"submit:{name}")
+        gate = self.release.setdefault(name, asyncio.Event())
+        await gate.wait()
+        self.events.append(f"generated:{name}")
+        batch = _batch(prompts, int(request.options["group_size"]))
+        self._prompt_names[id(batch)] = tuple(prompts)
+        return batch
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("supports_overlap", "reward_mode"),
+    [
+        (True, None),
+        (False, None),
+        (True, RewardCollectionMode.BATCHED_SERIAL),
+    ],
+)
+async def test_next_generation_is_submitted_before_the_current_one_completes(
+    supports_overlap: bool,
+    reward_mode: RewardCollectionMode | None,
+) -> None:
+    """The engine sees request N+1 while request N is still being finalized."""
+
+    collector = _EngineOrderCollector(supports_overlap=supports_overlap)
+    for name in ("p0", "p1", "p2"):
+        collector.release[name] = asyncio.Event()
+    collection = asyncio.create_task(
+        prepare_training_batches(
+            collector=collector,
+            prompts=[PromptExample(prompt=f"p{i}") for i in range(3)],
+            group_size=1,
+            runtime_debug=False,
+            policy_version=None,
+            reward_mode=reward_mode,
+        ),
+    )
+    await _settle()
+    # p1 is already submitted while p0 has not completed; p2 is not.
+    assert collector.events == ["submit:p0", "submit:p1"]
+    collector.release["p0"].set()
+    await _settle()
+    # Streaming mode also starts p0's score here; its position relative to the
+    # p2 submission is scheduler order, not a contract.
+    engine_events = [event for event in collector.events if not event.startswith("evaluate")]
+    assert engine_events == ["submit:p0", "submit:p1", "generated:p0", "submit:p2"]
+    collector.release["p1"].set()
+    collector.release["p2"].set()
+    batches = await collection
+
+    assert [batch.group_ids.item() for batch in batches] == [0, 1, 2]
+    assert collector.events.index("submit:p2") < collector.events.index("generated:p1")
+
+
+@pytest.mark.asyncio
+async def test_per_group_serial_never_submits_the_next_generation_early() -> None:
+    """The control arm keeps generation, scoring, and the next generation serial."""
+
+    collector = _EngineOrderCollector(supports_overlap=True)
+    for name in ("p0", "p1"):
+        collector.release[name] = asyncio.Event()
+        collector.release[name].set()
+
+    await prepare_training_batches(
+        collector=collector,
+        prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
+        group_size=1,
+        runtime_debug=False,
+        policy_version=None,
+        reward_mode=RewardCollectionMode.PER_GROUP_SERIAL,
+    )
+
+    assert collector.events == [
+        "submit:p0",
+        "generated:p0",
+        "evaluate_rollout:[p0]",
+        "submit:p1",
+        "generated:p1",
+        "evaluate_rollout:[p1]",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generation_failure_cancels_the_prefetched_generation() -> None:
+    """A failed group also cancels the group already submitted behind it."""
+
+    collector = _EngineOrderCollector(supports_overlap=True)
+    collector.release["p0"] = asyncio.Event()
+    collector.release["p1"] = asyncio.Event()
+    cancelled: list[str] = []
+
+    async def failing_generate(request):
+        name = ",".join(getattr(item, "prompt", item) for item in request.inputs)
+        collector.events.append(f"submit:{name}")
+        if name == "p0":
+            await asyncio.sleep(0)
+            raise RuntimeError("generation failed")
+        try:
+            await collector.release[name].wait()
+        except asyncio.CancelledError:
+            cancelled.append(name)
+            raise
+        raise AssertionError("p1 must be cancelled, never completed")
+
+    collector.generate_rollout = failing_generate  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="generation failed"):
+        await prepare_training_batches(
+            collector=collector,
+            prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
+            group_size=1,
+            runtime_debug=False,
+            policy_version=None,
+        )
+
+    assert collector.events == ["submit:p0", "submit:p1"]
+    assert cancelled == ["p1"]
 
 
 @pytest.mark.asyncio

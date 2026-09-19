@@ -136,6 +136,59 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(local_r
         owner.shutdown()
 
 
+def test_pipelined_runtime_stages_batches_and_merges_on_the_finalizer(local_ray) -> None:
+    """Per-request path end to end on real actors: the rank stages each batch in
+    the object store, the finalizer merges the references, and the driver gets
+    the gathered output in plan order."""
+    import vrl.generation.ray.launcher as launcher_mod
+
+    worker = _worker_config(pipelined=True)
+    owner = _cpu_rollout_owner(local_ray, worker=worker)
+    runtime: RayGenerationRuntime | None = None
+    try:
+        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).create_runtime(
+            RayGenerationConfig(
+                resources=owner.resources,
+                worker=worker,
+            ),
+            _launch_inputs(),
+            placement=owner.rollout_placement,
+        )
+        session = runtime._session
+        assert session is not None
+        assert [handle.worker_id for handle in session.finalizer_handles] == [
+            "rollout-0.finalize",
+        ]
+        assert session.executor.finalizers == tuple(session.finalizer_handles)
+        request = GenerationRequest(
+            request_id="req-pipelined",
+            family="sd3_5",
+            task="t2i",
+            inputs=["p"],
+            samples_per_prompt=4,
+            samples_per_generation_batch=2,
+            policy_version=7,
+        )
+
+        async def run() -> GenerationOutput:
+            await runtime.activate()
+            return await runtime.generate(request)
+
+        output = asyncio.run(run())
+
+        assert isinstance(output, GenerationOutput)
+        assert output.request_id == "req-pipelined"
+        assert output.output == [
+            {"request_id": "req-pipelined", "batch_key": "prompt:0:samples:0:2", "samples": 2},
+            {"request_id": "req-pipelined", "batch_key": "prompt:0:samples:2:4", "samples": 2},
+        ]
+        assert [row.sample_index for row in output.sample_rows] == [0, 1, 2, 3]
+    finally:
+        if runtime is not None:
+            asyncio.run(runtime.shutdown())
+        owner.shutdown()
+
+
 def test_create_runtime_rejects_missing_rollout_placement() -> None:
     """placement=None fails fast with the config knob, not an AttributeError."""
     from omegaconf import OmegaConf

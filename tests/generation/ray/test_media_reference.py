@@ -11,6 +11,8 @@ from vrl.generation.bindings.full_sequence_denoise import (
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import GenerationBatchEnvelope, GenerationBatchResult
+from vrl.generation.ray.finalizer import RayGenerationFinalizer
+from vrl.generation.ray.reward_media import reference_reward_media
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.generation.types import GenerationRequest
 from vrl.utils.media_reference import MediaReference
@@ -49,7 +51,7 @@ def test_ray_worker_puts_one_batch_and_returns_boxed_sample_views(monkeypatch, r
         stored.append(media)
         return "object-ref"
 
-    monkeypatch.setattr("vrl.generation.ray.worker.ray.put", put)
+    monkeypatch.setattr("ray.put", put)
     worker = _worker(rank)
     batch = _batch()
     original = batch.video
@@ -69,10 +71,10 @@ def test_direct_eval_and_secondary_rank_never_put_media(monkeypatch, references,
     def unexpected_put(media):
         pytest.fail("unexpected object-store materialization")
 
-    monkeypatch.setattr("vrl.generation.ray.worker.ray.put", unexpected_put)
+    monkeypatch.setattr("ray.put", unexpected_put)
     batch = _batch()
     original = batch.video
-    _worker(rank)._reference_reward_media(batch, _request(references=references))
+    reference_reward_media(batch, _request(references=references), primary=rank in (None, 0))
     assert batch.video is (None if references else original)
 
 
@@ -91,21 +93,22 @@ def test_gather_orders_refs_without_resolving_or_materializing(monkeypatch):
     assert output.output == first.video + second.video
 
 
-def test_gathered_pipelined_output_uses_same_reference_adapter(monkeypatch):
+def test_finalized_pipelined_output_uses_same_reference_adapter(monkeypatch):
+    """The finalizer boxes the merged media exactly as the per-batch rank does."""
+
     request = _request()
     batch = _batch()
-    output = DenoiseBatchGatherer().merge_generation_batches(
-        request, request.sample_rows(), [batch]
-    )
     stored = []
 
     def put(media):
         stored.append(media)
         return "pipelined-ref"
 
-    monkeypatch.setattr("vrl.generation.ray.worker.ray.put", put)
-    worker = _worker()
-    worker._reference_reward_media(output, request)
+    monkeypatch.setattr("ray.put", put)
+    monkeypatch.setattr("ray.get", lambda refs: list(refs))
+    output = RayGenerationFinalizer("finalize-0", DenoiseBatchGatherer()).merge_request(
+        request, request.sample_rows(), [batch]
+    )
     assert len(stored) == 1
     assert output.output == [MediaReference("pipelined-ref", i, nbytes=48) for i in range(2)]
 
@@ -131,8 +134,7 @@ def test_real_ray_boxed_media_is_consumed_in_receiver(local_ray):
     class Producer:
         def generate(self):
             output = SimpleNamespace(reward_media=torch.full((2, 3, 4, 4), 128, dtype=torch.uint8))
-            worker = _worker()
-            worker._reference_reward_media(output, _request())
+            reference_reward_media(output, _request(), primary=True)
             return output.reward_media
 
         def ping(self):
@@ -207,7 +209,7 @@ def _cross_node_media_probe():
                 output = SimpleNamespace(
                     reward_media=torch.full((2, 3, 4, 4), 128, dtype=torch.uint8)
                 )
-                _worker()._reference_reward_media(output, _request())
+                reference_reward_media(output, _request(), primary=True)
                 return output.reward_media, ray.get_runtime_context().get_node_id(), os.getpid()
 
         @ray.remote(num_cpus=1)

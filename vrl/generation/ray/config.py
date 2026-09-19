@@ -30,9 +30,8 @@ class RolloutWorkerConfig:
     health_check_first_wait_s: float
     worker_rpc_timeout_s: float
     generation_stall_timeout_s: float
-    # Opt-in single-worker per-request rollout (one RPC for all of a request's
-    # batches). Multi-worker execution is rejected because per-worker request
-    # partitioning is not implemented.
+    # Opt-in per-request rollout: each engine runs its round-robin share of a
+    # request's batches in one RPC and stages the payloads for a finalizer.
     pipelined: bool
     # Batch->worker binding: "round_robin" binds at plan time (baseline);
     # "dynamic" binds at dispatch time (pull + LPT). Equivalent for 1 worker.
@@ -94,13 +93,6 @@ class RayGenerationConfig:
     def __post_init__(self) -> None:
         if self.resources.rollout_num_engines < 1:
             raise ValueError("distributed.resources.rollout.num_engines must be >= 1")
-        if self.worker.pipelined and self.resources.rollout_num_engines != 1:
-            raise ValueError(
-                "distributed.rollout.pipelined=true requires exactly one rollout "
-                f"engine; resolved {self.resources.rollout_num_engines}. "
-                "Per-worker request pipelining "
-                "is not implemented.",
-            )
 
     @classmethod
     def from_root(

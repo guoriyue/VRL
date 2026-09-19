@@ -98,11 +98,14 @@ class _Executor:
         raise NotImplementedError
 
 
+_PLAN = SimpleNamespace(sample_batches=("b0",))
+
+
 class _PipelinedExecutor(_Executor):
-    def forward_plan_pipelined(
-        self, request: Any, sample_rows: Any, engine_plan: Any, *, completion_callback: Any
+    def forward_batches_pipelined(
+        self, request: Any, batches: Any, *, completion_callback: Any, stage_result: Any
     ) -> Any:
-        return request, sample_rows, engine_plan
+        return [(request, batches)]
 
 
 class _FakeCuMem:
@@ -325,16 +328,12 @@ def test_parked_worker_rejects_execution_until_wake() -> None:
 
     core.sleep()
     with pytest.raises(RuntimeError, match=r"parked.*refusing execute_request_pipelined"):
-        core.execute_request_pipelined(request, object(), [], completion_callback=_NOOP_CB)
+        core.execute_request_pipelined(request, _PLAN, completion_callback=_NOOP_CB)
 
     core.wake()
-    assert core.execute_request_pipelined(
-        request, "plan", ["rows"], completion_callback=_NOOP_CB
-    ) == (
-        request,
-        ["rows"],
-        "plan",
-    )
+    assert core.execute_request_pipelined(request, _PLAN, completion_callback=_NOOP_CB) == [
+        (request, _PLAN.sample_batches),
+    ]
 
 
 def test_failed_physical_proof_quarantines_already_moved_model(
@@ -604,13 +603,13 @@ def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
     from vrl.generation.types import GenerationRequest
 
     class _OomPipelinedExecutor(_PipelinedExecutor):
-        def forward_plan_pipelined(
+        def forward_batches_pipelined(
             self,
             _request: Any,
-            _sample_rows: Any,
-            _engine_plan: Any,
+            _batches: Any,
             *,
             completion_callback: Any,
+            stage_result: Any,
         ) -> Any:
             raise RuntimeError("CUDA out of memory")
 
@@ -627,7 +626,7 @@ def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
         policy_version=1,
     )
 
-    result = core.execute_request_pipelined(request, object(), [], completion_callback=_NOOP_CB)
+    result = core.execute_request_pipelined(request, _PLAN, completion_callback=_NOOP_CB)
 
     assert isinstance(result, PipelinedRequestOutOfMemory)
     assert model.reset_calls == 1
@@ -793,14 +792,10 @@ def test_generation_execution_does_not_reenter_one_shot_cumem_scope(
     )
     core.load_policy()
     request = GenerationRequest("r", "sd3_5", "t2i", ["p"], 1, policy_version=1)
-    engine_plan = object()
-    sample_rows: list[Any] = []
 
-    result = core.execute_request_pipelined(
-        request, engine_plan, sample_rows, completion_callback=_NOOP_CB
-    )
+    result = core.execute_request_pipelined(request, _PLAN, completion_callback=_NOOP_CB)
 
-    assert result == (request, sample_rows, engine_plan)
+    assert result == [(request, _PLAN.sample_batches)]
     assert fake.pool_tags == ["vrl:generation:rollout-0:weights"]
 
 
