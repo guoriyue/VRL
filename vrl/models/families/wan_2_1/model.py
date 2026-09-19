@@ -347,18 +347,6 @@ class WanT2VDiffusersModel(
             operation="trainable weight sync",
         )
 
-    def verify_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
-        """Read actual adapter bytes with offloaded parameters materialized."""
-
-        verify = super().verify_trainable_state
-        if not self.uses_pipeline_cpu_offload:
-            verify(state_dict)
-            return
-        self._with_pipeline_cpu_offload_suspended(
-            lambda: verify(state_dict),
-            operation="trainable weight verification",
-        )
-
     def reset_pipeline_cpu_offload(self) -> None:
         """Return every component to CPU and reinstall fresh streaming hooks.
 

@@ -82,35 +82,7 @@ class RayGenerationWorker:
     def wake(self) -> None:
         self.core.wake()
 
-    def begin_weight_transfer(self, manifest: Any, transfer_id: str, policy_version: int) -> int:
-        return self.core.begin_weight_transfer(manifest, transfer_id, policy_version)
-
-    def receive_weight_chunk(self, chunk: Any, transfer_id: str) -> int:
-        return self.core.receive_weight_chunk(chunk, transfer_id)
-
-    def receive_weight_bucket(self, chunks: Any, transfer_id: str) -> int:
-        if not chunks:
-            raise ValueError("weight bucket must not be empty")
-        for chunk in chunks:
-            version = self.receive_weight_chunk(chunk, transfer_id)
-        return version
-
-    def commit_weight_transfer(self, transfer_id: str, *, verify_content: bool = False) -> int:
-        return self.core.commit_weight_transfer(transfer_id, verify_content=verify_content)
-
-    def abort_weight_transfer(self, transfer_id: str) -> None:
-        self.core.abort_weight_transfer(transfer_id)
-
-    def verify_active_weights(self, trainable_state: Any, policy_version: int) -> int:
-        """Read back the state already active on this rank for acceptance."""
-
-        return self.core.verify_active_weights(trainable_state, policy_version)
-
-    def update_weights(
-        self, trainable_state: Any, policy_version: int, *, verify_content: bool = False
-    ) -> int:
-        if verify_content:
-            return self.core.update_weights(trainable_state, policy_version, verify_content=True)
+    def update_weights(self, trainable_state: Any, policy_version: int) -> int:
         return self.core.update_weights(trainable_state, policy_version)
 
     def supports_versioned_trainable_state(self) -> bool:

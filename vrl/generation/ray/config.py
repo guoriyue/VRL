@@ -32,13 +32,8 @@ class RolloutWorkerConfig:
     # Opt-in per-request rollout: each engine runs its round-robin share of a
     # request's batches in one RPC and stages the payloads for a finalizer.
     pipelined: bool
-    update_weight_buffer_size: int | None = None
 
     def __post_init__(self) -> None:
-        if self.update_weight_buffer_size is not None and (
-            type(self.update_weight_buffer_size) is not int or self.update_weight_buffer_size < 1
-        ):
-            raise ValueError("update_weight_buffer_size must be a positive integer")
         if not math.isfinite(self.cpus_per_worker) or self.cpus_per_worker <= 0:
             raise ValueError("cpus_per_worker must be finite and > 0")
         if not math.isfinite(self.health_check_interval_s):

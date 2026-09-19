@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import uuid
 from typing import Any, Protocol
 
 from vrl.generation.ray.engine import RayGenerationEngine
@@ -31,10 +29,8 @@ class RayGenerationWeightSync:
     """Broadcast ``update_weights`` to every rank of every generation engine.
 
     The engine call fans out to all its ranks and requires their version
-    echoes to agree (``RayGenerationEngine.remote_uniform``); this layer then validates the
-    agreed echo against the expected version per engine. ``verify_content`` is
-    an opt-in acceptance probe: every rank must read back the installed parameters
-    before returning that echo. Normal sync does not pay for device readback.
+    echoes to agree (``RayGenerationEngine.remote_uniform``); this layer then
+    validates the agreed echo against the expected version per engine.
     """
 
     def __init__(
@@ -43,15 +39,7 @@ class RayGenerationWeightSync:
         *,
         actor_dispatcher: RayActorDispatcher,
         worker_rpc_timeout_s: float,
-        verify_content: bool = False,
-        update_weight_buffer_size: int | None = None,
     ) -> None:
-        if update_weight_buffer_size is not None and (
-            type(update_weight_buffer_size) is not int or update_weight_buffer_size < 1
-        ):
-            raise ValueError("update_weight_buffer_size must be a positive integer")
-        self.update_weight_buffer_size = update_weight_buffer_size
-        self.verify_content = bool(verify_content)
         self.engines = list(engines)
         expected_engine_ids = tuple(engine.engine_id for engine in self.engines)
         if actor_dispatcher.worker_ids != expected_engine_ids:
@@ -71,13 +59,9 @@ class RayGenerationWeightSync:
         policy_version: int,
     ) -> None:
         require_int(policy_version, path="policy_version", minimum=0)
-        if self.update_weight_buffer_size is not None and trainable_state is not None:
-            await self._push_bucketed(trainable_state, policy_version)
-            return
         if not self.engines:
             return
 
-        verification = {"verify_content": True} if self.verify_content else {}
         ray = require_ray()
         # Serialize the (potentially large) state dict once into the object
         # store and hand every rank the same ObjectRef. Passing the dict
@@ -92,7 +76,7 @@ class RayGenerationWeightSync:
                 worker_id=engine.engine_id,
                 remote_method=engine.remote_uniform("update_weights"),
                 payload=shared_state_ref,
-                keyword_args={"policy_version": policy_version, **verification},
+                keyword_args={"policy_version": policy_version},
             )
             for job_index, engine in enumerate(self.engines)
         ]
@@ -131,73 +115,6 @@ class RayGenerationWeightSync:
                 f"engine {engine.engine_id!r} acknowledged policy version {acknowledged_policy_version}, "
                 f"expected {expected_policy_version}",
             )
-
-    async def _push_bucketed(self, state: Any, policy_version: int) -> None:
-        from vrl.generation.weight_transfer import iter_weight_buckets, weight_manifest
-
-        manifest = weight_manifest(state)
-        transfer_id = uuid.uuid4().hex
-        ray = require_ray()
-        assert self.update_weight_buffer_size is not None
-
-        async def broadcast(method: str, payload: Any, **kwargs: Any) -> None:
-            shared = ray.put(payload)
-            jobs = [
-                RayActorJob(
-                    job_index=index,
-                    worker_id=engine.engine_id,
-                    remote_method=engine.remote_uniform(method),
-                    payload=shared,
-                    keyword_args=kwargs,
-                )
-                for index, engine in enumerate(self.engines)
-            ]
-            policy_version_acks = await self.actor_dispatcher.run(
-                jobs,
-                operation=f"rollout.weight_sync.{method}",
-                call_timeout_s=self.worker_rpc_timeout_s,
-            )
-            for engine, (_, acknowledged_policy_version) in zip(
-                self.engines, policy_version_acks, strict=True
-            ):
-                self._validate_policy_version_match(
-                    engine, acknowledged_policy_version, policy_version
-                )
-
-        try:
-            await broadcast(
-                "begin_weight_transfer",
-                manifest,
-                transfer_id=transfer_id,
-                policy_version=policy_version,
-            )
-            # Await every receiver before putting the next independently owned
-            # slice. Receiver copies ensure completed buckets can be reclaimed.
-            for chunk in iter_weight_buckets(state, self.update_weight_buffer_size):
-                await broadcast("receive_weight_bucket", chunk, transfer_id=transfer_id)
-            await broadcast(
-                "commit_weight_transfer", transfer_id, verify_content=self.verify_content
-            )
-        except BaseException as error:
-            # The dispatcher may already reject admissions after a rank failure.
-            # Abort is cleanup, so bypass its normal admission path with a bound.
-            try:
-                results = await asyncio.wait_for(
-                    asyncio.gather(
-                        *[
-                            engine.remote("abort_weight_transfer")(transfer_id)
-                            for engine in self.engines
-                        ],
-                        return_exceptions=True,
-                    ),
-                    timeout=self.worker_rpc_timeout_s,
-                )
-                for result in results:
-                    if isinstance(result, BaseException):
-                        error.add_note(f"weight transfer abort failed: {result}")
-            except BaseException as cleanup_error:
-                error.add_note(f"weight transfer abort failed: {cleanup_error}")
-            raise
 
 
 __all__ = [

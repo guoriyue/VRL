@@ -141,53 +141,6 @@ def require_weights_for(
     return stripped
 
 
-def verify_weights_in(module: Any, state_dict: Mapping[str, Any], *, prefix: str) -> None:
-    """Read live trainable parameters and require exact installed payload bytes.
-
-    Acceptance-only: this synchronizes device copies and reads every tensor.
-    Never call it implicitly from the normal loader. Distributed/sharded and
-    quantized representations need their own explicit comparison contracts.
-    """
-
-    import torch
-    from torch.distributed.tensor import DTensor
-
-    expected = require_weights_for(module, state_dict, prefix=prefix)
-    parameters = dict(unwrap_compile_and_ddp(module).named_parameters())
-    for name, value in expected.items():
-        actual = parameters[name].detach()
-        for tensor in (actual, value):
-            if isinstance(tensor, DTensor) or tensor.is_quantized or tensor.is_meta:
-                raise NotImplementedError(
-                    f"{prefix}.{name}: exact weight verification requires materialized, "
-                    "unsharded, nonquantized tensors"
-                )
-            if tensor.layout != torch.strided:
-                raise NotImplementedError(f"{prefix}.{name}: unsupported tensor layout")
-        # Byte comparison preserves bf16 bits, signed zero and NaN payloads.
-        # A float32 diagnostic digest cannot provide that guarantee for all dtypes.
-        observed = actual.contiguous().reshape(-1).view(torch.uint8).cpu()
-        wanted = value.detach().contiguous().reshape(-1).view(torch.uint8).cpu()
-        if not torch.equal(observed, wanted):
-            raise RuntimeError(f"{prefix}.{name}: installed weight content differs from payload")
-
-
-def verify_trainable_modules(modules: Mapping[str, Any], state_dict: Mapping[str, Any]) -> None:
-    """Verify the existing flat sync namespace across all selected module roots."""
-
-    if not modules or not state_dict:
-        raise ValueError("weight verification requires modules and a nonempty payload")
-    remaining = set(state_dict)
-    for prefix, module in modules.items():
-        selected = {
-            key: value for key, value in state_dict.items() if key.startswith(f"{prefix}.")
-        }
-        verify_weights_in(module, selected, prefix=prefix)
-        remaining.difference_update(selected)
-    if remaining:
-        raise ValueError(f"weight verification received unknown roots: {sorted(remaining)[:5]}")
-
-
 class TrainableStateSlots:
     """Retain a few policy versions of a model's flat trainable-state payload.
 

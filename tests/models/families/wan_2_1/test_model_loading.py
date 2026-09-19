@@ -338,7 +338,6 @@ def test_wan_replay_loads_trainable_state_without_pipeline(family, dual) -> None
             }
         )
     model.load_trainable_state(payload)
-    model.verify_trainable_state(payload)
     assert not model.uses_pipeline_cpu_offload
     assert model.pipeline_cpu_offload_healthy
     model.reset_pipeline_cpu_offload()
@@ -480,18 +479,7 @@ def test_wan_sequential_offload_weight_sync_changes_forward() -> None:
     assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
     assert model.transformer(sample).shape == (1, 2)
 
-    model.verify_trainable_state(payload)
-    assert model.pipeline_cpu_offload_healthy
-    assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
     assert torch.equal(model.transformer(sample).detach(), after)
-    wrong = {name: value + 1 for name, value in payload.items()}
-    with pytest.raises(RuntimeError, match="trainable weight verification failed") as error:
-        model.verify_trainable_state(wrong)
-    assert "installed weight content differs" in str(error.value.__cause__)
-    assert pipeline.remove_calls == 4
-    assert pipeline.enable_calls == 5
-    assert not model.pipeline_cpu_offload_healthy
-    assert all(parameter.device.type == "meta" for parameter in model.transformer.parameters())
 
 
 class _BlockOffloadPipeline:
@@ -587,9 +575,7 @@ def test_wan_block_offload_weight_sync_changes_forward() -> None:
     assert not torch.equal(after, before)
     assert model.pipeline_cpu_offload_healthy
     assert hooked(inner) and hooked(inner.blocks[1])
-    # The reinstalled groups own the synced weights: a forward after the sync
-    # reads the same values the verification pass reads.
-    model.verify_trainable_state(payload)
+    # The reinstalled groups own the synced weights.
     assert torch.equal(model.transformer(sample).detach(), after)
 
     # A block that raises skips its post-forward offload. The public reset must

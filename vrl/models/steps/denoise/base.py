@@ -33,7 +33,6 @@ from vrl.models.weight_utils import (
     TrainableStateSlots,
     load_weights_into,
     require_weights_for,
-    verify_trainable_modules,
 )
 from vrl.nn.optimization.regional_compile import compile_repeated_blocks
 from vrl.nn.quantization.targeting import DEFAULT_EXCLUDE
@@ -382,11 +381,6 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
         transformer = self._require_transformer()
         return load_weights_into(transformer, state_dict, prefix="transformer")
 
-    def verify_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
-        """Opt-in readback of the family's actual trainable module roots."""
-
-        verify_trainable_modules(self.trainable_modules, state_dict)
-
     def validate_trainable_state(self, state_dict: Mapping[str, Any]) -> None:
         """Validate a sync payload without mutating the active policy."""
 
@@ -439,23 +433,6 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
             return
         self.load_trainable_state(self._versioned_state_slots().get(version))
         self._active_slot_version = version
-
-    def verify_active_trainable_state(
-        self, version: int, expected_state: Mapping[str, Any]
-    ) -> None:
-        """Read back an already active slot against an independently supplied snapshot.
-
-        Do not activate here: acceptance must observe the state generation used,
-        not repair it by installing the desired version before comparing.
-        """
-
-        version = require_int(version, path="policy version", minimum=0)
-        active = getattr(self, "_active_slot_version", None)
-        if active != version:
-            raise RuntimeError(
-                f"active trainable slot mismatch: expected={version}, actual={active}"
-            )
-        self.verify_trainable_state(expected_state)
 
     @classmethod
     def from_build(cls, build: ModelBuild) -> DenoiseModelBase:  # pragma: no cover (abstract)

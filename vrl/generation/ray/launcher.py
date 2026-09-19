@@ -243,7 +243,6 @@ class RayGenerationLauncher:
                 engines,
                 actor_dispatcher=actor_dispatcher,
                 worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
-                update_weight_buffer_size=worker.update_weight_buffer_size,
             )
             supports_non_draining_weight_sync = self._all_ranks_support_versioned_slots(
                 ray,

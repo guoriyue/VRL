@@ -5,7 +5,7 @@
 > retain the former `weight_sync_bucket_bytes` name used for those measurements.
 
 
-状态：**implementing；默认训练路径不增加全量 checksum 开销。**
+状态：**parked 2026-09-19。** 分桶传输在单机上测出无收益（见文末），仓库只有单节点配置；分桶传输、`update_weight_buffer_size`、`verify_content` 读回和 `weight_delivery_probe` 一并删除，多节点到手后按此文重建。
 
 ## 阅读基线与执行边界
 

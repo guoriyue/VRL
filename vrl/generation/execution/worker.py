@@ -89,7 +89,6 @@ class GenerationWorkerCore:
         # the slot for each request's stamped version instead of comparing against
         # one global version (which is what makes a non-draining sync safe).
         self._uses_versioned_slots = False
-        self._weight_transfer = None
         self._profiler_config = TorchProfilerConfig(
             **dict(self.launch_contract.torch_profiler),
         )
@@ -140,7 +139,6 @@ class GenerationWorkerCore:
     def release_policy(self) -> None:
         """Drop loaded model state so the rank releases CUDA memory before exit."""
 
-        self._weight_transfer = None
         with self._memory_parking.release_scope():
             self.executor = None
         # A cold rebuild restores the launch checkpoint, not the last installed
@@ -185,18 +183,14 @@ class GenerationWorkerCore:
         assert self.executor is not None
         self._memory_parking.wake(self.executor)
 
-    def update_weights(
-        self, trainable_state: Any, policy_version: int, *, verify_content: bool = False
-    ) -> int:
+    def update_weights(self, trainable_state: Any, policy_version: int) -> int:
         """Install weights and return the policy version as the commit ACK.
 
         When the model supports versioned trainable-state slots, install the new
         version as a retained slot WITHOUT overwriting the slots older in-flight
         requests still depend on (the non-draining-sync path); ``execute_batch``
         then activates the right slot per request. Otherwise keep the single
-        in-place overwrite (the draining-barrier path). ``verify_content`` checks
-        the live installed state before ACK on that path; retained slots require
-        a separate activation-aware acceptance probe.
+        in-place overwrite (the draining-barrier path).
         """
 
         require_int(policy_version, path="policy_version", minimum=0)
@@ -209,19 +203,6 @@ class GenerationWorkerCore:
         versioned = self.launch_contract.versioned_weight_sync and bool(
             getattr(policy_obj, "supports_versioned_trainable_state", False)
         )
-        verifier = None
-        if verify_content:
-            if versioned:
-                raise NotImplementedError(
-                    "live weight readback does not verify retained version slots"
-                )
-            if trainable_state is None:
-                raise ValueError("content verification requires an explicit weight payload")
-            verifier = getattr(policy_obj, "verify_trainable_state", None)
-            if not callable(verifier):
-                raise NotImplementedError(
-                    "model does not support installed weight content verification"
-                )
         try:
             if versioned:
                 model = require_runtime_model(
@@ -236,8 +217,6 @@ class GenerationWorkerCore:
                     owner=f"{type(self.executor).__name__}.model",
                 )
                 model.load_trainable_state(trainable_state)
-            if verifier is not None:
-                verifier(trainable_state)
         except BaseException as error:
             self._memory_parking.record_model_failure(policy_obj, error)
             raise
@@ -249,65 +228,6 @@ class GenerationWorkerCore:
         # their version from request.policy_version, not this field.
         self._policy_version = policy_version
         return self._policy_version
-
-    def begin_weight_transfer(self, manifest: Any, transfer_id: str, policy_version: int) -> int:
-        from vrl.generation.weight_transfer import StagedWeightTransfer
-
-        if self._weight_transfer is not None:
-            raise RuntimeError("another weight transfer is already staged")
-        self._weight_transfer = StagedWeightTransfer(transfer_id, policy_version, manifest)
-        return policy_version
-
-    def receive_weight_chunk(self, chunk: Any, transfer_id: str) -> int:
-        if self._weight_transfer is None:
-            raise RuntimeError("no staged weight transfer")
-        self._weight_transfer.receive(transfer_id, chunk)
-        return self._weight_transfer.policy_version
-
-    def commit_weight_transfer(self, transfer_id: str, *, verify_content: bool = False) -> int:
-        if self._weight_transfer is None:
-            raise RuntimeError("no staged weight transfer")
-        staged = self._weight_transfer
-        state = staged.finish(transfer_id)
-        try:
-            return self.update_weights(state, staged.policy_version, verify_content=verify_content)
-        finally:
-            self._weight_transfer = None
-
-    def abort_weight_transfer(self, transfer_id: str) -> None:
-        if self._weight_transfer is not None:
-            self._weight_transfer.require_id(transfer_id)
-            self._weight_transfer = None
-
-    def verify_active_weights(self, trainable_state: Any, policy_version: int) -> int:
-        """Acceptance-only readback; never activate, load, or acknowledge a new version.
-
-        Version-slot acceptance runs after the isolated worker has executed the
-        selected request. The expected snapshot must come from the sender, not
-        from the receiver's retained slot that is itself under test.
-        """
-
-        require_int(policy_version, path="policy_version", minimum=0)
-        self._memory_parking.require_active("verify_active_weights", executor=self.executor)
-        model = getattr(self.executor, "model", None)
-        if trainable_state is None:
-            raise ValueError("active weight verification requires an explicit payload")
-        if self._uses_versioned_slots:
-            verifier = getattr(model, "verify_active_trainable_state", None)
-            args = (policy_version, trainable_state)
-        else:
-            if self._policy_version != policy_version:
-                raise RuntimeError("active weight verification policy version mismatch")
-            verifier = getattr(model, "verify_trainable_state", None)
-            args = (trainable_state,)
-        if not callable(verifier):
-            raise NotImplementedError("model does not support active weight content verification")
-        try:
-            verifier(*args)
-        except BaseException as error:
-            self._memory_parking.record_model_failure(model, error)
-            raise
-        return policy_version
 
     def supports_versioned_trainable_state(self) -> bool:
         """Whether the loaded model can retain versioned trainable-state slots.

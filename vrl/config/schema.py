@@ -685,8 +685,6 @@ class RolloutRuntimeSection(ConfigBase):
     # hour covers the observed ~30-minute cold compile plus a 733-second Cosmos
     # batch with margin; opaque control calls retain their tighter budget above.
     generation_stall_timeout_s: float = 3600.0
-    # Optional tensor bytes per wire chunk; receiver staging still holds full state.
-    update_weight_buffer_size: int | None = Field(default=None, ge=1, strict=True)
     # engine level: opt-in per-request rollout. Each engine runs its share of a
     # request's batches in a single RPC instead of one RPC per batch, staging
     # each payload in the object store for a CPU finalizer actor to merge.
