@@ -138,11 +138,7 @@ def _timeout_session(
     return session, actor
 
 
-def _on_demand_runtime(
-    *,
-    sync_trainable_state: bool = True,
-    colocated: bool = True,
-) -> RayGenerationRuntime:
+def _on_demand_runtime(*, colocated: bool = True) -> RayGenerationRuntime:
     async def unexpected_session() -> RayGenerationSession:
         raise AssertionError("test did not configure a cold session")
 
@@ -150,7 +146,6 @@ def _on_demand_runtime(
         session=None,
         session_factory=unexpected_session,
         initial_policy_version=0,
-        supports_weight_sync=sync_trainable_state,
         colocated=colocated,
     )
     return runtime
@@ -410,14 +405,8 @@ async def test_offload_rejects_invalid_worker_parking_report_type(
     assert cleanup_ray.killed == [actor]
 
 
-def test_on_demand_weight_sync_capability_does_not_require_active_workers() -> None:
-    runtime = _on_demand_runtime()
-    disabled = _on_demand_runtime(sync_trainable_state=False)
-
-    assert runtime.supports_weight_sync is True
-    assert RayRuntimeWeightSyncer.if_supported(runtime) is not None
-    assert disabled.supports_weight_sync is False
-    assert RayRuntimeWeightSyncer.if_supported(disabled) is None
+def test_on_demand_weight_sync_does_not_require_active_workers() -> None:
+    assert RayRuntimeWeightSyncer.if_supported(_on_demand_runtime()) is not None
 
 
 @pytest.mark.parametrize("supports_non_draining_weight_sync", [False, True])
@@ -451,28 +440,6 @@ async def test_deferred_activation_publishes_candidate_non_draining_capability(
 
     assert runtime._session is candidate
     assert runtime.supports_non_draining_weight_sync is supports_non_draining_weight_sync
-
-
-@pytest.mark.asyncio
-async def test_deferred_activation_rejects_candidate_capability_mismatch() -> None:
-    runtime = _on_demand_runtime(sync_trainable_state=True)
-    candidate = _FakeSession()
-    candidate.weight_sync = None
-    candidate.supports_non_draining_weight_sync = True
-
-    async def launch_session() -> _FakeSession:
-        return candidate
-
-    runtime._session_factory = launch_session
-    with pytest.raises(RuntimeError, match="different weight-sync capability") as caught:
-        await runtime.activate()
-
-    assert runtime.lifecycle.failure is caught.value
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._session is None
-    assert runtime.supports_non_draining_weight_sync is False
-    assert candidate.force_close_calls == 1
-    assert candidate.calls == ["shutdown"]
 
 
 def test_driver_model_offload_is_derived_from_actual_gpu_overlap() -> None:
@@ -525,7 +492,6 @@ async def test_deferred_runtime_starts_health_monitoring_paused() -> None:
     runtime = RayGenerationRuntime(
         session=None,
         session_factory=launch_session,
-        supports_weight_sync=False,
         health_check_interval_s=0.01,
     )
     runtime.start_health_monitoring()

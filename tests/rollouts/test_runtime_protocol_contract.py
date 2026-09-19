@@ -35,7 +35,6 @@ def _runtime(
         return RayGenerationRuntime(
             session=None,
             session_factory=create_session,
-            supports_weight_sync=False,
             colocated=colocated,
         )
     return RayGenerationRuntime(

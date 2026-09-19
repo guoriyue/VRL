@@ -89,7 +89,6 @@ def _worker_config(**overrides: Any) -> RolloutWorkerConfig:
         "worker_rpc_timeout_s": 30.0,
         "generation_stall_timeout_s": 30.0,
         "pipelined": False,
-        "sync_trainable_state": False,
     }
     values.update(overrides)
     return RolloutWorkerConfig(**values)
@@ -117,7 +116,7 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(local_r
         assert runtime.current_policy_version == 7
         session = runtime._session
         assert session is not None
-        assert session.weight_sync is None
+        assert session.weight_sync is not None
         engines = session.executor.engines
         assert [engine.engine_id for engine in engines] == ["rollout-0"]
         assert engines[0].primary.actor is not None

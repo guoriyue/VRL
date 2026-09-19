@@ -32,12 +32,6 @@ class RolloutWorkerConfig:
     # Opt-in per-request rollout: each engine runs its round-robin share of a
     # request's batches in one RPC and stages the payloads for a finalizer.
     pipelined: bool
-    # Plain on/off. True keeps rollout workers resynced to the trained policy (the
-    # syncer flattens whatever is trainable — lora or full-param); False disables it.
-    # Defaults ON: online runs train the policy the rollout workers must resync, so
-    # an omitted value previously meant silent stale-policy training. The syncer is
-    # only built on the online launch path, so this never affects eval.
-    sync_trainable_state: bool
     update_weight_buffer_size: int | None = None
 
     def __post_init__(self) -> None:

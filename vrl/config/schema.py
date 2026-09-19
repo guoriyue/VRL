@@ -658,15 +658,14 @@ class RolloutRuntimeSection(ConfigBase):
     reader: vrl/generation/ray/config.py RayGenerationConfig.from_root. Release
     scheduling and colocation are NOT declared here: colocation lives in
     distributed.resources.rollout.gpu_pool=trainer (mirrors reward.gpu_pool),
-    and release scheduling is derived from GPU topology. sync_trainable_state
-    is a plain on/off: True keeps rollout engines resynced to the trained policy
-    (the syncer flattens whatever is trainable — lora or full-param), False
-    disables the weight syncer.
+    and release scheduling is derived from GPU topology. Rollout engines are
+    always resynced to the trained policy (the syncer flattens whatever is
+    trainable — lora or full-param).
 
     Each knob belongs to one layer of the engine/rank split (an engine is one
     replica; a rank is one per-GPU worker actor inside it):
     rank level: cpus_per_worker, health_check_*, worker_rpc_timeout_s.
-    engine level: generation_stall_timeout_s, sync_trainable_state, pipelined.
+    engine level: generation_stall_timeout_s, pipelined.
     """
 
     # rank level: CPU grant per rank actor (Ray num_cpus).
@@ -686,7 +685,6 @@ class RolloutRuntimeSection(ConfigBase):
     # hour covers the observed ~30-minute cold compile plus a 733-second Cosmos
     # batch with margin; opaque control calls retain their tighter budget above.
     generation_stall_timeout_s: float = 3600.0
-    sync_trainable_state: bool = True
     # Optional tensor bytes per wire chunk; receiver staging still holds full state.
     update_weight_buffer_size: int | None = Field(default=None, ge=1, strict=True)
     # engine level: opt-in per-request rollout. Each engine runs its share of a

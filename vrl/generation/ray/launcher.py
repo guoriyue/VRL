@@ -87,20 +87,17 @@ class RayGenerationLauncher:
         ray: Any,
         ranks: Sequence[RayActorHandle],
         *,
-        weight_sync: Any | None,
         worker_rpc_timeout_s: float,
     ) -> bool:
         """Return whether every rank supports versioned trainable-state slots.
 
         Non-draining weight sync needs slots on all ranks because a batch stamped
-        with an older policy version can be placed on any engine. A missing weight
-        syncer or an empty fleet keeps the safe draining barrier. A query
-        failure means the candidate fleet is broken, not merely unsupported, and
-        therefore propagates to launcher-owned actor cleanup.
+        with an older policy version can be placed on any engine. An empty fleet
+        keeps the safe draining barrier. A query failure means the candidate
+        fleet is broken, not merely unsupported, and therefore propagates to
+        launcher-owned actor cleanup.
         """
 
-        if weight_sync is None:
-            return False
         actors = [rank.actor for rank in ranks]
         if not actors:
             return False
@@ -242,20 +239,15 @@ class RayGenerationLauncher:
                 pipelined=worker.pipelined,
                 finalizers=finalizer_handles,
             )
-            weight_sync = (
-                RayGenerationWeightSync(
-                    engines,
-                    actor_dispatcher=actor_dispatcher,
-                    worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
-                    update_weight_buffer_size=worker.update_weight_buffer_size,
-                )
-                if worker.sync_trainable_state
-                else None
+            weight_sync = RayGenerationWeightSync(
+                engines,
+                actor_dispatcher=actor_dispatcher,
+                worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
+                update_weight_buffer_size=worker.update_weight_buffer_size,
             )
             supports_non_draining_weight_sync = self._all_ranks_support_versioned_slots(
                 ray,
                 [rank for engine in engines for rank in engine.ranks],
-                weight_sync=weight_sync,
                 worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
             )
             return RayGenerationSession(
@@ -356,7 +348,6 @@ class RayGenerationLauncher:
                 session=session,
                 session_factory=session_factory,
                 initial_policy_version=launch_inputs.launch_contract.policy_version,
-                supports_weight_sync=worker.sync_trainable_state,
                 colocated=resources.lifecycle.park_trainer_for_rollout,
                 health_check_interval_s=worker.health_check_interval_s,
                 health_check_timeout_s=worker.health_check_timeout_s,

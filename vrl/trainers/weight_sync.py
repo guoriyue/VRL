@@ -46,13 +46,11 @@ class RayRuntimeWeightSyncer(WeightSyncer):
     ) -> RayRuntimeWeightSyncer | None:
         """Wrap the runtime only when it declares weight-sync support.
 
-        Optional recipe wiring requires both the method and an explicit
-        capability. Direct construction validates the method only.
+        Optional recipe wiring requires the ``update_weights`` method; a
+        runtime without one (an in-process generator) gets no syncer.
         """
 
         if not callable(getattr(runtime, "update_weights", None)):
-            return None
-        if not bool(getattr(runtime, "supports_weight_sync", False)):
             return None
         return cls(runtime, initial_policy_version=initial_policy_version)
 

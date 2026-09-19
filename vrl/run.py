@@ -210,7 +210,7 @@ class ResolvedOnlineRun(ResolvedRun):
                 build.rollout,
                 # Full-finetune sync replaces base parameters; LoRA sync only sends
                 # adapters, so only the former needs retained base-weight masters.
-                base_weight_sync=(generation.worker.sync_trainable_state and not build.use_lora),
+                base_weight_sync=not build.use_lora,
             )
         # Family capability is role-agnostic, so read the raw enable bit rather
         # than the rollout build's scope-resolved property: a replay-scoped
@@ -266,9 +266,7 @@ class ResolvedOnlineRun(ResolvedRun):
                 # The typed trainer schedule is the source of truth for whether a
                 # worker may retain an older LoRA slot across non-draining sync.
                 versioned_weight_sync=(
-                    generation.worker.sync_trainable_state
-                    and trainer.rollout_orchestration.schedule_mode == "continuous"
-                    and build.use_lora
+                    trainer.rollout_orchestration.schedule_mode == "continuous" and build.use_lora
                 ),
             ),
             gatherer=self.family.new_gatherer(),

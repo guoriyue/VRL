@@ -325,14 +325,12 @@ def _slot_handles(ray: Any, *supports: bool | None) -> Iterator[list[RayActorHan
 def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
     """supports_non_draining_weight_sync derives as the AND of every worker's
     supports_versioned_trainable_state(): all True -> True; any False -> False."""
-    weight_sync = object()
 
     with _slot_handles(local_ray, True, True) as handles:
         assert (
             RayGenerationLauncher._all_ranks_support_versioned_slots(
                 local_ray,
                 handles,
-                weight_sync=weight_sync,
                 worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
             )
             is True
@@ -342,7 +340,6 @@ def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
             RayGenerationLauncher._all_ranks_support_versioned_slots(
                 local_ray,
                 handles,
-                weight_sync=weight_sync,
                 worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
             )
             is False
@@ -350,24 +347,12 @@ def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
 
 
 @pytest.mark.slow_test
-def test_runtime_capability_false_without_weight_sync_or_workers(local_ray) -> None:
-    """No weight sync (sync_trainable_state off) or no workers -> safe draining
-    barrier (False), never a silent True."""
-    with _slot_handles(local_ray, True, True) as handles:
-        assert (
-            RayGenerationLauncher._all_ranks_support_versioned_slots(
-                local_ray,
-                handles,
-                weight_sync=None,
-                worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
-            )
-            is False
-        )
+def test_runtime_capability_false_without_workers(local_ray) -> None:
+    """No workers -> safe draining barrier (False), never a silent True."""
     assert (
         RayGenerationLauncher._all_ranks_support_versioned_slots(
             local_ray,
             [],
-            weight_sync=object(),
             worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
         )
         is False
@@ -384,7 +369,6 @@ def test_runtime_capability_worker_query_failure_propagates(local_ray) -> None:
         RayGenerationLauncher._all_ranks_support_versioned_slots(
             local_ray,
             handles,
-            weight_sync=object(),
             worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
         )
 
@@ -472,20 +456,17 @@ def test_worker_defaults_and_explicit_override_project_from_public_schema() -> N
     assert default.worker_rpc_timeout_s == 600.0
     assert default.generation_stall_timeout_s == 3600.0
     assert default.pipelined is False
-    assert default.sync_trainable_state is True
 
     cfg = _cfg()
     cfg.distributed.rollout.cpus_per_worker = 2.5
     cfg.distributed.rollout.worker_rpc_timeout_s = 3600.0
     cfg.distributed.rollout.generation_stall_timeout_s = 1200.0
-    cfg.distributed.rollout.sync_trainable_state = False
     cfg.distributed.rollout.pipelined = True
     override = _ray_config(cfg).worker
 
     assert override.cpus_per_worker == 2.5
     assert override.worker_rpc_timeout_s == 3600.0
     assert override.generation_stall_timeout_s == 1200.0
-    assert override.sync_trainable_state is False
     assert override.pipelined is True
 
 
@@ -496,7 +477,6 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
     cfg.distributed.rollout = {
         "cpus_per_worker": 2.5,
         "health_check_interval_s": 0.0,
-        "sync_trainable_state": True,
     }
     config = _ray_config(cfg)
     owner = GlobalRayPlacementOwner(config.resources, config.worker)
@@ -583,7 +563,6 @@ def test_pipelined_launch_adds_one_finalizer_per_engine(monkeypatch) -> None:
     cfg = _launch_cfg()
     cfg.distributed.rollout = {
         "pipelined": True,
-        "sync_trainable_state": False,
     }
     config = RayGenerationConfig.from_root(
         parse_config(cfg),
@@ -791,9 +770,9 @@ def test_generation_launch_inputs_derive_versioned_sync_from_schedule() -> None:
 
 
 def test_generation_launch_inputs_thread_resolved_base_weight_sync() -> None:
-    """The rollout lifecycle, not model YAML, owns master-weight retention."""
+    """Master-weight retention follows the sync payload: a full-parameter sync
+    replaces base weights, so the worker retains masters; a LoRA sync does not."""
     cfg = _launch_cfg()
-    cfg.distributed.rollout = {"sync_trainable_state": False}
 
     launch_inputs = _capture_launch_inputs(
         cfg,
@@ -801,7 +780,9 @@ def test_generation_launch_inputs_thread_resolved_base_weight_sync() -> None:
     )
 
     rollout = launch_inputs.launch_contract.model_build["rollout"]
-    assert rollout["base_weight_sync"] is False
+    assert rollout["base_weight_sync"] is not launch_inputs.launch_contract.model_build[
+        "model_config"
+    ].get("use_lora", False)
 
 
 def test_generation_launch_inputs_mark_lora_as_adapter_only_sync() -> None:

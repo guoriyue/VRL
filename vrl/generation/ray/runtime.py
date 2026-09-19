@@ -49,7 +49,6 @@ class RayGenerationRuntime:
         session: RayGenerationSession | None,
         session_factory: _RaySessionFactory | None = None,
         initial_policy_version: int | None = None,
-        supports_weight_sync: bool | None = None,
         colocated: bool = False,
         health_check_interval_s: float = 0.0,
         health_check_timeout_s: float = 30.0,
@@ -66,9 +65,6 @@ class RayGenerationRuntime:
         self._session = session
         self._session_factory = session_factory
         self._colocated = bool(colocated)
-        if session is not None and supports_weight_sync is None:
-            supports_weight_sync = session.weight_sync is not None
-        self._supports_weight_sync = bool(supports_weight_sync)
 
         self.lifecycle = RuntimeLifecycle(owner="rollout runtime")
         # Accepted targets stamp new requests immediately; installed tracks the
@@ -103,10 +99,6 @@ class RayGenerationRuntime:
     @property
     def requires_driver_model_offload(self) -> bool:
         return self._colocated
-
-    @property
-    def supports_weight_sync(self) -> bool:
-        return self._supports_weight_sync
 
     @property
     def supports_non_draining_weight_sync(self) -> bool:
@@ -308,8 +300,6 @@ class RayGenerationRuntime:
         """Install on active workers or stage the accepted target while inactive."""
 
         await self._admit_operation("update_weights")
-        if not self._supports_weight_sync:
-            raise RuntimeError("Ray generation has no weight sync")
         activation = self._activation_task
         if activation is not None and not activation.done():
             raise RuntimeError(
@@ -624,11 +614,6 @@ class RayGenerationRuntime:
             if factory is None:
                 raise RuntimeError("deferred Ray generation has no session factory")
             candidate = await factory()
-            if (candidate.weight_sync is not None) != self._supports_weight_sync:
-                raise RuntimeError(
-                    "deferred Ray generation session reported a different "
-                    "weight-sync capability than its runtime",
-                )
             pending = self._pending_install
             active_policy_version = self.current_policy_version
             if pending is not None:

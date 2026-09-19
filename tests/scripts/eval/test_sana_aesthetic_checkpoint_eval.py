@@ -428,7 +428,6 @@ def _historical_fullparam_config() -> DictConfig:
             "health_check_timeout_s": 30.0,
             "max_inflight_chunks_per_worker": 1,
             "pipelined": False,
-            "sync_trainable_state": True,
         },
     )
     raw["rollout"]["trajectory_storage"] = {
