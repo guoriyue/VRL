@@ -216,7 +216,6 @@ def test_capability_timeout_is_not_downgraded_to_safe_false() -> None:
         RayGenerationLauncher._all_ranks_support_versioned_slots(
             ray,
             workers,
-            weight_sync=object(),
             worker_rpc_timeout_s=0.01,
         )
 
