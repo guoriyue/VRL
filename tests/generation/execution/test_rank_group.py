@@ -54,6 +54,7 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
             # Rank-local RNGs deliberately differ before every request.
             import random
 
+            from vrl.generation.execution.planner import EnginePlan
             from vrl.generation.execution.worker import GenerationWorkerCore
             from vrl.generation.types import GenerationRequest
 
@@ -64,7 +65,7 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
             core._uses_versioned_slots = False
             core._policy_version = None
             core.executor = SimpleNamespace(
-                forward_plan_pipelined=lambda *args, **kwargs: torch.cat(
+                execute_request_batches=lambda request, batches, **kwargs: torch.cat(
                     [torch.rand(4), torch.tensor([random.random()])]
                 ),
             )
@@ -73,8 +74,7 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
                 random.seed(rank + iteration * 100)
                 output = core.execute_request_batches(
                     GenerationRequest("r", "sd3_5", "t2i", ["p"], 1),
-                    None,
-                    [],
+                    EnginePlan(sample_batches=()),
                     completion_callback=None,
                 )
                 peer_outputs = [torch.empty_like(output) for _ in range(world)]
