@@ -3,31 +3,40 @@
   "files": {
     "train": {
       "path": "datasets/videophy/train.txt",
-      "row_count": 309,
-      "unique_prompt_count": 309,
-      "duplicate_prompt_count": 0
+      "row_count": 3343,
+      "unique_prompt_count": 3343,
+      "duplicate_prompt_count": 0,
+      "sha256": "9277637c130be20e363ff8c30268864524bfdb89bab7be342bc1d3016223fbdf"
     },
     "eval": {
       "path": "datasets/videophy/eval.txt",
-      "row_count": 35,
-      "unique_prompt_count": 35,
-      "duplicate_prompt_count": 0
+      "row_count": 599,
+      "unique_prompt_count": 599,
+      "duplicate_prompt_count": 0,
+      "sha256": "439df776615aa22bb2d62cf0fc6bcbfb4061ca7e92a53a8a40bfbdfbdab12076",
+      "hard_prompt_count": 180
+    }
+  },
+  "source": {
+    "train": {
+      "type": "huggingface_dataset",
+      "repo_id": "videophysics/videophy2_train",
+      "revision": "5c2a69593b39d28a77ef2b9dbf7acbd2b9f38f6c",
+      "file": "videophy2_training.csv",
+      "caption_column": "caption",
+      "raw_row_count": 3343
+    },
+    "eval": {
+      "type": "huggingface_dataset",
+      "repo_id": "videophysics/videophy2_test",
+      "revision": "90b81ffa54f565d9e40e83b7a2c247ba1dccfa2b",
+      "file": "videophy2_test.csv",
+      "caption_column": "caption",
+      "raw_row_count": 3397
     }
   },
   "prompt_overlap": {
     "train_eval": 0
   },
-  "source": {
-    "type": "huggingface_dataset",
-    "repo_id": "videophysics/videophy_test_public",
-    "file": "videophy_test_public.csv",
-    "caption_column": "caption",
-    "raw_row_count": 3360,
-    "unique_caption_count": 344
-  },
-  "split": {
-    "strategy": "random_seed=42, 90/10",
-    "train_count": 309,
-    "eval_count": 35
-  }
+  "notes": "VideoPhy2 (Bansal et al. 2025) prompts only; per-video sa/pc/joint labels and videos are not imported. This replaced the VideoPhy v1 manifest (344 captions from videophysics/videophy_test_public, split 90/10 locally) on 2026-09-19: v1's public train split repeats the same 344 captions, so v1 never had more prompts than this."
 }

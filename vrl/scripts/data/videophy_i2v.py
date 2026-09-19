@@ -1,10 +1,11 @@
 """VideoPhy I2V dataset population from official public videos.
 
-This importer turns the public VideoPhy benchmark table into an image-caption
+This importer turns the public VideoPhy2 benchmark tables into an image-caption
 manifest for Wan I2V training:
 
 - captions come from the existing repo split files under ``manifests/videophy``;
-- source videos come from ``videophysics/videophy_test_public``;
+- source videos come from ``videophysics/videophy2_train`` (training CSV) and
+  ``videophysics/videophy2_test`` (test CSV), matched to the captions;
 - reference images are frame 0 decoded from the selected official video URL.
 
 The generated PNGs and manifests live under ``data/external`` (or
@@ -21,7 +22,7 @@ import os
 import re
 import shutil
 import urllib.request
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -35,8 +36,12 @@ from vrl.scripts.data.common import (
 )
 from vrl.utils.json_files import write_json, write_jsonl
 
-DEFAULT_REPO_ID = "videophysics/videophy_test_public"
-DEFAULT_CSV_FILE = "videophy_test_public.csv"
+# (repo_id, csv_file, official split). Train captions live only in the training
+# CSV and held-out captions only in the test CSV, so both are always read.
+DEFAULT_SOURCES: tuple[tuple[str, str, str], ...] = (
+    ("videophysics/videophy2_train", "videophy2_training.csv", "train"),
+    ("videophysics/videophy2_test", "videophy2_test.csv", "test"),
+)
 COMMAND_NAME = "videophy-i2v"
 DATASET_NAME = "videophy_i2v"
 DECODE_METHOD = "imageio_ffmpeg_first_frame"
@@ -54,6 +59,20 @@ class VideoPhyVideoRow:
     complexity: int = 0
     majority_sa: int = 0
     majority_pc: int = 0
+    # Which official CSV the row came from (provenance recorded per manifest row).
+    repo_id: str = ""
+    csv_file: str = ""
+    source_split: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class VideoPhySource:
+    """One official VideoPhy CSV: where it came from and its local copy."""
+
+    repo_id: str
+    csv_file: str
+    csv_path: Path
+    split: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,8 +87,14 @@ class SelectedVideo:
 
 def register(subparsers: Any) -> None:
     parser = subparsers.add_parser(COMMAND_NAME)
-    parser.add_argument("--repo-id", default=DEFAULT_REPO_ID)
-    parser.add_argument("--csv-file", default=DEFAULT_CSV_FILE)
+    parser.add_argument(
+        "--source",
+        action="append",
+        default=None,
+        metavar="REPO_ID:CSV_FILE:SPLIT",
+        help="Official VideoPhy CSV to draw videos from; repeatable. "
+        "Defaults to the VideoPhy2 training and test CSVs.",
+    )
     parser.add_argument(
         "--train-prompts", type=Path, default=repo_root() / "manifests/videophy/train.txt"
     )
@@ -107,12 +132,10 @@ def expected_manifest_sources() -> dict[str, str]:
 
 def prepare_videophy_i2v_dataset(
     *,
-    csv_path: Path,
+    sources: Sequence[VideoPhySource],
     train_prompts: Path,
     eval_prompts: Path,
     data_root: Path,
-    repo_id: str,
-    csv_file: str,
     limit: int = 0,
     keep_videos: bool = False,
     width: int = 832,
@@ -120,7 +143,7 @@ def prepare_videophy_i2v_dataset(
     fetch_video: Callable[[str, Path], None] | None = None,
     extract_first_frame: Callable[[Path, Path], None] | None = None,
 ) -> dict[str, Any]:
-    """Build source-backed Wan I2V manifests from a local VideoPhy CSV."""
+    """Build source-backed Wan I2V manifests from local VideoPhy CSVs."""
 
     dataset_root = data_root / DATASET_NAME
     manifest_dir = dataset_root / "manifests"
@@ -134,7 +157,16 @@ def prepare_videophy_i2v_dataset(
         train_text = train_text[:limit]
         eval_text = eval_text[:limit]
 
-    candidates = load_videophy_video_rows(csv_path)
+    candidates = [
+        row
+        for source in sources
+        for row in load_videophy_video_rows(
+            source.csv_path,
+            repo_id=source.repo_id,
+            csv_file=source.csv_file,
+            source_split=source.split,
+        )
+    ]
     selected = [
         *select_videos_for_prompts(train_text, candidates, split="train"),
         *select_videos_for_prompts(eval_text, candidates, split="eval"),
@@ -159,7 +191,6 @@ def prepare_videophy_i2v_dataset(
                 row = _materialize_selected_video(
                     replace(item, source_row=candidate),
                     dataset_root=dataset_root,
-                    repo_id=repo_id,
                     image_root=image_root,
                     video_root=video_root,
                     keep_videos=keep_videos,
@@ -189,10 +220,19 @@ def prepare_videophy_i2v_dataset(
 
     report = {
         "dataset": DATASET_NAME,
-        "source_repo": repo_id,
-        "source_csv": csv_file,
-        "source_csv_path": csv_path.as_posix(),
-        "source_split": "test",
+        "source_repo": ",".join(source.repo_id for source in sources),
+        "source_csv": ",".join(source.csv_file for source in sources),
+        "source_csv_path": ",".join(source.csv_path.as_posix() for source in sources),
+        "source_split": ",".join(source.split for source in sources),
+        "sources": [
+            {
+                "repo_id": source.repo_id,
+                "csv_file": source.csv_file,
+                "csv_path": source.csv_path.as_posix(),
+                "split": source.split,
+            }
+            for source in sources
+        ],
         "decode_method": DECODE_METHOD,
         "train_rows": len(train_rows),
         "eval_rows": len(eval_rows),
@@ -204,13 +244,15 @@ def prepare_videophy_i2v_dataset(
         "kept_videos": keep_videos,
         "image_size": {"width": width, "height": height},
         "selection_policy": (
-            "Per caption, prefer rows with majority_sa=1 and majority_pc=1; "
+            "Per caption, prefer rows with the highest semantic-adherence (sa) then "
+            "physical-commonsense (pc) labels; "
             "tie-break by lower complexity, then CSV order; try the next candidate "
             "only when a source returns HTTP 403, 404 or 410."
         ),
         "license_note": (
-            "Source metadata comes from the MIT-licensed Hugging Face dataset "
-            "videophysics/videophy_test_public. Downloaded videos and decoded "
+            "Source metadata comes from the Hugging Face datasets "
+            "videophysics/videophy2_train and videophysics/videophy2_test. "
+            "Downloaded videos and decoded "
             "frames stay under data/external or VRL_DATA_ROOT and are not "
             "committed to git."
         ),
@@ -221,8 +263,18 @@ def prepare_videophy_i2v_dataset(
     return report
 
 
-def load_videophy_video_rows(csv_path: Path) -> list[VideoPhyVideoRow]:
-    """Parse the official VideoPhy public CSV into normalized video rows."""
+def load_videophy_video_rows(
+    csv_path: Path,
+    *,
+    repo_id: str = "",
+    csv_file: str = "",
+    source_split: str = "",
+) -> list[VideoPhyVideoRow]:
+    """Parse one official VideoPhy CSV into normalized video rows.
+
+    VideoPhy v1 labelled rows ``majority_sa`` / ``majority_pc``; VideoPhy2 uses
+    ``sa`` / ``pc`` (0-5 scales). Both spellings feed the same preference order.
+    """
 
     rows: list[VideoPhyVideoRow] = []
     with csv_path.open("r", encoding="utf-8", newline="") as handle:
@@ -240,8 +292,11 @@ def load_videophy_video_rows(csv_path: Path) -> list[VideoPhyVideoRow]:
                     source=str(raw.get("source", "")).strip(),
                     states_of_matter=str(raw.get("states_of_matter", "")).strip(),
                     complexity=_as_int(raw.get("complexity")),
-                    majority_sa=_as_int(raw.get("majority_sa")),
-                    majority_pc=_as_int(raw.get("majority_pc")),
+                    majority_sa=_as_int(raw.get("majority_sa", raw.get("sa"))),
+                    majority_pc=_as_int(raw.get("majority_pc", raw.get("pc"))),
+                    repo_id=repo_id,
+                    csv_file=csv_file,
+                    source_split=source_split,
                 ),
             )
     return rows
@@ -291,7 +346,6 @@ def _materialize_selected_video(
     item: SelectedVideo,
     *,
     dataset_root: Path,
-    repo_id: str,
     image_root: Path,
     video_root: Path,
     keep_videos: bool,
@@ -323,8 +377,9 @@ def _materialize_selected_video(
 
     metadata = {
         "source": "videophy",
-        "source_repo": repo_id,
-        "source_split": "test",
+        "source_repo": item.source_row.repo_id,
+        "source_csv": item.source_row.csv_file,
+        "source_split": item.source_row.source_split,
         "source_csv_row": item.source_row.row_index,
         "source_video_url": item.source_row.video_url,
         "source_video": _relative_or_absolute(video_path, dataset_root) if keep_videos else "",
@@ -386,27 +441,43 @@ def _cmd_videophy_i2v(args: argparse.Namespace) -> None:
     from huggingface_hub import hf_hub_download
 
     data_root = args.data_root.expanduser().resolve() if args.data_root else default_data_root()
-    csv_path = Path(
-        hf_hub_download(
-            args.repo_id,
-            args.csv_file,
-            repo_type="dataset",
-            cache_dir=str(args.cache_dir.expanduser()),
-        ),
+    specs = (
+        DEFAULT_SOURCES if not args.source else tuple(_parse_source(item) for item in args.source)
     )
+    sources = [
+        VideoPhySource(
+            repo_id=repo_id,
+            csv_file=csv_file,
+            split=split,
+            csv_path=Path(
+                hf_hub_download(
+                    repo_id,
+                    csv_file,
+                    repo_type="dataset",
+                    cache_dir=str(args.cache_dir.expanduser()),
+                ),
+            ),
+        )
+        for repo_id, csv_file, split in specs
+    ]
     report = prepare_videophy_i2v_dataset(
-        csv_path=csv_path,
+        sources=sources,
         train_prompts=args.train_prompts.expanduser(),
         eval_prompts=args.eval_prompts.expanduser(),
         data_root=data_root,
-        repo_id=args.repo_id,
-        csv_file=args.csv_file,
         limit=args.limit,
         keep_videos=args.keep_videos,
         width=args.width,
         height=args.height,
     )
     emit(report)
+
+
+def _parse_source(spec: str) -> tuple[str, str, str]:
+    parts = spec.split(":")
+    if len(parts) != 3 or not all(parts):
+        raise ValueError(f"--source must be REPO_ID:CSV_FILE:SPLIT, got {spec!r}")
+    return parts[0], parts[1], parts[2]
 
 
 def _read_prompts(path: Path) -> list[str]:
@@ -433,6 +504,7 @@ def _relative_or_absolute(path: Path, root: Path) -> str:
 
 __all__ = [
     "SelectedVideo",
+    "VideoPhySource",
     "VideoPhyVideoRow",
     "expected_manifest_sources",
     "load_videophy_video_rows",

@@ -10,6 +10,7 @@ from PIL import Image
 from vrl.scripts.data import bootstrap
 from vrl.scripts.data.videophy_i2v import (
     DECODE_METHOD,
+    VideoPhySource,
     VideoPhyVideoRow,
     prepare_videophy_i2v_dataset,
     select_videos_for_prompts,
@@ -42,12 +43,10 @@ def test_unavailable_candidate_fallback_keeps_source_and_cache_identity(
 
     def prepare() -> dict:
         return prepare_videophy_i2v_dataset(
-            csv_path=csv_path,
+            sources=[VideoPhySource("official/repo", "videos.csv", csv_path, "test")],
             train_prompts=prompts,
             eval_prompts=prompts,
             data_root=tmp_path / "data",
-            repo_id="official/repo",
-            csv_file="videos.csv",
             width=4,
             height=4,
             fetch_video=fetch,
@@ -125,7 +124,7 @@ def test_prepare_videophy_i2v_dataset_writes_source_backed_manifest(tmp_path: Pa
     source-backed manifest rows (URL, decode method, frame sizes) plus a report, and does not
     keep the videos.
     """
-    csv_path = tmp_path / "videophy_test_public.csv"
+    csv_path = tmp_path / "videophy2_test.csv"
     csv_path.write_text(
         "\n".join(
             [
@@ -155,12 +154,12 @@ def test_prepare_videophy_i2v_dataset_writes_source_backed_manifest(tmp_path: Pa
         Image.new("RGB", (4, 4), (10, 20, 30)).save(image_path)
 
     report = prepare_videophy_i2v_dataset(
-        csv_path=csv_path,
+        sources=[
+            VideoPhySource("videophysics/videophy2_test", "videophy2_test.csv", csv_path, "test")
+        ],
         train_prompts=train_prompts,
         eval_prompts=eval_prompts,
         data_root=data_root,
-        repo_id="videophysics/videophy_test_public",
-        csv_file="videophy_test_public.csv",
         fetch_video=fake_fetch,
         extract_first_frame=fake_extract,
     )
