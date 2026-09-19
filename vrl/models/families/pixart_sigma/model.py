@@ -325,9 +325,6 @@ class PixArtSigmaModel(
             do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
         )
 
-    # -- backend ownership (called by runtime, not by collectors) -------
-    _frozen_encoder_names = ("text_encoder",)
-
     def postprocess_branch(
         self,
         request: DenoiseBackboneInput,

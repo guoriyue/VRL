@@ -40,6 +40,14 @@ def build_denoise_runtime_bundle(
     # or any other model mutation.
     QuantizationPass.validate_support(build)
     model = model_cls.from_build(build)
+    memory = build.generation_memory
+    cpu_resident = frozenset(() if memory is None else memory.cpu_resident)
+    if cpu_resident and getattr(model, "_cpu_resident", frozenset()) != cpu_resident:
+        raise RuntimeError(
+            f"{type(model).__name__}.from_build did not honor model.memory.cpu_resident="
+            f"{sorted(cpu_resident)}; host placement is implemented by the shared "
+            "DiffusersPipelineModelBase loader only",
+        )
     pipeline_offload = rollout.pipeline_offload_mode != "none"
 
     # The single rollout placement site. Attach and full-finetune leave the

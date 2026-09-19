@@ -89,9 +89,6 @@ class SD3_5Model(
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
 
-    # -- backend ownership (called by runtime, not by collectors) -------
-    _frozen_encoder_names = ("text_encoder", "text_encoder_2", "text_encoder_3")
-
     # -- encode_prompt -------------------------------------------------
 
     def encode_prompt(

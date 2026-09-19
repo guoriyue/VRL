@@ -71,9 +71,6 @@ class HunyuanVideoModel(
     # frame axis back to [B, C, T, H, W].
     _decode_output_layout = "video_btchw"
 
-    # -- backend ownership (called by runtime, not by collectors) -------
-    _frozen_encoder_names = ("text_encoder", "text_encoder_2")
-
     def build_branch(
         self,
         request: DenoiseBackboneInput,

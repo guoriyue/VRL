@@ -126,9 +126,6 @@ class CogVideoXModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
 
-    # -- backend ownership (called by runtime, not by collectors) -------
-    _frozen_encoder_names = ("text_encoder",)
-
     def build_branch(
         self,
         request: DenoiseBackboneInput,

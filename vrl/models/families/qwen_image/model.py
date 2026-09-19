@@ -80,9 +80,6 @@ class QwenImageModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
     #     noise = comb * (||cond|| / ||comb||)
     cfg_normalization = True
 
-    # -- backend ownership (called by runtime, not by collectors) -------
-    _frozen_encoder_names = ("text_encoder",)
-
     def build_branch(
         self,
         request: DenoiseBackboneInput,

@@ -79,9 +79,6 @@ class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
     cfg_mode = "single_branch"
     cfg_base = "cond"
 
-    # -- backend ownership (called by runtime, not by collectors) -------
-    _frozen_encoder_names = ("text_encoder", "text_encoder_2")
-
     def build_branch(
         self,
         request: DenoiseBackboneInput,

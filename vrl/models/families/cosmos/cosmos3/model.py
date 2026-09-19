@@ -80,8 +80,6 @@ class Cosmos3SamplingState(GuidedDenoiseSamplingStateBase):
 class Cosmos3Model(CosmosReplayForward, DiffusersPipelineModelBase):
     """Cosmos3 Omni T2V generator wrapped for the vrl diffusion RL seam."""
 
-    _frozen_encoder_names: tuple[str, ...] = ()
-
     @property
     def vae_scale_factor_temporal(self) -> int:
         return self.pipeline.vae_scale_factor_temporal

@@ -44,6 +44,12 @@ def _load(monkeypatch: pytest.MonkeyPatch, parameter_dtype: torch.dtype) -> tupl
         # The shipped scheduler config: DPM-Solver calls the shift ``flow_shift``.
         scheduler=SimpleNamespace(config={"num_train_timesteps": 1000, "flow_shift": 3.0}),
     )
+    pipeline.components = {
+        "transformer": pipeline.transformer,
+        "vae": pipeline.vae,
+        "text_encoder": pipeline.text_encoder,
+        "scheduler": pipeline.scheduler,
+    }
     calls: list[dict[str, Any]] = []
 
     def fake_from_pretrained(model_name_or_path: str, **kwargs: Any) -> Any:

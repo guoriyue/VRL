@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
+import torch.nn as nn
 
 from vrl.config.precision import RolePrecision
 from vrl.models.interfaces.runtime import ModelBuild
@@ -433,23 +434,27 @@ def record_forward_calls(module: torch.nn.Module) -> list[dict[str, Any]]:
     return calls
 
 
-class RecordingModule:
+class RecordingModule(nn.Module):
     """Records the freeze / placement calls the shared loaders make on a component.
 
-    Deliberately a plain object, not an ``nn.Module``: the loader tests assert on
-    ``"cuda:0"`` / ``torch.device("cuda:1")`` placements, and a real ``Module.to``
-    would fail on the CUDA-less default lane. ``to_calls`` appends whatever it is
-    handed -- strings, ``torch.device`` objects, ``None`` -- with no normalization,
-    so every existing assertion reads the exact argument the loader passed.
+    An ``nn.Module`` so the loader's "every module component but the transformer"
+    rule sees it, but with ``to`` / ``requires_grad_`` overridden: the loader
+    tests assert on ``"cuda:0"`` / ``torch.device("cuda:1")`` placements, and a
+    real ``Module.to`` would fail on the CUDA-less default lane. ``to_calls``
+    appends whatever it is handed -- strings, ``torch.device`` objects, ``None``
+    -- with no normalization, so every assertion reads the exact argument the
+    loader passed.
     """
 
     def __init__(self) -> None:
+        super().__init__()
         self.dtype: torch.dtype | None = None
         self.requires_grad_enabled: bool | None = None
         self.to_calls: list[tuple[Any, torch.dtype | None]] = []
 
-    def requires_grad_(self, enabled: bool) -> None:
+    def requires_grad_(self, enabled: bool = True) -> RecordingModule:
         self.requires_grad_enabled = enabled
+        return self
 
     def to(self, device: Any = None, dtype: torch.dtype | None = None) -> RecordingModule:
         self.to_calls.append((device, dtype))

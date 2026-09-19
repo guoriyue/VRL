@@ -314,9 +314,6 @@ class MochiModel(
             num_train_timesteps=int(batch_context["num_train_timesteps"]),
         )
 
-    # -- backend ownership (called by runtime, not by collectors) -------
-    _frozen_encoder_names = ("text_encoder",)
-
     def postprocess_branch(
         self,
         request: DenoiseBackboneInput,

@@ -40,7 +40,7 @@ TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS = (
 # This is a family capability selection, not the global schema namespace:
 # adding a future memory section must not silently grant it to every VAE family.
 _VAE_DECODE_MEMORY_SECTIONS = frozenset({"vae_decode"})
-# Families on the shared DiffusersPipelineModelBase loader also honor
+# The shared DiffusersPipelineModelBase loader also honors
 # model.memory.cpu_resident (host placement of frozen pipeline components).
 _DIFFUSERS_PIPELINE_MEMORY_SECTIONS = _VAE_DECODE_MEMORY_SECTIONS | {"cpu_resident"}
 
@@ -463,8 +463,11 @@ def _full_sequence_denoise_entry(
         )
     if runtime_capabilities is None:
         if supported_model_memory_sections is None:
+            # The generic executor runs a DiffusersPipelineModelBase family on
+            # the shared loader; a family that owns its from_build passes the
+            # VAE-only set explicitly.
             supported_model_memory_sections = (
-                _VAE_DECODE_MEMORY_SECTIONS
+                _DIFFUSERS_PIPELINE_MEMORY_SECTIONS
                 if executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
                 else frozenset()
             )
@@ -595,7 +598,6 @@ _register_model_family(
             replay_cls="vrl.models.families.flux.model:FluxReplayModel",
             transformer_classname="FluxTransformer2DModel",
         ),
-        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -613,7 +615,6 @@ _register_model_family(
             replay_cls="vrl.models.families.qwen_image.model:QwenImageReplayModel",
             transformer_classname="QwenImageTransformer2DModel",
         ),
-        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -628,7 +629,6 @@ _register_model_family(
             replay_cls="vrl.models.families.sana.model:SanaReplayModel",
             transformer_classname="SanaTransformer2DModel",
         ),
-        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -643,7 +643,6 @@ _register_model_family(
             replay_cls="vrl.models.families.lumina2.model:Lumina2ReplayModel",
             transformer_classname="Lumina2Transformer2DModel",
         ),
-        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -658,7 +657,6 @@ _register_model_family(
             replay_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoReplayModel",
             transformer_classname="HunyuanVideoTransformer3DModel",
         ),
-        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -673,7 +671,6 @@ _register_model_family(
             replay_cls="vrl.models.families.mochi.model:MochiReplayModel",
             transformer_classname="MochiTransformer3DModel",
         ),
-        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -688,7 +685,6 @@ _register_model_family(
             replay_cls="vrl.models.families.hunyuan_image.model:HunyuanImageReplayModel",
             transformer_classname="HunyuanImageTransformer2DModel",
         ),
-        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -707,7 +703,6 @@ _register_model_family(
             # the rollout's DDIM ladder via pixart_ddim_scheduler.
             scheduler_classname="DDIMScheduler",
         ),
-        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -725,7 +720,6 @@ _register_model_family(
             # same ladder the rollout sampled (sde_type=ddim).
             scheduler_classname="CogVideoXDDIMScheduler",
         ),
-        supported_model_memory_sections=_DIFFUSERS_PIPELINE_MEMORY_SECTIONS,
     ),
 )
 
@@ -749,6 +743,8 @@ _register_model_family(
                 "vrl.models.families.wan_2_1.config:normalize_wan_model_build"
             ),
         ),
+        # Family-owned from_build: no host placement of frozen components.
+        supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
     ),
 )
 
@@ -874,6 +870,8 @@ _register_model_family(
                 "vrl.models.families.cosmos.anima.runtime:build_anima_replay_runtime_bundle"
             ),
         ),
+        # Family-owned from_build: no host placement of frozen components.
+        supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
     ),
 )
 

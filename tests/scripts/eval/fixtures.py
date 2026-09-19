@@ -72,6 +72,15 @@ class TinySanaPipeline:
         self.loads = 0
         self._labels: dict[float, str] = {self.fingerprint(): "base"}
 
+    @property
+    def components(self) -> dict[str, Any]:
+        return {
+            "transformer": self.transformer,
+            "vae": self.vae,
+            "text_encoder": self.text_encoder,
+            "scheduler": self.scheduler,
+        }
+
     def fingerprint(self) -> float:
         return float(sum(p.detach().double().sum().item() for p in self.transformer.parameters()))
 

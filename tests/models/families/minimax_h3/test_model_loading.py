@@ -148,7 +148,7 @@ def test_from_build_loads_the_t2va_workflow_and_freezes_the_generation_modules(
         "revision": "abc123",
         "torch_dtype": {
             "default": torch.bfloat16,
-            "text_encoder": torch.bfloat16,
+            "transformer": torch.bfloat16,
             "vae": torch.float32,
             "audio_vae": torch.float32,
         },

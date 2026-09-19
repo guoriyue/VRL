@@ -19,6 +19,16 @@ class _FakePipeline:
         self.text_encoder_3 = RecordingModule()
         self.device = "cpu"
 
+    @property
+    def components(self) -> dict[str, Any]:
+        return {
+            "transformer": self.transformer,
+            "vae": self.vae,
+            "text_encoder": self.text_encoder,
+            "text_encoder_2": self.text_encoder_2,
+            "text_encoder_3": self.text_encoder_3,
+        }
+
 
 def test_sd3_fp32_runtime_loads_frozen_components_without_fp32_peak(monkeypatch) -> None:
     """fp32 training keeps the transformer and VAE in fp32 while the frozen text encoders load

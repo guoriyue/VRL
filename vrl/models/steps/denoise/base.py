@@ -758,9 +758,8 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
 
     # -- backend ownership -------------------------------------------------
     # The pipeline class comes from the checkpoint's ``model_index.json``
-    # (``DiffusionPipeline.from_pretrained``); a family only names the
-    # components the shared loader freezes and places besides the VAE.
-    _frozen_encoder_names: tuple[str, ...] = ("text_encoder",)
+    # (``DiffusionPipeline.from_pretrained``); every module component but the
+    # transformer is frozen, so a family declares nothing for the loader.
     # Component names ``from_build`` left on the host (``model.memory.cpu_resident``);
     # parking's wake never moves them back onto the GPU.
     _cpu_resident: frozenset[str] = frozenset()
@@ -771,13 +770,14 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
         build: ModelBuild,
         model_dtype: torch.dtype,
     ) -> tuple[torch.dtype, dict[str, Any]]:
-        """Resolve prompt-encoder dtype plus pipeline load kwargs for a family.
+        """Resolve prompt-encoder dtype plus pipeline load kwargs.
 
         ``build.rollout.prompt_encoder_dtype`` is authoritative when present; bare
-        test builds retain the historical fallback. VAEs are not controlled by this
-        option: rollout families explicitly keep them in fp32 for decode fidelity.
-        The initial ``from_pretrained`` mapping preserves that fp32 VAE boundary
-        while avoiding an all-fp32 prompt-encoder load peak.
+        test builds retain the historical fallback. Every component but the
+        transformer is frozen, so the frozen dtype is the load default and the
+        two named exceptions are the trainable transformer and the VAE, which
+        rollout families keep in fp32 for decode fidelity. Mapping them at
+        ``from_pretrained`` avoids an all-fp32 prompt-encoder load peak.
         """
 
         rollout = getattr(build, "rollout", None)
@@ -788,15 +788,15 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
         # immutable Hub snapshot; otherwise parity can compare different weights.
         load_kwargs: dict[str, Any] = build.pretrained_kwargs
         load_kwargs["torch_dtype"] = {
-            "default": model_dtype,
+            "default": prompt_encoder_dtype,
+            "transformer": model_dtype,
             "vae": torch.float32,
-            **{name: prompt_encoder_dtype for name in cls._frozen_encoder_names},
         }
         return prompt_encoder_dtype, load_kwargs
 
     @classmethod
     def from_build(cls, build: ModelBuild) -> DiffusersPipelineModelBase:
-        """Load the family pipeline and freeze everything but the transformer.
+        """Load the family pipeline and freeze every module but the transformer.
 
         Frozen components live on the compute device unless
         ``model.memory.cpu_resident`` names them; a named component stays on
@@ -806,8 +806,6 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
 
         from diffusers import DiffusionPipeline
 
-        # Prompt encoders follow the rollout-only precision policy; the VAE stays
-        # family-owned fp32 below because decode fidelity is a separate concern.
         prompt_encoder_dtype, load_kwargs = cls._pipeline_load_dtypes(
             build,
             build.parameter_dtype,
@@ -816,24 +814,28 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
             build.model_name_or_path,
             **load_kwargs,
         )
+        components = pipeline.components
+        if not isinstance(components, Mapping):
+            raise TypeError("diffusion pipeline.components must be a mapping")
         memory = build.generation_memory
         cpu_resident = frozenset(() if memory is None else memory.cpu_resident)
-        unknown = sorted(name for name in cpu_resident if getattr(pipeline, name, None) is None)
+        unknown = sorted(
+            name for name in cpu_resident if not isinstance(components.get(name), nn.Module)
+        )
         if unknown:
             raise ValueError(
                 f"model.memory.cpu_resident names component(s) {unknown} that "
-                f"{type(pipeline).__name__} does not ship",
+                f"{type(pipeline).__name__} does not ship as modules",
             )
-        pipeline.vae.requires_grad_(False)
-        for name in cls._frozen_encoder_names:
-            encoder = getattr(pipeline, name, None)
-            if encoder is not None:
-                encoder.requires_grad_(False)
-                encoder.to(
-                    "cpu" if name in cpu_resident else build.device,
-                    dtype=prompt_encoder_dtype,
-                )
-        pipeline.vae.to("cpu" if "vae" in cpu_resident else build.device, dtype=torch.float32)
+        for name, module in components.items():
+            if name == "transformer" or not isinstance(module, nn.Module):
+                continue
+            module.requires_grad_(False)
+            module.to(
+                "cpu" if name in cpu_resident else build.device,
+                # The VAE is a family-owned fp32 fidelity boundary, not a prompt encoder.
+                dtype=torch.float32 if name == "vae" else prompt_encoder_dtype,
+            )
         model = cls(
             pipeline=pipeline,
             device=build.device,

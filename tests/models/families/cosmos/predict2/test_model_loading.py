@@ -124,8 +124,8 @@ def test_cosmos_predict2_from_build_swaps_safety_checker_and_restores_grad(
                 "model_name_or_path": "nvidia/Cosmos-Predict2-2B-Video2World",
                 "torch_dtype": {
                     "default": torch.bfloat16,
+                    "transformer": torch.bfloat16,
                     "vae": torch.float32,
-                    "text_encoder": torch.bfloat16,
                 },
             },
         ]
@@ -189,9 +189,14 @@ def test_custom_cosmos_loaders_apply_component_dtypes(monkeypatch) -> None:
             rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.float32),
         )
         model_class.from_build(build)
-        expected = {"default": torch.bfloat16, "vae": torch.float32}
+        # Frozen components load at the rollout encoder dtype by default; the
+        # trainable transformer and the fp32 VAE are the named exceptions.
+        expected = {
+            "default": torch.float32,
+            "transformer": torch.bfloat16,
+            "vae": torch.float32,
+        }
         if has_encoder:
-            expected["text_encoder"] = torch.float32
             assert pipeline.text_encoder.to_calls == [("cpu", torch.float32)]
         assert calls[0]["torch_dtype"] == expected
         assert calls[0]["revision"] == "snapshot"

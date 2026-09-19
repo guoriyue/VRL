@@ -98,9 +98,6 @@ class HunyuanImageModel(
     cfg_mode = "separate_cfg"
     cfg_base = "uncond"
 
-    # -- backend ownership (called by runtime, not by collectors) -------
-    _frozen_encoder_names = ("text_encoder", "text_encoder_2")
-
     def build_branch(
         self,
         request: DenoiseBackboneInput,

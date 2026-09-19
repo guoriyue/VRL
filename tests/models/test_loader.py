@@ -153,19 +153,17 @@ def test_pipeline_dtype_projection_keeps_encoder_override_separate_from_model() 
         rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.float32),
     )
 
-    class DualEncoderPipelineModel(DiffusersPipelineModelBase):
-        _frozen_encoder_names = ("text_encoder", "text_encoder_2")
-
-    encoder_dtype, kwargs = DualEncoderPipelineModel._pipeline_load_dtypes(
+    encoder_dtype, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(
         build,
         torch.bfloat16,
     )
     assert encoder_dtype == torch.float32
+    # Frozen components (every encoder) load at the rollout encoder dtype; only
+    # the trainable transformer and the fp32 VAE are named.
     assert kwargs["torch_dtype"] == {
-        "default": torch.bfloat16,
+        "default": torch.float32,
+        "transformer": torch.bfloat16,
         "vae": torch.float32,
-        "text_encoder": torch.float32,
-        "text_encoder_2": torch.float32,
     }
     assert kwargs["revision"] == "snapshot"
 

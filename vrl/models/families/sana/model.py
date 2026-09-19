@@ -284,9 +284,6 @@ class SanaModel(
         )
 
     # -- backend ownership (called by runtime, not by collectors) -------
-    _frozen_encoder_names = ("text_encoder",)
-
-    # -- backend ownership (called by runtime, not by collectors) -------
 
     @staticmethod
     def _apply_fp16_saturation_clamp(transformer: Any) -> None:

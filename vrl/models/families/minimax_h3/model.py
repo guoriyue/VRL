@@ -302,11 +302,10 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
     """MiniMax-H3 text-to-video(+audio) generator wrapped for the vrl diffusion RL seam."""
 
     # ``from_build`` is family-owned (modular pipeline, not ``DiffusionPipeline``);
-    # the two declarations below are what it applies to the frozen conditioner.
+    # the declaration below is what it applies to the frozen conditioner.
     # Qwen3-VL-32B co-resides with the transformer: a deployment that can hold
     # the 33B policy holds the encoder too, and parking it would put a 32B
     # forward on the CPU per prompt.
-    _frozen_encoder_names: tuple[str, ...] = ("text_encoder",)
     _prompt_encoder_on_cpu: bool = False
 
     @classmethod
@@ -339,10 +338,8 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
             audio_scheduler=pipeline.audio_scheduler,
         )
         encoder_device = "cpu" if cls._prompt_encoder_on_cpu else build.device
-        for name in cls._frozen_encoder_names:
-            encoder = getattr(components, name)
-            encoder.requires_grad_(False)
-            encoder.to(encoder_device, dtype=prompt_encoder_dtype)
+        components.text_encoder.requires_grad_(False)
+        components.text_encoder.to(encoder_device, dtype=prompt_encoder_dtype)
         for vae in (components.vae, components.audio_vae):
             vae.requires_grad_(False)
             vae.to(build.device, dtype=torch.float32)

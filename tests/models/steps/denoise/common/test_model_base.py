@@ -159,6 +159,14 @@ class _LoadedPipeline:
         self.vae = RecordingModule()
         self.text_encoder = RecordingModule()
 
+    @property
+    def components(self) -> dict[str, Any]:
+        return {
+            "transformer": self.transformer,
+            "vae": self.vae,
+            "text_encoder": self.text_encoder,
+        }
+
 
 def _bare_build(**memory: Any) -> ModelBuild:
     return ModelBuild(
@@ -217,19 +225,35 @@ def test_shared_from_build_rejects_an_unknown_cpu_resident_component(monkeypatch
         MochiModel.from_build(_bare_build(cpu_resident=("text_encoder_2",)))
 
 
-def test_shared_from_build_skips_an_absent_declared_encoder(monkeypatch) -> None:
-    """A pipeline variant without one of the declared encoders loads anyway.
-
-    The loop reads encoders with ``getattr(..., None)``, so a checkpoint that
-    ships fewer encoders than the family declares is a skip, not a crash.
-    """
-    pipeline = _LoadedPipeline()  # only ``text_encoder``, not _2 / _3
+def test_shared_from_build_freezes_every_module_component_but_the_transformer(
+    monkeypatch,
+) -> None:
+    """The frozen set is whatever the checkpoint ships, not a family list."""
+    pipeline = _LoadedPipeline()
+    pipeline.text_encoder_2 = RecordingModule()
+    pipeline.scheduler = object()
+    monkeypatch.setattr(
+        type(pipeline),
+        "components",
+        property(
+            lambda self: {
+                "transformer": self.transformer,
+                "vae": self.vae,
+                "text_encoder": self.text_encoder,
+                "text_encoder_2": self.text_encoder_2,
+                "scheduler": self.scheduler,
+            }
+        ),
+    )
     _load_pipeline(monkeypatch, pipeline)
 
     model = SD3_5Model.from_build(_bare_build())
 
     assert model.pipeline is pipeline
+    assert pipeline.transformer.requires_grad_enabled is None
     assert pipeline.text_encoder.to_calls == [("cuda:0", torch.float16)]
+    assert pipeline.text_encoder_2.to_calls == [("cuda:0", torch.float16)]
+    assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]
 
 
 def _sana_build(dtype: torch.dtype) -> ModelBuild:
