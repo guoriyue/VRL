@@ -1,8 +1,8 @@
 # GenEval prompt metadata imported from Flow-GRPO.
 data:
   loader: prompt_manifest
-  manifest: datasets/geneval/train.jsonl
-  eval_manifest: datasets/geneval/test.jsonl
+  manifest: manifests/geneval/train.jsonl
+  eval_manifest: manifests/geneval/test.jsonl
   preprocessing:
     format: jsonl
   sampler:

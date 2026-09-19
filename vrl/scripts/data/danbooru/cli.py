@@ -49,7 +49,7 @@ def build_default_manifests(
 
 
 def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
-    return (("datasets/danbooru/anatomy/", (ANIME_PROMPTS_COMMAND,)),)
+    return (("manifests/danbooru/anatomy/", (ANIME_PROMPTS_COMMAND,)),)
 
 
 def main(

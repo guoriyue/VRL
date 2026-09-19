@@ -106,7 +106,7 @@ def _populate_hint_for_path(path: str) -> str:
     for prefix, argv in _manifest_setup_hints():
         if path.startswith(prefix):
             return _setup_command(argv)
-    return f"{path} is not present and no populate command maps to it; see datasets/ docs"
+    return f"{path} is not present and no populate command maps to it; see manifests/ docs"
 
 
 def _manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:

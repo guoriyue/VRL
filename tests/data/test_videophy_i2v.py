@@ -209,7 +209,7 @@ def test_for_experiment_rejects_partial_videophy_i2v_smoke_data(tmp_path: Path) 
     """A manifest with fewer rows than its prompt file is incomplete: the plan stays not ready
     with the shortfall reported, while the complete eval split passes.
     """
-    split_root = tmp_path / "datasets" / "videophy"
+    split_root = tmp_path / "manifests" / "videophy"
     split_root.mkdir(parents=True)
     (split_root / "train.txt").write_text("prompt a\nprompt b\n", encoding="utf-8")
     (split_root / "eval.txt").write_text("prompt c\n", encoding="utf-8")

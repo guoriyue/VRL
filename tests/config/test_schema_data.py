@@ -20,7 +20,7 @@ def test_valid_data_loaders_are_accepted(loader: str) -> None:
     if loader == "prompt_manifest":
         data = DataConfig(
             loader=loader,
-            manifest="datasets/ocr/train.txt",
+            manifest="manifests/ocr/train.txt",
             preprocessing={"format": "text"},
             sampler={"type": "random_without_replacement"},
         )
@@ -73,7 +73,7 @@ def test_omitted_loader_derives_from_preprocessing_format(fmt: str, expected: st
         )
     else:
         data = DataConfig(
-            manifest="datasets/ocr/train.txt",
+            manifest="manifests/ocr/train.txt",
             preprocessing={"format": fmt},
             sampler={"type": "random_without_replacement"},
         )

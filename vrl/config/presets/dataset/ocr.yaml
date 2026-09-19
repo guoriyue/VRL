@@ -2,8 +2,8 @@
 # text in each prompt row.
 data:
   loader: prompt_manifest
-  manifest: datasets/ocr/train.txt
-  eval_manifest: datasets/ocr/test.txt
+  manifest: manifests/ocr/train.txt
+  eval_manifest: manifests/ocr/test.txt
   preprocessing:
     format: text
   sampler:

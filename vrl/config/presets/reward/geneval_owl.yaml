@@ -1,7 +1,7 @@
 # GenEval compositional reward scored in-process: OWLv2 open-vocabulary
 # detection + CLIP colour classification under the official GenEval rules.
 # Every prompt row must carry `metadata.geneval` ({include, exclude, tag}) —
-# the Flow-GRPO manifests under datasets/geneval do. The score key is the
+# the Flow-GRPO manifests under manifests/geneval do. The score key is the
 # graded satisfied-condition fraction; the strict all-or-nothing verdict is
 # what the held-out eval reports. Runs on the trainer GPU by default
 # (distributed.resources.reward.device: trainer), ~2.3 GB resident.

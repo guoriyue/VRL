@@ -40,14 +40,14 @@ vrl/runtime/env/__pycache__/
 *.hdf5
 data/external/
 data/cache/
-datasets/**/images/
-datasets/**/videos/
+manifests/**/images/
+manifests/**/videos/
 # Pre-mixture leftover: the anima_preview3 NSFW ladder used to train off a mixed
 # manifest built on the side. The mix now lives in the dataset preset
 # (data.manifest counts), so delete this once no in-flight run resumes from a
 # resolved config that still points at it.
-datasets/danbooru/anime_quality_safety_mix50/
-datasets/video_world/references/
+manifests/danbooru/anime_quality_safety_mix50/
+manifests/video_world/references/
 !tests/fixtures/**
 
 # Logs

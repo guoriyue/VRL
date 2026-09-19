@@ -131,7 +131,7 @@ vrl/
   config/      OmegaConf loading, typed schema, and bundled YAML presets
   nn/ math/ utils/    shared kernels and helpers
   scripts/     training and data preparation entrypoints
-datasets/   committed prompt datasets and dataset build scripts
+manifests/  committed prompt manifests and dataset build scripts
 docs/       architecture notes, sprint notes, training examples
 third_party/  vendored submodules (+ the CountGD Bazel package)
 ```

@@ -132,7 +132,7 @@ field and scoring behavior are unchanged.
 ## GenEval (OWLv2 + CLIP)
 
 Select `+reward=geneval_owl` with a manifest whose rows carry `metadata.geneval`
-(the Flow-GRPO GenEval manifests under `datasets/geneval`, including the anime
+(the Flow-GRPO GenEval manifests under `manifests/geneval`, including the anime
 restyle selected by `+dataset=geneval_anime`). The official GenEval decision
 rules run in-process over `google/owlv2-base-patch16-ensemble` detections and
 `openai/clip-vit-large-patch14` colour classification, so no mmdet stack or

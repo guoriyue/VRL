@@ -14,12 +14,12 @@
 # Every target tag is validated against the tagger's own selected_tags.csv, the
 # check that a 0.731-vs-0.980 recall discrepancy once came down to.
 #
-# Built from the danbooru tag corpora already in datasets/danbooru by
+# Built from the danbooru tag corpora already in manifests/danbooru by
 # scripts/build_anime_craft.py (source_post_ids recorded per row).
 data:
   loader: prompt_manifest
-  manifest: datasets/danbooru/anime_craft/train_prompts.jsonl
-  eval_manifest: datasets/danbooru/anime_craft/eval_prompts.jsonl
+  manifest: manifests/danbooru/anime_craft/train_prompts.jsonl
+  eval_manifest: manifests/danbooru/anime_craft/eval_prompts.jsonl
   preprocessing:
     format: jsonl
   sampler:

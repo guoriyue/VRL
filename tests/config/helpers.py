@@ -46,7 +46,7 @@ def minimal_grpo_cfg(**overrides):
         "algorithm": {"kind": "grpo"},
         "data": {
             "loader": "prompt_manifest",
-            "manifest": "datasets/ocr/train.txt",
+            "manifest": "manifests/ocr/train.txt",
             "preprocessing": {"format": "text"},
             "sampler": {"type": "random_without_replacement"},
         },

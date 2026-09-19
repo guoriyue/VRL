@@ -3,7 +3,7 @@
 This importer turns the public VideoPhy benchmark table into an image-caption
 manifest for Wan I2V training:
 
-- captions come from the existing repo split files under ``datasets/videophy``;
+- captions come from the existing repo split files under ``manifests/videophy``;
 - source videos come from ``videophysics/videophy_test_public``;
 - reference images are frame 0 decoded from the selected official video URL.
 
@@ -71,10 +71,10 @@ def register(subparsers: Any) -> None:
     parser.add_argument("--repo-id", default=DEFAULT_REPO_ID)
     parser.add_argument("--csv-file", default=DEFAULT_CSV_FILE)
     parser.add_argument(
-        "--train-prompts", type=Path, default=repo_root() / "datasets/videophy/train.txt"
+        "--train-prompts", type=Path, default=repo_root() / "manifests/videophy/train.txt"
     )
     parser.add_argument(
-        "--eval-prompts", type=Path, default=repo_root() / "datasets/videophy/eval.txt"
+        "--eval-prompts", type=Path, default=repo_root() / "manifests/videophy/eval.txt"
     )
     parser.add_argument("--data-root", type=Path, default=None)
     parser.add_argument("--cache-dir", type=Path, default=default_cache_dir())
@@ -100,8 +100,8 @@ def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
 
 def expected_manifest_sources() -> dict[str, str]:
     return {
-        f"data/external/{DATASET_NAME}/manifests/train.jsonl": "datasets/videophy/train.txt",
-        f"data/external/{DATASET_NAME}/manifests/eval.jsonl": "datasets/videophy/eval.txt",
+        f"data/external/{DATASET_NAME}/manifests/train.jsonl": "manifests/videophy/train.txt",
+        f"data/external/{DATASET_NAME}/manifests/eval.jsonl": "manifests/videophy/eval.txt",
     }
 
 

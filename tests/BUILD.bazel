@@ -55,7 +55,7 @@ vrl_pytest(
     name = "config_tests",
     size = "large",
     srcs = glob(["config/**/*.py"]),
-    data = ["//datasets:manifests"],
+    data = ["//manifests:manifests"],
     env = CPU_ENV,
 )
 
@@ -74,7 +74,7 @@ vrl_pytest(
         size = "enormous",
         srcs = glob([lane + "/**/*.py"]),
         args = NOT_SLOW,
-        data = ["//datasets:manifests"] + extra_data,
+        data = ["//manifests:manifests"] + extra_data,
         env = CPU_ENV,
     )
     for lane, extra_data in [
@@ -104,7 +104,7 @@ vrl_pytest(
     size = "enormous",
     srcs = TEST_TREE,
     args = ["-m", "'gpu and not e2e and not slow_test'"],
-    data = ["//datasets:manifests"],
+    data = ["//manifests:manifests"],
     tags = GPU_TAGS,
 )
 
@@ -132,7 +132,7 @@ vrl_pytest(
     timeout = "eternal",
     srcs = glob(["e2e/**/*.py"]),
     args = ["-m", "e2e"],
-    data = ["//datasets:manifests"],
+    data = ["//manifests:manifests"],
     env = {"WM_RUN_REAL_MODEL_TESTS": "1"},
     support = ":support_shared_gpu",
     tags = GPU_TAGS + ["external"],
@@ -145,7 +145,7 @@ vrl_pytest(
     size = "enormous",
     srcs = glob(["ray/**/*.py", "generation/ray/**/*.py", "rollouts/**/*.py"]),
     args = ["-m", "'slow_test and not e2e'"],
-    data = ["//datasets:manifests"],
+    data = ["//manifests:manifests"],
     env = CPU_ENV,
     tags = ["exclusive"],
 )

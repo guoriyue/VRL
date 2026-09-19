@@ -1,6 +1,6 @@
 """Danbooru dataset defaults and taxonomy projections.
 
-The editable vocabulary remains in ``datasets/danbooru/config.yaml``. This
+The editable vocabulary remains in ``manifests/danbooru/config.yaml``. This
 module loads that one source of truth and exposes the concrete runtime shapes
 used by the anatomy, safety, asset, and CLI owners.
 """
@@ -21,7 +21,7 @@ ANIME_SAFETY_PROMPTS_COMMAND = "anime-safety-prompts"
 ANIME_POSITIVES_COMMAND = "anime-positives"
 ANIME_FETCH_IMAGES_COMMAND = "anime-fetch-images"
 
-OUTPUT_DIR = repo_root() / "datasets" / "danbooru"
+OUTPUT_DIR = repo_root() / "manifests" / "danbooru"
 ANATOMY_DIR = OUTPUT_DIR / "anatomy"
 SAFETY_DIR = OUTPUT_DIR / "safety"
 
@@ -59,7 +59,7 @@ DOMAIN = "anime"
 
 
 class _AnatomyTaxonomy(ConfigBase):
-    """``anatomy`` block of datasets/danbooru/config.yaml."""
+    """``anatomy`` block of manifests/danbooru/config.yaml."""
 
     exclude_tags: list[str]
     hand_focus_allowed_exclude_tags: list[str]
@@ -87,7 +87,7 @@ class _AnatomyTaxonomy(ConfigBase):
 
 
 class _SafetyTaxonomy(ConfigBase):
-    """``safety`` block of datasets/danbooru/config.yaml."""
+    """``safety`` block of manifests/danbooru/config.yaml."""
 
     target_ratings: list[str]
     excluded_tags: list[str]

@@ -2,14 +2,14 @@
 # 19,700 train / 300 test plain-text prompts in real user T2V-query style
 # (typos, Spanish, 2D-game asset requests included). No paired videos and no
 # labels — RL explores from prompts alone. Regenerate with:
-#   curl -fL -o datasets/flash_grpo_video/train.txt \
+#   curl -fL -o manifests/flash_grpo_video/train.txt \
 #     https://raw.githubusercontent.com/Shredded-Pork/Flash-GRPO/main/dataset/video/train.txt
-#   curl -fL -o datasets/flash_grpo_video/test.txt \
+#   curl -fL -o manifests/flash_grpo_video/test.txt \
 #     https://raw.githubusercontent.com/Shredded-Pork/Flash-GRPO/main/dataset/video/test.txt
 data:
   loader: prompt_manifest
-  manifest: datasets/flash_grpo_video/train.txt
-  eval_manifest: datasets/flash_grpo_video/test.txt
+  manifest: manifests/flash_grpo_video/train.txt
+  eval_manifest: manifests/flash_grpo_video/test.txt
   task_type: text_to_video
   preprocessing:
     format: text

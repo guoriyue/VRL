@@ -15,11 +15,8 @@ from typing import Any
 import pytest
 
 # The local Pick-a-Pic double is an HF ``Dataset``; that package ships with the
-# ``data`` extra, which the model-only test environments do not install. The
-# repository's own ``datasets/`` asset directory imports as an empty namespace
-# package from the repo root, so the module import alone cannot tell.
-if not hasattr(pytest.importorskip("datasets"), "Dataset"):
-    pytest.skip("HF datasets is not installed (uv extra: data)", allow_module_level=True)
+# ``data`` extra, which the model-only test environments do not install.
+pytest.importorskip("datasets")
 
 from tests.scripts.eval.fixtures import write_tiny_wan_snapshot
 from vrl.config.loading import load_config

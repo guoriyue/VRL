@@ -5,8 +5,8 @@
 # one-line derivation of train.jsonl and is regenerated the same way.
 data:
   loader: prompt_manifest
-  manifest: datasets/geneval/train_anime.jsonl
-  eval_manifest: datasets/geneval/official_eval_553_anime.jsonl
+  manifest: manifests/geneval/train_anime.jsonl
+  eval_manifest: manifests/geneval/official_eval_553_anime.jsonl
   preprocessing:
     format: jsonl
   sampler:

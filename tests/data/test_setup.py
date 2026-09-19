@@ -159,16 +159,16 @@ def test_for_experiment_plan_covers_every_mixture_source(tmp_path: Path) -> None
         {
             "loader": "prompt_manifest",
             "manifest": {
-                "datasets/danbooru/anatomy/train_prompts.jsonl": 6800,
-                "datasets/danbooru/safety/train.jsonl": 1200,
+                "manifests/danbooru/anatomy/train_prompts.jsonl": 6800,
+                "manifests/danbooru/safety/train.jsonl": 1200,
             },
         },
         repo_root=tmp_path,
     )
 
     assert [step["path"] for step in plan["steps"]] == [
-        "datasets/danbooru/anatomy/train_prompts.jsonl",
-        "datasets/danbooru/safety/train.jsonl",
+        "manifests/danbooru/anatomy/train_prompts.jsonl",
+        "manifests/danbooru/safety/train.jsonl",
     ]
     assert plan["ready"] is False
 
@@ -358,12 +358,12 @@ def test_for_experiment_plan_marks_committed_manifest_ready(tmp_path: Path) -> N
     """A committed prompt manifest marks the experiment's dataset plan ready, with its row count
     and no fetch command.
     """
-    manifest_dir = tmp_path / "datasets" / "pickscore_sfw"
+    manifest_dir = tmp_path / "manifests" / "pickscore_sfw"
     manifest_dir.mkdir(parents=True)
     (manifest_dir / "train.txt").write_text("a\nb\nc\n", encoding="utf-8")
 
     plan = bootstrap.resolve_experiment_dataset_plan(
-        {"loader": "prompt_manifest", "manifest": "datasets/pickscore_sfw/train.txt"},
+        {"loader": "prompt_manifest", "manifest": "manifests/pickscore_sfw/train.txt"},
         repo_root=tmp_path,
     )
 
@@ -391,7 +391,7 @@ def test_for_experiment_plan_flags_missing_manifest_with_command(tmp_path: Path)
     plan = bootstrap.resolve_experiment_dataset_plan(
         {
             "loader": "prompt_manifest",
-            "manifest": "datasets/danbooru/anatomy/train_prompts.jsonl",
+            "manifest": "manifests/danbooru/anatomy/train_prompts.jsonl",
         },
         repo_root=tmp_path,
     )

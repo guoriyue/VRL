@@ -10,10 +10,10 @@
 data:
   loader: prompt_manifest
   manifest:
-    datasets/danbooru/anatomy/train_prompts.jsonl: 2000
-    datasets/danbooru/safety/train.jsonl: 2000
+    manifests/danbooru/anatomy/train_prompts.jsonl: 2000
+    manifests/danbooru/safety/train.jsonl: 2000
   mix_seed: 20260818
-  eval_manifest: datasets/danbooru/anatomy/eval_prompts.jsonl
+  eval_manifest: manifests/danbooru/anatomy/eval_prompts.jsonl
   preprocessing:
     format: jsonl
   sampler:

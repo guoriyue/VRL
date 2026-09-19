@@ -15,14 +15,14 @@
 # Prompt distribution and run depth:
 # - /dataset/pickscore_sfw swaps the 192 DrawBench prompts for 15,486 real
 #   Pick-a-Pic user prompts (SFW-filtered, imported from Flow-GRPO — see
-#   datasets/pickscore_sfw/report.json for provenance; zero train/test overlap).
+#   manifests/pickscore_sfw/report.json for provenance; zero train/test overlap).
 #   The aesthetic reward is prompt-agnostic, so the prompt set's job is to widen
 #   the explored image distribution beyond DrawBench's 11 benchmark categories.
 # - 300 rollout updates: repository measurements show 8-12 updates only prove
 #   the pipeline works; a trustworthy learning curve needs ~200-300.
 # - save_freq 10 keeps the run judgeable and resumable on the shared GPU with
 #   30 periodic recovery points plus checkpoint-final.
-# Standalone held-out evaluation can use datasets/pickscore_sfw/test.txt (1,024
+# Standalone held-out evaluation can use manifests/pickscore_sfw/test.txt (1,024
 # prompts) through the dataset preset's eval_manifest; online training does not
 # execute that evaluation automatically.
 #
