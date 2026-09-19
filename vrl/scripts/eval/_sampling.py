@@ -48,21 +48,26 @@ def resolve_eval_sampling(
     ``overrides`` supplies optional CLI-flag values keyed by the output field
     name. A falsy numeric override falls back to the config value;
     ``guidance_scale`` falls back only when the override is ``None`` so an
-    explicit ``0`` (CFG disabled) is preserved. A key that ends up unset is an
-    error naming its config path.
+    explicit ``0`` (CFG disabled) is preserved. Between the CLI and the training
+    ``sampling`` sits ``eval.sampling``: the values evaluation runs with when
+    they differ from training (a longer denoise schedule). A key that ends up
+    unset is an error naming its config path.
     """
 
     sampling = root.sampling
     if sampling is None:
         raise ValueError("config missing required field: sampling")
     cli = dict(overrides or {})
+    eval_sampling = root.eval.sampling if root.eval is not None else None
 
     executor = root.model.executor if root.model is not None else None
 
     def pick(name: str, cast: type, *, executor_fallback: bool = False) -> Any:
         override = cli.get(name)
         use_override = override is not None if name == "guidance_scale" else bool(override)
-        value = override if use_override else getattr(sampling, name, None)
+        value = override if use_override else getattr(eval_sampling, name, None)
+        if value is None:
+            value = getattr(sampling, name, None)
         if value is None and executor_fallback and executor is not None:
             value = getattr(executor, name)
         if value is None:

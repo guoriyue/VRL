@@ -9,11 +9,14 @@ from vrl.config.schema import parse_config
 from vrl.scripts.eval._sampling import resolve_eval_sampling
 
 
-def _root(*, sampling: dict, executor: dict | None = None):
+def _root(*, sampling: dict, executor: dict | None = None, eval: dict | None = None):
     model = {"family": "sd3_5"}
     if executor is not None:
         model["executor"] = executor
-    return parse_config(OmegaConf.create({"model": model, "sampling": sampling}))
+    payload = {"model": model, "sampling": sampling}
+    if eval is not None:
+        payload["eval"] = eval
+    return parse_config(OmegaConf.create(payload))
 
 
 _IMAGE = {"width": 512, "height": 512, "num_steps": 10, "guidance_scale": 4.5}
@@ -50,3 +53,21 @@ def test_cli_override_wins_and_explicit_zero_guidance_is_kept() -> None:
 
     assert out["num_steps"] == 3
     assert out["guidance_scale"] == 0.0
+
+
+def test_eval_sampling_num_steps_overrides_training_and_yields_to_the_cli() -> None:
+    """Flow-GRPO shape: train on 10 steps, evaluate on 40; a CLI value still wins."""
+    root = _root(
+        sampling=_IMAGE,
+        executor={"max_sequence_length": 128},
+        eval={"sampling": {"num_steps": 40}},
+    )
+
+    assert resolve_eval_sampling(root)["num_steps"] == 40
+    assert resolve_eval_sampling(root, overrides={"num_steps": 3})["num_steps"] == 3
+    assert resolve_eval_sampling(root)["guidance_scale"] == 4.5
+
+
+def test_eval_sampling_rejects_a_non_positive_step_count() -> None:
+    with pytest.raises(ValueError, match=r"eval\.sampling\.num_steps must be >= 1"):
+        _root(sampling=_IMAGE, eval={"sampling": {"num_steps": 0}})

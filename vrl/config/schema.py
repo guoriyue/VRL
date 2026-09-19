@@ -757,6 +757,27 @@ class ProductionSection(ConfigBase):
     )
 
 
+class EvalSamplingSection(ConfigBase):
+    """Sampling values evaluation runs with instead of the training values."""
+
+    # reader: vrl/scripts/eval/_sampling.py resolve_eval_sampling. Flow-GRPO
+    # trains on a short schedule and evaluates on the full one (T=10 -> T=40).
+    num_steps: StrictInt | None = None
+
+    @field_validator("num_steps")
+    @classmethod
+    def _positive_steps(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("eval.sampling.num_steps must be >= 1")
+        return value
+
+
+class EvalSection(ConfigBase):
+    """Evaluation-time overrides; anything absent inherits the training config."""
+
+    sampling: EvalSamplingSection | None = None
+
+
 class RootConfig(ConfigBase):
     """Top-level typed boundary for all training config sections.
 
@@ -773,6 +794,8 @@ class RootConfig(ConfigBase):
     # (``_parse_model_section``); sampling follows the model's family.
     model: SerializeAsAny[ModelSection] | None = None
     sampling: SerializeAsAny[SamplingSection] | None = None
+    # Evaluation-time overrides of the sections above (currently sampling).
+    eval: EvalSection | None = None
     # Per-component production gates; the reward contract and data-provenance checks
     # are launch gates (vrl/config/validation.py gate_production).
     production: ProductionSection | None = None
