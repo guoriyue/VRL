@@ -136,8 +136,8 @@ def test_entrypoint_forwards_composition_overrides(monkeypatch, tmp_path) -> Non
     from vrl.config import loading as config_loading
 
     expected_overrides = [
-        "+reward=codex_image_qa_anime_color_light",
-        "+reward=codex_image_qa_luna",
+        "+reward=wd_tagger",
+        "+reward=pickscore",
         "+dataset=anime_craft",
         "model.use_lora=false",
         "sampling.num_steps=40",

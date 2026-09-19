@@ -714,7 +714,6 @@ def test_multiple_gpu_reward_actors_divide_the_owned_bundle() -> None:
         ("nsfw_safety", "cuda:0", {"model_name": "test"}),
         ("wd_tagger", "cpu", {"tagger": None}),
         ("image_sharpness", "cpu", {}),
-        ("codex_image_qa", "cpu", {}),
         ("aesthetic", "cuda:0", {}),
         ("pickscore", "cuda:0", {}),
         ("geneval_owl", "cuda:0", {}),

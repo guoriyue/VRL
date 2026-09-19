@@ -849,32 +849,6 @@ def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
     assert built.trainer.batch_plan.training_microbatch_size == 1
 
 
-def test_luna_reward_overlay_changes_only_the_judge_command() -> None:
-    policy = load_config("reward/codex_image_qa_anime_general_quality")
-    experiment_overrides = [
-        "+reward=codex_image_qa_anime_general_quality",
-        "+dataset=anime_quality_safety_mix50",
-        "trainer.total_epochs=1",
-        "trainer.output_dir=/test-only/anime-quality",
-    ]
-    base_experiment = load_config(
-        "experiment/sd3_5/online_grpo_pickscore",
-        overrides=experiment_overrides,
-    )
-    luna_experiment = load_config(
-        "experiment/sd3_5/online_grpo_pickscore",
-        overrides=[*experiment_overrides, "+reward=codex_image_qa_luna_scored"],
-    )
-    base_reward = base_experiment.reward.kwargs.codex_image_qa
-    luna_reward = luna_experiment.reward.kwargs.codex_image_qa
-
-    assert base_reward.prompt_template == policy.reward.kwargs.codex_image_qa.prompt_template
-    assert luna_reward.prompt_template == policy.reward.kwargs.codex_image_qa.prompt_template
-    assert "--model" not in policy.reward.kwargs.codex_image_qa.command
-    assert "gpt-5.6-luna" not in policy.reward.kwargs.codex_image_qa.command
-    assert "gpt-5.6-luna" in luna_reward.command
-
-
 @pytest.mark.parametrize("value", ["0", "largest"])
 def test_generation_chunk_rejects_non_positive_or_non_integer_values(value: str) -> None:
     cfg = load_config(

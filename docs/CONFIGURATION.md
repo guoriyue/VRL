@@ -149,31 +149,7 @@ geometry for the first rows of `data.manifest` (`--eval` for the eval
 manifest), prints per-component scores, and exits non-zero on the first
 component that raises. The scores themselves mean nothing; the pipeline does.
 
-## Judge, rubric, and data are separate choices
-
-The `codex_image_qa_anime_*` names identify anime-oriented scoring rubrics;
-they do not implement another reward model or bind to one generator. Reuse
-the same rubric for another anime generator rather than copying it into that
-generator's experiment directory. Judge identity and durable rollout recording
-remain independent overlays:
-
-```bash
-python -m vrl.scripts.train \
-  --config experiment/sd3_5/online_grpo_pickscore \
-  +reward=codex_image_qa \
-  +reward=codex_image_qa_anime_color_light \
-  +reward=codex_image_qa_luna_scored \
-  +dataset=anime_craft \
-  sampling.num_steps=40 \
-  actor.optim.lr=2e-5 trainer.total_epochs=1 trainer.save_freq=1 \
-  trainer.output_dir=outputs/sd3_5_color_light_composed
-```
-
-The step count above is an explicit experiment choice, not a property of the
-judge. Saved old results do not establish that this new combination improves
-quality. A `dataset/*` preset with reference images or encoded clean latents
-(DDRL-style) refers to assets that must exist before training; selecting the
-dataset does not generate them, and those assets are generator-specific.
+## Composing rewards
 
 For several independent rewards, select each component and set its coefficient
 explicitly, for example `+reward=aesthetic +reward=pickscore`, then
@@ -199,9 +175,8 @@ without creating a model/reward-specific evaluator or training-experiment YAML:
 ```bash
 python -m vrl.scripts.eval.image_checkpoint_eval \
   --run-dir outputs/sd3_5_color_light_composed \
-  --eval-policy-config reward/codex_image_qa \
-  --eval-policy-override +reward=codex_image_qa_anime_color_light \
-  --eval-policy-override +reward=codex_image_qa_luna \
+  --eval-policy-config reward/wd_tagger \
+  --eval-policy-override +reward=pickscore \
   --eval-policy-override +dataset=anime_craft \
   --strata bucket prompt_style --per-stratum 6 \
   --samples-per-prompt 2 --seed 91000 \
@@ -245,7 +220,7 @@ For a new plot of existing scores, no generator or reward model is needed:
 ```bash
 python -m vrl.scripts.eval.score_report \
   --scores outputs/sd3_5_color_light_composed/checkpoint_evaluation/report/scores.jsonl \
-  --score-key codex_image_qa \
+  --score-key wd_tagger \
   --output-dir outputs/color_light_curve
 ```
 
@@ -270,9 +245,10 @@ defaults with a similar name.
 The `cosmos-predict2-anima` family, its two experiment entrypoints, its
 standalone generator, the `anima_*` dataset presets and the `anima_*`
 evaluators were removed on 2026-09-18. Sprint reports under `docs/sprints`
-keep the historical commands; the anime rubric presets
-(`codex_image_qa_anime_*`), the anime datasets and the image evaluators they
-used remain generator-independent.
+keep the historical commands; the anime datasets and the image evaluators
+remain generator-independent. The `codex_image_qa` LLM-judge reward and its
+anime rubric presets were removed on 2026-09-19: its test-retest agreement
+(0.1-0.5, ties on ~60% of prompts) made it unusable as a GRPO reward.
 
 An earlier reward audit retired the family-specific person-critic canary and
 the unavailable production critic entrypoint. The offline person-critic research
@@ -284,8 +260,7 @@ the sprint report. Retired code/config/text-data paths identify members in
 Moved datasets, media, and probes retain their repository-relative layout under
 that archive directory's `files/`; see its `README.md` for the exact inventory.
 
-CountGD person counting, grounded OCR, tag adherence, the shared Codex exact-count
-scoring mechanism, and reusable exact-count evaluation remain available. They
+CountGD person counting, grounded OCR, and tag adherence remain available. They
 accept image artifacts and task metadata independently of the generator; no
 family-specific person research dataset is required by the framework. Generator independence
 does not establish reward accuracy or resistance to reward hacking on every image
