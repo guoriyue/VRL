@@ -49,7 +49,7 @@ GB = 1024**3
 def test_execution_counts_reject_nonintegers(field, value):
     with pytest.raises(ValueError, match=field):
         if field == "completed_batches":
-            BatchProduceFence(completed_batches=value, event=None)
+            BatchProduceFence(completed_batches=value)
         elif field == "n":
             BatchSizeProbeTrial(n=value, oom=True, label="probe")
         else:

@@ -60,9 +60,9 @@ def _plan(request, sample_rows):
 @pytest.mark.real_cover(
     "tests/generation/execution/test_sample_batches_pipelined_cuda.py",
     why=(
-        "the device falls back to CPU when CUDA is absent, and on CPU the pipelining "
-        "mechanism this test wraps — the cross-stream Event and the async D2H copy on the "
-        "side stream — does not execute at all; the gpu-lane file drives both for real"
+        "the device falls back to CPU when CUDA is absent, and on CPU the per-batch "
+        "pinned device-to-host copy this test wraps does not execute at all; the "
+        "gpu-lane file drives it for real"
     ),
 )
 def test_forward_plan_pipelined_matches_serial_forward_plan() -> None:

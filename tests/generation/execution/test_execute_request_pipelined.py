@@ -58,7 +58,7 @@ class _Executor:
         if self.error is not None:
             raise self.error
         if completion_callback is not None:
-            completion_callback(BatchProduceFence(completed_batches=1, event=None))
+            completion_callback(BatchProduceFence(completed_batches=1))
         return "GATHERED_OUTPUT"
 
 
@@ -116,7 +116,7 @@ def test_worker_core_forwards_pipelined_completion_callback() -> None:
     )
 
     assert output == "GATHERED_OUTPUT"
-    assert fences == [BatchProduceFence(completed_batches=1, event=None)]
+    assert fences == [BatchProduceFence(completed_batches=1)]
 
 
 def test_pipelined_core_keeps_media_tensor_for_ray_adapter():

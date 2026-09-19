@@ -35,6 +35,7 @@ from vrl.generation.protocols import (
 )
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import require_runtime_model
+from vrl.trajectory.device import copy_tensor_tree_to_pinned_cpu
 from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import is_cuda_out_of_memory, release_cuda_memory
 from vrl.utils.logging import init_logger
@@ -377,7 +378,7 @@ class GenerationWorkerCore:
                 request_id=request.request_id,
                 worker_id=self.worker_id,
                 batch=batch,
-                output=self._copy_output_to_cpu(output),
+                output=copy_tensor_tree_to_pinned_cpu(output),
                 memory=memory,
                 rank_metrics=self._rank_metrics(
                     runtime_debug=runtime_debug,
@@ -593,13 +594,13 @@ class GenerationWorkerCore:
         *,
         completion_callback: BatchCompletionCallback,
     ) -> GenerationOutput | PipelinedRequestOutOfMemory:
-        """Run ALL of a request's batches through the executor's software pipeline
-        (``forward_plan_pipelined``) on THIS worker, so batch N+1's denoise overlaps
-        batch N's GPU->CPU copy + host packing — hiding the per-batch worker
-        boundary that per-batch dispatch leaves serial. Single-worker only (all the
-        request's batches must be here). Returns the gathered ``GenerationOutput``;
-        after a CUDA OOM it first joins pending copy work, clears partial request
-        state, and returns ``PipelinedRequestOutOfMemory`` for driver-side retry.
+        """Run ALL of a request's batches on THIS worker in one call
+        (``forward_plan_pipelined``), removing the per-batch Ray round trip,
+        result pickling, and worker prologue that per-batch dispatch leaves the
+        GPU idle through. Single-worker only (all the request's batches must be
+        here). Returns the gathered ``GenerationOutput``; after a CUDA OOM it
+        clears partial request state and returns ``PipelinedRequestOutOfMemory``
+        for driver-side retry.
 
         Version safety mirrors ``execute_batch`` but at the REQUEST level (every
         batch shares ``request.policy_version``): slot mode serves the request from
@@ -654,10 +655,10 @@ class GenerationWorkerCore:
             if not is_cuda_out_of_memory(error):
                 raise
             error_text = str(error)
-            # The exception traceback retains every partially produced batch and
-            # copy-stream object. Clear those frames before emptying the allocator
-            # cache; otherwise the driver's safe per-batch retry can immediately
-            # OOM on tensors held by the failed whole-request pipeline.
+            # The exception traceback retains every partially produced batch.
+            # Clear those frames before emptying the allocator cache; otherwise
+            # the driver's safe per-batch retry can immediately OOM on tensors
+            # held by the failed whole-request loop.
             error_traceback = error.__traceback__
             if error_traceback is not None:
                 traceback.clear_frames(error_traceback)
@@ -892,46 +893,6 @@ class GenerationWorkerCore:
         import torch
 
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    @staticmethod
-    def _copy_output_to_cpu(value: Any) -> Any:
-        """Return CPU output after all queued GPU-to-CPU copies finish.
-
-        Pinned buffers live in CPU RAM. Queue transfers together, then wait once
-        before returning readable results to the caller.
-        """
-
-        # Keep Torch and trajectory imports out of module initialization.
-        import torch
-
-        from vrl.trajectory.device import map_tensor_tree
-
-        cuda_copies_pending = False
-
-        def copy_tensor_to_cpu(tensor: torch.Tensor) -> torch.Tensor:
-            nonlocal cuda_copies_pending
-            tensor = tensor.detach()
-            if not tensor.is_cuda:
-                return tensor.cpu()
-
-            cpu_buffer = torch.empty(
-                tensor.shape,
-                dtype=tensor.dtype,
-                device="cpu",
-                pin_memory=True,
-            )
-            cpu_buffer.copy_(tensor, non_blocking=True)
-            cuda_copies_pending = True
-            return cpu_buffer
-
-        copied = map_tensor_tree(
-            value,
-            copy_tensor_to_cpu,
-            is_leaf=lambda item: isinstance(item, torch.Tensor),
-        )
-        if cuda_copies_pending:
-            torch.cuda.synchronize()
-        return copied
 
 
 __all__ = ["GenerationWorkerCore"]

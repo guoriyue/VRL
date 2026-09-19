@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
-from typing import Any, Literal, Protocol, TypeAlias, get_args
+from typing import Any, Literal, TypeAlias, get_args
 
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.protocols import BatchPayload
@@ -41,33 +41,20 @@ BatchPlacementStrategy = Literal["round_robin", "dynamic"]
 ParkingBackend = Literal["cpu_only", "cpu_offload", "cumem"]
 
 
-class QueryableCompletion(Protocol):
-    """Non-blocking completion query implemented by device events."""
-
-    def query(self) -> bool: ...
-
-
 @dataclass(frozen=True, slots=True)
 class BatchProduceFence:
-    """In-process fence for one batch's device-side produce completion.
+    """One batch of a per-request worker loop has finished and is on the CPU.
 
-    ``event=None`` represents synchronous CPU execution. CUDA callers publish
-    only events that have already been recorded; the Ray worker retains and
-    queries them locally rather than putting CUDA objects on the wire.
+    The loop copies each batch's result to host memory synchronously before
+    publishing the fence, so a fence never refers to in-flight device work.
     """
 
     completed_batches: int
-    event: QueryableCompletion | None
 
     def __post_init__(self) -> None:
         require_int(
             self.completed_batches, path="batch produce fence completed_batches", minimum=1
         )
-
-    def query(self) -> bool:
-        """Return without synchronizing the device."""
-
-        return self.event is None or self.event.query()
 
 
 # Keep the exported alias as its historical runtime value; a ``type`` statement
@@ -362,7 +349,6 @@ __all__ = [
     "GenerationBatchResult",
     "ParkingBackend",
     "PipelinedRequestOutOfMemory",
-    "QueryableCompletion",
     "StaleSlotDiscard",
     "WorkerMemoryParkingSnapshot",
 ]

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.sample_batches import (
@@ -31,9 +30,10 @@ class BatchExecutorBase:
       and the same gather as the Ray dispatch, with a local OOM-split retry.
       Production drives batches through the Ray dispatcher instead; planning is
       shared via ``EnginePlan.from_request``'s single width fallback.
-    - ``forward_batches_pipelined`` is the single-worker overlap of batch N+1's
-      produce with batch N's GPU->CPU teardown; bindings that expose it wrap
-      it in their own ``forward_plan_pipelined``.
+    - ``forward_batches_pipelined`` runs ALL of a request's batches on one
+      worker in one call, copying each result to pinned CPU memory before the
+      next batch is produced; bindings that expose it wrap it in their own
+      ``forward_plan_pipelined``.
     - ``merge_generation_batches`` delegates to the gatherer injected by the composition
       root that already owns the family registry entry. The neutral execution
       layer never looks family identity up again.
@@ -66,72 +66,34 @@ class BatchExecutorBase:
         *,
         completion_callback: BatchCompletionCallback | None = None,
     ) -> list[BatchPayload]:
-        """In-process software pipeline over a request's batches: while batch N+1's
-        PRODUCE (encode->prepare->denoise->decode, GPU compute on the default stream)
-        runs, batch N's TEARDOWN (the GPU->CPU result copy + host packing, on a copy
-        stream) drains — hiding the copy+CPU boundary behind the next batch's denoise.
+        """Produce a request's batches in order on this worker, one RPC for all.
 
-        Before producing batch N+1, enqueue batch N's copy on the copy stream.
-        That stream waits for batch N's produce event before reading its tensors;
-        compute does not wait for the copy to finish. Copies preserve tensor values,
-        and results are appended in batch order regardless of copy completion.
+        What this saves over per-batch dispatch is the per-batch Ray round trip,
+        result pickling, and worker prologue, during which the GPU sat idle. Each
+        batch's result is copied to pinned CPU memory (one synchronize) before
+        the next batch is produced, so at most one batch's payload occupies the
+        GPU at a time and the copied results are readable when the loop returns.
 
-        Compute uses the executor's canonical ``forward_batch`` implementation;
-        teardown is a stream-scoped GPU-to-CPU copy. Results remain in batch order.
+        The copy itself is not overlapped with the next batch's compute: measured
+        on Cosmos 240p (SPRINT_diffusion_rollout_stage_pipeline, 2026-06-27) the
+        device-to-host copy is a few percent of denoise time and a side-stream
+        overlap recovered nothing (6735 ms serial vs 6729 ms overlapped), so the
+        loop keeps the plain synchronous copy.
+
+        ``completion_callback`` receives one fence per batch, after that batch's
+        result is on the CPU. Results stay in batch order.
         """
 
-        import torch
-
-        cuda = torch.cuda.is_available()
-        copy_stream = torch.cuda.Stream() if cuda else None
+        from vrl.trajectory.device import copy_tensor_tree_to_pinned_cpu
 
         results: list[BatchPayload] = []
-        pending_events: list[torch.cuda.Event] = []
-
-        failed = False
-        try:
-            for idx, batch in enumerate(batches):
-                result = self.forward_batch(request, batch)
-                produce_done = None
-                if cuda:
-                    produce_done = torch.cuda.Event()
-                    produce_done.record()  # This batch's compute has been enqueued.
-                if completion_callback is not None:
-                    # Registration happens only after the CUDA event is recorded.
-                    # The callback retains this fence; it does not claim completion
-                    # until a later non-blocking query observes the event.
-                    completion_callback(
-                        BatchProduceFence(
-                            completed_batches=idx + 1,
-                            event=produce_done,
-                        ),
-                    )
-
-                # Queue this batch's copy before starting the next batch's compute.
-                # Only the copy stream waits for production; the host keeps advancing.
-                if result is not None and copy_stream is not None:
-                    copy_stream.wait_event(produce_done)
-                    results.append(_enqueue_cpu_copies(result, copy_stream))
-                    copy_done = torch.cuda.Event()
-                    copy_done.record(copy_stream)
-                    pending_events.append(copy_done)
-                else:
-                    results.append(result)
-        except BaseException:
-            failed = True
-            raise
-        finally:
-            # A later produce can OOM while the previous batch's side-stream D2H is
-            # still reading its source tensors. Join every submitted copy before the
-            # worker clears exception frames and releases those tensors for retry.
-            try:
-                for ev in pending_events:
-                    ev.synchronize()
-            finally:
-                # If teardown itself failed after submitting a copy but before its
-                # Event was appended, the stream is the only complete barrier.
-                if failed and copy_stream is not None:
-                    copy_stream.synchronize()
+        for idx, batch in enumerate(batches):
+            result = self.forward_batch(request, batch)
+            if result is not None:
+                result = copy_tensor_tree_to_pinned_cpu(result)
+            results.append(result)
+            if completion_callback is not None:
+                completion_callback(BatchProduceFence(completed_batches=idx + 1))
         return results
 
     def merge_generation_batches(
@@ -146,39 +108,6 @@ class BatchExecutorBase:
                 "for request-level execution",
             )
         return self._gatherer.merge_generation_batches(request, sample_rows, batches)
-
-
-def _enqueue_cpu_copies(value: Any, stream: Any) -> Any:
-    """Enqueue CUDA tensor copies into pinned CPU buffers on ``stream``.
-
-    Return the rebuilt tensor tree without waiting for the copies. The caller
-    must order this stream after production and wait for copy completion before
-    reading the CPU buffers. Non-CUDA tensors are returned unchanged.
-    """
-
-    import torch
-
-    from vrl.trajectory.device import map_tensor_tree
-
-    def _leaf(t: Any) -> Any:
-        if not t.is_cuda:
-            return t
-        source = t.detach()
-        host = torch.empty(source.shape, dtype=source.dtype, device="cpu", pin_memory=True)
-        with torch.cuda.stream(stream):
-            host.copy_(source, non_blocking=True)
-        # The pending Event protects consumers of ``host``, but it does not keep
-        # ``source`` alive. Tell the caching allocator that the source storage is
-        # still read by the copy stream so a short next batch cannot recycle it
-        # before D2H completes.
-        source.record_stream(stream)
-        return host
-
-    return map_tensor_tree(
-        value,
-        _leaf,
-        is_leaf=lambda candidate: isinstance(candidate, torch.Tensor),
-    )
 
 
 __all__ = ["BatchExecutorBase"]

@@ -221,18 +221,15 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         *,
         completion_callback: BatchCompletionCallback | None = None,
     ) -> GenerationOutput:
-        """In-process software-pipelined variant of forward_plan: batch N+1's
-        produce (encode->prepare->denoise->decode, GPU compute on the default
-        stream) overlaps batch N's teardown (the GPU->CPU result copy + host
-        packing, on a copy stream), hiding the per-batch copy+CPU boundary behind
-        the next batch's denoise. BIT-EXACT to forward_plan: same per-batch stage
-        methods (via forward_batch), value-preserving side-stream copy,
-        and the SAME order-preserving merge_generation_batches — so the gathered output is
-        identical; only the wall-clock changes.
+        """Per-request variant of forward_plan: every batch of the request runs
+        on this worker in one call, each result copied to pinned CPU memory
+        before the next batch is produced. BIT-EXACT to forward_plan: the same
+        per-batch stage methods (via forward_batch) and the SAME order-preserving
+        merge_generation_batches, so the gathered output is identical; only the
+        per-batch dispatch overhead disappears.
 
-        This is the executor-level entry for the single-GPU stage-overlap lever; the
-        Ray worker calls it per-request (all of a request's batches on one worker)
-        instead of dispatching one monolithic forward_batch per batch.
+        The Ray worker calls this per request (all of a request's batches on one
+        worker) instead of dispatching one forward_batch RPC per batch.
         """
 
         batches = self.forward_batches_pipelined(

@@ -70,4 +70,45 @@ def move_value_to_device(value: Any, device: Any | None) -> Any:
     )
 
 
-__all__ = ["map_tensor_tree", "move_value_to_device"]
+def copy_tensor_tree_to_pinned_cpu(value: Any) -> Any:
+    """Copy every CUDA tensor leaf into a pinned CPU buffer and wait once.
+
+    The copies are queued ``non_blocking`` on the current stream and joined with a
+    single ``torch.cuda.synchronize()`` before the tree is returned, so callers
+    always receive readable host tensors. Non-CUDA tensors are detached and moved
+    with ``Tensor.cpu()``. The generation worker uses this to hand a batch result
+    across the Ray wire, and the per-request batch loop uses it to release each
+    batch's GPU payload before producing the next.
+    """
+
+    import torch
+
+    cuda_copies_pending = False
+
+    def copy_tensor_to_cpu(tensor: torch.Tensor) -> torch.Tensor:
+        nonlocal cuda_copies_pending
+        tensor = tensor.detach()
+        if not tensor.is_cuda:
+            return tensor.cpu()
+
+        cpu_buffer = torch.empty(
+            tensor.shape,
+            dtype=tensor.dtype,
+            device="cpu",
+            pin_memory=True,
+        )
+        cpu_buffer.copy_(tensor, non_blocking=True)
+        cuda_copies_pending = True
+        return cpu_buffer
+
+    copied = map_tensor_tree(
+        value,
+        copy_tensor_to_cpu,
+        is_leaf=lambda item: isinstance(item, torch.Tensor),
+    )
+    if cuda_copies_pending:
+        torch.cuda.synchronize()
+    return copied
+
+
+__all__ = ["copy_tensor_tree_to_pinned_cpu", "map_tensor_tree", "move_value_to_device"]

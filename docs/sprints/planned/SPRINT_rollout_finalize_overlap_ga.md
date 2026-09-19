@@ -59,3 +59,32 @@ weight-sync 栅栏等本 sprint 够不着的项，则只做「转默认」部分
 - pipelined on/off 输出逐张量相等（现有 bit-exact 测试 + 新增视频形状用例）。
 - 真实 run 前后 nsys 对比：gen 段 wall-clock 与空转占比，写明测量口径。
 - 全量 pytest 基线对齐。
+
+## 2026-09-18 更新：侧流拷贝已拆除，per-request 循环保留
+
+`forward_batches_pipelined` 不再把第 N 批的 D2H 拷贝放到 copy stream 上与第 N+1
+批的 produce 重叠。现在它是一个普通循环：`forward_batch` → 同步的 pinned 拷贝
+（`vrl/trajectory/device.py::copy_tensor_tree_to_pinned_cpu`，与 Ray worker 逐批路径
+共用同一个助手）→ 发布 fence。`BatchProduceFence` 不再携带 CUDA event，
+`RayGenerationWorker.pipelined_progress` 直接读快照，不再轮询 event。
+
+依据是本仓库已有的两次测量，而不是新测：
+
+- 侧流重叠单独计量为零：串行 6735 ms 对重叠 6729 ms
+  （`reading/SPRINT_diffusion_rollout_stage_pipeline.md` 1a，2026-06-27）。
+- 36% 的收益来自"整个 request 一次 RPC"消掉的逐批派发开销
+  （同文 1b，cosmos 240p_33f：124.8 s → 80.1 s），与拷贝重叠无关。
+
+拆除的代价是每批多一次 `torch.cuda.synchronize()`，按上面的量级是毫秒级；
+去掉的是 copy stream、每批两个 event、`record_stream`、pinned 生命周期规则和
+OOM 路径里"先 join 侧流再清帧"的顺序约束，以及第 N 批 payload 在第 N+1 批
+produce 期间多占的一份显存（planner 从未为它记账）。
+
+对照 miles-diffusion（2026-09-18 读本地 sglang-diffusion 源码）：引擎在 denoising
+stage 末尾就是同步 `.cpu()`（`runtime/pipelines_core/stages/denoising.py:888`），
+没有侧流；打包与序列化在 scheduler / HTTP 进程，反序列化在 Miles 的 parser
+actor 池。他们三个层次全靠进程分离，没有线程或 CUDA 流。
+
+本 sprint 剩余部分的前提不变：循环结束后 `merge_generation_batches` 与 Ray
+序列化仍在 GPU worker 进程内串行，P0 的 nsys 归因才决定是否值得把它们搬出
+worker（附录 B 的 CPU actor 形状）。

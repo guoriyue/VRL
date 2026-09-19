@@ -30,8 +30,9 @@ class RolloutWorkerConfig:
     health_check_first_wait_s: float
     worker_rpc_timeout_s: float
     generation_stall_timeout_s: float
-    # Opt-in single-worker pipelined rollout. Multi-worker execution is rejected
-    # because per-worker request partitioning is not implemented.
+    # Opt-in single-worker per-request rollout (one RPC for all of a request's
+    # batches). Multi-worker execution is rejected because per-worker request
+    # partitioning is not implemented.
     pipelined: bool
     # Batch->worker binding: "round_robin" binds at plan time (baseline);
     # "dynamic" binds at dispatch time (pull + LPT). Equivalent for 1 worker.

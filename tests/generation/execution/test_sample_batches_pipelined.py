@@ -1,21 +1,20 @@
-"""forward_batches_pipelined is BIT-EXACT to serial produce/teardown — the
-pipelined (overlapped) path returns the same per-batch results in batch order as
-running each batch serially. The side-stream copy only changes WHEN the teardown
-runs, never WHAT it produces; batches are independent."""
+"""forward_batches_pipelined runs a request's batches in order on one worker and
+returns the same per-batch results as running each batch serially. Each result
+is copied to pinned CPU memory before the next batch is produced, so at most
+one batch's payload is on the GPU at a time; batches are independent."""
 
 from __future__ import annotations
 
 import sys
-from contextlib import nullcontext
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
 from vrl.generation.bindings.full_sequence_denoise.executor import DenoiseBatchResult
-from vrl.generation.execution.executor_base import BatchExecutorBase, _enqueue_cpu_copies
+from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import BatchProduceFence
+from vrl.trajectory import device as device_module
 
 
 def _executor(produce):
@@ -29,7 +28,7 @@ def _executor(produce):
     return _Executor()
 
 
-def test_pipelined_results_equal_serial_in_chunk_order() -> None:
+def test_pipelined_results_equal_serial_in_batch_order() -> None:
     def produce(batch):
         return ("denoised", batch)
 
@@ -40,7 +39,6 @@ def test_pipelined_results_equal_serial_in_chunk_order() -> None:
     serial = [produce(batch) for batch in ["c0", "c1", "c2", "c3"]]
 
     assert pipelined == serial
-    # Order preserved by index, not completion order.
     assert pipelined == [
         ("denoised", "c0"),
         ("denoised", "c1"),
@@ -49,7 +47,7 @@ def test_pipelined_results_equal_serial_in_chunk_order() -> None:
     ]
 
 
-def test_every_chunk_produced_exactly_once() -> None:
+def test_every_batch_produced_exactly_once() -> None:
     produced: list = []
 
     def produce(batch):
@@ -63,87 +61,59 @@ def test_every_chunk_produced_exactly_once() -> None:
     assert len(out) == len(batches)
 
 
-def test_cpu_completion_fence_follows_each_successful_chunk(monkeypatch) -> None:
-    monkeypatch.setitem(
-        sys.modules,
-        "torch",
-        SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False)),
-    )
+def test_each_batch_is_copied_to_cpu_before_the_next_is_produced(monkeypatch) -> None:
+    operations: list[tuple[str, str]] = []
+
+    def produce(batch):
+        operations.append(("produce", batch))
+        return ("result", batch)
+
+    def copy(result):
+        operations.append(("copy", result[1]))
+        return ("host", result[1])
+
+    monkeypatch.setattr(device_module, "copy_tensor_tree_to_pinned_cpu", copy)
+
+    out = _executor(produce).forward_batches_pipelined("req", ["c0", "c1", "c2"])
+
+    assert out == [("host", "c0"), ("host", "c1"), ("host", "c2")]
+    assert operations == [
+        ("produce", "c0"),
+        ("copy", "c0"),
+        ("produce", "c1"),
+        ("copy", "c1"),
+        ("produce", "c2"),
+        ("copy", "c2"),
+    ]
+
+
+def test_completion_fence_follows_each_copied_batch(monkeypatch) -> None:
+    order: list[str] = []
+
+    def copy(result):
+        order.append(f"copy:{result[1]}")
+        return result
+
+    monkeypatch.setattr(device_module, "copy_tensor_tree_to_pinned_cpu", copy)
     fences: list[BatchProduceFence] = []
+
+    def publish(fence: BatchProduceFence) -> None:
+        order.append(f"fence:{fence.completed_batches}")
+        fences.append(fence)
 
     output = _executor(lambda batch: ("result", batch)).forward_batches_pipelined(
         "req",
         ["c0", "c1", "c2"],
-        completion_callback=fences.append,
+        completion_callback=publish,
     )
 
     assert output == [("result", "c0"), ("result", "c1"), ("result", "c2")]
     assert [fence.completed_batches for fence in fences] == [1, 2, 3]
-    assert all(fence.event is None and fence.query() for fence in fences)
+    # A fence is published only after its batch's result is on the CPU.
+    assert order == ["copy:c0", "fence:1", "copy:c1", "fence:2", "copy:c2", "fence:3"]
 
 
-def test_cuda_completion_fence_is_recorded_before_publication(monkeypatch) -> None:
-    operations: list[tuple[str, int]] = []
-    events: list[Any] = []
-
-    class _Event:
-        def __init__(self) -> None:
-            self.index = len(events)
-            self.recorded = False
-            events.append(self)
-
-        def record(self, _stream=None) -> None:
-            self.recorded = True
-            operations.append(("record", self.index))
-
-        def query(self) -> bool:
-            return False
-
-        def synchronize(self) -> None:
-            operations.append(("synchronize", self.index))
-
-    class _CopyStream:
-        @staticmethod
-        def wait_event(_event: Any) -> None:
-            return None
-
-    copy_stream = _CopyStream()
-    fake_torch = SimpleNamespace(
-        cuda=SimpleNamespace(
-            is_available=lambda: True,
-            Stream=lambda: copy_stream,
-            Event=_Event,
-        ),
-    )
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-
-    import vrl.generation.execution.executor_base as executor_base
-
-    monkeypatch.setattr(
-        executor_base,
-        "_enqueue_cpu_copies",
-        lambda result, _stream: result,
-    )
-    published: list[BatchProduceFence] = []
-
-    def publish(fence: BatchProduceFence) -> None:
-        assert fence.event is not None
-        assert fence.event.recorded is True
-        operations.append(("publish", fence.event.index))
-        published.append(fence)
-
-    assert _executor(lambda batch: ("result", batch)).forward_batches_pipelined(
-        "req",
-        ["c0"],
-        completion_callback=publish,
-    ) == [("result", "c0")]
-
-    assert published == [BatchProduceFence(completed_batches=1, event=events[0])]
-    assert published[0].query() is False
-    assert operations[:2] == [("record", 0), ("publish", 0)]
-
-
-def test_single_chunk_still_produces_and_tears_down() -> None:
+def test_single_batch_still_produces_and_copies() -> None:
     out = _executor(lambda batch: ("p", batch)).forward_batches_pipelined(
         "req",
         ["only"],
@@ -151,7 +121,7 @@ def test_single_chunk_still_produces_and_tears_down() -> None:
     assert out == [("p", "only")]
 
 
-def test_empty_chunks_returns_empty() -> None:
+def test_empty_batches_returns_empty() -> None:
     out = _executor(lambda batch: batch).forward_batches_pipelined(
         "req",
         [],
@@ -159,43 +129,9 @@ def test_empty_chunks_returns_empty() -> None:
     assert out == []
 
 
-def test_produce_error_joins_already_submitted_copy(monkeypatch) -> None:
-    class _Event:
-        def __init__(self) -> None:
-            self.recorded_stream = None
-            self.synchronize_calls = 0
-            events.append(self)
-
-        def record(self, stream=None) -> None:
-            self.recorded_stream = stream
-
-        def synchronize(self) -> None:
-            self.synchronize_calls += 1
-
-    events: list[_Event] = []
-
-    class _CopyStream:
-        def __init__(self) -> None:
-            self.waited_events: list[_Event] = []
-            self.synchronize_calls = 0
-
-        def wait_event(self, event) -> None:
-            self.waited_events.append(event)
-
-        def synchronize(self) -> None:
-            self.synchronize_calls += 1
-
-    copy_stream = _CopyStream()
-    fake_torch = SimpleNamespace(
-        cuda=SimpleNamespace(
-            is_available=lambda: True,
-            Stream=lambda: copy_stream,
-            Event=_Event,
-        ),
-    )
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+def test_produce_error_propagates_after_earlier_batches_were_copied(monkeypatch) -> None:
     produced: list[str] = []
-    torn_down: list[tuple[str, str]] = []
+    copied: list[tuple[str, str]] = []
 
     def produce(batch: str) -> tuple[str, str]:
         produced.append(batch)
@@ -203,33 +139,22 @@ def test_produce_error_joins_already_submitted_copy(monkeypatch) -> None:
             raise RuntimeError("CUDA out of memory in second batch")
         return ("result", batch)
 
-    def teardown(result: tuple[str, str], _stream) -> tuple[str, str]:
-        torn_down.append(result)
+    def copy(result):
+        copied.append(result)
         return result
 
-    import vrl.generation.execution.executor_base as executor_base
-
-    monkeypatch.setattr(executor_base, "_enqueue_cpu_copies", teardown)
+    monkeypatch.setattr(device_module, "copy_tensor_tree_to_pinned_cpu", copy)
 
     with pytest.raises(RuntimeError, match="CUDA out of memory"):
-        _executor(produce).forward_batches_pipelined(
-            "req",
-            ["c0", "c1"],
-        )
+        _executor(produce).forward_batches_pipelined("req", ["c0", "c1"])
 
     assert produced == ["c0", "c1"]
-    assert torn_down == [("result", "c0")]
-    assert len(events) == 2
-    assert events[0].recorded_stream is None
-    assert events[0].synchronize_calls == 0
-    assert events[1].recorded_stream is copy_stream
-    assert events[1].synchronize_calls == 1
-    assert copy_stream.synchronize_calls == 1
+    assert copied == [("result", "c0")]
 
 
-def test_async_tree_move_preserves_slots_dataclass_and_records_source_stream(
-    monkeypatch,
-) -> None:
+def test_pinned_copy_preserves_slots_dataclass_and_waits_once(monkeypatch) -> None:
+    synchronize_calls: list[None] = []
+
     class _CudaTensor:
         is_cuda = True
         shape = (2,)
@@ -237,13 +162,9 @@ def test_async_tree_move_preserves_slots_dataclass_and_records_source_stream(
 
         def __init__(self, name: str) -> None:
             self.name = name
-            self.recorded_streams: list[object] = []
 
         def detach(self):
             return self
-
-        def record_stream(self, stream) -> None:
-            self.recorded_streams.append(stream)
 
     class _HostTensor:
         def __init__(self) -> None:
@@ -256,16 +177,16 @@ def test_async_tree_move_preserves_slots_dataclass_and_records_source_stream(
 
     hosts: list[_HostTensor] = []
 
-    def _empty(*_args, **_kwargs) -> _HostTensor:
+    def _empty(*_args, **kwargs) -> _HostTensor:
+        assert kwargs["pin_memory"] is True
         host = _HostTensor()
         hosts.append(host)
         return host
 
-    copy_stream = object()
     fake_torch = SimpleNamespace(
         Tensor=_CudaTensor,
         empty=_empty,
-        cuda=SimpleNamespace(stream=lambda _stream: nullcontext()),
+        cuda=SimpleNamespace(synchronize=lambda: synchronize_calls.append(None)),
     )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     sources = [_CudaTensor(name) for name in ("latents", "steps", "video", "replay")]
@@ -280,7 +201,7 @@ def test_async_tree_move_preserves_slots_dataclass_and_records_source_stream(
         context={"prompt": "p"},
     )
 
-    moved = _enqueue_cpu_copies(batch, copy_stream)
+    moved = device_module.copy_tensor_tree_to_pinned_cpu(batch)
 
     assert not hasattr(batch, "__dict__")
     assert isinstance(moved, DenoiseBatchResult)
@@ -292,4 +213,27 @@ def test_async_tree_move_preserves_slots_dataclass_and_records_source_stream(
     assert moved.context == {"prompt": "p"}
     assert len(hosts) == len(sources)
     assert all(host.non_blocking is True for host in hosts)
-    assert all(source.recorded_streams == [copy_stream] for source in sources)
+    assert len(synchronize_calls) == 1
+
+
+def test_pinned_copy_without_cuda_tensors_does_not_synchronize(monkeypatch) -> None:
+    class _CpuTensor:
+        is_cuda = False
+
+        def detach(self):
+            return self
+
+        def cpu(self):
+            return ("cpu", self)
+
+    def _fail_synchronize() -> None:
+        raise AssertionError("no CUDA copy was queued")
+
+    fake_torch = SimpleNamespace(
+        Tensor=_CpuTensor,
+        cuda=SimpleNamespace(synchronize=_fail_synchronize),
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    source = _CpuTensor()
+
+    assert device_module.copy_tensor_tree_to_pinned_cpu({"x": source}) == {"x": ("cpu", source)}

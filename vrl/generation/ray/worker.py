@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-from collections import deque
 from collections.abc import Sequence
 from typing import Any
 
@@ -58,7 +57,6 @@ class RayGenerationWorker:
         )
         self._pipelined_progress_lock = threading.Lock()
         self._pipelined_progress: PipelinedRequestProgress | None = None
-        self._pipelined_completion_fences: deque[BatchProduceFence] = deque()
 
     @ray.method(concurrency_group=HEALTH_CONCURRENCY_GROUP)
     def health(self) -> str:
@@ -172,13 +170,13 @@ class RayGenerationWorker:
         engine_plan: EnginePlan,
         sample_rows: Sequence[GenerationSampleRow],
     ) -> GenerationOutput | PipelinedRequestOutOfMemory:
-        """Per-request software-pipelined execution (single-worker stage-overlap
-        path); returns a gathered output or typed OOM retry. See
+        """Run all of a request's batches on this worker in one call; returns a
+        gathered output or typed OOM retry. See
         GenerationWorkerCore.execute_request_pipelined."""
         request_id = str(request.request_id)
         total_batches = len(engine_plan.sample_batches)
         with self._pipelined_progress_lock:
-            if self._pipelined_progress is not None or self._pipelined_completion_fences:
+            if self._pipelined_progress is not None:
                 active_request_id = (
                     self._pipelined_progress.request_id
                     if self._pipelined_progress is not None
@@ -201,7 +199,7 @@ class RayGenerationWorker:
                     raise RuntimeError(
                         f"pipelined progress lost active request {request_id!r}",
                     )
-                expected = current.completed_batches + len(self._pipelined_completion_fences) + 1
+                expected = current.completed_batches + 1
                 if fence.completed_batches != expected:
                     raise RuntimeError(
                         "pipelined completion fences must register one batch at a time "
@@ -214,7 +212,11 @@ class RayGenerationWorker:
                         f"(request_id={request_id!r}, total={total_batches}, "
                         f"actual={fence.completed_batches})",
                     )
-                self._pipelined_completion_fences.append(fence)
+                self._pipelined_progress = PipelinedRequestProgress(
+                    request_id=request_id,
+                    completed_batches=fence.completed_batches,
+                    total_batches=total_batches,
+                )
 
         try:
             output = self.core.execute_request_pipelined(
@@ -228,7 +230,6 @@ class RayGenerationWorker:
             return output
         finally:
             with self._pipelined_progress_lock:
-                self._pipelined_completion_fences.clear()
                 self._pipelined_progress = None
 
     @ray.method(concurrency_group=HEALTH_CONCURRENCY_GROUP)
@@ -242,17 +243,6 @@ class RayGenerationWorker:
             progress = self._pipelined_progress
             if progress is None or progress.request_id != request_id:
                 return None
-            while self._pipelined_completion_fences:
-                fence = self._pipelined_completion_fences[0]
-                if not fence.query():
-                    break
-                self._pipelined_completion_fences.popleft()
-                progress = PipelinedRequestProgress(
-                    request_id=request_id,
-                    completed_batches=fence.completed_batches,
-                    total_batches=progress.total_batches,
-                )
-                self._pipelined_progress = progress
             return progress
 
 
