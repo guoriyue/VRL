@@ -142,6 +142,27 @@
   有）分层均值。
 - **验收**：同一 eval 产物能回算出三种口径；不改训练。
 
+## L. previous policy 脱离 LoRA（NFT / V-GRPO 全参） ★★
+
+- **出处**：A–K 之外的内部缺口。工业界（Seedream、Seedance、HunyuanImage、
+  Qwen-Image）全部全参后训练；VRL 里 NFT 与 V-GRPO 是仅有的两个不依赖
+  log-prob 比值的目标，却被 `runtime.py:373 require_lora_for_previous_policy_adapter`
+  锁死在 LoRA 上。
+- **VRL 现状**：算法需要的只是"一份冻结的上一步策略的 forward + 每步以 decay
+  刷新"。实现绑在 PEFT 第二 adapter 上：`attach_previous_policy_adapter` /
+  `sync_previous_policy_adapter` / `activate_adapter("previous")`（`base.py:490–524`），
+  算法基类也叫 `PreviousAdapterObjective`。`trainers/online/ema.py` 已经在维护
+  "可训练参数的 decay 副本"，只是没有换入 forward 的接口。
+- **做什么**：
+  1. 模型侧契约改为 `sync_previous_policy(decay)` + `previous_policy()` 上下文，
+     不出现 adapter 字样；实现是"可训练参数的 shadow 副本 + forward 期间换入"，
+     LoRA 时 shadow 就是 adapter 参数（等价现状，不再需要第二个 PEFT adapter），
+     全参时 shadow 是全部可训练参数（显存 +1× 可训参数；FSDP2 下按 shard 保存）。
+  2. 去掉 `require_lora_for_previous_policy_adapter`；`PreviousAdapterObjective`
+     改名 `PreviousPolicyObjective`。
+- **验收**：SD3.5 LoRA 上 NFT 的 first-step invariant 与现状数值一致；全参 NFT
+  在 tiny 模型上 lr=0 invariant 通过；FSDP2 两卡 smoke。
+
 ---
 
 ## 已有、不需要做的（防止重复立项）
@@ -158,4 +179,4 @@
 ## 建议顺序
 
 A → B → E（都是小改、且是 C 的前提：C 的验收要靠 A 防单 RM hacking）→ C（最大
-缺口，图像先）→ D → F → G → K → I → J → H。
+缺口，图像先）→ L（与 C 同为全参路线的前提）→ D → F → G → K → I → J → H。
