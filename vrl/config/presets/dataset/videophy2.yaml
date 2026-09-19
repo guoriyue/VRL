@@ -1,0 +1,12 @@
+# VideoPhy2 prompts (3,343 train / 600 held-out test captions, disjoint) for
+# physical-commonsense video RL; supersedes the 344-caption VideoPhy v1 split
+# in datasets/videophy for anything but reproducing the older runs. See
+# datasets/videophy2/report.json.
+data:
+  loader: prompt_manifest
+  manifest: datasets/videophy2/train.txt
+  eval_manifest: datasets/videophy2/eval.txt
+  preprocessing:
+    format: text
+  sampler:
+    type: random_without_replacement
