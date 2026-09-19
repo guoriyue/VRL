@@ -270,3 +270,29 @@ A bucket-only dropped-chunk injection proves that the CLI actually takes the
 staged path and rejects incomplete assembly without publishing a report. Ruff
 passed for the two touched Python files. No GPU workload was started for these
 checks.
+
+## 2026-09-19: Bucket transport measured on a real model — no gain on one host
+
+Real SD3.5-Medium, one RTX 5090 receiver, `--workers 1 trainer.seed=17`,
+`experiment/sd3_5/online_grpo_ocr`; the two timings are the probe's
+`transport.sync_verify_wall_s` (first install, repeat install), each a verified
+full install with the version ACK. Reports under `outputs/weight_acceptance/`.
+
+| payload | transport | first (s) | repeat (s) |
+| --- | --- | --- | --- |
+| LoRA adapter, 91 MiB / 486 tensors | snapshot | 0.202 | 0.168 |
+| | 16 MiB buckets | 0.214 | 0.210 |
+| | 64 MiB buckets | 0.236 | 0.232 |
+| | 256 MiB buckets | 0.233 | 0.223 |
+| full transformer (`model.use_lora=false`), 4.18 GiB / 908 tensors | snapshot | 6.099 | 5.842 |
+| | 64 MiB buckets | 6.979 | 6.602 |
+| | 512 MiB buckets | 6.448 | 6.344 |
+
+Staged buckets are 5–15 % slower than the one-shot snapshot at both payload
+sizes on a single host, where the object store is shared memory and no
+per-chunk streaming hides a network. The bucket path's remaining rationale is
+receiver staging memory across nodes; that case has not been measured because
+the repository has no multi-node configuration to run it on. Per the
+"one preset user or one measurement" rule, `update_weight_buffer_size` now has
+its measurement and it argues for removal; the content-verification part of
+this sprint (`verify_content`, poison/readback) is unaffected by that decision.
