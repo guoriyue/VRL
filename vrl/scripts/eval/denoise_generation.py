@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 class ImageSampling:
     """Resolved image sampling values shared by generation and evaluation.
 
-    One type serves the checkpoint evaluators and the Anima generation archive:
+    One type serves the checkpoint evaluators and the generation archive:
     ``from_root`` projects the parsed config through ``resolve_eval_sampling``
     (no defaults of its own), ``from_mapping`` re-reads a persisted record and
     fails closed on missing or unknown keys, and ``to_record`` writes it back

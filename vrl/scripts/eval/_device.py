@@ -48,8 +48,7 @@ def resolve_eval_dtype(
 
     ``"auto"`` follows the config's training dtype, except on CPU where only
     float32 is dependable. ``requires_trainer`` names the caller's error domain
-    for the missing-trainer case ("Anima generation", "Cosmos checkpoint
-    evaluation"); everything else is identical across the eval entrypoints.
+    for the missing-trainer case ("Cosmos checkpoint evaluation", ...); everything else is identical across the eval entrypoints.
     """
     import torch
 

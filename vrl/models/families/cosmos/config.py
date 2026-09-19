@@ -9,7 +9,7 @@ from vrl.models.checkpoint_identity import checkpoint_identity_metadata
 
 
 class CosmosVideoModelSection(ModelSection):
-    """Predict2 and Predict2.5 use per-frame timesteps; Anima does not."""
+    """Predict2 and Predict2.5 use per-frame timesteps."""
 
     # Both rollout and replay share the frame-level conditioning computation.
     # This changes kernels, not weights, so it is excluded from checkpoint identity.

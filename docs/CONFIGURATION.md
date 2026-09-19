@@ -9,35 +9,27 @@ not reasons to create another experiment YAML.
 
 ```bash
 python -m vrl.scripts.train \
-  --config experiment/anima_preview3/online_grpo \
+  --config experiment/sd3_5/online_grpo_pickscore \
   +reward=ocr +dataset=ocr \
   actor.optim.lr=1e-5 trainer.total_epochs=2 \
-  trainer.output_dir=outputs/anima_ocr_composed
+  trainer.output_dir=outputs/sd3_5_ocr_composed
 ```
 
-This illustrates configuration composition, not a recommended Anima training
-recipe. The standard OCR dataset must exist at the paths declared by
-`dataset/ocr`; composition does not generate it. The neutral Anima entrypoint
-deliberately requires reward, data,
-learning rate, and output directory, and defaults to one training iteration.
-Choose a longer budget explicitly at launch. It retains the measured
-eager execution, generation/replay batch-1, and parity gates. Use
-`experiment/anima_preview3/online_grpo_fullparam` for the distinct single-GPU
-full-transformer memory contract; do not approximate that contract by changing
-only `model.use_lora`.
-
-These are the only two bundled Anima training entrypoints. Neither selects a
-reward or dataset. Model-by-reward combinations, coefficients, learning rates,
-and run lengths belong in the user's launch command or external run config,
-not another checked-in experiment YAML. The two entrypoints remain separate
-because LoRA and full-transformer updates have different reference-model and
-single-GPU memory constraints.
+This illustrates configuration composition, not a recommended recipe. The
+standard OCR dataset must exist at the paths declared by `dataset/ocr`;
+composition does not generate it. Model-by-reward combinations, coefficients,
+learning rates, and run lengths belong in the user's launch command or
+external run config, not another checked-in experiment YAML. LoRA and
+full-transformer entrypoints stay separate where a family ships both (e.g.
+`experiment/sd3_5/online_grpo_ocr_fsdp_2x1_fullparam`), because the two have
+different reference-model and memory constraints; do not approximate one
+with the other by changing only `model.use_lora`.
 
 The central loader processes:
 
 1. The `--config` source and its own `defaults`.
 2. Each `+group=option` preset, in command-line order, including that preset's
-   own defaults. For example, `+model/cosmos=anima_preview3` selects a nested
+   own defaults. For example, `+model/cosmos=predict2_2b` selects a nested
    model group, while `+sampling/image=512` selects image geometry.
 3. All ordinary `section.field=value` overrides, last, regardless of their
    position among preset arguments.
@@ -154,40 +146,28 @@ component that raises. The scores themselves mean nothing; the pipeline does.
 ## Judge, rubric, and data are separate choices
 
 The `codex_image_qa_anime_*` names identify anime-oriented scoring rubrics;
-they do not implement another reward model or require Anima weights.
-Reuse the same rubric for another anime generator rather than copying it into
-that generator's experiment directory. Judge identity and durable rollout
-recording remain independent overlays:
+they do not implement another reward model or bind to one generator. Reuse
+the same rubric for another anime generator rather than copying it into that
+generator's experiment directory. Judge identity and durable rollout recording
+remain independent overlays:
 
 ```bash
 python -m vrl.scripts.train \
-  --config experiment/anima_preview3/online_grpo \
+  --config experiment/sd3_5/online_grpo_pickscore \
   +reward=codex_image_qa \
   +reward=codex_image_qa_anime_color_light \
   +reward=codex_image_qa_luna_scored \
-  +dataset=anima_color_light_ddrl \
-  algorithm.sft_weight=0.001 sampling.num_steps=40 \
+  +dataset=anime_craft \
+  sampling.num_steps=40 \
   actor.optim.lr=2e-5 trainer.total_epochs=1 trainer.save_freq=1 \
-  trainer.output_dir=outputs/anima_color_light_composed
+  trainer.output_dir=outputs/sd3_5_color_light_composed
 ```
 
-The DDRL dataset refers to generated anchor images and encoded clean latents;
-those assets must exist before training. Selecting a dataset does not generate
-them. The SFT coefficient and step count above are explicit experiment choices,
-not properties of the judge. Saved old results do not establish that this new
-combination improves quality.
-
-The single color-and-light corpus lives in `datasets/anima/color_light/`: 256
-training prompts, 96 independent evaluation prompts, and 32 development prompts
-retained from earlier experiments. Development prompts are not part of the
-formal evaluation split. DDRL expects newly prepared anchors and latents under
-`data/external/anima/color_light/`; the historical 64-prompt anchor set does not
-cover this merged training corpus.
-
-The remaining `dataset/anima_*` names identify real Anima-generated reference
-images/latents and their prompt manifests, not model/reward combinations. Those
-reference assets are generator-specific; changing the model does not make its
-training latents interchangeable. The rubric and judge remain independent.
+The step count above is an explicit experiment choice, not a property of the
+judge. Saved old results do not establish that this new combination improves
+quality. A `dataset/*` preset with reference images or encoded clean latents
+(DDRL-style) refers to assets that must exist before training; selecting the
+dataset does not generate them, and those assets are generator-specific.
 
 For several independent rewards, select each component and set its coefficient
 explicitly, for example `+reward=aesthetic +reward=pickscore`, then
@@ -201,23 +181,8 @@ generator. The shared `reward/ocr` preset declares the defaults; select an
 engine and text-matching policy explicitly when an experiment needs different
 semantics. Optional debug artifacts use
 `'reward.kwargs.ocr.debug_dir=${trainer.output_dir}/reward_debug'` (quote shell
-interpolation). Retired Anima OCR datasets and qualification rules are historical
-experiment evidence, not additional requirements for the shared OCR reward.
-
-## Anima generation outputs
-
-The standalone Anima generator writes one reusable archive, not a debug dump:
-
-- `images/*.png`: generated images.
-- `run_config.json`: model/adapter identity, sampling settings, and runtime provenance.
-- `metadata.jsonl`: image-to-prompt mapping, batch seeds, and reward metadata for evaluation.
-- `anchor_manifest.jsonl`: the same images as clean targets for the SFT encoder and DDRL datasets.
-
-Paired evaluation reads and checks this archive, and the target encoder consumes
-the anchor manifest. The duplicate `metadata.csv` export has been removed;
-`metadata.jsonl` is the canonical image index. Existing archives remain readable.
-Output-directory ownership checks prevent one generation run from overwriting
-or relabeling another. None of these files saves another model checkpoint.
+interpolation). Retired OCR datasets and qualification rules are historical experiment
+evidence, not additional requirements for the shared OCR reward.
 
 ## Compose an independent evaluation policy
 
@@ -227,14 +192,14 @@ without creating a model/reward-specific evaluator or training-experiment YAML:
 
 ```bash
 python -m vrl.scripts.eval.image_checkpoint_eval \
-  --run-dir outputs/anima_color_light_composed \
+  --run-dir outputs/sd3_5_color_light_composed \
   --eval-policy-config reward/codex_image_qa \
   --eval-policy-override +reward=codex_image_qa_anime_color_light \
   --eval-policy-override +reward=codex_image_qa_luna \
-  --eval-policy-override +dataset=anima_color_light_ddrl \
+  --eval-policy-override +dataset=anime_craft \
   --strata bucket prompt_style --per-stratum 6 \
   --samples-per-prompt 2 --seed 91000 \
-  --checkpoint candidate=outputs/anima_color_light_composed/checkpoint-final \
+  --checkpoint candidate=outputs/sd3_5_color_light_composed/checkpoint-final \
   --dry-run
 ```
 
@@ -267,13 +232,13 @@ the verified images without loading the generator. A successful run atomically
 publishes `report/` containing scores, `summary.json`, `curve.csv`, `curve.png`,
 blinded contact sheets and a separate `blind_key.json`. Completed reports cannot
 be overwritten. Changed settings or an incomplete generation require a new
-`--output-dir`; older Anima-specific archives are not silently migrated.
+`--output-dir`; older family-specific archives are not silently migrated.
 
 For a new plot of existing scores, no generator or reward model is needed:
 
 ```bash
 python -m vrl.scripts.eval.score_report \
-  --scores outputs/anima_color_light_composed/checkpoint_evaluation/report/scores.jsonl \
+  --scores outputs/sd3_5_color_light_composed/checkpoint_evaluation/report/scores.jsonl \
   --score-key codex_image_qa \
   --output-dir outputs/color_light_curve
 ```
@@ -296,22 +261,14 @@ evaluation manifests, scores, and their hashes remain the experiment evidence.
 Reproducing a historical run uses those recorded settings, not today's neutral
 defaults with a similar name.
 
-The Anima reward/data/run-length combinations retired on 2026-09-04 are not
-replaced with compatibility YAMLs or a JSON table of the same combinations.
-Their historical commands in sprint reports describe past runs, not current
-launch entrypoints. In particular, the rejected full-parameter quality and
-exact-count experiments are not promoted by this migration.
+The `cosmos-predict2-anima` family, its two experiment entrypoints, its
+standalone generator, the `anima_*` dataset presets and the `anima_*`
+evaluators were removed on 2026-09-18. Sprint reports under `docs/sprints`
+keep the historical commands; the anime rubric presets
+(`codex_image_qa_anime_*`), the anime datasets and the image evaluators they
+used remain generator-independent.
 
-All remaining Anima reward combinations, including aesthetic, general-quality,
-and safety variants, have now been retired. Their tests compose independent
-presets instead; the generation CLI defaults to the model preset and does not
-load a training reward. The three anime rubric presets were renamed from
-`codex_image_qa_anima_*` to `codex_image_qa_anime_*`, without changing scores or
-adding compatibility aliases. See the
-[final Anima composition inventory](/home/mingfeiguo/Desktop/vrl-anima-composition-archive-VIWBEO/README.md).
-Other model families' established recipes are outside this migration.
-
-The subsequent reward audit retired the Anima-specific person-critic canary and
+An earlier reward audit retired the family-specific person-critic canary and
 the unavailable production critic entrypoint. The offline person-critic research
 chain has also been archived: dedicated source, tests, dataset presets, protocol
 assets, person-count/integrity datasets, and the rejected Luna person-count rubric
@@ -324,11 +281,11 @@ that archive directory's `files/`; see its `README.md` for the exact inventory.
 CountGD person counting, grounded OCR, tag adherence, the shared Codex exact-count
 scoring mechanism, and reusable exact-count evaluation remain available. They
 accept image artifacts and task metadata independently of the generator; no
-Anima person research dataset is required by the framework. Generator independence
+family-specific person research dataset is required by the framework. Generator independence
 does not establish reward accuracy or resistance to reward hacking on every image
 distribution.
 
-The subsequent evaluation cleanup archived the Anima OCR qualification reporter,
+A later evaluation cleanup archived the OCR qualification reporter,
 its dedicated dataset generators, five OCR dataset presets and their data, the
 rejected requested-token grounding rubric, the anatomy probe/report chain, and
 the old objective-C tag-adherence evaluation entrypoint. The shared tag reward

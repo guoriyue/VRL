@@ -98,12 +98,12 @@ The generic names replace `countgd_person_count` / `countgd_person_count_http`;
 old run configs must use the new component/preset and convert `expected_people`
 to `object_class: person` plus `expected_count`. Restart the service with the
 new config: its protocol version intentionally differs from the person-only
-version, so an old running service is rejected. The historical Anima paired
-evaluator translates its old person-count archives at the model boundary.
+version, so an old running service is rejected. Older person-count archives are
+translated at the model boundary by the evaluators that read them.
 
 [CountGD](https://github.com/niki-amini-naieni/CountGD) supports text-conditioned
 open-world counting, but accepting a class description does not establish its
-accuracy on that class or style. The previous Anima person-count experiment
+accuracy on that class or style. An earlier person-count experiment
 found detector-only gains under optimization. Audit held-out images before
 using this signal for training; zero-count rewards can also reward missed
 detections. Checkpoint/runtime pins and the 0.23 detection threshold are unchanged.
@@ -141,7 +141,7 @@ published GenEval tables, only before/after on this detector.
 
 The `geneval_owl` score is the fraction of satisfied conditions (object
 presence, count, colour, relative position); the strict all-or-nothing verdict
-is reported by `vrl.scripts.eval.anima_geneval_eval`. The model stays resident
+is a per-prompt reduction of the same conditions. The model stays resident
 on the reward device (~2.3 GB). `geneval` remains the adapter for an external
 evaluator supplied by `import_path`.
 

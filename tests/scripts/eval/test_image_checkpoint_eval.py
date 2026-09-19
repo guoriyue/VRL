@@ -162,7 +162,7 @@ def test_independent_policy_does_not_replace_run_sampling(tmp_path, plan, monkey
     OmegaConf.save(
         OmegaConf.create(
             {
-                "model": {"family": "cosmos-predict2-anima", "use_lora": False},
+                "model": {"family": "sd3_5", "use_lora": False},
                 "precision": {"training": {"dtype": "fp32"}, "float32_precision": "ieee"},
                 "sampling": {
                     "width": 8,

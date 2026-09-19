@@ -35,7 +35,7 @@ class PromptExample:
     target_video: str | None = field(default=None, metadata={"artifact": True})
     references: list[str] = field(default_factory=list, metadata={"artifact": True})
     # Empty delegates the modality to the selected model-family registry entry.
-    # A video default silently mislabeled image-family JSONL rows such as Anima.
+    # A video default silently mislabeled image-family JSONL rows.
     task_type: str = ""
     # Per-prompt sampling overrides. Keys are the selected family's sampling
     # section fields (plus the rollout denoise knobs); the collector rejects any

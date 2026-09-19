@@ -29,7 +29,7 @@ dependencies = [
     # small dependency must remain in the core environment explicitly.
     "pyzmq>=25.0.0",
     "nvidia-ml-py>=12.0.0",  # process-attributed physical CUDA parking evidence
-    "safetensors>=0.4.0",  # weight loading (cosmos/anima, FSDP save)
+    "safetensors>=0.4.0",  # weight loading (cosmos single-file members, FSDP save)
 ]
 
 [dependency-groups]

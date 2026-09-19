@@ -18,11 +18,14 @@ from vrl.scripts.rewards.preflight import _synthetic_media, main, preflight_rewa
 
 def _config(tmp_path, *overrides: str):
     return load_config(
-        "experiment/anima_preview3/online_grpo",
+        "recipe/online/flow_matching_grpo",
         overrides=[
+            "+model/sd3_5=medium",
+            "+sampling/image=512",
+            "+sampling/denoise=10_step_cfg_4_5",
+            "actor.optim.lr=1e-5",
             "+reward=image_sharpness",
             "+dataset=drawbench_train_192",
-            "actor.optim.lr=1e-5",
             f"trainer.output_dir={tmp_path / 'out'}",
             *overrides,
         ],
@@ -67,12 +70,15 @@ def test_main_reports_a_missing_manifest_as_a_failure(tmp_path, capsys) -> None:
     code = main(
         [
             "--config",
-            "experiment/anima_preview3/online_grpo",
+            "recipe/online/flow_matching_grpo",
             "--device",
             "cpu",
+            "+model/sd3_5=medium",
+            "+sampling/image=512",
+            "+sampling/denoise=10_step_cfg_4_5",
+            "actor.optim.lr=1e-5",
             "+reward=image_sharpness",
             "+dataset=drawbench_train_192",
-            "actor.optim.lr=1e-5",
             f"trainer.output_dir={tmp_path / 'out'}",
             f"data.manifest={tmp_path / 'missing.txt'}",
         ]
@@ -86,14 +92,17 @@ def test_main_prints_the_score_table_on_success(tmp_path, capsys) -> None:
     code = main(
         [
             "--config",
-            "experiment/anima_preview3/online_grpo",
+            "recipe/online/flow_matching_grpo",
             "--prompts",
             "1",
             "--device",
             "cpu",
+            "+model/sd3_5=medium",
+            "+sampling/image=512",
+            "+sampling/denoise=10_step_cfg_4_5",
+            "actor.optim.lr=1e-5",
             "+reward=image_sharpness",
             "+dataset=drawbench_train_192",
-            "actor.optim.lr=1e-5",
             f"trainer.output_dir={tmp_path / 'out'}",
         ]
     )

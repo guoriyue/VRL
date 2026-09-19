@@ -41,13 +41,6 @@ _BATCH = 2
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "scheduler_configs.json"
 
 
-def _anima_scheduler():
-    diffusers = pytest.importorskip("diffusers")
-    scheduler = diffusers.FlowMatchEulerDiscreteScheduler(shift=3.0)
-    scheduler.register_to_config(sigma_data=1.0, sigma_max=1.0)
-    return scheduler
-
-
 def _echo_scheduler():
     diffusers = pytest.importorskip("diffusers")
     return diffusers.FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000)
@@ -89,7 +82,6 @@ _SCHEDULER_FIXTURES: dict[str, dict[str, object]] = json.loads(
 )
 
 _MANUAL_SCHEDULERS = {
-    "cosmos-predict2-anima": _anima_scheduler,
     "echo": _echo_scheduler,
 }
 assert set(_full_sequence_diffusion_families()) >= set(_MANUAL_SCHEDULERS)

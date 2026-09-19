@@ -51,20 +51,7 @@ def _load_bundled_raw(name: str):
 def _load_experiment_for_static_validation(name: str):
     """Complete runtime templates with inert test choices."""
 
-    overrides: list[str] = []
-    if name in {
-        "anima_preview3/online_grpo",
-        "anima_preview3/online_grpo_fullparam",
-    }:
-        overrides = [
-            "+reward=aesthetic",
-            "+dataset=anime_anatomy",
-            "trainer.total_epochs=1",
-            "trainer.output_dir=/test-only/anima-composition",
-        ]
-        if name == "anima_preview3/online_grpo":
-            overrides.append("actor.optim.lr=1e-5")
-    return load_config(f"experiment/{name}", overrides=overrides)
+    return load_config(f"experiment/{name}")
 
 
 def test_load_config_enforces_mandatory_marker(tmp_path: Path) -> None:
@@ -890,17 +877,16 @@ def test_luna_reward_overlay_changes_only_the_judge_command() -> None:
     policy = load_config("reward/codex_image_qa_anime_general_quality")
     experiment_overrides = [
         "+reward=codex_image_qa_anime_general_quality",
-        "+dataset=anima_quality_ddrl",
-        "actor.optim.lr=2e-5",
+        "+dataset=anime_quality_safety_mix50",
         "trainer.total_epochs=1",
-        "trainer.output_dir=/test-only/anima-quality",
+        "trainer.output_dir=/test-only/anime-quality",
     ]
     base_experiment = load_config(
-        "experiment/anima_preview3/online_grpo",
+        "experiment/sd3_5/online_grpo_pickscore",
         overrides=experiment_overrides,
     )
     luna_experiment = load_config(
-        "experiment/anima_preview3/online_grpo",
+        "experiment/sd3_5/online_grpo_pickscore",
         overrides=[*experiment_overrides, "+reward=codex_image_qa_luna_scored"],
     )
     base_reward = base_experiment.reward.kwargs.codex_image_qa
@@ -911,31 +897,6 @@ def test_luna_reward_overlay_changes_only_the_judge_command() -> None:
     assert "--model" not in policy.reward.kwargs.codex_image_qa.command
     assert "gpt-5.6-luna" not in policy.reward.kwargs.codex_image_qa.command
     assert "gpt-5.6-luna" in luna_reward.command
-
-
-def test_anima_runtime_requires_explicit_experiment_choices() -> None:
-    assert list_bundled_configs("experiment/anima_preview3") == (
-        "experiment/anima_preview3/online_grpo.yaml",
-        "experiment/anima_preview3/online_grpo_fullparam.yaml",
-    )
-    for name in ("online_grpo", "online_grpo_fullparam"):
-        with pytest.raises(ValueError) as exc:
-            load_config(f"experiment/anima_preview3/{name}")
-        for key in ("reward", "data", "trainer.output_dir"):
-            assert key in str(exc.value)
-        if name == "online_grpo":
-            assert "actor.optim.lr" in str(exc.value)
-
-    fullparam = load_config(
-        "experiment/anima_preview3/online_grpo_fullparam",
-        overrides=[
-            "+reward=aesthetic",
-            "+dataset=anime_anatomy",
-            "trainer.output_dir=/test-only/anima-fullparam",
-        ],
-    )
-    assert fullparam.model.use_lora is False
-    assert fullparam.model.lora is None
 
 
 @pytest.mark.parametrize("value", ["0", "largest"])
@@ -951,13 +912,11 @@ def test_generation_chunk_rejects_non_positive_or_non_integer_values(value: str)
 
 def test_negative_reward_component_weights_are_rejected() -> None:
     cfg = load_config(
-        "experiment/anima_preview3/online_grpo",
+        "experiment/sd3_5/online_grpo_pickscore",
         overrides=[
-            "+reward=aesthetic",
             "+reward=nsfw_safety",
             "+dataset=anime_safety_stress",
-            "actor.optim.lr=1e-5",
-            "trainer.output_dir=/test-only/anima-safety",
+            "trainer.output_dir=/test-only/anime-safety",
         ],
     )
     cfg.reward.components.nsfw_safety = -0.5

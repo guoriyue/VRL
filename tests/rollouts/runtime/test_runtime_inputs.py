@@ -111,17 +111,6 @@ def test_every_registry_entry_has_pickle_safe_ray_launch_inputs(
             DenoiseBatchGatherer,
             (),
         ),
-        (
-            "anima_preview3/online_grpo",
-            "cosmos-predict2-anima",
-            DenoiseBatchGatherer,
-            (
-                "+reward=aesthetic",
-                "+dataset=drawbench_train_192",
-                "actor.optim.lr=1.0e-5",
-                "trainer.output_dir=outputs/test_anima_launch_inputs",
-            ),
-        ),
     ],
 )
 def test_rollout_runtime_inputs_are_serializable_and_registry_backed(

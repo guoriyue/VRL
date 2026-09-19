@@ -644,8 +644,8 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
     def generation_memory_targets(self) -> dict[str, Any]:
         """Named modules the generation memory policy may configure.
 
-        Every diffusers-backed family carries its VAE on ``pipeline.vae``;
-        Anima (single-file checkpoint, no pipeline) carries ``self.vae``.
+        Every diffusers-backed family carries its VAE on ``pipeline.vae``; a
+        family without a pipeline carries ``self.vae``.
         Custom backends whose VAE does not implement this memory protocol keep
         it behind a family-specific attribute and expose no target. Replay
         models likewise own no VAE. In either case, the policy fails loud if
@@ -707,8 +707,8 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
     prompt encoders, driven by the three class declarations below. A family
     overrides only where it genuinely differs (FLUX's dual-encoder discovery,
     SANA's scheduler swap, wan's multi-transformer ``trainable_modules``/LoRA).
-    Families NOT backed by a diffusers pipeline (echo's LTX wrapper, anima's
-    single-file checkpoint) stay on ``DenoiseModelBase`` directly.
+    Families NOT backed by a diffusers pipeline (echo's LTX wrapper) stay on
+    ``DenoiseModelBase`` directly.
     """
 
     def __init__(self, *, pipeline: Any, device: Any = None) -> None:

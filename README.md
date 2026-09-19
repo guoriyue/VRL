@@ -72,7 +72,6 @@ positioning and roadmap.
 | **Wan2.2** | image -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Cosmos-Predict2** | video -> world | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Cosmos-Predict2.5** | text -> world | full_sequence / denoise | GRPO, DiffusionNFT | 🧪 Runnable |
-| **Cosmos-Anima** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Echo** | text -> video | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Cosmos3** | text -> video | full_sequence / denoise | — | 🔌 Integrated |
 | **MiniMax-H3** (Hailuo 3.0) | text -> video (+ audio side stream) | full_sequence / denoise | GRPO (recipe only) | 🔌 Integrated (33B + 32B conditioner, ~144 GB: needs multi-GPU FSDP; CPU tiny-real parity only; diffusers>=0.40) |
@@ -235,18 +234,15 @@ bazel run //:vrl_train -- --config experiment/sd3_5/online_grpo_ocr \
 For a new combination, use a reward/data-neutral execution recipe rather than
 adding another model-by-reward experiment YAML:
 
-Anima has only two execution templates: `online_grpo` (LoRA) and
-`online_grpo_fullparam`. Neither selects rewards or data; compose those at launch.
-
 ```bash
 python -m vrl.scripts.train \
-    --config experiment/anima_preview3/online_grpo \
+    --config experiment/sd3_5/online_grpo_pickscore \
     +reward=ocr +dataset=ocr \
     actor.optim.lr=1e-5 trainer.total_epochs=2 \
-    trainer.output_dir=outputs/anima_ocr_composed
+    trainer.output_dir=outputs/sd3_5_ocr_composed
 ```
 
-This demonstrates composition, not a recommended Anima training recipe. The
+This demonstrates composition, not a recommended training recipe. The
 standard OCR dataset must be available at the paths declared by `dataset/ocr`.
 The same arguments work with `python -m vrl.scripts.supervise`. Preset overlays
 merge in order; ordinary dotlist values apply last. `+reward=` is additive, not

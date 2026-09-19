@@ -10,7 +10,7 @@ from vrl.scripts.eval._sampling import resolve_eval_sampling
 
 
 def _root(*, sampling: dict, executor: dict | None = None):
-    model = {"family": "cosmos-predict2-anima"}
+    model = {"family": "sd3_5"}
     if executor is not None:
         model["executor"] = executor
     return parse_config(OmegaConf.create({"model": model, "sampling": sampling}))

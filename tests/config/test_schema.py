@@ -23,9 +23,8 @@ def test_cosmos_video_accepts_frame_shared_adaln(family: str) -> None:
     assert cfg.model.model_dump()["frame_shared_adaln"] is True
 
 
-@pytest.mark.parametrize("family", ["sd3_5", "cosmos-predict2-anima"])
-def test_frame_shared_adaln_rejects_models_without_frame_conditioning(family: str) -> None:
-    cfg = minimal_grpo_cfg(model={"family": family, "frame_shared_adaln": True})
+def test_frame_shared_adaln_rejects_models_without_frame_conditioning() -> None:
+    cfg = minimal_grpo_cfg(model={"family": "sd3_5", "frame_shared_adaln": True})
     with pytest.raises(ValueError, match=r"unknown model\.frame_shared_adaln"):
         parse_config(cfg)
 

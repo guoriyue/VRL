@@ -230,7 +230,7 @@ class ModelBuild:
     common curated views so consumers read ``build.lora`` /
     ``build.num_steps`` directly instead of re-deriving from the raw block.
     The generation-memory policy is resolved into its own typed field before
-    this build can cross Ray. Family-specific fields (e.g. anima checkpoint
+    this build can cross Ray. Family-specific fields (e.g. checkpoint member
     paths) are read straight from ``model_config``. The universal typed fields
     are runtime-injected or needed by every family, so they stay typed.
     """

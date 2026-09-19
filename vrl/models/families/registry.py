@@ -100,12 +100,12 @@ class DenoiseFamilyBuild:
 
     model_cls: str
     # Replay recipe; None marks a family whose registry entry points directly to
-    # its hand-written replay builder (echo/cosmos3/anima).
+    # its hand-written replay builder (echo/cosmos3).
     replay_cls: str | None = None
     transformer_classname: str | None = None
     scheduler_classname: str | None = None
     # Only families whose replay construction cannot use the generic descriptor
-    # path declare an override (echo/cosmos3/anima).
+    # path declare an override (echo/cosmos3).
     replay_runtime_builder: str | None = None
     # Non-diffusers families may own rollout assembly as well as replay
     # assembly. The registry still carries ``model_cls`` as the importable
@@ -855,23 +855,6 @@ _register_model_family(
                 "vrl.models.families.cosmos.cosmos3.runtime:build_cosmos3_replay_runtime_bundle"
             ),
         ),
-    ),
-)
-
-_register_model_family(
-    _full_sequence_denoise_entry(
-        family="cosmos-predict2-anima",
-        task="t2i",
-        model_section_cls="vrl.models.families.cosmos.anima.config:CosmosAnimaModelSection",
-        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
-        build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.cosmos.anima.model:AnimaModel",
-            replay_runtime_builder=(
-                "vrl.models.families.cosmos.anima.runtime:build_anima_replay_runtime_bundle"
-            ),
-        ),
-        # Family-owned from_build: no host placement of frozen components.
-        supported_model_memory_sections=_VAE_DECODE_MEMORY_SECTIONS,
     ),
 )
 

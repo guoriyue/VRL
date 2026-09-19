@@ -143,13 +143,13 @@ def test_entrypoint_forwards_composition_overrides(monkeypatch, tmp_path) -> Non
     expected_overrides = [
         "+reward=codex_image_qa_anime_color_light",
         "+reward=codex_image_qa_luna",
-        "+dataset=anima_color_light_ddrl",
+        "+dataset=anime_craft",
         "model.use_lora=false",
         "sampling.num_steps=40",
     ]
 
     def capture_load_config(path, *, overrides):
-        assert path == "experiment/anima_preview3/online_grpo"
+        assert path == "experiment/sd3_5/online_grpo_pickscore"
         assert overrides == expected_overrides
         raise RuntimeError("configuration arguments captured before model loading")
 
@@ -159,7 +159,7 @@ def test_entrypoint_forwards_composition_overrides(monkeypatch, tmp_path) -> Non
         encode_targets.main(
             [
                 "--experiment",
-                "anima_preview3/online_grpo",
+                "sd3_5/online_grpo_pickscore",
                 "--out",
                 str(tmp_path / "latents.pt"),
                 *expected_overrides,

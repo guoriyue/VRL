@@ -7,11 +7,11 @@ and expands lazily in the forward, so an unaligned export lost the key whenever
 samples_per_generation_batch > 1 and replay restore KeyError'd on ``init_latents`` (found
 by the OOM-split GPU gate, 2026-06-11).
 
-predict2.5 and anima share the same shared-conditioning shape: their export
-already calls the shared ``expand_tensor_to_batch`` so production is guarded,
-but nothing pinned it. This parametrizes the contract across all three
-Cosmos families so the alignment cannot silently regress in any of them: every
-exported replay tensor must leave the model sample-aligned.
+predict2.5 shares the same shared-conditioning shape: its export already
+calls the shared ``expand_tensor_to_batch`` so production is guarded, but
+nothing pinned it. This parametrizes the contract across both Cosmos families
+so the alignment cannot silently regress in either: every exported replay
+tensor must leave the model sample-aligned.
 
 Wan-I2V is deliberately excluded — its ``condition`` comes from
 ``pipe.prepare_latents(..., batch_size, ...)`` already sample-batched and its
@@ -29,7 +29,6 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.models.families.cosmos.anima.model import AnimaModel, AnimaSamplingState
 from vrl.models.families.cosmos.predict2.model import (
     CosmosPredict2Model,
     CosmosPredict2SamplingState,
@@ -82,27 +81,12 @@ def _predict25_state(batch_size: int) -> CosmosPredict25SamplingState:
     )
 
 
-def _anima_state(batch_size: int) -> AnimaSamplingState:
-    return AnimaSamplingState(
-        latents=torch.randn(batch_size, 2, 3, 4, 4),
-        timesteps=torch.linspace(1000.0, 0.0, 5),
-        scheduler=object(),
-        prompt_embeds=torch.randn(batch_size, 7, 8),
-        negative_prompt_embeds=None,
-        guidance_scale=7.0,
-        do_cfg=True,
-        # Shared conditioning carries a leading-1 dim, aligned lazily at export.
-        padding_mask=torch.zeros(1, 1, 4, 4),
-    )
-
-
 # (family name, model class, synthetic-state builder). Each family's
 # export_replay_tensors is invoked via object.__new__ (transformer-free, pure
 # state plumbing) so this stays cheap and CPU-only.
 _CASES: list[tuple[str, type, Callable[[int], Any]]] = [
     ("predict2", CosmosPredict2Model, _predict2_state),
     ("predict2_5", CosmosPredict25Model, _predict25_state),
-    ("anima", AnimaModel, _anima_state),
 ]
 
 

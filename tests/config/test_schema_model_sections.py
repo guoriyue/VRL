@@ -22,7 +22,6 @@ from vrl.config.schema import (
     parse_config,
 )
 from vrl.models.families.causvid.config import CausVidModelSection
-from vrl.models.families.cosmos.anima.config import CosmosAnimaModelSection
 from vrl.models.families.cosmos.predict2_5.config import (
     CosmosPredict25ModelSection,
 )
@@ -88,7 +87,6 @@ _MODEL_RUNTIME_CAPABILITY_MATRIX = {
     "cosmos3": (False, True),
     "minimax_h3": (False, True),
     "vdn_h3": (False, True),
-    "cosmos-predict2-anima": (True, True),
     "echo": (False, False),
 }
 
@@ -216,25 +214,6 @@ def test_cosmos_predict25_keys_select_family_section() -> None:
     parsed = parse_config(cfg)
     assert isinstance(parsed.model, CosmosPredict25ModelSection)
     assert parsed.model.skip_text_encoder is True
-
-
-def test_cosmos_anima_keys_select_family_section() -> None:
-    cfg = OmegaConf.create(
-        {
-            "model": {
-                "family": "cosmos-predict2-anima",
-                "qwen_tokenizer_path": "Qwen/Qwen2.5-0.5B",
-                "scheduler_shift": 3.0,
-                "transformer_file": "split_files/diffusion_models/anima.safetensors",
-            },
-        },
-    )
-
-    assert unknown_keys(cfg) == []
-    parsed = parse_config(cfg)
-    assert isinstance(parsed.model, CosmosAnimaModelSection)
-    assert parsed.model.scheduler_shift == 3.0
-    assert parsed.model.transformer_file == "split_files/diffusion_models/anima.safetensors"
 
 
 @pytest.mark.parametrize(
