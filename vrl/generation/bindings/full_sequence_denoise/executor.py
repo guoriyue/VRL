@@ -299,11 +299,18 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         config = self.build_denoise_config(params, batch)
         if execute_steps is not None:
             config = replace(config, execute_steps=execute_steps)
+        initial_latents = self.draw_group_initial_latents(
+            request=params.model_request,
+            encoded=encoded,
+            config=config,
+            prepare_kwargs=prepare_kwargs,
+        )
         state = self.prepare_denoise_state(
             request=params.model_request,
             encoded=batch_encoded,
             config=config,
             prepare_kwargs=prepare_kwargs,
+            initial_latents=initial_latents,
         )
         stage_durations["prepare_latent"] = time.perf_counter() - started
 
@@ -347,6 +354,41 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         batch_result.replay_tensors = policy.apply_to_value(batch_result.replay_tensors)
         return batch_result
 
+    def draw_group_initial_latents(
+        self,
+        *,
+        request: DenoiseRequest,
+        encoded: dict[str, Any],
+        config: DenoiseLoopConfig,
+        prepare_kwargs: dict[str, Any] | None = None,
+    ) -> torch.Tensor | None:
+        """The prompt group's shared starting latent, expanded to this batch.
+
+        ``rollout.group_shared_noise`` gives every prompt group one seed
+        (``config.initial_noise_seed``). The latent is drawn through the family's
+        own ``prepare_sampling`` with ONE row of conditioning and that seed, so
+        its shape, dtype, and state form (packed, conditioned, ...) are the
+        family's, and the draw never depends on the batch width. Every batch of
+        the prompt, including OOM-split children, repeats the same one-row draw
+        and expands it, so the group shares one start however it is batched.
+        Families whose preparation encodes a reference (I2V, V2W) pay that
+        encode twice per batch while the option is on. ``None`` when the
+        request does not share noise.
+        """
+
+        if config.initial_noise_seed is None:
+            return None
+        from vrl.utils.profiling import profile_range
+
+        with profile_range("generation.prepare_sampling"):
+            state = self.model.prepare_sampling(
+                replace(request, seed=config.initial_noise_seed),
+                encoded,
+                **(prepare_kwargs or {}),
+            )
+        group = state.latents[:1]
+        return group.expand(config.sample_count, *group.shape[1:]).contiguous()
+
     def prepare_denoise_state(
         self,
         *,
@@ -354,31 +396,30 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         encoded: dict[str, Any],
         config: DenoiseLoopConfig,
         prepare_kwargs: dict[str, Any] | None = None,
+        initial_latents: torch.Tensor | None = None,
     ) -> Any:
         """Prepare latent state for one diffusion sample batch."""
 
         from vrl.utils.profiling import profile_range
 
         model = self.model
-        if config.initial_noise_seed is not None:
-            # Every batch of the prompt group draws from one seed, so its first
-            # row is the group's latent regardless of the batch width.
-            request = replace(request, seed=config.initial_noise_seed)
-        elif request.seed is not None:
+        if request.seed is not None:
             # Match the denoise generator's batch offset. Reusing the request
             # seed makes every one-sample native batch start from identical noise.
             request = replace(request, seed=request.seed + config.sample_start)
         with profile_range("generation.prepare_sampling"):
-            state = model.prepare_sampling(request, encoded, **(prepare_kwargs or {}))
+            state = model.prepare_sampling(
+                request,
+                encoded,
+                initial_latents=initial_latents,
+                **(prepare_kwargs or {}),
+            )
         batch_rows = state.latents.shape[0]
         if int(batch_rows) != config.sample_count:
             raise ValueError(
                 "Diffusion denoise batch produced "
                 f"{batch_rows} rows, expected {config.sample_count}",
             )
-        if config.initial_noise_seed is not None:
-            with torch.no_grad():
-                state.latents[1:] = state.latents[:1]
         return state
 
     def run_denoise_steps(

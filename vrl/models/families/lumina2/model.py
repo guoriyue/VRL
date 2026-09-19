@@ -156,6 +156,8 @@ class Lumina2Model(
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> Lumina2SamplingState:
         """Build the per-request SamplingState for a denoise loop."""
@@ -181,7 +183,7 @@ class Lumina2Model(
             torch.float32,
             device,
             generator,
-            None,
+            initial_latents,
         )
 
         return Lumina2SamplingState(

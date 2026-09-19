@@ -146,6 +146,8 @@ class Cosmos3Model(CosmosReplayForward, DiffusersPipelineModelBase):
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> Cosmos3SamplingState:
         del kwargs
@@ -169,6 +171,7 @@ class Cosmos3Model(CosmosReplayForward, DiffusersPipelineModelBase):
             height=request.height,
             width=request.width,
             fps=float(fps),
+            latents=initial_latents,
             generator=generator,
             device=device,
             dtype=pipe.transformer.dtype,

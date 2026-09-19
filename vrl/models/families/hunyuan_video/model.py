@@ -130,6 +130,8 @@ class HunyuanVideoModel(
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> HunyuanVideoSamplingState:
         """Build the per-request 5D-latent SamplingState for a denoise loop."""
@@ -164,7 +166,7 @@ class HunyuanVideoModel(
             torch.float32,
             device,
             generator,
-            None,
+            initial_latents,
         )
 
         return HunyuanVideoSamplingState(

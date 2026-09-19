@@ -108,9 +108,19 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> Any:
-        """Build a private per-family sampling state for the denoise loop."""
+        """Build a private per-family sampling state for the denoise loop.
+
+        ``initial_latents`` is the batch's starting latent in this family's own
+        state form (row-expanded from a latent this same method produced for
+        the same request geometry). When given, the family uses it verbatim in
+        place of its noise draw; when ``None`` it draws from ``request.seed``.
+        Which rows share a start is the rollout layer's decision (a prompt
+        group under ``rollout.group_shared_noise``); the family only executes it.
+        """
 
     @abstractmethod
     def forward_step(

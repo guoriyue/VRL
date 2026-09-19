@@ -201,6 +201,8 @@ class PixArtSigmaModel(
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> PixArtSigmaSamplingState:
         """Build the per-request SamplingState for a denoise loop."""
@@ -228,7 +230,7 @@ class PixArtSigmaModel(
             torch.float32,
             device,
             generator,
-            None,
+            initial_latents,
         )
 
         return PixArtSigmaSamplingState(

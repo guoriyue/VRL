@@ -176,6 +176,8 @@ class MochiModel(
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> MochiSamplingState:
         """Build the per-request SamplingState for a denoise loop."""
@@ -207,7 +209,7 @@ class MochiModel(
             torch.float32,
             device,
             generator,
-            None,
+            initial_latents,
         )
 
         return MochiSamplingState(

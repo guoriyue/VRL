@@ -736,6 +736,8 @@ class WanT2VDiffusersModel(
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> WanT2VSamplingState:
         """Build the per-request SamplingState for a Wan T2V denoise loop."""
@@ -772,7 +774,7 @@ class WanT2VDiffusersModel(
             torch.float32,
             device,
             generator,
-            None,
+            initial_latents,
         )
 
         return WanT2VSamplingState(
@@ -1144,6 +1146,8 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> WanI2VSamplingState:
         """Build the per-request SamplingState for a Wan I2V denoise loop."""
@@ -1188,7 +1192,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
                 torch.float32,
                 device,
                 generator,
-                None,
+                initial_latents,
                 None,
             )
 

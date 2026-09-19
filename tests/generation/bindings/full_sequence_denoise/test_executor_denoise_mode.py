@@ -20,9 +20,10 @@ def test_initial_noise_uses_batch_offset_without_mutating_request(seed: int | No
     )
 
     class PreparingModel:
-        def prepare_sampling(self, batch_request, encoded, *, marker):
+        def prepare_sampling(self, batch_request, encoded, *, initial_latents=None, marker):
             assert encoded == {"prompt": "test"}
             assert marker == "forwarded"
+            assert initial_latents is None
             self.seed = batch_request.seed
             generator = torch.Generator().manual_seed(self.seed or 0)
             return _State(
@@ -57,43 +58,77 @@ def test_initial_noise_uses_batch_offset_without_mutating_request(seed: int | No
         assert not torch.equal(states[0].latents, states[1].latents)
 
 
-def test_group_shared_initial_noise_is_one_latent_per_prompt_across_batches() -> None:
-    """With ``initial_noise_seed`` set, every row of every batch of the prompt starts
-    from the same latent — the seed is not offset by the batch position and row 0
-    is broadcast over the batch — while a different prompt seed gives a different one."""
+def test_group_shared_initial_latent_is_drawn_once_per_prompt_and_expanded() -> None:
+    """With ``initial_noise_seed`` set, the executor draws ONE row through the
+    family with the group seed and one row of conditioning, expands it to the
+    batch, and hands it to the batch's own preparation as ``initial_latents``,
+    whose seed stays the per-batch one. Every batch of the prompt, whatever its
+    width or offset, starts from that row; a different group seed differs."""
     request = DenoiseRequest(
-        width=128, height=128, frame_count=1, num_steps=1, guidance_scale=1.0, seed=None
+        width=128, height=128, frame_count=1, num_steps=1, guidance_scale=1.0, seed=5
     )
 
     class PreparingModel:
         def __init__(self) -> None:
-            self.rows = 4
+            self.calls: list[tuple[int | None, int, bool]] = []
 
-        def prepare_sampling(self, batch_request, encoded):
-            del encoded
-            generator = torch.Generator().manual_seed(batch_request.seed)
-            return _State(
-                torch.randn(self.rows, 8, generator=generator), torch.tensor([1.0]), _Scheduler()
-            )
+        def prepare_sampling(self, batch_request, encoded, *, initial_latents=None):
+            rows = encoded["prompt_embeds"].shape[0]
+            self.calls.append((batch_request.seed, rows, initial_latents is not None))
+            if initial_latents is not None:
+                latents = initial_latents.clone()
+            else:
+                generator = torch.Generator().manual_seed(batch_request.seed)
+                latents = torch.randn(rows, 8, generator=generator)
+            return _State(latents, torch.tensor([1.0]), _Scheduler())
 
-    executor = _Executor(PreparingModel())
+    model = PreparingModel()
+    executor = _Executor(model)
+    single = {"prompt_embeds": torch.zeros(1, 3)}
 
-    def prepare(start: int, count: int, seed: int) -> torch.Tensor:
-        executor.model.rows = count
+    def prepare(start: int, count: int, group_seed: int) -> torch.Tensor:
         config = DenoiseLoopConfig(
             sample_start=start,
             sample_count=count,
-            seed=None,
+            seed=5,
             sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo"),
             sde_window=None,
-            initial_noise_seed=seed,
+            initial_noise_seed=group_seed,
         )
-        return executor.prepare_denoise_state(request=request, encoded={}, config=config).latents
+        initial = executor.draw_group_initial_latents(
+            request=request, encoded=single, config=config
+        )
+        assert initial is not None and initial.shape == (count, 8)
+        return executor.prepare_denoise_state(
+            request=request,
+            encoded={"prompt_embeds": torch.zeros(count, 3)},
+            config=config,
+            initial_latents=initial,
+        ).latents
 
-    first, second = prepare(0, 4, 21), prepare(4, 2, 21)
+    first, second, child = prepare(0, 4, 21), prepare(4, 2, 21), prepare(6, 1, 21)
     assert all(torch.equal(row, first[0]) for row in first)
-    assert torch.equal(second[0], first[0]) and torch.equal(second[1], first[0])
+    assert all(torch.equal(row, first[0]) for row in second)
+    assert torch.equal(child[0], first[0])
     assert not torch.equal(prepare(0, 4, 22)[0], first[0])
+    # Group draws: one row, group seed, no initial latent; batch preparations:
+    # the batch's rows, the per-batch seed (request seed + offset), the latent.
+    assert model.calls[0] == (21, 1, False)
+    assert model.calls[1] == (5, 4, True)
+    assert model.calls[2] == (21, 1, False)
+    assert model.calls[3] == (5 + 4, 2, True)
+
+    # Without a group seed nothing is drawn and the batch prepares on its own.
+    config = DenoiseLoopConfig(
+        sample_start=0,
+        sample_count=2,
+        seed=5,
+        sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo"),
+        sde_window=None,
+    )
+    assert (
+        executor.draw_group_initial_latents(request=request, encoded=single, config=config) is None
+    )
 
 
 def test_diffusion_executor_base_satisfies_probe_protocol() -> None:

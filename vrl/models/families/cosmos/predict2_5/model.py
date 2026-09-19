@@ -264,6 +264,8 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> CosmosPredict25SamplingState:
         del kwargs
@@ -290,7 +292,7 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             dtype=torch.float32,
             device=device,
             generator=generator,
-            latents=None,
+            latents=initial_latents,
         )
         padding_mask = latents.new_zeros(
             1,

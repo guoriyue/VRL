@@ -154,6 +154,8 @@ class SanaModel(
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> SanaSamplingState:
         """Build the per-request SamplingState for a denoise loop."""
@@ -179,7 +181,7 @@ class SanaModel(
             torch.float32,
             device,
             generator,
-            None,
+            initial_latents,
         )
 
         return SanaSamplingState(

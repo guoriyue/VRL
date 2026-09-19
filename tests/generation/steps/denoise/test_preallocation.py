@@ -332,9 +332,11 @@ class _Model:
         self,
         request: Any,
         encoded: dict[str, torch.Tensor],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> SimpleNamespace:
-        del kwargs
+        del kwargs, initial_latents
         return _state(
             batch=int(encoded["prompt_embeds"].shape[0]),
             steps=request.num_steps,
@@ -394,12 +396,14 @@ class _StageTrackingExecutor(DenoiseBatchExecutorBase):
         encoded: dict[str, Any],
         config: DenoiseLoopConfig,
         prepare_kwargs: dict[str, Any] | None = None,
+        initial_latents: torch.Tensor | None = None,
     ) -> Any:
         self.calls.append("prepare")
         return super().prepare_denoise_state(
             request=request,
             encoded=encoded,
             config=config,
+            initial_latents=initial_latents,
             prepare_kwargs=prepare_kwargs,
         )
 

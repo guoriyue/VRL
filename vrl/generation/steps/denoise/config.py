@@ -144,7 +144,8 @@ class DenoiseLoopConfig:
     denoise_mode: DenoiseMode = "sde"
     teacache: TeaCacheConfig | None = None
     # Set when the request shares one initial latent per prompt group: the
-    # generator seed every batch of this prompt draws from (no batch offset).
+    # seed the executor draws that group's one-row latent from (no batch
+    # offset) before expanding it over the batch.
     initial_noise_seed: int | None = None
     # Memory probes may execute fewer steps while retaining full buffer allocation.
     execute_steps: int | None = None

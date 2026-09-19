@@ -146,6 +146,8 @@ class SD3_5Model(
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> SD3SamplingState:
         """Build the per-request SamplingState for a denoise loop."""
@@ -175,7 +177,7 @@ class SD3_5Model(
             torch.float32,
             device,
             generator,
-            None,
+            initial_latents,
         )
 
         do_cfg = request.guidance_scale > 1.0

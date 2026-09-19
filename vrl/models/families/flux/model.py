@@ -210,6 +210,8 @@ class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> FluxSamplingState:
         """Build the per-request packed-latent SamplingState for a denoise loop."""
@@ -237,7 +239,7 @@ class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
             torch.float32,
             device,
             generator,
-            None,
+            initial_latents,
         )
 
         # Timesteps depend on the packed image sequence length (dynamic shifting),

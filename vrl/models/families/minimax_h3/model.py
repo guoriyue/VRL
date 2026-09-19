@@ -409,6 +409,8 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> MiniMaxH3SamplingState:
         del kwargs
@@ -462,6 +464,10 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
             generator=generator,
             dtype=torch.float32,
         ).to(device)
+        if initial_latents is not None:
+            # The video draw above still runs so the audio rows keep the
+            # reference pipeline's generator order; only the start is replaced.
+            latents = initial_latents.to(device=device, dtype=torch.float32)
         return MiniMaxH3SamplingState(
             latents=latents,
             timesteps=self.scheduler.timesteps,
