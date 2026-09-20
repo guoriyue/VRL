@@ -545,7 +545,7 @@ class FlowDPPO(GRPO):
             rs_keep,
         )
         unclipped_loss = -advantages * ratio
-        # Masked mean, matching GRPO/GRPOGuard/TokenGRPO: the denominator is the
+        # Masked mean, matching GRPO/GRPOGuard: the denominator is the
         # KEPT count, not the batch size. Dividing by the batch size would scale
         # the gradient by the keep fraction, so the effective learning rate would
         # shrink exactly as the trust region engages — a gradient-magnitude

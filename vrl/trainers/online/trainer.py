@@ -840,8 +840,8 @@ class OnlineTrainer:
             )
 
         # Parity is a trainer/evaluator fact, not an objective-specific metric.
-        # Measure every replayed segment here so TokenGRPO, trust-region variants,
-        # and multi-segment objectives cannot accidentally leave a false zero that
+        # Measure every replayed segment here so the chunk-autoregressive replay,
+        # trust-region variants and multi-segment signals cannot leave a false zero that
         # lets the pre-optimizer correctness gate pass.
         fresh_parts: list[torch.Tensor] = []
         old_parts: list[torch.Tensor] = []
