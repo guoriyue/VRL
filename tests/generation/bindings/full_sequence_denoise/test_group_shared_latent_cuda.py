@@ -55,7 +55,7 @@ def _config(start: int, count: int, group_seed: int | None) -> DenoiseLoopConfig
         seed=11,
         sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo"),
         sde_window=None,
-        initial_noise_seed=group_seed,
+        group_latent_seed=group_seed,
     )
 
 

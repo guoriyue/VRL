@@ -59,7 +59,7 @@ def test_initial_noise_uses_batch_offset_without_mutating_request(seed: int | No
 
 
 def test_group_shared_initial_latent_is_drawn_once_per_prompt_and_expanded() -> None:
-    """With ``initial_noise_seed`` set, the executor draws ONE row through the
+    """With ``group_latent_seed`` set, the executor draws ONE row through the
     family with the group seed and one row of conditioning, expands it to the
     batch, and hands it to the batch's own preparation as ``initial_latents``,
     whose seed stays the per-batch one. Every batch of the prompt, whatever its
@@ -93,7 +93,7 @@ def test_group_shared_initial_latent_is_drawn_once_per_prompt_and_expanded() -> 
             seed=5,
             sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo"),
             sde_window=None,
-            initial_noise_seed=group_seed,
+            group_latent_seed=group_seed,
         )
         initial = executor.draw_group_initial_latents(
             request=request, encoded=single, config=config

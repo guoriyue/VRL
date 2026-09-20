@@ -210,7 +210,7 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
             sde_window=params.sde_window,
             denoise_mode=params.denoise_mode,
             teacache=params.teacache,
-            initial_noise_seed=params.initial_noise_seed(batch.prompt_index),
+            group_latent_seed=params.prompt_group_latent_seed(batch.prompt_index),
         )
 
     def forward_plan_pipelined(
@@ -365,7 +365,7 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         """The prompt group's shared starting latent, expanded to this batch.
 
         ``rollout.group_shared_noise`` gives every prompt group one seed
-        (``config.initial_noise_seed``). The latent is drawn through the family's
+        (``config.group_latent_seed``). The latent is drawn through the family's
         own ``prepare_sampling`` with ONE row of conditioning and that seed, so
         its shape, dtype, and state form (packed, conditioned, ...) are the
         family's, and the draw never depends on the batch width. Every batch of
@@ -376,13 +376,13 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         request does not share noise.
         """
 
-        if config.initial_noise_seed is None:
+        if config.group_latent_seed is None:
             return None
         from vrl.utils.profiling import profile_range
 
         with profile_range("generation.prepare_sampling"):
             state = self.model.prepare_sampling(
-                replace(request, seed=config.initial_noise_seed),
+                replace(request, seed=config.group_latent_seed),
                 encoded,
                 **(prepare_kwargs or {}),
             )

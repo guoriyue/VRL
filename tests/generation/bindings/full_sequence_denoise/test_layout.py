@@ -359,12 +359,12 @@ def test_group_shared_noise_derives_one_seed_per_prompt_group() -> None:
     seeded = _layout().parse_sampling_params(
         _request({"seed": 11}, denoise=DenoiseRequestOptions(group_shared_noise=True))
     )
-    assert seeded.group_noise_seed == 11 ^ 0x6E015E5D
-    assert seeded.initial_noise_seed(0) == seeded.initial_noise_seed(0)
-    assert seeded.initial_noise_seed(0) != seeded.initial_noise_seed(1)
+    assert seeded.group_latent_seed == 11 ^ 0x6E015E5D
+    assert seeded.prompt_group_latent_seed(0) == seeded.prompt_group_latent_seed(0)
+    assert seeded.prompt_group_latent_seed(0) != seeded.prompt_group_latent_seed(1)
 
     unseeded = _layout().parse_sampling_params(
         _request(denoise=DenoiseRequestOptions(group_shared_noise=True))
     )
-    assert unseeded.group_noise_seed is not None
-    assert _layout().parse_sampling_params(_request()).initial_noise_seed(0) is None
+    assert unseeded.group_latent_seed is not None
+    assert _layout().parse_sampling_params(_request()).prompt_group_latent_seed(0) is None

@@ -143,10 +143,11 @@ class DenoiseLoopConfig:
     sde_window: tuple[int, int] | None
     denoise_mode: DenoiseMode = "sde"
     teacache: TeaCacheConfig | None = None
-    # Set when the request shares one initial latent per prompt group: the
-    # seed the executor draws that group's one-row latent from (no batch
-    # offset) before expanding it over the batch.
-    initial_noise_seed: int | None = None
+    # Set under rollout.group_shared_noise: the prompt group's seed. What
+    # crosses the wire is this integer; the executor draws the group's one-row
+    # starting latent from it on the worker and expands it over every batch of
+    # the prompt, so no latent tensor travels in the request.
+    group_latent_seed: int | None = None
     # Memory probes may execute fewer steps while retaining full buffer allocation.
     execute_steps: int | None = None
 

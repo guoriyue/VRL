@@ -29,14 +29,14 @@ class DenoiseSamplingParams:
     sde_window: tuple[int, int] | None = None
     # Request-level seed behind the shared initial latent of every prompt group
     # (``rollout.group_shared_noise``); None keeps per-sample initial noise.
-    group_noise_seed: int | None = None
+    group_latent_seed: int | None = None
 
-    def initial_noise_seed(self, prompt_index: int) -> int | None:
-        """The generator seed every batch of ``prompt_index`` draws its latent from."""
+    def prompt_group_latent_seed(self, prompt_index: int) -> int | None:
+        """The seed every batch of ``prompt_index`` draws the group's starting latent from."""
 
-        if self.group_noise_seed is None:
+        if self.group_latent_seed is None:
             return None
-        return random.Random(self.group_noise_seed ^ (prompt_index * 0x9E3779B1)).getrandbits(62)
+        return random.Random(self.group_latent_seed ^ (prompt_index * 0x9E3779B1)).getrandbits(62)
 
     def text_encode_kwargs(self) -> dict[str, Any]:
         """Build shared prompt-encoder knobs without inventing a text length."""
@@ -134,16 +134,16 @@ class DenoiseRequestLayout:
             start = rng.randint(lo, hi - window_size)
             sde_window = (start, start + window_size)
 
-        group_noise_seed = None
+        group_latent_seed = None
         if options.group_shared_noise:
-            group_noise_seed = model_request.seed
-            if group_noise_seed is None:
-                group_noise_seed = request.sde_window_seed
-                if group_noise_seed is None:
+            group_latent_seed = model_request.seed
+            if group_latent_seed is None:
+                group_latent_seed = request.sde_window_seed
+                if group_latent_seed is None:
                     raise ValueError("group-shared noise requires request-owned sde_window_seed")
             # Own stream salt, so the shared latent never coincides with the SDE
             # window draw or a family's own use of the sampling seed.
-            group_noise_seed ^= 0x6E015E5D
+            group_latent_seed ^= 0x6E015E5D
 
         return DenoiseSamplingParams(
             model_request=model_request,
@@ -152,7 +152,7 @@ class DenoiseRequestLayout:
             denoise_mode=options.denoise_mode,
             teacache=options.teacache,
             sde_window=sde_window,
-            group_noise_seed=group_noise_seed,
+            group_latent_seed=group_latent_seed,
         )
 
 
