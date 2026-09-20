@@ -350,21 +350,3 @@ def test_batch_broadcast_preserves_view_and_materialized_storage_contracts():
     assert expand_tensor_to_batch(source, 1, materialize=True) is source
     with pytest.raises(ValueError, match="cannot broadcast tensor batch=2"):
         expand_tensor_to_batch(torch.ones(2, 3), 4)
-
-
-def test_group_shared_noise_derives_one_seed_per_prompt_group() -> None:
-    """One request-level seed, salted per prompt: every batch of a prompt group draws
-    the same latent, different groups draw different ones, and a request without a
-    sampling seed falls back to its own ``sde_window_seed``."""
-    seeded = _layout().parse_sampling_params(
-        _request({"seed": 11}, denoise=DenoiseRequestOptions(group_shared_noise=True))
-    )
-    assert seeded.group_latent_seed == 11 ^ 0x6E015E5D
-    assert seeded.prompt_group_latent_seed(0) == seeded.prompt_group_latent_seed(0)
-    assert seeded.prompt_group_latent_seed(0) != seeded.prompt_group_latent_seed(1)
-
-    unseeded = _layout().parse_sampling_params(
-        _request(denoise=DenoiseRequestOptions(group_shared_noise=True))
-    )
-    assert unseeded.group_latent_seed is not None
-    assert _layout().parse_sampling_params(_request()).prompt_group_latent_seed(0) is None

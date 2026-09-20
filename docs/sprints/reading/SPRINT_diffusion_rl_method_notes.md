@@ -38,7 +38,7 @@ PDF 已在 `docs/papers/diffusion-flow-rl/`（dancegrpo、flow-grpo、mixgrpo �
 |---|---|
 | GRPO loss + 组归一 advantage | 有（`GRPO`, `GroupAdvantageEstimator`） |
 | 随机 timestep 子集 | 有（`actor.timestep_selection=random`，done sprint 验证过机制） |
-| 组内共享初始噪声 | **有**：`rollout.group_shared_noise`（2026-09-19）。executor 用组 seed 经家族自己的 `prepare_sampling` 抽一行，扩展后以 `initial_latents` 交给该批的准备；loss 侧另有 `v_grpo.py` 的 `_group_shared_noise` |
+| 组内共享初始噪声 | **有**：`rollout.group_shared_noise`（2026-09-19）。collector 把它规划成 request 上每个样本一个 `initial_noise_seeds`（组内相同），executor 对每个不同的 seed 经家族自己的 `prepare_sampling` 抽一行，按行拼好后以 `initial_latents` 交给该批的准备；执行层不知道『组』。loss 侧另有 `v_grpo.py` 的 `_group_shared_noise` |
 | 多 reward advantage 级合成 | **无**（`MultiReward` 出加权总分，分量保留在 `RewardOutput.components`，但 advantage 只看总分） |
 | Best-of-N top/bottom-k | **无**（只有非零 advantage 掩码） |
 | CFG 下的训练分支 | 有 `DenoiseCFGMode`，但没有审计"训练时 uncond 分支是否也走 replay" |

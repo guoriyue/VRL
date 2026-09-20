@@ -118,8 +118,8 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
         state form (row-expanded from a latent this same method produced for
         the same request geometry). When given, the family uses it verbatim in
         place of its noise draw; when ``None`` it draws from ``request.seed``.
-        Which rows share a start is the rollout layer's decision (a prompt
-        group under ``rollout.group_shared_noise``); the family only executes it.
+        Which rows share a start is the rollout layer's decision (per-sample
+        seeds on the request); the family only executes it.
         """
 
     @abstractmethod

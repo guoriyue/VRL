@@ -58,12 +58,12 @@ def test_initial_noise_uses_batch_offset_without_mutating_request(seed: int | No
         assert not torch.equal(states[0].latents, states[1].latents)
 
 
-def test_group_shared_initial_latent_is_drawn_once_per_prompt_and_expanded() -> None:
-    """With ``group_latent_seed`` set, the executor draws ONE row through the
-    family with the group seed and one row of conditioning, expands it to the
-    batch, and hands it to the batch's own preparation as ``initial_latents``,
-    whose seed stays the per-batch one. Every batch of the prompt, whatever its
-    width or offset, starts from that row; a different group seed differs."""
+def test_initial_latents_are_drawn_once_per_distinct_seed_and_assembled_per_row() -> None:
+    """Each distinct seed in the batch's ``initial_noise_seeds`` is drawn ONCE
+    through the family with one row of conditioning; rows are assembled from
+    their seeds and handed to the batch's own preparation as ``initial_latents``,
+    whose seed stays the per-batch one. Rows that share a seed share the start;
+    a batch of a different prompt, or an OOM-split child, gets its rows' seeds."""
     request = DenoiseRequest(
         width=128, height=128, frame_count=1, num_steps=1, guidance_scale=1.0, seed=5
     )
@@ -86,18 +86,17 @@ def test_group_shared_initial_latent_is_drawn_once_per_prompt_and_expanded() -> 
     executor = _Executor(model)
     single = {"prompt_embeds": torch.zeros(1, 3)}
 
-    def prepare(start: int, count: int, group_seed: int) -> torch.Tensor:
+    def prepare(start: int, seeds: tuple[int, ...]) -> torch.Tensor:
+        count = len(seeds)
         config = DenoiseLoopConfig(
             sample_start=start,
             sample_count=count,
             seed=5,
             sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo"),
             sde_window=None,
-            group_latent_seed=group_seed,
+            initial_noise_seeds=seeds,
         )
-        initial = executor.draw_group_initial_latents(
-            request=request, encoded=single, config=config
-        )
+        initial = executor.draw_initial_latents(request=request, encoded=single, config=config)
         assert initial is not None and initial.shape == (count, 8)
         return executor.prepare_denoise_state(
             request=request,
@@ -106,19 +105,24 @@ def test_group_shared_initial_latent_is_drawn_once_per_prompt_and_expanded() -> 
             initial_latents=initial,
         ).latents
 
-    first, second, child = prepare(0, 4, 21), prepare(4, 2, 21), prepare(6, 1, 21)
-    assert all(torch.equal(row, first[0]) for row in first)
-    assert all(torch.equal(row, first[0]) for row in second)
-    assert torch.equal(child[0], first[0])
-    assert not torch.equal(prepare(0, 4, 22)[0], first[0])
-    # Group draws: one row, group seed, no initial latent; batch preparations:
+    whole = prepare(0, (21, 21, 21, 21))
+    assert all(torch.equal(row, whole[0]) for row in whole)
+    # An OOM-split child carries its own rows' seeds and starts identically.
+    child = prepare(2, (21, 21))
+    assert torch.equal(child, whole[2:])
+    # Mixed seeds: two draws, rows follow their seeds.
+    mixed = prepare(0, (21, 22, 21))
+    assert torch.equal(mixed[0], whole[0]) and torch.equal(mixed[2], whole[0])
+    assert not torch.equal(mixed[1], whole[0])
+    # Draws: one row with the row's seed, no initial latent; batch preparations:
     # the batch's rows, the per-batch seed (request seed + offset), the latent.
     assert model.calls[0] == (21, 1, False)
     assert model.calls[1] == (5, 4, True)
     assert model.calls[2] == (21, 1, False)
-    assert model.calls[3] == (5 + 4, 2, True)
+    assert model.calls[3] == (5 + 2, 2, True)
+    assert model.calls[4:7] == [(21, 1, False), (22, 1, False), (5, 3, True)]
 
-    # Without a group seed nothing is drawn and the batch prepares on its own.
+    # Without seeds nothing is drawn and the batch prepares on its own.
     config = DenoiseLoopConfig(
         sample_start=0,
         sample_count=2,
@@ -126,8 +130,24 @@ def test_group_shared_initial_latent_is_drawn_once_per_prompt_and_expanded() -> 
         sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo"),
         sde_window=None,
     )
+    assert executor.draw_initial_latents(request=request, encoded=single, config=config) is None
+
+
+def test_batch_initial_noise_seeds_slice_the_request_rows_prompt_major() -> None:
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
+    from vrl.generation.types import GenerationRequest
+
+    request = GenerationRequest(
+        "r", "sd3_5", "t2i", ["p0", "p1"], 3, initial_noise_seeds=(1, 1, 1, 2, 2, 2)
+    )
+    seeds = DenoiseBatchExecutorBase.batch_initial_noise_seeds
+
+    assert seeds(request, GenerationSampleBatch(0, 0, 3)) == (1, 1, 1)
+    assert seeds(request, GenerationSampleBatch(1, 0, 2)) == (2, 2)
+    assert seeds(request, GenerationSampleBatch(1, 2, 1)) == (2,)
     assert (
-        executor.draw_group_initial_latents(request=request, encoded=single, config=config) is None
+        seeds(GenerationRequest("r", "sd3_5", "t2i", ["p0"], 2), GenerationSampleBatch(0, 0, 2))
+        is None
     )
 
 

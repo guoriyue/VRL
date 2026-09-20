@@ -55,7 +55,7 @@ def _config(start: int, count: int, group_seed: int | None) -> DenoiseLoopConfig
         seed=11,
         sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo"),
         sde_window=None,
-        group_latent_seed=group_seed,
+        initial_noise_seeds=None if group_seed is None else (group_seed,) * count,
     )
 
 
@@ -69,9 +69,7 @@ def test_group_shares_one_start_across_batch_widths_and_oom_split_on_cuda() -> N
 
     def latents(start: int, count: int, group_seed: int | None) -> torch.Tensor:
         config = _config(start, count, group_seed)
-        initial = executor.draw_group_initial_latents(
-            request=request, encoded=single, config=config
-        )
+        initial = executor.draw_initial_latents(request=request, encoded=single, config=config)
         state = executor.prepare_denoise_state(
             request=request,
             encoded={"prompt_embeds": torch.zeros(count, 3, 4, device=device)},

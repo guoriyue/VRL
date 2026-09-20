@@ -92,3 +92,17 @@ def test_request_preserves_optional_integer_policy_version(version):
     from dataclasses import replace
 
     assert replace(_request(), policy_version=version).policy_version is version
+
+
+@pytest.mark.parametrize("seeds", [(1, 2, 3), (1,), (1, -1)])
+def test_request_initial_noise_seeds_are_one_nonnegative_int_per_sample_row(seeds) -> None:
+    def build(inputs: list[str], initial_noise_seeds) -> GenerationRequest:
+        return GenerationRequest(
+            "r", "sd3_5", "t2i", inputs, 2, initial_noise_seeds=initial_noise_seeds
+        )
+
+    with pytest.raises(ValueError, match="initial_noise_seeds"):
+        build(["p0"], seeds)
+
+    assert build(["p0", "p1"], [7, 7, 8, 8]).initial_noise_seeds == (7, 7, 8, 8)
+    assert build(["p0"], None).initial_noise_seeds is None

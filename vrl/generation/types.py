@@ -96,10 +96,17 @@ class GenerationRequest:
     # Rollout-owned denoise knobs (rollout.* / rollout.sde.*), projected once by
     # the collector. ``None`` on hand-built requests means the option defaults.
     denoise: DenoiseRequestOptions | None = None
-    # Request-owned fallback randomness for the SDE window and the group-shared
-    # initial latent. Copies sent to separate workers retain it without imposing
-    # a latent-noise sampling seed.
+    # Request-owned fallback randomness for the SDE window. Copies sent to
+    # separate workers retain it without imposing a latent-noise sampling seed.
     sde_window_seed: int | None = None
+    # One seed per sample row (``sample_rows()`` order: prompt-major), each
+    # naming the row's INITIAL latent only. The rollout layer plans them: rows
+    # that must start from the same latent carry the same seed (a GRPO group
+    # under ``rollout.group_shared_noise``), others carry distinct ones. ``None``
+    # leaves every row to the family's own draw from ``sampling.seed``. Per
+    # row, not per batch, so an OOM split keeps each row's start. The SDE step
+    # noise is seeded separately and stays per sample either way.
+    initial_noise_seeds: tuple[int, ...] | None = None
     runtime_debug: bool = False
     policy_version: int | None = None
     # Online reward transport: Ray actors return boxed media references instead
@@ -121,6 +128,7 @@ class GenerationRequest:
         runtime_debug: bool = False,
         policy_version: int | None = None,
         sde_window_seed: int | None = None,
+        initial_noise_seeds: tuple[int, ...] | list[int] | None = None,
         reward_media_refs: bool = False,
     ) -> None:
         normalized_inputs: list[GenerationInput] = []
@@ -143,6 +151,9 @@ class GenerationRequest:
         self.trajectory_storage = trajectory_storage
         self.denoise = denoise
         self.sde_window_seed = sde_window_seed
+        self.initial_noise_seeds = (
+            None if initial_noise_seeds is None else tuple(initial_noise_seeds)
+        )
         self.reward_media_refs = bool(reward_media_refs)
         self.runtime_debug = runtime_debug
         self.policy_version = policy_version
@@ -183,10 +194,22 @@ class GenerationRequest:
             require_int(self.sde_window_seed, path="GenerationRequest.sde_window_seed", minimum=0)
         elif (
             self.denoise is not None
-            and (self.denoise.sde_window_size > 0 or self.denoise.group_shared_noise)
+            and self.denoise.sde_window_size > 0
             and self.sampling.get("seed") is None
         ):
             self.sde_window_seed = random.getrandbits(64)
+        seeds = self.initial_noise_seeds
+        if seeds is not None:
+            expected = len(self.inputs) * self.samples_per_prompt
+            if len(seeds) != expected:
+                raise ValueError(
+                    "GenerationRequest.initial_noise_seeds must carry one seed per sample "
+                    f"row ({expected}), got {len(seeds)}",
+                )
+            for index, seed in enumerate(seeds):
+                require_int(
+                    seed, path=f"GenerationRequest.initial_noise_seeds[{index}]", minimum=0
+                )
 
     def sample_rows(self) -> list[GenerationSampleRow]:
         """Mint the deterministic per-sample identity rows for this request.

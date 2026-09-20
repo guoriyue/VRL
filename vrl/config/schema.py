@@ -356,9 +356,10 @@ class RolloutConfig(ConfigBase):
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
-    # reader: vrl/generation/bindings/full_sequence_denoise/layout.py — every
-    # sample of a prompt group starts the denoise from the same initial latent
-    # (DanceGRPO); the SDE step noise stays per sample.
+    # reader: vrl/rollouts/collector/requests.py — every sample of a prompt
+    # group starts the denoise from the same initial latent (DanceGRPO): the
+    # request carries one initial-noise seed per sample row, equal within a
+    # group; the SDE step noise stays per sample.
     group_shared_noise: StrictBool | None = Field(
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},

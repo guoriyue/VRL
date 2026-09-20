@@ -482,7 +482,12 @@ def test_denoise_family_build_descriptors_have_one_explicit_replay_mode() -> Non
             assert build.replay_unavailable_reason is None
 
 
-def test_group_shared_noise_reaches_the_request_options() -> None:
+def test_group_shared_noise_is_a_collector_rule_that_becomes_per_sample_seeds() -> None:
+    """The flag never rides the request as an option: the collector turns it
+    into one initial-noise seed per sample row, equal within a prompt group and
+    distinct across groups, and OFF leaves the request without seeds."""
+    from vrl.rollouts.collector.requests import GenerationRequestBuilder
+
     cfg = OmegaConf.create(
         {
             "model": {"family": "sd3_5"},
@@ -493,5 +498,27 @@ def test_group_shared_noise_reaches_the_request_options() -> None:
 
     rollout = RolloutCollectorConfig.from_root(parse_config(cfg))
 
-    assert rollout.denoise.group_shared_noise is True
+    assert rollout.group_shared_noise is True
     assert "group_shared_noise" not in rollout.request_sampling
+    assert not hasattr(rollout.denoise, "group_shared_noise")
+
+    entry = get_model_family_entry("sd3_5")
+    request = GenerationRequestBuilder(entry=entry, config=rollout).build(["p0", "p1"], 3).request
+    seeds = request.initial_noise_seeds
+    assert seeds is not None and len(seeds) == 6
+    assert len(set(seeds[:3])) == 1 and len(set(seeds[3:])) == 1
+    assert seeds[0] != seeds[3]
+    # Deterministic in the request seed: a resumed run replans the same starts.
+    again = GenerationRequestBuilder(entry=entry, config=rollout).build(
+        ["p0", "p1"], 3, request_overrides={"seed": request.sampling["seed"]}
+    )
+    assert again.request.initial_noise_seeds == seeds
+
+    cfg.rollout.group_shared_noise = False
+    off = RolloutCollectorConfig.from_root(parse_config(cfg))
+    assert (
+        GenerationRequestBuilder(entry=entry, config=off)
+        .build(["p0"], 2)
+        .request.initial_noise_seeds
+        is None
+    )
