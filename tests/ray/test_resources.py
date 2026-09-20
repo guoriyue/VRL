@@ -8,6 +8,7 @@ from omegaconf import OmegaConf
 from vrl.config.schema import parse_config
 from vrl.ray.placement import BundleLayout
 from vrl.ray.resources import (
+    RayLifecyclePlan,
     ResolvedDistributedResources,
     format_distributed_resource_plan,
 )
@@ -1380,10 +1381,10 @@ def test_offload_true_forces_parking_on_a_private_gpu() -> None:
     assert plan.park_trainer_for_reward and plan.park_rollout_for_train
 
 
-def test_offload_false_declares_a_resident_role_and_its_neighbours_skip_parking() -> None:
+def test_resident_reward_does_not_disable_neighbour_parking() -> None:
     """A resident reward on the rollout card (miles' colocated PickScore shape):
-    the reward never parks and rollout no longer parks before scoring, while
-    the trainer/rollout handoff on the shared card is untouched."""
+    the reward never parks, while automatic trainer and rollout roles still
+    park before scoring and retain their mutual handoff."""
     resolved = ResolvedDistributedResources.from_root(
         parse_config(
             _cfg(
@@ -1400,12 +1401,12 @@ def test_offload_false_declares_a_resident_role_and_its_neighbours_skip_parking(
 
     plan = resolved.lifecycle
     assert plan.reward_offload is False and not plan.offload_reward
-    assert not plan.park_rollout_for_reward and not plan.park_trainer_for_reward
+    assert plan.park_rollout_for_reward and plan.park_trainer_for_reward
     assert plan.offload_rollout and plan.offload_train
     assert plan.park_rollout_for_train and plan.park_trainer_for_rollout
 
 
-def test_offload_false_on_a_sharing_role_keeps_both_resident() -> None:
+def test_resident_rollout_keeps_automatic_trainer_parking() -> None:
     resolved = ResolvedDistributedResources.from_root(
         parse_config(
             _cfg(
@@ -1422,7 +1423,7 @@ def test_offload_false_on_a_sharing_role_keeps_both_resident() -> None:
     plan = resolved.lifecycle
     assert resolved.colocated
     assert plan.rollout_mode == "resident"
-    assert not plan.offload_train and not plan.park_trainer_for_rollout
+    assert plan.offload_train and plan.park_trainer_for_rollout
 
 
 def test_offload_true_on_a_gpu_less_role_is_rejected() -> None:
@@ -1459,3 +1460,29 @@ def test_offload_auto_keeps_the_derived_plan() -> None:
     plan = resolved.lifecycle
     assert not (plan.offload_train or plan.offload_rollout or plan.offload_reward)
     assert plan.rollout_mode == "resident"
+
+
+@pytest.mark.parametrize("resident_role", ["trainer", "rollout", "reward"])
+@pytest.mark.parametrize("shared", [False, True])
+def test_auto_offload_depends_on_devices_not_neighbour_setting(resident_role, shared):
+    devices = {"trainer": (0,), "rollout": (0 if shared else 1,), "reward": (0 if shared else 2,)}
+    settings = {
+        "trainer": "train_offload",
+        "rollout": "rollout_offload",
+        "reward": "reward_offload",
+    }
+    plan = RayLifecyclePlan(**devices, **{settings[resident_role]: False})
+    actual = {
+        "trainer": plan.offload_train,
+        "rollout": plan.offload_rollout,
+        "reward": plan.offload_reward,
+    }
+    for role, offloads in actual.items():
+        assert offloads is (shared and role != resident_role)
+    for role, _other, parks in [
+        ("trainer", "rollout", plan.park_trainer_for_rollout),
+        ("rollout", "trainer", plan.park_rollout_for_train),
+        ("trainer", "reward", plan.park_trainer_for_reward),
+        ("rollout", "reward", plan.park_rollout_for_reward),
+    ]:
+        assert parks is (shared and role != resident_role)

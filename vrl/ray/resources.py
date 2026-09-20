@@ -204,11 +204,9 @@ class OffloadConfig:
     ``auto`` (default) offloads a role exactly when it shares a GPU with another
     role, as resolved from the device sets. ``true`` forces a role to park at
     every phase boundary even on a private card (trade time for headroom).
-    ``false`` declares the role resident: it never parks, and its neighbours
-    skip the parks they would do for it, because the operator asserts the two
-    fit on the card together (miles' 0.05-GPU colocated PickScore shape). That
-    assertion is the operator's; a wrong one is a runtime OOM, not a silent
-    reinterpretation by the resolver.
+    ``false`` keeps only that role resident. It does not change another role's
+    offload decision: an automatic neighbour still parks when they share a GPU.
+    A resident role must fit alongside whichever other role is currently active.
     """
 
     train: OffloadSetting = "auto"
@@ -267,8 +265,8 @@ class RayLifecyclePlan:
     happens at; they are finer than the offload bits because a role can share
     with one neighbour but not the other (trainer+rollout on GPU 0, reward on
     GPU 1 parks nothing around scoring). A forced role parks at every boundary;
-    a resident role (``offload.<role>: false``) never parks and its neighbours
-    skip the parks they would do for it.
+    a resident role (``offload.<role>: false``) never parks. Each neighbour
+    independently follows its own setting and physical GPU overlap.
     """
 
     trainer: tuple[int, ...]
@@ -289,11 +287,12 @@ class RayLifecyclePlan:
     def _setting(self, role: str) -> OffloadSetting:
         return getattr(self, self._SETTING_BY_ROLE[role])
 
-    def _shares(self, role: str, other: str) -> bool:
-        """Whether ``role`` and ``other`` overlap AND neither is declared resident."""
+    def _parks_for(self, role: str, other: str) -> bool:
+        """Resolve this role's offload setting at the other role's phase."""
 
-        if self._setting(role) is False or self._setting(other) is False:
-            return False
+        setting = self._setting(role)
+        if setting != "auto":
+            return setting
         return bool(set(getattr(self, role)) & set(getattr(self, other)))
 
     # ── the three offload bits ────────────────────────────────────────
@@ -301,31 +300,19 @@ class RayLifecyclePlan:
     def offload_train(self) -> bool:
         """Trainer parks its model/optimizer while rollout or reward use its GPU."""
 
-        return (
-            self._setting("trainer") is True
-            or self._shares("trainer", "rollout")
-            or self._shares("trainer", "reward")
-        )
+        return self._parks_for("trainer", "rollout") or self._parks_for("trainer", "reward")
 
     @property
     def offload_rollout(self) -> bool:
         """Rollout workers park (CuMem sleep) between phases; ``on_demand`` lease."""
 
-        return (
-            self._setting("rollout") is True
-            or self._shares("rollout", "trainer")
-            or self._shares("rollout", "reward")
-        )
+        return self._parks_for("rollout", "trainer") or self._parks_for("rollout", "reward")
 
     @property
     def offload_reward(self) -> bool:
         """Reward parks after scoring: it sits on someone else's card."""
 
-        return (
-            self._setting("reward") is True
-            or self._shares("reward", "trainer")
-            or self._shares("reward", "rollout")
-        )
+        return self._parks_for("reward", "trainer") or self._parks_for("reward", "rollout")
 
     # ── boundary views ────────────────────────────────────────────────
     @property
@@ -339,19 +326,19 @@ class RayLifecyclePlan:
     def park_trainer_for_rollout(self) -> bool:
         """Trainer parks its state for the generation phase."""
 
-        return self._setting("trainer") is True or self._shares("trainer", "rollout")
+        return self._parks_for("trainer", "rollout")
 
     @property
     def park_rollout_for_train(self) -> bool:
-        return self._setting("rollout") is True or self._shares("rollout", "trainer")
+        return self._parks_for("rollout", "trainer")
 
     @property
     def park_rollout_for_reward(self) -> bool:
-        return self._setting("rollout") is True or self._shares("rollout", "reward")
+        return self._parks_for("rollout", "reward")
 
     @property
     def park_trainer_for_reward(self) -> bool:
-        return self._setting("trainer") is True or self._shares("trainer", "reward")
+        return self._parks_for("trainer", "reward")
 
 
 @dataclass(frozen=True, slots=True)
