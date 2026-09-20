@@ -61,6 +61,7 @@ class ReplayParityConfig:
     """Mandatory unchanged-policy rollout/replay parity threshold."""
 
     max_abs_logprob_diff: float = field(default=0.01)
+    every_update: bool = field(default=False)
 
     def __post_init__(self) -> None:
         limit = float(self.max_abs_logprob_diff)

@@ -246,6 +246,40 @@ class TestDiagnostics:
         assert grad_enabled[0] is False
         assert any(grad_enabled[1:])
 
+    @pytest.mark.parametrize("difference", [0.0, 2.980232238769531e-7, 0.00230485200881958])
+    def test_zero_parity_limit_rejects_even_small_finite_drift(self, tmp_path, difference):
+        """The four-L40S gate must not inherit the default 0.01 tolerance."""
+        from vrl.algorithms.types import InitialReplayStats
+        from vrl.trainers.core.types import ReplayParityConfig
+
+        trainer = _make_parity_boundary_trainer(tmp_path, drop_zero_advantage=False)
+        trainer.config.replay_parity = ReplayParityConfig(max_abs_logprob_diff=0.0)
+        stats = InitialReplayStats(logprob_abs_diff_max=difference, finite=True)
+        if difference:
+            with pytest.raises(RuntimeError, match="replay parity failed"):
+                trainer._validate_first_update_parity(stats, local_weight=1.0)
+            assert trainer._replay_parity_passed is False
+        else:
+            trainer._validate_first_update_parity(stats, local_weight=1.0)
+            assert trainer._replay_parity_passed is True
+
+    def test_every_update_parity_rejects_drift_after_initial_success(self, tmp_path):
+        from vrl.algorithms.types import InitialReplayStats
+        from vrl.trainers.core.types import ReplayParityConfig
+
+        trainer = _make_parity_boundary_trainer(tmp_path, drop_zero_advantage=False)
+        trainer.config.replay_parity = ReplayParityConfig(
+            max_abs_logprob_diff=0.0, every_update=True,
+        )
+        trainer._validate_first_update_parity(
+            InitialReplayStats(logprob_abs_diff_max=0.0, finite=True), local_weight=1.0,
+        )
+        assert trainer._replay_parity_passed
+        with pytest.raises(RuntimeError, match="replay parity failed before optimizer update"):
+            trainer._validate_first_update_parity(
+                InitialReplayStats(logprob_abs_diff_max=1e-12, finite=True), local_weight=1.0,
+            )
+
     def test_replay_parity_passes_only_after_first_measured_update(
         self,
         tmp_path,

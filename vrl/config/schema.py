@@ -510,6 +510,7 @@ class TrainerSection(ConfigBase):
     entrypoint: str | None = None
     output_dir: str | None = None
     total_epochs: StrictInt | None = None
+    max_duration_seconds: StrictInt | None = None
     save_freq: StrictInt | None = None
     seed: StrictInt | None = None
     deterministic: StrictBool | None = None

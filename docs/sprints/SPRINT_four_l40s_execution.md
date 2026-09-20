@@ -4166,3 +4166,15 @@ here before launching.
   min), stage-2 resume (4 GPUs, ~3.5 h, peak host RAM ~354 GB), ck12/ck16 eval
   (3 GPUs, ~1.5 h). Other sessions: `touch /mnt/nvme/outputs/gpu_queue/PAUSE`
   to hold it, or keep a process on a GPU; add your own scripts to pending/.
+
+### 2026-09-18 primary-fill overnight claim
+
+GPUs 0-3 claimed exclusively by `/home/ubuntu/VRL-night-20260918`, candidate
+`3ab166bb`, parent control `8c7fec35`. User requested sequential FSDP SD3.5/Wan
+regressions before full-size random H3 trainer-only preflight. Appendable queue,
+logs, rank results and resource traces: `outputs/overnight_20260918` in that
+worktree. Supervisor `tools/overnight/queue_runner.py`; do not launch competing
+GPU jobs. SD3.5 two-update candidate completed with exact-zero replay drift;
+parent comparison is active. Wan and H3 are gated next. Shared runtime untouched.
+Older `/mnt/nvme` artifacts are absent; temporary models are being reconstructed
+in `/dev/shm/vrl-night-20260918/models`. No NVMe device formatted.

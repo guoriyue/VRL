@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import gc
 import inspect
+import json
 import logging
 import os
 import tempfile
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -75,6 +77,7 @@ from vrl.utils.memory import HostMemoryMonitor
 from vrl.utils.profiling import profile_range
 
 logger = logging.getLogger(__name__)
+_training_clock = time.monotonic
 _host_memory = HostMemoryMonitor(logger=logger)
 
 _RAY_ADDRESS_ENV = "RAY_ADDRESS"
@@ -1187,6 +1190,9 @@ async def run_online_recipe(
             rank=training_context.dp_rank,
             strategy=str(data_config.sampler.type),
         )
+        training_started = _training_clock()
+        completed_epoch = start_epoch
+        stopped_by_duration = False
         for epoch in range(start_epoch, run_config.total_epochs):
             indices = prompt_sampler.sample(epoch=epoch)
             example_batch = [examples[i] for i in indices]
@@ -1221,13 +1227,42 @@ async def run_online_recipe(
             # export inside is a collective under FSDP2 (all ranks all-gather), and
             # save_checkpoint writes files on the primary only. Gating the call to
             # rank0 deadlocks FSDP (rank0 waits at the gather for peers that skipped).
-            if run_config.save_freq > 0 and (epoch + 1) % run_config.save_freq == 0:
-                run.save_checkpoint(output_dir / f"checkpoint-{epoch + 1}", epoch=epoch + 1)
+            completed_epoch = epoch + 1
+            if run_config.save_freq > 0 and completed_epoch % run_config.save_freq == 0:
+                run.save_checkpoint(output_dir / f"checkpoint-{completed_epoch}", epoch=completed_epoch)
+
+            # Finish an update and its checkpoint on every rank before stopping.
+            # Construction/reload time does not count toward the training budget.
+            limit = run_config.max_duration_seconds
+            if limit is not None and strategy.collectives.all_true(
+                _training_clock() - training_started >= limit
+            ):
+                stopped_by_duration = True
+                logger.info(
+                    "Training duration reached at update boundary: seconds=%.3f limit=%s epoch=%s",
+                    _training_clock() - training_started, limit, completed_epoch,
+                )
+                break
 
         # Final checkpoint on EVERY rank too (collective gather inside; rank0 writes).
         run.save_checkpoint(
             output_dir / "checkpoint-final",
-            epoch=run_config.total_epochs,
+            epoch=completed_epoch,
+        )
+
+        duration_record = {
+            "start_epoch": start_epoch,
+            "completed_epoch": completed_epoch,
+            "training_elapsed_seconds": _training_clock() - training_started,
+            "max_duration_seconds": run_config.max_duration_seconds,
+            "stopped_by_duration": stopped_by_duration,
+        }
+        run_on_primary_rank(
+            training_context,
+            lambda: (output_dir / "training_duration.json").write_text(
+                json.dumps(duration_record, indent=2)
+            ),
+            description="training duration evidence",
         )
 
         def seal_completed_loop() -> None:

@@ -226,6 +226,7 @@ class TrainingStateParking(ModelParking):
         super().__init__()
         self.state = state
         self.ema_device = getattr(state.ema, "device", None)
+        self._host_storage_directories = []
 
     def park_training_state(self) -> None:
         import torch
@@ -237,6 +238,19 @@ class TrainingStateParking(ModelParking):
             tensor = next(self.module_tensors(model), None)
             device = state.device if tensor is None else torch.device(tensor.device)
             self.park(model, restore_device=device, preserve_tensor_devices=True)
+            self._map_frozen_host_storage(model)
+        if self._host_storage_directories:
+            # Return freed anonymous CPU copies to the OS after replacing them
+            # with reclaimable file mappings. glibc may otherwise retain GiBs.
+            import ctypes
+            import gc
+
+            gc.collect()
+            trim = getattr(ctypes.CDLL(None), "malloc_trim", None)
+            if trim is not None:
+                trim.argtypes = [ctypes.c_size_t]
+                trim.restype = ctypes.c_int
+                trim(0)
         if state.optimizer is not None:
             # Independent FP32 master parameters and live grads may not belong
             # to the model. The shared ledger deduplicates ordinary parameters.
@@ -254,8 +268,49 @@ class TrainingStateParking(ModelParking):
             for attr in ("_scale", "_growth_tracker", "_per_optimizer_states"):
                 self.park_tensors(getattr(state.grad_scaler, attr, None))
 
+    def _map_frozen_host_storage(self, model: Any) -> None:
+        """Opt-in disk-backed frozen shards; bytes and parameter aliases stay intact.
+
+        Anonymous CPU copies of four trainers plus four dual-expert generators
+        exceed host RAM. Shared file mappings let Linux reclaim inactive frozen
+        shards while generation owns the GPUs. This is storage relocation only.
+        """
+        import os
+        import tempfile
+        from pathlib import Path
+        import torch
+
+        root = os.environ.get("VRL_TRAINER_PARKING_DIRECTORY")
+        if not root:
+            return
+        directory = tempfile.TemporaryDirectory(prefix="trainer-", dir=root)
+        self._host_storage_directories.append(directory)
+        with torch.no_grad():
+            for index, parameter in enumerate(model.parameters()):
+                if parameter.requires_grad:
+                    continue
+                local = getattr(parameter, "_local_tensor", parameter)
+                if local.device.type != "cpu" or not local.is_contiguous():
+                    raise RuntimeError("NVMe parking requires contiguous CPU frozen shards")
+                if local.numel() == 0:
+                    continue
+                mapped = torch.from_file(
+                    str(Path(directory.name) / f"{index}.bin"), shared=True,
+                    size=local.numel(), dtype=local.dtype,
+                ).reshape(local.shape)
+                mapped.copy_(local)
+                if hasattr(parameter, "_local_tensor"):
+                    parameter._local_tensor = mapped
+                else:
+                    parameter.data = mapped
+        # Refresh FSDP's local shard views after replacing only owned storage.
+        ModelParking._move_module(model, torch.device("cpu"))
+
     def restore(self) -> None:
         super().restore()
+        for directory in self._host_storage_directories:
+            directory.cleanup()
+        self._host_storage_directories.clear()
         if self.state.ema is not None and hasattr(self.state.ema, "device"):
             self.state.ema.device = self.ema_device
         empty_cuda_cache()

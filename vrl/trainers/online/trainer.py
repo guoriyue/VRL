@@ -1919,7 +1919,7 @@ class OnlineTrainer:
         *,
         local_weight: float,
     ) -> InitialReplayStats:
-        """Gate this process's first measured exact replay before optimizer.step."""
+        """Gate measured replay before optimizer.step, optionally on every update."""
 
         cfg = self.config
         resolved, has_measurements = _distributed_initial_replay_stats(
@@ -1934,7 +1934,7 @@ class OnlineTrainer:
             or correction.recompute_old_logprob != "off"
         )
         if (
-            self._replay_parity_passed
+            (self._replay_parity_passed and not cfg.replay_parity.every_update)
             or self.evaluator is None
             or not self.algorithm.uses_evaluator
             or intentional_correction
@@ -1962,7 +1962,7 @@ class OnlineTrainer:
             append_jsonl_record(f"{cfg.output_dir}/training_debug.jsonl", record)
         if not passed:
             raise RuntimeError(
-                "replay parity failed before this process's first optimizer update: "
+                "replay parity failed before optimizer update: "
                 f"finite={resolved.finite}, "
                 f"max_abs_diff={resolved.logprob_abs_diff_max:.6g}, "
                 f"limit={limit:.6g}. The first-sample probe is insufficient; "

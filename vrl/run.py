@@ -68,9 +68,12 @@ class OnlineRunConfig:
     save_freq: int = 50
     seed: int = 0
     deterministic: bool = False
+    max_duration_seconds: int | None = None
 
     def __post_init__(self) -> None:
         require_int(self.total_epochs, path="trainer.total_epochs", minimum=0)
+        if self.max_duration_seconds is not None:
+            require_int(self.max_duration_seconds, path="trainer.max_duration_seconds", minimum=1)
         require_int(self.save_freq, path="trainer.save_freq", minimum=0)
         require_int(self.seed, path="trainer.seed")
         if not -(2**63) <= self.seed < 2**64:
@@ -85,6 +88,8 @@ class OnlineRunConfig:
         if total_epochs is None:
             raise ValueError("config missing required key: trainer.total_epochs")
         values: dict[str, Any] = {"total_epochs": total_epochs}
+        if trainer.max_duration_seconds is not None:
+            values["max_duration_seconds"] = trainer.max_duration_seconds
         if trainer.save_freq is not None:
             values["save_freq"] = trainer.save_freq
         if trainer.seed is not None:

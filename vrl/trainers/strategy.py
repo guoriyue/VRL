@@ -915,10 +915,21 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         self.collectives.coordination_barrier()
 
         failure: BaseException | None = None
-        try:
-            self._park_training_state_locally(state)
-        except BaseException as error:
-            failure = error
+        import os
+
+        # File-backed parking first creates a temporary anonymous CPU copy.
+        # Avoid multiplying that peak by world size while rollout actors are
+        # asleep in host RAM. The move is local; all peers still participate in
+        # every barrier, including after a local failure.
+        serialized = bool(os.environ.get("VRL_TRAINER_PARKING_DIRECTORY"))
+        for owner in range(self.context.world_size if serialized else 1):
+            if not serialized or self.context.rank == owner:
+                try:
+                    self._park_training_state_locally(state)
+                except BaseException as error:
+                    failure = error
+            if serialized:
+                self.collectives.coordination_barrier()
         if not self.collectives.succeeded(failure is None):
             if failure is None:
                 # A peer failed while this rank parked cleanly. Undo locally so

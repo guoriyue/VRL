@@ -73,8 +73,10 @@ algorithm:
   # half the batch gated on noise — and the inherited 1e-4 (from
   # recipe/online/denoise_grpo.yaml, which shadows the FlashGRPOConfig
   # dataclass default) left it at 0.78. 1e-2 is 5x the observed max drift and
-  # still an order of magnitude under trainer.debug.max_abs_logprob_diff, the
-  # gate that catches a genuinely broken replay.
+  # retained here as the historical PPO clipping setting, not a parity
+  # tolerance. Exact replay acceptance below rejects any pre-update drift.
+  # BF16 trajectory storage was subsequently shown to contribute ~1.95e-3
+  # even with identical predictions; compilation is not the sole cause.
   # Watch pre_update_clip_fraction on update 1: it must be near zero.
   clip_ratio: 1.0e-2
   kl_coef: 0.0            # reference: no KL term; clip_ratio is the rail
@@ -158,6 +160,10 @@ reward:
         local_files_only: true
 
 trainer:
+  # Four-L40S acceptance requires exact unchanged-policy parity. Enforce it
+  # before optimizer.step, not only in an external post-run receipt check.
+  replay_parity:
+    max_abs_logprob_diff: 0.0
   output_dir: outputs/wan_hpsv3_flash_grpo/fsdp_run
   # The paper trains until manually stopped; stop on eval-sample quality, not
   # the curve (the reward has no temporal term).

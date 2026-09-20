@@ -1153,3 +1153,24 @@ async def test_process_seed_is_applied_before_actual_model_build(monkeypatch, tm
         assert torch.equal(observed[0], observed[1])
     finally:
         restore_rng_state(previous)
+
+
+@pytest.mark.asyncio
+async def test_duration_stop_saves_actual_completed_epoch(monkeypatch, tmp_path):
+    run = _RealRun(monkeypatch, tmp_path, overrides=(
+        "trainer.total_epochs=100", "trainer.max_duration_seconds=10", "trainer.save_freq=1",
+    ))
+    state = _state()
+    _install_ray_side_fakes(monkeypatch, tmp_path, state)
+    monkeypatch.setattr(online, "_training_clock", lambda: state["trainer_steps"] * 20.0)
+    saved = []
+    monkeypatch.setattr(online.OnlineRecipeRun, "save_checkpoint",
+                        lambda self, path, *, epoch: saved.append((path.name, epoch)))
+    await online.run_online_recipe(run.cfg)
+    assert state["trainer_steps"] == 1
+    assert saved == [("checkpoint-1", 1), ("checkpoint-final", 1)]
+    record = json.loads((run.output_dir / "training_duration.json").read_text())
+    assert record["stopped_by_duration"] is True
+    assert record["completed_epoch"] == 1
+    assert record["training_elapsed_seconds"] == 20
+    assert state["schedule_shutdowns"] == 1
