@@ -490,6 +490,9 @@ class ActorSection(ConfigBase):
     # training_microbatch_size separately splits samples within each prompt group.
     prompts_per_collection: StrictInt | None = None
     training_microbatch_size: StrictInt | None = None
+    # Optimizer steps taken on one collected batch: the samples are shuffled and
+    # split into this many disjoint updates after ONE advantage computation.
+    optimizer_steps_per_batch: StrictInt | None = None
     host_memory_budget_fraction: float | None = None
     # reader: vrl/trainers/activation_checkpointing.py (bool: true=full, false=off)
     gradient_checkpointing: Literal["off", "full", "full_cpu", "selective"] | StrictBool | None = (

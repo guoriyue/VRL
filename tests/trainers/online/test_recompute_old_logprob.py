@@ -11,10 +11,18 @@ from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.trainers.online.trainer import OnlineTrainer
 
 
-def _config(*, ppo_epochs: int, schedule_mode: str, max_stale: int, mode: str = "on"):
+def _config(
+    *,
+    ppo_epochs: int,
+    schedule_mode: str,
+    max_stale: int,
+    mode: str = "on",
+    optimizer_steps_per_batch: int = 1,
+):
     return SimpleNamespace(
         precision_correction=PrecisionCorrectionConfig(recompute_old_logprob=mode),
         ppo_epochs=ppo_epochs,
+        batch_plan=SimpleNamespace(optimizer_steps_per_batch=optimizer_steps_per_batch),
         rollout_orchestration=SimpleNamespace(
             schedule_mode=schedule_mode,
             continuous=SimpleNamespace(max_stale_policy_versions=max_stale),
@@ -32,6 +40,19 @@ def test_multiple_ppo_epochs_are_refused() -> None:
     with pytest.raises(ValueError, match="ppo_epochs=2"):
         OnlineTrainer._validate_recompute_old_logprob(
             _config(ppo_epochs=2, schedule_mode="strict_on_policy", max_stale=0)
+        )
+
+
+def test_several_optimizer_steps_per_batch_are_refused() -> None:
+    """The second update of a batch replays under weights the first one moved."""
+    with pytest.raises(ValueError, match="optimizer_steps_per_batch=2"):
+        OnlineTrainer._validate_recompute_old_logprob(
+            _config(
+                ppo_epochs=1,
+                schedule_mode="strict_on_policy",
+                max_stale=0,
+                optimizer_steps_per_batch=2,
+            )
         )
 
 

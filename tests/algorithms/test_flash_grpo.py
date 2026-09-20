@@ -98,6 +98,26 @@ def _input(signals: TrajectorySignalBatch, advantages: torch.Tensor) -> Algorith
     return AlgorithmInput(rewards=None, group_ids=None, advantages=advantages, signals=signals)
 
 
+class _Wan20Scheduler:
+    """The 20-step shift-3 table with the timestep lookup ``prepare_update`` reads."""
+
+    def __init__(self) -> None:
+        self.sigmas = _wan20_sigmas()
+        self.timesteps = self.sigmas[:-1] * 1000
+
+    def index_for_timestep(self, timestep: torch.Tensor) -> int:
+        return int((self.timesteps == timestep).nonzero().item())
+
+
+def _prepared(steps: list[int]) -> FlashGRPO:
+    """A FlashGRPO whose update-wide denominator covers exactly ``steps``."""
+
+    scheduler = _Wan20Scheduler()
+    algorithm = FlashGRPO()
+    algorithm.prepare_update(scheduler.timesteps[steps], scheduler=scheduler)
+    return algorithm
+
+
 # ------------------------------------------------------- rectification parity
 
 
@@ -110,7 +130,7 @@ def test_rectification_weight_matches_reference_table() -> None:
     """
 
     std, dt, sigma = _sde_intermediates(list(range(10)))
-    weight = FlashGRPO()._loss_weight(
+    weight = _prepared(list(range(10)))._loss_weight(
         _signals(10, std_dev_t=std, dt=dt, sigma=sigma).primary,
     )
 
@@ -125,7 +145,7 @@ def test_earlier_noisier_steps_get_larger_weight() -> None:
     # coe decreases monotonically over the window: early high-noise steps have
     # the SMALLEST log-prob gradients, so rectification weights them UP.
     std, dt, sigma = _sde_intermediates(list(range(10)))
-    weight = FlashGRPO()._loss_weight(
+    weight = _prepared(list(range(10)))._loss_weight(
         _signals(10, std_dev_t=std, dt=dt, sigma=sigma).primary,
     )
     assert torch.all(weight[:-1] > weight[1:])
@@ -134,7 +154,7 @@ def test_earlier_noisier_steps_get_larger_weight() -> None:
 
 def test_weight_is_mean_one_so_effective_lr_is_unchanged() -> None:
     std, dt, sigma = _sde_intermediates([0, 3, 6, 9])
-    weight = FlashGRPO()._loss_weight(
+    weight = _prepared([0, 3, 6, 9])._loss_weight(
         _signals(4, std_dev_t=std, dt=dt, sigma=sigma).primary,
     )
     assert weight.mean().item() == pytest.approx(1.0, rel=1e-6)
@@ -148,7 +168,7 @@ def test_on_policy_unit_advantages_give_loss_minus_one() -> None:
     # rectification redistributes gradient across timesteps without changing
     # the loss scale.
     std, dt, sigma = _sde_intermediates([0, 3, 6, 9])
-    loss, metrics = FlashGRPO().compute_loss(
+    loss, metrics = _prepared([0, 3, 6, 9]).compute_loss(
         _input(_signals(4, std_dev_t=std, dt=dt, sigma=sigma), torch.ones(4)),
     )
     assert float(loss) == pytest.approx(-1.0, rel=1e-6)
@@ -160,15 +180,61 @@ def test_one_hot_advantage_exposes_the_per_step_weight() -> None:
     # must exceed the late step's by the table ratio (~1.98x over the window).
     std, dt, sigma = _sde_intermediates(list(range(10)))
     sig = _signals(10, std_dev_t=std, dt=dt, sigma=sigma)
+    algorithm = _prepared(list(range(10)))
 
     def loss_with_advantage_at(index: int) -> float:
         advantages = torch.zeros(10)
         advantages[index] = 1.0
-        loss, _ = FlashGRPO().compute_loss(_input(sig, advantages))
+        loss, _ = algorithm.compute_loss(_input(sig, advantages))
         return float(loss)
 
     ratio = loss_with_advantage_at(0) / loss_with_advantage_at(9)
     assert ratio == pytest.approx(_REFERENCE_COE[0] / _REFERENCE_COE[9], rel=5e-3)
+
+
+def test_update_denominator_is_shared_by_every_microbatch_split() -> None:
+    """The reference divides every microbatch of an accumulation window by the
+    same ``value_norm``; a sample's weight must not depend on how the update is
+    cut into microbatches, only on the update's timestep population."""
+    steps = list(range(10))
+    std, dt, sigma = _sde_intermediates(steps)
+    algorithm = _prepared(steps)
+    whole = algorithm._loss_weight(_signals(10, std_dev_t=std, dt=dt, sigma=sigma).primary)
+    pieces = torch.cat(
+        [
+            algorithm._loss_weight(
+                _signals(
+                    stop - start,
+                    std_dev_t=std[start:stop],
+                    dt=dt[start:stop],
+                    sigma=sigma[start:stop],
+                ).primary
+            )
+            for start, stop in ((0, 3), (3, 7), (7, 10))
+        ]
+    )
+    torch.testing.assert_close(pieces, whole)
+    # Normalized over the update, not the microbatch: a 3-sample piece does
+    # NOT average to 1 on its own, the whole update does.
+    assert pieces[:3].mean().item() != pytest.approx(1.0, rel=1e-3)
+    assert whole.mean().item() == pytest.approx(1.0, rel=1e-6)
+
+
+def test_update_denominator_is_the_reference_value_norm() -> None:
+    """``1/value_norm`` of the reference is ``1/mean(coe)`` over the update: an
+    update trained only on the two extreme steps normalizes by their mean."""
+    std, dt, sigma = _sde_intermediates([0, 9])
+    weight = _prepared([0, 9])._loss_weight(
+        _signals(2, std_dev_t=std, dt=dt, sigma=sigma).primary,
+    )
+    table = torch.tensor([_REFERENCE_COE[0], _REFERENCE_COE[9]])
+    assert torch.allclose(weight, (table / table.mean()).float(), rtol=2e-3)
+
+
+def test_loss_weight_requires_the_update_denominator() -> None:
+    std, dt, sigma = _sde_intermediates([0, 1])
+    with pytest.raises(RuntimeError, match="prepare_update"):
+        FlashGRPO()._loss_weight(_signals(2, std_dev_t=std, dt=dt, sigma=sigma).primary)
 
 
 def test_missing_sigma_fails_fast() -> None:

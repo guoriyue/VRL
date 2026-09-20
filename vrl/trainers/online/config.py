@@ -33,6 +33,11 @@ class OnlineBatchPlan:
     prompts_per_collection: int = 0
     # Samples per training computation within one prompt group; zero keeps it whole.
     training_microbatch_size: int = 1
+    # Optimizer updates per collected batch. Advantages (and a global std) are
+    # computed once over the whole batch; its samples are then shuffled and split
+    # into this many disjoint updates, each stepping the optimizer (Flash-GRPO's
+    # reference trains one epoch of samples as two accumulation windows).
+    optimizer_steps_per_batch: int = 1
     host_memory_budget_fraction: float = 0.0
 
     @classmethod
@@ -68,6 +73,7 @@ class OnlineBatchPlan:
         for name in (
             "prompts_per_collection",
             "training_microbatch_size",
+            "optimizer_steps_per_batch",
             "host_memory_budget_fraction",
         ):
             value = None if actor is None else getattr(actor, name)
@@ -100,6 +106,18 @@ class OnlineBatchPlan:
             raise ValueError(
                 "actor.prompts_per_collection must evenly divide "
                 f"rollout.prompts_per_batch ({prompts} % {collection_prompts} != 0)",
+            )
+        optimizer_steps = require_int(
+            self.optimizer_steps_per_batch,
+            path="actor.optimizer_steps_per_batch",
+            minimum=1,
+        )
+        if optimizer_steps > 1 and collection_prompts > 0:
+            raise ValueError(
+                "actor.optimizer_steps_per_batch>1 splits one collected batch into "
+                "several updates, which needs the full-batch path; streaming "
+                "accumulation (prompts_per_collection>0) releases each collection "
+                f"after one update (got optimizer_steps_per_batch={optimizer_steps})",
             )
 
         budget = self.host_memory_budget_fraction
@@ -308,6 +326,13 @@ class TrainerConfig:
                 "from the rollout's recorded stochastic window; "
                 f"actor.timestep_fraction={self.timestep_fraction} would be "
                 "silently ignored — leave it at 1.0",
+            )
+        if self.ema.step_per_microbatch and self.batch_plan.collections_per_update > 1:
+            raise ValueError(
+                "actor.ema.step_per_microbatch steps the shadow after every replay "
+                "microbatch and once more after the optimizer step, which needs the "
+                "update's last microbatch to be known: collect the update in one "
+                "collection (prompts_per_collection=0 or =prompts_per_batch)",
             )
         if self.batch_plan.streaming and int(self.ppo_epochs) != 1:
             raise ValueError(

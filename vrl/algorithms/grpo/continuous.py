@@ -85,7 +85,7 @@ class GRPO:
     """Group Relative Policy Optimization for continuous rollout signals.
 
     Advantages are normalised within each prompt group:
-        a_i = (r_i - mean(r)) / max(std(r), eps)
+        a_i = (r_i - mean(r)) / (std(r) + eps)
 
     Loss is the clipped surrogate objective (PPO-style) applied to
     per-sample log-probabilities produced by the evaluator.
@@ -364,23 +364,68 @@ class FlashGRPO(GRPO):
        the reference implementation's hardcoded per-timestep table
        {999: 7.4770 ... 785: 3.7754} on the Wan 20-step shift-3 schedule to
        0.1%). The loss weight is ``w_i = (1/c_i) / mean(1/c)`` with the mean
-       reduced across ranks, so per-timestep gradient magnitudes equalize
-       while the effective learning rate is untouched (batch-mean weight = 1).
+       taken over EVERY sample of the optimizer update, across ranks, so
+       per-timestep gradient magnitudes equalize while the effective learning
+       rate is untouched (update-mean weight = 1).
 
-    The cross-rank mean matches the reference's gradient_accumulation==1
-    branch (per-microbatch all-reduced mean); the reference's accumulation
-    branch normalizes over the whole update window instead — same expectation,
-    slightly different variance.
+    The update-wide mean is the reference's gradient-accumulation branch
+    (``value_norm_list``: one denominator per accumulation window shared by all
+    its microbatches). The trainer supplies it through ``prepare_update`` from
+    the recorded timesteps before the first backward, so the weight of a
+    sample does not depend on how the update is split into microbatches.
+    Under streaming accumulation the trainer can only see one collection at a
+    time, so the denominator then spans that collection: exact parity needs
+    the full-batch path (or one collection per update).
     """
 
     # Rectification reads std_dev_t / dt from the SDE intermediates, exactly
     # like the trust-region subclasses.
     needs_kl_intermediates = True
 
+    def __init__(
+        self,
+        config: FlashGRPOConfig | None = None,
+        *,
+        advantage_estimator: GroupAdvantageEstimator | None = None,
+    ) -> None:
+        super().__init__(config or FlashGRPOConfig(), advantage_estimator=advantage_estimator)
+        self._update_coe_mean: Any | None = None
+
+    def prepare_update(
+        self,
+        timesteps: Any,
+        *,
+        scheduler: Any,
+        noise_level: float = 1.0,
+        sde_type: str = "flow_grpo",
+    ) -> None:
+        """Fix the update's rectification denominator from its recorded timesteps.
+
+        ``timesteps`` holds one entry per (sample, trained step) of the whole
+        optimizer update on this rank; the mean of ``1/c`` is reduced across
+        ranks so every microbatch of every rank divides by the same number.
+        """
+
+        from vrl.math.denoise.flow_matching import flow_sde_scale_terms
+
+        sigma, sqrt_neg_dt, std = flow_sde_scale_terms(
+            scheduler,
+            timesteps,
+            noise_level=noise_level,
+            sde_type=sde_type,
+        )
+        coe = 1.0 / rectification_scale(std.float(), sqrt_neg_dt.float(), sigma.float())
+        self._update_coe_mean = _cross_rank_mean(coe).clamp_min(1e-12)
+
     def _loss_weight(self, signals: Any) -> Any:
         import torch
 
         _require_rectification_signals(signals, "FlashGRPO")
+        if self._update_coe_mean is None:
+            raise RuntimeError(
+                "FlashGRPO.prepare_update must run before the update's first loss: the "
+                "rectification weight is normalized over the whole optimizer update",
+            )
 
         def _per_sample(value: Any) -> Any:
             tensor = torch.as_tensor(value)
@@ -390,10 +435,22 @@ class FlashGRPO(GRPO):
 
         std = _per_sample(signals.std_dev_t).float()
         sqrt_neg_dt = _per_sample(signals.dt).float()
-        sigma = _per_sample(signals.sigma).float().clamp_min(1e-6)
-        grad_scale = sqrt_neg_dt / std + std * sqrt_neg_dt * (1 - sigma) / (2 * sigma)
-        coe = 1.0 / grad_scale.clamp_min(1e-12)
-        return coe / _cross_rank_mean(coe).clamp_min(1e-12)
+        sigma = _per_sample(signals.sigma).float()
+        coe = 1.0 / rectification_scale(std, sqrt_neg_dt, sigma)
+        return coe / self._update_coe_mean.to(device=coe.device, dtype=coe.dtype)
+
+
+def rectification_scale(std: Any, sqrt_neg_dt: Any, sigma: Any) -> Any:
+    """Flash-GRPO's log-prob gradient magnitude ``c(t)`` for one SDE transition.
+
+    ``c = sqrt(-dt)/std + std*sqrt(-dt)*(1-sigma)/(2*sigma)``; the loss weight
+    is ``1/c``. One definition serves both the per-sample weight (from the
+    evaluator's SDE intermediates) and the update-wide denominator (from the
+    recorded timesteps), so the two cannot drift apart.
+    """
+
+    sigma = sigma.clamp_min(1e-6)
+    return (sqrt_neg_dt / std + std * sqrt_neg_dt * (1 - sigma) / (2 * sigma)).clamp_min(1e-12)
 
 
 def _require_rectification_signals(signals: Any, algorithm: str) -> None:

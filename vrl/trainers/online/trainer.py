@@ -637,12 +637,16 @@ class OnlineTrainer:
             if orchestration.schedule_mode == "continuous"
             else 0
         )
-        if int(config.ppo_epochs) > 1 or max_stale > 0:
+        optimizer_steps = int(
+            getattr(getattr(config, "batch_plan", None), "optimizer_steps_per_batch", 1)
+        )
+        if int(config.ppo_epochs) > 1 or optimizer_steps > 1 or max_stale > 0:
             raise ValueError(
                 "precision_correction.recompute_old_logprob='on' replaces the rollout "
                 "log-prob with the trainer's pre-update replay log-prob, which is only "
-                "the behavior policy under actor.ppo_epochs=1 and no continuous "
-                f"staleness; got ppo_epochs={int(config.ppo_epochs)}, "
+                "the behavior policy under actor.ppo_epochs=1, one optimizer step per "
+                f"batch and no continuous staleness; got ppo_epochs={int(config.ppo_epochs)}, "
+                f"optimizer_steps_per_batch={optimizer_steps}, "
                 f"max_stale_policy_versions={max_stale}. Use 'off' (bypass) with the "
                 "drift guard + TIS/RS for off-policy replay.",
             )
@@ -671,7 +675,11 @@ class OnlineTrainer:
             if schedule_mode == "continuous"
             else 0
         )
-        if int(cfg.ppo_epochs) <= 1 and max_stale <= 0:
+        if (
+            int(cfg.ppo_epochs) <= 1
+            and int(cfg.batch_plan.optimizer_steps_per_batch) <= 1
+            and max_stale <= 0
+        ):
             raise ValueError(
                 f"{type(self.algorithm).__name__} is defined by its importance-ratio "
                 "trust region, but the rollout schedule permits no behavior-policy "
@@ -1177,6 +1185,38 @@ class OnlineTrainer:
             selection,
         )
 
+    def _update_timesteps(
+        self,
+        batches: list[RolloutBatch],
+        default_indices: list[int],
+        selection: str,
+    ) -> torch.Tensor:
+        """Recorded timestep of every (sample, trained step) pair in ``batches``.
+
+        The per-batch trained steps follow the same rule as the replay loop
+        (``sde_window`` reads each group's window; other selections share
+        ``default_indices``), so the tensor enumerates exactly the transitions
+        the update will put loss on.
+        """
+
+        from vrl.trajectory.reader import TrajectoryReader
+
+        columns: list[torch.Tensor] = []
+        for batch in batches:
+            indices = (
+                self._sde_window_indices(batch) if selection == "sde_window" else default_indices
+            )
+            timesteps = TrajectoryReader.from_batch(batch).replay_tensor_dict("denoise")[
+                "timesteps"
+            ]
+            if timesteps.ndim == 1:
+                timesteps = timesteps.unsqueeze(1)
+            for index in indices:
+                columns.append(timesteps[:, index].reshape(-1))
+        if not columns:
+            return torch.zeros(0)
+        return torch.cat(columns)
+
     @staticmethod
     def _sde_window_indices(batch: RolloutBatch) -> list[int]:
         """Replay indices from the trajectory's recorded stochastic window.
@@ -1265,6 +1305,7 @@ class OnlineTrainer:
         capture_initial_replay: bool,
         defer_replay_tensors: bool,
         timer: PhaseTimer | None = None,
+        ema_per_microbatch: EMAWeights | None = None,
     ) -> None:
         """One replay/backward sweep over the update's sample batches.
 
@@ -1273,17 +1314,35 @@ class OnlineTrainer:
         (the all-filtered initial_replay crash), so the sweep lives here and
         the callers keep only their own orchestration. Both paths pass their
         batch profiler so replay and backward timings share the same boundary.
+
+        ``ema_per_microbatch`` reproduces the reference loop's shadow stepping:
+        the shadow steps after every microbatch but the last, at the current
+        optimizer-step counter; the caller steps it once more after the
+        optimizer step with the advanced counter (``EMAConfig.step_per_microbatch``).
         """
 
         cfg = self.config
         loss_scale = int(total_groups) * len(train_indices)
         training_microbatch_size = cfg.batch_plan.training_microbatch_size
-        for sample_batch in _TrainingMicrobatch.plan_balanced(
+        # An objective whose per-sample weight is normalized over the update
+        # (Flash-GRPO's rectification) fixes its denominator here, from the
+        # recorded timesteps of every sample it is about to train on, before
+        # the first replay forward.
+        prepare_update = getattr(self.algorithm, "prepare_update", None)
+        if callable(prepare_update):
+            prepare_update(
+                self._update_timesteps(batches, train_indices, cfg.timestep_selection),
+                scheduler=self.evaluator.scheduler,
+                noise_level=getattr(self.evaluator, "noise_level", 1.0),
+                sde_type=getattr(self.evaluator, "sde_type", "flow_grpo"),
+            )
+        sample_batches = _TrainingMicrobatch.plan_balanced(
             batches,
             advantages,
             training_microbatch_size,
             self._strategy,
-        ):
+        )
+        for position, sample_batch in enumerate(sample_batches):
             group_batch = sample_batch.batch.to_device(
                 self.device,
                 defer_replay_tensors=defer_replay_tensors,
@@ -1319,6 +1378,65 @@ class OnlineTrainer:
                         weight=sample_batch.loss_weight,
                         capture_initial_replay=capture_initial_replay,
                     )
+            if ema_per_microbatch is not None and position + 1 < len(sample_batches):
+                trainable = [p for p in self.model.parameters() if p.requires_grad]
+                ema_per_microbatch.step(trainable, self.state.global_step)
+
+    def _ema_after_optimizer_step(self, ema: EMAWeights | None) -> None:
+        """Step the EMA shadow for one completed optimizer step.
+
+        Default: one step at the counter of the update just taken. Reference
+        microbatch stepping instead advances the counter first — the reference
+        increments ``global_step`` on gradient sync and then steps the shadow
+        for the update's last microbatch — so the final lerp of the update
+        reads the next counter.
+        """
+
+        if ema is None:
+            return
+        trainable = [p for p in self.model.parameters() if p.requires_grad]
+        if self.config.ema.step_per_microbatch:
+            ema.step(trainable, self.state.global_step + 1)
+        else:
+            ema.step(trainable, self.state.global_step)
+
+    def _optimizer_step_chunks(
+        self,
+        batches: list[RolloutBatch],
+        advantages: list[torch.Tensor],
+        steps: int,
+    ) -> list[tuple[list[RolloutBatch], list[torch.Tensor]]]:
+        """Split one collected batch into ``steps`` disjoint optimizer updates.
+
+        Samples are shuffled within each prompt group and dealt across the
+        updates (the reference shuffles the epoch's samples before cutting it
+        into accumulation windows), so a group's advantage — already computed
+        over the whole batch — feeds every update and no rank runs an update
+        without samples. The permutation is seeded from the optimizer-step
+        counter and rank, so a resumed run deals the same way.
+        """
+
+        if steps <= 1:
+            return [(batches, advantages)]
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(
+            (int(self.state.global_step) * 1_000_003 + int(self._strategy.context.rank))
+            & 0x7FFFFFFF,
+        )
+        chunks: list[tuple[list[RolloutBatch], list[torch.Tensor]]] = [
+            ([], []) for _ in range(steps)
+        ]
+        for batch, adv in zip(batches, advantages, strict=True):
+            count = int(batch.rewards.shape[0])
+            permutation = torch.randperm(count, generator=generator)
+            for (chunk_batches, chunk_advs), selector in zip(
+                chunks, torch.tensor_split(permutation, steps), strict=True
+            ):
+                if selector.numel() == 0:
+                    continue
+                chunk_batches.append(batch.select(selector.to(batch.rewards.device)))
+                chunk_advs.append(adv[selector.to(adv.device)])
+        return chunks
 
     def backward_on_training_batch(
         self,
@@ -1373,6 +1491,7 @@ class OnlineTrainer:
             capture_initial_replay=True,
             defer_replay_tensors=defer,
             timer=batch.timer,
+            ema_per_microbatch=(self._update_ema if self.config.ema.step_per_microbatch else None),
         )
 
     async def finish_optimizer_update(
@@ -1411,9 +1530,7 @@ class OnlineTrainer:
                 after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
                 if callable(after_optimizer_step):
                     after_optimizer_step(self.model, self.state.global_step)
-                if self._update_ema is not None:
-                    trainable = [p for p in self.model.parameters() if p.requires_grad]
-                    self._update_ema.step(trainable, self.state.global_step)
+                self._ema_after_optimizer_step(self._update_ema)
             self.state.global_step += 1
             if stepped:
                 sync_stats = await self.rollout_schedule.after_train_step()
@@ -1695,47 +1812,54 @@ class OnlineTrainer:
 
         initial_replay = InitialReplayStats()
         policy_updated = False
+        ema_per_microbatch = ema if cfg.ema.step_per_microbatch else None
         for _ppo_epoch in range(cfg.ppo_epochs):
             # ``train_on_rollout_batch`` receives one already-collected optimizer
             # target batch. Streaming accumulation is owned by the recipe and
             # calls begin/backward/finish instead; interpreting the same count
             # again here would turn one target batch into several optimizer steps.
-            capture_initial_replay = _ppo_epoch == 0
-            self._run_replay_pass(
+            # ``optimizer_steps_per_batch`` deals the batch's samples into that
+            # many disjoint updates, each with its own optimizer step.
+            chunks = self._optimizer_step_chunks(
                 filtered_batches,
                 filtered_advs,
-                total_groups=len(filtered_batches),
-                train_indices=train_indices,
-                algorithm_adapter=algorithm_adapter,
-                agg=agg_metrics,
-                capture_initial_replay=capture_initial_replay,
-                defer_replay_tensors=defer_replay_tensor_move,
-                timer=timer,
+                cfg.batch_plan.optimizer_steps_per_batch,
             )
+            for chunk_index, (chunk_batches, chunk_advs) in enumerate(chunks):
+                capture_initial_replay = _ppo_epoch == 0 and chunk_index == 0
+                self._run_replay_pass(
+                    chunk_batches,
+                    chunk_advs,
+                    total_groups=len(chunk_batches),
+                    train_indices=train_indices,
+                    algorithm_adapter=algorithm_adapter,
+                    agg=agg_metrics,
+                    capture_initial_replay=capture_initial_replay,
+                    defer_replay_tensors=defer_replay_tensor_move,
+                    timer=timer,
+                    ema_per_microbatch=ema_per_microbatch,
+                )
 
-            with timer.time("optim_step"):
-                if capture_initial_replay:
-                    local_initial, local_weight = agg_metrics.initial_replay_snapshot()
-                    initial_replay = self._validate_first_update_parity(
-                        local_initial,
-                        local_weight=local_weight,
-                    )
-                _gn, _stepped = self._clip_and_step(optimizer)
-                agg_metrics.grad_norms.append(_gn)
+                with timer.time("optim_step"):
+                    if capture_initial_replay:
+                        local_initial, local_weight = agg_metrics.initial_replay_snapshot()
+                        initial_replay = self._validate_first_update_parity(
+                            local_initial,
+                            local_weight=local_weight,
+                        )
+                    _gn, _stepped = self._clip_and_step(optimizer)
+                    agg_metrics.grad_norms.append(_gn)
 
-            # A scaler-skipped step (inf/nan grads) left the weights unchanged —
-            # do not fold a non-update into EMA or the algorithm adapter.
-            if _stepped:
-                policy_updated = True
-                after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
-                if callable(after_optimizer_step):
-                    after_optimizer_step(self.model, self.state.global_step)
+                # A scaler-skipped step (inf/nan grads) left the weights unchanged —
+                # do not fold a non-update into EMA or the algorithm adapter.
+                if _stepped:
+                    policy_updated = True
+                    after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
+                    if callable(after_optimizer_step):
+                        after_optimizer_step(self.model, self.state.global_step)
+                    self._ema_after_optimizer_step(ema)
 
-                if ema is not None:
-                    trainable = [p for p in self.model.parameters() if p.requires_grad]
-                    ema.step(trainable, self.state.global_step)
-
-            self.state.global_step += 1
+                self.state.global_step += 1
 
         # collect.* phase timings arrive inside iteration.stats: each collect
         # call owns its timings (no shared collector state), and the

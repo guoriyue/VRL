@@ -46,6 +46,14 @@ class EMAConfig:
     enable: bool = field(default=False)
     decay: float = field(default=0.9999)
     update_interval: int = field(default=1)
+    # Flash-GRPO's reference loop calls ``ema.step`` after EVERY replay
+    # microbatch (not once per optimizer step), with the optimizer-step counter
+    # already advanced for the update's last microbatch. On an update whose
+    # counter passes the interval gate that is (microbatches - 1) lerps at the
+    # same decay followed by one at the next counter — with decay 0.9 and 24
+    # microbatches, effectively a copy of the live weights every
+    # ``update_interval`` updates. Off, the shadow steps once per optimizer step.
+    step_per_microbatch: bool = field(default=False)
 
 
 @dataclass(slots=True)
