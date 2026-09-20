@@ -23,7 +23,6 @@ from vrl.utils.logging import init_logger
 
 if TYPE_CHECKING:
     from vrl.generation.protocols import GenerationBatchExecutor
-    from vrl.models.families.registry import GenerationParkingProfile
 
 logger = init_logger(__name__)
 
@@ -56,6 +55,13 @@ def _log_parking_diagnostics(model: Any, *, worker_id: str) -> None:
         logger.exception("parking diagnostics unavailable: worker=%s", worker_id)
 
 
+def _resident_on_cuda(model: Any) -> bool:
+    """Whether the built model holds its weights on a CUDA device."""
+
+    device = getattr(model, "device", None)
+    return device is not None and str(device).startswith("cuda")
+
+
 class _ParkingPhase(Enum):
     ACTIVE = "active"
     PARKED = "parked"
@@ -69,13 +75,15 @@ _ParkingBackend = ModelParking | CumemPool
 @dataclass(frozen=True, slots=True)
 class _ParkingPlan:
     required: bool
-    profile: GenerationParkingProfile
+    # rollout.pipeline_offload_mode != "none": Accelerate already owns the
+    # model's residency, so the worker must not claim a CuMem scope around it.
+    pipeline_offload: bool
 
 
 @dataclass(slots=True)
 class _ParkingSession:
     required: bool
-    profile: GenerationParkingProfile
+    pipeline_offload: bool
     baseline_gpu_used_bytes: int | None
     backend: _ParkingBackend
 
@@ -100,15 +108,6 @@ class WorkerMemoryParking:
             raise TypeError(
                 "worker memory parking requires a GenerationRuntimeLaunchContract",
             )
-        from vrl.models.families.registry import (
-            GenerationParkingProfile,
-            get_model_family_entry,
-        )
-
-        parking_profile = get_model_family_entry(
-            launch_contract.family,
-        ).runtime_capabilities.memory_parking
-
         rollout = launch_contract.model_build.get("rollout")
         pipeline_offload_mode = "none"
         if isinstance(rollout, Mapping):
@@ -119,23 +118,10 @@ class WorkerMemoryParking:
         # RolloutBuildOptions from it, so share that type's validator rather than
         # writing the vocabulary check a second time.
         PipelineOffloadMode(pipeline_offload_mode)
-        if pipeline_offload_mode != "none":
-            # Accelerate already owns the model's active residency, so the
-            # worker must not claim a CuMem build scope around CPU/meta weights.
-            profile = GenerationParkingProfile.MODEL
-        elif parking_profile in {
-            GenerationParkingProfile.CUMEM,
-            GenerationParkingProfile.MODEL,
-        }:
-            profile = parking_profile
-        else:
-            raise TypeError(
-                f"unsupported generation memory-parking profile: {parking_profile!r}",
-            )
         self.worker_id = worker_id
         self._parking: _ParkingPlan | _ParkingSession = _ParkingPlan(
             required=launch_contract.sleep_offload,
-            profile=profile,
+            pipeline_offload=pipeline_offload_mode != "none",
         )
         self._phase = _ParkingPhase.ACTIVE
         # Persist only a lightweight quarantine reason. Exception tracebacks can
@@ -150,7 +136,16 @@ class WorkerMemoryParking:
         self,
         build_executor: Callable[[], GenerationBatchExecutor],
     ) -> GenerationBatchExecutor:
-        """Build once, claiming a CuMem pool only for eager-resident weights."""
+        """Build once; a parking-required, CUDA-resident model lives in a CuMem pool.
+
+        The backend follows from residency, not from the family: whether the
+        rank must yield its GPU (the launch contract), whether Accelerate
+        already manages the pipeline's residency (``pipeline_offload_mode``),
+        and whether the built model is resident on CUDA at all (a model that
+        is not, such as an isolated-runtime wrapper, has nothing to unmap and
+        parks by moving). The pool scope must wrap construction, so the third
+        fact is read after the build and an unneeded pool is closed at once.
+        """
 
         self.require_active("policy build", executor=None)
         state = self._parking
@@ -166,20 +161,18 @@ class WorkerMemoryParking:
         self._phase = _ParkingPhase.ACTIVE
         self._failure_reason = None
 
-        from vrl.models.families.registry import GenerationParkingProfile
-
-        if not (state.required and state.profile is GenerationParkingProfile.CUMEM):
+        if not state.required or state.pipeline_offload:
             executor = build_executor()
             self._parking = _ParkingSession(
                 required=state.required,
-                profile=state.profile,
+                pipeline_offload=state.pipeline_offload,
                 baseline_gpu_used_bytes=baseline_gpu_used_bytes,
                 backend=ModelParking(),
             )
             return executor
 
-        # Require before building: a family that declared CuMem parking must fail
-        # in milliseconds on a misconfigured box, not after loading GiB of weights
+        # Require before building: a parking-required rank must fail in
+        # milliseconds on a misconfigured box, not after loading GiB of weights
         # it would then have no way to release.
         pool = CumemPool.require(tag=f"vrl:generation:{self.worker_id}:weights")
         try:
@@ -196,7 +189,7 @@ class WorkerMemoryParking:
             except BaseException as close_error:
                 self._parking = _ParkingSession(
                     required=state.required,
-                    profile=state.profile,
+                    pipeline_offload=state.pipeline_offload,
                     baseline_gpu_used_bytes=baseline_gpu_used_bytes,
                     backend=pool,
                 )
@@ -209,11 +202,29 @@ class WorkerMemoryParking:
                     f"build={build_error!r}; cleanup={close_error!r}",
                 ) from close_error
             raise
+        backend: _ParkingBackend = pool
+        if not _resident_on_cuda(getattr(executor, "model", None)):
+            # Nothing was allocated in the pool; release it and park by moving.
+            try:
+                pool.close()
+            except BaseException as close_error:
+                self._parking = _ParkingSession(
+                    required=state.required,
+                    pipeline_offload=state.pipeline_offload,
+                    baseline_gpu_used_bytes=baseline_gpu_used_bytes,
+                    backend=pool,
+                )
+                self._quarantine(
+                    f"CuMem cleanup failed after a non-CUDA build: {close_error!r}",
+                    cumem_broken=True,
+                )
+                raise
+            backend = ModelParking()
         self._parking = _ParkingSession(
             required=state.required,
-            profile=state.profile,
+            pipeline_offload=state.pipeline_offload,
             baseline_gpu_used_bytes=baseline_gpu_used_bytes,
-            backend=pool,
+            backend=backend,
         )
         return executor
 
@@ -446,7 +457,9 @@ class WorkerMemoryParking:
                 raise
             release_cuda_memory(ipc_collect=True)
         if isinstance(state, _ParkingSession):
-            self._parking = _ParkingPlan(required=state.required, profile=state.profile)
+            self._parking = _ParkingPlan(
+                required=state.required, pipeline_offload=state.pipeline_offload
+            )
         self._phase = _ParkingPhase.ACTIVE
         self._failure_reason = None
 
@@ -530,7 +543,7 @@ class WorkerMemoryParking:
             )
         session = _ParkingSession(
             required=state.required,
-            profile=state.profile,
+            pipeline_offload=state.pipeline_offload,
             baseline_gpu_used_bytes=None,
             backend=ModelParking(),
         )

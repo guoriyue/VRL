@@ -7,7 +7,6 @@ single family table shared by model construction, generation, and collection.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
 
 from vrl.models.families.names import (
@@ -38,19 +37,6 @@ TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS = (
 )
 
 
-class GenerationParkingProfile(Enum):
-    """Family-level declaration of the worker's single parking backend.
-
-    Binding, not advisory: a ``CUMEM`` family whose allocator is unavailable
-    fails the policy build instead of degrading to ``MODEL``. Only the resolved
-    residency mode may override the choice (pipeline CPU offload already owns
-    the model's residency), and that is a mechanism conflict, not a fallback.
-    """
-
-    MODEL = "model"
-    CUMEM = "cumem"
-
-
 @dataclass(frozen=True, slots=True)
 class GenerationRuntimeCapabilities:
     """Concrete executor/runtime behaviors, separate from model semantics."""
@@ -61,7 +47,6 @@ class GenerationRuntimeCapabilities:
     # IS the multi-GPU engine capability — one source, no capability bool to
     # drift. The launch preflight gate and the rank program both read it.
     sequence_parallel_installer: str | None = None
-    memory_parking: GenerationParkingProfile = GenerationParkingProfile.MODEL
 
     @property
     def supports_multi_gpu_engine(self) -> bool:
@@ -420,7 +405,6 @@ def _full_sequence_denoise_entry(
     if runtime_capabilities is None:
         runtime_capabilities = GenerationRuntimeCapabilities(
             supports_torch_compile=True,
-            memory_parking=GenerationParkingProfile.CUMEM,
         )
     return ModelFamilyEntry(
         family=family,
@@ -483,7 +467,6 @@ _register_model_family(
         # declaring it here is what opens gpus_per_engine > 1.
         runtime_capabilities=GenerationRuntimeCapabilities(
             supports_torch_compile=True,
-            memory_parking=GenerationParkingProfile.CUMEM,
             sequence_parallel_installer=(
                 "vrl.models.sequence_parallel:install_sd3_sequence_parallel"
             ),
@@ -505,7 +488,6 @@ _register_model_family(
         ),
         runtime_capabilities=GenerationRuntimeCapabilities(
             supports_torch_compile=True,
-            memory_parking=GenerationParkingProfile.CUMEM,
         ),
     ),
 )
@@ -828,7 +810,6 @@ __all__ = [
     "FAMILY_REGISTRY",
     "GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR",
     "DenoiseFamilyBuild",
-    "GenerationParkingProfile",
     "GenerationRuntimeCapabilities",
     "ModelFamilyEntry",
     "PolicySemantics",

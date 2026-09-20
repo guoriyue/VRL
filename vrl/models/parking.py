@@ -222,6 +222,11 @@ class TrainingMemoryState:
 class TrainingStateParking(ModelParking):
     """Extend model parking with optimizer, gradient, EMA and scaler storage."""
 
+    # A tmpfs mount (``/tmp`` on many hosts, ``/dev/shm``) keeps mapped files
+    # in RAM, which defeats disk parking silently.
+    _RAM_BACKED_FILESYSTEMS = frozenset({"tmpfs", "ramfs", "devtmpfs"})
+    _MOUNTS = "/proc/mounts"
+
     def __init__(
         self,
         state: TrainingMemoryState,
@@ -291,7 +296,7 @@ class TrainingStateParking(ModelParking):
         root = self._parking_directory
         if root is None:
             return
-        require_disk_backed_directory(root)
+        self._require_disk_backed_directory()
         directory = tempfile.TemporaryDirectory(prefix="trainer-", dir=root)
         self._host_storage_directories.append(directory)
         with torch.no_grad():
@@ -317,6 +322,38 @@ class TrainingStateParking(ModelParking):
         # Refresh FSDP's local shard views after replacing only owned storage.
         ModelParking._move_module(model, torch.device("cpu"))
 
+    def _require_disk_backed_directory(self) -> None:
+        """Refuse a parking directory that is missing or not a real disk.
+
+        The longest mount point that prefixes the directory decides; hosts
+        without ``/proc/mounts`` are not checked.
+        """
+        import os
+
+        directory = self._parking_directory
+        assert directory is not None
+        if not os.path.isdir(directory):
+            raise ValueError(f"parking directory does not exist: {directory}")
+        try:
+            with open(self._MOUNTS, encoding="utf-8") as handle:
+                entries = [line.split() for line in handle]
+        except OSError:
+            return
+        resolved = os.path.realpath(directory)
+        best: tuple[str, str] | None = None
+        for entry in entries:
+            if len(entry) < 3:
+                continue
+            mount_point, fstype = entry[1], entry[2]
+            covers = resolved == mount_point or resolved.startswith(mount_point.rstrip("/") + "/")
+            if covers and (best is None or len(mount_point) > len(best[0])):
+                best = (mount_point, fstype)
+        if best is not None and best[1] in self._RAM_BACKED_FILESYSTEMS:
+            raise ValueError(
+                f"parking directory {directory} is on a {best[1]} mount ({best[0]}); "
+                "disk parking needs node-local disk such as NVMe, or the files stay in RAM",
+            )
+
     def restore(self) -> None:
         super().restore()
         for directory in self._host_storage_directories:
@@ -325,42 +362,6 @@ class TrainingStateParking(ModelParking):
         if self.state.ema is not None and hasattr(self.state.ema, "device"):
             self.state.ema.device = self.ema_device
         empty_cuda_cache()
-
-
-_RAM_BACKED_FILESYSTEMS = frozenset({"tmpfs", "ramfs", "devtmpfs"})
-
-
-def require_disk_backed_directory(directory: str, *, mounts: str = "/proc/mounts") -> None:
-    """Refuse a parking directory that is not a real disk.
-
-    A tmpfs mount (``/tmp`` on many hosts, ``/dev/shm``) keeps the mapped
-    files in RAM, which defeats disk parking silently. The longest mount point
-    that prefixes the directory decides; hosts without ``/proc/mounts`` are
-    not checked.
-    """
-    import os
-
-    if not os.path.isdir(directory):
-        raise ValueError(f"parking directory does not exist: {directory}")
-    try:
-        with open(mounts, encoding="utf-8") as handle:
-            entries = [line.split() for line in handle]
-    except OSError:
-        return
-    resolved = os.path.realpath(directory)
-    best: tuple[str, str] | None = None
-    for entry in entries:
-        if len(entry) < 3:
-            continue
-        mount_point, fstype = entry[1], entry[2]
-        covers = resolved == mount_point or resolved.startswith(mount_point.rstrip("/") + "/")
-        if covers and (best is None or len(mount_point) > len(best[0])):
-            best = (mount_point, fstype)
-    if best is not None and best[1] in _RAM_BACKED_FILESYSTEMS:
-        raise ValueError(
-            f"parking directory {directory} is on a {best[1]} mount ({best[0]}); "
-            "disk parking needs node-local disk such as NVMe, or the files stay in RAM",
-        )
 
 
 def cumem_allocator() -> Any | None:
@@ -374,6 +375,10 @@ def cumem_allocator() -> Any | None:
     :class:`CumemPool` a fake allocator instead of touching CUDA.
     """
 
+    import torch
+
+    if not torch.cuda.is_available():
+        return None
     try:
         from vllm.device_allocator.cumem import CuMemAllocator
     except Exception:

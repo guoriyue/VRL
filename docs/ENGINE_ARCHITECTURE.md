@@ -90,7 +90,7 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 |---|---|
 | `RayGenerationWorker` (`ray/worker.py`) | The Ray actor shell; delegates to the core. |
 | `GenerationWorkerCore` | Worker-process brain: validates the launch contract, builds the family executor, isinstance-probes `BatchSizeProbeExecutor` for auto batch sizing, runs forward/probe calls. |
-| `WorkerMemoryParking` | Whole-model GPU↔pinned-host parking with phase tracking; produces `WorkerMemoryParkingSnapshot` evidence the driver validates. |
+| `WorkerMemoryParking` | Whole-model GPU↔pinned-host parking with phase tracking; produces `WorkerMemoryParkingSnapshot` evidence the driver validates. The backend follows residency, not the family: a parking-required rank whose model is resident on CUDA parks through a `CumemPool`; under `pipeline_offload_mode` or with a model built off CUDA it parks by moving. |
 | `DistributedExecutionPlanner` → `DistributedGenerationPlan`, `DeviceAssignment` | Splits a request into per-worker batch assignments. |
 | `EnginePlan` (`planner.py`) | The resolved per-request plan: which `sample_batches` run where. |
 | `GenerationSampleBatch`, `SampleAlignedValues`, `BatchResultWithIdentity` (`sample_batches.py`) | The batch coordinate system: a batch is a slice of samples (`prompt_index`, `sample_start`, `sample_count`), not a time segment. `SampleAlignedValues` slices per-sample tensors consistently. |
