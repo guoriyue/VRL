@@ -1,0 +1,152 @@
+# Flash-GRPO reference reproduction on Wan 2.1 1.3B T2V + HPSv3, four L40S.
+# Every knob below reproduces scripts/train_wan2_1_flash_1node.py of
+# Shredded-Pork/Flash-GRPO@bd6051f68e1ab444e5ec7c6ffe0a1f7eaf559a0d as READ
+# FROM ITS SOURCE, not from its config names (docs/sprints/
+# SPRINT_flash_grpo_native_reference.md derives each number). Where vrl's loop
+# is structured differently the equivalence is stated at the knob.
+#
+# Reference batch per EPOCH (one sampling pass, one advantage pass):
+#   8 ranks x 24 requests x 2 videos = 384 videos over 48 unique prompts
+#   (the sampler re-draws prompts every accumulation window; each prompt is
+#   repeated on 4 virtual ranks x 2 videos = 8 videos), standardized once
+#   with the global std of all 384, shuffled, trained as TWO accumulation
+#   windows of 192 videos, each ending in one optimizer step.
+# Here: 12 prompt groups/rank x 8 samples x 4 ranks = 384 per collected batch,
+# global_std across ranks, dealt into optimizer_steps_per_batch=2 updates.
+#
+# Launch (three-update smoke first):
+#   VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB=512 HF_HOME=/mnt/nvme/hf/huggingface \
+#   torchrun --standalone --nproc_per_node=4 -m vrl.scripts.train \
+#     --config experiment/wan_2_1/online_flash_grpo_hpsv3_reference_4x_l40s \
+#     trainer.total_epochs=2 trainer.output_dir=outputs/flash_grpo_reference/smoke
+defaults:
+  - /recipe/online/wan_2_1_grpo
+  - /model/wan_2_1/1_3b
+  - /sampling/video/480x832_81f        # reference: 480x832, 81 frames
+  - /sampling/denoise/20_step_cfg_4_5  # reference: 20 train steps, CFG 4.5
+  - /dataset/flash_grpo_video          # reference: dataset/video/{train,test}.txt
+  - /reward/hpsv3
+  - /base/distributed/training_fsdp
+
+model:
+  local_files_only: true
+  # reference LoraConfig(r=16, lora_alpha=32, init_lora_weights="gaussian")
+  # on the same eight attention projections; adapters start from zero output.
+  lora:
+    rank: 16
+    alpha: 32
+    init_lora_weights: gaussian
+    target_modules:
+      - add_k_proj
+      - add_q_proj
+      - add_v_proj
+      - to_add_out
+      - to_k
+      - to_out.0
+      - to_q
+      - to_v
+  # The reference samples and trains the eager bf16 model. Inductor changes
+  # rollout numerics against the eager replay (measured ratio drift 2e-3 on
+  # this stack), which the 1e-3 clip below would gate. Eager keeps the
+  # unchanged-policy parity check at its zero-error target.
+  torch_compile:
+    enable: false
+
+algorithm:
+  kind: flash_grpo
+  clip_ratio: 1.0e-3      # reference: train.clip_range = 1e-3
+  kl_coef: 0.0            # reference: train.beta = 0
+  # reference: PerPromptStatTracker(global_std=True): per-prompt mean, std of
+  # ALL rewards of the epoch + 1e-4 (additive; eps defaults to 1e-4).
+  global_std: true
+  adv_clip_max: 5.0       # reference: train.adv_clip_max = 5
+
+actor:
+  optim:
+    lr: 1.0e-4            # reference: train.learning_rate = 1e-4
+    adam_beta1: 0.9       # reference: adam_beta1 / adam_beta2 / weight_decay / eps
+    adam_beta2: 0.999
+    weight_decay: 1.0e-4
+    eps: 1.0e-8
+  # reference: accelerator.clip_grad_norm_(max_grad_norm=1.0) on the SUM of 24
+  # microbatch-mean losses per rank (gradient_accumulation_steps=24 on four
+  # ranks). vrl backpropagates the MEAN over the update's samples, i.e. the
+  # same direction scaled by 1/24, so the equivalent threshold is 1.0/24.
+  # AdamW (decoupled weight decay) is invariant to that constant factor.
+  max_norm: 0.0416667
+  # Full-batch path: the whole 384-sample batch is collected, standardized
+  # once, then dealt into two optimizer updates (reference: one epoch = two
+  # accumulation windows after one stat_tracker.update).
+  prompts_per_collection: 0
+  optimizer_steps_per_batch: 2
+  ppo_epochs: 1           # reference: train.num_inner_epochs = 1
+  # Mechanism 1: train exactly the rollout's stochastic step (sde_window
+  # requires timestep_fraction 1.0; the trained subset is the recorded window).
+  timestep_selection: sde_window
+  timestep_fraction: 1.0
+  drop_zero_advantage: true   # reference: mask = advantages.abs().sum() != 0
+  gradient_checkpointing: full
+  ema:
+    enable: true          # reference: EMAModuleWrapper(decay=0.9, update_step_interval=8)
+    decay: 0.9
+    update_interval: 8
+    # reference: ema.step() after EVERY microbatch, counter advanced before
+    # the last call of an update (see EMAConfig.step_per_microbatch).
+    step_per_microbatch: true
+
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 4
+    fsdp:
+      mesh: ["dp_shard"]
+      precision_policy: none      # keep native dtypes: fp32 adapters, bf16 base
+      reshard_after_forward: true
+      cpu_offload: false
+  resources:
+    rollout:
+      gpu_pool: trainer
+  rollout:
+    worker_rpc_timeout_s: 1800
+
+rollout:
+  # 12 groups/rank x 8 samples x 4 ranks = 384 videos per collected batch.
+  prompts_per_batch: 12
+  n_samples_per_prompt: 8
+  # One request per prompt group draws ONE stochastic step for the whole group
+  # (mechanism 2); sub-batches of the request share it, so the group may run as
+  # two generation batches of four for memory.
+  samples_per_generation_batch: 4
+  denoise_mode: sde
+  # reference SDE: std_dev_t = sigma_min + (sigma_max - sigma_min) * sigma,
+  # which is flow_grpo at noise_level 1.0.
+  noise_level: 1.0
+  sde:
+    type: flow_grpo
+    # reference: index = random.choices(range(10)) per prompt, first 10 steps.
+    window_size: 1
+    window_range: [0, 10]
+  # Lossless replay inputs: the parity gate compares fp32 rollout log-probs
+  # with fp32 replay log-probs of the SAME stored latents.
+  trajectory_storage:
+    dtype: float32
+
+reward:
+  kwargs:
+    hpsv3:
+      worker_config:
+        model_path: /mnt/nvme/models/HPSv3
+        base_model_path: /mnt/nvme/models/Qwen2-VL-7B-Instruct
+        local_files_only: true
+        # reference client: (video*255).round() uint8 -> JPEG per frame -> server
+        # scores every frame; top floor(0.3*81)=24 frame mean.
+        jpeg_roundtrip: true
+        top_frame_fraction: 0.3
+
+trainer:
+  output_dir: outputs/flash_grpo_reference/run
+  total_epochs: 300       # reference: num_epochs = 300, stopped manually
+  save_freq: 2
+  debug:
+    first_step: true      # unchanged-policy parity before the first update
