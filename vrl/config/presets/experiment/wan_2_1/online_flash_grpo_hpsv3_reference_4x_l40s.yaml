@@ -107,6 +107,10 @@ distributed:
   resources:
     rollout:
       gpu_pool: trainer
+    # Four parked trainers plus four sleeping generators exceed this host's RAM;
+    # the trainers' frozen shards go to node-local NVMe while generation runs
+    # (same as online_grpo_hpsv3_fsdp_4x_l40s).
+    parking_directory: /mnt/nvme/vrl-parking
   rollout:
     worker_rpc_timeout_s: 1800
 
