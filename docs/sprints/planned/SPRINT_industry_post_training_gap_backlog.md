@@ -151,7 +151,7 @@
   有）分层均值。
 - **验收**：同一 eval 产物能回算出三种口径；不改训练。
 
-## L. previous policy 脱离 LoRA（NFT / V-GRPO 全参） ★★ — 代码已落地 2026-09-19，待 GPU 验证
+## L. previous policy 脱离 LoRA（NFT / V-GRPO 全参） ★★ — 已落地，单卡全参 GRPO/NFT 各 20 步验证 2026-09-19
 
 - **出处**：A–K 之外的内部缺口。工业界（Seedream、Seedance、HunyuanImage、
   Qwen-Image）全部全参后训练；VRL 里 NFT 与 V-GRPO 是仅有的两个不依赖
@@ -180,6 +180,35 @@
   28 ms（一进一出）、`update(0.9)` 10 ms。`rollout.cache_ref_noise_pred`
   （GRPO 族的 ref-forward 缓存，没有任何 preset 用）连同它在 rollout 侧要求的
   参考快照一起删除；reference forward 只在 trainer 的 replay 里算。
+- **5090 单卡全参 smoke（2026-09-19，SANA 1.6B，`use_lora=false`，lr 1e-5，
+  8-bit Adam，128 样本/步，20 步）**：
+  - GRPO `kl_coef=0.01`（参考快照 + 闭式 KL）：first-step log-prob 对账
+    mean 6e-6 / max 1.3e-5，`replay_parity_gate` finite；20 步全部完成，
+    checkpoint-20 落盘。`kl_penalty` 单调 2.8e-5 → 8.7e-4（策略确实离开参考点），
+    `grad_norm` 0.13–0.46 无发散，`logprob_abs_diff_max` 3e-3–7e-3。
+    reward_mean 前 8 步均值 0.687、后 8 步 0.692，差值在步间噪声（±0.013）内：
+    这个预算看不出 reward 走势，也不该指望——验证正确性用，不是验证提升用。
+    显存：rollout 16 GB → parking 后 5 GB → 训练 21 GB → 第一次 optimizer step
+    后 27.8 GB 峰值（8-bit Adam 状态首步物化）。1.6B 参数一份 fp16 快照 3.2 GB，
+    与预算一致。每步 6.5 min，其中 3.5 min 是 preset 里 0 权重、`device: cpu`
+    的 aesthetic 观测项——验证跑应去掉它。
+  - NFT（previous + reference 两份快照）：第一次起跑在 first-step 探针里
+    `KeyError: 'latents_clean'`——SANA 没导出干净潜变量（只有 sd3_5 / flux /
+    cosmos / minimax_h3 导出），且 `validate_inputs` 排在探针之后。已修
+    （`1eb485e23`）。重跑：first-step advantage-flip invariant abs_diff = 0
+    （阈值 1e-6）——两份全参快照（previous + reference）换入换出不污染训练
+    forward；20 步全部完成，checkpoint-20 落盘。loss（归一化 MSE）6.6 → 6.2，
+    `grad_norm` 0.7–4.1；第 2 步 `grad_norm=inf` 是 fp16 GradScaler 初始 scale
+    溢出的设计事件（跳步 + 回退，不做 previous 同步），之后全部有限。
+    reward_mean 前 8 步 0.688、后 8 步 0.693，同样在噪声内。显存峰值 30.2 GB
+    （比 GRPO 多一份 previous 快照；32 GB 卡上剩 2 GB）。每步 2 min（只挂
+    PickScore）。数据顺序和采样 seed 与 GRPO 那条腿相同，两条腿的 epoch-0
+    reward_mean 完全一致（0.6884），rollout 是确定性的。
+  - 原始产物（metrics / resolved_config / training_debug / 显存曲线 / 启动脚本）
+    在 `outputs/fullparam_smoke_20260919/{sana_grpo,sana_nft}/`（gitignored）。
+  - 下一步（reward 是否真的上升）：固定 8 个 prompt、同一组 prompt 上固定
+    seed 评测、去掉 CPU aesthetic、lr 3e-5，30 步，LoRA 对照；通过标准是
+    评测 reward 升幅 > 2× 步间噪声且 KL 单调增。
   剩：多卡真实 FSDP2 训练 smoke（本机单卡做不了）。
 
 ---
