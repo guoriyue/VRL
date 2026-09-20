@@ -1260,8 +1260,8 @@ async def run_online_recipe(
 def _preflight_production_video_reward(root: RootConfig) -> None:
     """Fail fast on the driver if the production reward backend is unimportable."""
 
-    production = root.production
-    if production is None or not production.kling_video_reward:
+    reward = root.reward
+    if not root.production or reward is None or "kling_video_reward" not in reward.components:
         return
     from vrl.rewards.models.kling_video_reward import preflight_kling_video_reward_backend
 
@@ -1269,7 +1269,7 @@ def _preflight_production_video_reward(root: RootConfig) -> None:
         preflight_kling_video_reward_backend()
     except Exception as exc:
         raise RuntimeError(
-            "production.kling_video_reward requires the repo-owned Kling VideoReward "
+            "production run requires the repo-owned Kling VideoReward "
             "inference backend under vrl/rewards/models/kling_video_reward.py.",
         ) from exc
 

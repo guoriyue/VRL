@@ -1,6 +1,6 @@
 """The production contract a reward declares (``RewardFunction.production``).
 
-``production.<reward>.enabled`` turns on one gate whose entire content is the
+``production: true`` turns on one gate whose entire content is the
 contract the reward declares. These pin what it refuses and, just as important,
 what it deliberately leaves to running the reward (the preflight entry).
 """
@@ -54,7 +54,7 @@ def test_only_live_loader_keys_are_locked() -> None:
 
 def test_a_reward_declares_its_contract_and_most_rewards_have_none() -> None:
     """The gate's whole per-reward vocabulary is this one declaration; a reward
-    without one has no production gate (enabling it is a config error)."""
+    without one is simply not checked by the gate."""
 
     assert KlingVideoReward.production is not None
     assert KlingVideoReward.production.task_types == {

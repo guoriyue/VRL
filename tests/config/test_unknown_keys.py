@@ -117,14 +117,6 @@ def test_open_blocks_accept_arbitrary_keys() -> None:
     assert unknown_keys(cfg) == []
 
 
-def test_production_gate_is_closed() -> None:
-    cfg = OmegaConf.create(
-        {"production": {"kling_video_reward": False, "kling_video_rewrd": True}},
-    )
-
-    assert unknown_keys(cfg) == ["production.kling_video_rewrd"]
-
-
 def test_online_update_memory_keys_are_owned_by_actor() -> None:
     assert unknown_keys(OmegaConf.create({"actor": {"prompts_per_collection": 1}})) == []
     assert unknown_keys(OmegaConf.create({"rollout": {"prompts_per_collection": 1}})) == [

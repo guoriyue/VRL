@@ -62,12 +62,12 @@ class RewardCleanupError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class ProductionContract:
-    """What ``production.<reward>.enabled`` asserts about one reward's config.
+    """What a production run (``production: true``) asserts about this reward's config.
 
     A reward opts into the production gate by declaring one of these in its
     class-declaration block, beside ``model_factory`` and its ``default_*``
-    values; a reward that declares none has no production gate, and enabling
-    one for it is a config error. Everything the gate compares against is
+    values; a configured reward that declares none is simply not checked by
+    the gate. Everything the gate compares against is
     declared here, so the check needs the contract and the configured kwargs
     and nothing else.
 
@@ -92,14 +92,14 @@ class ProductionContract:
     def require(self, name: str, kwargs: Mapping[str, Any], *, task_type: str) -> None:
         """Refuse a production config for component ``name`` that breaks the contract."""
 
-        prefix = f"production.{name} requires"
+        prefix = f"production run: reward {name} requires"
         if not str(kwargs.get("reward_name", "")).strip():
             raise ValueError(f"{prefix} reward.kwargs.{name}.reward_name")
         worker_config = kwargs.get("worker_config") or {}
         forbidden = sorted(key for key in self.LOCKED_WORKER_CONFIG_KEYS if key in worker_config)
         if forbidden:
             raise ValueError(
-                f"production.{name} worker_config should name the reward model directly; "
+                f"production run: reward {name} worker_config should name the reward model directly; "
                 f"remove extra loader fields: {', '.join(forbidden)}",
             )
         if task_type not in self.task_types:

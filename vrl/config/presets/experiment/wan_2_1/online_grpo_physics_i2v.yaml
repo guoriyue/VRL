@@ -42,5 +42,4 @@ reward:
       worker_config:
         device: cpu
 
-production:
-  kling_video_reward: false
+production: false

@@ -202,38 +202,28 @@ def gate_compile_compatible(root: RootConfig, precision: PrecisionPolicy) -> Non
 
 
 def gate_production(root: RootConfig, precision: PrecisionPolicy) -> None:
-    """Every ``production.<reward>.enabled`` entry: the reward's own contract
-    (``validate_production_kwargs``), then the dataset's provenance
-    (``DatasetProvenance.from_config``). The gate holds no per-reward or
-    per-dataset knowledge; both owners declare theirs. Whether the rewards can
-    actually score these rows is ``python -m vrl.scripts.rewards.preflight``'s
-    job, not a config gate's."""
+    """``production: true``: every configured reward that declares a production
+    contract is held to it (``ProductionContract.require``), then the dataset's
+    provenance (``DatasetProvenance.from_config``). The gate holds no per-reward
+    or per-dataset knowledge; both owners declare theirs. A configured reward
+    without a contract is not checked here: whether the rewards can actually
+    score these rows is ``python -m vrl.scripts.rewards.preflight``'s job, not
+    a config gate's."""
 
     del precision
-    production = root.production
-    enabled = (
-        ()
-        if production is None
-        else tuple(
-            name for name in type(production).model_fields if bool(getattr(production, name))
-        )
-    )
-    if not enabled:
+    if not root.production:
         return
     from vrl.rewards.functions.registry import get_reward
     from vrl.trainers.data.provenance import DatasetProvenance
 
     reward = root.reward
     task_type = str((root.data.task_type if root.data is not None else None) or "")
-    for name in enabled:
-        contract = get_reward(name).production
-        if contract is None:
-            raise ValueError(f"production.{name}: the reward declares no production contract")
-        contract.require(
-            name,
-            (reward.kwargs.get(name) if reward is not None else None) or {},
-            task_type=task_type,
-        )
+    if reward is not None:
+        for name in reward.components:
+            contract = get_reward(name).production
+            if contract is None:
+                continue
+            contract.require(name, reward.kwargs.get(name) or {}, task_type=task_type)
     if root.data is None:
         raise ValueError("config missing required field: data.manifest")
     DatasetProvenance.from_config(root.data)

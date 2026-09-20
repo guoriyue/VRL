@@ -35,14 +35,14 @@ def test_launch_gates_do_not_run_inside_parse_config() -> None:
         {
             "model": {"family": "sd3_5"},
             "precision": {"float32_precision": "tf32", "training": {"dtype": "bf16"}},
-            "production": {"kling_video_reward": True},
+            "production": True,
         }
     )
 
     root = parse_config(cfg)
 
-    assert root.production is not None
-    with pytest.raises(ValueError, match=r"production\.kling_video_reward requires"):
+    assert root.production is True
+    with pytest.raises(ValueError, match=r"data\.manifest"):
         validation.require_training_config(cfg)
 
 

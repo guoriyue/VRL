@@ -743,17 +743,6 @@ class DistributedSection(ConfigBase):
 # ── Root config ───────────────────────────────────────────────────────────────
 
 
-class ProductionSection(ConfigBase):
-    """Closed registry of production gates with runtime consumers.
-
-    One bool per reward that declares a production contract; the gate in
-    ``vrl/config/validation.py`` iterates the declared fields, so a misspelled
-    reward name is rejected at parse time instead of silently never enabling.
-    """
-
-    kling_video_reward: bool = False
-
-
 class EvalSection(ConfigBase):
     """Evaluation-time overrides; anything absent inherits the training config.
 
@@ -789,9 +778,11 @@ class RootConfig(ConfigBase):
     sampling: SerializeAsAny[SamplingSection] | None = None
     # Evaluation-time overrides of the sections above (currently sampling).
     eval: EvalSection | None = None
-    # Per-component production gates; the reward contract and data-provenance checks
-    # are launch gates (vrl/config/validation.py gate_production).
-    production: ProductionSection | None = None
+    # This is a production run: the launch gate (vrl/config/validation.py
+    # gate_production) holds every configured reward that declares a production
+    # contract to it and requires source-backed dataset provenance. Which rewards
+    # run is reward.components' business; this flag only raises the bar on them.
+    production: bool = False
     trainer: TrainerSection | None = None
     actor: ActorSection | None = None
     distributed: DistributedSection | None = None

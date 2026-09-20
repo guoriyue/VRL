@@ -38,5 +38,4 @@ trainer:
   save_freq: 20
 
 
-production:
-  kling_video_reward: true
+production: true

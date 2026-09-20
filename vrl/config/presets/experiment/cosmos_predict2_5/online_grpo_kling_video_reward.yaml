@@ -75,5 +75,4 @@ trainer:
   # Evaluate saved checkpoints separately with the held-out manifest and fixed seeds.
 
 
-production:
-  kling_video_reward: true
+production: true

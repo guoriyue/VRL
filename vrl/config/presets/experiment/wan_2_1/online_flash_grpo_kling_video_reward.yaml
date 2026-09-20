@@ -74,5 +74,4 @@ trainer:
     first_step: true
 
 
-production:
-  kling_video_reward: true
+production: true
