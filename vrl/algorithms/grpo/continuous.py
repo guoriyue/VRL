@@ -121,6 +121,34 @@ class GRPO:
         self._initialize_precision_correction()
         self._initialize_advantage_estimator(advantage_estimator)
 
+    def _require_trust_region_signals(self, signals: Any) -> Any:
+        """Validate the SDE signals trust-region losses need; return the rollout mean.
+
+        Both Flow-DPPO and GRPO-Guard read the rollout proposal mean plus the
+        per-step diffusion intermediates (std_dev_t, sqrt_dt). dt is a hard
+        requirement, not an optional input: a missing dt would silently drop the
+        diffusion coefficient (Flow-DPPO) or collapse the step-scale to 1
+        (GRPO-Guard), quietly changing the objective — so fail fast instead.
+        """
+
+        algorithm = type(self).__name__
+        value = signals.old_prev_sample_mean
+        if value is None:
+            raise RuntimeError(
+                f"{algorithm} needs signals.old_prev_sample_mean (the rollout-time "
+                "reverse-SDE proposal mean), but it is None. Set "
+                "sampling.return_prev_sample_mean=true so generation stores it into "
+                "the trajectory.",
+            )
+        if signals.prev_sample_mean is None or signals.std_dev_t is None or signals.dt is None:
+            raise RuntimeError(
+                f"{algorithm} requires flow-matching SDE signals "
+                "(prev_sample_mean / std_dev_t / dt). dt comes from the evaluator's "
+                "KL intermediates; needs_kl_intermediates=True must drive "
+                "SignalRequest(need_kl_intermediates=True).",
+            )
+        return value
+
     def _initialize_precision_correction(self) -> None:
         """Install the trainer-injected rollout/replay correction capability."""
 
@@ -414,13 +442,13 @@ class FlashGRPO(GRPO):
             noise_level=noise_level,
             sde_type=sde_type,
         )
-        coe = 1.0 / rectification_scale(std.float(), sqrt_neg_dt.float(), sigma.float())
-        self._update_coe_mean = _cross_rank_mean(coe).clamp_min(1e-12)
+        coe = 1.0 / self._rectification_scale(std.float(), sqrt_neg_dt.float(), sigma.float())
+        self._update_coe_mean = self._cross_rank_mean(coe).clamp_min(1e-12)
 
     def _loss_weight(self, signals: Any) -> Any:
         import torch
 
-        _require_rectification_signals(signals, "FlashGRPO")
+        self._require_signals(signals)
         if self._update_coe_mean is None:
             raise RuntimeError(
                 "FlashGRPO.prepare_update must run before the update's first loss: the "
@@ -436,84 +464,57 @@ class FlashGRPO(GRPO):
         std = _per_sample(signals.std_dev_t).float()
         sqrt_neg_dt = _per_sample(signals.dt).float()
         sigma = _per_sample(signals.sigma).float()
-        coe = 1.0 / rectification_scale(std, sqrt_neg_dt, sigma)
+        coe = 1.0 / self._rectification_scale(std, sqrt_neg_dt, sigma)
         return coe / self._update_coe_mean.to(device=coe.device, dtype=coe.dtype)
 
+    @staticmethod
+    def _rectification_scale(std: Any, sqrt_neg_dt: Any, sigma: Any) -> Any:
+        """Flash-GRPO's log-prob gradient magnitude ``c(t)`` for one SDE transition.
 
-def rectification_scale(std: Any, sqrt_neg_dt: Any, sigma: Any) -> Any:
-    """Flash-GRPO's log-prob gradient magnitude ``c(t)`` for one SDE transition.
+        ``c = sqrt(-dt)/std + std*sqrt(-dt)*(1-sigma)/(2*sigma)``; the loss
+        weight is ``1/c``. One definition serves both the per-sample weight
+        (from the evaluator's SDE intermediates) and the update-wide
+        denominator (from the recorded timesteps), so the two cannot drift.
+        """
 
-    ``c = sqrt(-dt)/std + std*sqrt(-dt)*(1-sigma)/(2*sigma)``; the loss weight
-    is ``1/c``. One definition serves both the per-sample weight (from the
-    evaluator's SDE intermediates) and the update-wide denominator (from the
-    recorded timesteps), so the two cannot drift apart.
-    """
+        sigma = sigma.clamp_min(1e-6)
+        scale = sqrt_neg_dt / std + std * sqrt_neg_dt * (1 - sigma) / (2 * sigma)
+        return scale.clamp_min(1e-12)
 
-    sigma = sigma.clamp_min(1e-6)
-    return (sqrt_neg_dt / std + std * sqrt_neg_dt * (1 - sigma) / (2 * sigma)).clamp_min(1e-12)
+    @staticmethod
+    def _require_signals(signals: Any) -> None:
+        """Fail fast when the SDE intermediates the rectification needs are absent.
 
+        A missing input would otherwise silently degrade to unweighted GRPO —
+        quietly changing the objective, the same failure mode
+        ``GRPO._require_trust_region_signals`` guards for the trust-region losses.
+        """
 
-def _require_rectification_signals(signals: Any, algorithm: str) -> None:
-    """Fail fast when the SDE intermediates the rectification needs are absent.
+        if signals.std_dev_t is None or signals.dt is None or signals.sigma is None:
+            raise RuntimeError(
+                "FlashGRPO requires flow-matching SDE signals "
+                "(std_dev_t / dt / sigma). dt comes from the evaluator's KL "
+                "intermediates (needs_kl_intermediates=True drives "
+                "SignalRequest(need_kl_intermediates=True)); sigma is produced only "
+                "by the flow-matching SDE path — it is None on DDIM/token replays, "
+                "which Flash-GRPO does not support.",
+            )
 
-    A missing input would otherwise silently degrade to unweighted GRPO —
-    quietly changing the objective, the same failure mode
-    ``_require_trust_region_signals`` guards for the trust-region losses.
-    """
+    @staticmethod
+    def _cross_rank_mean(values: Any) -> Any:
+        """Mean of ``values`` over all training ranks.
 
-    if signals.std_dev_t is None or signals.dt is None or signals.sigma is None:
-        raise RuntimeError(
-            f"{algorithm} requires flow-matching SDE signals "
-            "(std_dev_t / dt / sigma). dt comes from the evaluator's KL "
-            "intermediates (needs_kl_intermediates=True drives "
-            "SignalRequest(need_kl_intermediates=True)); sigma is produced only "
-            "by the flow-matching SDE path — it is None on DDIM/token replays, "
-            "which Flash-GRPO does not support.",
-        )
+        Called once per update by every rank in lockstep (the trainer's
+        unanimous-work gate keeps update counts balanced), so the collective
+        cannot deadlock — the same argument as ``_population_std_across_ranks``.
+        An empty local tensor must NOT short-circuit before the collective:
+        emptiness is rank-local, so an empty rank contributes zeros instead.
+        """
 
+        from vrl.algorithms.advantages import all_reduce_sufficient_stats
 
-def _cross_rank_mean(values: Any) -> Any:
-    """Mean of ``values`` over all training ranks.
-
-    Called once per microbatch by every rank in lockstep (the trainer's
-    unanimous-work gate keeps microbatch counts balanced), so the collective
-    cannot deadlock — the same argument as ``_population_std_across_ranks``.
-    An empty local tensor must NOT short-circuit before the collective:
-    emptiness is rank-local, so an empty rank contributes zeros instead.
-    """
-
-    from vrl.algorithms.advantages import all_reduce_sufficient_stats
-
-    g_sum, _g_sumsq, g_count = all_reduce_sufficient_stats(values)
-    return (g_sum / g_count.clamp_min(1.0)).to(values.device)
-
-
-def _require_trust_region_signals(signals: Any, algorithm: str) -> Any:
-    """Validate the SDE signals trust-region losses need; return the rollout mean.
-
-    Both Flow-DPPO and GRPO-Guard read the rollout proposal mean plus the per-step
-    diffusion intermediates (std_dev_t, sqrt_dt). dt is a hard requirement, not an
-    optional input: a missing dt would silently drop the diffusion coefficient
-    (Flow-DPPO) or collapse the step-scale to 1 (GRPO-Guard), quietly changing the
-    objective — so fail fast instead.
-    """
-
-    value = signals.old_prev_sample_mean
-    if value is None:
-        raise RuntimeError(
-            f"{algorithm} needs signals.old_prev_sample_mean (the rollout-time "
-            "reverse-SDE proposal mean), but it is None. Set "
-            "sampling.return_prev_sample_mean=true so generation stores it into "
-            "the trajectory.",
-        )
-    if signals.prev_sample_mean is None or signals.std_dev_t is None or signals.dt is None:
-        raise RuntimeError(
-            f"{algorithm} requires flow-matching SDE signals "
-            "(prev_sample_mean / std_dev_t / dt). dt comes from the evaluator's "
-            "KL intermediates; needs_kl_intermediates=True must drive "
-            "SignalRequest(need_kl_intermediates=True).",
-        )
-    return value
+        g_sum, _g_sumsq, g_count = all_reduce_sufficient_stats(values)
+        return (g_sum / g_count.clamp_min(1.0)).to(values.device)
 
 
 @dataclass(slots=True)
@@ -568,7 +569,7 @@ class FlowDPPO(GRPO):
         if inputs.advantages is None:
             raise RuntimeError("AlgorithmInput.advantages is required for FlowDPPO")
         signals = inputs.signals.primary
-        old_prev_sample_mean = _require_trust_region_signals(signals, "FlowDPPO")
+        old_prev_sample_mean = self._require_trust_region_signals(signals)
         advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
 
         pc = self.precision_correction
@@ -699,7 +700,7 @@ class GRPOGuard(GRPO):
         if inputs.advantages is None:
             raise RuntimeError("AlgorithmInput.advantages is required for GRPOGuard")
         signals = inputs.signals.primary
-        old_prev_sample_mean = _require_trust_region_signals(signals, "GRPOGuard")
+        old_prev_sample_mean = self._require_trust_region_signals(signals)
         advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
 
         log_ratio = signals.log_prob - signals.old_log_prob

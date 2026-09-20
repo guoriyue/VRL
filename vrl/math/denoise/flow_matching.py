@@ -28,8 +28,10 @@ class SDEStepResult:
 class _FlowSchedule:
     """One replay step's schedule terms in the rectified-flow [0, 1] domain.
 
-    ``one_plus_sigma`` / ``one_plus_sigma_prev`` are set only for EDM-domain
-    sigma tables and carry the sample/velocity conversion factors.
+    Read once per step by ``sde_step_with_logprob`` and by the model-free
+    ``flow_sde_scale_terms``, so both derive dt and the flow_grpo noise scale
+    from the same numbers. ``one_plus_sigma`` / ``one_plus_sigma_prev`` are set
+    only for EDM-domain sigma tables and carry the sample/velocity conversion.
     """
 
     sigma: Any
@@ -39,6 +41,73 @@ class _FlowSchedule:
     one_plus_sigma: Any | None
     one_plus_sigma_prev: Any | None
 
+    @classmethod
+    def read(
+        cls,
+        scheduler: Any,
+        step_index: list[int],
+        *,
+        device: Any,
+        view_shape: tuple[int, ...],
+    ) -> _FlowSchedule:
+        """Read sigma / sigma_prev / endpoints for ``step_index`` in the flow domain.
+
+        Cosmos Predict2's FlowMatch scheduler keeps its sigma table in the EDM
+        domain (sigma_max=80) while the SDE math is derived for rectified-flow
+        sigmas in [0, 1] (x_t = (1-t)*x0 + t*noise). Feeding EDM sigmas through
+        the [0, 1] formulas silently produces ~sigma^2-scale garbage log-probs
+        (observed: logprob ~ -68^2 on Predict2 GRPO). Detect the domain from the
+        RUNTIME sigma table — config keys are unreliable: Predict2.5's UniPC
+        declares sigma_max=200 yet use_flow_sigmas=True already normalizes its
+        runtime table to [0, 1]. Cache the verdict on the scheduler so steps
+        after the first do not pay a GPU->host sync for the max().
+        """
+
+        prev_step_index = [s + 1 for s in step_index]
+        scheduler.sigmas = scheduler.sigmas.to(device)
+        sigma = scheduler.sigmas[step_index].view(*view_shape)
+        sigma_prev = scheduler.sigmas[prev_step_index].view(*view_shape)
+        # sigmas[1] / sigmas[-1] are loop-invariant schedule endpoints; keep them as
+        # 0-d device tensors instead of .item() to drop two per-step host syncs.
+        sigma_max = scheduler.sigmas[1]
+        sigma_min = scheduler.sigmas[-1]
+        edm_domain = getattr(scheduler, "_vrl_edm_sigma_domain", None)
+        if edm_domain is None:
+            edm_domain = bool(scheduler.sigmas.max().item() > 1.0)
+            scheduler._vrl_edm_sigma_domain = edm_domain
+        if not edm_domain:
+            return cls(sigma, sigma_prev, sigma_max, sigma_min, None, None)
+        # t = s/(1+s) maps EDM sigmas onto the flow domain; log_prob /
+        # prev_sample_mean / std_dev_t stay there — the constant Jacobian offset
+        # cancels in policy ratios and KL, and magnitudes match the flow families.
+        one_plus_sigma = 1 + sigma
+        one_plus_sigma_prev = 1 + sigma_prev
+        return cls(
+            sigma=sigma / one_plus_sigma,
+            sigma_prev=sigma_prev / one_plus_sigma_prev,
+            sigma_max=sigma_max / (1 + sigma_max),
+            sigma_min=sigma_min / (1 + sigma_min),
+            one_plus_sigma=one_plus_sigma,
+            one_plus_sigma_prev=one_plus_sigma_prev,
+        )
+
+    @property
+    def dt(self) -> Any:
+        return self.sigma_prev - self.sigma
+
+    def flow_grpo_std_dev_t(self, noise_level: float) -> Any:
+        """Flow-GRPO's SDE noise scale: ``sigma_min + (sigma_max - sigma_min) * sigma``
+        at ``noise_level == 1`` (the reference parameterization), its sqrt form otherwise."""
+
+        import torch
+
+        sigma = self.sigma
+        if noise_level == 1.0:
+            return self.sigma_min + (self.sigma_max - self.sigma_min) * sigma
+        return (
+            torch.sqrt(sigma / (1 - torch.where(sigma == 1, self.sigma_max, sigma))) * noise_level
+        )
+
 
 def _resolve_step_index(scheduler: Any, timestep: Any, step_index: Any) -> list[int]:
     if step_index is None:
@@ -46,69 +115,6 @@ def _resolve_step_index(scheduler: Any, timestep: Any, step_index: Any) -> list[
     if isinstance(step_index, int):
         return [step_index] * len(timestep)
     return list(step_index)
-
-
-def _flow_domain_schedule(
-    scheduler: Any,
-    step_index: list[int],
-    *,
-    device: Any,
-    view_shape: tuple[int, ...],
-) -> _FlowSchedule:
-    """Read sigma / sigma_prev / endpoints for ``step_index`` in the flow domain.
-
-    Cosmos Predict2's FlowMatch scheduler keeps its sigma table in the EDM
-    domain (sigma_max=80) while the SDE math is derived for rectified-flow
-    sigmas in [0, 1] (x_t = (1-t)*x0 + t*noise). Feeding EDM sigmas through
-    the [0, 1] formulas silently produces ~sigma^2-scale garbage log-probs
-    (observed: logprob ~ -68^2 on Predict2 GRPO). Detect the domain from the
-    RUNTIME sigma table — config keys are unreliable: Predict2.5's UniPC
-    declares sigma_max=200 yet use_flow_sigmas=True already normalizes its
-    runtime table to [0, 1]. Cache the verdict on the scheduler so steps
-    after the first do not pay a GPU->host sync for the max().
-    """
-
-    prev_step_index = [s + 1 for s in step_index]
-    scheduler.sigmas = scheduler.sigmas.to(device)
-    sigma = scheduler.sigmas[step_index].view(*view_shape)
-    sigma_prev = scheduler.sigmas[prev_step_index].view(*view_shape)
-    # sigmas[1] / sigmas[-1] are loop-invariant schedule endpoints; keep them as
-    # 0-d device tensors instead of .item() to drop two per-step host syncs.
-    sigma_max = scheduler.sigmas[1]
-    sigma_min = scheduler.sigmas[-1]
-    edm_domain = getattr(scheduler, "_vrl_edm_sigma_domain", None)
-    if edm_domain is None:
-        edm_domain = bool(scheduler.sigmas.max().item() > 1.0)
-        scheduler._vrl_edm_sigma_domain = edm_domain
-    if not edm_domain:
-        return _FlowSchedule(sigma, sigma_prev, sigma_max, sigma_min, None, None)
-    # t = s/(1+s) maps EDM sigmas onto the flow domain; log_prob /
-    # prev_sample_mean / std_dev_t stay there — the constant Jacobian offset
-    # cancels in policy ratios and KL, and magnitudes match the flow families.
-    one_plus_sigma = 1 + sigma
-    one_plus_sigma_prev = 1 + sigma_prev
-    return _FlowSchedule(
-        sigma=sigma / one_plus_sigma,
-        sigma_prev=sigma_prev / one_plus_sigma_prev,
-        sigma_max=sigma_max / (1 + sigma_max),
-        sigma_min=sigma_min / (1 + sigma_min),
-        one_plus_sigma=one_plus_sigma,
-        one_plus_sigma_prev=one_plus_sigma_prev,
-    )
-
-
-def _flow_grpo_std_dev_t(schedule: _FlowSchedule, noise_level: float) -> Any:
-    """Flow-GRPO's SDE noise scale: ``sigma_min + (sigma_max - sigma_min) * sigma``
-    at ``noise_level == 1`` (the reference parameterization), its sqrt form otherwise."""
-
-    import torch
-
-    sigma = schedule.sigma
-    if noise_level == 1.0:
-        return schedule.sigma_min + (schedule.sigma_max - schedule.sigma_min) * sigma
-    return (
-        torch.sqrt(sigma / (1 - torch.where(sigma == 1, schedule.sigma_max, sigma))) * noise_level
-    )
 
 
 def flow_sde_scale_terms(
@@ -134,14 +140,13 @@ def flow_sde_scale_terms(
             f"flow SDE scale terms are defined for sde_type='flow_grpo', got {sde_type!r}"
         )
     timestep = torch.as_tensor(timestep).reshape(-1)
-    schedule = _flow_domain_schedule(
+    schedule = _FlowSchedule.read(
         scheduler,
         _resolve_step_index(scheduler, timestep, step_index),
         device=timestep.device,
         view_shape=(-1,),
     )
-    dt = schedule.sigma_prev - schedule.sigma
-    return schedule.sigma, torch.sqrt(-1 * dt), _flow_grpo_std_dev_t(schedule, noise_level)
+    return schedule.sigma, torch.sqrt(-1 * schedule.dt), schedule.flow_grpo_std_dev_t(noise_level)
 
 
 def sde_step_with_logprob(
@@ -210,14 +215,14 @@ def sde_step_with_logprob(
 
     step_index = _resolve_step_index(scheduler, timestep, step_index)
     ndim = sample.ndim
-    schedule = _flow_domain_schedule(
+    schedule = _FlowSchedule.read(
         scheduler,
         step_index,
         device=sample.device,
         view_shape=(-1,) + (1,) * (ndim - 1),
     )
     sigma, sigma_prev = schedule.sigma, schedule.sigma_prev
-    dt = sigma_prev - sigma
+    dt = schedule.dt
     one_plus_sigma_prev = schedule.one_plus_sigma_prev
     if schedule.one_plus_sigma is not None:
         # EDM-domain inputs: the model_output is the noise estimate
@@ -255,7 +260,7 @@ def sde_step_with_logprob(
         log_prob = -((prev_sample.detach() - prev_sample_mean) ** 2)
         log_prob = log_prob.mean(dim=tuple(range(1, log_prob.ndim)))
     else:
-        std_dev_t = _flow_grpo_std_dev_t(schedule, noise_level)
+        std_dev_t = schedule.flow_grpo_std_dev_t(noise_level)
 
         prev_sample_mean = (
             sample * (1 + std_dev_t**2 / (2 * sigma) * dt)
