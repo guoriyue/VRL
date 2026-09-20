@@ -287,7 +287,7 @@ class RayLifecyclePlan:
     def _setting(self, role: str) -> OffloadSetting:
         return getattr(self, self._SETTING_BY_ROLE[role])
 
-    def _parks_for(self, role: str, other: str) -> bool:
+    def _should_offload_for(self, role: str, other: str) -> bool:
         """Resolve this role's offload setting at the other role's phase."""
 
         setting = self._setting(role)
@@ -300,19 +300,25 @@ class RayLifecyclePlan:
     def offload_train(self) -> bool:
         """Trainer parks its model/optimizer while rollout or reward use its GPU."""
 
-        return self._parks_for("trainer", "rollout") or self._parks_for("trainer", "reward")
+        return self._should_offload_for("trainer", "rollout") or self._should_offload_for(
+            "trainer", "reward"
+        )
 
     @property
     def offload_rollout(self) -> bool:
         """Rollout workers park (CuMem sleep) between phases; ``on_demand`` lease."""
 
-        return self._parks_for("rollout", "trainer") or self._parks_for("rollout", "reward")
+        return self._should_offload_for("rollout", "trainer") or self._should_offload_for(
+            "rollout", "reward"
+        )
 
     @property
     def offload_reward(self) -> bool:
         """Reward parks after scoring: it sits on someone else's card."""
 
-        return self._parks_for("reward", "trainer") or self._parks_for("reward", "rollout")
+        return self._should_offload_for("reward", "trainer") or self._should_offload_for(
+            "reward", "rollout"
+        )
 
     # ── boundary views ────────────────────────────────────────────────
     @property
@@ -326,19 +332,19 @@ class RayLifecyclePlan:
     def park_trainer_for_rollout(self) -> bool:
         """Trainer parks its state for the generation phase."""
 
-        return self._parks_for("trainer", "rollout")
+        return self._should_offload_for("trainer", "rollout")
 
     @property
     def park_rollout_for_train(self) -> bool:
-        return self._parks_for("rollout", "trainer")
+        return self._should_offload_for("rollout", "trainer")
 
     @property
     def park_rollout_for_reward(self) -> bool:
-        return self._parks_for("rollout", "reward")
+        return self._should_offload_for("rollout", "reward")
 
     @property
     def park_trainer_for_reward(self) -> bool:
-        return self._parks_for("trainer", "reward")
+        return self._should_offload_for("trainer", "reward")
 
 
 @dataclass(frozen=True, slots=True)
