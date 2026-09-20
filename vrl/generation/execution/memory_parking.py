@@ -1,4 +1,8 @@
-"""Physical GPU-memory parking owned by one generation worker."""
+"""Physical GPU-memory parking owned by one generation worker.
+
+The worker picks the parking mechanism (``cumem`` or ``move``, vocabulary in
+``vrl/models/parking.py``) from residency; its destination is always RAM.
+"""
 
 from __future__ import annotations
 

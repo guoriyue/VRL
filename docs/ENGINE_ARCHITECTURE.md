@@ -35,7 +35,34 @@ flowchart LR
 | `RuntimePhase`, `RuntimeLifecycle`, `RuntimeLifecycleError` | `vrl/utils/lifecycle.py` | Owner-labeled lifecycle FSM. Both engine runtimes drive their phase transitions through it, which is what makes the two lifecycles provably identical. |
 | `OperationDeadline`, `OperationTimeout(TerminalRuntimeError)` | `vrl/utils/deadline.py` | Bounded-wait primitive; expiry is terminal by design. |
 | `RayCallDeadline(OperationDeadline)`, `RayOperationTimeout(OperationTimeout)`, `RayOperationCancelled(TerminalRuntimeError)` | `vrl/ray/operation_deadline.py` | The same deadline vocabulary specialized for Ray calls. |
-| `CumemPool` | `vrl/utils/cuda_memory.py` | Tagged CUDA allocation pool: build model state inside it, later park physical pages to pinned host RAM and verify the residual (`validate_parking_residual`, `CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT`). Used by generation workers and CuMem rewards alike. |
+| `CumemPool` | `vrl/models/parking.py` | Tagged CUDA allocation pool: build model state inside it, later park physical pages to pinned host RAM and verify the residual (`validate_parking_residual`, `CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT`). Used by generation workers and CuMem rewards alike. |
+
+### Parking (`vrl/models/parking.py`)
+
+Every role parks the same way in outline: copy what must survive off the card,
+release the card, restore on the next phase. Two words describe any concrete
+parking. The **mechanism** is how the card is released: `move` (`.to("cpu")`
+per storage, `ModelParking`) or `cumem` (the model was built inside a vLLM
+CuMem pool, so its pages are backed up and unmapped as one unit,
+`CumemPool`). The **destination** is where the bytes live meanwhile: `ram`, or
+`disk` (frozen shards become shared file mappings under
+`distributed.resources.trainer_parking_directory`; trainable parameters,
+optimizer state and EMA still go to RAM). Three of the four cells exist, and
+each role sits in a fixed one:
+
+| | destination `ram` | destination `disk` |
+|---|---|---|
+| mechanism `move` | generation worker whose model is off CUDA; trainer by default; reward | trainer with `trainer_parking_directory` set (`TrainingStateParking`) |
+| mechanism `cumem` | generation worker with a CUDA-resident model; CuMem rewards | none: vLLM backs up to pinned RAM only |
+
+The trainer cannot use `cumem` because FSDP shards and optimizer state are
+allocated by torch, not inside a pool; the generation worker does not use
+`disk` because one CuMem backup per phase fits pinned RAM. Whether a role parks
+at all is the earlier, separate decision `distributed.resources.offload`
+(`RayLifecyclePlan` below), derived from which roles share a GPU. The
+per-role owners (`WorkerMemoryParking`, `_TrainingParkingStrategy`,
+`MemoryParkingScorer`) add phase tracking and failure recovery on top; they do
+not add a third mechanism.
 
 ### Ray infrastructure (`vrl/ray`)
 
@@ -90,7 +117,7 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 |---|---|
 | `RayGenerationWorker` (`ray/worker.py`) | The Ray actor shell; delegates to the core. |
 | `GenerationWorkerCore` | Worker-process brain: validates the launch contract, builds the family executor, isinstance-probes `BatchSizeProbeExecutor` for auto batch sizing, runs forward/probe calls. |
-| `WorkerMemoryParking` | Whole-model GPU↔pinned-host parking with phase tracking; produces `WorkerMemoryParkingSnapshot` evidence the driver validates. The backend follows residency, not the family: a parking-required rank whose model is resident on CUDA parks through a `CumemPool`; under `pipeline_offload_mode` or with a model built off CUDA it parks by moving. |
+| `WorkerMemoryParking` | The generation worker's parking owner (vocabulary in §1 Parking): phase tracking plus `WorkerMemoryParkingSnapshot` evidence the driver validates. Picks the mechanism from residency, not the family: a parking-required rank whose model is resident on CUDA uses `cumem`; under `pipeline_offload_mode` or with a model built off CUDA it uses `move`. Destination is always RAM. |
 | `DistributedExecutionPlanner` → `DistributedGenerationPlan`, `DeviceAssignment` | Splits a request into per-worker batch assignments. |
 | `EnginePlan` (`planner.py`) | The resolved per-request plan: which `sample_batches` run where. |
 | `GenerationSampleBatch`, `SampleAlignedValues`, `BatchResultWithIdentity` (`sample_batches.py`) | The batch coordinate system: a batch is a slice of samples (`prompt_index`, `sample_start`, `sample_count`), not a time segment. `SampleAlignedValues` slices per-sample tensors consistently. |

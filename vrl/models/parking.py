@@ -1,7 +1,41 @@
-"""Model, training-state and CuMem parking backends.
+"""Parking: a role gives its GPU memory up for a phase and takes it back later.
 
-Callers own phase transitions and failure recovery. CPU relocation records
-original devices; CuMem preserves virtual addresses through allocator mappings.
+Every role (generation worker, trainer, reward) parks the same way in outline:
+copy what must survive off the card, release the card, restore on the next
+phase. Two independent questions describe any concrete parking, and the whole
+repository uses only these two words for them:
+
+* **mechanism** -- how the card is released. ``move``: tensors are moved with
+  ``.to("cpu")`` one storage at a time (:class:`ModelParking`). ``cumem``: the
+  model was built inside a vLLM CuMem pool, so its physical pages are backed
+  up and unmapped as one unit while virtual addresses stay valid
+  (:class:`CumemPool`).
+* **destination** -- where the surviving bytes live meanwhile. ``ram``: host
+  memory. ``disk``: frozen shards become shared file mappings under
+  ``distributed.resources.trainer_parking_directory`` so Linux can reclaim
+  them; trainable parameters, optimizer state and EMA still go to RAM.
+
+Only three of the four cells exist, and each role sits in a fixed one:
+
+=========== ============================ =====================================
+             destination ``ram``          destination ``disk``
+=========== ============================ =====================================
+``move``     generation worker whose      trainer with
+             model is off CUDA; trainer   ``trainer_parking_directory`` set
+             by default; reward           (:class:`TrainingStateParking`)
+``cumem``    generation worker with a     (none: vLLM backs up to pinned RAM
+             CUDA-resident model; CuMem   only)
+             rewards
+=========== ============================ =====================================
+
+The trainer cannot use ``cumem`` because FSDP shards and optimizer state are
+allocated by torch, not inside a pool; the generation worker does not use
+``disk`` because one CuMem backup per phase fits pinned RAM. Whether a role
+parks at all is a separate, earlier decision: ``distributed.resources.offload``
+(``vrl/ray/resources.py``), derived from which roles share a GPU.
+
+Callers own phase transitions and failure recovery. ``move`` records original
+devices; ``cumem`` preserves virtual addresses through allocator mappings.
 """
 
 from __future__ import annotations
@@ -32,7 +66,10 @@ def module_on_host(module: Any) -> bool:
 
 
 class ModelParking:
-    """Retain original devices before moving storage, including partial moves."""
+    """Mechanism ``move``, destination ``ram`` (see the module docstring).
+
+    Retains original devices before moving storage, including partial moves.
+    """
 
     def __init__(self) -> None:
         self._modules: list[tuple[Any, Any]] = []
@@ -220,7 +257,11 @@ class TrainingMemoryState:
 
 
 class TrainingStateParking(ModelParking):
-    """Extend model parking with optimizer, gradient, EMA and scaler storage."""
+    """The trainer's parking: mechanism ``move``; destination ``ram``, or
+    ``disk`` for frozen shards when ``parking_directory`` is set.
+
+    Extends model parking with optimizer, gradient, EMA and scaler storage.
+    """
 
     # A tmpfs mount (``/tmp`` on many hosts, ``/dev/shm``) keeps mapped files
     # in RAM, which defeats disk parking silently.
@@ -236,8 +277,8 @@ class TrainingStateParking(ModelParking):
         super().__init__()
         self.state = state
         self.ema_device = getattr(state.ema, "device", None)
-        # distributed.resources.parking_directory: frozen shards go to shared
-        # file mappings under it instead of anonymous host RAM.
+        # distributed.resources.trainer_parking_directory: frozen shards go to
+        # shared file mappings under it instead of anonymous host RAM.
         self._parking_directory = parking_directory
         self._host_storage_directories = []
 
@@ -390,7 +431,9 @@ def cumem_allocator() -> Any | None:
 
 
 class CumemPool:
-    """Tagged handle over the process-wide vLLM CuMemAllocator.
+    """Mechanism ``cumem``, destination ``ram`` (see the module docstring).
+
+    Tagged handle over the process-wide vLLM CuMemAllocator.
 
     A tag selects which pages receive a CPU backup; it is not an independently
     sleepable allocator slice. ``CuMemAllocator.sleep`` walks and unmaps every

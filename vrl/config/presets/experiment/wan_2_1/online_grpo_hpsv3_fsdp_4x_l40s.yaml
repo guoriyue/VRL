@@ -110,7 +110,7 @@ distributed:
       gpu_pool: trainer
     # Four parked trainers plus four sleeping generators exceed this host's RAM;
     # the trainers' frozen shards go to node-local NVMe while generation runs.
-    parking_directory: /mnt/nvme/vrl-parking
+    trainer_parking_directory: /mnt/nvme/vrl-parking
   rollout:
     # Wan pipeline startup reads five T5 shards; 600s default killed a real
     # launch off EBS. Keep cold-start headroom even with the NVMe cache.

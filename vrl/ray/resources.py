@@ -201,6 +201,10 @@ OffloadSetting = Literal["auto"] | bool
 class OffloadConfig:
     """Per-role GPU offload switches (public key: distributed.resources.offload).
 
+    This decides WHETHER a role parks; how and where it parks is fixed per role
+    (vocabulary in ``vrl/models/parking.py``), except for the trainer's
+    ``trainer_parking_directory``.
+
     ``auto`` (default) offloads a role exactly when it shares a GPU with another
     role, as resolved from the device sets. ``true`` forces a role to park at
     every phase boundary even on a private card (trade time for headroom).
@@ -224,28 +228,32 @@ class DistributedResourceConfig:
     reward: RewardResourceConfig = field(default_factory=RewardResourceConfig)
     offload: OffloadConfig = field(default_factory=OffloadConfig)
     cross_node: bool = False
-    # Where a parked role's host copy lives (public key:
-    # distributed.resources.parking_directory). ``offload`` decides WHETHER a
-    # role gives up its GPU; this decides WHERE the copy goes. Unset: pinned
-    # host RAM. Set: a node-local disk directory (NVMe) that the trainer's
-    # frozen shards are written to as shared file mappings, so Linux can drop
-    # and re-read them while generation owns the GPUs -- for hosts whose RAM
-    # cannot hold every parked role at once. Trainable parameters, optimizer
-    # state and EMA stay in host RAM. With a directory set, ranks park one at a
-    # time, since the file copy first needs a transient anonymous copy. The
+    # The trainer's parking destination (public key:
+    # distributed.resources.trainer_parking_directory; vocabulary in
+    # vrl/models/parking.py). ``offload`` decides WHETHER a role gives up its
+    # GPU; this decides WHERE the trainer's copy goes. Unset: host RAM. Set: a
+    # node-local disk directory (NVMe) that the trainer's frozen shards are
+    # written to as shared file mappings, so Linux can drop and re-read them
+    # while generation owns the GPUs -- for hosts whose RAM cannot hold every
+    # parked role at once. Trainable parameters, optimizer state and EMA stay
+    # in host RAM. With a directory set, ranks park one at a time, since the
+    # file copy first needs a transient anonymous copy. Only the trainer has
+    # this choice: generation workers and rewards always park into RAM. The
     # counterpart of miles' --offload-train-target=disk / --offload-train-disk-dir.
-    parking_directory: str | None = None
+    trainer_parking_directory: str | None = None
 
     def __post_init__(self) -> None:
-        directory = self.parking_directory
+        directory = self.trainer_parking_directory
         if directory is None:
             return
         if not isinstance(directory, str) or not directory.strip():
-            raise ValueError("distributed.resources.parking_directory must be a non-empty path")
+            raise ValueError(
+                "distributed.resources.trainer_parking_directory must be a non-empty path"
+            )
         if not directory.startswith("/"):
             raise ValueError(
-                "distributed.resources.parking_directory must be an absolute node-local "
-                f"path, got {directory!r}",
+                "distributed.resources.trainer_parking_directory must be an absolute "
+                f"node-local path, got {directory!r}",
             )
 
 
