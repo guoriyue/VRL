@@ -180,6 +180,8 @@ class _TrainingParkingStrategy:
     # Class-level default so a strategy that inherits this cannot forget to
     # initialize it; the first park assigns a per-instance value.
     _parked_training_state: TrainingStateParking | None = None
+    # distributed.resources.parking_directory; None parks into host RAM.
+    _parking_directory: str | None = None
 
     def validate_training_state_parking(self) -> None:
         return None
@@ -205,7 +207,7 @@ class _TrainingParkingStrategy:
                 "cannot park different training state before restoring the current phase"
             )
 
-        parked = TrainingStateParking(state)
+        parked = TrainingStateParking(state, parking_directory=self._parking_directory)
         self._parked_training_state = parked
         try:
             parked.park_training_state()
@@ -507,6 +509,7 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         shard_trainable_only: bool = False,
         ulysses_degree: int = 1,
         ring_degree: int = 1,
+        parking_directory: str | None = None,
     ) -> None:
         self.context = context
         self.collectives = collectives if collectives is not None else TrainingCollectives(context)
@@ -514,6 +517,7 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         self._precision_policy = precision_policy
         self._reshard_after_forward = reshard_after_forward
         self._cpu_offload = cpu_offload
+        self._parking_directory = parking_directory
         self._shard_trainable_only = shard_trainable_only
         if shard_trainable_only and precision_policy != "none":
             raise ValueError("shard_trainable_only requires precision_policy='none'")
@@ -915,13 +919,11 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
         self.collectives.coordination_barrier()
 
         failure: BaseException | None = None
-        import os
-
-        # File-backed parking first creates a temporary anonymous CPU copy.
-        # Avoid multiplying that peak by world size while rollout actors are
-        # asleep in host RAM. The move is local; all peers still participate in
-        # every barrier, including after a local failure.
-        serialized = bool(os.environ.get("VRL_TRAINER_PARKING_DIRECTORY"))
+        # Disk parking first creates a transient anonymous CPU copy. Avoid
+        # multiplying that peak by world size while rollout actors are asleep
+        # in host RAM. The move is local; all peers still participate in every
+        # barrier, including after a local failure.
+        serialized = self._parking_directory is not None
         for owner in range(self.context.world_size if serialized else 1):
             if not serialized or self.context.rank == owner:
                 try:
@@ -1205,6 +1207,11 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
             reshard_after_forward=fsdp.reshard_after_forward,
             cpu_offload=fsdp.cpu_offload,
             shard_trainable_only=fsdp.shard_trainable_only,
+            parking_directory=(
+                config.distributed.resources.parking_directory
+                if config.distributed is not None and config.distributed.resources is not None
+                else None
+            ),
         )
     if configured_strategy == "ddp":
         if training.ddp is None:

@@ -45,7 +45,7 @@ def _assert_exact(actual, expected):
         assert torch.equal(actual[name], expected[name]), name
 
 
-def _equivalence_worker(rank, port, shard_trainable_only=True):
+def _equivalence_worker(rank, port, shard_trainable_only=True, parking_directory=None):
     os.environ.update(MASTER_ADDR="127.0.0.1", MASTER_PORT=str(port))
     torch.set_num_threads(1)
     torch.cuda.set_device(rank)
@@ -57,6 +57,7 @@ def _equivalence_worker(rank, port, shard_trainable_only=True):
         reshard_after_forward=True,
         cpu_offload=False,
         shard_trainable_only=shard_trainable_only,
+        parking_directory=parking_directory,
     )
     try:
         states = []
@@ -192,7 +193,6 @@ def test_four_gpu_parking_preserves_next_updates():
 
 @pytest.mark.gpu
 @pytest.mark.skipif(torch.cuda.device_count() < 4, reason="requires four CUDA devices")
-def test_four_gpu_nvme_full_shard_parking_preserves_updates(tmp_path, monkeypatch):
-    monkeypatch.setenv("VRL_TRAINER_PARKING_DIRECTORY", str(tmp_path))
-    mp.spawn(_equivalence_worker, args=(free_port(), False), nprocs=4, join=True)
+def test_four_gpu_disk_full_shard_parking_preserves_updates(tmp_path):
+    mp.spawn(_equivalence_worker, args=(free_port(), False, str(tmp_path)), nprocs=4, join=True)
     assert not list(tmp_path.iterdir())

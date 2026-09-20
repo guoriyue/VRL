@@ -226,6 +226,29 @@ class DistributedResourceConfig:
     reward: RewardResourceConfig = field(default_factory=RewardResourceConfig)
     offload: OffloadConfig = field(default_factory=OffloadConfig)
     cross_node: bool = False
+    # Where a parked role's host copy lives (public key:
+    # distributed.resources.parking_directory). ``offload`` decides WHETHER a
+    # role gives up its GPU; this decides WHERE the copy goes. Unset: pinned
+    # host RAM. Set: a node-local disk directory (NVMe) that the trainer's
+    # frozen shards are written to as shared file mappings, so Linux can drop
+    # and re-read them while generation owns the GPUs -- for hosts whose RAM
+    # cannot hold every parked role at once. Trainable parameters, optimizer
+    # state and EMA stay in host RAM. With a directory set, ranks park one at a
+    # time, since the file copy first needs a transient anonymous copy. The
+    # counterpart of miles' --offload-train-target=disk / --offload-train-disk-dir.
+    parking_directory: str | None = None
+
+    def __post_init__(self) -> None:
+        directory = self.parking_directory
+        if directory is None:
+            return
+        if not isinstance(directory, str) or not directory.strip():
+            raise ValueError("distributed.resources.parking_directory must be a non-empty path")
+        if not directory.startswith("/"):
+            raise ValueError(
+                "distributed.resources.parking_directory must be an absolute node-local "
+                f"path, got {directory!r}",
+            )
 
 
 @dataclass(frozen=True, slots=True)
