@@ -116,6 +116,15 @@ def preflight_rewards(
         raise ValueError("reward preflight needs a data section")
     entry = _model_family(built)
     data = built.root.data
+    if data.source_report:
+        # A source-backed dataset ships a report beside its manifests; hold the
+        # rows to it here, before the reward runs over them. This used to be a
+        # launch gate behind a production flag; the preflight is where every
+        # filesystem-reading check of a run belongs.
+        from vrl.trainers.data.provenance import DatasetProvenance
+
+        DatasetProvenance.from_config(data)
+        logger.info("dataset provenance checked against %s", data.source_report)
     if use_eval_manifest:
         if not data.eval_manifest:
             raise ValueError("config missing required field: data.eval_manifest")

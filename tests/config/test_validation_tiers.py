@@ -27,22 +27,23 @@ def test_cross_section_rules_fire_on_direct_root_construction() -> None:
 
 
 def test_launch_gates_do_not_run_inside_parse_config() -> None:
-    """A gate that needs the precision policy or the filesystem must not tax
-    ``parse_config`` callers: the production gate reads manifests, so a config
-    that enables it parses but fails only through ``require_training_config``."""
+    """A gate that needs the precision policy or a runtime module must not tax
+    ``parse_config`` callers: the compile matrix reads the build-role resolver,
+    so a config it rejects still parses and fails only through
+    ``require_training_config``."""
 
     cfg = OmegaConf.create(
         {
-            "model": {"family": "sd3_5"},
+            "model": {"family": "sd3_5", "torch_compile": {"enable": True}},
             "precision": {"float32_precision": "tf32", "training": {"dtype": "bf16"}},
-            "production": True,
+            "distributed": {"resources": {"rollout": {"gpus_per_engine": 2}}},
         }
     )
 
     root = parse_config(cfg)
 
-    assert root.production is True
-    with pytest.raises(ValueError, match=r"data\.manifest"):
+    assert root.model.torch_compile.enable is True
+    with pytest.raises(ValueError, match=r"torch_compile\.enable=true cannot combine"):
         validation.require_training_config(cfg)
 
 

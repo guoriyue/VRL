@@ -36,4 +36,3 @@ trainer:
   save_freq: 20
 
 
-production: true

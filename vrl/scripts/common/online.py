@@ -17,7 +17,6 @@ from omegaconf import DictConfig
 
 from vrl.algorithms.advantages import nonzero_advantage_mask
 from vrl.config.builders import BuiltConfigs
-from vrl.config.schema import RootConfig
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
@@ -830,7 +829,6 @@ async def run_online_recipe(
     resolved = resolve_online_run(cfg)
     # Identical initialization on every rank, before any randomized model build.
     resolved.run.initialize_process_rng()
-    _preflight_production_video_reward(resolved.built.root)
     built = resolved.built
     run_config = resolved.run
     family_entry = resolved.family
@@ -1255,23 +1253,6 @@ async def run_online_recipe(
         raise
     finally:
         await lifecycle.shutdown(run_error=run_error)
-
-
-def _preflight_production_video_reward(root: RootConfig) -> None:
-    """Fail fast on the driver if the production reward backend is unimportable."""
-
-    reward = root.reward
-    if not root.production or reward is None or "kling_video_reward" not in reward.components:
-        return
-    from vrl.rewards.models.kling_video_reward import preflight_kling_video_reward_backend
-
-    try:
-        preflight_kling_video_reward_backend()
-    except Exception as exc:
-        raise RuntimeError(
-            "production run requires the repo-owned Kling VideoReward "
-            "inference backend under vrl/rewards/models/kling_video_reward.py.",
-        ) from exc
 
 
 __all__ = [

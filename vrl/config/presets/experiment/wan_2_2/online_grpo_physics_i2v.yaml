@@ -66,4 +66,3 @@ reward:
       worker_config:
         device: cpu
 
-production: false

@@ -82,4 +82,3 @@ trainer:
   # Evaluate saved checkpoints separately with the held-out manifest and fixed seeds.
 
 
-production: true

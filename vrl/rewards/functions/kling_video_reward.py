@@ -8,7 +8,7 @@ factory and its defaults.
 
 from __future__ import annotations
 
-from vrl.rewards.base import ModelRewardFunction, ProductionContract
+from vrl.rewards.base import ModelRewardFunction
 
 
 class KlingVideoReward(ModelRewardFunction):
@@ -17,9 +17,6 @@ class KlingVideoReward(ModelRewardFunction):
     model_factory = "vrl.rewards.models.kling_video_reward:KlingVideoRewardModel"
     name = "kling_video_reward"
     default_score_key = "overall_reward"
-    production = ProductionContract(
-        task_types=frozenset({"text_to_video", "image_to_video", "video2world"}),
-    )
 
 
 __all__ = ["KlingVideoReward"]

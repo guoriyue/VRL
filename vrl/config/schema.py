@@ -779,11 +779,6 @@ class RootConfig(ConfigBase):
     sampling: SerializeAsAny[SamplingSection] | None = None
     # Evaluation-time overrides of the sections above (currently sampling).
     eval: EvalSection | None = None
-    # This is a production run: the launch gate (vrl/config/validation.py
-    # gate_production) holds every configured reward that declares a production
-    # contract to it and requires source-backed dataset provenance. Which rewards
-    # run is reward.components' business; this flag only raises the bar on them.
-    production: bool = False
     trainer: TrainerSection | None = None
     actor: ActorSection | None = None
     distributed: DistributedSection | None = None

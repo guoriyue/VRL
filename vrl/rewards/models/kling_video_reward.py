@@ -428,14 +428,6 @@ class KlingQwen2VLRewardModel(Qwen2VLForConditionalGeneration):
         return {"logits": pooled_logits}
 
 
-def preflight_kling_video_reward_backend() -> None:
-    """Validate repo-owned backend imports without downloading weights."""
-
-    import peft  # noqa: F401
-    import qwen_vl_utils  # noqa: F401
-    import transformers  # noqa: F401
-
-
 def load_kling_video_reward_checkpoint(
     model: Any,
     checkpoint_dir: Path,
@@ -685,5 +677,4 @@ def _insert_adapter_name_into_state_dict(
 
 __all__ = [
     "KlingVideoRewardModel",
-    "preflight_kling_video_reward_backend",
 ]

@@ -125,3 +125,16 @@ def test_synthetic_media_follows_the_collector_layout(task: str, expected_shape)
     assert tuple(media.shape) == expected_shape
     assert float(media.min()) >= 0.0 and float(media.max()) <= 1.0
     assert torch.equal(media, _synthetic_media(sampling, task, seed=0))
+
+
+def test_preflight_checks_dataset_provenance_when_a_source_report_is_configured(tmp_path) -> None:
+    """Source-backed data is held to its report before any reward runs; a report
+    path that does not exist fails the preflight naming the field."""
+    with pytest.raises(ValueError, match=r"data\.source_report does not exist"):
+        preflight_rewards(
+            _config(
+                tmp_path, f"data.source_report={(tmp_path / 'missing_report.json').as_posix()}"
+            ),
+            prompts=1,
+            device=torch.device("cpu"),
+        )

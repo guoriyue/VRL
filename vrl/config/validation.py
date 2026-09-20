@@ -4,10 +4,12 @@
 ``parse_config`` (tier 1 shapes + tier 2 cross-section rules, see
 ``vrl/config/rules.py``), the precision policy, then ``TRAINING_GATES`` in
 order. A gate is a check that tier 2 cannot afford: it needs the resolved
-precision policy, a runtime module (the compile matrix reads the build-role
-resolver and the checkpointing resolver) or the filesystem (the production
-data gate reads manifests). Eval and perf tools call ``parse_config`` alone,
-so a gate never taxes them.
+precision policy or a runtime module (the compile matrix reads the build-role
+resolver and the checkpointing resolver). Eval and perf tools call
+``parse_config`` alone, so a gate never taxes them. Checks that read the
+filesystem (dataset provenance, reward backends) belong to
+``python -m vrl.scripts.rewards.preflight``, which runs the real reward over
+the real rows before training does.
 
 Adding a gate: write ``def gate_<name>(root, precision) -> None`` that raises
 ``ValueError`` naming the offending keys, and append it to ``TRAINING_GATES``.
@@ -201,38 +203,9 @@ def gate_compile_compatible(root: RootConfig, precision: PrecisionPolicy) -> Non
     )
 
 
-def gate_production(root: RootConfig, precision: PrecisionPolicy) -> None:
-    """``production: true``: every configured reward that declares a production
-    contract is held to it (``ProductionContract.require``), then the dataset's
-    provenance (``DatasetProvenance.from_config``). The gate holds no per-reward
-    or per-dataset knowledge; both owners declare theirs. A configured reward
-    without a contract is not checked here: whether the rewards can actually
-    score these rows is ``python -m vrl.scripts.rewards.preflight``'s job, not
-    a config gate's."""
-
-    del precision
-    if not root.production:
-        return
-    from vrl.rewards.functions.registry import get_reward
-    from vrl.trainers.data.provenance import DatasetProvenance
-
-    reward = root.reward
-    task_type = str((root.data.task_type if root.data is not None else None) or "")
-    if reward is not None:
-        for name in reward.components:
-            contract = get_reward(name).production
-            if contract is None:
-                continue
-            contract.require(name, reward.kwargs.get(name) or {}, task_type=task_type)
-    if root.data is None:
-        raise ValueError("config missing required field: data.manifest")
-    DatasetProvenance.from_config(root.data)
-
-
 TRAINING_GATES: tuple[TrainingGate, ...] = (
     gate_compile_compatible,
     validate_guarded_rollout_drift,
-    gate_production,
 )
 
 

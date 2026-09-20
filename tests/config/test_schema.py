@@ -251,48 +251,6 @@ def test_reward_inference_rejects_unknown_component() -> None:
         )
 
 
-def test_production_video_reward_structural_rules() -> None:
-    """Production validates the named reward and task, not transport encoding."""
-    cfg = OmegaConf.create(
-        {
-            "algorithm": {"kind": "grpo"},
-            "data": {
-                "loader": "prompt_manifest",
-                "manifest": "x",
-                "preprocessing": {},
-                "sampler": {"type": "random_without_replacement"},
-                "task_type": "text_to_video",
-            },
-            "rollout": {"sde": {"type": "cps"}},
-            "reward": {
-                "components": {"kling_video_reward": 1.0},
-                "kwargs": {
-                    "kling_video_reward": {
-                        "sleep_offload": True,
-                        "reward_name": "org/model@main",
-                        "score_key": "overall",
-                        "worker_config": {},
-                    }
-                },
-            },
-            "production": True,
-        }
-    )
-    from vrl.rewards.functions.registry import get_reward
-
-    root = parse_config(cfg)
-    get_reward("kling_video_reward").production.require(
-        "kling_video_reward",
-        root.reward.kwargs["kling_video_reward"],
-        task_type=str(root.data.task_type),
-    )
-
-
-def test_production_gate_defaults_to_disabled_and_accepts_enabled() -> None:
-    assert parse_config(OmegaConf.create({})).production is False
-    assert parse_config(OmegaConf.create({"production": True})).production is True
-
-
 # ── Missing field mapping (??? → ValueError) ──────────────────────────────────
 
 

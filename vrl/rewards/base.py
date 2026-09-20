@@ -21,7 +21,7 @@ import math
 import time
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -60,58 +60,8 @@ class RewardCleanupError(RuntimeError):
         super().__init__(f"{message}: {details}")
 
 
-@dataclass(frozen=True, slots=True)
-class ProductionContract:
-    """What a production run (``production: true``) asserts about this reward's config.
-
-    A reward opts into the production gate by declaring one of these in its
-    class-declaration block, beside ``model_factory`` and its ``default_*``
-    values; a configured reward that declares none is simply not checked by
-    the gate. Everything the gate compares against is
-    declared here, so the check needs the contract and the configured kwargs
-    and nothing else.
-
-    Most of what a production config can get wrong (a model it cannot load, a
-    row it cannot read, a service that is down) shows up by running the reward
-    -- ``python -m vrl.scripts.rewards.preflight`` does that in seconds. What
-    stays here is what running the reward cannot answer: the prompt task types
-    the reward was validated against and the loader keys a production config
-    must not carry. Input media encoding belongs to the scoring model, not the
-    experiment recipe.
-    """
-
-    # Prompt task types (``data.task_type``) this reward is validated for.
-    task_types: frozenset[str]
-    # ``ModelRewardFunction.__init__`` prefers ``worker_config["model_factory"]``
-    # over the class's own, so this key redirects the reward's model loader. A
-    # production config names its model, never its loader. Not per-reward data
-    # -- it is a property of how the loader reads its config -- so it lives on
-    # this type rather than being restated by every reward.
-    LOCKED_WORKER_CONFIG_KEYS: ClassVar[frozenset[str]] = frozenset({"model_factory"})
-
-    def require(self, name: str, kwargs: Mapping[str, Any], *, task_type: str) -> None:
-        """Refuse a production config for component ``name`` that breaks the contract."""
-
-        prefix = f"production run: reward {name} requires"
-        if not str(kwargs.get("reward_name", "")).strip():
-            raise ValueError(f"{prefix} reward.kwargs.{name}.reward_name")
-        worker_config = kwargs.get("worker_config") or {}
-        forbidden = sorted(key for key in self.LOCKED_WORKER_CONFIG_KEYS if key in worker_config)
-        if forbidden:
-            raise ValueError(
-                f"production run: reward {name} worker_config should name the reward model directly; "
-                f"remove extra loader fields: {', '.join(forbidden)}",
-            )
-        if task_type not in self.task_types:
-            expected = ", ".join(sorted(self.task_types)) or "<none>"
-            raise ValueError(f"{prefix} data.task_type={expected}")
-
-
 class RewardFunction:
     """Base class for pure scoring functions and reward composition."""
-
-    # The production gate's contract, declared by a reward that has one.
-    production: ClassVar[ProductionContract | None] = None
 
     # Most reward constructors expose the selected device as ``device``;
     # exceptional schemas (for example NSFW's classifier_device) override it.

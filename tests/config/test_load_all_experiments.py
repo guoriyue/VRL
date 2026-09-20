@@ -33,6 +33,7 @@ from vrl.config.validation import require_training_config
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 from vrl.scripts.common.factory import validate_reward_memory_parking
+from vrl.trainers.data.provenance import DatasetProvenance
 
 
 def _experiment_names() -> list[str]:
@@ -613,7 +614,7 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
         assert isinstance(algo_cfg, expected_type)
 
 
-def test_cosmos_v2w_production_validation_accepts_source_backed_data(
+def test_cosmos_v2w_source_backed_data_passes_provenance(
     tmp_path: Path,
 ) -> None:
     """Cosmos V2W production validation accepts a source-backed manifest pair whose metadata
@@ -681,7 +682,6 @@ def test_cosmos_v2w_production_validation_accepts_source_backed_data(
     cfg = load_config(
         "experiment/cosmos_predict2/online_grpo_v2w_reference",
         overrides=[
-            "production=true",
             f"data.manifest={train.as_posix()}",
             f"data.eval_manifest={eval_manifest.as_posix()}",
             f"data.source_report={report.as_posix()}",
@@ -690,9 +690,10 @@ def test_cosmos_v2w_production_validation_accepts_source_backed_data(
     )
 
     require_training_config(cfg)
+    DatasetProvenance.from_config(parse_config(cfg).data)
 
 
-def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path) -> None:
+def test_wan_i2v_source_backed_data_passes_provenance(tmp_path: Path) -> None:
     """Wan I2V production validation accepts source-backed VideoPhy manifests: image, caption,
     task type, and the CSV / video-URL / decode provenance in metadata.
     """
@@ -763,7 +764,6 @@ def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path
     cfg = load_config(
         "experiment/wan_2_1/online_grpo_physics_i2v",
         overrides=[
-            "production=true",
             f"data.manifest={train_manifest.as_posix()}",
             f"data.eval_manifest={eval_manifest.as_posix()}",
             f"data.source_report={report.as_posix()}",
@@ -772,6 +772,7 @@ def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path
     )
 
     require_training_config(cfg)
+    DatasetProvenance.from_config(parse_config(cfg).data)
 
 
 def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> None:
@@ -793,31 +794,6 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> No
     assert resources.reward_devices == ()
     assert resources.lifecycle.rollout_mode == "on_demand"
     assert resources.lifecycle.park_rollout_for_train is True
-
-
-def test_wan_video_reward_production_config_requires_reward_name() -> None:
-    cfg = load_config("experiment/wan_2_1/online_grpo_kling_video_reward")
-    cfg.reward.kwargs.kling_video_reward.reward_name = ""
-
-    with pytest.raises(ValueError, match="reward_name"):
-        require_training_config(cfg)
-
-
-def test_wan_video_reward_production_rejects_a_redirected_model_loader() -> None:
-    """A production Kling config cannot carry ``worker_config.model_factory``.
-
-    That key is the live redirect: ``ModelRewardFunction.__init__`` prefers
-    it over the reward class's own factory, so a config carrying it names the
-    loader instead of the model. ``import_path`` used to be locked beside it and
-    is not any more -- it is a GenEval *constructor* kwarg
-    (``reward.kwargs.geneval.import_path``), never read out of ``worker_config``,
-    so locking it there protected nothing.
-    """
-    cfg = load_config("experiment/wan_2_1/online_grpo_kling_video_reward")
-    cfg.reward.kwargs.kling_video_reward.worker_config.model_factory = "fake:factory"
-
-    with pytest.raises(ValueError, match="remove extra loader fields"):
-        require_training_config(cfg)
 
 
 def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
