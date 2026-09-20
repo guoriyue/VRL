@@ -77,5 +77,4 @@ reward:
         device: cpu
 
 production:
-  kling_video_reward:
-    enabled: true
+  kling_video_reward: true

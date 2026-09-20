@@ -275,7 +275,7 @@ def test_production_video_reward_structural_rules() -> None:
                     }
                 },
             },
-            "production": {"kling_video_reward": {"enabled": True}},
+            "production": {"kling_video_reward": True},
         }
     )
     from vrl.rewards.functions.registry import get_reward
@@ -290,12 +290,12 @@ def test_production_video_reward_structural_rules() -> None:
 
 def test_production_gate_defaults_to_disabled_and_accepts_enabled() -> None:
     disabled = parse_config(OmegaConf.create({"production": {}}))
-    assert disabled.production.kling_video_reward.enabled is False
+    assert disabled.production.kling_video_reward is False
 
     enabled = parse_config(
-        OmegaConf.create({"production": {"kling_video_reward": {"enabled": True}}}),
+        OmegaConf.create({"production": {"kling_video_reward": True}}),
     )
-    assert enabled.production.kling_video_reward.enabled is True
+    assert enabled.production.kling_video_reward is True
 
 
 # ── Missing field mapping (??? → ValueError) ──────────────────────────────────

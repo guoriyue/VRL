@@ -45,5 +45,4 @@ reward:
       score_key: motion_quality
 
 production:
-  kling_video_reward:
-    enabled: false
+  kling_video_reward: false

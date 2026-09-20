@@ -1261,7 +1261,7 @@ def _preflight_production_video_reward(root: RootConfig) -> None:
     """Fail fast on the driver if the production reward backend is unimportable."""
 
     production = root.production
-    if production is None or not production.kling_video_reward.enabled:
+    if production is None or not production.kling_video_reward:
         return
     from vrl.rewards.models.kling_video_reward import preflight_kling_video_reward_backend
 

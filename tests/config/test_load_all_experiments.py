@@ -681,7 +681,7 @@ def test_cosmos_v2w_production_validation_accepts_source_backed_data(
     cfg = load_config(
         "experiment/cosmos_predict2/online_grpo_v2w_reference",
         overrides=[
-            "production.kling_video_reward.enabled=true",
+            "production.kling_video_reward=true",
             f"data.manifest={train.as_posix()}",
             f"data.eval_manifest={eval_manifest.as_posix()}",
             f"data.source_report={report.as_posix()}",
@@ -763,7 +763,7 @@ def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path
     cfg = load_config(
         "experiment/wan_2_1/online_grpo_physics_i2v",
         overrides=[
-            "production.kling_video_reward.enabled=true",
+            "production.kling_video_reward=true",
             f"data.manifest={train_manifest.as_posix()}",
             f"data.eval_manifest={eval_manifest.as_posix()}",
             f"data.source_report={report.as_posix()}",

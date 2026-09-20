@@ -49,7 +49,7 @@ def resolve_eval_sampling(
     name. A falsy numeric override falls back to the config value;
     ``guidance_scale`` falls back only when the override is ``None`` so an
     explicit ``0`` (CFG disabled) is preserved. Between the CLI and the training
-    ``sampling`` sits ``eval.sampling``: the values evaluation runs with when
+    ``sampling`` sits ``eval``: the values evaluation runs with when
     they differ from training (a longer denoise schedule). A key that ends up
     unset is an error naming its config path.
     """
@@ -58,7 +58,7 @@ def resolve_eval_sampling(
     if sampling is None:
         raise ValueError("config missing required field: sampling")
     cli = dict(overrides or {})
-    eval_sampling = root.eval.sampling if root.eval is not None else None
+    eval_sampling = root.eval
 
     executor = root.model.executor if root.model is not None else None
 

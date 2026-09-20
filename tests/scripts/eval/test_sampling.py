@@ -60,7 +60,7 @@ def test_eval_sampling_num_steps_overrides_training_and_yields_to_the_cli() -> N
     root = _root(
         sampling=_IMAGE,
         executor={"max_sequence_length": 128},
-        eval={"sampling": {"num_steps": 40}},
+        eval={"num_steps": 40},
     )
 
     assert resolve_eval_sampling(root)["num_steps"] == 40
@@ -69,5 +69,5 @@ def test_eval_sampling_num_steps_overrides_training_and_yields_to_the_cli() -> N
 
 
 def test_eval_sampling_rejects_a_non_positive_step_count() -> None:
-    with pytest.raises(ValueError, match=r"eval\.sampling\.num_steps must be >= 1"):
-        _root(sampling=_IMAGE, eval={"sampling": {"num_steps": 0}})
+    with pytest.raises(ValueError, match=r"eval\.num_steps must be >= 1"):
+        _root(sampling=_IMAGE, eval={"num_steps": 0})

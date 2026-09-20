@@ -215,9 +215,7 @@ def gate_production(root: RootConfig, precision: PrecisionPolicy) -> None:
         ()
         if production is None
         else tuple(
-            name
-            for name in type(production).model_fields
-            if bool(getattr(production, name).enabled)
+            name for name in type(production).model_fields if bool(getattr(production, name))
         )
     )
     if not enabled:

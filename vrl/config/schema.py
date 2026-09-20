@@ -743,39 +743,32 @@ class DistributedSection(ConfigBase):
 # ── Root config ───────────────────────────────────────────────────────────────
 
 
-class KlingVideoRewardProductionConfig(ConfigBase):
-    """Production enablement for the Kling VideoReward contract gate."""
-
-    enabled: bool = False
-
-
 class ProductionSection(ConfigBase):
-    """Closed registry of production gates with runtime consumers."""
+    """Closed registry of production gates with runtime consumers.
 
-    kling_video_reward: KlingVideoRewardProductionConfig = Field(
-        default_factory=KlingVideoRewardProductionConfig,
-    )
+    One bool per reward that declares a production contract; the gate in
+    ``vrl/config/validation.py`` iterates the declared fields, so a misspelled
+    reward name is rejected at parse time instead of silently never enabling.
+    """
+
+    kling_video_reward: bool = False
 
 
-class EvalSamplingSection(ConfigBase):
-    """Sampling values evaluation runs with instead of the training values."""
+class EvalSection(ConfigBase):
+    """Evaluation-time overrides; anything absent inherits the training config.
 
-    # reader: vrl/scripts/eval/_sampling.py resolve_eval_sampling. Flow-GRPO
-    # trains on a short schedule and evaluates on the full one (T=10 -> T=40).
+    reader: vrl/scripts/eval/_sampling.py resolve_eval_sampling. Flow-GRPO
+    trains on a short schedule and evaluates on the full one (T=10 -> T=40).
+    """
+
     num_steps: StrictInt | None = None
 
     @field_validator("num_steps")
     @classmethod
     def _positive_steps(cls, value: int | None) -> int | None:
         if value is not None and value < 1:
-            raise ValueError("eval.sampling.num_steps must be >= 1")
+            raise ValueError("eval.num_steps must be >= 1")
         return value
-
-
-class EvalSection(ConfigBase):
-    """Evaluation-time overrides; anything absent inherits the training config."""
-
-    sampling: EvalSamplingSection | None = None
 
 
 class RootConfig(ConfigBase):
