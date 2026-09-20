@@ -278,6 +278,7 @@ class TrainingStateParking(ModelParking):
         import os
         import tempfile
         from pathlib import Path
+
         import torch
 
         root = os.environ.get("VRL_TRAINER_PARKING_DIRECTORY")
@@ -295,8 +296,10 @@ class TrainingStateParking(ModelParking):
                 if local.numel() == 0:
                     continue
                 mapped = torch.from_file(
-                    str(Path(directory.name) / f"{index}.bin"), shared=True,
-                    size=local.numel(), dtype=local.dtype,
+                    str(Path(directory.name) / f"{index}.bin"),
+                    shared=True,
+                    size=local.numel(),
+                    dtype=local.dtype,
                 ).reshape(local.shape)
                 mapped.copy_(local)
                 if hasattr(parameter, "_local_tensor"):

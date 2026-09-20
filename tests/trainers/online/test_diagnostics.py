@@ -269,15 +269,18 @@ class TestDiagnostics:
 
         trainer = _make_parity_boundary_trainer(tmp_path, drop_zero_advantage=False)
         trainer.config.replay_parity = ReplayParityConfig(
-            max_abs_logprob_diff=0.0, every_update=True,
+            max_abs_logprob_diff=0.0,
+            every_update=True,
         )
         trainer._validate_first_update_parity(
-            InitialReplayStats(logprob_abs_diff_max=0.0, finite=True), local_weight=1.0,
+            InitialReplayStats(logprob_abs_diff_max=0.0, finite=True),
+            local_weight=1.0,
         )
         assert trainer._replay_parity_passed
         with pytest.raises(RuntimeError, match="replay parity failed before optimizer update"):
             trainer._validate_first_update_parity(
-                InitialReplayStats(logprob_abs_diff_max=1e-12, finite=True), local_weight=1.0,
+                InitialReplayStats(logprob_abs_diff_max=1e-12, finite=True),
+                local_weight=1.0,
             )
 
     def test_replay_parity_passes_only_after_first_measured_update(

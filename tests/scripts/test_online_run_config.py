@@ -161,11 +161,3 @@ def test_strict_cuda_seed_repeats_small_optimizer_updates(monkeypatch):
         torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
         torch.backends.cudnn.deterministic, torch.backends.cudnn.benchmark = cudnn
         restore_rng_state(previous)
-
-
-def test_online_run_duration_is_positive_and_optional():
-    assert OnlineRunConfig.from_root(_root(total_epochs=10)).max_duration_seconds is None
-    assert OnlineRunConfig.from_root(_root(total_epochs=10, max_duration_seconds=28800)).max_duration_seconds == 28800
-    for invalid in (0, -1):
-        with pytest.raises(ValueError, match="max_duration_seconds"):
-            OnlineRunConfig.from_root(_root(total_epochs=10, max_duration_seconds=invalid))

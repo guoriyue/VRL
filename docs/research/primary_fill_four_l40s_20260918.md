@@ -1,5 +1,9 @@
 # Primary-rank fill: four-L40S overnight acceptance
 
+> The `tools/overnight/` scripts these notes cite are not on `main`; they are
+> the night's operational scripts and live in commit `f38c5afc3` on
+> `exp/overnight-primary-fill-20260918`. Results and receipts are under `outputs/`.
+
 In progress. Candidate `3ab166bb`, isolated worktree
 `/home/ubuntu/VRL-night-20260918`. Parent control: `8c7fec35` in
 `/home/ubuntu/VRL-primary-fill-baseline`. Production code is unchanged.
