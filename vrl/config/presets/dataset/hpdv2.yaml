@@ -1,10 +1,10 @@
 # HPDv2 prompt manifest (Human Preference Dataset v2) as packaged by
 # miles_diffusion; pairs with the HPS-family rewards (hpsv3) the way
-# pickscore_sfw pairs with PickScore. See datasets/hpdv2/report.json.
+# pickscore_sfw pairs with PickScore. See manifests/hpdv2/report.json.
 data:
   loader: prompt_manifest
-  manifest: datasets/hpdv2/train.txt
-  eval_manifest: datasets/hpdv2/test.txt
+  manifest: manifests/hpdv2/train.txt
+  eval_manifest: manifests/hpdv2/test.txt
   preprocessing:
     format: text
   sampler:

@@ -37,7 +37,7 @@ SAFETY_SEED = 0
 
 
 class _TagVocabulary(ConfigBase):
-    """``tags`` block of datasets/danbooru/config.yaml: prompt vocabulary shared by builders."""
+    """``tags`` block of manifests/danbooru/config.yaml: prompt vocabulary shared by builders."""
 
     subject_tags: dict[str, Any]
     pose_tags: dict[str, Any]

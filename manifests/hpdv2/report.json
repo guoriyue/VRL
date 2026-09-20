@@ -2,7 +2,7 @@
   "dataset": "hpdv2",
   "files": {
     "train": {
-      "path": "datasets/hpdv2/train.txt",
+      "path": "manifests/hpdv2/train.txt",
       "row_count": 103672,
       "source_row_count": 103672,
       "duplicate_prompt_count": 0,
@@ -10,7 +10,7 @@
       "sha256": "ef8c64c74fc1d18802996dec2324a4f5d7175043105de720b2eb64f7e82221ff"
     },
     "test": {
-      "path": "datasets/hpdv2/test.txt",
+      "path": "manifests/hpdv2/test.txt",
       "row_count": 242,
       "source_row_count": 242,
       "duplicate_prompt_count": 0,

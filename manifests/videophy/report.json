@@ -2,14 +2,14 @@
   "dataset": "videophy",
   "files": {
     "train": {
-      "path": "datasets/videophy/train.txt",
+      "path": "manifests/videophy/train.txt",
       "row_count": 3343,
       "unique_prompt_count": 3343,
       "duplicate_prompt_count": 0,
       "sha256": "9277637c130be20e363ff8c30268864524bfdb89bab7be342bc1d3016223fbdf"
     },
     "eval": {
-      "path": "datasets/videophy/eval.txt",
+      "path": "manifests/videophy/eval.txt",
       "row_count": 599,
       "unique_prompt_count": 599,
       "duplicate_prompt_count": 0,
