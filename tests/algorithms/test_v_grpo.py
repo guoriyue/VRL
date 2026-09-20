@@ -254,12 +254,6 @@ def test_first_step_invariant_holds_when_previous_is_synced() -> None:
 # ------------------------------------------------------------ guards
 
 
-def test_timestep_index_outside_the_trajectory_is_rejected() -> None:
-    _, _, batch = _batch(timestep=(250.0, 500.0))
-    with pytest.raises(RuntimeError, match="timestep_index out of range"):
-        VGRPO().compute_batch_timestep_loss(_synced_model(), batch, 2, torch.ones(_BATCH))
-
-
 def test_edm_scale_timestep_grid_fails_loudly() -> None:
     _, _, batch = _batch(timestep=80000.0)
     with pytest.raises(RuntimeError, match=r"normalize into \[0, 1\]"):

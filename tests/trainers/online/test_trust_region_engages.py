@@ -21,7 +21,7 @@ from tests.trainers.online._helpers import (
     _stamp_model_precision,
     _trajectory_signals,
 )
-from vrl.algorithms.grpo.continuous import GRPO, FlowDPPO, GRPOGuard
+from vrl.algorithms.grpo.continuous import GRPO, FlowDPPO, GRPOConfig, GRPOGuard
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.trainers.core.types import (
     ContinuousRolloutConfig,
@@ -108,6 +108,13 @@ def test_trust_region_with_multi_epoch_is_allowed(tmp_path) -> None:
     # ppo_epochs>1 lets the policy move between epochs, so the ratio engages.
     trainer = _build_trainer(tmp_path, algorithm=FlowDPPO(), ppo_epochs=2)
     assert trainer is not None
+
+
+def test_kl_term_without_a_reference_model_is_rejected(tmp_path) -> None:
+    # The KL compares the replay against the reference; the trainer decides
+    # once, at construction, instead of the loss finding ref_log_prob missing.
+    with pytest.raises(ValueError, match="ref_model"):
+        _build_trainer(tmp_path, algorithm=GRPO(GRPOConfig(kl_coef=0.1)))
 
 
 def test_plain_grpo_single_epoch_is_allowed(tmp_path) -> None:

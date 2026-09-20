@@ -17,6 +17,7 @@ from vrl.algorithms.logprob_mismatch import (
 )
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
+from vrl.rollouts.evaluators.types import FlowSDESignal
 
 
 @dataclass(slots=True)
@@ -94,17 +95,6 @@ class GRPO:
     uses_evaluator = True
     tolerates_off_policy_staleness = True
 
-    # Signal-branch contract (AlgorithmAdapter.validate_inputs): the clipped
-    # surrogate reads these from the evaluator replay. ref_log_prob is
-    # conditional on kl_coef>0, so it is NOT a hard requirement here — the
-    # KL branch validates it with its own detailed diagnostic.
-    required_signal_keys = ("log_prob", "old_log_prob")
-    required_data_keys: tuple[str, ...] = ()
-
-    # Trust-region subclasses (Flow-DPPO / GRPO-Guard) flip this True so the
-    # trainer requests the SDE KL intermediates (dt) even when kl_coef == 0.
-    needs_kl_intermediates = False
-
     # Plain GRPO's clip is a safety rail, not the objective: at ppo_epochs=1 it
     # is honest REINFORCE-with-group-baseline (the ratio is ~1 and the clip is
     # simply inactive). Trust-region subclasses whose loss IS the ratio term flip
@@ -120,34 +110,6 @@ class GRPO:
         self.config = config or GRPOConfig()
         self._initialize_precision_correction()
         self._initialize_advantage_estimator(advantage_estimator)
-
-    def _require_trust_region_signals(self, signals: Any) -> Any:
-        """Validate the SDE signals trust-region losses need; return the rollout mean.
-
-        Both Flow-DPPO and GRPO-Guard read the rollout proposal mean plus the
-        per-step diffusion intermediates (std_dev_t, sqrt_dt). dt is a hard
-        requirement, not an optional input: a missing dt would silently drop the
-        diffusion coefficient (Flow-DPPO) or collapse the step-scale to 1
-        (GRPO-Guard), quietly changing the objective — so fail fast instead.
-        """
-
-        algorithm = type(self).__name__
-        value = signals.old_prev_sample_mean
-        if value is None:
-            raise RuntimeError(
-                f"{algorithm} needs signals.old_prev_sample_mean (the rollout-time "
-                "reverse-SDE proposal mean), but it is None. Set "
-                "sampling.return_prev_sample_mean=true so generation stores it into "
-                "the trajectory.",
-            )
-        if signals.prev_sample_mean is None or signals.std_dev_t is None or signals.dt is None:
-            raise RuntimeError(
-                f"{algorithm} requires flow-matching SDE signals "
-                "(prev_sample_mean / std_dev_t / dt). dt comes from the evaluator's "
-                "KL intermediates; needs_kl_intermediates=True must drive "
-                "SignalRequest(need_kl_intermediates=True).",
-            )
-        return value
 
     def _initialize_precision_correction(self) -> None:
         """Install the trainer-injected rollout/replay correction capability."""
@@ -213,10 +175,6 @@ class GRPO:
         from vrl.math.denoise.flow_matching import compute_kl_divergence
 
         cfg = self.config
-        # Presence of signals + required_signal_keys is enforced upstream by
-        # AlgorithmAdapter.validate_inputs (one declarative gate).
-        if inputs.advantages is None:
-            raise RuntimeError("AlgorithmInput.advantages is required for GRPO")
         signals = inputs.signals.primary
         advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
         pc = self.precision_correction
@@ -274,18 +232,10 @@ class GRPO:
         rs_seq_masked_fraction = 0.0 if rs_keep is None else (1.0 - rs_keep.mean()).item()
 
         if cfg.kl_coef > 0:
-            if signals.ref_log_prob is None:
-                raise RuntimeError(
-                    f"GRPOConfig.kl_coef={cfg.kl_coef} > 0 but "
-                    "signals.ref_log_prob is None. Check: (1) ref_model "
-                    "passed to OnlineTrainer, (2) SignalRequest(need_ref=True) "
-                    "in the evaluator call."
-                )
-            if (
-                signals.distribution == "flow_matching"
-                and signals.prev_sample_mean is not None
-                and signals.ref_prev_sample_mean is not None
-            ):
+            # The reference forward ran (the trainer requests it whenever the KL
+            # term is on). A flow-matching SDE replay carries both proposal
+            # means, so the KL is the closed form in latent space.
+            if isinstance(signals, FlowSDESignal):
                 kl = compute_kl_divergence(
                     signals.prev_sample_mean,
                     signals.ref_prev_sample_mean,
@@ -406,10 +356,6 @@ class FlashGRPO(GRPO):
     the full-batch path (or one collection per update).
     """
 
-    # Rectification reads std_dev_t / dt from the SDE intermediates, exactly
-    # like the trust-region subclasses.
-    needs_kl_intermediates = True
-
     def __init__(
         self,
         config: FlashGRPOConfig | None = None,
@@ -445,10 +391,9 @@ class FlashGRPO(GRPO):
         coe = 1.0 / self._rectification_scale(std.float(), sqrt_neg_dt.float(), sigma.float())
         self._update_coe_mean = self._cross_rank_mean(coe).clamp_min(1e-12)
 
-    def _loss_weight(self, signals: Any) -> Any:
+    def _loss_weight(self, signals: FlowSDESignal) -> Any:
         import torch
 
-        self._require_signals(signals)
         if self._update_coe_mean is None:
             raise RuntimeError(
                 "FlashGRPO.prepare_update must run before the update's first loss: the "
@@ -480,25 +425,6 @@ class FlashGRPO(GRPO):
         sigma = sigma.clamp_min(1e-6)
         scale = sqrt_neg_dt / std + std * sqrt_neg_dt * (1 - sigma) / (2 * sigma)
         return scale.clamp_min(1e-12)
-
-    @staticmethod
-    def _require_signals(signals: Any) -> None:
-        """Fail fast when the SDE intermediates the rectification needs are absent.
-
-        A missing input would otherwise silently degrade to unweighted GRPO —
-        quietly changing the objective, the same failure mode
-        ``GRPO._require_trust_region_signals`` guards for the trust-region losses.
-        """
-
-        if signals.std_dev_t is None or signals.dt is None or signals.sigma is None:
-            raise RuntimeError(
-                "FlashGRPO requires flow-matching SDE signals "
-                "(std_dev_t / dt / sigma). dt comes from the evaluator's KL "
-                "intermediates (needs_kl_intermediates=True drives "
-                "SignalRequest(need_kl_intermediates=True)); sigma is produced only "
-                "by the flow-matching SDE path — it is None on DDIM/token replays, "
-                "which Flash-GRPO does not support.",
-            )
 
     @staticmethod
     def _cross_rank_mean(values: Any) -> Any:
@@ -543,7 +469,6 @@ class FlowDPPO(GRPO):
     policy are always kept. This is the key difference from PPO's symmetric clip.
     """
 
-    needs_kl_intermediates = True
     # The KL mask is the objective: at strict + ppo_epochs=1 the rollout and
     # current proposal means coincide, KL==0, nothing is masked, and the loss
     # collapses to -advantages * 1 (plain REINFORCE). Require a moving policy.
@@ -566,10 +491,8 @@ class FlowDPPO(GRPO):
         from vrl.math.denoise.flow_matching import compute_kl_divergence
 
         cfg = self.config
-        if inputs.advantages is None:
-            raise RuntimeError("AlgorithmInput.advantages is required for FlowDPPO")
         signals = inputs.signals.primary
-        old_prev_sample_mean = self._require_trust_region_signals(signals)
+        old_prev_sample_mean = signals.old_prev_sample_mean
         advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
 
         pc = self.precision_correction
@@ -676,7 +599,6 @@ class GRPOGuard(GRPO):
     early and late timesteps contribute comparably.
     """
 
-    needs_kl_intermediates = True
     # The ratio-mean-bias / step-scale guard is the objective: at strict +
     # ppo_epochs=1 the current-vs-rollout drift is 0, the guard correction
     # vanishes, and the loss collapses to plain GRPO. Require a moving policy.
@@ -697,10 +619,8 @@ class GRPOGuard(GRPO):
         import torch
 
         cfg = self.config
-        if inputs.advantages is None:
-            raise RuntimeError("AlgorithmInput.advantages is required for GRPOGuard")
         signals = inputs.signals.primary
-        old_prev_sample_mean = self._require_trust_region_signals(signals)
+        old_prev_sample_mean = signals.old_prev_sample_mean
         advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
 
         log_ratio = signals.log_prob - signals.old_log_prob
@@ -712,8 +632,6 @@ class GRPOGuard(GRPO):
         pc = self.precision_correction
         _, tis_keep = apply_truncated_importance_weight(torch.exp(log_ratio), pc)
         rs_keep = apply_rejection_sample_mask(log_ratio, pc, mask=signals.mask)
-        # dt is guaranteed present by _require_trust_region_signals (no silent
-        # fallback-to-1, which would erase the per-step scale normalization).
         sqrt_dt_mean = signals.dt.mean()
         scale = sqrt_dt_mean * signals.std_dev_t.mean()
         non_batch = tuple(range(1, signals.prev_sample_mean.ndim))

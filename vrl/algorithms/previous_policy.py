@@ -24,14 +24,10 @@ from typing import Any
 class PreviousPolicyObjective:
     """Replay-branch objective whose behaviour policy is the previous step's weights."""
 
+    # These objectives train the forward process from the rollout's clean
+    # latents (TrajectoryReader.forward_process_replay) — no reverse-SDE
+    # trajectory, no log-probs, no evaluator.
     uses_evaluator = False
-    # Replay-branch contract (AlgorithmAdapter.validate_inputs): these
-    # objectives train the forward process from rollout tensors only — no
-    # reverse-SDE trajectory, no log-probs. Declaring the keys lets the adapter
-    # fail fast with available-vs-missing diagnostics.
-    required_data_keys = ("latents_clean", "prompt_embeds", "timesteps")
-    required_signal_keys: tuple[str, ...] = ()
-    needs_kl_intermediates = False
     requires_active_trust_region = False
     # The behaviour policy is the previous policy refreshed every optimizer
     # step, not the policy that generated a stale rollout: training on rollouts

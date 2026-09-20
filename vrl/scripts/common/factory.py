@@ -95,7 +95,7 @@ class AlgorithmEvaluatorPair:
             # evaluator. dance_grpo reuses FlowGRPO unchanged (its delta is the
             # trainer's random timestep selection + multi-reward); flow_dppo /
             # grpo_guard are trust-region variants whose loss reads the rollout
-            # proposal mean (rollout.return_prev_sample_mean).
+            # proposal mean, checked against the recipe below.
             from vrl.algorithms.grpo.continuous import GRPO, FlashGRPO, FlowDPPO, GRPOGuard
 
             is_chunk_autoregressive = (
@@ -152,6 +152,12 @@ class AlgorithmEvaluatorPair:
 
             math_dtype = resolve_torch_dtype(precision.denoise_math)
             denoise = collector_config.denoise or DenoiseRequestOptions()
+            if algorithm.requires_active_trust_region and not denoise.return_prev_sample_mean:
+                raise ValueError(
+                    f"algorithm.kind={kind!r} measures the current-vs-rollout proposal "
+                    "drift, which needs the rollout mean stored at generation; set "
+                    "rollout.return_prev_sample_mean=true",
+                )
             from vrl.rollouts.evaluators.denoise.sde_logprob import (
                 DenoiseSDELogProbEvaluator,
             )

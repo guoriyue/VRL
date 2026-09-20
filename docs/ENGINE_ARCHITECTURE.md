@@ -267,7 +267,7 @@ prescribes.
 | `TrajectoryRolloutBatchBuilder`, `RolloutBatchBuildContext`, `RolloutBatch` | Scored outputs → training batches. |
 | `RolloutSchedule` (protocol) → `StrictOnPolicyRolloutSchedule`, `ContinuousRolloutSchedule` | When to generate vs train. Strict drains everything per iteration; continuous keeps a producer/consumer pipeline running (`ContinuousRolloutOwner` / `Producer` / `Consumer` / `Queue`, `StalenessPolicy`, `ContinuousRolloutSettings/Item/ProducerState`). |
 | `RolloutRuntimeCoordinator`, `RolloutCollectorControl` (protocol) | Wires schedule ↔ collector ↔ trainer phases (`RolloutIteration`, `RolloutScheduleMode`, `RewardCollectionMode`). |
-| `Evaluator` (protocol) → `ReplayEvaluatorBase` (ABC) → `DiffusionSDELogProbEvaluator`, `ChunkAutoregressiveDenoiseLogProbEvaluator` | Replay-side log-prob evaluation per generation paradigm; produce `SegmentSignal` / `TrajectorySignalBatch` via `TrajectorySignalBuilder`. |
+| `Evaluator` (protocol) → `ReplayEvaluatorBase` (ABC) → `DiffusionSDELogProbEvaluator`, `ChunkAutoregressiveDenoiseLogProbEvaluator` | Replay-side log-prob evaluation per generation paradigm; produce `TrajectorySignalBatch` via `TrajectorySignalBuilder`; the SDE evaluator's segment is a `FlowSDESignal` (proposal mean, std, sqrt(-dt), sigma always present), the chunk evaluator's a plain `SegmentSignal`. Objectives read the type's fields; there is no declared key list. |
 | `RolloutStats`, `StatsSink` (protocol) → `LoggingStatsSink` / `JsonlStatsSink` / `MultiStatsSink` | Phase timing and throughput reporting. |
 
 ---

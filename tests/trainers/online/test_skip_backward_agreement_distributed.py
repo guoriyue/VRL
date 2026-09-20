@@ -344,9 +344,6 @@ def _run_replay_loop_rank(
         backward_calls: list[float] = []
 
         class _Algorithm(_EvaluatorAlgorithmFake):
-            required_signal_keys = ("log_prob",)
-            required_data_keys: tuple[str, ...] = ()
-
             class _Config:
                 global_std = False
                 eps = 1e-8

@@ -216,24 +216,6 @@ def _build_batch(
     )
 
 
-def test_nft_rejects_timestep_index_outside_trajectory() -> None:
-    model = _build_model()
-    batch = _build_batch(
-        x0=torch.randn(_LATENT_SHAPE),
-        noise=torch.randn(_LATENT_SHAPE),
-        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
-        timestep=(250.0, 500.0),
-    )
-
-    with pytest.raises(RuntimeError, match="timestep_index out of range"):
-        DiffusionNFT().compute_batch_timestep_loss(
-            model,
-            batch,
-            2,
-            torch.ones(_BATCH),
-        )
-
-
 def _default_forward(
     model: _NFTModel, xt: torch.Tensor, prompt_embeds: torch.Tensor, timestep: torch.Tensor
 ) -> torch.Tensor:
@@ -344,42 +326,12 @@ def test_negative_advantage_trains_away_from_reconstruction(trainable: str) -> N
     assert after > before
 
 
-def test_nft_beta_must_be_positive() -> None:
-    cfg = DiffusionNFTConfig(nft_beta=0.0)
-    model = _build_model()
-    batch = _build_batch(
-        x0=torch.randn(_LATENT_SHAPE),
-        noise=torch.randn(_LATENT_SHAPE),
-        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
-        timestep=500.0,
-    )
-    with pytest.raises(RuntimeError, match="nft_beta must be > 0"):
-        DiffusionNFT(cfg).compute_batch_timestep_loss(
-            model,
-            batch,
-            0,
-            torch.tensor([1.0]),
-        )
-
-
-def test_advantage_scale_must_be_positive() -> None:
-    """Checks NFT advantage scale must be positive."""
-
-    cfg = DiffusionNFTConfig(advantage_scale=0.0)
-    model = _build_model()
-    batch = _build_batch(
-        x0=torch.randn(_LATENT_SHAPE),
-        noise=torch.randn(_LATENT_SHAPE),
-        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
-        timestep=500.0,
-    )
-    with pytest.raises(RuntimeError, match="advantage_scale must be > 0"):
-        DiffusionNFT(cfg).compute_batch_timestep_loss(
-            model,
-            batch,
-            0,
-            torch.tensor([1.0]),
-        )
+@pytest.mark.parametrize("field", ["nft_beta", "advantage_scale"])
+def test_non_positive_loss_constants_are_rejected_at_construction(field: str) -> None:
+    # Both scale the objective; zero or negative makes it degenerate, so the
+    # config refuses them before any batch is replayed.
+    with pytest.raises(ValueError, match=f"{field} must be > 0"):
+        DiffusionNFTConfig(**{field: 0.0})
 
 
 @pytest.mark.parametrize("trainable", ["lora", "full"])

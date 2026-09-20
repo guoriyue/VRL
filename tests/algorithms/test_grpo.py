@@ -10,7 +10,7 @@ import torch
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.algorithms.trajectory import AlgorithmInput
-from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
+from vrl.rollouts.evaluators.types import FlowSDESignal, SegmentSignal, TrajectorySignalBatch
 
 # ---------------------------------------------------------------------------
 # Regression: single-sample GRPO advantage must NOT be NaN
@@ -397,21 +397,33 @@ def _flow_signals(
     std_dev_t: torch.Tensor | None = None,
     dt: torch.Tensor | None = None,
 ) -> TrajectorySignalBatch:
+    """A flow-matching signal; with a proposal mean it is the full SDE signal."""
+
+    if prev_sample_mean is None:
+        segment = SegmentSignal(
+            name="denoise",
+            distribution="flow_matching",
+            log_prob=log_prob,
+            old_log_prob=old_log_prob,
+            mask=torch.ones_like(log_prob),
+            ref_log_prob=ref_log_prob,
+        )
+    else:
+        segment = FlowSDESignal(
+            name="denoise",
+            distribution="flow_matching",
+            log_prob=log_prob,
+            old_log_prob=old_log_prob,
+            mask=torch.ones_like(log_prob),
+            ref_log_prob=ref_log_prob,
+            prev_sample_mean=prev_sample_mean,
+            std_dev_t=std_dev_t,
+            dt=dt,
+            sigma=torch.full_like(std_dev_t, 0.5),
+            ref_prev_sample_mean=ref_prev_sample_mean,
+        )
     return TrajectorySignalBatch(
-        segments={
-            "denoise": SegmentSignal(
-                name="denoise",
-                distribution="flow_matching",
-                log_prob=log_prob,
-                old_log_prob=old_log_prob,
-                mask=torch.ones_like(log_prob),
-                ref_log_prob=ref_log_prob,
-                prev_sample_mean=prev_sample_mean,
-                ref_prev_sample_mean=ref_prev_sample_mean,
-                std_dev_t=std_dev_t,
-                dt=dt,
-            ),
-        },
+        segments={"denoise": segment},
         group_ids=torch.arange(log_prob.shape[0], device=log_prob.device),
         primary_segment="denoise",
     )

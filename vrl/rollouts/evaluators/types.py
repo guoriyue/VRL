@@ -6,9 +6,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SegmentSignal:
-    """Trajectory-native training signals for one logical segment."""
+    """Trajectory-native training signals for one logical segment.
+
+    Every replay produces the three policy values. ``ref_log_prob`` is the one
+    field decided at startup rather than by the replay: the trainer requests it
+    exactly when the objective's KL term is on, and refuses that configuration
+    without a reference model.
+    """
 
     name: str
     distribution: str
@@ -16,20 +22,29 @@ class SegmentSignal:
     old_log_prob: Any
     mask: Any
     ref_log_prob: Any | None = None
-    prev_sample_mean: Any | None = None
+
+
+@dataclass(kw_only=True)
+class FlowSDESignal(SegmentSignal):
+    """Signals of a flow-matching reverse-SDE replay step.
+
+    The SDE step always yields the proposal mean, its standard deviation, the
+    step's ``sqrt(-dt)`` and flow-domain sigma, so objectives that read them
+    (the KL in latent space, Flash-GRPO's rectification, the trust-region
+    losses) take this type and read the fields. The two optional means follow
+    startup decisions, not the replay: ``ref_prev_sample_mean`` accompanies
+    ``ref_log_prob``; ``old_prev_sample_mean`` is the rollout-time proposal
+    mean that generation stores only when the recipe sets
+    ``rollout.return_prev_sample_mean`` (the factory requires it for
+    trust-region objectives).
+    """
+
+    prev_sample_mean: Any
+    std_dev_t: Any
+    dt: Any
+    sigma: Any
     ref_prev_sample_mean: Any | None = None
-    # Rollout-time (behavior policy) reverse-SDE proposal mean, captured at
-    # generation and replayed back unchanged. Distinct from prev_sample_mean
-    # (current replay policy) and ref_prev_sample_mean (frozen ref): trust-region
-    # algorithms (Flow-DPPO / GRPO-Guard) measure the current-vs-rollout drift,
-    # so they need this third mean. None unless generation stored it.
     old_prev_sample_mean: Any | None = None
-    std_dev_t: Any | None = None
-    dt: Any | None = None
-    # Flow-domain sigma of the replayed step (same [0, 1] domain as
-    # std_dev_t / dt). Flash-GRPO's temporal gradient rectification consumes it;
-    # None for evaluators that do not run the flow-matching SDE.
-    sigma: Any | None = None
 
 
 @dataclass
@@ -87,10 +102,9 @@ class TrajectorySignalBatch:
 
 @dataclass
 class SignalRequest:
-    """What the algorithm needs the evaluator to compute."""
+    """What the trainer asks the evaluator to compute beyond the replay itself."""
 
     need_ref: bool = False
-    need_kl_intermediates: bool = False  # for latent-space KL
 
 
 def _require_same_shape(left: Any, right: Any, *, label: str, hint: str = "") -> None:

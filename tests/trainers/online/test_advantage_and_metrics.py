@@ -36,9 +36,6 @@ class TestAdvantageAndMetrics:
         from vrl.trainers.online.trainer import OnlineTrainer
 
         class _Algorithm(_EvaluatorAlgorithmFake):
-            required_signal_keys = ("log_prob", "old_log_prob")
-            required_data_keys: tuple[str, ...] = ()
-
             class _Config:
                 global_std = False
                 eps = 1e-8
@@ -311,9 +308,6 @@ class TestAdvantageAndMetrics:
         from vrl.trajectory.builders import build_diffusion_trajectory
 
         class _Algorithm(_EvaluatorAlgorithmFake):
-            required_signal_keys: tuple[str, ...] = ()
-            required_data_keys: tuple[str, ...] = ()
-
             class _Config:
                 global_std = True
                 eps = 1e-8

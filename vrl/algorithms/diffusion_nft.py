@@ -32,6 +32,14 @@ class DiffusionNFTConfig:
     advantage_scale: float = 5.0
     weight_copy_decay: float = 0.0
 
+    def __post_init__(self) -> None:
+        if float(self.nft_beta) <= 0:
+            raise ValueError(f"DiffusionNFTConfig.nft_beta must be > 0, got {self.nft_beta}")
+        if float(self.advantage_scale) <= 0:
+            raise ValueError(
+                f"DiffusionNFTConfig.advantage_scale must be > 0, got {self.advantage_scale}",
+            )
+
 
 class DiffusionNFT(PreviousPolicyObjective):
     """DiffusionNFT-style GRPO objective.
@@ -110,44 +118,16 @@ class DiffusionNFT(PreviousPolicyObjective):
 
         cfg = self.config
         advantage_scale = float(cfg.advantage_scale)
-        if advantage_scale <= 0:
-            raise RuntimeError("DiffusionNFTConfig.advantage_scale must be > 0")
-        replay_tensors = TrajectoryReader.from_batch(batch).replay_tensor_dict("denoise")
-        # Presence + tensor-type of these keys is enforced upstream by
-        # AlgorithmAdapter.validate_inputs (declared in required_data_keys);
-        # read them directly here.
-        x0 = replay_tensors["latents_clean"]
-        prompt_embeds = replay_tensors["prompt_embeds"]
-        timesteps = replay_tensors["timesteps"]
-        timestep_width = 1 if timesteps.ndim == 1 else int(timesteps.shape[1])
-        if not 0 <= timestep_index < timestep_width:
-            raise RuntimeError(
-                "DiffusionNFT timestep_index out of range: "
-                f"timestep_index={timestep_index}, width={timestep_width}, "
-                f"timesteps.shape={tuple(timesteps.shape)}",
-            )
-        t_raw = timesteps if timesteps.ndim == 1 else timesteps[:, timestep_index]
-
-        if x0.shape[0] != prompt_embeds.shape[0]:
-            raise RuntimeError(
-                "DiffusionNFT batch mismatch: latents_clean and prompt_embeds "
-                f"have leading dims {x0.shape[0]} and {prompt_embeds.shape[0]}",
-            )
-
-        if advantages.shape[0] != x0.shape[0]:
-            raise RuntimeError(
-                "DiffusionNFT batch mismatch: advantages and latents_clean "
-                f"have leading dims {advantages.shape[0]} and {x0.shape[0]}",
-            )
-
-        t = self.flow_time(t_raw, x0)
-        t = t.to(dtype=x0.dtype)
+        replay = TrajectoryReader.from_batch(batch).forward_process_replay(
+            "denoise", timestep_index
+        )
+        x0 = replay.latents_clean
+        t = self.flow_time(replay.timestep, x0).to(dtype=x0.dtype)
         t_expanded = t.view(-1, *([1] * (x0.ndim - 1)))
-        noise = replay_tensors.get("diffusion_nft_noise")
-        if noise is None:
+        if replay.noise is None:
             noise = torch.randn_like(x0.float())
         else:
-            noise = noise.to(device=x0.device, dtype=torch.float32)
+            noise = replay.noise.to(device=x0.device, dtype=torch.float32)
         xt = (1 - t_expanded) * x0.float() + t_expanded * noise
         xt_input = xt.to(x0.dtype)
 
@@ -188,8 +168,6 @@ class DiffusionNFT(PreviousPolicyObjective):
         reward_mix = ((adv / advantage_scale) / 2.0 + 0.5).clamp(0.0, 1.0)
 
         beta = float(cfg.nft_beta)
-        if beta <= 0:
-            raise RuntimeError("DiffusionNFTConfig.nft_beta must be > 0")
         positive_prediction = beta * forward_prediction + (1.0 - beta) * previous_prediction
         negative_prediction = (1.0 + beta) * previous_prediction - beta * forward_prediction
 

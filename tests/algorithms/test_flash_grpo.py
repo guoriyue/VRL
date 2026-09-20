@@ -28,7 +28,7 @@ import torch
 from vrl.algorithms.grpo.continuous import FlashGRPO, FlashGRPOConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
-from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
+from vrl.rollouts.evaluators.types import FlowSDESignal, TrajectorySignalBatch
 
 # The reference implementation's hardcoded rectification table: coe(t) for the
 # first 10 steps of the Wan2.1 20-step shift-3 flow-match schedule, where
@@ -73,16 +73,17 @@ def _sde_intermediates(steps: list[int]) -> tuple[torch.Tensor, torch.Tensor, to
 def _signals(
     n: int,
     *,
-    std_dev_t: torch.Tensor | None = None,
-    dt: torch.Tensor | None = None,
-    sigma: torch.Tensor | None = None,
+    std_dev_t: torch.Tensor,
+    dt: torch.Tensor,
+    sigma: torch.Tensor,
 ) -> TrajectorySignalBatch:
-    segment = SegmentSignal(
+    segment = FlowSDESignal(
         name="denoise",
         distribution="flow_matching",
         log_prob=torch.zeros(n),
         old_log_prob=torch.zeros(n),
         mask=torch.ones(n),
+        prev_sample_mean=torch.zeros(n, 1),
         std_dev_t=std_dev_t,
         dt=dt,
         sigma=sigma,
@@ -237,14 +238,6 @@ def test_loss_weight_requires_the_update_denominator() -> None:
         FlashGRPO()._loss_weight(_signals(2, std_dev_t=std, dt=dt, sigma=sigma).primary)
 
 
-def test_missing_sigma_fails_fast() -> None:
-    std, dt, _ = _sde_intermediates([0, 1])
-    with pytest.raises(RuntimeError, match="sigma"):
-        FlashGRPO().compute_loss(
-            _input(_signals(2, std_dev_t=std, dt=dt, sigma=None), torch.ones(2)),
-        )
-
-
 # ------------------------------------------------------------ kind dispatch
 
 
@@ -255,7 +248,6 @@ def test_flash_grpo_kind_dispatches_to_its_config() -> None:
     assert cls is FlashGRPOConfig
     # The paper's tight clip is the algorithm's default identity, not a preset.
     assert cls().clip_ratio == pytest.approx(1e-3)
-    assert FlashGRPO().needs_kl_intermediates is True
 
 
 # --------------------------------------------- sde_window selection contract

@@ -62,6 +62,7 @@ from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
     from vrl.algorithms.trajectory import AlgorithmAdapter
+    from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 
 logger = logging.getLogger(__name__)
 
@@ -529,6 +530,14 @@ class OnlineTrainer:
         if hasattr(algorithm, "precision_correction"):
             algorithm.precision_correction = config.precision_correction
             self._validate_recompute_old_logprob(config)
+        # The KL term needs the reference replay; decide it here, once, instead
+        # of discovering a missing ref_log_prob inside the loss.
+        if algorithm.uses_evaluator and self._kl_coef > 0 and ref_model is None:
+            raise ValueError(
+                f"{type(algorithm).__name__} has kl_coef={self._kl_coef} > 0 but "
+                "OnlineTrainer received no ref_model; the KL term compares against "
+                "the reference replay",
+            )
         # Clean fine-tuning latents ({target artifact -> [C,T,H,W]}) for the GRPO
         # diffusion-loss regularizer; the recipe loads data.sft_latents and the
         # config layer already rejected sft_weight>0 without it.
@@ -754,6 +763,38 @@ class OnlineTrainer:
         with profile_range("trainer.backward"):
             self._strategy.backward(loss, grad_scaler=self._grad_scaler)
 
+    def _evaluate_signals(
+        self,
+        batch: RolloutBatch,
+        timestep_index: int,
+        *,
+        need_ref: bool = False,
+    ) -> TrajectorySignalBatch:
+        """The one call into the evaluator: replay one step into typed signals.
+
+        The evaluator scopes only replay_forward; SDE/log-prob/gather math and
+        the algorithm loss remain outside autocast.
+        """
+
+        from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
+        from vrl.utils.profiling import profile_range
+
+        if self.evaluator is None:
+            raise RuntimeError(f"{type(self.algorithm).__name__} requires an evaluator")
+        with profile_range("trainer.replay"):
+            signals = self.evaluator.evaluate(
+                self.model,
+                batch,
+                timestep_index,
+                ref_model=self.ref_model,
+                signal_request=SignalRequest(need_ref=need_ref),
+            )
+        if not isinstance(signals, TrajectorySignalBatch):
+            raise TypeError(
+                f"evaluator output must be TrajectorySignalBatch; got {type(signals).__name__}",
+            )
+        return signals
+
     def _compute_replay_loss(
         self,
         group_batch: RolloutBatch,
@@ -765,7 +806,6 @@ class OnlineTrainer:
         """Run the shared evaluator/algorithm decision for one replay timestep."""
 
         from vrl.algorithms.trajectory import AlgorithmInput
-        from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
         from vrl.utils.profiling import profile_range
 
         if not self.algorithm.uses_evaluator:
@@ -784,29 +824,12 @@ class OnlineTrainer:
                     ),
                 )
 
-        if self.evaluator is None:
-            raise RuntimeError(f"{type(self.algorithm).__name__} requires an evaluator")
-        kl_coef = float(getattr(self.algorithm.config, "kl_coef", 0.0))
-        need_kl_intermediates = kl_coef > 0 or self.algorithm.needs_kl_intermediates
-        # The evaluator scopes only replay_forward; SDE/log-prob/gather math
-        # and the algorithm loss remain outside autocast.
-        with profile_range("trainer.replay"):
-            signals = self.evaluator.evaluate(
-                self.model,
-                group_batch,
-                timestep_index,
-                ref_model=self.ref_model,
-                signal_request=SignalRequest(
-                    need_ref=kl_coef > 0,
-                    need_kl_intermediates=need_kl_intermediates,
-                ),
-            )
+        signals = self._evaluate_signals(
+            group_batch,
+            timestep_index,
+            need_ref=self._kl_coef > 0,
+        )
         with profile_range("trainer.loss"):
-            if not isinstance(signals, TrajectorySignalBatch):
-                raise TypeError(
-                    "evaluator output must be TrajectorySignalBatch; "
-                    f"got {type(signals).__name__}",
-                )
             loss, metrics = algorithm_adapter.compute_loss(
                 self.algorithm,
                 AlgorithmInput(
@@ -1576,8 +1599,7 @@ class OnlineTrainer:
         The schedule's post-update weight publication is asynchronous even though
         replay evaluation, backward, and the optimizer step are synchronous.
         """
-        from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
-        from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
+        from vrl.algorithms.trajectory import AlgorithmAdapter
         from vrl.utils.profiling import profile_range
 
         cfg = self.config
@@ -1663,22 +1685,8 @@ class OnlineTrainer:
                 self.device,
                 defer_replay_tensors=defer_replay_tensor_move,
             )
-            with (
-                torch.no_grad(),
-                profile_range("trainer.replay"),
-            ):
-                _dbg_signals = self.evaluator.evaluate(
-                    self.model,
-                    _dbg_batch,
-                    train_indices[0],
-                    ref_model=self.ref_model,
-                    signal_request=SignalRequest(need_ref=False, need_kl_intermediates=False),
-                )
-            if not isinstance(_dbg_signals, TrajectorySignalBatch):
-                raise TypeError(
-                    "evaluator output must be TrajectorySignalBatch; "
-                    f"got {type(_dbg_signals).__name__}",
-                )
+            with torch.no_grad():
+                _dbg_signals = self._evaluate_signals(_dbg_batch, train_indices[0])
             _dbg_log_prob = _dbg_signals.primary.log_prob
             _old_lp_0 = _dbg_signals.primary.old_log_prob
             _diff = (_dbg_log_prob - _old_lp_0).abs()
@@ -1752,19 +1760,6 @@ class OnlineTrainer:
                     defer_replay_tensors=defer_replay_tensor_move,
                 )
                 _dbg_adv = first_debug_batch.advantages.to(self.device)
-                # The probe reads the same replay tensors the loss does, but runs
-                # before the first loss call, where the adapter's contract gate
-                # would otherwise turn a missing family export into a bare
-                # KeyError deep inside the objective.
-                algorithm_adapter.validate_inputs(
-                    self.algorithm,
-                    AlgorithmInput(
-                        advantages=_dbg_adv,
-                        model=self.model,
-                        rollout_batch=_dbg_batch,
-                        timestep_index=0,
-                    ),
-                )
                 with (
                     torch.no_grad(),
                     profile_range("trainer.replay"),
@@ -1984,9 +1979,6 @@ class OnlineTrainer:
         agree across ranks that training work exists before entering this gate.
         """
 
-        from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
-        from vrl.utils.profiling import profile_range
-
         if (
             not self._precision_drift_guard_pending
             or not self.algorithm.uses_evaluator
@@ -2003,20 +1995,8 @@ class OnlineTrainer:
         )
 
         def evaluate(timestep_idx: int) -> TrajectorySignalBatch:
-            with torch.no_grad(), profile_range("trainer.replay"):
-                signals = self.evaluator.evaluate(
-                    self.model,
-                    guard_batch,
-                    timestep_idx,
-                    ref_model=self.ref_model,
-                    signal_request=SignalRequest(need_ref=False, need_kl_intermediates=False),
-                )
-            if not isinstance(signals, TrajectorySignalBatch):
-                raise TypeError(
-                    "evaluator output must be TrajectorySignalBatch; "
-                    f"got {type(signals).__name__}",
-                )
-            return signals
+            with torch.no_grad():
+                return self._evaluate_signals(guard_batch, timestep_idx)
 
         record = measure_precision_drift(
             cfg.precision_drift_guard,
@@ -2095,6 +2075,12 @@ class OnlineTrainer:
             )
         self._replay_parity_passed = True
         return resolved
+
+    @property
+    def _kl_coef(self) -> float:
+        """The objective's KL weight; zero for objectives without the knob."""
+
+        return float(getattr(self.algorithm.config, "kl_coef", 0.0) or 0.0)
 
     @property
     def _sft_weight(self) -> float:

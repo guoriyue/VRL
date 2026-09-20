@@ -19,7 +19,7 @@ from vrl.algorithms.grpo.continuous import (
 )
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.algorithms.trajectory import AlgorithmInput
-from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
+from vrl.rollouts.evaluators.types import FlowSDESignal, TrajectorySignalBatch
 
 
 def _signals(
@@ -33,16 +33,17 @@ def _signals(
 ) -> TrajectorySignalBatch:
     return TrajectorySignalBatch(
         segments={
-            "denoise": SegmentSignal(
+            "denoise": FlowSDESignal(
                 name="denoise",
                 distribution="flow_matching",
                 log_prob=log_prob,
                 old_log_prob=old_log_prob,
                 mask=torch.ones_like(log_prob),
                 prev_sample_mean=prev_sample_mean,
-                old_prev_sample_mean=old_prev_sample_mean,
                 std_dev_t=std_dev_t,
                 dt=dt,
+                sigma=torch.full_like(std_dev_t, 0.5),
+                old_prev_sample_mean=old_prev_sample_mean,
             ),
         },
         group_ids=torch.arange(log_prob.shape[0]),
@@ -196,24 +197,6 @@ def test_flow_dppo_unit_variance_branch_has_no_std_dev_t_denominator() -> None:
     assert metrics.update.clip_fraction == pytest.approx(1.0)  # masked
 
 
-@pytest.mark.parametrize("algorithm", [FlowDPPO, GRPOGuard], ids=["flow_dppo", "grpo_guard"])
-def test_trust_region_algorithms_require_old_prev_sample_mean(algorithm) -> None:
-    """Both trust-region losses need the old mean; a recipe that forgot
-    ``return_prev_sample_mean`` fails loud instead of silently skipping the term."""
-
-    n = 2
-    sig = _signals(
-        log_prob=torch.zeros(n),
-        old_log_prob=torch.zeros(n),
-        prev_sample_mean=torch.zeros(n, 1, 1, 1),
-        old_prev_sample_mean=None,  # recipe forgot return_prev_sample_mean
-        std_dev_t=torch.ones(n, 1, 1, 1),
-        dt=torch.ones(n, 1, 1, 1),
-    )
-    with pytest.raises(RuntimeError, match="return_prev_sample_mean"):
-        algorithm().compute_loss(_input(sig, torch.ones(n)))
-
-
 def test_flow_dppo_truncates_precision_weight_into_loss() -> None:
     # Under fp8/bf16-split rollout, TIS-truncate must cap the rollout->replay ratio
     # that enters the trust-region loss; without it a single inflated weight (e^3)
@@ -331,23 +314,6 @@ def test_flow_dppo_masked_loss_uses_the_kept_count_as_denominator() -> None:
     # FlowDPPO reports the trust-region masked fraction as clip_fraction.
     assert metrics.update.clip_fraction == pytest.approx(0.25)
     assert float(loss) == pytest.approx(-1.0)
-
-
-def test_trust_region_losses_fail_fast_without_dt() -> None:
-    # dt is a hard contract: missing it must raise, not silently drop the
-    # diffusion coefficient (Flow-DPPO) or collapse the step-scale to 1 (Guard).
-    n = 2
-    for algo in (FlowDPPO(), GRPOGuard()):
-        sig = _signals(
-            log_prob=torch.zeros(n),
-            old_log_prob=torch.zeros(n),
-            prev_sample_mean=torch.zeros(n, 1, 1, 1),
-            old_prev_sample_mean=torch.zeros(n, 1, 1, 1),
-            std_dev_t=torch.ones(n, 1, 1, 1),
-            dt=None,
-        )
-        with pytest.raises(RuntimeError, match="dt"):
-            algo.compute_loss(_input(sig, torch.ones(n)))
 
 
 # ============================================================ GRPO-Guard (§2.3)

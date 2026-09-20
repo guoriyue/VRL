@@ -35,11 +35,16 @@ the large trainers and config schema do not count as full-module review.
 - Keep DPO shape equality and even-batch checks: prediction/target arithmetic
   can otherwise broadcast or split unequal winner/loser halves. The ordinary
   tensor annotation does not declare those runtime dimensions.
-- Keep `_require_trust_region_signals`: two distinct objectives share the SDE
-  input boundary, including mandatory recorded rollout mean and dt. Keep the
-  named rectification guard as the corresponding Flash-GRPO signal boundary;
-  it keeps missing-input diagnostics separate from the weight formula. Neither
-  becomes a generic validator class or loses its conditional requirements.
+- Superseded 2026-09-20: `_require_trust_region_signals`, the Flash-GRPO
+  rectification guard and the declared key lists are gone. The input type is
+  the contract: the SDE evaluator always fills `FlowSDESignal` (proposal mean,
+  std, sqrt(-dt), sigma), the chunk evaluator a plain `SegmentSignal`, and the
+  forward-process objectives read `TrajectoryReader.forward_process_replay`.
+  The two conditional fields are startup decisions like Miles' `ref_mode`:
+  the trainer refuses `kl_coef > 0` without a reference model, the factory
+  refuses a trust-region objective whose recipe does not set
+  `rollout.return_prev_sample_mean`. Config-domain limits (`nft_beta`,
+  `advantage_scale`) are `__post_init__` errors.
 - Keep `_cross_rank_mean`: distributed sum/count reduction is different from
   local `.mean()`, including an empty local rank. The local `_per_sample` shares
   three coefficient reductions inside Flash-GRPO, and `_token_kl_per_token`

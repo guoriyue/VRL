@@ -32,9 +32,6 @@ from vrl.trainers.online.trainer import OnlineTrainer, TrainingBatch
 
 
 class _Algorithm(_EvaluatorAlgorithmFake):
-    required_signal_keys = ("log_prob",)
-    required_data_keys: tuple[str, ...] = ()
-
     class _Config:
         global_std = False
         eps = 1e-8

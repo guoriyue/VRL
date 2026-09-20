@@ -101,6 +101,25 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
     assert type(pair.algorithm) is expected_algorithm
 
 
+@pytest.mark.parametrize("recipe", ["flow_matching_dppo", "flow_matching_grpo_guard"])
+def test_trust_region_recipe_must_store_the_rollout_proposal_mean(recipe: str) -> None:
+    """Flow-DPPO / GRPO-Guard score drift against the rollout mean; a recipe that
+    does not store it is refused when the pair is built, not inside the loss."""
+
+    cfg = load_config(
+        "experiment/sd3_5/online_grpo_ocr",
+        overrides=[f"/recipe/online={recipe}", "rollout.return_prev_sample_mean=false"],
+    )
+
+    with pytest.raises(ValueError, match=r"rollout\.return_prev_sample_mean=true"):
+        AlgorithmEvaluatorPair.from_configs(
+            family_entry=get_model_family_entry("sd3_5"),
+            built=build_configs(cfg),
+            collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
+            scheduler=object(),
+        )
+
+
 def test_chunk_autoregressive_factory_builds_grouped_grpo_evaluator() -> None:
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
 

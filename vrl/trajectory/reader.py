@@ -23,6 +23,19 @@ class TrajectoryReaderError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class ForwardProcessReplay:
+    """What a forward-process objective (DiffusionNFT, V-GRPO) trains on at one step.
+
+    The clean latents the rollout decoded, this step's grid timestep per sample,
+    and the noise the rollout drew for the interpolation when it stored one.
+    """
+
+    latents_clean: Any
+    timestep: Any
+    noise: Any | None
+
+
+@dataclass(frozen=True, slots=True)
 class TrajectoryReader:
     """Read named tensors, roles, and replay slices from one trajectory."""
 
@@ -77,6 +90,35 @@ class TrajectoryReader:
         """Read the unique tensor value with ``role`` from a trajectory segment."""
 
         return self.role_tensor(segment_name, role).value
+
+    def forward_process_replay(
+        self,
+        segment_name: str,
+        timestep_index: int,
+    ) -> ForwardProcessReplay:
+        """Typed view of the tensors a forward-process objective reads at one step."""
+
+        timesteps = self.tensor(segment_name, "timesteps")
+        step_dims = [
+            dim
+            for dim, axis in enumerate(timesteps.axes)
+            if self.trajectory.axes[axis].kind == "denoise_step"
+        ]
+        timestep = timesteps.value
+        if step_dims:
+            timestep = self._slice_axis(
+                timestep,
+                tensor_ref(segment_name, "timesteps"),
+                step_dims[0],
+                timestep_index,
+            )
+        segment = self.trajectory.segments[segment_name]
+        noise = segment.tensors.get("diffusion_nft_noise")
+        return ForwardProcessReplay(
+            latents_clean=self.tensor_value(segment_name, "latents_clean"),
+            timestep=timestep,
+            noise=None if noise is None else noise.value,
+        )
 
     def replay_tensor_dict(
         self,
@@ -170,6 +212,7 @@ class TrajectoryReader:
 
 
 __all__ = [
+    "ForwardProcessReplay",
     "TrajectoryReader",
     "TrajectoryReaderError",
 ]

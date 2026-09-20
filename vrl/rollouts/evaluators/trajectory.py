@@ -42,13 +42,8 @@ class TrajectorySignalBuilder:
         timestep_idx: int | None = None,
         old_log_prob: Any | None = None,
         mask: Any | None = None,
-        ref_log_prob: Any | None = None,
-        prev_sample_mean: Any | None = None,
-        ref_prev_sample_mean: Any | None = None,
-        old_prev_sample_mean: Any | None = None,
-        std_dev_t: Any | None = None,
-        dt: Any | None = None,
-        sigma: Any | None = None,
+        signal_type: type[SegmentSignal] = SegmentSignal,
+        **fields: Any,
     ) -> TrajectorySignalBatch:
         """Build a one-segment ``TrajectorySignalBatch`` for concrete evaluators."""
 
@@ -58,13 +53,8 @@ class TrajectorySignalBuilder:
             timestep_idx=timestep_idx,
             old_log_prob=old_log_prob,
             mask=mask,
-            ref_log_prob=ref_log_prob,
-            prev_sample_mean=prev_sample_mean,
-            ref_prev_sample_mean=ref_prev_sample_mean,
-            old_prev_sample_mean=old_prev_sample_mean,
-            std_dev_t=std_dev_t,
-            dt=dt,
-            sigma=sigma,
+            signal_type=signal_type,
+            **fields,
         )
         return TrajectorySignalBatch(
             segments={segment.name: segment},
@@ -81,15 +71,15 @@ class TrajectorySignalBuilder:
         timestep_idx: int | None = None,
         old_log_prob: Any | None = None,
         mask: Any | None = None,
-        ref_log_prob: Any | None = None,
-        prev_sample_mean: Any | None = None,
-        ref_prev_sample_mean: Any | None = None,
-        old_prev_sample_mean: Any | None = None,
-        std_dev_t: Any | None = None,
-        dt: Any | None = None,
-        sigma: Any | None = None,
+        signal_type: type[SegmentSignal] = SegmentSignal,
+        **fields: Any,
     ) -> SegmentSignal:
-        """Build one signal segment from first-class trajectory facts."""
+        """Build one signal segment from first-class trajectory facts.
+
+        The builder resolves what the trajectory recorded (``distribution``,
+        ``old_log_prob``, ``mask``); ``fields`` are the evaluator's own outputs
+        and go straight into ``signal_type``, whose constructor is the contract.
+        """
 
         segment = self.trajectory.segments.get(segment_name)
         if segment is None:
@@ -119,19 +109,13 @@ class TrajectorySignalBuilder:
         # Shape theorems live on TrajectorySignalBatch.__post_init__ — every
         # production consumer of this signal constructs one, so validating here
         # too was a drifting duplicate of the same checks.
-        return SegmentSignal(
+        return signal_type(
             name=segment_name,
             distribution=segment.distribution,
             log_prob=log_prob,
             old_log_prob=resolved_old,
             mask=resolved_mask,
-            ref_log_prob=ref_log_prob,
-            prev_sample_mean=prev_sample_mean,
-            ref_prev_sample_mean=ref_prev_sample_mean,
-            old_prev_sample_mean=old_prev_sample_mean,
-            std_dev_t=std_dev_t,
-            dt=dt,
-            sigma=sigma,
+            **fields,
         )
 
     @property

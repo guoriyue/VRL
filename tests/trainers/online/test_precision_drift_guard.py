@@ -356,9 +356,6 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
     from vrl.trainers.online.trainer import OnlineTrainer
 
     class _Algorithm(_EvaluatorAlgorithmFake):
-        required_signal_keys: tuple[str, ...] = ()
-        required_data_keys: tuple[str, ...] = ()
-
         class _Config:
             global_std = False
             eps = 1e-8

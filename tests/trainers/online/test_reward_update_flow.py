@@ -35,9 +35,6 @@ class TestRewardUpdateFlow:
         captured_inputs: list = []
 
         class _Algorithm(_EvaluatorAlgorithmFake):
-            required_signal_keys = ("log_prob",)
-            required_data_keys: tuple[str, ...] = ()
-
             class _Config:
                 global_std = False
                 eps = 1e-8
@@ -149,9 +146,6 @@ class TestRewardUpdateFlow:
         evaluate_group_ids: list[list[int]] = []
 
         class _Algorithm(_EvaluatorAlgorithmFake):
-            required_signal_keys = ("log_prob",)
-            required_data_keys: tuple[str, ...] = ()
-
             class _Config:
                 global_std = False
                 eps = 1e-8
@@ -261,9 +255,6 @@ class TestRewardUpdateFlow:
         after_step_calls: list[int] = []
 
         class _Algorithm(_EvaluatorAlgorithmFake):
-            required_signal_keys = ("log_prob",)
-            required_data_keys: tuple[str, ...] = ()
-
             class _Config:
                 global_std = False
                 eps = 1e-8
@@ -593,9 +584,6 @@ class TestRewardUpdateFlow:
         recorded_grads: list[float] = []
 
         class _Algorithm(_EvaluatorAlgorithmFake):
-            required_signal_keys = ("log_prob",)
-            required_data_keys: tuple[str, ...] = ()
-
             class _Config:
                 global_std = False
                 eps = 1e-8
@@ -707,9 +695,6 @@ class TestRewardUpdateFlow:
         from vrl.trainers.online.trainer import OnlineTrainer
 
         class _Algorithm(_EvaluatorAlgorithmFake):
-            required_signal_keys = ("log_prob",)
-            required_data_keys: tuple[str, ...] = ()
-
             class _Config:
                 global_std = False
                 eps = 1e-8
@@ -829,9 +814,6 @@ def test_training_microbatch_size_splits_backward_and_preserves_gradient(monkeyp
     monkeypatch.setattr(RolloutBatch, "to_device", _recording_to_device)
 
     class _Algorithm(_EvaluatorAlgorithmFake):
-        required_signal_keys = ("log_prob",)
-        required_data_keys: tuple[str, ...] = ()
-
         class _Config:
             global_std = False
             eps = 1e-8

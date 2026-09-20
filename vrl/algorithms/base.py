@@ -18,12 +18,7 @@ class Algorithm(Protocol):
     - compute_loss(inputs)
     """
 
-    # Declarative input contract, read by ``AlgorithmAdapter.validate_inputs``
-    # to fail fast — with available-vs-missing diagnostics — when the rollout
-    # payload lacks a tensor the loss consumes. Mirrors verl-omni's
-    # ``DiffusionLossFn.required_data_keys`` / ``validate_inputs``, and belongs
-    # to the same "algorithm self-describes" family as ``uses_evaluator`` /
-    # ``tolerates_off_policy_staleness`` / ``requires_active_trust_region``.
+    # Behavior declarations the trainer and the factory read once at startup.
     #
     # requires_active_trust_region: the loss is *defined* by a clipped/guarded
     #   importance ratio r = pi_new/pi_old (Flow-DPPO / GRPO-Guard). When True the
@@ -31,20 +26,17 @@ class Algorithm(Protocol):
     #   trust-region term identically zero (the run degenerates to plain GRPO).
     #   False for objectives whose ratio clip is only a safety rail
     #   (plain GRPO at ppo_epochs=1 is honest REINFORCE-with-group-baseline).
+    #   The factory also reads it as "measures drift against the rollout
+    #   proposal mean" and requires ``rollout.return_prev_sample_mean``.
     #
-    # required_signal_keys: ``SegmentSignal`` fields the loss reads from the
-    #   evaluator replay (signal branch, ``uses_evaluator=True``).
-    # required_data_keys: replay-tensor names the loss reads straight off the
-    #   rollout batch (replay branch, ``uses_evaluator=False``).
-    # Every behavior and input field is a required declaration. Root objectives
-    # own their values; subclasses inherit only when the family theorem is the
-    # same. The consumer contract itself carries no behavioral defaults.
+    # What a loss reads is the type of its input (``SegmentSignal`` /
+    # ``FlowSDESignal`` on the evaluator branch, ``ForwardProcessReplay`` on the
+    # replay branch), not a declared key list. Every behavior flag is a required
+    # declaration. Root objectives own their values; subclasses inherit only
+    # when the family theorem is the same.
     uses_evaluator: bool
     tolerates_off_policy_staleness: bool
     requires_active_trust_region: bool
-    needs_kl_intermediates: bool
-    required_signal_keys: tuple[str, ...]
-    required_data_keys: tuple[str, ...]
 
     @property
     def config(self) -> object:

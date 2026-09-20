@@ -157,25 +157,11 @@ class VGRPO(PreviousPolicyObjective):
         from vrl.trajectory.reader import TrajectoryReader
 
         cfg = self.config
-        replay_tensors = TrajectoryReader.from_batch(batch).replay_tensor_dict("denoise")
-        x0 = replay_tensors["latents_clean"]
-        prompt_embeds = replay_tensors["prompt_embeds"]
-        timesteps = replay_tensors["timesteps"]
-        timestep_width = 1 if timesteps.ndim == 1 else int(timesteps.shape[1])
-        if not 0 <= timestep_index < timestep_width:
-            raise RuntimeError(
-                "V-GRPO timestep_index out of range: "
-                f"timestep_index={timestep_index}, width={timestep_width}, "
-                f"timesteps.shape={tuple(timesteps.shape)}",
-            )
-        t_raw = timesteps if timesteps.ndim == 1 else timesteps[:, timestep_index]
-        batch_size = int(x0.shape[0])
-        if prompt_embeds.shape[0] != batch_size or advantages.shape[0] != batch_size:
-            raise RuntimeError(
-                "V-GRPO batch mismatch: latents_clean, prompt_embeds and advantages "
-                f"have leading dims {batch_size}, {prompt_embeds.shape[0]}, {advantages.shape[0]}",
-            )
-        t = self.flow_time(t_raw, x0)
+        replay = TrajectoryReader.from_batch(batch).forward_process_replay(
+            "denoise", timestep_index
+        )
+        x0 = replay.latents_clean
+        t = self.flow_time(replay.timestep, x0)
         t_expanded = t.view(-1, *([1] * (x0.ndim - 1)))
         noise = self._group_shared_noise(
             x0,
@@ -262,10 +248,6 @@ class VGRPO(PreviousPolicyObjective):
             ids = [0] * batch
         else:
             ids = [int(value) for value in torch.as_tensor(group_ids).reshape(-1).tolist()]
-            if len(ids) != batch:
-                raise RuntimeError(
-                    f"V-GRPO group_ids has {len(ids)} rows for a batch of {batch} samples",
-                )
         shape = tuple(x0.shape[1:])
         draws: dict[int, Any] = {}
         rows = []

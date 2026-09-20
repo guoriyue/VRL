@@ -9,15 +9,18 @@ from vrl.models.interfaces import ReplayModel
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import ReplayEvaluatorBase
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
-from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
+from vrl.rollouts.evaluators.types import FlowSDESignal, SignalRequest, TrajectorySignalBatch
 from vrl.trajectory.device import move_value_to_device
 
 
 class DenoiseSDELogProbEvaluator(ReplayEvaluatorBase):
     """Signal extraction for flow-matching diffusion models.
 
-    Uses ``sde_step_with_logprob`` to compute log-probabilities and
-    optionally reference model signals for latent-space KL.
+    Uses ``sde_step_with_logprob`` to score the recorded transition; the step's
+    proposal mean, standard deviation, ``sqrt(-dt)`` and sigma come out of the
+    same call, so every replay yields a complete ``FlowSDESignal``. The
+    reference forward is the one optional part, requested when the objective's
+    KL term is on.
     """
 
     supports_deferred_replay_tensor_move = True
@@ -104,7 +107,7 @@ class DenoiseSDELogProbEvaluator(ReplayEvaluatorBase):
             t,
             observations,
             prev_sample=actions,
-            return_dt=signal_request.need_kl_intermediates,
+            return_dt=True,
             noise_level=self.noise_level,
             sde_type=self.sde_type,
             math_dtype=self.math_dtype,
@@ -112,8 +115,6 @@ class DenoiseSDELogProbEvaluator(ReplayEvaluatorBase):
 
         ref_log_prob = None
         ref_prev_sample_mean = None
-        ref_sqrt_neg_dt = None
-
         if ref_noise_pred is not None:
             ref_result = flow_matching_math.sde_step_with_logprob(
                 self.scheduler,
@@ -121,19 +122,16 @@ class DenoiseSDELogProbEvaluator(ReplayEvaluatorBase):
                 t,
                 observations,
                 prev_sample=actions,
-                return_dt=signal_request.need_kl_intermediates,
                 noise_level=self.noise_level,
                 sde_type=self.sde_type,
                 math_dtype=self.math_dtype,
             )
             ref_log_prob = ref_result.log_prob
             ref_prev_sample_mean = ref_result.prev_sample_mean
-            ref_sqrt_neg_dt = ref_result.sqrt_neg_dt
 
         # Rollout-time proposal mean for this step, captured at generation
-        # (return_prev_sample_mean) and replayed back unchanged. Trust-region
-        # losses (Flow-DPPO / GRPO-Guard) read it; None for recipes that did not
-        # opt in. Sliced to this step to match result.prev_sample_mean's shape.
+        # (rollout.return_prev_sample_mean) and replayed back unchanged, sliced
+        # to this step to match result.prev_sample_mean's shape.
         stored_prev_sample_mean = replay.get("old_prev_sample_mean")
         old_prev_sample_mean = (
             move_value_to_device(stored_prev_sample_mean[:, timestep_idx], device)
@@ -144,12 +142,13 @@ class DenoiseSDELogProbEvaluator(ReplayEvaluatorBase):
         return TrajectorySignalBuilder(batch).single_segment(
             segment_name="denoise",
             log_prob=result.log_prob,
+            timestep_idx=timestep_idx,
+            signal_type=FlowSDESignal,
             ref_log_prob=ref_log_prob,
             prev_sample_mean=result.prev_sample_mean,
+            std_dev_t=result.std_dev_t,
+            dt=result.sqrt_neg_dt,
+            sigma=result.sigma,
             ref_prev_sample_mean=ref_prev_sample_mean,
             old_prev_sample_mean=old_prev_sample_mean,
-            std_dev_t=result.std_dev_t,
-            dt=result.sqrt_neg_dt if result.sqrt_neg_dt is not None else ref_sqrt_neg_dt,
-            sigma=result.sigma,
-            timestep_idx=timestep_idx,
         )
