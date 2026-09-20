@@ -128,7 +128,10 @@ def _standardize_group_rewards(
         )
         variance, mean = torch.var_mean(stats_rewards, correction=0)
         std = global_std_value if global_std else torch.sqrt(variance)
-        denom = torch.clamp(std, min=eps)
+        # Additive epsilon, as Flow-GRPO's and Flash-GRPO's PerPromptStatTracker
+        # write it (``std + 1e-4``): a max() floor would silently leave a small
+        # group std uncorrected below eps.
+        denom = std + eps
         advantages[mask] = ((stats_rewards - mean) / denom).to(rewards.dtype)
     return advantages
 

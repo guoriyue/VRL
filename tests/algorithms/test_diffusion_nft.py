@@ -68,15 +68,16 @@ def test_diffusion_nft_advantages_match_grpo_contract(global_std: bool) -> None:
     # Independent numeric oracle: the closed-form group-relative advantage for
     # this exact input, hand-derived (NOT via group_relative_advantages, which
     # is the function under test — re-calling it would be a tautology). Both
-    # groups have mean-centered rewards [-1, 0, +1] over a population std.
-    #   global_std=False: per-group std = sqrt(2/3) = 0.8164966 -> +-1.2247449
-    #   global_std=True:  std over [1..6] = sqrt(35/12) = 1.7078251 -> +-0.5855400
+    # groups have mean-centered rewards [-1, 0, +1] over a population std with
+    # the reference's ADDITIVE epsilon (PerPromptStatTracker: ``std + 1e-4``).
+    #   global_std=False: per-group std = sqrt(2/3) = 0.8164966 -> +-1/(0.8164966+1e-4) = +-1.2245949
+    #   global_std=True:  std over [1..6] = sqrt(35/12) = 1.7078251 -> +-1/(1.7078251+1e-4) = +-0.5855058
     # adv_clip_max=5.0 does not bind. A change to eps placement, the unbiased
     # flag, or the clamp would move these and fail here.
     expected = (
-        torch.tensor([-0.5855400, 0.0, 0.5855400, -0.5855400, 0.0, 0.5855400])
+        torch.tensor([-0.5855058, 0.0, 0.5855058, -0.5855058, 0.0, 0.5855058])
         if global_std
-        else torch.tensor([-1.2247449, 0.0, 1.2247449, -1.2247449, 0.0, 1.2247449])
+        else torch.tensor([-1.2245949, 0.0, 1.2245949, -1.2245949, 0.0, 1.2245949])
     )
     assert torch.allclose(grpo_advantages, expected, atol=1e-6)
 
