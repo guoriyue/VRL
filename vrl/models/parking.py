@@ -1,41 +1,18 @@
-"""Parking: a role gives its GPU memory up for a phase and takes it back later.
+"""Release GPU storage for a phase, then restore it without losing model state.
 
-Every role (generation worker, trainer, reward) parks the same way in outline:
-copy what must survive off the card, release the card, restore on the next
-phase. Two independent questions describe any concrete parking, and the whole
-repository uses only these two words for them:
+ModelParking relocates tensors to CPU and records their original devices.
+TrainingStateParking extends that relocation to optimizer, gradient, EMA and
+scaler state. An optional FrozenParameterFileStore replaces frozen CPU shards
+with file mappings; it owns disk validation and file lifetime, not device moves.
 
-* **mechanism** -- how the card is released. ``move``: tensors are moved with
-  ``.to("cpu")`` one storage at a time (:class:`ModelParking`). ``cumem``: the
-  model was built inside a vLLM CuMem pool, so its physical pages are backed
-  up and unmapped as one unit while virtual addresses stay valid
-  (:class:`CumemPool`).
-* **destination** -- where the surviving bytes live meanwhile. ``ram``: host
-  memory. ``disk``: frozen shards become shared file mappings under
-  ``distributed.resources.trainer_parking_directory`` so Linux can reclaim
-  them; trainable parameters, optimizer state and EMA still go to RAM.
+CumemPool provides a separate allocator mechanism: model allocations must be
+created inside its pool, which can back them up to pinned RAM and unmap physical
+GPU pages while preserving virtual addresses. The current trainer does not use
+this pool, and the CuMem path does not implement disk backups. Host capacity
+must cover RAM backups in either mechanism.
 
-Only three of the four cells exist, and each role sits in a fixed one:
-
-=========== ============================ =====================================
-             destination ``ram``          destination ``disk``
-=========== ============================ =====================================
-``move``     generation worker whose      trainer with
-             model is off CUDA; trainer   ``trainer_parking_directory`` set
-             by default; reward           (:class:`TrainingStateParking`)
-``cumem``    generation worker with a     (none: vLLM backs up to pinned RAM
-             CUDA-resident model; CuMem   only)
-             rewards
-=========== ============================ =====================================
-
-The trainer cannot use ``cumem`` because FSDP shards and optimizer state are
-allocated by torch, not inside a pool; the generation worker does not use
-``disk`` because one CuMem backup per phase fits pinned RAM. Whether a role
-parks at all is a separate, earlier decision: ``distributed.resources.offload``
-(``vrl/ray/resources.py``), derived from which roles share a GPU.
-
-Callers own phase transitions and failure recovery. ``move`` records original
-devices; ``cumem`` preserves virtual addresses through allocator mappings.
+Callers own phase transitions and failure recovery. Whether a role yields its
+GPU is decided by distributed.resources.offload in vrl/ray/resources.py.
 """
 
 from __future__ import annotations
@@ -46,6 +23,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from vrl.models.frozen_parameter_storage import FrozenParameterFileStore
 from vrl.utils.cuda_memory import empty_cuda_cache
 
 if TYPE_CHECKING:
@@ -263,11 +241,6 @@ class TrainingStateParking(ModelParking):
     Extends model parking with optimizer, gradient, EMA and scaler storage.
     """
 
-    # A tmpfs mount (``/tmp`` on many hosts, ``/dev/shm``) keeps mapped files
-    # in RAM, which defeats disk parking silently.
-    _RAM_BACKED_FILESYSTEMS = frozenset({"tmpfs", "ramfs", "devtmpfs"})
-    _MOUNTS = "/proc/mounts"
-
     def __init__(
         self,
         state: TrainingMemoryState,
@@ -277,10 +250,9 @@ class TrainingStateParking(ModelParking):
         super().__init__()
         self.state = state
         self.ema_device = getattr(state.ema, "device", None)
-        # distributed.resources.trainer_parking_directory: frozen shards go to
-        # shared file mappings under it instead of anonymous host RAM.
-        self._parking_directory = parking_directory
-        self._host_storage_directories = []
+        self._frozen_file_store = (
+            FrozenParameterFileStore(parking_directory) if parking_directory is not None else None
+        )
 
     def park_training_state(self) -> None:
         import torch
@@ -292,19 +264,12 @@ class TrainingStateParking(ModelParking):
             tensor = next(self.module_tensors(model), None)
             device = state.device if tensor is None else torch.device(tensor.device)
             self.park(model, restore_device=device, preserve_tensor_devices=True)
-            self._map_frozen_host_storage(model)
-        if self._host_storage_directories:
-            # Return freed anonymous CPU copies to the OS after replacing them
-            # with reclaimable file mappings. glibc may otherwise retain GiBs.
-            import ctypes
-            import gc
-
-            gc.collect()
-            trim = getattr(ctypes.CDLL(None), "malloc_trim", None)
-            if trim is not None:
-                trim.argtypes = [ctypes.c_size_t]
-                trim.restype = ctypes.c_int
-                trim(0)
+            if self._frozen_file_store is not None:
+                self._frozen_file_store.store(model.parameters())
+                # Storage replacement requires FSDP to refresh its local shard views.
+                self._move_module(model, torch.device("cpu"))
+        if self._frozen_file_store is not None:
+            self._frozen_file_store.release_unused_host_memory()
         if state.optimizer is not None:
             # Independent FP32 master parameters and live grads may not belong
             # to the model. The shared ledger deduplicates ordinary parameters.
@@ -322,84 +287,10 @@ class TrainingStateParking(ModelParking):
             for attr in ("_scale", "_growth_tracker", "_per_optimizer_states"):
                 self.park_tensors(getattr(state.grad_scaler, attr, None))
 
-    def _map_frozen_host_storage(self, model: Any) -> None:
-        """Disk-backed frozen shards; bytes and parameter aliases stay intact.
-
-        Anonymous CPU copies of every parked role can exceed host RAM. Shared
-        file mappings let Linux reclaim inactive frozen shards while generation
-        owns the GPUs. This is storage relocation only.
-        """
-        import tempfile
-        from pathlib import Path
-
-        import torch
-
-        root = self._parking_directory
-        if root is None:
-            return
-        self._require_disk_backed_directory()
-        directory = tempfile.TemporaryDirectory(prefix="trainer-", dir=root)
-        self._host_storage_directories.append(directory)
-        with torch.no_grad():
-            for index, parameter in enumerate(model.parameters()):
-                if parameter.requires_grad:
-                    continue
-                local = getattr(parameter, "_local_tensor", parameter)
-                if local.device.type != "cpu" or not local.is_contiguous():
-                    raise RuntimeError("disk parking requires contiguous CPU frozen shards")
-                if local.numel() == 0:
-                    continue
-                mapped = torch.from_file(
-                    str(Path(directory.name) / f"{index}.bin"),
-                    shared=True,
-                    size=local.numel(),
-                    dtype=local.dtype,
-                ).reshape(local.shape)
-                mapped.copy_(local)
-                if hasattr(parameter, "_local_tensor"):
-                    parameter._local_tensor = mapped
-                else:
-                    parameter.data = mapped
-        # Refresh FSDP's local shard views after replacing only owned storage.
-        ModelParking._move_module(model, torch.device("cpu"))
-
-    def _require_disk_backed_directory(self) -> None:
-        """Refuse a parking directory that is missing or not a real disk.
-
-        The longest mount point that prefixes the directory decides; hosts
-        without ``/proc/mounts`` are not checked.
-        """
-        import os
-
-        directory = self._parking_directory
-        assert directory is not None
-        if not os.path.isdir(directory):
-            raise ValueError(f"parking directory does not exist: {directory}")
-        try:
-            with open(self._MOUNTS, encoding="utf-8") as handle:
-                entries = [line.split() for line in handle]
-        except OSError:
-            return
-        resolved = os.path.realpath(directory)
-        best: tuple[str, str] | None = None
-        for entry in entries:
-            if len(entry) < 3:
-                continue
-            mount_point, fstype = entry[1], entry[2]
-            covers = resolved == mount_point or resolved.startswith(mount_point.rstrip("/") + "/")
-            if covers and (best is None or len(mount_point) > len(best[0])):
-                best = (mount_point, fstype)
-        if best is not None and best[1] in self._RAM_BACKED_FILESYSTEMS:
-            raise ValueError(
-                f"parking directory {directory} is on a {best[1]} mount ({best[0]}); "
-                "disk parking needs node-local disk such as NVMe, or the files stay in RAM",
-            )
-
     def restore(self) -> None:
         super().restore()
-        for directory in self._host_storage_directories:
-            directory.cleanup()
-        self._host_storage_directories.clear()
+        if self._frozen_file_store is not None:
+            self._frozen_file_store.cleanup()
         if self.state.ema is not None and hasattr(self.state.ema, "device"):
             self.state.ema.device = self.ema_device
         empty_cuda_cache()

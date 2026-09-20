@@ -52,17 +52,16 @@ each role sits in a fixed one:
 
 | | destination `ram` | destination `disk` |
 |---|---|---|
-| mechanism `move` | generation worker whose model is off CUDA; trainer by default; reward | trainer with `trainer_parking_directory` set (`TrainingStateParking`) |
+| mechanism `move` | generation worker using CPU relocation (including managed pipeline offload); trainer by default; reward | trainer with `trainer_parking_directory` set (`TrainingStateParking`) |
 | mechanism `cumem` | generation worker with a CUDA-resident model; CuMem rewards | none: vLLM backs up to pinned RAM only |
 
-The trainer cannot use `cumem` because FSDP shards and optimizer state are
-allocated by torch, not inside a pool; the generation worker does not use
-`disk` because one CuMem backup per phase fits pinned RAM. Whether a role parks
-at all is the earlier, separate decision `distributed.resources.offload`
-(`RayLifecyclePlan` below), derived from which roles share a GPU. The
-per-role owners (`WorkerMemoryParking`, `_TrainingParkingStrategy`,
-`MemoryParkingScorer`) add phase tracking and failure recovery on top; they do
-not add a third mechanism.
+`TrainingStateParking` orchestrates trainer relocation through `ModelParking`.
+Its optional `FrozenParameterFileStore` (`vrl/models/frozen_parameter_storage.py`)
+owns directory validation, frozen CPU mappings, host-memory reclamation and file
+cleanup. FSDP view refresh and device restoration remain with the parking layer.
+The current trainer does not allocate its state inside CuMem; generation CuMem
+backups use pinned RAM and do not implement disk storage. RAM capacity remains a
+resource requirement. `distributed.resources.offload` decides when roles park.
 
 ### Ray infrastructure (`vrl/ray`)
 
