@@ -143,7 +143,9 @@ class HPSv3Qwen2VLRewardModel(Qwen2VLForConditionalGeneration):
 class HPSv3Model:
     """Load HPSv3 and score one (prompt, video) pair per call, frame by frame."""
 
-    input_artifact_format: ClassVar[Literal["mp4", "tensor"]] = "mp4"
+    # ``tensor`` hands the scorer the rollout's own frames; ``mp4`` re-decodes a
+    # lossy H.264 file. Flash-GRPO's reference scores the raw frames.
+    input_artifact_format: ClassVar[Literal["mp4", "tensor"]] = "tensor"
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)
@@ -180,6 +182,9 @@ class HPSv3Model:
         # uniformly to bound scoring cost on long videos.
         num_frames = self.worker_config.get("num_frames")
         self.num_frames = None if num_frames is None else int(num_frames)
+        # The reference client JPEG-encodes every uint8 frame before the server
+        # decodes and scores it; the compression is part of its reward.
+        self.jpeg_roundtrip = bool(self.worker_config.get("jpeg_roundtrip", False))
         disable_flash_attn2 = self.worker_config.get("disable_flash_attn2")
         if disable_flash_attn2 is None:
             disable_flash_attn2 = importlib.util.find_spec("flash_attn") is None
@@ -238,18 +243,39 @@ class HPSv3Model:
         model.load_state_dict(state_dict, strict=True)
 
     def __call__(self, artifact: RewardInferenceArtifact) -> dict[str, float]:
-        prompt, video_path = artifact.require_prompt_and_video_path(family="HPSv3")
-        return self._score_video(video_path, prompt)
+        prompt = artifact.prompt
+        if not prompt:
+            raise ValueError("HPSv3 scoring requires the artifact prompt")
+        return self._score_frames(self._frames(artifact), prompt)
 
-    def _score_video(self, video_path: str, prompt: str) -> dict[str, float]:
+    def _frames(self, artifact: RewardInferenceArtifact) -> torch.Tensor:
+        """The video as ``[T,H,W,3]`` unit-range floats, from media or a file."""
+
+        from vrl.utils.media import (
+            frames_thwc_to_float,
+            read_video_frames,
+            sample_frames,
+            video_tensor_to_uint8_frames,
+        )
+
+        if artifact.media is not None or artifact.path.endswith(".pt"):
+            media = artifact.as_media()
+            if not isinstance(media, torch.Tensor):
+                raise TypeError(
+                    f"HPSv3 expects a video tensor artifact, got {type(media).__name__}"
+                )
+            frames = frames_thwc_to_float(torch.from_numpy(video_tensor_to_uint8_frames(media)))
+            return sample_frames(frames, self.num_frames)
+        return read_video_frames(artifact.as_path(), self.num_frames)
+
+    def _score_frames(self, frames: torch.Tensor, prompt: str) -> dict[str, float]:
         from PIL import Image
 
-        from vrl.utils.media import read_video_frames
-
-        frames = read_video_frames(video_path, self.num_frames)
-        # [T,H,W,3] float [0,1] -> PIL
+        # [T,H,W,3] float [0,1] -> PIL, the reference's ``(x*255).round()`` uint8
         array = (frames.clamp(0.0, 1.0) * 255.0).round().to(torch.uint8).cpu().numpy()
         images = [Image.fromarray(frame) for frame in array]
+        if self.jpeg_roundtrip:
+            images = [_jpeg_roundtrip(image) for image in images]
         mu_scores: list[float] = []
         for start in range(0, len(images), self.frames_per_forward):
             chunk = images[start : start + self.frames_per_forward]
@@ -293,6 +319,21 @@ class HPSv3Model:
             return_tensors="pt",
         )
         return batch.to(self.device)
+
+
+def _jpeg_roundtrip(image: Any) -> Any:
+    """Encode/decode one frame as JPEG at PIL's default quality, as the reference client does."""
+
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG")
+    buffer.seek(0)
+    decoded = Image.open(buffer, formats=["JPEG"])
+    decoded.load()
+    return decoded
 
 
 def _aggregate_frame_scores(scores: list[float], top_fraction: float) -> dict[str, float]:

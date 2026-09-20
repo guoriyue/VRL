@@ -13,7 +13,6 @@ from vrl.rewards.models.base import FileRewardModel
 @pytest.mark.parametrize(
     ("module_name", "class_name"),
     [
-        ("hpsv3", "HPSv3Model"),
         ("kling_video_reward", "KlingVideoRewardModel"),
         ("unified_reward_video", "UnifiedRewardVideoModel"),
         ("videocon_physics", "VideoConPhysicsModel"),
@@ -27,6 +26,17 @@ def test_path_consuming_model_declares_mp4_without_loading(module_name, class_na
 
     assert isinstance(model, FileRewardModel)
     assert model.input_artifact_format == "mp4"
+
+
+def test_hpsv3_scores_the_rollout_frames_as_a_tensor_file() -> None:
+    """HPSv3 declares the tensor format: the reference scores the raw generated
+    frames (JPEG-compressed by its client), not a re-decoded H.264 file."""
+    from vrl.rewards.models.hpsv3 import HPSv3Model
+
+    model = object.__new__(HPSv3Model)
+
+    assert isinstance(model, FileRewardModel)
+    assert model.input_artifact_format == "tensor"
 
 
 @pytest.mark.parametrize(
