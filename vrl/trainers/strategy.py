@@ -167,7 +167,7 @@ class Strategy(Protocol):
         ...
 
 
-class _TrainingParkingStrategy:
+class TrainerParking:
     """Move live trainer state off a shared GPU for a rollout phase, and back.
 
     Shared by single-process and FSDP2. The shared parking ledger handles
@@ -389,7 +389,7 @@ class _UnshardedStateStrategy:
         optimizer.load_state_dict(state)
 
 
-class SingleProcessStrategy(_TrainingParkingStrategy, _UnshardedStateStrategy):
+class SingleProcessStrategy(TrainerParking, _UnshardedStateStrategy):
     """The current single-GPU behavior, moved behind the strategy protocol.
 
     Every method here is the existing trainer / checkpoint / weight-sync logic
@@ -478,7 +478,7 @@ def _trainable_module_handles(model: Any) -> list[tuple[str, Any, Any]]:
     return handles
 
 
-class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
+class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
     """FSDP2 (``fully_shard`` + DTensor) training behind the same seam.
 
     The model wraps once in ``prepare_model``; thereafter params/grads/optimizer
@@ -944,7 +944,7 @@ class FSDPStrategy(_ProcessGroupStrategy, _TrainingParkingStrategy):
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         try:
-            _TrainingParkingStrategy.shutdown(self, restore_parked=restore_parked)
+            TrainerParking.shutdown(self, restore_parked=restore_parked)
         finally:
             super().shutdown(restore_parked=restore_parked)
 

@@ -14,8 +14,8 @@ gradient, EMA and scaler state.
 
 The session raises typed failures and keeps no phase policy. Whether a failure
 quarantines the owner, rolls back every rank, or is retried belongs to the
-owners (``WorkerMemoryParking``, ``_TrainingParkingStrategy``,
-``InProcessRewardScorer``), and whether a role yields its GPU at all is
+owners (``GenerationWorkerParking``, ``TrainerParking``,
+``RewardParking``), and whether a role yields its GPU at all is
 decided by distributed.resources.offload in vrl/ray/resources.py.
 """
 

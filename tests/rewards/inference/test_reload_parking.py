@@ -49,7 +49,7 @@ async def test_reload_rebuilds_equal_scores_without_retaining_model(monkeypatch)
         assert first[0].scores == second[0].scores
         assert torch.equal(torch.get_rng_state(), before)
         assert len(owners) == 2
-        assert scorer._parking is None
+        assert scorer._parking.pool is None
     finally:
         await scorer.shutdown()
     assert all(owner() is None for owner in owners)

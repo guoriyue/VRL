@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.generation.execution._helpers import launch_contract
-from vrl.generation.execution.memory_parking import WorkerMemoryParking
+from vrl.generation.execution.memory_parking import GenerationWorkerParking
 from vrl.generation.execution.types import (
     RequestBatchOutOfMemory,
     StaleSlotDiscard,
@@ -74,7 +74,7 @@ def _core(*, executor, uses_slots: bool, policy_version: int | None):
     # test_worker_versioned_slots.py::test_update_weights_installs_versioned_slots_without_overwrite.
     core._uses_versioned_slots = uses_slots
     core._policy_version = policy_version
-    core._memory_parking = WorkerMemoryParking(
+    core._memory_parking = GenerationWorkerParking(
         "w0",
         launch_contract(),
     )

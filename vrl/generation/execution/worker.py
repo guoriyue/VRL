@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from torch.distributed import ProcessGroup
 
-from vrl.generation.execution.memory_parking import WorkerMemoryParking
+from vrl.generation.execution.memory_parking import GenerationWorkerParking
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.rank_group import (
     RankGroupSpec,
@@ -79,7 +79,7 @@ class GenerationWorkerCore:
 
         self.family_entry = get_model_family_entry(launch_contract.family)
         self.executor: GenerationBatchExecutor | None = None
-        self._memory_parking = WorkerMemoryParking(
+        self._memory_parking = GenerationWorkerParking(
             worker_id,
             launch_contract,
         )

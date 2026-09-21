@@ -270,7 +270,6 @@ async def test_failed_pooled_preparation_rolls_back_before_retry(monkeypatch) ->
             "model_factory": f"{__name__}:_flaky_prepare_factory",
         },
     )
-    runtime._release_cuda_memory_for_parking = lambda: None  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError, match="prepare failed"):
         await runtime.score_batch(_make_request())
@@ -278,7 +277,7 @@ async def test_failed_pooled_preparation_rolls_back_before_retry(monkeypatch) ->
     assert _PARTIAL_PREPARE_REF is not None
     assert _PARTIAL_PREPARE_REF() is None
     assert runtime._model is None
-    assert runtime._parking is None
+    assert runtime._parking.pool is None
     assert allocator.allocator_and_pools == {}
 
     results = await runtime.score_batch(_make_request())
@@ -315,7 +314,7 @@ async def test_reward_memory_parking_retries_after_sleep_failure(monkeypatch) ->
     await runtime.score_batch(_parking_request())
     with pytest.raises(RuntimeError, match="sleep failed"):
         await runtime.park_memory()
-    assert runtime._parking is not None
+    assert runtime._parking.pool is not None
     assert runtime._parking.pool.asleep is False
 
     await runtime.park_memory()
@@ -339,7 +338,7 @@ async def test_dedicated_reward_runtime_stays_resident(monkeypatch) -> None:
     await runtime.score_batch(_parking_request())
 
     assert runtime.requires_memory_parking is False
-    assert runtime._parking is None
+    assert runtime._parking.pool is None
     assert allocator.pool_tags == []
     assert allocator.sleeps == []
 
@@ -373,13 +372,12 @@ async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
             "model_factory": f"{__name__}:_immovable_factory",
         },
     )
-    runtime._release_cuda_memory_for_parking = lambda: None  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError, match="CuMemAllocator is required"):
         await runtime.score_batch(_parking_request())
 
     assert runtime._model is None
-    assert runtime._parking is None
+    assert runtime._parking.pool is None
 
 
 @pytest.mark.gpu

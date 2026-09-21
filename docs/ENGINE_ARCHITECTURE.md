@@ -61,10 +61,10 @@ the pre-load baseline), `park` (sleeps the pool, or runs the owner's move and
 rolls it back through the ledger on failure), `restore`, `release_gpu` plus
 `gpu_used_bytes` (the residual evidence) and `release_scope` (wake, drop, close).
 It raises `ParkingBroken` / `CumemBroken` and holds no policy; the owners add
-what only they need: `WorkerMemoryParking` the quarantine phases and the
-driver-validated snapshot, `_TrainingParkingStrategy` the cross-rank failure
-agreement and identity ticket, `InProcessRewardScorer` the async lifecycle and
-`reload` mode. `ModelParking` takes the `parking_directory`, so `disk` is a
+what only they need: `GenerationWorkerParking` the quarantine phases and the
+driver-validated snapshot, `TrainerParking` the cross-rank failure
+agreement and identity ticket, `RewardParking` the reload mode and the
+terminal device-cache release. `ModelParking` takes the `parking_directory`, so `disk` is a
 property of the `move` mechanism rather than of the trainer:
 `FrozenParameterFileStore` (`vrl/models/frozen_parameter_storage.py`) owns
 directory validation, frozen CPU mappings, host-memory reclamation and file
@@ -127,7 +127,7 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 |---|---|
 | `RayGenerationWorker` (`ray/worker.py`) | The Ray actor shell; delegates to the core. |
 | `GenerationWorkerCore` | Worker-process brain: validates the launch contract, builds the family executor, isinstance-probes `BatchSizeProbeExecutor` for auto batch sizing, runs forward/probe calls. |
-| `WorkerMemoryParking` | The generation worker's parking owner (vocabulary in §1 Parking): phase tracking plus `WorkerMemoryParkingSnapshot` evidence the driver validates. Picks the mechanism from residency, not the family: a parking-required rank whose model is resident on CUDA uses `cumem`; under `pipeline_offload_mode` or with a model built off CUDA it uses `move`. Destination is always RAM. |
+| `GenerationWorkerParking` | The generation worker's parking owner (vocabulary in §1 Parking): phase tracking plus `WorkerMemoryParkingSnapshot` evidence the driver validates. Picks the mechanism from residency, not the family: a parking-required rank whose model is resident on CUDA uses `cumem`; under `pipeline_offload_mode` or with a model built off CUDA it uses `move`. Destination is always RAM. |
 | `DistributedExecutionPlanner` → `DistributedGenerationPlan`, `DeviceAssignment` | Splits a request into per-worker batch assignments. |
 | `EnginePlan` (`planner.py`) | The resolved per-request plan: which `sample_batches` run where. |
 | `GenerationSampleBatch`, `SampleAlignedValues`, `BatchResultWithIdentity` (`sample_batches.py`) | The batch coordinate system: a batch is a slice of samples (`prompt_index`, `sample_start`, `sample_count`), not a time segment. `SampleAlignedValues` slices per-sample tensors consistently. |
@@ -270,7 +270,8 @@ classDiagram
 | Class | Role |
 |---|---|
 | `RewardFunctionRuntime` (`runtime.py`) | Implements `RewardRuntime` around the configured `RewardFunction`: lifecycle FSM, deadlines, parking gate (`validate_parking_residual`). What `RayGenerationRuntime` is to generation. |
-| `InProcessRewardScorer` (`runtime.py`) | `RewardScorer` + `MemoryParkingScorer` implementation: builds the model from `RewardRuntimeLaunchContract.model_factory` (inside a `CumemPool` when parking is on). `_score_artifacts` resolves media and owns model-required temporary files; `_infer` runs the batch hook or per-artifact loop. Remote scoring processes reuse it. |
+| `RewardParking` (`runtime.py`) | The reward's parking owner (vocabulary in §1 Parking): a `ParkingSession` on the configured device for `cumem`, no session for `reload` (destroy the model and trim host allocations at each handoff), and the terminal device-cache release every runtime needs. |
+| `InProcessRewardScorer` (`runtime.py`) | `RewardScorer` + `MemoryParkingScorer` implementation: builds the model from `RewardRuntimeLaunchContract.model_factory` through `RewardParking`. `_score_artifacts` resolves media and owns model-required temporary files; `_infer` runs the batch hook or per-artifact loop. Remote scoring processes reuse it. |
 | `build_reward_scorer` (`runtime.py`) | Factory: worker config or `RewardInferenceConfig` → in-process or HTTP scorer. |
 | `HttpRewardScorer` (`service/client.py`) | `RewardScorer` + `RemoteReadyScorer` over HTTP: checks service identity/capabilities at `ensure_ready` and uploads tensor media, with explicit shared-file inputs also supported. Ambiguous failures retain borrowed/shared artifacts where applicable. |
 | `RewardService`, `RewardServiceConfig` (`service/server.py`) | The standalone scoring process: parses the same launch contract, re-verifies artifact integrity (`sha256_file`), runs the same `validate_and_order_results` guard server-side. |

@@ -71,7 +71,7 @@ class _ParkingPhase(Enum):
     CUMEM_BROKEN = "cumem_broken"
 
 
-class WorkerMemoryParking:
+class GenerationWorkerParking:
     """Own one worker's parking session and the policy around it.
 
     The Ray launch contract carries only the topology-derived requirement to
@@ -450,4 +450,4 @@ class WorkerMemoryParking:
             self._phase = _ParkingPhase.QUARANTINED
 
 
-__all__ = ["WorkerMemoryParking"]
+__all__ = ["GenerationWorkerParking"]
