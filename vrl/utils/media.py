@@ -9,7 +9,8 @@ contracts:
   only scales.
 - ``image_to_uint8_hwc`` / ``to_pil_image``: defensive converter for inputs of
   uncertain range/layout (raw generation output, dataset arrays). Denormalizes
-  ``[-1, 1]`` when ``min < 0`` and normalizes channel layout to HWC RGB.
+  ``[-1, 1]`` when ``min < 0`` and normalizes channel layout to HWC RGB,
+  optionally preserving RGBA for exported assets.
 """
 
 from __future__ import annotations
@@ -39,8 +40,8 @@ def to_uint8(media: torch.Tensor) -> torch.Tensor:
     return (media * 255).round().clamp(0, 255).to(torch.uint8)
 
 
-def image_to_uint8_hwc(image: Any) -> np.ndarray:
-    """Convert a tensor/ndarray image to an ``HWC`` RGB ``uint8`` array.
+def image_to_uint8_hwc(image: Any, *, preserve_alpha: bool = False) -> np.ndarray:
+    """Convert an image to HWC uint8, preserving alpha or compositing over white.
 
     Accepts torch tensors or numpy arrays in ``CHW``/``HWC`` (optionally a
     leading singleton batch). Floats in ``[-1, 1]`` are denormalized when the
@@ -54,7 +55,7 @@ def image_to_uint8_hwc(image: Any) -> np.ndarray:
         array = array[0]
     if isinstance(array, torch.Tensor):
         if array.ndim == 3 and array.shape[0] in {1, 3, 4}:
-            array = array[:3].permute(1, 2, 0)
+            array = array.permute(1, 2, 0)
         if torch.is_floating_point(array):
             # NumPy cannot represent bfloat16. Normalize tensor float dtypes to
             # float32 while preserving integer values for the pass-through path.
@@ -66,39 +67,43 @@ def image_to_uint8_hwc(image: Any) -> np.ndarray:
     if array_np.ndim != 3:
         raise ValueError(f"expected an image with 3 dimensions, got shape {array_np.shape}")
     if array_np.shape[0] in {1, 3, 4} and array_np.shape[-1] not in {1, 3, 4}:
-        array_np = array_np[:3].transpose(1, 2, 0)
+        array_np = array_np.transpose(1, 2, 0)
     if array_np.shape[-1] == 1:
         array_np = np.repeat(array_np, 3, axis=-1)
-    if array_np.shape[-1] == 4:
-        array_np = array_np[..., :3]
-    if array_np.shape[-1] != 3:
-        raise ValueError(f"expected an RGB image, got shape {array_np.shape}")
+    if array_np.shape[-1] not in {3, 4}:
+        raise ValueError(f"expected an RGB/RGBA image, got shape {array_np.shape}")
 
     if np.issubdtype(array_np.dtype, np.floating):
         if float(np.nanmin(array_np)) < 0.0:
             array_np = (array_np + 1.0) * 0.5
         array_np = np.nan_to_num(array_np, nan=0.0, posinf=1.0, neginf=0.0)
         array_np = np.clip(array_np, 0.0, 1.0)
-        return (array_np * 255.0).round().astype(np.uint8)
-    return np.clip(array_np, 0, 255).astype(np.uint8)
+        array_np = array_np * 255.0
+    array_np = np.clip(array_np, 0, 255)
+    if array_np.shape[-1] == 4 and not preserve_alpha:
+        alpha = array_np[..., 3:4].astype(np.float32) / 255.0
+        array_np = array_np[..., :3] * alpha + 255.0 * (1.0 - alpha)
+    return array_np.round().astype(np.uint8)
 
 
-def to_pil_image(image: Any) -> PILImage.Image:
-    """Convert a tensor/ndarray/PIL image to an RGB ``PIL.Image``."""
+def to_pil_image(image: Any, *, preserve_alpha: bool = False) -> PILImage.Image:
+    """Convert to PIL; RGB consumers see transparent pixels composited over white."""
 
     from PIL import Image
 
     if isinstance(image, Image.Image):
-        return image.convert("RGB")
-    return Image.fromarray(image_to_uint8_hwc(image), mode="RGB")
+        image = image.convert(
+            "RGBA" if "A" in image.getbands() or "transparency" in image.info else "RGB"
+        )
+    return Image.fromarray(image_to_uint8_hwc(image, preserve_alpha=preserve_alpha))
 
 
 def write_png(image: Any, path: str | Path) -> None:
-    """Write a tensor/ndarray/PIL image to an RGB PNG file."""
+    """Write an RGB/RGBA PNG without discarding an existing alpha channel."""
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    to_pil_image(image).save(path, format="PNG")
+    to_pil_image(image, preserve_alpha=True).save(path, format="PNG")
 
 
 def video_tensor_to_uint8_frames(tensor: torch.Tensor) -> np.ndarray:
@@ -215,7 +220,7 @@ def read_image_as_frames(path: str | Path) -> torch.Tensor:
     from PIL import Image
 
     with Image.open(path) as image:
-        frame = torch.from_numpy(image_to_uint8_hwc(image.convert("RGB")))
+        frame = torch.from_numpy(np.array(to_pil_image(image)))
     return frames_thwc_to_float(frame.unsqueeze(0))
 
 

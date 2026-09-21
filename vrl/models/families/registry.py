@@ -550,7 +550,8 @@ _register_model_family(
         family="qwen_image_21",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
-        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
+        sampling_section_cls="vrl.config.sampling_schema:QwenImage21SamplingSection",
+        executor_cls="vrl.models.families.qwen_image_21.runtime:QwenImage21BatchExecutor",
         # Qwen-Image-2.1: 7B single-stream DiT (diffusers ``QwenImage21*``), a
         # different transformer/VAE/pipeline from the 20B ``qwen_image`` MMDiT.
         build=DenoiseFamilyBuild(

@@ -48,8 +48,7 @@ test = [
 cosmos = [
     # Qwen-Image-2.1 (QwenImage21Pipeline / QwenImage21Transformer2DModel /
     # AutoencoderKLQwenImage21) merged in huggingface/diffusers#14804 after the
-    # 0.40.0 release; until 0.41 ships, install main:
-    #   uv pip install --no-deps "git+https://github.com/huggingface/diffusers@main"
+    # 0.40.0 release; tool.uv.sources pins the qualified implementation below.
     "diffusers>=0.40.0,<0.42",
     # 5.17 is Qwen-Image-2.1's floor (Qwen3-VL text encoder); the model stack
     # and its tiny-real CPU parity tests are qualified against it.
@@ -158,6 +157,9 @@ conflicts = [
     [{ extra = "ar-vllm" }, { extra = "cosmos" }],
     [{ extra = "ar-vllm" }, { extra = "reward" }],
 ]
+
+[tool.uv.sources]
+diffusers = { git = "https://github.com/huggingface/diffusers", rev = "80c7ed262aeffbeb43ef13ae04baeb9b84515a69" }
 
 [tool.setuptools.packages.find]
 include = ["vrl*"]

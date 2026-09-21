@@ -27,6 +27,7 @@ class PromptExample:
     target_text: str = ""
     reference_image: str | None = field(default=None, metadata={"artifact": True})
     reference_video: str | None = field(default=None, metadata={"artifact": True})
+    reference_images: list[str] = field(default_factory=list, metadata={"artifact": True})
     # CONTRACT: clean targets stay manifest-relative for the whole run. Exactly
     # one target_image/target_video is the identity key into sft-latents shards;
     # target-similarity rewards resolve the same artifact per process. Load-time
@@ -59,6 +60,7 @@ class PromptExample:
             task_type=self.task_type or None,
             reference_image=self.reference_image or None,
             reference_video=self.reference_video or None,
+            reference_images=self.reference_images,
         )
 
     def reward_metadata(self) -> dict[str, Any]:
@@ -137,6 +139,11 @@ def load_prompt_examples_from_jsonl_bytes(
         prompt_fields = {key: value for key, value in obj.items() if key in known_fields}
         if not isinstance(prompt_fields.get("prompt"), str):
             raise ValueError(f"{context}:{line_number}: prompt must be a string")
+        images = prompt_fields.get("reference_images", [])
+        if not isinstance(images, list) or any(
+            not isinstance(path, str) or not path.strip() for path in images
+        ):
+            raise ValueError(f"{context}:{line_number}: reference_images must be a list of paths")
         for name in ("metadata", "request_overrides"):
             value = prompt_fields.get(name)
             if value is None:

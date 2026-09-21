@@ -35,6 +35,7 @@ class GenerationInput:
     task_type: str | None = None
     reference_image: str | None = None
     reference_video: str | None = None
+    reference_images: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.prompt:
@@ -42,6 +43,13 @@ class GenerationInput:
         for name in ("reference_image", "reference_video"):
             if getattr(self, name) == "":
                 raise ValueError(f"GenerationInput.{name} must be None or non-empty")
+        if not isinstance(self.reference_images, list) or any(
+            not isinstance(path, str) or not path.strip() for path in self.reference_images
+        ):
+            raise ValueError("GenerationInput.reference_images must be a list of non-empty paths")
+        if self.reference_image is not None and self.reference_images:
+            raise ValueError("Use reference_image or reference_images, not both")
+        self.reference_images = list(self.reference_images)
 
 
 @dataclass(slots=True)

@@ -120,6 +120,8 @@ class GenerationRequestBuilder:
             group_metadata["task_type"] = first.task_type
             if first.reference_image is not None:
                 group_metadata["reference_image"] = first.reference_image
+            if first.reference_images:
+                group_metadata["reference_images"] = list(first.reference_images)
             if first.reference_video is not None:
                 group_metadata["reference_video"] = first.reference_video
 

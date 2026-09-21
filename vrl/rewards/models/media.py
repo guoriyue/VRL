@@ -78,7 +78,7 @@ def artifact_middle_frame_image(artifact: RewardInferenceArtifact) -> Image.Imag
     if not artifact.path or artifact.path.endswith(".pt"):
         media = artifact.as_media()
         if isinstance(media, Image.Image):
-            return media.convert("RGB")
+            return to_pil_image(media)
     frames = decode_artifact_frames(artifact, 1)
     return to_pil_image(frames[frames.shape[0] // 2])
 
@@ -102,11 +102,11 @@ def pil_frames_from_media(media: Any) -> list[list[Image.Image]]:
     if isinstance(media, Image.Image):
         if media.width == 0 or media.height == 0:
             raise ValueError("reward received an empty media image")
-        return [[media.convert("RGB")]]
+        return [[to_pil_image(media)]]
     if isinstance(media, (list, tuple)) and all(isinstance(item, Image.Image) for item in media):
         if not media or any(item.width == 0 or item.height == 0 for item in media):
             raise ValueError("reward received an empty media frame list")
-        return [[item.convert("RGB") for item in media]]
+        return [[to_pil_image(item) for item in media]]
     if isinstance(media, np.ndarray):
         if media.size == 0:
             raise ValueError("reward received an empty media array")

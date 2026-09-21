@@ -382,6 +382,10 @@ def resolve_prompt_example_references(
         example,
         reference_image=reference_image,
         reference_video=reference_video,
+        reference_images=[
+            str(resolve_artifact_path(item, data_root=data_root, allow_absolute=allow_absolute))
+            for item in example.reference_images
+        ],
         references=references,
     )
 

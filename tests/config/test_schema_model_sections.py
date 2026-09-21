@@ -50,7 +50,7 @@ _MODEL_EXECUTOR_CAPABILITIES = {
     "magi_1": False,
     "flux": True,
     "qwen_image": True,
-    "qwen_image_21": True,
+    "qwen_image_21": False,
     "sana": True,
     "lumina2": True,
     "hunyuan_video": True,

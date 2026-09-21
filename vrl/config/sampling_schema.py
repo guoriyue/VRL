@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import StrictBool, StrictInt
+from pydantic import Field, StrictBool, StrictInt
 
 from vrl.config.base import ConfigBase
 
@@ -73,6 +73,13 @@ class TextEncodedImageSamplingSection(DenoiseImageSamplingSection):
     max_sequence_length: Any = None
 
 
+class QwenImage21SamplingSection(TextEncodedImageSamplingSection):
+    """Qwen-Image-2.1 reference preprocessing and decoded channel selection."""
+
+    reference_resolution: StrictInt = Field(default=1024, ge=32)
+    output_mode: Literal["rgb", "rgba"] = "rgb"
+
+
 class VideoSamplingSection(DenoiseImageSamplingSection):
     """Sampling inputs shared by denoise video generators."""
 
@@ -114,6 +121,7 @@ __all__ = [
     "EchoSamplingSection",
     "MagiSamplingSection",
     "MiniMaxH3SamplingSection",
+    "QwenImage21SamplingSection",
     "SamplingSection",
     "TeaCacheSection",
     "TextEncodedImageSamplingSection",

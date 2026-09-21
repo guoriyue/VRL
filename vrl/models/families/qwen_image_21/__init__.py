@@ -1,1 +1,1 @@
-"""Qwen-Image-2.1 family: Alibaba's 7B single-stream DiT t2i model for Flow-GRPO RL training."""
+"""Qwen-Image-2.1 text/image-conditioned generation and RGBA assets for Flow-GRPO."""
