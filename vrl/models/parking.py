@@ -69,7 +69,7 @@ class ModelParking:
         self._seen_modules: set[int] = set()
         self._seen_tensors: set[int] = set()
         self._module_tensor_devices: dict[int, dict[str, Any]] = {}
-        self._frozen_file_store = (
+        self._disk_store = (
             FrozenParameterFileStore(parking_directory) if parking_directory is not None else None
         )
 
@@ -112,11 +112,11 @@ class ModelParking:
         move_frozen = getattr(model, "move_frozen_components", None)
         if callable(move_frozen):
             move_frozen("cpu")
-        if self._frozen_file_store is not None and callable(getattr(model, "parameters", None)):
-            self._frozen_file_store.store(model.parameters())
+        if self._disk_store is not None and callable(getattr(model, "parameters", None)):
+            self._disk_store.store(model.parameters())
             # Storage replacement requires FSDP to refresh its local shard views.
             self._move_module(model, "cpu")
-            self._frozen_file_store.release_unused_host_memory()
+            self._disk_store.release_unused_host_memory()
 
     def park_tensors(self, value: Any) -> None:
         """Move extra state in place, preserving aliases with parked parameters."""
@@ -223,8 +223,8 @@ class ModelParking:
         self._seen_modules.clear()
         self._seen_tensors.clear()
         self._module_tensor_devices.clear()
-        if self._frozen_file_store is not None:
-            self._frozen_file_store.cleanup()
+        if self._disk_store is not None:
+            self._disk_store.cleanup()
 
 
 @dataclass(frozen=True, slots=True)
