@@ -29,6 +29,7 @@ from typing import Any
 import torch
 
 from vrl.generation.types import DenoiseRequest
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
@@ -123,7 +124,7 @@ class QwenImageModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         from diffusers.pipelines.qwenimage.pipeline_qwenimage import calculate_shift
 
         return set_mu_shifted_timesteps(
-            self.pipeline.scheduler,
+            self.scheduler,
             num_steps=num_steps,
             image_seq_len=image_seq_len,
             device=device,
@@ -398,6 +399,22 @@ class QwenImageModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
 
 class QwenImageReplayModel(DiffusersReplayModelBase, QwenImageModel):
     """Replay-only Qwen-Image model that owns no prompt encoders, VAE, or pipeline."""
+
+    def prepare_replay(self, build: ModelBuild) -> None:
+        """Set the mu-shifted replay timesteps the dynamic scheduler needs.
+
+        Same contract as ``FluxReplayModel.prepare_replay``: the generic loader
+        leaves the replay scheduler without timesteps, and the SDE log-prob math
+        indexes ``scheduler.sigmas`` by timestep, so the replay grid must equal
+        the rollout's. Qwen-Image packs an 8x VAE + 2x2 patch grid:
+        seq_len = (H // 16) * (W // 16).
+        """
+        sampling = build.sampling_config or {}
+        num_steps = build.num_steps
+        height, width = sampling.get("height"), sampling.get("width")
+        if num_steps is not None and height and width:
+            image_seq_len = (int(height) // 16) * (int(width) // 16)
+            self._set_dynamic_timesteps(num_steps, image_seq_len, build.device)
 
 
 __all__ = ["QwenImageModel", "QwenImageReplayModel", "QwenImageSamplingState"]

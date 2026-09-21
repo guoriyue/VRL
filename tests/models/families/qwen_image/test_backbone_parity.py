@@ -138,3 +138,51 @@ def test_qwen_replay_model_restores_state_without_a_pipeline() -> None:
     state = model.restore_eval_state(replay_tensors, batch_context, latents, 0)
     out = model.forward_step(state, 0)
     assert out["noise_pred"].shape == (2, _SEQ, TINY_QWEN_IN_CHANNELS)
+
+
+def test_qwen_prepare_replay_sets_the_rollout_timestep_grid() -> None:
+    """The pipeline-less replay scheduler must carry the rollout's mu-shifted grid.
+
+    Rollout derives ``mu`` from the packed latent length in ``prepare_sampling``;
+    the generic replay loader knows nothing about it. The SDE log-prob math
+    indexes ``scheduler.sigmas`` by timestep, so ``prepare_replay`` must rebuild
+    the same grid from the run's fixed resolution.
+    """
+    import json
+    from pathlib import Path
+
+    from diffusers import FlowMatchEulerDiscreteScheduler
+
+    from vrl.config.precision import RolePrecision
+    from vrl.models.interfaces.runtime import ModelBuild
+
+    fixture = Path("tests/models/steps/denoise/fixtures/scheduler_configs.json")
+    config = json.loads(fixture.read_text())["qwen_image"]["config"]
+    assert config["use_dynamic_shifting"] is True
+    height, width, num_steps = 512, 512, 10
+
+    rollout = _model(build_tiny_qwen_image_transformer())
+    rollout_scheduler = FlowMatchEulerDiscreteScheduler.from_config(config)
+    rollout.pipeline.scheduler = rollout_scheduler
+    # 512 px -> 64x64 latent cells, 2x2 patch pack -> 1024 tokens.
+    expected = rollout._set_dynamic_timesteps(num_steps, 1024, torch.device("cpu")).clone()
+
+    replay = QwenImageReplayModel(
+        transformer=build_tiny_qwen_image_transformer(),
+        scheduler=FlowMatchEulerDiscreteScheduler.from_config(config),
+        device=torch.device("cpu"),
+    )
+    replay.prepare_replay(
+        ModelBuild(
+            model_name_or_path="fake/repo",
+            revision=None,
+            device="cpu",
+            parameter_dtype=torch.float32,
+            family="qwen_image",
+            precision=RolePrecision("fp32", "ieee", outer_autocast=False),
+            sampling_config={"height": height, "width": width, "num_steps": num_steps},
+        )
+    )
+
+    torch.testing.assert_close(replay.scheduler.timesteps, expected)
+    torch.testing.assert_close(replay.scheduler.sigmas, rollout_scheduler.sigmas)

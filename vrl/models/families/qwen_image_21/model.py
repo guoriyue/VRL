@@ -37,6 +37,7 @@ import numpy as np
 import torch
 
 from vrl.generation.types import DenoiseRequest
+from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
@@ -451,6 +452,26 @@ class QwenImage21Model(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
 
 class QwenImage21ReplayModel(DiffusersReplayModelBase, QwenImage21Model):
     """Replay-only Qwen-Image-2.1 model that owns no prompt encoder, VAE, or pipeline."""
+
+    def prepare_replay(self, build: ModelBuild) -> None:
+        """Set the mu-shifted replay timesteps the dynamic scheduler needs.
+
+        The generic loader leaves the replay scheduler WITHOUT timesteps (mu is
+        resolution-derived). The replay SDE log-prob math reads
+        ``scheduler.sigmas`` + ``index_for_timestep``, so the replay scheduler
+        must carry the SAME shifted grid the rollout set in ``prepare_sampling``.
+        Resolution is fixed per run: 2.1 packs the 16x VAE grid unpatched, with
+        each side rounded to a multiple of 2 latent cells exactly as
+        ``QwenImage21Pipeline.prepare_latents`` does.
+        """
+        sampling = build.sampling_config or {}
+        num_steps = build.num_steps
+        height, width = sampling.get("height"), sampling.get("width")
+        if num_steps is not None and height and width:
+            # QwenImage21Pipeline hardcodes vae_scale_factor = 16; replay owns no VAE.
+            latent_h = 2 * (int(height) // 32)
+            latent_w = 2 * (int(width) // 32)
+            self._set_dynamic_timesteps(num_steps, latent_h * latent_w, build.device)
 
 
 __all__ = ["QwenImage21Model", "QwenImage21ReplayModel", "QwenImage21SamplingState"]

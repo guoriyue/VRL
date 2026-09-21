@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import numpy as np
 import torch
 
 from tests.models.steps.denoise.fixtures import (
@@ -136,3 +137,56 @@ def test_qwen21_replay_model_restores_state_without_a_pipeline() -> None:
     out = replay.forward_step(restored, 0)
 
     torch.testing.assert_close(out["noise_pred"], expected)
+
+
+def test_qwen21_prepare_replay_sets_the_rollout_timestep_grid() -> None:
+    """The pipeline-less replay scheduler must carry the rollout's mu-shifted grid.
+
+    Rollout derives ``mu`` from the packed latent length inside ``prepare_sampling``;
+    the generic replay loader knows nothing about it, so ``prepare_replay`` must
+    rebuild the same grid from the run's fixed resolution. The SDE log-prob math
+    indexes ``scheduler.sigmas`` by timestep, so a missing/unshifted grid makes
+    every replay step read the wrong sigma.
+    """
+    import json
+    from pathlib import Path
+
+    from diffusers import FlowMatchEulerDiscreteScheduler
+
+    from vrl.config.precision import RolePrecision
+    from vrl.models.interfaces.runtime import ModelBuild
+
+    fixture = Path("tests/models/steps/denoise/fixtures/scheduler_configs.json")
+    config = json.loads(fixture.read_text())["qwen_image_21"]["config"]
+    assert config["use_dynamic_shifting"] is True
+    height, width, num_steps = 512, 512, 10
+
+    rollout = _model(build_tiny_qwen_image_21_transformer())
+    rollout_scheduler = FlowMatchEulerDiscreteScheduler.from_config(config)
+    rollout.pipeline.scheduler = rollout_scheduler
+    # 512 px -> 32x32 latent cells, packed unpatched -> 1024 tokens.
+    expected = rollout._set_dynamic_timesteps(num_steps, 1024, torch.device("cpu")).clone()
+
+    replay = QwenImage21ReplayModel(
+        transformer=build_tiny_qwen_image_21_transformer(),
+        scheduler=FlowMatchEulerDiscreteScheduler.from_config(config),
+        device=torch.device("cpu"),
+    )
+    replay.prepare_replay(
+        ModelBuild(
+            model_name_or_path="fake/repo",
+            revision=None,
+            device="cpu",
+            parameter_dtype=torch.float32,
+            family="qwen_image_21",
+            precision=RolePrecision("fp32", "ieee", outer_autocast=False),
+            sampling_config={"height": height, "width": width, "num_steps": num_steps},
+        )
+    )
+
+    torch.testing.assert_close(replay.scheduler.timesteps, expected)
+    torch.testing.assert_close(replay.scheduler.sigmas, rollout_scheduler.sigmas)
+    # Un-shifted grid would differ: the shift is what the replay must reproduce.
+    plain = FlowMatchEulerDiscreteScheduler.from_config(config)
+    plain.set_timesteps(num_steps, sigmas=np.linspace(1.0, 1.0 / num_steps, num_steps), mu=0.0)
+    assert not torch.allclose(plain.timesteps, expected)
