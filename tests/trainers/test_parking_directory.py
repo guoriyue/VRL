@@ -16,7 +16,7 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.config.schema import parse_config
-from vrl.models.frozen_parameter_storage import FrozenParameterFileStore
+from vrl.models.frozen_disk_store import FrozenDiskStore
 from vrl.models.parking import TrainingMemoryState, TrainingStateParking
 from vrl.ray.resources import DistributedResourceConfig
 from vrl.trainers.strategy import FSDPStrategy, build_strategy
@@ -83,7 +83,7 @@ def test_disk_parking_refuses_missing_and_ram_backed_directories(tmp_path, monke
         f"/dev/root / ext4 rw 0 0\nnvme0n1 {nvme} ext4 rw 0 0\ntmpfs {shm} tmpfs rw 0 0\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(FrozenParameterFileStore, "_MOUNTS", str(mounts))
+    monkeypatch.setattr(FrozenDiskStore, "_MOUNTS", str(mounts))
     _, state = _cpu_training_state()
 
     with pytest.raises(ValueError, match="does not exist"):
@@ -104,7 +104,7 @@ def test_disk_parking_moves_frozen_shards_to_files_and_restores_them(
     nvme = tmp_path / "nvme"
     nvme.mkdir()
     mounts.write_text(f"/dev/root / ext4 rw 0 0\nnvme0n1 {nvme} ext4 rw 0 0\n", encoding="utf-8")
-    monkeypatch.setattr(FrozenParameterFileStore, "_MOUNTS", str(mounts))
+    monkeypatch.setattr(FrozenDiskStore, "_MOUNTS", str(mounts))
     model, state = _cpu_training_state()
     before = {name: tensor.clone() for name, tensor in model.state_dict().items()}
     frozen_weight = model[0].weight
@@ -134,7 +134,7 @@ def test_partial_file_mapping_failure_can_restore_and_clean_up(tmp_path, monkeyp
     """A failed second file must not lose the first parameter or leak its file."""
     mounts = tmp_path / "mounts"
     mounts.write_text("/dev/root / ext4 rw 0 0\n", encoding="utf-8")
-    monkeypatch.setattr(FrozenParameterFileStore, "_MOUNTS", str(mounts))
+    monkeypatch.setattr(FrozenDiskStore, "_MOUNTS", str(mounts))
     directory = tmp_path / "storage"
     directory.mkdir()
     model, state = _cpu_training_state()

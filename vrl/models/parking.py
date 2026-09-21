@@ -5,7 +5,7 @@ a CuMem pool when the role must prove release), park it, restore it, release
 it, and measure the physical footprint in between. Two mechanisms sit under
 the session. ``move`` (:class:`ModelParking`) relocates tensors to CPU and
 records their original devices; with a ``parking_directory`` its frozen shards
-continue to file mappings (:class:`FrozenParameterFileStore`), which owns disk
+continue to file mappings (:class:`FrozenDiskStore`), which owns disk
 validation and file lifetime, not device moves. ``cumem`` (:class:`CumemPool`)
 requires model allocations to be created inside its pool, which it backs up to
 pinned RAM and unmaps while preserving virtual addresses; it has no disk
@@ -29,7 +29,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from vrl.models.frozen_parameter_storage import FrozenParameterFileStore
+from vrl.models.frozen_disk_store import FrozenDiskStore
 from vrl.utils.cuda_memory import (
     empty_cuda_cache,
     gpu_process_used_bytes,
@@ -70,7 +70,7 @@ class ModelParking:
         self._seen_tensors: set[int] = set()
         self._module_tensor_devices: dict[int, dict[str, Any]] = {}
         self._disk_store = (
-            FrozenParameterFileStore(parking_directory) if parking_directory is not None else None
+            FrozenDiskStore(parking_directory) if parking_directory is not None else None
         )
 
     @property

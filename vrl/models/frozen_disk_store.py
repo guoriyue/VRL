@@ -1,7 +1,9 @@
-"""File-backed storage for frozen CPU parameters and local DTensor shards.
+"""The ``disk`` parking destination: frozen CPU shards as reclaimable file mappings.
 
 Owns directory validation, mappings and temporary-file lifetime. It does not
-move models between devices or choose when training yields the GPU.
+move models between devices (that is ``ModelParking``, the ``move``
+mechanism, which owns one of these when given a ``parking_directory``) or
+choose when a role yields the GPU.
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ from collections.abc import Iterable
 from typing import Any
 
 
-class FrozenParameterFileStore:
+class FrozenDiskStore:
     """Replace frozen CPU storage with reclaimable file mappings.
 
     The caller refreshes framework-specific shard views after store(), and

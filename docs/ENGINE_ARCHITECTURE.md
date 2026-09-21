@@ -66,7 +66,7 @@ driver-validated snapshot, `TrainerParking` the cross-rank failure
 agreement and identity ticket, `RewardParking` the reload mode and the
 terminal device-cache release. `ModelParking` takes the `parking_directory`, so `disk` is a
 property of the `move` mechanism rather than of the trainer:
-`FrozenParameterFileStore` (`vrl/models/frozen_parameter_storage.py`) owns
+`FrozenDiskStore` (`vrl/models/frozen_disk_store.py`) owns
 directory validation, frozen CPU mappings, host-memory reclamation and file
 cleanup, and `TrainingStateParking` only adds optimizer, gradient, EMA and
 scaler storage. The trainer does not allocate its state inside CuMem;
