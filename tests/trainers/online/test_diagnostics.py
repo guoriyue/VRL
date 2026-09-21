@@ -549,7 +549,10 @@ class TestDiagnostics:
     def test_intentional_precision_correction_uses_its_bounded_drift_contract(
         self,
         tmp_path,
+        caplog,
     ) -> None:
+        import json
+
         from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
         from vrl.algorithms.types import InitialReplayStats
 
@@ -560,11 +563,47 @@ class TestDiagnostics:
         )
 
         drift = InitialReplayStats(logprob_abs_diff_max=1.0, finite=True)
-        resolved = trainer._validate_first_update_parity(drift, local_weight=1.0)
+        with caplog.at_level("WARNING", logger="vrl.trainers.online.trainer"):
+            resolved = trainer._validate_first_update_parity(drift, local_weight=1.0)
 
+        # Correction modes bound or bypass the drift inside the loss, so the
+        # gate must not stop the run -- but it still measures and reports it.
         assert resolved.logprob_abs_diff_max == pytest.approx(1.0)
         assert trainer._replay_parity_passed is False
-        assert not (tmp_path / "training_debug.jsonl").exists()
+        record = json.loads((tmp_path / "training_debug.jsonl").read_text().strip())
+        assert record["event"] == "replay_parity_gate"
+        assert record["passed"] is False
+        assert record["enforced"] is False
+        assert "driver_trainable_before_step" in record
+        assert any("precision_correction is enabled" in m for m in caplog.messages)
+
+    def test_every_update_parity_records_the_digest_only_on_first_proof_and_failure(
+        self, tmp_path
+    ) -> None:
+        import json
+
+        from vrl.algorithms.types import InitialReplayStats
+        from vrl.trainers.core.types import ReplayParityConfig
+
+        trainer = _make_parity_boundary_trainer(tmp_path, drop_zero_advantage=False)
+        trainer.config.replay_parity = ReplayParityConfig(
+            max_abs_logprob_diff=0.01, every_update=True
+        )
+        for _ in range(2):
+            trainer._validate_first_update_parity(
+                InitialReplayStats(logprob_abs_diff_max=0.0, finite=True), local_weight=1.0
+            )
+        with pytest.raises(RuntimeError, match="replay parity failed"):
+            trainer._validate_first_update_parity(
+                InitialReplayStats(logprob_abs_diff_max=0.5, finite=True), local_weight=1.0
+            )
+
+        records = [
+            json.loads(line)
+            for line in (tmp_path / "training_debug.jsonl").read_text().splitlines()
+        ]
+        assert [r["passed"] for r in records] == [True, True, False]
+        assert ["driver_trainable_before_step" in r for r in records] == [True, False, True]
 
 
 @pytest.mark.parametrize("source", ["getter", "parameters"])

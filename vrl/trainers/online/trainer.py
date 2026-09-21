@@ -2023,7 +2023,20 @@ class OnlineTrainer:
         *,
         local_weight: float,
     ) -> InitialReplayStats:
-        """Gate measured replay before optimizer.step, optionally on every update."""
+        """Gate measured replay before optimizer.step, optionally on every update.
+
+        The gate compares the rollout-recorded log-prob with the trainer's own
+        replay of the same step under unchanged weights. It exists to catch
+        gross mismatches (a broken weight sync, a timestep or CFG disagreement,
+        a precision split), not to certify that residual drift is harmless to
+        the gradient; the threshold is a per-recipe measurement, see
+        ``ReplayParityConfig``.
+
+        With TIS / RS / recompute enabled the drift is expected and handled
+        inside the loss, so a violation only warns: the ratio the loss sees no
+        longer measures the drift, and a silent skip would hide the one signal
+        that the two backends have actually diverged.
+        """
 
         cfg = self.config
         resolved, has_measurements = _distributed_initial_replay_stats(
@@ -2031,17 +2044,10 @@ class OnlineTrainer:
             local_weight=local_weight,
             strategy=self._strategy,
         )
-        correction = getattr(self.algorithm, "precision_correction", None)
-        intentional_correction = correction is not None and (
-            correction.tis_mode != "off"
-            or correction.rs_mode != "off"
-            or correction.recompute_old_logprob != "off"
-        )
         if (
             (self._replay_parity_passed and not cfg.replay_parity.every_update)
             or self.evaluator is None
             or not self.algorithm.uses_evaluator
-            or intentional_correction
         ):
             return resolved
 
@@ -2050,6 +2056,12 @@ class OnlineTrainer:
         if not has_measurements:
             return resolved
 
+        correction = getattr(self.algorithm, "precision_correction", None)
+        intentional_correction = correction is not None and (
+            correction.tis_mode != "off"
+            or correction.rs_mode != "off"
+            or correction.recompute_old_logprob != "off"
+        )
         limit = float(cfg.replay_parity.max_abs_logprob_diff)
         passed = resolved.finite and resolved.logprob_abs_diff_max <= limit
         record = {
@@ -2058,20 +2070,38 @@ class OnlineTrainer:
             "finite": resolved.finite,
             "max_abs_diff": resolved.logprob_abs_diff_max,
             "max_abs_diff_limit": limit,
+            "enforced": not intentional_correction,
             "trainer_step": int(self.state.step),
             "global_step": int(self.state.global_step),
-            "driver_trainable_before_step": trainable_state_digest(self.model),
         }
+        # The trainable digest walks every requires_grad tensor; under
+        # every_update on a full-parameter policy that is a per-step cost, so
+        # it is recorded only where it is diagnostic: the first proof and any
+        # failure.
+        if not passed or not self._replay_parity_passed:
+            record["driver_trainable_before_step"] = trainable_state_digest(self.model)
         if self._strategy.context.is_primary:
             append_jsonl_record(f"{cfg.output_dir}/training_debug.jsonl", record)
         if not passed:
-            raise RuntimeError(
+            message = (
                 "replay parity failed before optimizer update: "
                 f"finite={resolved.finite}, "
                 f"max_abs_diff={resolved.logprob_abs_diff_max:.6g}, "
-                f"limit={limit:.6g}. The first-sample probe is insufficient; "
-                "align rollout/replay precision and batch shape or recompute "
-                "the old policy with the replay backend.",
+                f"limit={limit:.6g}."
+            )
+            if intentional_correction:
+                logger.warning(
+                    "%s precision_correction is enabled so the update proceeds, but the "
+                    "rollout and replay backends disagree beyond the recipe's parity "
+                    "threshold; TIS/RS/recompute bound or bypass this drift, they do "
+                    "not remove it.",
+                    message,
+                )
+                return resolved
+            raise RuntimeError(
+                f"{message} The first-sample probe is insufficient; align "
+                "rollout/replay precision and batch shape, or measure the drift and "
+                "raise the recipe threshold if it is kernel noise.",
             )
         self._replay_parity_passed = True
         return resolved

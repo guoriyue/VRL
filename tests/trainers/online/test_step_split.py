@@ -317,7 +317,11 @@ def test_corrected_replay_enforces_drift_guard_on_both_update_paths(
             json.loads(line)
             for line in (tmp_path / "training_debug.jsonl").read_text().splitlines()
         ]
-        assert [record["event"] for record in records] == ["precision_drift_guard"]
+        by_event = {record["event"]: record for record in records}
+        assert set(by_event) == {"precision_drift_guard", "replay_parity_gate"}
+        # Under a correction mode the parity gate still measures and records
+        # the drift but does not enforce it; the drift guard owns enforcement.
+        assert by_event["replay_parity_gate"]["enforced"] is False
 
 
 def test_trainer_uses_already_gathered_drift_record_without_more_collectives(

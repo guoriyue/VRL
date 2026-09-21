@@ -137,9 +137,12 @@ class PrecisionCorrectionConfig:
     its log is what RS rejects on. Two orthogonal axes:
 
     **TIS** (per-element weight magnitude). ``off`` keeps legacy behavior;
-    ``truncate`` = one-sided upper cap (keep the gradient, bound it); ``clip`` =
-    two-sided; ``mask`` = drop out-of-range elements entirely. Judges the IS
-    *weight* ``exp(replay - rollout)``: catches a single inflated weight.
+    ``truncate`` = one-sided upper cap; ``clip`` = two-sided; ``mask`` = drop
+    out-of-range elements entirely. All three are ``clamp``-style: an element
+    outside the band contributes no gradient through the ratio (the clamped
+    value is a constant), so TIS bounds the weight by cutting it off, not by
+    scaling it. Judges the IS *weight* ``exp(replay - rollout)``: catches a
+    single inflated weight.
 
     **RS** (whole-sequence off-policy rejection). Judges the *log-ratio*
     ``replay - rollout`` aggregated over the sequence and rejects the entire
@@ -157,14 +160,17 @@ class PrecisionCorrectionConfig:
     PPO ratio ``exp(replay - rollout)`` itself acts as the importance weight).
     ``on`` takes the behavior log-prob from the trainer's own replay forward under
     the pre-update weights instead — with one optimizer step per rollout that is
-    the very forward the loss is built on, so ``old = log_prob.detach()``, the
-    ratio is exactly 1, and rollout-vs-replay kernel drift (batch shape, compile,
-    fused norms) can no longer clip or scale the gradient, at no extra forward
-    cost. It is only sound when the behavior policy IS the pre-update
-    target policy: the trainer refuses it under ``ppo_epochs > 1`` (later epochs
-    would need the epoch-1 values) and under continuous staleness (the recorded
-    log-prob then carries a real off-policy correction). Parity metrics keep
-    measuring the rollout-recorded value, so the drift stays visible.
+    the very forward the loss is built on, so ``old = log_prob.detach()`` and the
+    ratio is exactly 1 at no extra forward cost. This is an approximation, not a
+    correction: rollout-vs-replay drift (batch shape, compile, fused norms, fp8)
+    is no longer *measured* by the ratio, it is assumed to be kernel noise. If
+    the rollout backend has actually changed the sampling distribution, ``on``
+    hides a real off-policy error instead of weighting it. It is only sound
+    when the behavior policy IS the pre-update target policy and the drift is
+    small: the trainer refuses it under ``ppo_epochs > 1`` (later epochs would
+    need the epoch-1 values) and under continuous staleness (the recorded
+    log-prob then carries a real off-policy correction), and the replay parity
+    gate keeps measuring the rollout-recorded value so the drift stays visible.
 
     **Combination contract.** Under fp8/bf16 rollout + bypass, drift must be
     bounded: run the drift guard (``auto``/``fail``, which checks parity before
@@ -186,8 +192,9 @@ class PrecisionCorrectionConfig:
     # to match verl-omni's recommended LLM preset.
     rs_log_ratio_low: float = math.log(0.5)
     rs_log_ratio_high: float = math.log(2.0)
-    # Bypass (off, the only implemented path) vs a reserved decoupled-recompute
-    # interface (on, unimplemented — raises on construction, never a no-op knob).
+    # Bypass (off): the rollout-recorded old log-prob is the PPO "old".
+    # Recompute (on): the trainer's own pre-update replay forward is the "old"
+    # (ratio == 1); see the class docstring for when that approximation holds.
     recompute_old_logprob: str = "off"  # "off" | "on"
 
     def __post_init__(self) -> None:

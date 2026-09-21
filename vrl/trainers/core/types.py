@@ -66,7 +66,19 @@ class DebugConfig:
 
 @dataclass(slots=True)
 class ReplayParityConfig:
-    """Mandatory unchanged-policy rollout/replay parity threshold."""
+    """Unchanged-policy rollout/replay parity threshold.
+
+    ``max_abs_logprob_diff`` bounds |replay - rollout| of the per-step log-prob
+    before the first optimizer update (and on every update with
+    ``every_update``). The default 0.01 catches gross mismatches -- a broken
+    weight sync, a timestep or CFG disagreement, a precision split -- on bf16
+    recipes whose kernels are not bit-identical across the two backends. It
+    does NOT certify that the residual drift is harmless: GRPO recipes clip at
+    ``clip_ratio`` 1e-4, so any drift the threshold admits still moves the PPO
+    ratio. Set the threshold per recipe from a measured drift: bit-exact
+    configurations (fp32, or the same compiled graph on both sides, e.g. the
+    SANA full-parameter preset) pin it at 1e-6.
+    """
 
     max_abs_logprob_diff: float = field(default=0.01)
     every_update: bool = field(default=False)
