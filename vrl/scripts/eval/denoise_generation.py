@@ -44,11 +44,15 @@ class ImageSampling:
     height: int
     num_steps: int
     guidance_scale: float
-    max_sequence_length: int
+    # None for families whose sampling section declares no prompt-length knob
+    # (Qwen-Image-2.1); the projection carries the key only when declared.
+    max_sequence_length: int | None = None
 
     def __post_init__(self) -> None:
         for name in ("width", "height", "num_steps", "max_sequence_length"):
             value = getattr(self, name)
+            if name == "max_sequence_length" and value is None:
+                continue
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"sampling.{name} must be a positive integer")
         guidance_scale = self.guidance_scale
@@ -73,7 +77,14 @@ class ImageSampling:
         from vrl.scripts.eval._sampling import resolve_eval_sampling
 
         sampling = resolve_eval_sampling(root, overrides=overrides)
-        return cls(**{field.name: sampling[field.name] for field in fields(cls)})
+        return cls(
+            **{
+                field.name: sampling[field.name]
+                for field in fields(cls)
+                if field.name != "max_sequence_length"
+            },
+            max_sequence_length=sampling.get("max_sequence_length"),
+        )
 
     @classmethod
     def from_mapping(

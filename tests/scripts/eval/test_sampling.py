@@ -88,3 +88,23 @@ def test_eval_sampling_resolution_overrides_training_geometry() -> None:
 def test_eval_sampling_rejects_non_positive_resolution() -> None:
     with pytest.raises(ValueError, match=r"eval\.width must be >= 1"):
         _root(sampling=_IMAGE, eval={"width": 0})
+
+
+def test_family_without_a_prompt_length_knob_projects_no_key() -> None:
+    """Qwen-Image-2.1 tokenizes its template whole: no max_sequence_length anywhere.
+
+    The projection must not demand a key the family's sampling section does not
+    declare, and the evaluator's ImageSampling must accept its absence.
+    """
+    from vrl.scripts.eval.denoise_generation import ImageSampling
+
+    root = parse_config(
+        OmegaConf.create({"model": {"family": "qwen_image_21"}, "sampling": _IMAGE})
+    )
+
+    out = resolve_eval_sampling(root)
+    assert "max_sequence_length" not in out
+
+    sampling = ImageSampling.from_root(root)
+    assert sampling.max_sequence_length is None
+    assert ImageSampling.from_mapping(sampling.to_record()) == sampling

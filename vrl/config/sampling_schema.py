@@ -73,8 +73,12 @@ class TextEncodedImageSamplingSection(DenoiseImageSamplingSection):
     max_sequence_length: Any = None
 
 
-class QwenImage21SamplingSection(TextEncodedImageSamplingSection):
-    """Qwen-Image-2.1 reference preprocessing and decoded channel selection."""
+class QwenImage21SamplingSection(DenoiseImageSamplingSection):
+    """Qwen-Image-2.1 reference preprocessing and decoded channel selection.
+
+    No ``max_sequence_length``: the Qwen3-VL prompt template is tokenized whole,
+    so the knob is not a pipeline input (the model ignores it if passed).
+    """
 
     reference_resolution: StrictInt = Field(default=1024, ge=32)
     output_mode: Literal["rgb", "rgba"] = "rgb"
