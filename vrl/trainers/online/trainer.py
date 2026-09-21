@@ -594,6 +594,7 @@ class OnlineTrainer:
         # Recheck rollout/replay parity in each process; a checkpoint's previous
         # pass does not cover changes to kernels, compilation, or batch geometry.
         self._replay_parity_passed = False
+        self._first_proof_digest: dict[str, Any] | None = None
         self._precision_drift_guard_pending = True
         self._update_phase_timers: list[PhaseTimer] = []
         self.rollout_schedule = build_rollout_schedule(
@@ -1548,6 +1549,7 @@ class OnlineTrainer:
                     local_weight=local_weight,
                 )
                 grad_norm, stepped = self._clip_and_step(optimizer)
+            self._record_first_update_weights(stepped=stepped)
             agg.grad_norms.append(grad_norm)
             if stepped:
                 after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
@@ -1843,6 +1845,7 @@ class OnlineTrainer:
                             local_weight=local_weight,
                         )
                     _gn, _stepped = self._clip_and_step(optimizer)
+                    self._record_first_update_weights(stepped=_stepped)
                     agg_metrics.grad_norms.append(_gn)
 
                 # A scaler-skipped step (inf/nan grads) left the weights unchanged —
@@ -2080,6 +2083,10 @@ class OnlineTrainer:
         # failure.
         if not passed or not self._replay_parity_passed:
             record["driver_trainable_before_step"] = trainable_state_digest(self.model)
+            if passed:
+                # The optimizer step that follows the first proof re-digests
+                # and reports whether the trainable weights actually moved.
+                self._first_proof_digest = record["driver_trainable_before_step"]
         if self._strategy.context.is_primary:
             append_jsonl_record(f"{cfg.output_dir}/training_debug.jsonl", record)
         if not passed:
@@ -2105,6 +2112,34 @@ class OnlineTrainer:
             )
         self._replay_parity_passed = True
         return resolved
+
+    def _record_first_update_weights(self, *, stepped: bool) -> None:
+        """After the first proven-parity optimizer step, record whether weights moved.
+
+        A bf16 master weight can round a small update away entirely (the
+        after-step digest equals the before-step one); fp32 masters must move.
+        Recorded once, next to the ``replay_parity_gate`` proof, on both the
+        streaming and the full-batch update paths.
+        """
+        before = self._first_proof_digest
+        if before is None:
+            return
+        self._first_proof_digest = None
+        after = trainable_state_digest(self.model)
+        record = {
+            "event": "first_update_weights",
+            "stepped": stepped,
+            "moved": after["sha256"] != before["sha256"],
+            "driver_trainable_before_step": before,
+            "driver_trainable_after_step": after,
+            "trainer_step": int(self.state.step),
+            "global_step": int(self.state.global_step),
+        }
+        if self._strategy.context.is_primary:
+            append_jsonl_record(
+                f"{self.config.output_dir}/training_debug.jsonl",
+                record,
+            )
 
     @property
     def _kl_coef(self) -> float:

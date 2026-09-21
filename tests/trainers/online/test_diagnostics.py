@@ -212,10 +212,12 @@ class TestDiagnostics:
         else:
             assert set(by_event) == {
                 "replay_parity_gate",
+                "first_update_weights",
                 "first_step_logprob_parity",
             }
-            assert all(record["passed"] for record in records)
+            assert all(record["passed"] for record in records if "passed" in record)
             assert by_event["replay_parity_gate"]["max_abs_diff"] == 0.0
+            assert by_event["first_update_weights"]["moved"] is True
 
         if failure_pattern is not None:
             assert trainer.state.step == 0
