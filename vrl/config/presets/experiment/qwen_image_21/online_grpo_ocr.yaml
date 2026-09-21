@@ -1,0 +1,28 @@
+# Qwen-Image-2.1 + OCR GRPO (Flow-GRPO OCR prompts; text rendering is the
+# checkpoint's headline capability, so the verifiable OCR reward is the first
+# RL target). true_cfg_scale defaults to 1.0 upstream, so the denoise preset
+# is the no-CFG one: one transformer forward per step.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/qwen_image_21/base
+  - /sampling/image/512
+  - /sampling/denoise/10_step_no_cfg
+  - /reward/ocr
+  - /dataset/ocr
+
+
+actor:
+  optim:
+    lr: 3.0e-4
+  prompts_per_collection: 2
+
+rollout:
+  n_samples_per_prompt: 16
+  prompts_per_batch: 8
+  samples_per_generation_batch: 16
+
+trainer:
+  output_dir: outputs/qwen_image_21_ocr_grpo
+  save_freq: 60
+  debug:
+    first_step: true

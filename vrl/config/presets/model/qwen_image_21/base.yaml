@@ -1,0 +1,36 @@
+# Qwen-Image-2.1 (7B single-stream DiT) — checkpoint, LoRA, compile, memory.
+# Sampling shape / denoise defaults live under sampling/. Qwen Research License
+# (non-commercial). Text-to-image only in this family; multi-reference editing
+# and RGBA layer outputs are generation-side features not yet exposed to RL.
+model:
+  family: qwen_image_21
+  executor:
+    max_sequence_length: 1024
+  path: Qwen/Qwen-Image-2.1
+  revision: b3179ad355be050328e483a9dfdd9e60cd62adfa
+
+  memory:
+    # The 17.5 GB Qwen3-VL encoder does not fit beside the 14 GB transformer
+    # plus LoRA training state on a 32 GB card; it encodes on the host. Drop
+    # this on a card with room for both.
+    cpu_resident:
+      - text_encoder
+    vae_decode:
+      tiling: true
+      slicing: true
+
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 64
+    # Single-stream blocks: one attention (to_q/k/v/out.0) + SwiGLU MLP
+    # (proj/gate_layer/out) per block; attention projections only, as the
+    # sibling image families train.
+    target_modules:
+      - to_k
+      - to_q
+      - to_v
+      - to_out.0
+
+  torch_compile:
+    enable: false

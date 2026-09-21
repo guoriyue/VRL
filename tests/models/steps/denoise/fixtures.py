@@ -322,6 +322,34 @@ def build_tiny_qwen_image_transformer(*, seed: int = 0) -> Any:
     )
 
 
+TINY_QWEN21_IN_CHANNELS = 8
+TINY_QWEN21_CONTEXT_DIM = 16
+
+
+def build_tiny_qwen_image_21_transformer(*, seed: int = 0) -> Any:
+    """Tiny real ``QwenImage21Transformer2DModel`` on CPU, cache-free (config-init).
+
+    ``patch_size=1``: the packed latent ``[B, seq, C]`` IS the transformer input,
+    and ``out_channels == in_channels`` so the noise_pred matches it for the SDE
+    step. ``axes_dims_rope`` sums to ``attention_head_dim`` (16).
+    """
+
+    from diffusers import QwenImage21Transformer2DModel
+
+    torch.manual_seed(seed)
+    return QwenImage21Transformer2DModel(
+        patch_size=1,
+        in_channels=TINY_QWEN21_IN_CHANNELS,
+        out_channels=TINY_QWEN21_IN_CHANNELS,
+        num_layers=1,
+        attention_head_dim=16,
+        num_attention_heads=2,
+        context_in_dim=TINY_QWEN21_CONTEXT_DIM,
+        mlp_ratio=2,
+        axes_dims_rope=(4, 6, 6),
+    )
+
+
 def build_tiny_wan_i2v_transformer(*, seed: int = 0) -> Any:
     """Tiny real Wan I2V ``WanTransformer3DModel`` on CPU, cache-free.
 

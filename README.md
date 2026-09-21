@@ -61,6 +61,7 @@ positioning and roadmap.
 | **SD3.5** | text -> image | full_sequence / denoise | GRPO, V-GRPO | ✅ OCR GRPO |
 | **FLUX** | text -> image | full_sequence / denoise | GRPO-Guard, DanceGRPO, DiffusionNFT, Flow-DPPO | 🧪 Runnable |
 | **Qwen-Image** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
+| **Qwen-Image-2.1** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **SANA** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **Lumina-Image-2** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |
 | **HunyuanImage-2.1** | text -> image | full_sequence / denoise | GRPO | 🧪 Runnable |

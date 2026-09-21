@@ -1,0 +1,42 @@
+# Qwen-Image-2.1 OCR GRPO — single-GPU smoke recipe.
+#
+# Smallest end-to-end probe: small resolution, few denoise steps, LoRA-only.
+# Proves the family runs encode -> prepare -> denoise -> decode -> reward ->
+# LoRA grad on one 32 GB card with the Qwen3-VL encoder on the host.
+#
+#   CUDA_VISIBLE_DEVICES=0 vrl-train \
+#     --config experiment/qwen_image_21/online_grpo_smoke_single_gpu
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/qwen_image_21/base
+  - /sampling/image/512
+  - /sampling/denoise/10_step_no_cfg
+  - /reward/ocr
+  - /dataset/ocr
+  - _self_
+
+
+sampling:
+  height: 256
+  width: 256
+  num_steps: 4
+
+actor:
+  optim:
+    lr: 1.0e-4
+  prompts_per_collection: 2
+  gradient_checkpointing: true
+
+rollout:
+  n_samples_per_prompt: 2
+  prompts_per_batch: 2
+  samples_per_generation_batch: 1
+  sde:
+    window_range: [0, 4]
+
+trainer:
+  output_dir: outputs/qwen_image_21_ocr_grpo_smoke_single_gpu
+  total_epochs: 1
+  save_freq: 9999
+  debug:
+    first_step: true

@@ -46,11 +46,14 @@ test = [
 
 [project.optional-dependencies]
 cosmos = [
-    # Cosmos3OmniPipeline first ships in Diffusers 0.39.
-    "diffusers>=0.40.0,<0.41",
-    # 5.13 is the floor the model stack and its tiny-real CPU parity tests are
-    # qualified against (first required by a since-removed family; kept as-is).
-    "transformers>=5.13.0,<6",
+    # Qwen-Image-2.1 (QwenImage21Pipeline / QwenImage21Transformer2DModel /
+    # AutoencoderKLQwenImage21) merged in huggingface/diffusers#14804 after the
+    # 0.40.0 release; until 0.41 ships, install main:
+    #   uv pip install --no-deps "git+https://github.com/huggingface/diffusers@main"
+    "diffusers>=0.40.0,<0.42",
+    # 5.17 is Qwen-Image-2.1's floor (Qwen3-VL text encoder); the model stack
+    # and its tiny-real CPU parity tests are qualified against it.
+    "transformers>=5.17.0,<6",
     "accelerate>=0.30.0",
     "sentencepiece>=0.2.0",
     "peft>=0.11.0",          # LoRA adapters for the denoise model families
@@ -70,7 +73,7 @@ cosmos = [
 # bundles its own FFmpeg, so it is the only backend that works from a plain
 # `uv sync --extra reward`.
 reward = [
-    "transformers>=5.13.0,<6",
+    "transformers>=5.17.0,<6",
     "peft>=0.11.0",
     "qwen-vl-utils>=0.0.10",
     "decord>=0.6.0",

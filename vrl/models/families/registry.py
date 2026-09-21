@@ -547,6 +547,22 @@ _register_model_family(
 
 _register_model_family(
     _full_sequence_denoise_entry(
+        family="qwen_image_21",
+        task="t2i",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
+        # Qwen-Image-2.1: 7B single-stream DiT (diffusers ``QwenImage21*``), a
+        # different transformer/VAE/pipeline from the 20B ``qwen_image`` MMDiT.
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.qwen_image_21.model:QwenImage21Model",
+            replay_cls="vrl.models.families.qwen_image_21.model:QwenImage21ReplayModel",
+            transformer_classname="QwenImage21Transformer2DModel",
+        ),
+    ),
+)
+
+_register_model_family(
+    _full_sequence_denoise_entry(
         family="sana",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
