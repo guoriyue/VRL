@@ -34,10 +34,10 @@ _NOOP_CB = lambda *args, **kwargs: None  # noqa: E731
 def _isolate_cuda_parking_probes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep CPU fakes independent of CUDA activity on the pytest host."""
 
-    import vrl.generation.execution.memory_parking as parking_module
+    import vrl.models.parking as parking_backends
 
-    monkeypatch.setattr(parking_module, "gpu_process_used_bytes", lambda: 0)
-    monkeypatch.setattr(parking_module, "release_cuda_memory_for_parking", lambda **_: None)
+    monkeypatch.setattr(parking_backends, "gpu_process_used_bytes", lambda device=None: 0)
+    monkeypatch.setattr(parking_backends, "release_cuda_memory_for_parking", lambda *_, **__: None)
 
 
 class _SleepModel:
@@ -210,10 +210,10 @@ def _install_cumem_pool(
 ) -> None:
     """Route the parking owner's public CuMem factory through a CPU fake."""
 
-    import vrl.generation.execution.memory_parking as parking_module
+    import vrl.models.parking as parking_backends
 
     monkeypatch.setattr(
-        parking_module.CumemPool,
+        parking_backends.CumemPool,
         "try_create",
         classmethod(
             lambda cls, tag=None: cls(fake, tag or "weights"),
@@ -224,10 +224,10 @@ def _install_cumem_pool(
 def _make_cumem_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Simulate a box without vLLM: ``require`` then raises through ``try_create``."""
 
-    import vrl.generation.execution.memory_parking as parking_module
+    import vrl.models.parking as parking_backends
 
     monkeypatch.setattr(
-        parking_module.CumemPool,
+        parking_backends.CumemPool,
         "try_create",
         classmethod(lambda _cls, tag=None: None),
     )
@@ -340,14 +340,14 @@ def test_parked_worker_rejects_execution_until_wake() -> None:
 def test_failed_physical_proof_quarantines_already_moved_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import vrl.generation.execution.memory_parking as parking_module
+    import vrl.models.parking as parking_backends
 
     model = _SleepModel(device="cuda:0")
     core = _core(model)
     monkeypatch.setattr(
-        parking_module,
+        parking_backends,
         "release_cuda_memory_for_parking",
-        lambda **_: (_ for _ in ()).throw(RuntimeError("CUDA synchronize failed")),
+        lambda *_, **__: (_ for _ in ()).throw(RuntimeError("CUDA synchronize failed")),
     )
 
     with pytest.raises(RuntimeError, match="CUDA synchronize failed"):
@@ -382,11 +382,11 @@ def test_pipeline_offload_sleep_wake_preserves_accelerate_hooks() -> None:
 def test_pipeline_offload_never_consults_cumem_factory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import vrl.generation.execution.memory_parking as parking_module
+    import vrl.models.parking as parking_backends
 
     attempts: list[str | None] = []
     monkeypatch.setattr(
-        parking_module.CumemPool,
+        parking_backends.CumemPool,
         "try_create",
         classmethod(lambda _cls, tag=None: attempts.append(tag)),
     )
@@ -450,7 +450,7 @@ def test_parking_diagnostics_failure_is_nonfatal(monkeypatch, caplog) -> None:
 def test_pipeline_offload_residual_failure_does_not_commit_parked_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import vrl.generation.execution.memory_parking as parking_module
+    import vrl.models.parking as parking_backends
 
     model = _PipelineOffloadModel()
     baseline = 1024
@@ -461,7 +461,9 @@ def test_pipeline_offload_residual_failure_does_not_commit_parked_state(
             baseline + CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT + 1,
         ),
     )
-    monkeypatch.setattr(parking_module, "gpu_process_used_bytes", lambda: next(readings))
+    monkeypatch.setattr(
+        parking_backends, "gpu_process_used_bytes", lambda device=None: next(readings)
+    )
     core = _core(
         None,
         sleep_offload=True,
@@ -690,12 +692,14 @@ def test_cumem_sleep_bounds_lazy_cuda_runtime_residual(
 ) -> None:
     """Runtime drift is bounded; one byte beyond the protocol limit still fails."""
 
-    import vrl.generation.execution.memory_parking as parking_module
+    import vrl.models.parking as parking_backends
 
     baseline = 1024
     residual = baseline + CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT + extra_residual_bytes
     readings = iter((baseline, 10 * 1024**3, residual))
-    monkeypatch.setattr(parking_module, "gpu_process_used_bytes", lambda: next(readings))
+    monkeypatch.setattr(
+        parking_backends, "gpu_process_used_bytes", lambda device=None: next(readings)
+    )
     fake = _FakeCuMem()
     _install_cumem_pool(monkeypatch, fake)
     model = _SleepModel(device="cuda:0")
@@ -836,12 +840,12 @@ def test_failed_pooled_build_closes_retained_pool(
 def test_failed_pooled_build_cleanup_makes_worker_terminal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import vrl.generation.execution.memory_parking as parking_module
+    import vrl.models.parking as parking_backends
 
     fake = _FakeCuMem()
     _install_cumem_pool(monkeypatch, fake)
     monkeypatch.setattr(
-        parking_module.CumemPool,
+        parking_backends.CumemPool,
         "close",
         lambda _pool: (_ for _ in ()).throw(RuntimeError("pool close failed")),
     )
@@ -868,11 +872,11 @@ def test_loaded_validation_drops_traceback_model_before_pool_close(
     import gc
     import weakref
 
-    import vrl.generation.execution.memory_parking as parking_module
+    import vrl.models.parking as parking_backends
 
     fake = _FakeCuMem()
     _install_cumem_pool(monkeypatch, fake)
-    original_close = parking_module.CumemPool.close
+    original_close = parking_backends.CumemPool.close
     model_ref: weakref.ReferenceType[Any] | None = None
     model_was_released: list[bool] = []
 
@@ -890,7 +894,7 @@ def test_loaded_validation_drops_traceback_model_before_pool_close(
 
     core = _core(None, sleep_offload=True)
     core._build_executor = build_mismatched_backend  # type: ignore[method-assign]
-    monkeypatch.setattr(parking_module.CumemPool, "close", assert_model_released)
+    monkeypatch.setattr(parking_backends.CumemPool, "close", assert_model_released)
 
     with pytest.raises(RuntimeError, match="residency mechanisms must be mutually exclusive"):
         core.load_policy()
@@ -925,11 +929,11 @@ def test_load_policy_does_not_pool_without_sleep_offload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A resident worker without phase parking never enters the cumem pool."""
-    import vrl.generation.execution.memory_parking as parking_module
+    import vrl.models.parking as parking_backends
 
     called: list[bool] = []
     monkeypatch.setattr(
-        parking_module.CumemPool,
+        parking_backends.CumemPool,
         "try_create",
         classmethod(lambda _cls, tag=None: called.append(True)),
     )
@@ -1089,12 +1093,14 @@ def test_sleep_bounds_lazy_cuda_runtime_residual(
     extra_residual_bytes: int,
     should_pass: bool,
 ) -> None:
-    import vrl.generation.execution.memory_parking as parking_module
+    import vrl.models.parking as parking_backends
 
     baseline = 1024
     residual = baseline + CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT + extra_residual_bytes
     readings = iter((baseline, 10 * 1024**3, residual))
-    monkeypatch.setattr(parking_module, "gpu_process_used_bytes", lambda: next(readings))
+    monkeypatch.setattr(
+        parking_backends, "gpu_process_used_bytes", lambda device=None: next(readings)
+    )
     _install_cumem_pool(monkeypatch, _FakeCuMem())
     core = _core(None, sleep_offload=True)
     core._build_executor = lambda: _build_executor(core, _SleepModel())  # type: ignore[method-assign]

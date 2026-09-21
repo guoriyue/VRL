@@ -278,7 +278,7 @@ async def test_failed_pooled_preparation_rolls_back_before_retry(monkeypatch) ->
     assert _PARTIAL_PREPARE_REF is not None
     assert _PARTIAL_PREPARE_REF() is None
     assert runtime._model is None
-    assert runtime._pool is None
+    assert runtime._parking is None
     assert allocator.allocator_and_pools == {}
 
     results = await runtime.score_batch(_make_request())
@@ -315,13 +315,13 @@ async def test_reward_memory_parking_retries_after_sleep_failure(monkeypatch) ->
     await runtime.score_batch(_parking_request())
     with pytest.raises(RuntimeError, match="sleep failed"):
         await runtime.park_memory()
-    assert runtime._pool is not None
-    assert runtime._pool.asleep is False
+    assert runtime._parking is not None
+    assert runtime._parking.pool.asleep is False
 
     await runtime.park_memory()
 
     assert allocator.sleep_attempts == 2
-    assert runtime._pool.asleep is True
+    assert runtime._parking.pool.asleep is True
 
 
 @pytest.mark.asyncio
@@ -339,7 +339,7 @@ async def test_dedicated_reward_runtime_stays_resident(monkeypatch) -> None:
     await runtime.score_batch(_parking_request())
 
     assert runtime.requires_memory_parking is False
-    assert runtime._pool is None
+    assert runtime._parking is None
     assert allocator.pool_tags == []
     assert allocator.sleeps == []
 
@@ -379,7 +379,7 @@ async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
         await runtime.score_batch(_parking_request())
 
     assert runtime._model is None
-    assert runtime._pool is None
+    assert runtime._parking is None
 
 
 @pytest.mark.gpu
@@ -417,7 +417,7 @@ async def test_reward_pool_captures_noncurrent_cuda_device(monkeypatch) -> None:
     try:
         await runtime.activate()
         assert torch.cuda.current_device() == 0
-        pool = runtime._pool
+        pool = runtime._parking.pool
         assert pool is not None
         owned = [data for data in pool._allocator.pointer_to_data.values() if data.tag == pool.tag]
         assert owned, "target-device model allocations escaped the CuMem pool"
@@ -432,24 +432,35 @@ async def test_reward_pool_captures_noncurrent_cuda_device(monkeypatch) -> None:
         torch.cuda.set_device(original)
 
 
-def test_reward_device_scope_targets_the_configured_cuda_device(monkeypatch) -> None:
+def test_reward_parking_session_scopes_pool_operations_to_the_configured_device(
+    monkeypatch,
+) -> None:
+    """A reward pinned to cuda:1 must pool, sleep and wake on cuda:1 while the
+    driver's current device stays where it was; CPU and unset devices never
+    touch torch.cuda.device."""
     from contextlib import nullcontext
 
-    from vrl.rewards.runtime import _reward_device_scope
+    import vrl.models.parking as parking_mod
+    from vrl.models.parking import ParkingSession
 
+    allocator = _FakeCumemAllocator()
+    monkeypatch.setattr(parking_mod, "cumem_allocator", lambda: allocator)
+    monkeypatch.setattr(parking_mod, "gpu_process_used_bytes", lambda device=None: 0)
     seen: list[object] = []
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "device", lambda target: seen.append(target) or nullcontext())
-    with _reward_device_scope("cuda:1"):
-        pass
-    assert seen == [torch.device("cuda:1")]
-    with _reward_device_scope("cpu"), _reward_device_scope(""), _reward_device_scope(None):
-        pass
-    assert len(seen) == 1
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    with _reward_device_scope("cuda:1"):
-        pass
-    assert len(seen) == 1
+
+    session = ParkingSession("reward runtime", required=True, device="cuda:1")
+    session.build(lambda: object(), cumem=True)
+    session.park()
+    session.restore()
+    assert seen == [torch.device("cuda:1")] * 3
+
+    for device in ("cpu", None):
+        resident = ParkingSession("reward runtime", required=True, device=device)
+        resident.build(lambda: object(), cumem=True)
+        resident.park()
+    assert len(seen) == 3
 
 
 @pytest.mark.gpu

@@ -224,7 +224,7 @@ def test_terminal_shutdown_can_abandon_parked_state_without_gpu_restore() -> Non
 def test_training_parking_cache_release_failure_rolls_back_and_does_not_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import vrl.trainers.strategy as strategy_module
+    import vrl.models.parking as parking_backends
 
     model = _CountingLinear()
     state = TrainingMemoryState(
@@ -237,9 +237,9 @@ def test_training_parking_cache_release_failure_rolls_back_and_does_not_commit(
     )
     strategy = SingleProcessStrategy()
     monkeypatch.setattr(
-        strategy_module,
-        "_release_training_cuda_memory",
-        lambda: (_ for _ in ()).throw(RuntimeError("empty cache failed")),
+        parking_backends,
+        "release_cuda_memory_for_parking",
+        lambda *_, **__: (_ for _ in ()).throw(RuntimeError("empty cache failed")),
     )
 
     with pytest.raises(RuntimeError, match="empty cache failed"):

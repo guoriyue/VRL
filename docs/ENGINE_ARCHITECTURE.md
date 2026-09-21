@@ -55,13 +55,24 @@ each role sits in a fixed one:
 | mechanism `move` | generation worker using CPU relocation (including managed pipeline offload); trainer by default; reward | trainer with `trainer_parking_directory` set (`TrainingStateParking`) |
 | mechanism `cumem` | generation worker with a CUDA-resident model; CuMem rewards | none: vLLM backs up to pinned RAM only |
 
-`TrainingStateParking` orchestrates trainer relocation through `ModelParking`.
-Its optional `FrozenParameterFileStore` (`vrl/models/frozen_parameter_storage.py`)
-owns directory validation, frozen CPU mappings, host-memory reclamation and file
-cleanup. FSDP view refresh and device restoration remain with the parking layer.
-The current trainer does not allocate its state inside CuMem; generation CuMem
-backups use pinned RAM and do not implement disk storage. RAM capacity remains a
-resource requirement. `distributed.resources.offload` decides when roles park.
+All three roles drive these mechanisms through one `ParkingSession`: `build`
+(claims the CuMem pool around construction, or a `move` ledger, and captures
+the pre-load baseline), `park` (sleeps the pool, or runs the owner's move and
+rolls it back through the ledger on failure), `restore`, `release_gpu` plus
+`gpu_used_bytes` (the residual evidence) and `release_scope` (wake, drop, close).
+It raises `ParkingBroken` / `CumemBroken` and holds no policy; the owners add
+what only they need: `WorkerMemoryParking` the quarantine phases and the
+driver-validated snapshot, `_TrainingParkingStrategy` the cross-rank failure
+agreement and identity ticket, `InProcessRewardScorer` the async lifecycle and
+`reload` mode. `ModelParking` takes the `parking_directory`, so `disk` is a
+property of the `move` mechanism rather than of the trainer:
+`FrozenParameterFileStore` (`vrl/models/frozen_parameter_storage.py`) owns
+directory validation, frozen CPU mappings, host-memory reclamation and file
+cleanup, and `TrainingStateParking` only adds optimizer, gradient, EMA and
+scaler storage. The trainer does not allocate its state inside CuMem;
+generation CuMem backups use pinned RAM and do not implement disk storage. RAM
+capacity remains a resource requirement. `distributed.resources.offload`
+decides when roles park.
 
 ### Ray infrastructure (`vrl/ray`)
 

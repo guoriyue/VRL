@@ -12,7 +12,6 @@ teaching the trainer which distributed mechanism is active.
 
 from __future__ import annotations
 
-import gc
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack
 from functools import partial
@@ -23,6 +22,7 @@ from torch import nn
 
 from vrl.models.parking import (
     ModelParking,
+    ParkingSession,
     TrainingMemoryState,
     TrainingStateParking,
     module_on_host,
@@ -179,7 +179,7 @@ class _TrainingParkingStrategy:
 
     # Class-level default so a strategy that inherits this cannot forget to
     # initialize it; the first park assigns a per-instance value.
-    _parked_training_state: TrainingStateParking | None = None
+    _parking: ParkingSession | None = None
     # distributed.resources.trainer_parking_directory; None parks into host RAM.
     _parking_directory: str | None = None
 
@@ -200,46 +200,54 @@ class _TrainingParkingStrategy:
         self.validate_training_state_parking()
         if not isinstance(state, TrainingMemoryState):
             raise TypeError("training state parking requires TrainingMemoryState")
-        if self._parked_training_state is not None:
-            if self._parked_training_state.state.identity_key == state.identity_key:
+        if self._parking is not None:
+            if self._parked_state().identity_key == state.identity_key:
                 return
             raise RuntimeError(
                 "cannot park different training state before restoring the current phase"
             )
 
-        parked = TrainingStateParking(state, parking_directory=self._parking_directory)
-        self._parked_training_state = parked
+        ledger = TrainingStateParking(state, parking_directory=self._parking_directory)
+        session = ParkingSession("trainer", required=True, ledger=ledger)
+        self._parking = session
         try:
-            parked.park_training_state()
-            _release_training_cuda_memory()
-        except BaseException:
+            # A failed move is rolled back inside the session; a failed cache
+            # release after a successful move is rolled back here, so the
+            # trainer never commits a park it cannot prove.
+            session.park(move=ledger.park_training_state)
             try:
-                parked.restore()
-            except BaseException as rollback_error:
-                raise RuntimeError(
-                    "training-state parking failed and rollback could not restore the trainer",
-                ) from rollback_error
-            self._parked_training_state = None
+                session.release_gpu()
+            except BaseException:
+                session.restore()
+                raise
+        except BaseException:
+            self._parking = None
             raise
 
+    def _parked_state(self) -> TrainingMemoryState:
+        assert self._parking is not None
+        ledger = self._parking.backend
+        assert isinstance(ledger, TrainingStateParking)
+        return ledger.state
+
     def restore_training_state(self, state: TrainingMemoryState) -> None:
-        parked = self._parked_training_state
-        if parked is None:
+        parking = self._parking
+        if parking is None:
             return
-        same_state = parked.state.identity_key == state.identity_key
-        parked.restore()
-        self._parked_training_state = None
+        same_state = self._parked_state().identity_key == state.identity_key
+        parking.restore()
+        self._parking = None
         if not same_state:
             raise RuntimeError("trainer-owned state changed while its GPU memory was parked")
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
-        if self._parked_training_state is not None and restore_parked:
-            self.restore_training_state(self._parked_training_state.state)
-        elif self._parked_training_state is not None:
+        if self._parking is not None and restore_parked:
+            self.restore_training_state(self._parked_state())
+        elif self._parking is not None:
             # Terminal role cleanup could not prove the shared GPU was released.
             # Drop only this adapter's restore ticket; the live objects deliberately
             # remain on CPU until process exit instead of racing another GPU owner.
-            self._parked_training_state = None
+            self._parking = None
 
 
 class _ProcessGroupStrategy:
@@ -427,17 +435,6 @@ class SingleProcessStrategy(_TrainingParkingStrategy, _UnshardedStateStrategy):
 
     def gather_rng_states(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         return [state]
-
-
-def _release_training_cuda_memory() -> None:
-    """Release trainer allocator pages; any CUDA failure invalidates the handoff."""
-
-    gc.collect()
-    if not torch.cuda.is_available():
-        return
-    torch.cuda.synchronize()
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()
 
 
 def _trainable_module_handles(model: Any) -> list[tuple[str, Any, Any]]:

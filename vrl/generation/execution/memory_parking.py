@@ -1,28 +1,27 @@
 """Physical GPU-memory parking owned by one generation worker.
 
-The worker picks the parking mechanism (``cumem`` or ``move``, vocabulary in
-``vrl/models/parking.py``) from residency; its destination is always RAM.
+The steps every role shares (pooled build, park with rollback, restore,
+release, the physical evidence) live in :class:`vrl.models.parking.ParkingSession`.
+This owner adds what only a Ray generation worker needs: the mechanism choice
+from residency, the quarantine phases that tell the driver to terminate the
+actor instead of retrying, pipeline-CPU-offload hook health, and the
+``WorkerMemoryParkingSnapshot`` the driver validates before handing the GPU to
+the trainer.
 """
 
 from __future__ import annotations
 
-import traceback
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.models import parking
 from vrl.models.interfaces.runtime import PipelineOffloadMode
-from vrl.models.parking import CumemPool, ModelParking
-from vrl.utils.cuda_memory import (
-    CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT,
-    gpu_process_used_bytes,
-    release_cuda_memory,
-    release_cuda_memory_for_parking,
-)
+from vrl.models.parking import CumemBroken, ModelParking, ParkingBroken, ParkingSession
+from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT, release_cuda_memory
 from vrl.utils.logging import init_logger
 
 if TYPE_CHECKING:
@@ -59,46 +58,27 @@ def _log_parking_diagnostics(model: Any, *, worker_id: str) -> None:
         logger.exception("parking diagnostics unavailable: worker=%s", worker_id)
 
 
-def _resident_on_cuda(model: Any) -> bool:
-    """Whether the built model holds its weights on a CUDA device."""
+def _resident_on_cuda(executor: Any) -> bool:
+    """Whether the built executor's model holds its weights on a CUDA device."""
 
-    device = getattr(model, "device", None)
+    device = getattr(getattr(executor, "model", None), "device", None)
     return device is not None and str(device).startswith("cuda")
 
 
 class _ParkingPhase(Enum):
     ACTIVE = "active"
-    PARKED = "parked"
     QUARANTINED = "quarantined"
     CUMEM_BROKEN = "cumem_broken"
 
 
-_ParkingBackend = ModelParking | CumemPool
-
-
-@dataclass(frozen=True, slots=True)
-class _ParkingPlan:
-    required: bool
-    # rollout.pipeline_offload_mode != "none": Accelerate already owns the
-    # model's residency, so the worker must not claim a CuMem scope around it.
-    pipeline_offload: bool
-
-
-@dataclass(slots=True)
-class _ParkingSession:
-    required: bool
-    pipeline_offload: bool
-    baseline_gpu_used_bytes: int | None
-    backend: _ParkingBackend
-
-
 class WorkerMemoryParking:
-    """Own one worker's mutually exclusive CUDA-memory parking backend.
+    """Own one worker's parking session and the policy around it.
 
     The Ray launch contract carries only the topology-derived requirement to
     yield the GPU. This owner combines it with the resolved rollout residency
-    mode and family capabilities before model construction, then retains the
-    backend-specific state required for idempotent sleep, wake, and teardown.
+    mode before model construction, then keeps the session for idempotent
+    sleep, wake, and teardown and quarantines the worker when a failure made
+    its residency unknowable.
     """
 
     def __init__(
@@ -123,10 +103,11 @@ class WorkerMemoryParking:
         # writing the vocabulary check a second time.
         PipelineOffloadMode(pipeline_offload_mode)
         self.worker_id = worker_id
-        self._parking: _ParkingPlan | _ParkingSession = _ParkingPlan(
-            required=launch_contract.sleep_offload,
-            pipeline_offload=pipeline_offload_mode != "none",
-        )
+        self._required = launch_contract.sleep_offload
+        # rollout.pipeline_offload_mode != "none": Accelerate already owns the
+        # model's residency, so the worker must not claim a CuMem scope around it.
+        self._pipeline_offload = pipeline_offload_mode != "none"
+        self._session: ParkingSession | None = None
         self._phase = _ParkingPhase.ACTIVE
         # Persist only a lightweight quarantine reason. Exception tracebacks can
         # retain the model and its CUDA tensors past terminal cleanup.
@@ -134,7 +115,7 @@ class WorkerMemoryParking:
 
     @property
     def _is_parked(self) -> bool:
-        return self._phase is _ParkingPhase.PARKED
+        return self._session is not None and self._session.parked
 
     def build(
         self,
@@ -142,7 +123,7 @@ class WorkerMemoryParking:
     ) -> GenerationBatchExecutor:
         """Build once; a parking-required, CUDA-resident model lives in a CuMem pool.
 
-        The backend follows from residency, not from the family: whether the
+        The mechanism follows from residency, not from the family: whether the
         rank must yield its GPU (the launch contract), whether Accelerate
         already manages the pipeline's residency (``pipeline_offload_mode``),
         and whether the built model is resident on CUDA at all (a model that
@@ -152,98 +133,39 @@ class WorkerMemoryParking:
         """
 
         self.require_active("policy build", executor=None)
-        state = self._parking
-        if isinstance(state, _ParkingSession):
+        if self._session is not None:
             raise RuntimeError(
                 f"generation worker {self.worker_id!r} already owns a loaded "
                 "memory-parking backend",
             )
-        baseline_gpu_used_bytes = None
-        if state.required:
-            # Compare this process against its own preload physical-memory baseline.
-            baseline_gpu_used_bytes = gpu_process_used_bytes()
         self._phase = _ParkingPhase.ACTIVE
         self._failure_reason = None
-
-        if not state.required or state.pipeline_offload:
-            executor = build_executor()
-            self._parking = _ParkingSession(
-                required=state.required,
-                pipeline_offload=state.pipeline_offload,
-                baseline_gpu_used_bytes=baseline_gpu_used_bytes,
-                backend=ModelParking(),
-            )
-            return executor
-
-        # Require before building: a parking-required rank must fail in
-        # milliseconds on a misconfigured box, not after loading GiB of weights
-        # it would then have no way to release.
-        pool = CumemPool.require(tag=f"vrl:generation:{self.worker_id}:weights")
+        session = ParkingSession(f"generation worker {self.worker_id!r}", required=self._required)
         try:
-            with pool.building():
-                executor = build_executor()
-        except BaseException as build_error:
-            # Drop traceback-held builder locals before touching vLLM's retained
-            # MemPool registry while preserving the diagnostic stack itself.
-            if build_error.__traceback__ is not None:
-                traceback.clear_frames(build_error.__traceback__)
-            release_cuda_memory(ipc_collect=True)
-            try:
-                pool.close()
-            except BaseException as close_error:
-                self._parking = _ParkingSession(
-                    required=state.required,
-                    pipeline_offload=state.pipeline_offload,
-                    baseline_gpu_used_bytes=baseline_gpu_used_bytes,
-                    backend=pool,
-                )
-                self._quarantine(
-                    f"CuMem cleanup failed after pooled build error: {close_error!r}",
-                    cumem_broken=True,
-                )
-                raise RuntimeError(
-                    "generation pooled build and cleanup both failed: "
-                    f"build={build_error!r}; cleanup={close_error!r}",
-                ) from close_error
+            executor = session.build(
+                build_executor,
+                cumem=self._required and not self._pipeline_offload,
+                tag=f"vrl:generation:{self.worker_id}:weights",
+                resident=_resident_on_cuda,
+            )
+        except CumemBroken as error:
+            self._session = session
+            self._quarantine(str(error), cumem_broken=True)
             raise
-        backend: _ParkingBackend = pool
-        if not _resident_on_cuda(getattr(executor, "model", None)):
-            # Nothing was allocated in the pool; release it and park by moving.
-            try:
-                pool.close()
-            except BaseException as close_error:
-                self._parking = _ParkingSession(
-                    required=state.required,
-                    pipeline_offload=state.pipeline_offload,
-                    baseline_gpu_used_bytes=baseline_gpu_used_bytes,
-                    backend=pool,
-                )
-                self._quarantine(
-                    f"CuMem cleanup failed after a non-CUDA build: {close_error!r}",
-                    cumem_broken=True,
-                )
-                raise
-            backend = ModelParking()
-        self._parking = _ParkingSession(
-            required=state.required,
-            pipeline_offload=state.pipeline_offload,
-            baseline_gpu_used_bytes=baseline_gpu_used_bytes,
-            backend=backend,
-        )
+        self._session = session
         return executor
 
     def validate_loaded(self, executor: GenerationBatchExecutor) -> None:
         """Fail before serving when no complete backend owns the loaded model."""
 
         session = self._loaded_session()
-        backend = session.backend
         if not session.required:
             return
         model = getattr(executor, "model", None)
         uses_pipeline_offload = bool(
             getattr(model, "uses_pipeline_cpu_offload", False),
         )
-        if isinstance(backend, CumemPool):
+        if session.mechanism == "cumem":
             if uses_pipeline_offload:
                 raise RuntimeError(
                     f"generation worker {self.worker_id!r} selected both CuMem and "
@@ -280,11 +202,11 @@ class WorkerMemoryParking:
 
         self.require_healthy("sleep", executor=executor)
         if executor is None:
-            if self._parking.required:
+            if self._required:
                 raise RuntimeError(
                     f"generation worker {self.worker_id!r} cannot park before policy load",
                 )
-            used_bytes = gpu_process_used_bytes()
+            used_bytes = parking.gpu_process_used_bytes()
             snapshot = WorkerMemoryParkingSnapshot(
                 worker_id=self.worker_id,
                 backend="cpu_only",
@@ -298,56 +220,37 @@ class WorkerMemoryParking:
 
         self.validate_loaded(executor)
         session = self._loaded_session()
-        loaded_bytes = gpu_process_used_bytes()
+        loaded_bytes = session.gpu_used_bytes()
         model = executor.model
-        backend = session.backend
-
-        if isinstance(backend, CumemPool):
-            try:
-                if not backend.asleep:
-                    backend.sleep()
-            except BaseException as error:
-                self._quarantine(
-                    f"CuMem sleep failed and may have partially unmapped allocations: {error!r}",
-                    cumem_broken=True,
-                )
-                raise
-            snapshot_backend = "cumem"
-            residual_bytes_limit = CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
-        elif bool(getattr(model, "uses_pipeline_cpu_offload", False)):
-            if not self._is_parked:
-                self._reset_pipeline_cpu_offload(model, operation="sleep")
-            snapshot_backend = "cpu_offload"
-            residual_bytes_limit = CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
-        else:
-            if backend.restore_device is None:
-                try:
-                    backend.park(model, restore_device=restore_device)
-                except BaseException as move_error:
-                    try:
-                        backend.restore()
-                    except BaseException as rollback_error:
-                        reason = (
-                            "generation CPU parking and rollback both failed: "
-                            f"move={move_error!r}; rollback={rollback_error!r}"
-                        )
-                        self._quarantine(reason)
-                        raise RuntimeError(reason) from rollback_error
-                    raise
-            snapshot_backend = (
-                "cpu_offload" if str(backend.restore_device).startswith("cuda") else "cpu_only"
-            )
-            residual_bytes_limit = (
-                CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT if snapshot_backend == "cpu_offload" else 0
-            )
 
         try:
-            # An idle BLAS workspace can pin a multi-GiB allocator segment.
-            # CPU-offload invalidates device residency; CuMem keeps its pools.
-            release_cuda_memory_for_parking(
-                clear_blas_workspaces=snapshot_backend == "cpu_offload",
-            )
-            residual_bytes = gpu_process_used_bytes()
+            if session.mechanism == "cumem":
+                session.park()
+                snapshot_backend = "cumem"
+            elif bool(getattr(model, "uses_pipeline_cpu_offload", False)):
+                # Accelerate hooks remain installed; resetting them drops the
+                # resident layers, and the next forward onloads again.
+                session.park(
+                    move=lambda: self._reset_pipeline_cpu_offload(model, operation="sleep"),
+                )
+                snapshot_backend = "cpu_offload"
+            else:
+                ledger = session.backend
+                assert isinstance(ledger, ModelParking)
+                session.park(move=lambda: ledger.park(model, restore_device=restore_device))
+                snapshot_backend = (
+                    "cpu_offload" if str(ledger.restore_device).startswith("cuda") else "cpu_only"
+                )
+        except ParkingBroken as error:
+            self._quarantine(str(error), cumem_broken=isinstance(error, CumemBroken))
+            raise
+        residual_bytes_limit = (
+            CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT if snapshot_backend != "cpu_only" else 0
+        )
+
+        try:
+            session.release_gpu()
+            residual_bytes = session.gpu_used_bytes()
             baseline_bytes = session.baseline_gpu_used_bytes
             if baseline_bytes is None:
                 if session.required or residual_bytes:
@@ -385,7 +288,6 @@ class WorkerMemoryParking:
             snapshot.baseline_gpu_used_bytes,
             snapshot.residual_bytes_limit,
         )
-        self._phase = _ParkingPhase.PARKED
         return snapshot
 
     def wake(self, executor: GenerationBatchExecutor) -> None:
@@ -394,76 +296,33 @@ class WorkerMemoryParking:
         self.require_healthy("wake", executor=executor)
         if not self._is_parked:
             return
-        model = getattr(executor, "model", None)
-        session = self._loaded_session()
-        backend = session.backend
-        if isinstance(backend, CumemPool):
-            try:
-                backend.wake()
-            except BaseException as error:
-                self._quarantine(
-                    f"CuMem wake failed and may have partially remapped allocations: {error!r}",
-                    cumem_broken=True,
-                )
-                raise
-            self._phase = _ParkingPhase.ACTIVE
-            return
-        if bool(getattr(model, "uses_pipeline_cpu_offload", False)):
-            # Accelerate hooks remain installed; the next forward performs the
-            # actual per-layer or per-module onload.
-            self._phase = _ParkingPhase.ACTIVE
-            return
-        device = backend.restore_device
-        if device is None:
-            reason = "module CPU parking lost its restore device"
-            self._quarantine(reason)
-            raise RuntimeError(
-                f"generation worker {self.worker_id!r} {reason}",
-            )
-        backend.restore()
-        self._phase = _ParkingPhase.ACTIVE
+        try:
+            self._loaded_session().restore()
+        except CumemBroken as error:
+            self._quarantine(str(error), cumem_broken=True)
+            raise
 
     @contextmanager
     def release_scope(self) -> Iterator[None]:
         """Release state after the caller drops its executor reference."""
 
-        state = self._parking
-        backend = state.backend if isinstance(state, _ParkingSession) else None
-        pool = backend if isinstance(backend, CumemPool) else None
         if self._phase is _ParkingPhase.CUMEM_BROKEN:
             raise RuntimeError(
                 f"generation worker {self.worker_id!r} has an indeterminate CuMem "
                 "mapping and must terminate instead of closing the pool in process",
             )
-        if pool is not None and pool.asleep:
-            try:
-                pool.wake()
-            except BaseException as error:
-                self._quarantine(
-                    f"CuMem wake during release failed: {error!r}",
-                    cumem_broken=True,
-                )
-                raise
-        yield
-        if isinstance(backend, ModelParking):
-            # The restore ledger also owns model/tensor references. Drop them
-            # before collecting allocator pages after the executor was released.
-            backend.discard()
-        release_cuda_memory(ipc_collect=True)
-        if pool is not None:
-            try:
-                pool.close()
-            except BaseException as error:
-                self._quarantine(
-                    f"CuMem terminal close failed: {error!r}",
-                    cumem_broken=True,
-                )
-                raise
+        session = self._session
+        if session is None:
+            yield
             release_cuda_memory(ipc_collect=True)
-        if isinstance(state, _ParkingSession):
-            self._parking = _ParkingPlan(
-                required=state.required, pipeline_offload=state.pipeline_offload
-            )
+        else:
+            try:
+                with session.release_scope():
+                    yield
+            except CumemBroken as error:
+                self._quarantine(str(error), cumem_broken=True)
+                raise
+        self._session = None
         self._phase = _ParkingPhase.ACTIVE
         self._failure_reason = None
 
@@ -533,26 +392,23 @@ class WorkerMemoryParking:
             return
         self._quarantine(f"{type(error).__name__}: {error}")
 
-    def _loaded_session(self) -> _ParkingSession:
-        state = self._parking
-        if isinstance(state, _ParkingSession):
-            return state
-        if state.required:
+    def _loaded_session(self) -> ParkingSession:
+        if self._session is not None:
+            return self._session
+        if self._required:
             # build() is the only place that commits a backend. Manufacturing one
             # here for a parking-required worker would silently reintroduce the
-            # CuMem-to-model downgrade that build() now refuses.
+            # CuMem-to-model downgrade that build() refuses.
             raise RuntimeError(
                 f"generation worker {self.worker_id!r} queried its parking backend "
                 "before policy build committed one",
             )
-        session = _ParkingSession(
-            required=state.required,
-            pipeline_offload=state.pipeline_offload,
-            baseline_gpu_used_bytes=None,
-            backend=ModelParking(),
+        self._session = ParkingSession(
+            f"generation worker {self.worker_id!r}",
+            required=False,
+            ledger=ModelParking(),
         )
-        self._parking = session
-        return session
+        return self._session
 
     def _reset_pipeline_cpu_offload(
         self,

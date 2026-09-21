@@ -992,7 +992,7 @@ def test_fsdp_parking_rolls_every_rank_back_when_one_peer_fails() -> None:
         strategy.park_training_state(state)
 
     # Rolled back: nothing stays parked, so the world is resident again.
-    assert strategy._parked_training_state is None
+    assert strategy._parking is None
 
 
 @pytest.mark.parametrize("restore_parked", [True, False])
@@ -1020,7 +1020,7 @@ def test_fsdp_shutdown_consumes_parked_state_before_group_cleanup(
     strategy.restore_training_state(state)
 
     assert calls == (["move", "group"] if restore_parked else ["group"])
-    assert strategy._parked_training_state is None
+    assert strategy._parking is None
 
 
 def test_fsdp_shutdown_cleans_process_group_when_restore_fails(monkeypatch) -> None:

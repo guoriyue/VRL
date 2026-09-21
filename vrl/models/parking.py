@@ -1,30 +1,41 @@
 """Release GPU storage for a phase, then restore it without losing model state.
 
-ModelParking relocates tensors to CPU and records their original devices.
-TrainingStateParking extends that relocation to optimizer, gradient, EMA and
-scaler state. An optional FrozenParameterFileStore replaces frozen CPU shards
-with file mappings; it owns disk validation and file lifetime, not device moves.
+Every role parks through one :class:`ParkingSession`: build the object (inside
+a CuMem pool when the role must prove release), park it, restore it, release
+it, and measure the physical footprint in between. Two mechanisms sit under
+the session. ``move`` (:class:`ModelParking`) relocates tensors to CPU and
+records their original devices; with a ``parking_directory`` its frozen shards
+continue to file mappings (:class:`FrozenParameterFileStore`), which owns disk
+validation and file lifetime, not device moves. ``cumem`` (:class:`CumemPool`)
+requires model allocations to be created inside its pool, which it backs up to
+pinned RAM and unmaps while preserving virtual addresses; it has no disk
+destination. :class:`TrainingStateParking` extends ``move`` to optimizer,
+gradient, EMA and scaler state.
 
-CumemPool provides a separate allocator mechanism: model allocations must be
-created inside its pool, which can back them up to pinned RAM and unmap physical
-GPU pages while preserving virtual addresses. The current trainer does not use
-this pool, and the CuMem path does not implement disk backups. Host capacity
-must cover RAM backups in either mechanism.
-
-Callers own phase transitions and failure recovery. Whether a role yields its
-GPU is decided by distributed.resources.offload in vrl/ray/resources.py.
+The session raises typed failures and keeps no phase policy. Whether a failure
+quarantines the owner, rolls back every rank, or is retried belongs to the
+owners (``WorkerMemoryParking``, ``_TrainingParkingStrategy``,
+``InProcessRewardScorer``), and whether a role yields its GPU at all is
+decided by distributed.resources.offload in vrl/ray/resources.py.
 """
 
 from __future__ import annotations
 
 import gc
 import itertools
-from collections.abc import Iterator, Mapping
+import traceback
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from vrl.models.frozen_parameter_storage import FrozenParameterFileStore
-from vrl.utils.cuda_memory import empty_cuda_cache
+from vrl.utils.cuda_memory import (
+    empty_cuda_cache,
+    gpu_process_used_bytes,
+    release_cuda_memory,
+    release_cuda_memory_for_parking,
+)
 
 if TYPE_CHECKING:
     import torch
@@ -44,17 +55,23 @@ def module_on_host(module: Any) -> bool:
 
 
 class ModelParking:
-    """Mechanism ``move``, destination ``ram`` (see the module docstring).
+    """Mechanism ``move``: relocate storage to CPU and remember where it was.
 
     Retains original devices before moving storage, including partial moves.
+    With a ``parking_directory`` the frozen shards of every parked module go on
+    to file mappings under it, so Linux can reclaim them while another role
+    owns the GPU; trainable storage stays in host RAM.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, parking_directory: str | None = None) -> None:
         self._modules: list[tuple[Any, Any]] = []
         self._tensors: list[tuple[torch.Tensor, torch.device]] = []
         self._seen_modules: set[int] = set()
         self._seen_tensors: set[int] = set()
         self._module_tensor_devices: dict[int, dict[str, Any]] = {}
+        self._frozen_file_store = (
+            FrozenParameterFileStore(parking_directory) if parking_directory is not None else None
+        )
 
     @property
     def restore_device(self) -> Any | None:
@@ -95,6 +112,11 @@ class ModelParking:
         move_frozen = getattr(model, "move_frozen_components", None)
         if callable(move_frozen):
             move_frozen("cpu")
+        if self._frozen_file_store is not None and callable(getattr(model, "parameters", None)):
+            self._frozen_file_store.store(model.parameters())
+            # Storage replacement requires FSDP to refresh its local shard views.
+            self._move_module(model, "cpu")
+            self._frozen_file_store.release_unused_host_memory()
 
     def park_tensors(self, value: Any) -> None:
         """Move extra state in place, preserving aliases with parked parameters."""
@@ -201,6 +223,8 @@ class ModelParking:
         self._seen_modules.clear()
         self._seen_tensors.clear()
         self._module_tensor_devices.clear()
+        if self._frozen_file_store is not None:
+            self._frozen_file_store.cleanup()
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,11 +259,8 @@ class TrainingMemoryState:
 
 
 class TrainingStateParking(ModelParking):
-    """The trainer's parking: mechanism ``move``; destination ``ram``, or
-    ``disk`` for frozen shards when ``parking_directory`` is set.
-
-    Extends model parking with optimizer, gradient, EMA and scaler storage.
-    """
+    """The trainer's ``move`` ledger: model parking plus optimizer, gradient,
+    EMA and scaler storage."""
 
     def __init__(
         self,
@@ -247,12 +268,9 @@ class TrainingStateParking(ModelParking):
         *,
         parking_directory: str | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(parking_directory=parking_directory)
         self.state = state
         self.ema_device = getattr(state.ema, "device", None)
-        self._frozen_file_store = (
-            FrozenParameterFileStore(parking_directory) if parking_directory is not None else None
-        )
 
     def park_training_state(self) -> None:
         import torch
@@ -264,12 +282,6 @@ class TrainingStateParking(ModelParking):
             tensor = next(self.module_tensors(model), None)
             device = state.device if tensor is None else torch.device(tensor.device)
             self.park(model, restore_device=device, preserve_tensor_devices=True)
-            if self._frozen_file_store is not None:
-                self._frozen_file_store.store(model.parameters())
-                # Storage replacement requires FSDP to refresh its local shard views.
-                self._move_module(model, torch.device("cpu"))
-        if self._frozen_file_store is not None:
-            self._frozen_file_store.release_unused_host_memory()
         if state.optimizer is not None:
             # Independent FP32 master parameters and live grads may not belong
             # to the model. The shared ledger deduplicates ordinary parameters.
@@ -289,11 +301,245 @@ class TrainingStateParking(ModelParking):
 
     def restore(self) -> None:
         super().restore()
-        if self._frozen_file_store is not None:
-            self._frozen_file_store.cleanup()
         if self.state.ema is not None and hasattr(self.state.ema, "device"):
             self.state.ema.device = self.ema_device
         empty_cuda_cache()
+
+
+class ParkingBroken(RuntimeError):
+    """Parking left the owner's residency unknowable.
+
+    A move failed and its rollback failed too; the owner must not trust the
+    state it holds.
+    """
+
+
+class CumemBroken(ParkingBroken):
+    """A CuMem allocator operation failed midway.
+
+    vLLM mutates mappings one by one without rollback, so only process
+    termination is safe afterwards.
+    """
+
+
+ParkingMechanism = Literal["cumem", "move"]
+
+
+class ParkingSession:
+    """One role's parking of one built object: the steps every role shares.
+
+    ``build`` claims the mechanism (a CuMem pool wrapped around construction,
+    or a ``move`` ledger), ``park`` releases the card, ``restore`` brings it
+    back and ``release_scope`` tears everything down. ``baseline_gpu_used_bytes``,
+    ``release_gpu`` and ``gpu_used_bytes`` supply the physical evidence a
+    parking-required role must produce. ``device`` scopes every pool operation
+    to a configured CUDA device (a reward pinned to ``cuda:1`` while the driver
+    sits on ``cuda:0``); ``None`` uses the current device.
+
+    Failures are typed and carry no policy: :class:`ParkingBroken` when a move
+    and its rollback both failed, :class:`CumemBroken` when a pool operation
+    failed midway. Any other error propagates unchanged and leaves the session
+    retryable (a failed move was rolled back, a failed pool sleep changed no
+    state).
+    """
+
+    def __init__(
+        self,
+        owner: str,
+        *,
+        required: bool,
+        device: str | None = None,
+        ledger: ModelParking | None = None,
+    ) -> None:
+        self.owner = owner
+        # Whether this owner must prove physical release (baseline captured
+        # before build, residual measured after park).
+        self.required = required
+        self._device = device
+        self.backend: ModelParking | CumemPool | None = ledger
+        self.baseline_gpu_used_bytes: int | None = None
+        self.parked = False
+
+    @property
+    def pool(self) -> CumemPool | None:
+        return self.backend if isinstance(self.backend, CumemPool) else None
+
+    @property
+    def mechanism(self) -> ParkingMechanism | None:
+        if self.backend is None:
+            return None
+        return "cumem" if isinstance(self.backend, CumemPool) else "move"
+
+    def _device_scope(self) -> Any:
+        if self._device is None:
+            return nullcontext()
+        import torch
+
+        if not torch.cuda.is_available():
+            return nullcontext()
+        target = torch.device(self._device)
+        return torch.cuda.device(target) if target.type == "cuda" else nullcontext()
+
+    def gpu_used_bytes(self) -> int:
+        """This process's physical footprint on the session's device."""
+
+        return gpu_process_used_bytes(self._device)
+
+    def build(
+        self,
+        factory: Callable[[], Any],
+        *,
+        cumem: bool,
+        tag: str | None = None,
+        resident: Callable[[Any], bool] | None = None,
+    ) -> Any:
+        """Build once and commit the mechanism.
+
+        ``cumem`` claims the pool before building, so a misconfigured box fails
+        in milliseconds rather than after loading GiB of weights it could not
+        release; a build failure closes the pool again. ``resident`` is read
+        after the build: an object it reports off CUDA allocated nothing in the
+        pool, so the pool is closed and the session parks by moving instead.
+        """
+
+        if self.backend is not None:
+            raise RuntimeError(f"{self.owner} already owns a parking backend")
+        if self.required:
+            # Compare this process against its own preload physical baseline.
+            self.baseline_gpu_used_bytes = self.gpu_used_bytes()
+        if not cumem:
+            with self._device_scope():
+                result = factory()
+            self.backend = ModelParking()
+            return result
+        pool = CumemPool.require(tag=tag)
+        try:
+            with self._device_scope(), pool.building():
+                result = factory()
+        except BaseException as build_error:
+            # Drop traceback-held builder locals before touching vLLM's retained
+            # MemPool registry while preserving the diagnostic stack itself.
+            if build_error.__traceback__ is not None:
+                traceback.clear_frames(build_error.__traceback__)
+            release_cuda_memory(ipc_collect=True)
+            self._close_pool(pool, after=f"a failed build ({build_error!r})")
+            raise
+        if resident is not None and not resident(result):
+            self._close_pool(pool, after="a build that left the model off CUDA")
+            self.backend = ModelParking()
+            return result
+        self.backend = pool
+        return result
+
+    def park(self, *, move: Callable[[], None] | None = None) -> None:
+        """Release the card; idempotent once parked.
+
+        ``cumem`` sleeps the pool. ``move`` runs the owner's move (the ledger
+        knows what to relocate) and rolls it back through the ledger if it
+        fails, so a retry starts from a resident model.
+        """
+
+        backend = self._require_backend("park")
+        if self.parked:
+            return
+        if isinstance(backend, CumemPool):
+            try:
+                with self._device_scope():
+                    backend.sleep()
+            except BaseException as error:
+                raise CumemBroken(
+                    f"{self.owner}: CuMem sleep failed and may have partially unmapped "
+                    f"allocations: {error!r}",
+                ) from error
+            self.parked = True
+            return
+        if move is None:
+            raise TypeError(f"{self.owner}: parking by moving needs the move to perform")
+        try:
+            move()
+        except BaseException as move_error:
+            try:
+                backend.restore()
+            except BaseException as rollback_error:
+                raise ParkingBroken(
+                    f"{self.owner} parking and rollback both failed: "
+                    f"move={move_error!r}; rollback={rollback_error!r}",
+                ) from rollback_error
+            raise
+        self.parked = True
+
+    def restore(self) -> None:
+        """Bring the card back; a failed ``move`` restore keeps the ledger for retry."""
+
+        backend = self._require_backend("restore")
+        if not self.parked:
+            return
+        if isinstance(backend, CumemPool):
+            try:
+                with self._device_scope():
+                    backend.wake()
+            except BaseException as error:
+                raise CumemBroken(
+                    f"{self.owner}: CuMem wake failed and may have partially remapped "
+                    f"allocations: {error!r}",
+                ) from error
+        else:
+            backend.restore()
+        self.parked = False
+
+    def release_gpu(self) -> None:
+        """Strict CUDA cleanup after a park, before the residual is measured.
+
+        A ``move`` park invalidates device residency, so idle BLAS workspaces
+        that pin allocator segments are cleared too; ``cumem`` keeps its pools.
+        """
+
+        release_cuda_memory_for_parking(
+            self._device,
+            clear_blas_workspaces=isinstance(self.backend, ModelParking),
+        )
+
+    @contextmanager
+    def release_scope(self) -> Iterator[None]:
+        """Wake a slept pool, let the owner drop its references, then free everything.
+
+        A slept pool holds pinned host buffers for its pages; waking before the
+        owner drops the object makes freeing the tensors return the pool's
+        memory instead of leaking offloaded copies.
+        """
+
+        backend = self.backend
+        pool = self.pool
+        if pool is not None:
+            self.restore()
+        yield
+        if isinstance(backend, ModelParking):
+            # The ledger also owns model/tensor references; drop them before
+            # collecting allocator pages.
+            backend.discard()
+        release_cuda_memory(ipc_collect=True)
+        if pool is not None:
+            self._close_pool(pool, after="release")
+            release_cuda_memory(ipc_collect=True)
+        self.backend = None
+        self.parked = False
+
+    def _require_backend(self, operation: str) -> ModelParking | CumemPool:
+        if self.backend is None:
+            raise RuntimeError(
+                f"{self.owner} cannot {operation} before its build committed a backend"
+            )
+        return self.backend
+
+    def _close_pool(self, pool: CumemPool, *, after: str) -> None:
+        try:
+            with self._device_scope():
+                pool.close()
+        except BaseException as close_error:
+            self.backend = pool
+            raise CumemBroken(
+                f"{self.owner}: CuMem pool close failed after {after}: {close_error!r}",
+            ) from close_error
 
 
 def cumem_allocator() -> Any | None:
