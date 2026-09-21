@@ -1,0 +1,32 @@
+# Qwen-Image-2.1 with a wide LoRA: rank 256 on every projection of the 32
+# single-stream blocks (attention q/k/v/out + SwiGLU proj/gate/out), 671M
+# trainable parameters (1.25 GiB bf16). The single-32GB-card stand-in for
+# full-parameter post-training: the 7B weights + grads alone (28 GB) do not
+# fit, this does. Shared modulation / txt_in / img_in / proj_out stay frozen.
+defaults:
+  - /model/qwen_image_21/base
+
+model:
+  lora:
+    rank: 256
+    alpha: 512
+    target_modules:
+      - to_q
+      - to_k
+      - to_v
+      - to_out.0
+      - img_mlp.proj
+      - img_mlp.gate_layer
+      - img_mlp.out
+
+  # Regional compile: one trace serves all 32 identical blocks. Measured on
+  # the reference pipeline (512px, bf16, 5090): 1.13x at batch 8, ~1.05x at
+  # batch 1; eager-vs-compiled drift is bf16 kernel noise (1.4/255 mean), so
+  # rollout AND replay compile (scope: all) to keep parity at 0.
+  # Requires TORCHINDUCTOR_COMPILE_THREADS=1 in envs whose triton is the dev
+  # 3.8 tree (the inductor subprocess pool loses the GPU backend otherwise).
+  torch_compile:
+    enable: true
+    mode: default
+    scope: all
+    regional: true

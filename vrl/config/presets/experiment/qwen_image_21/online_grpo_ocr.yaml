@@ -1,10 +1,11 @@
 # Qwen-Image-2.1 + OCR GRPO (Flow-GRPO OCR prompts; text rendering is the
 # checkpoint's headline capability, so the verifiable OCR reward is the first
-# RL target). true_cfg_scale defaults to 1.0 upstream, so the denoise preset
+# RL target). Wide LoRA (r=256, all block projections) stands in for
+# full-parameter training on one 32 GB card. true_cfg_scale defaults to 1.0 upstream, so the denoise preset
 # is the no-CFG one: one transformer forward per step.
 defaults:
   - /recipe/online/flow_matching_grpo
-  - /model/qwen_image_21/base
+  - /model/qwen_image_21/lora_wide
   - /sampling/image/512
   - /sampling/denoise/10_step_no_cfg
   - /reward/ocr
@@ -19,7 +20,12 @@ actor:
 rollout:
   n_samples_per_prompt: 16
   prompts_per_batch: 8
-  samples_per_generation_batch: 16
+  # 8 x 512px through the 7B transformer peaks at ~26 GB on the reference
+  # pipeline; 16 would not fit beside LoRA training state on a 32 GB card.
+  samples_per_generation_batch: 8
+  # Full-noise SDE at 10 steps visibly degrades 2.1's text; 0.7 is the value
+  # the repo's other image recipes converged on.
+  noise_level: 0.7
 
 trainer:
   output_dir: outputs/qwen_image_21_ocr_grpo
