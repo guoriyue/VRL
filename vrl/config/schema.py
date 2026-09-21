@@ -755,12 +755,16 @@ class EvalSection(ConfigBase):
     """
 
     num_steps: StrictInt | None = None
+    # Held-out generation at the checkpoint's native resolution while training
+    # samples a cheaper one (Qwen-Image-2.1 OCR: train 512px, eval 1024px).
+    width: StrictInt | None = None
+    height: StrictInt | None = None
 
-    @field_validator("num_steps")
+    @field_validator("num_steps", "width", "height")
     @classmethod
-    def _positive_steps(cls, value: int | None) -> int | None:
+    def _positive(cls, value: int | None, info: ValidationInfo) -> int | None:
         if value is not None and value < 1:
-            raise ValueError("eval.num_steps must be >= 1")
+            raise ValueError(f"eval.{info.field_name} must be >= 1")
         return value
 
 

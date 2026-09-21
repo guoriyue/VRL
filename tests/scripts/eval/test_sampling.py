@@ -71,3 +71,20 @@ def test_eval_sampling_num_steps_overrides_training_and_yields_to_the_cli() -> N
 def test_eval_sampling_rejects_a_non_positive_step_count() -> None:
     with pytest.raises(ValueError, match=r"eval\.num_steps must be >= 1"):
         _root(sampling=_IMAGE, eval={"num_steps": 0})
+
+
+def test_eval_sampling_resolution_overrides_training_geometry() -> None:
+    """Train at 512px, evaluate at the checkpoint's native 1024px."""
+    root = _root(
+        sampling={**_IMAGE, "max_sequence_length": 256},
+        eval={"width": 1024, "height": 1024, "num_steps": 40},
+    )
+
+    out = resolve_eval_sampling(root)
+
+    assert (out["width"], out["height"], out["num_steps"]) == (1024, 1024, 40)
+
+
+def test_eval_sampling_rejects_non_positive_resolution() -> None:
+    with pytest.raises(ValueError, match=r"eval\.width must be >= 1"):
+        _root(sampling=_IMAGE, eval={"width": 0})
