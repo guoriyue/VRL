@@ -15,11 +15,27 @@ defaults:
 actor:
   optim:
     lr: 3.0e-4
+    # int8 Adam state: the fp32 r=256 LoRA (671M params) would otherwise carry
+    # 5.4 GB of moments beside its 2.7 GB weights + 2.7 GB grads on a 32 GB card.
+    # Weights stay fp32 (the update is computed in fp32); only m/v are quantized.
+    optim_8bit: true
+  # Full activation checkpointing: one eager 512px replay forward without it
+  # needs >12 GB of activations (dry run OOM at 29.15 GiB during the forward).
+  gradient_checkpointing: full
+  # Train on 5 of the 10 SDE steps per sample (the repo's usual choice for
+  # compute-bound recipes, cf. cosmos 0.5 / sd3_5 0.2). The eager, checkpointed
+  # replay costs ~4 forward-equivalents per sample-step: the 3-update dry run
+  # measured 8.5-10.5 min of replay per 128-sample update at 0.99 against a
+  # 3.5-4 min rollout.
+  timestep_fraction: 0.5
   prompts_per_collection: 2
 
 rollout:
   n_samples_per_prompt: 16
-  prompts_per_batch: 8
+  # 6 groups x 16 = 96 samples per update: with timestep_fraction 0.5 this
+  # lands one update at ~6 min on a 5090 (rollout ~2.6 min + replay ~3.2 min),
+  # the budget for a same-day 60-update answer.
+  prompts_per_batch: 6
   # 8 x 512px through the 7B transformer peaks at ~26 GB on the reference
   # pipeline; 16 would not fit beside LoRA training state on a 32 GB card.
   samples_per_generation_batch: 8

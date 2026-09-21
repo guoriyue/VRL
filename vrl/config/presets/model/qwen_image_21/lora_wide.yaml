@@ -19,14 +19,12 @@ model:
       - img_mlp.gate_layer
       - img_mlp.out
 
-  # Regional compile: one trace serves all 32 identical blocks. Measured on
-  # the reference pipeline (512px, bf16, 5090): 1.13x at batch 8, ~1.05x at
-  # batch 1; eager-vs-compiled drift is bf16 kernel noise (1.4/255 mean), so
-  # rollout AND replay compile (scope: all) to keep parity at 0.
-  # Requires TORCHINDUCTOR_COMPILE_THREADS=1 in envs whose triton is the dev
-  # 3.8 tree (the inductor subprocess pool loses the GPU backend otherwise).
+  # Compile OFF. Regional compile measured only 1.13x at batch 8 on the
+  # reference pipeline, and the trainer cannot compile at all here: torch.compile
+  # forbids activation checkpointing (vrl/config/validation.py), and without
+  # checkpointing one 512px replay forward through the 32 blocks plus the 14 GB
+  # bf16 base and the fp32 r=256 LoRA state exceeds 32 GB (dry run OOM at
+  # 29.15 GiB before the first backward). Eager on BOTH sides keeps rollout and
+  # replay on the same kernels, which is what the parity gate needs.
   torch_compile:
-    enable: true
-    mode: default
-    scope: all
-    regional: true
+    enable: false
