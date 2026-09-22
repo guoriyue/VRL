@@ -1,0 +1,2145 @@
+{
+  "generation": {
+    "pipeline": "QwenImage21Pipeline",
+    "model": "Qwen/Qwen-Image-2.1",
+    "revision": "b3179ad355be050328e483a9dfdd9e60cd62adfa",
+    "settings": {
+      "out": "/home/mingfeiguo/Desktop/VRL/outputs/qwen_image_21_reward_study",
+      "steps": 40,
+      "resolution": 1024,
+      "seeds": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "dtype": "bfloat16",
+    "true_cfg_scale": 1.0,
+    "use_kv_cache": true,
+    "trained": false,
+    "vae_tiling": false,
+    "vae_device": "cpu",
+    "reference_encoding_cache": "Original first 14 uncached; remaining use exact-byte deterministic VAE-mode and text encoding cache."
+  },
+  "protocol": {
+    "objective": "Compare original EditScore/EditReward with task-grounded verification on practical attribute editing and replacement requests. Identify natural failures and measure any selection improvement before claiming policy-learning gains.",
+    "tasks": 10,
+    "seeds": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "steps": 40,
+    "output_resolution": 1024,
+    "development_sources": [
+      "armchair.jpg",
+      "sweater.jpg"
+    ],
+    "heldout_sources": [
+      "two_chairs.jpg",
+      "dining.jpg"
+    ],
+    "no_noop_tasks": true,
+    "candidate_policy": "Every initial candidate comes from the same untrained official Qwen-Image-2.1 pipeline. No synthetic degradation.",
+    "labels": "Assistant visual review before reading reward scores, not independent human annotations. Preserve per-criterion evidence and uncertainty.",
+    "evaluation": "Compare top-1 selection and within-task pair ordering. Freeze task-grounded scoring choices using development sources before inspecting heldout scores. Report ties, failures, and tiny sample limits.",
+    "scope_note": "Best-of-N/agent improvements are inference-time improvements and must not be reported as RL weight-training gains.",
+    "color_rule_sha256": "d2063c508a144a6eff535e399c58bea8411f1ab9a91e0b2ea48de236cf2563a8",
+    "retry": "One extra four-seed development-only retry with explicit feedback. Evaluated against the original request; not included in heldout top-1 metrics.",
+    "annotation_correction": "After heldout inspection, v3 fixes a cream-frame patch which overlapped editable upholstery. Preserve v2 frozen scores separately; report v3 as exploratory annotation-corrected results. No scalar hyperparameters were changed."
+  },
+  "summary": {
+    "candidates": 44,
+    "color_rule_version": 3,
+    "evaluation_caveat": "After heldout inspection, v3 fixes a cream-frame patch which overlapped editable upholstery. Preserve v2 frozen scores separately; report v3 as exploratory annotation-corrected results. No scalar hyperparameters were changed.",
+    "label_source": "Assistant visual review, not independent human preference labels.",
+    "tie_policy": "Lowest seed; all tied winners reported. Pairwise ties receive half credit.",
+    "tasks": [
+      {
+        "task_id": "armchair_seat_blue",
+        "split": "development",
+        "retry": false,
+        "candidates": 4,
+        "reviewed_successes": 0,
+        "unknown_labels": 0,
+        "requested_edit_successes": 4,
+        "protected_region_passes": 0,
+        "selection": {
+          "editscore": {
+            "name": "armchair_seat_blue_s1",
+            "success": false,
+            "score": 9.591663046625438,
+            "tied_winners": [
+              "armchair_seat_blue_s1",
+              "armchair_seat_blue_s2",
+              "armchair_seat_blue_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editreward": {
+            "name": "armchair_seat_blue_s0",
+            "success": false,
+            "score": 0.7374176979064941,
+            "tied_winners": [
+              "armchair_seat_blue_s0"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editscore_task_crop": {
+            "name": "armchair_seat_blue_s0",
+            "success": false,
+            "score": 9.397872099576585,
+            "tied_winners": [
+              "armchair_seat_blue_s0",
+              "armchair_seat_blue_s1",
+              "armchair_seat_blue_s2",
+              "armchair_seat_blue_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "grounded_editscore": {
+            "name": "armchair_seat_blue_s2",
+            "success": false,
+            "score": 0.0978398781226133,
+            "tied_winners": [
+              "armchair_seat_blue_s2"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          }
+        },
+        "seed0_success": false
+      },
+      {
+        "task_id": "armchair_leather",
+        "split": "development",
+        "retry": false,
+        "candidates": 4,
+        "reviewed_successes": 4,
+        "unknown_labels": 0,
+        "requested_edit_successes": 4,
+        "protected_region_passes": 4,
+        "selection": {
+          "editscore": {
+            "name": "armchair_leather_s0",
+            "success": true,
+            "score": 10.0,
+            "tied_winners": [
+              "armchair_leather_s0",
+              "armchair_leather_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editreward": {
+            "name": "armchair_leather_s0",
+            "success": true,
+            "score": 1.7161192893981934,
+            "tied_winners": [
+              "armchair_leather_s0"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "grounded_editscore": {
+            "name": "armchair_leather_s0",
+            "success": true,
+            "score": 1.0,
+            "tied_winners": [
+              "armchair_leather_s0",
+              "armchair_leather_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          }
+        },
+        "seed0_success": true
+      },
+      {
+        "task_id": "sweater_one_sleeve",
+        "split": "development",
+        "retry": false,
+        "candidates": 4,
+        "reviewed_successes": 4,
+        "unknown_labels": 0,
+        "requested_edit_successes": 4,
+        "protected_region_passes": 4,
+        "selection": {
+          "editscore": {
+            "name": "sweater_one_sleeve_s2",
+            "success": true,
+            "score": 9.797958971132712,
+            "tied_winners": [
+              "sweater_one_sleeve_s2"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editreward": {
+            "name": "sweater_one_sleeve_s0",
+            "success": true,
+            "score": 1.8603804111480713,
+            "tied_winners": [
+              "sweater_one_sleeve_s0"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editscore_task_crop": {
+            "name": "sweater_one_sleeve_s2",
+            "success": true,
+            "score": 9.397872099576585,
+            "tied_winners": [
+              "sweater_one_sleeve_s2"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "grounded_editscore": {
+            "name": "sweater_one_sleeve_s2",
+            "success": true,
+            "score": 0.971348226070404,
+            "tied_winners": [
+              "sweater_one_sleeve_s2"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          }
+        },
+        "seed0_success": true
+      },
+      {
+        "task_id": "sweater_black_preserve_print",
+        "split": "development",
+        "retry": false,
+        "candidates": 4,
+        "reviewed_successes": 0,
+        "unknown_labels": 4,
+        "requested_edit_successes": 4,
+        "protected_region_passes": 0,
+        "selection": {
+          "editscore": {
+            "name": "sweater_black_preserve_print_s1",
+            "success": null,
+            "score": 9.6,
+            "tied_winners": [
+              "sweater_black_preserve_print_s1",
+              "sweater_black_preserve_print_s2"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editreward": {
+            "name": "sweater_black_preserve_print_s2",
+            "success": null,
+            "score": 2.5598416328430176,
+            "tied_winners": [
+              "sweater_black_preserve_print_s2"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "grounded_editscore": {
+            "name": "sweater_black_preserve_print_s1",
+            "success": null,
+            "score": 0.96,
+            "tied_winners": [
+              "sweater_black_preserve_print_s1",
+              "sweater_black_preserve_print_s2"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          }
+        },
+        "seed0_success": null
+      },
+      {
+        "task_id": "far_chair_blue",
+        "split": "heldout",
+        "retry": false,
+        "candidates": 4,
+        "reviewed_successes": 4,
+        "unknown_labels": 0,
+        "requested_edit_successes": 4,
+        "protected_region_passes": 4,
+        "selection": {
+          "editscore": {
+            "name": "far_chair_blue_s1",
+            "success": true,
+            "score": 9.797958971132712,
+            "tied_winners": [
+              "far_chair_blue_s1",
+              "far_chair_blue_s2",
+              "far_chair_blue_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editreward": {
+            "name": "far_chair_blue_s3",
+            "success": true,
+            "score": 1.8848425149917603,
+            "tied_winners": [
+              "far_chair_blue_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editscore_task_crop": {
+            "name": "far_chair_blue_s0",
+            "success": true,
+            "score": 9.797958971132712,
+            "tied_winners": [
+              "far_chair_blue_s0",
+              "far_chair_blue_s1",
+              "far_chair_blue_s2",
+              "far_chair_blue_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "grounded_editscore": {
+            "name": "far_chair_blue_s0",
+            "success": true,
+            "score": 0.96,
+            "tied_winners": [
+              "far_chair_blue_s0"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          }
+        },
+        "seed0_success": true
+      },
+      {
+        "task_id": "far_chair_leather",
+        "split": "heldout",
+        "retry": false,
+        "candidates": 4,
+        "reviewed_successes": 4,
+        "unknown_labels": 0,
+        "requested_edit_successes": 4,
+        "protected_region_passes": 4,
+        "selection": {
+          "editscore": {
+            "name": "far_chair_leather_s3",
+            "success": true,
+            "score": 9.797958971132712,
+            "tied_winners": [
+              "far_chair_leather_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editreward": {
+            "name": "far_chair_leather_s1",
+            "success": true,
+            "score": 1.397231101989746,
+            "tied_winners": [
+              "far_chair_leather_s1"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "grounded_editscore": {
+            "name": "far_chair_leather_s3",
+            "success": true,
+            "score": 0.9797958971132712,
+            "tied_winners": [
+              "far_chair_leather_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          }
+        },
+        "seed0_success": true
+      },
+      {
+        "task_id": "dining_left_teal",
+        "split": "heldout",
+        "retry": false,
+        "candidates": 4,
+        "reviewed_successes": 2,
+        "unknown_labels": 0,
+        "requested_edit_successes": 4,
+        "protected_region_passes": 2,
+        "selection": {
+          "editscore": {
+            "name": "dining_left_teal_s0",
+            "success": false,
+            "score": 9.397872099576585,
+            "tied_winners": [
+              "dining_left_teal_s0",
+              "dining_left_teal_s1",
+              "dining_left_teal_s2",
+              "dining_left_teal_s3"
+            ],
+            "correct_pair_credit": 2.0,
+            "comparable_pairs": 4
+          },
+          "editreward": {
+            "name": "dining_left_teal_s3",
+            "success": false,
+            "score": 1.488994836807251,
+            "tied_winners": [
+              "dining_left_teal_s3"
+            ],
+            "correct_pair_credit": 2,
+            "comparable_pairs": 4
+          },
+          "editscore_task_crop": {
+            "name": "dining_left_teal_s0",
+            "success": false,
+            "score": 9.797958971132712,
+            "tied_winners": [
+              "dining_left_teal_s0",
+              "dining_left_teal_s1"
+            ],
+            "correct_pair_credit": 2.0,
+            "comparable_pairs": 4
+          },
+          "grounded_editscore": {
+            "name": "dining_left_teal_s0",
+            "success": false,
+            "score": 0.9397872099576585,
+            "tied_winners": [
+              "dining_left_teal_s0",
+              "dining_left_teal_s1",
+              "dining_left_teal_s2",
+              "dining_left_teal_s3"
+            ],
+            "correct_pair_credit": 2.0,
+            "comparable_pairs": 4
+          }
+        },
+        "seed0_success": false
+      },
+      {
+        "task_id": "dining_left_office",
+        "split": "heldout",
+        "retry": false,
+        "candidates": 4,
+        "reviewed_successes": 4,
+        "unknown_labels": 0,
+        "requested_edit_successes": 4,
+        "protected_region_passes": 4,
+        "selection": {
+          "editscore": {
+            "name": "dining_left_office_s0",
+            "success": true,
+            "score": 9.6,
+            "tied_winners": [
+              "dining_left_office_s0"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editreward": {
+            "name": "dining_left_office_s3",
+            "success": true,
+            "score": 1.4885001182556152,
+            "tied_winners": [
+              "dining_left_office_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "grounded_editscore": {
+            "name": "dining_left_office_s0",
+            "success": true,
+            "score": 0.96,
+            "tied_winners": [
+              "dining_left_office_s0"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          }
+        },
+        "seed0_success": true
+      },
+      {
+        "task_id": "dining_left_seat_blue",
+        "split": "heldout",
+        "retry": false,
+        "candidates": 4,
+        "reviewed_successes": 0,
+        "unknown_labels": 0,
+        "requested_edit_successes": 4,
+        "protected_region_passes": 0,
+        "selection": {
+          "editscore": {
+            "name": "dining_left_seat_blue_s1",
+            "success": false,
+            "score": 9.397872099576585,
+            "tied_winners": [
+              "dining_left_seat_blue_s1",
+              "dining_left_seat_blue_s2"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editreward": {
+            "name": "dining_left_seat_blue_s2",
+            "success": false,
+            "score": 1.235307216644287,
+            "tied_winners": [
+              "dining_left_seat_blue_s2"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editscore_task_crop": {
+            "name": "dining_left_seat_blue_s1",
+            "success": false,
+            "score": 7.95989949685296,
+            "tied_winners": [
+              "dining_left_seat_blue_s1"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "grounded_editscore": {
+            "name": "dining_left_seat_blue_s1",
+            "success": false,
+            "score": 0.9397872099576585,
+            "tied_winners": [
+              "dining_left_seat_blue_s1",
+              "dining_left_seat_blue_s2"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          }
+        },
+        "seed0_success": false
+      },
+      {
+        "task_id": "far_chair_seat_blue",
+        "split": "heldout",
+        "retry": false,
+        "candidates": 4,
+        "reviewed_successes": 4,
+        "unknown_labels": 0,
+        "requested_edit_successes": 4,
+        "protected_region_passes": 4,
+        "selection": {
+          "editscore": {
+            "name": "far_chair_seat_blue_s3",
+            "success": true,
+            "score": 9.6,
+            "tied_winners": [
+              "far_chair_seat_blue_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editreward": {
+            "name": "far_chair_seat_blue_s3",
+            "success": true,
+            "score": 1.7107875347137451,
+            "tied_winners": [
+              "far_chair_seat_blue_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editscore_task_crop": {
+            "name": "far_chair_seat_blue_s3",
+            "success": true,
+            "score": 9.797958971132712,
+            "tied_winners": [
+              "far_chair_seat_blue_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "grounded_editscore": {
+            "name": "far_chair_seat_blue_s3",
+            "success": true,
+            "score": 0.9248452186584473,
+            "tied_winners": [
+              "far_chair_seat_blue_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          }
+        },
+        "seed0_success": true
+      },
+      {
+        "task_id": "armchair_seat_blue_retry",
+        "split": "development",
+        "retry": true,
+        "candidates": 4,
+        "reviewed_successes": 4,
+        "unknown_labels": 0,
+        "requested_edit_successes": 4,
+        "protected_region_passes": 4,
+        "selection": {
+          "editscore": {
+            "name": "armchair_seat_blue_retry_s0",
+            "success": true,
+            "score": 9.6,
+            "tied_winners": [
+              "armchair_seat_blue_retry_s0",
+              "armchair_seat_blue_retry_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editreward": {
+            "name": "armchair_seat_blue_retry_s3",
+            "success": true,
+            "score": 1.3246877193450928,
+            "tied_winners": [
+              "armchair_seat_blue_retry_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "editscore_task_crop": {
+            "name": "armchair_seat_blue_retry_s1",
+            "success": true,
+            "score": 9.797958971132712,
+            "tied_winners": [
+              "armchair_seat_blue_retry_s1"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          },
+          "grounded_editscore": {
+            "name": "armchair_seat_blue_retry_s3",
+            "success": true,
+            "score": 0.96,
+            "tied_winners": [
+              "armchair_seat_blue_retry_s3"
+            ],
+            "correct_pair_credit": 0,
+            "comparable_pairs": 0
+          }
+        },
+        "seed0_success": true
+      }
+    ],
+    "development": {
+      "editscore": {
+        "top1_successes": 2,
+        "top1_known_tasks": 3,
+        "pair_credit": 0,
+        "comparable_pairs": 0
+      },
+      "editreward": {
+        "top1_successes": 2,
+        "top1_known_tasks": 3,
+        "pair_credit": 0,
+        "comparable_pairs": 0
+      },
+      "editscore_task_crop": {
+        "top1_successes": 1,
+        "top1_known_tasks": 2,
+        "pair_credit": 0,
+        "comparable_pairs": 0
+      },
+      "grounded_editscore": {
+        "top1_successes": 2,
+        "top1_known_tasks": 3,
+        "pair_credit": 0,
+        "comparable_pairs": 0
+      }
+    },
+    "heldout": {
+      "editscore": {
+        "top1_successes": 4,
+        "top1_known_tasks": 6,
+        "pair_credit": 2.0,
+        "comparable_pairs": 4
+      },
+      "editreward": {
+        "top1_successes": 4,
+        "top1_known_tasks": 6,
+        "pair_credit": 2,
+        "comparable_pairs": 4
+      },
+      "editscore_task_crop": {
+        "top1_successes": 2,
+        "top1_known_tasks": 4,
+        "pair_credit": 2.0,
+        "comparable_pairs": 4
+      },
+      "grounded_editscore": {
+        "top1_successes": 4,
+        "top1_known_tasks": 6,
+        "pair_credit": 2.0,
+        "comparable_pairs": 4
+      }
+    },
+    "retry_pools": [
+      {
+        "original_task": "armchair_seat_blue",
+        "retry_task": "armchair_seat_blue_retry",
+        "candidates": 8,
+        "note": "Development-only pool with extra generation and feedback; not a heldout policy-training result.",
+        "selection": {
+          "editscore": {
+            "name": "armchair_seat_blue_retry_s0",
+            "success": true,
+            "score": 9.6,
+            "tied_winners": [
+              "armchair_seat_blue_retry_s0",
+              "armchair_seat_blue_retry_s3"
+            ],
+            "correct_pair_credit": 11.0,
+            "comparable_pairs": 16
+          },
+          "editreward": {
+            "name": "armchair_seat_blue_retry_s3",
+            "success": true,
+            "score": 1.3246877193450928,
+            "tied_winners": [
+              "armchair_seat_blue_retry_s3"
+            ],
+            "correct_pair_credit": 16,
+            "comparable_pairs": 16
+          },
+          "editscore_task_crop": {
+            "name": "armchair_seat_blue_retry_s1",
+            "success": true,
+            "score": 9.797958971132712,
+            "tied_winners": [
+              "armchair_seat_blue_retry_s1"
+            ],
+            "correct_pair_credit": 10.0,
+            "comparable_pairs": 16
+          },
+          "grounded_editscore": {
+            "name": "armchair_seat_blue_retry_s3",
+            "success": true,
+            "score": 0.96,
+            "tied_winners": [
+              "armchair_seat_blue_retry_s3"
+            ],
+            "correct_pair_credit": 16,
+            "comparable_pairs": 16
+          }
+        }
+      }
+    ]
+  },
+  "reward_environment": {
+    "torch": "2.11.0",
+    "transformers": "4.57.0",
+    "peft": "0.17.1",
+    "trl": "0.8.6",
+    "qwen-vl-utils": "0.0.14",
+    "json-repair": "0.63.4",
+    "deepspeed": "0.19.7",
+    "timm": "1.0.29",
+    "Pillow": "12.2.0",
+    "numpy": "2.3.5",
+    "PyYAML": "6.0.2"
+  },
+  "model_provenance": {
+    "editscore_seed42": {
+      "model": "EditScore/EditScore-7B",
+      "judge_seed": 42,
+      "upstream_commit": "4609c5d2ebb62fdebf665d3c924686d896ef1f74",
+      "torch": "2.11.0+cu130",
+      "device": "cuda",
+      "baseline": true,
+      "view": "full",
+      "base_model_revision": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
+      "settings": {
+        "score_range": 25,
+        "temperature": 0.7,
+        "num_pass": 1,
+        "reduction": "average_last"
+      },
+      "transformers": "4.57.0"
+    },
+    "editreward_seed42": {
+      "model": "TIGER-Lab/EditReward-Qwen2.5-VL-7B",
+      "judge_seed": 42,
+      "upstream_commit": "77a93aaa461fe9187e0ff841b59ecc0d0620bb7f",
+      "torch": "2.11.0+cu130",
+      "device": "cuda",
+      "baseline": true,
+      "view": "full",
+      "base_model_revision": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
+      "settings": {
+        "pooling_strategy": "mean",
+        "attention": "sdpa",
+        "image_pixels": 200704
+      },
+      "transformers": "4.57.0"
+    },
+    "editscore_seed43": {
+      "model": "EditScore/EditScore-7B",
+      "judge_seed": 43,
+      "upstream_commit": "4609c5d2ebb62fdebf665d3c924686d896ef1f74",
+      "torch": "2.11.0+cu130",
+      "device": "cuda",
+      "baseline": true,
+      "view": "full",
+      "base_model_revision": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
+      "settings": {
+        "score_range": 25,
+        "temperature": 0.7,
+        "num_pass": 1,
+        "reduction": "average_last"
+      },
+      "transformers": "4.57.0"
+    },
+    "editscore_task_crop_seed42": {
+      "model": "EditScore/EditScore-7B",
+      "judge_seed": 42,
+      "upstream_commit": "4609c5d2ebb62fdebf665d3c924686d896ef1f74",
+      "torch": "2.11.0+cu130",
+      "device": "cuda",
+      "baseline": false,
+      "view": "task_crop",
+      "base_model_revision": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
+      "settings": {
+        "score_range": 25,
+        "temperature": 0.7,
+        "num_pass": 1,
+        "reduction": "average_last"
+      },
+      "transformers": "4.57.0"
+    }
+  },
+  "judge_stability": {
+    "judge_seed": 43,
+    "development_retry_pool": {
+      "name": "armchair_seat_blue_s2",
+      "success": false,
+      "score": 9.797958971132712,
+      "tied_winners": [
+        "armchair_seat_blue_s2",
+        "armchair_seat_blue_retry_s1",
+        "armchair_seat_blue_retry_s3"
+      ],
+      "correct_pair_credit": 13.0,
+      "comparable_pairs": 16
+    },
+    "scores": {
+      "armchair_seat_blue_s0": 9.397872099576585,
+      "armchair_seat_blue_s1": 9.397872099576585,
+      "armchair_seat_blue_s2": 9.797958971132712,
+      "armchair_seat_blue_s3": 7.58946638440411,
+      "armchair_leather_s0": 9.6,
+      "armchair_leather_s1": 9.6,
+      "armchair_leather_s2": 9.6,
+      "armchair_leather_s3": 9.397872099576585,
+      "sweater_one_sleeve_s0": 9.397872099576585,
+      "sweater_one_sleeve_s1": 9.397872099576585,
+      "sweater_one_sleeve_s2": 9.397872099576585,
+      "sweater_one_sleeve_s3": 9.6,
+      "sweater_black_preserve_print_s0": 9.397872099576585,
+      "sweater_black_preserve_print_s1": 9.6,
+      "sweater_black_preserve_print_s2": 9.6,
+      "sweater_black_preserve_print_s3": 9.6,
+      "armchair_seat_blue_retry_s0": 9.6,
+      "armchair_seat_blue_retry_s1": 9.797958971132712,
+      "armchair_seat_blue_retry_s2": 9.6,
+      "armchair_seat_blue_retry_s3": 9.797958971132712
+    }
+  },
+  "candidates": [
+    {
+      "name": "armchair_seat_blue_s0",
+      "task_id": "armchair_seat_blue",
+      "seed": 0,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.397872099576585,
+        "editreward_seed42": 0.7374176979064941,
+        "editscore_seed43": 9.397872099576585,
+        "editscore_task_crop_seed42": 9.397872099576585
+      },
+      "editscore_details": {
+        "prompt_following": 9.2,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.397872099576585,
+        "SC_reasoning": "The editing instruction was mostly followed: only the seat surface of the grey armchair was changed to royal blue fabric, while the curved backrest and both armrests remain grey. The rest of the scene, including the side table, magazine holder, floor lamp, walls, window, and floor, is preserved well with minimal changes. There is a slight discrepancy in the tone of blue which looks more vibrant than a typical royal blue, but overall, the edit is effective and minimally invasive.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and materials appear consistent and well-integrated into the environment. There are no noticeable artifacts, distortions, or blending issues. Only extremely minor potential issues with fabric texture uniformity prevent a perfect score."
+      },
+      "color_constraint_v3": 0.02718971340527787,
+      "grounded_editscore_v3": 0.02718971340527787,
+      "grounded_editscore_v2": 0.02718971340527787,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": false,
+        "scene_preserved": true,
+        "joint_success": false,
+        "evidence": "Backrest also recolored blue; magazine holder remains brown."
+      }
+    },
+    {
+      "name": "armchair_seat_blue_s1",
+      "task_id": "armchair_seat_blue",
+      "seed": 1,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.591663046625438,
+        "editreward_seed42": 0.5528541803359985,
+        "editscore_seed43": 9.397872099576585,
+        "editscore_task_crop_seed42": 9.397872099576585
+      },
+      "editscore_details": {
+        "prompt_following": 9.6,
+        "consistency": 9.2,
+        "perceptual_quality": 10.0,
+        "overall": 9.591663046625438,
+        "SC_reasoning": "The editing instruction was mostly followed: only the seat surface of the grey armchair was changed to royal blue fabric, while the curved backrest and both armrests remain grey. The rest of the scene, including the side table, magazine holder, floor lamp, walls, window, and floor, is preserved accurately. There is minimal overediting; only the specified area was altered.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and wall textures are well-rendered. There are no visible artifacts, distortions, or unnatural elements."
+      },
+      "color_constraint_v3": 0.03263948528638139,
+      "grounded_editscore_v3": 0.03263948528638139,
+      "grounded_editscore_v2": 0.03263948528638139,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": false,
+        "scene_preserved": true,
+        "joint_success": false,
+        "evidence": "Backrest also recolored blue; magazine holder remains brown."
+      }
+    },
+    {
+      "name": "armchair_seat_blue_s2",
+      "task_id": "armchair_seat_blue",
+      "seed": 2,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.591663046625438,
+        "editreward_seed42": 0.6397497653961182,
+        "editscore_seed43": 9.797958971132712,
+        "editscore_task_crop_seed42": 9.397872099576585
+      },
+      "editscore_details": {
+        "prompt_following": 9.2,
+        "consistency": 9.6,
+        "perceptual_quality": 10.0,
+        "overall": 9.591663046625438,
+        "SC_reasoning": "The editing instruction was mostly followed: only the seat surface of the grey armchair was changed to royal blue fabric, while the curved backrest and both armrests remained grey. The rest of the scene, including the side table, magazine holder, floor lamp, walls, window, and floor, were preserved well with minimal changes. There is a slight blue tint affecting the cushion near the left armrest, but overall, the edit is highly successful and minimally invasive.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and proportions; there are no visible artifacts, distortions, or unnatural elements present."
+      },
+      "color_constraint_v3": 0.0978398781226133,
+      "grounded_editscore_v3": 0.0978398781226133,
+      "grounded_editscore_v2": 0.0978398781226133,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": false,
+        "scene_preserved": false,
+        "joint_success": false,
+        "evidence": "Backrest stays grey, but the separate magazine holder turns blue."
+      }
+    },
+    {
+      "name": "armchair_seat_blue_s3",
+      "task_id": "armchair_seat_blue",
+      "seed": 3,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.591663046625438,
+        "editreward_seed42": 0.5951452255249023,
+        "editscore_seed43": 7.58946638440411,
+        "editscore_task_crop_seed42": 9.397872099576585
+      },
+      "editscore_details": {
+        "prompt_following": 9.2,
+        "consistency": 9.6,
+        "perceptual_quality": 10.0,
+        "overall": 9.591663046625438,
+        "SC_reasoning": "The editing instruction was mostly followed: only the seat surface of the grey armchair was changed to royal blue fabric, while the curved backrest and both armrests remained grey. The rest of the scene, including the magazine holder, side table, floor lamp, walls, window, and floor, were preserved well with minimal changes. There is a slight blue tint affecting the magazine holder, but overall the edit is very successful and minimally invasive.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and wall textures are well-rendered. There are no visible artifacts, distortions, or unnatural elements."
+      },
+      "color_constraint_v3": 0.029353421615269326,
+      "grounded_editscore_v3": 0.029353421615269326,
+      "grounded_editscore_v2": 0.029353421615269326,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": false,
+        "scene_preserved": false,
+        "joint_success": false,
+        "evidence": "Backrest partly blue and magazine holder turns blue."
+      }
+    },
+    {
+      "name": "armchair_leather_s0",
+      "task_id": "armchair_leather",
+      "seed": 0,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 10.0,
+        "editreward_seed42": 1.7161192893981934,
+        "editscore_seed43": 9.6
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 10.0,
+        "perceptual_quality": 10.0,
+        "overall": 10.0,
+        "SC_reasoning": "The editing was highly successful\u2014the grey fabric armchair was accurately replaced with black leather upholstery while maintaining the exact original chair silhouette, proportions, and position. The table, magazine holder, lamp, and room remain unchanged. There is no evidence of overediting; only the intended change was made.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and proportions; there are no visible artifacts, distortions, or unnatural elements present."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 1.0,
+      "grounded_editscore_v2": 1.0,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Black leather appearance is visible; original wraparound chair silhouette and surrounding objects are retained. Fine seams vary; no strict preference among the four is asserted."
+      }
+    },
+    {
+      "name": "armchair_leather_s1",
+      "task_id": "armchair_leather",
+      "seed": 1,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.6,
+        "editreward_seed42": 1.3569343090057373,
+        "editscore_seed43": 9.6
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.6,
+        "SC_reasoning": "The editing was highly successful\u2014the grey fabric armchair was accurately replaced with a black leather one while preserving its exact silhouette, proportions, and position. The magazine holder, lamp, and rest of the room remain unchanged. Minor differences in lighting or texture on the new chair are barely noticeable, indicating minimal overediting.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and furniture placement. There are no visible distortions, artifacts, or oddities; all elements are well integrated and clear."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.96,
+      "grounded_editscore_v2": 0.96,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Black leather appearance is visible; original wraparound chair silhouette and surrounding objects are retained. Fine seams vary; no strict preference among the four is asserted."
+      }
+    },
+    {
+      "name": "armchair_leather_s2",
+      "task_id": "armchair_leather",
+      "seed": 2,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.797958971132712,
+        "editreward_seed42": 1.4862942695617676,
+        "editscore_seed43": 9.6
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 10.0,
+        "perceptual_quality": 9.6,
+        "overall": 9.797958971132712,
+        "SC_reasoning": "The editing was highly successful\u2014the grey fabric armchair was accurately replaced with black leather upholstery while maintaining the exact original chair silhouette, proportions, and position. The table, magazine holder, lamp, and room remain unchanged. There is no evidence of overediting; only the intended change was made.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and furniture placement. There are no visible distortions, artifacts, or oddities; all elements are well integrated and clear."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.9797958971132712,
+      "grounded_editscore_v2": 0.9797958971132712,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Black leather appearance is visible; original wraparound chair silhouette and surrounding objects are retained. Fine seams vary; no strict preference among the four is asserted."
+      }
+    },
+    {
+      "name": "armchair_leather_s3",
+      "task_id": "armchair_leather",
+      "seed": 3,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 10.0,
+        "editreward_seed42": 1.653888463973999,
+        "editscore_seed43": 9.397872099576585
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 10.0,
+        "perceptual_quality": 10.0,
+        "overall": 10.0,
+        "SC_reasoning": "The editing was highly successful\u2014the grey fabric armchair was accurately replaced with black leather upholstery while maintaining the exact original chair silhouette, proportions, and position. The table, magazine holder, lamp, and room remain unchanged. There is no evidence of overediting; only the intended change was made.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and proportions; there are no visible artifacts, distortions, or unnatural elements present."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 1.0,
+      "grounded_editscore_v2": 1.0,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Black leather appearance is visible; original wraparound chair silhouette and surrounding objects are retained. Fine seams vary; no strict preference among the four is asserted."
+      }
+    },
+    {
+      "name": "sweater_one_sleeve_s0",
+      "task_id": "sweater_one_sleeve",
+      "seed": 0,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.2,
+        "editreward_seed42": 1.8603804111480713,
+        "editscore_seed43": 9.397872099576585,
+        "editscore_task_crop_seed42": 8.997777503361593
+      },
+      "editscore_details": {
+        "prompt_following": 9.6,
+        "consistency": 9.2,
+        "perceptual_quality": 9.2,
+        "overall": 9.2,
+        "SC_reasoning": "The editing instruction was followed very well: only the sleeve on the left side (holding the gift box) has been changed to royal blue while the right sleeve remains red. All white printed lettering and patterns are preserved, as well as the woman, gift box, trousers, and background. Minimal overediting is present, as only the specified area was altered.",
+        "PQ_reasoning": "The image looks very natural with realistic proportions, clothing texture, and lighting. The hand holding the gift bag appears slightly awkward but not overly distorted. There are minimal visible artifacts; the sweater pattern and text are clear, and the background blends well with the subject."
+      },
+      "color_constraint_v3": 0.9987629652023315,
+      "grounded_editscore_v3": 0.9199999999999999,
+      "grounded_editscore_v2": 0.9199999999999999,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Only the requested image-left sleeve is blue; torso and other sleeve remain red. Lettering remains readable. Minor folds and print geometry differ; no strict pairwise preference asserted."
+      }
+    },
+    {
+      "name": "sweater_one_sleeve_s1",
+      "task_id": "sweater_one_sleeve",
+      "seed": 1,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.397872099576585,
+        "editreward_seed42": 1.5237400531768799,
+        "editscore_seed43": 9.397872099576585,
+        "editscore_task_crop_seed42": 8.597674104081872
+      },
+      "editscore_details": {
+        "prompt_following": 9.6,
+        "consistency": 9.2,
+        "perceptual_quality": 9.6,
+        "overall": 9.397872099576585,
+        "SC_reasoning": "The editing instruction was followed very well: only the sleeve on the left side (holding the gift box) has been changed to royal blue while the right sleeve remains red. All white printed lettering and patterns are preserved, as well as the woman, gift box, trousers, and background. Minimal overediting is present, as only the specified area was altered.",
+        "PQ_reasoning": "The image looks very natural with realistic proportions, clothing texture, and lighting. There are no visible distortions or unusual artifacts, and the subject's pose and background blend well together."
+      },
+      "color_constraint_v3": 0.9959359169006348,
+      "grounded_editscore_v3": 0.9397872099576585,
+      "grounded_editscore_v2": 0.9397872099576585,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Only the requested image-left sleeve is blue; torso and other sleeve remain red. Lettering remains readable. Minor folds and print geometry differ; no strict pairwise preference asserted."
+      }
+    },
+    {
+      "name": "sweater_one_sleeve_s2",
+      "task_id": "sweater_one_sleeve",
+      "seed": 2,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.797958971132712,
+        "editreward_seed42": 1.7580420970916748,
+        "editscore_seed43": 9.397872099576585,
+        "editscore_task_crop_seed42": 9.397872099576585
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 10.0,
+        "perceptual_quality": 9.6,
+        "overall": 9.797958971132712,
+        "SC_reasoning": "The editing instruction was followed very well: only the sleeve on the left side was changed from red to royal blue, while the right sleeve and the rest of the sweater remain red. All printed lettering, patterns, the woman, gift box, trousers, and background are preserved. There is no evidence of overediting or loss of detail.",
+        "PQ_reasoning": "The image looks very natural with realistic proportions, clothing texture, and lighting. There are no visible distortions, unusual body parts, or artifacts present in the image."
+      },
+      "color_constraint_v3": 0.971348226070404,
+      "grounded_editscore_v3": 0.971348226070404,
+      "grounded_editscore_v2": 0.971348226070404,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Only the requested image-left sleeve is blue; torso and other sleeve remain red. Lettering remains readable. Minor folds and print geometry differ; no strict pairwise preference asserted."
+      }
+    },
+    {
+      "name": "sweater_one_sleeve_s3",
+      "task_id": "sweater_one_sleeve",
+      "seed": 3,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.397872099576585,
+        "editreward_seed42": 1.8043336868286133,
+        "editscore_seed43": 9.6,
+        "editscore_task_crop_seed42": 8.8
+      },
+      "editscore_details": {
+        "prompt_following": 9.6,
+        "consistency": 9.2,
+        "perceptual_quality": 9.6,
+        "overall": 9.397872099576585,
+        "SC_reasoning": "The editing instruction was followed very well: only the sleeve on the left side (holding the gift box) has been changed to royal blue while the right sleeve remains red. All white printed lettering and patterns are preserved, as well as the woman, gift box, trousers, and background. Minimal overediting is present, as only the specified area was altered.",
+        "PQ_reasoning": "The image looks very natural with realistic proportions, clothing texture, and lighting. There are no visible distortions, unusual body parts, or artifacts present in the image."
+      },
+      "color_constraint_v3": 0.9921034574508667,
+      "grounded_editscore_v3": 0.9397872099576585,
+      "grounded_editscore_v2": 0.9397872099576585,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Only the requested image-left sleeve is blue; torso and other sleeve remain red. Lettering remains readable. Minor folds and print geometry differ; no strict pairwise preference asserted."
+      }
+    },
+    {
+      "name": "sweater_black_preserve_print_s0",
+      "task_id": "sweater_black_preserve_print",
+      "seed": 0,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.397872099576585,
+        "editreward_seed42": 2.4670462608337402,
+        "editscore_seed43": 9.397872099576585
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 9.6,
+        "perceptual_quality": 9.2,
+        "overall": 9.397872099576585,
+        "SC_reasoning": "The editing was highly successful\u2014the sweater was changed from red to black exactly as instructed, while preserving all printed words, holiday patterns, and fabric details. The woman's pose, hair, skin, hands, gift box, trousers, and background remain unchanged, showing minimal overediting. Only slight differences in lighting and shadow exist, but they do not detract from the overall fidelity.",
+        "PQ_reasoning": "The image looks very natural with realistic proportions, clothing texture, and lighting. The hand holding the gift bag appears slightly awkward but not overly distorted. There are minimal visible artifacts; the text on the sweater is clear and the background is clean."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.9397872099576585,
+      "grounded_editscore_v2": 0.9397872099576585,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": null,
+        "scene_preserved": true,
+        "joint_success": null,
+        "evidence": "Black recolor succeeded and printed words remain readable. Exact glyph/pattern geometry is not verified; excluded from binary success aggregates rather than asserting pixel-exact print preservation."
+      }
+    },
+    {
+      "name": "sweater_black_preserve_print_s1",
+      "task_id": "sweater_black_preserve_print",
+      "seed": 1,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.6,
+        "editreward_seed42": 2.534721612930298,
+        "editscore_seed43": 9.6
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.6,
+        "SC_reasoning": "The editing was highly successful\u2014the sweater changed from red to black while preserving the exact white printed words, lettering shapes, holiday patterns, and fabric texture. The garment shape, folds, and overall appearance remain consistent. The woman's pose, hair, skin, hands, gift box, trousers, and background were also preserved. Only minimal, necessary changes were made, resulting in a near-perfect execution.",
+        "PQ_reasoning": "The image looks very natural with realistic proportions, clothing texture, and lighting. There are no visible distortions, unusual body parts, or artifacts present in the image."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.96,
+      "grounded_editscore_v2": 0.96,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": null,
+        "scene_preserved": true,
+        "joint_success": null,
+        "evidence": "Black recolor succeeded and printed words remain readable. Exact glyph/pattern geometry is not verified; excluded from binary success aggregates rather than asserting pixel-exact print preservation."
+      }
+    },
+    {
+      "name": "sweater_black_preserve_print_s2",
+      "task_id": "sweater_black_preserve_print",
+      "seed": 2,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.6,
+        "editreward_seed42": 2.5598416328430176,
+        "editscore_seed43": 9.6
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.6,
+        "SC_reasoning": "The editing was highly successful\u2014the sweater was changed from red to black exactly as instructed, while preserving all printed words, holiday patterns, and fabric details. The woman's pose, hair, skin, hands, gift box, trousers, and background remain unchanged, showing minimal overediting. Only slight differences in lighting and shadow exist, but they do not detract from the overall fidelity.",
+        "PQ_reasoning": "The image looks very natural with realistic proportions, lighting, and shadows. The clothing textures and hand details are well-rendered. There are no visible distortions, watermarks, or unusual body parts; everything appears harmonious."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.96,
+      "grounded_editscore_v2": 0.96,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": null,
+        "scene_preserved": true,
+        "joint_success": null,
+        "evidence": "Black recolor succeeded and printed words remain readable. Exact glyph/pattern geometry is not verified; excluded from binary success aggregates rather than asserting pixel-exact print preservation."
+      }
+    },
+    {
+      "name": "sweater_black_preserve_print_s3",
+      "task_id": "sweater_black_preserve_print",
+      "seed": 3,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.397872099576585,
+        "editreward_seed42": 2.509430408477783,
+        "editscore_seed43": 9.6
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 9.6,
+        "perceptual_quality": 9.2,
+        "overall": 9.397872099576585,
+        "SC_reasoning": "The editing was highly successful\u2014the sweater was changed from red to black exactly as instructed, while preserving all printed words, holiday patterns, and fabric details. The woman's pose, hair, skin, hands, gift box, trousers, and background remain unchanged, showing minimal overediting. Only slight differences in lighting and shadow exist, but they do not detract from the overall fidelity.",
+        "PQ_reasoning": "The image looks very natural with realistic proportions, clothing texture, and lighting. The hand holding the gift bag appears slightly awkward but not overly distorted. There are no obvious visual artifacts or inconsistencies apart from minor unnaturalness in the fingers."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.9397872099576585,
+      "grounded_editscore_v2": 0.9397872099576585,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": null,
+        "scene_preserved": true,
+        "joint_success": null,
+        "evidence": "Black recolor succeeded and printed words remain readable. Exact glyph/pattern geometry is not verified; excluded from binary success aggregates rather than asserting pixel-exact print preservation."
+      }
+    },
+    {
+      "name": "far_chair_blue_s0",
+      "task_id": "far_chair_blue",
+      "seed": 0,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.6,
+        "editreward_seed42": 1.6148715019226074,
+        "editscore_task_crop_seed42": 9.797958971132712
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.6,
+        "SC_reasoning": "The editing instruction was followed perfectly: only the farther chair, the one behind the white round table and closest to the window, was changed to royal blue while the nearer chair remained unchanged in its original rust color. Both chair shapes and fabric textures were preserved. No unnecessary changes were made to other elements like the table, pendant light, curtains, window, walls, or floor. Minimal overediting is present.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and curtains are well rendered and harmonious. There are no visible artifacts, distortions, or unnatural elements present."
+      },
+      "color_constraint_v3": 0.9672699570655823,
+      "grounded_editscore_v3": 0.96,
+      "grounded_editscore_v2": 0.96,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Farther chair is blue; nearer foreground chair remains rust. White table, curtain, light and scene remain visually consistent. Minor upholstery contours vary."
+      }
+    },
+    {
+      "name": "far_chair_blue_s1",
+      "task_id": "far_chair_blue",
+      "seed": 1,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.797958971132712,
+        "editreward_seed42": 1.7726603746414185,
+        "editscore_task_crop_seed42": 9.797958971132712
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 10.0,
+        "perceptual_quality": 9.6,
+        "overall": 9.797958971132712,
+        "SC_reasoning": "The editing instruction was followed perfectly: only the farther chair, the one behind the white round table and closest to the window, was changed to royal blue while the nearer chair remained unchanged in its original rust color. Both chair shapes and fabric textures were preserved, as well as the white table, pendant light, curtains, window, walls, floor, and lighting. There is no sign of overediting; the only change is the requested upholstery color.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture arrangement and curtain textures are convincing. There are no obvious artifacts, distortions, or visual errors, though the lamp's shape is slightly stylized but plausible for interior design."
+      },
+      "color_constraint_v3": 0.9483827948570251,
+      "grounded_editscore_v3": 0.9483827948570251,
+      "grounded_editscore_v2": 0.9483827948570251,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Farther chair is blue; nearer foreground chair remains rust. White table, curtain, light and scene remain visually consistent. Minor upholstery contours vary."
+      }
+    },
+    {
+      "name": "far_chair_blue_s2",
+      "task_id": "far_chair_blue",
+      "seed": 2,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.797958971132712,
+        "editreward_seed42": 1.553146481513977,
+        "editscore_task_crop_seed42": 9.797958971132712
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 10.0,
+        "perceptual_quality": 9.6,
+        "overall": 9.797958971132712,
+        "SC_reasoning": "The editing instruction was followed perfectly: only the farther chair, the one behind the white round table and closest to the window, was changed to royal blue while the nearer chair remained unchanged in its original rust color. Both chair shapes and fabric textures were preserved, as well as the white table, pendant light, curtains, window, walls, floor, and lighting. There is no sign of overediting; the only change is the intended upholstery color.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and curtains are well rendered without visible distortions or artifacts. Only minor softness around the lamp edges and window could be noted, but overall, it's highly effective."
+      },
+      "color_constraint_v3": 0.9528058171272278,
+      "grounded_editscore_v3": 0.9528058171272278,
+      "grounded_editscore_v2": 0.9528058171272278,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Farther chair is blue; nearer foreground chair remains rust. White table, curtain, light and scene remain visually consistent. Minor upholstery contours vary."
+      }
+    },
+    {
+      "name": "far_chair_blue_s3",
+      "task_id": "far_chair_blue",
+      "seed": 3,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.797958971132712,
+        "editreward_seed42": 1.8848425149917603,
+        "editscore_task_crop_seed42": 9.797958971132712
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 10.0,
+        "perceptual_quality": 9.6,
+        "overall": 9.797958971132712,
+        "SC_reasoning": "The editing instruction was followed perfectly: only the farther chair, the one behind the white round table and closest to the window, was changed to royal blue while the nearer chair remained unchanged in its original rust color. Both chair shapes and fabric textures were preserved, as well as the white table, pendant light, curtains, window, walls, floor, and lighting. There is no sign of overediting; the only change is the requested upholstery color.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and curtains are well rendered and harmonious. There are no visible artifacts, distortions, or unnatural elements."
+      },
+      "color_constraint_v3": 0.9583033919334412,
+      "grounded_editscore_v3": 0.9583033919334412,
+      "grounded_editscore_v2": 0.9583033919334412,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Farther chair is blue; nearer foreground chair remains rust. White table, curtain, light and scene remain visually consistent. Minor upholstery contours vary."
+      }
+    },
+    {
+      "name": "far_chair_leather_s0",
+      "task_id": "far_chair_leather",
+      "seed": 0,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.6,
+        "editreward_seed42": 0.9902170896530151
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.6,
+        "SC_reasoning": "The farther chair behind the white round table was successfully changed to cognac brown leather with realistic grain and subtle sheen, matching the instruction exactly. The closer foreground chair remains unchanged in its original rust-colored boucle fabric. All other elements\u2014white table, pendant light, curtains, window, walls, floor, and lighting\u2014are preserved with no unnecessary changes.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and curtains are well rendered and harmonious. There are no visible artifacts, distortions, or unnatural elements."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.96,
+      "grounded_editscore_v2": 0.96,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Far chair has brown leather sheen and seams while the nearer chair retains its rust boucle texture. Chair silhouettes and room remain visually consistent; minor seams and table shading vary."
+      }
+    },
+    {
+      "name": "far_chair_leather_s1",
+      "task_id": "far_chair_leather",
+      "seed": 1,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.6,
+        "editreward_seed42": 1.397231101989746
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.6,
+        "SC_reasoning": "The farther chair behind the white round table was successfully changed to cognac brown leather with realistic grain and subtle sheen, matching the instruction exactly. The closer foreground chair remains unchanged in its original rust-colored boucle fabric. All other elements\u2014table, pendant light, curtains, window, walls, floor, and lighting\u2014are preserved with minimal change.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and curtains are well rendered and harmonious. There are no visible artifacts, distortions, or unnatural elements present."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.96,
+      "grounded_editscore_v2": 0.96,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Far chair has brown leather sheen and seams while the nearer chair retains its rust boucle texture. Chair silhouettes and room remain visually consistent; minor seams and table shading vary."
+      }
+    },
+    {
+      "name": "far_chair_leather_s2",
+      "task_id": "far_chair_leather",
+      "seed": 2,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.6,
+        "editreward_seed42": 1.1101067066192627
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.6,
+        "SC_reasoning": "The editing was highly successful\u2014the farther chair behind the white round table was changed to cognac brown leather with realistic grain and sheen, while the nearer foreground chair remained in its original rust-colored boucle fabric. The table, pendant light, curtains, window, walls, and lighting were preserved without noticeable alteration. Only the required chair was changed, showing minimal overediting.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and curtains are well rendered and harmonious. There are no visible artifacts, distortions, or unnatural elements."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.96,
+      "grounded_editscore_v2": 0.96,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Far chair has brown leather sheen and seams while the nearer chair retains its rust boucle texture. Chair silhouettes and room remain visually consistent; minor seams and table shading vary."
+      }
+    },
+    {
+      "name": "far_chair_leather_s3",
+      "task_id": "far_chair_leather",
+      "seed": 3,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.797958971132712,
+        "editreward_seed42": 1.0108823776245117
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 10.0,
+        "perceptual_quality": 9.6,
+        "overall": 9.797958971132712,
+        "SC_reasoning": "The editing was highly successful\u2014the farther chair behind the white round table was changed to cognac brown leather with realistic grain and sheen, while the nearer foreground chair remained in its original rust-colored boucle fabric. All other elements including the table, pendant light, curtains, window, walls, and floor were preserved exactly, indicating no unnecessary or excessive changes.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and curtains are well rendered and harmonious. There are no visible artifacts, distortions, or inconsistencies."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.9797958971132712,
+      "grounded_editscore_v2": 0.9797958971132712,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Far chair has brown leather sheen and seams while the nearer chair retains its rust boucle texture. Chair silhouettes and room remain visually consistent; minor seams and table shading vary."
+      }
+    },
+    {
+      "name": "dining_left_teal_s0",
+      "task_id": "dining_left_teal",
+      "seed": 0,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.397872099576585,
+        "editreward_seed42": 1.1715177297592163,
+        "editscore_task_crop_seed42": 9.797958971132712
+      },
+      "editscore_details": {
+        "prompt_following": 9.2,
+        "consistency": 9.2,
+        "perceptual_quality": 9.6,
+        "overall": 9.397872099576585,
+        "SC_reasoning": "The editing instruction was mostly followed: only the burgundy seat and backrest upholstery of the left chair was changed to teal blue, while the ornate cream-colored frame was preserved. However, the entire backrest of the left chair was changed to teal, rather than just the seat and backrest. The chair on the right remained unchanged, fulfilling that part well. The rest of the image, including the table, lamp, mirrors, objects, floor, and lighting, were preserved with minimal change. There is slight overediting since both the seat and backrest were changed instead of just the seat.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and furniture arrangement. There are no visible distortions, artifacts, or oddities; all objects are well-defined and harmonized. Only minor imperfections in texture detail prevent a perfect score."
+      },
+      "color_constraint_v3": 0.9687276184558868,
+      "grounded_editscore_v3": 0.9397872099576585,
+      "grounded_editscore_v2": 0.3704252847050695,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": false,
+        "scene_preserved": false,
+        "joint_success": false,
+        "evidence": "Left upholstery becomes teal, but the protected right chair becomes noticeably darker/purpler, especially the backrest. This violates retaining its original upholstery color; the color-leakage-only verifier may miss this non-teal drift.",
+        "judgment_note": "Color-preservation label is a visual judgment; human confirmation is needed for fine tone tolerances."
+      }
+    },
+    {
+      "name": "dining_left_teal_s1",
+      "task_id": "dining_left_teal",
+      "seed": 1,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.397872099576585,
+        "editreward_seed42": 1.4191659688949585,
+        "editscore_task_crop_seed42": 9.797958971132712
+      },
+      "editscore_details": {
+        "prompt_following": 9.2,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.397872099576585,
+        "SC_reasoning": "The editing instruction was mostly followed: only the left chair's burgundy seat and backrest were changed to teal blue, while the ornate cream-colored frame remains unchanged. The right chair is kept entirely unchanged with its burgundy upholstery intact. The rest of the scene, including the table, lamp, mirrors, objects, floor, and lighting, remain preserved well. There is a slight unnatural look to the teal color and minor inconsistencies around the edges, but overall the edit is highly successful and minimally invasive.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and furniture arrangement. There are no visible distortions, watermarks, or unusual artifacts; all objects are well-integrated into the scene."
+      },
+      "color_constraint_v3": 0.9951640069484711,
+      "grounded_editscore_v3": 0.9397872099576585,
+      "grounded_editscore_v2": 0.2859420784329443,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Left upholstery becomes teal and the right chair remains visually close to the original burgundy; cream frames and scene retained. Minor texture and shading changes remain.",
+        "judgment_note": "Color-preservation label is a visual judgment; human confirmation is needed for fine tone tolerances."
+      }
+    },
+    {
+      "name": "dining_left_teal_s2",
+      "task_id": "dining_left_teal",
+      "seed": 2,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.397872099576585,
+        "editreward_seed42": 1.4707109928131104,
+        "editscore_task_crop_seed42": 8.313843876330612
+      },
+      "editscore_details": {
+        "prompt_following": 9.2,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.397872099576585,
+        "SC_reasoning": "The editing instruction was mostly followed: only the left chair's burgundy seat and backrest were changed to teal blue, while the ornate cream-colored frame remains unchanged. The right chair is still entirely burgundy. The rest of the scene is preserved with minimal overediting. Minor deduction for the slight shift in the color tone of the left chair's upholstery.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and furniture arrangement. There are no visible distortions, artifacts, or oddities; all objects are well-defined and harmonized. Only minor imperfections in texture detail prevent a perfect score."
+      },
+      "color_constraint_v3": 0.9893437623977661,
+      "grounded_editscore_v3": 0.9397872099576585,
+      "grounded_editscore_v2": 0.31401157458772944,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Left upholstery becomes teal and the right chair remains visually close to the original burgundy; cream frames and scene retained. Minor texture and shading changes remain.",
+        "judgment_note": "Color-preservation label is a visual judgment; human confirmation is needed for fine tone tolerances."
+      }
+    },
+    {
+      "name": "dining_left_teal_s3",
+      "task_id": "dining_left_teal",
+      "seed": 3,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.397872099576585,
+        "editreward_seed42": 1.488994836807251,
+        "editscore_task_crop_seed42": 8.313843876330612
+      },
+      "editscore_details": {
+        "prompt_following": 9.2,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.397872099576585,
+        "SC_reasoning": "The editing instruction was mostly followed: only the left chair's burgundy seat and backrest were changed to teal blue, while the ornate cream-colored frame remains unchanged. The right chair is still entirely burgundy. The rest of the scene is preserved with minimal overediting. Minor deduction for the slight shift in the color tone of the left chair's upholstery.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and furniture arrangement. There are no visible distortions, artifacts, or oddities; all objects are well-defined and harmonized. Only slight softness in background details keeps it from a perfect score."
+      },
+      "color_constraint_v3": 0.982041209936142,
+      "grounded_editscore_v3": 0.9397872099576585,
+      "grounded_editscore_v2": 0.5054917045449285,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": false,
+        "scene_preserved": false,
+        "joint_success": false,
+        "evidence": "Left upholstery becomes teal, but the protected right chair becomes noticeably darker/purpler, especially the backrest. This violates retaining its original upholstery color; the color-leakage-only verifier may miss this non-teal drift.",
+        "judgment_note": "Color-preservation label is a visual judgment; human confirmation is needed for fine tone tolerances."
+      }
+    },
+    {
+      "name": "dining_left_office_s0",
+      "task_id": "dining_left_office",
+      "seed": 0,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.6,
+        "editreward_seed42": 1.4722130298614502
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.6,
+        "SC_reasoning": "The ornate chair on the left was replaced with a modern black mesh office chair with armrests and a five-wheel base as instructed. The new chair is placed in the same spot, maintaining realistic scale and perspective. The ornate burgundy chair on the right, round table, lamp, mirrors, tabletop objects, floor, and lighting remain unchanged, showing minimal and effective editing.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and reflections; the furniture arrangement is believable and harmonious. There are almost no visible artifacts, distortions, or unnatural elements except for slight softness near the lamp shade's edge."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.96,
+      "grounded_editscore_v2": 0.96,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Only the left chair is replaced by a black mesh office chair with a wheeled base. The right burgundy chair, table, lamp and room remain visually consistent. The frame edge crops some wheel detail; exact wheel count is not certified."
+      }
+    },
+    {
+      "name": "dining_left_office_s1",
+      "task_id": "dining_left_office",
+      "seed": 1,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 8.138795979750322,
+        "editreward_seed42": 1.3337665796279907
+      },
+      "editscore_details": {
+        "prompt_following": 9.6,
+        "consistency": 9.2,
+        "perceptual_quality": 7.2,
+        "overall": 8.138795979750322,
+        "SC_reasoning": "The ornate chair on the left was replaced with a modern black mesh office chair with armrests and a five-wheel base as instructed. The new chair is realistically placed in the same spot, maintaining correct scale and perspective. The ornate burgundy chair on the right, round table, lamp, mirrors, tabletop objects, floor, and lighting remain unchanged. Only minor blending artifacts are visible around the new chair's base, but overall, the edit is highly successful and minimally invasive.",
+        "PQ_reasoning": "The image composition is mostly natural, with good lighting and perspective. However, the modern office chair appears unnaturally placed relative to the vintage furniture and the lamp's light source, making the scene feel slightly off. There are minor artifacts visible in the lower part of the image (floor area near the table), but overall artifact presence is low."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.8138795979750322,
+      "grounded_editscore_v2": 0.8138795979750322,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Only the left chair is replaced by a black mesh office chair with a wheeled base. The right burgundy chair, table, lamp and room remain visually consistent. The frame edge crops some wheel detail; exact wheel count is not certified."
+      }
+    },
+    {
+      "name": "dining_left_office_s2",
+      "task_id": "dining_left_office",
+      "seed": 2,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.397872099576585,
+        "editreward_seed42": 1.2606072425842285
+      },
+      "editscore_details": {
+        "prompt_following": 9.6,
+        "consistency": 9.2,
+        "perceptual_quality": 9.6,
+        "overall": 9.397872099576585,
+        "SC_reasoning": "The ornate chair on the left was replaced with a modern black mesh office chair with armrests and a five-wheel base as instructed. The new chair is realistically placed in the same spot, maintaining correct scale and perspective. The ornate burgundy chair on the right, round table, lamp, mirrors, tabletop objects, floor, and lighting remain unchanged. Only minor blending artifacts are visible around the new chair's base, but overall, the edit is highly successful and minimally invasive.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and reflections; the furniture arrangement is believable and harmonious. There are almost no visible artifacts, distortions, or unnatural elements except for slight softness near the lamp shade edge, but it's minimal."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.9397872099576585,
+      "grounded_editscore_v2": 0.9397872099576585,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Only the left chair is replaced by a black mesh office chair with a wheeled base. The right burgundy chair, table, lamp and room remain visually consistent. The frame edge crops some wheel detail; exact wheel count is not certified."
+      }
+    },
+    {
+      "name": "dining_left_office_s3",
+      "task_id": "dining_left_office",
+      "seed": 3,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 8.313843876330612,
+        "editreward_seed42": 1.4885001182556152
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 9.6,
+        "perceptual_quality": 7.2,
+        "overall": 8.313843876330612,
+        "SC_reasoning": "The ornate chair on the left was replaced with a modern black mesh office chair with armrests and a five-wheel base as instructed. The new chair is realistically placed in the same spot, maintaining correct scale and perspective. The ornate burgundy chair on the right, round table, lamp, mirrors, tabletop objects, floor, and lighting remain unchanged. Only minor blending artifacts are visible around the base of the new chair, but overall, the edit is highly successful and minimally invasive.",
+        "PQ_reasoning": "The image composition is mostly natural, with good lighting and perspective. However, the modern office chair appears unnaturally placed relative to the vintage furniture and the table, creating some visual inconsistency and affecting naturalness. There are minor artifacts around the edges of objects, particularly where the chair meets the floor and the lampshade's reflection, but no major distortions or blurring."
+      },
+      "color_constraint_v3": null,
+      "grounded_editscore_v3": 0.8313843876330612,
+      "grounded_editscore_v2": 0.8313843876330612,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Only the left chair is replaced by a black mesh office chair with a wheeled base. The right burgundy chair, table, lamp and room remain visually consistent. The frame edge crops some wheel detail; exact wheel count is not certified."
+      }
+    },
+    {
+      "name": "dining_left_seat_blue_s0",
+      "task_id": "dining_left_seat_blue",
+      "seed": 0,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 8.313843876330612,
+        "editreward_seed42": 0.9797664880752563,
+        "editscore_task_crop_seed42": 7.83836717690617
+      },
+      "editscore_details": {
+        "prompt_following": 7.2,
+        "consistency": 8.0,
+        "perceptual_quality": 9.6,
+        "overall": 8.313843876330612,
+        "SC_reasoning": "The editing instruction was mostly followed: the left chair's seat cushion was changed to royal blue while its backrest remains burgundy, with the ornate frame unchanged. However, the right chair's upholstery was also changed to burgundy instead of remaining blue, which is incorrect. Overediting occurred because both chairs were affected rather than just the left seat. Most other elements remain consistent.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and furniture arrangement. There are no visible distortions, watermarks, or unusual artifacts; all objects are well-integrated into the scene."
+      },
+      "color_constraint_v3": 0.9768276810646057,
+      "grounded_editscore_v3": 0.8313843876330612,
+      "grounded_editscore_v2": 0.8313843876330612,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": false,
+        "scene_preserved": true,
+        "joint_success": false,
+        "evidence": "Seat-only blue recolor is semantically achieved, but the left backrest becomes a much darker wine red instead of retaining its original warm red upholstery appearance. No blue leaks into the backrest. This exposes a source-color-preservation failure beyond target-color leakage.",
+        "judgment_note": "The instruction names burgundy, which may encourage tone normalization. Counted as a fidelity failure under change-only-seat; not a wrong-part blue recolor."
+      }
+    },
+    {
+      "name": "dining_left_seat_blue_s1",
+      "task_id": "dining_left_seat_blue",
+      "seed": 1,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.397872099576585,
+        "editreward_seed42": 1.1180617809295654,
+        "editscore_task_crop_seed42": 7.95989949685296
+      },
+      "editscore_details": {
+        "prompt_following": 9.2,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.397872099576585,
+        "SC_reasoning": "The editing instruction was mostly followed: only the seat cushion of the left chair was changed to royal blue, while the backrest remains burgundy and the ornate frame is unchanged. The rest of the scene is preserved with minimal overediting. There is a very minor inconsistency in the shade of burgundy on the right chair's backrest, which could be more precisely matched to the left chair's backrest color, but overall the edit is highly successful and minimally invasive.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and furniture arrangement. There are no visible distortions, watermarks, or unusual artifacts; everything appears harmoniously rendered."
+      },
+      "color_constraint_v3": 0.9570738077163696,
+      "grounded_editscore_v3": 0.9397872099576585,
+      "grounded_editscore_v2": 0.9397872099576585,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": false,
+        "scene_preserved": true,
+        "joint_success": false,
+        "evidence": "Seat-only blue recolor is semantically achieved, but the left backrest becomes a much darker wine red instead of retaining its original warm red upholstery appearance. No blue leaks into the backrest. This exposes a source-color-preservation failure beyond target-color leakage.",
+        "judgment_note": "The instruction names burgundy, which may encourage tone normalization. Counted as a fidelity failure under change-only-seat; not a wrong-part blue recolor."
+      }
+    },
+    {
+      "name": "dining_left_seat_blue_s2",
+      "task_id": "dining_left_seat_blue",
+      "seed": 2,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.397872099576585,
+        "editreward_seed42": 1.235307216644287,
+        "editscore_task_crop_seed42": 5.932958789676531
+      },
+      "editscore_details": {
+        "prompt_following": 9.2,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.397872099576585,
+        "SC_reasoning": "The editing instruction was mostly followed: only the seat cushion of the left chair was changed to royal blue, while the backrest remains burgundy and the ornate frame is unchanged. The rest of the scene is preserved with minimal overediting. There is a very minor inconsistency in the shade of burgundy on the right chair's backrest, which could be more precisely matched to the left chair's backrest color, but overall the edit is highly successful and minimally invasive.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and furniture arrangement. There are no noticeable distortions, artifacts, or oddities; all objects are well integrated and clear."
+      },
+      "color_constraint_v3": 0.9787212610244751,
+      "grounded_editscore_v3": 0.9397872099576585,
+      "grounded_editscore_v2": 0.9397872099576585,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": false,
+        "scene_preserved": true,
+        "joint_success": false,
+        "evidence": "Seat-only blue recolor is semantically achieved, but the left backrest becomes a much darker wine red instead of retaining its original warm red upholstery appearance. No blue leaks into the backrest. This exposes a source-color-preservation failure beyond target-color leakage.",
+        "judgment_note": "The instruction names burgundy, which may encourage tone normalization. Counted as a fidelity failure under change-only-seat; not a wrong-part blue recolor."
+      }
+    },
+    {
+      "name": "dining_left_seat_blue_s3",
+      "task_id": "dining_left_seat_blue",
+      "seed": 3,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.2,
+        "editreward_seed42": 0.7526000738143921,
+        "editscore_task_crop_seed42": 7.019971509913698
+      },
+      "editscore_details": {
+        "prompt_following": 9.2,
+        "consistency": 9.6,
+        "perceptual_quality": 9.2,
+        "overall": 9.2,
+        "SC_reasoning": "The editing instruction was mostly followed: only the seat cushion of the left chair was changed to royal blue, while the backrest remains burgundy and the ornate frame is unchanged. The rest of the scene is preserved with minimal overediting. There is a very slight inconsistency in the shade of burgundy on the right chair's backrest, which could be more precisely matched to the original, but overall the edit is successful and minimally invasive.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and proportions; the furniture arrangement and reflections make sense. Minor artifacts can be seen around the edges of the table legs and some small details on the magazine, but overall, there are no major distortions or glaring issues."
+      },
+      "color_constraint_v3": 0.9772655963897705,
+      "grounded_editscore_v3": 0.9199999999999999,
+      "grounded_editscore_v2": 0.9199999999999999,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": false,
+        "scene_preserved": true,
+        "joint_success": false,
+        "evidence": "Seat-only blue recolor is semantically achieved, but the left backrest becomes a much darker wine red instead of retaining its original warm red upholstery appearance. No blue leaks into the backrest. This exposes a source-color-preservation failure beyond target-color leakage.",
+        "judgment_note": "The instruction names burgundy, which may encourage tone normalization. Counted as a fidelity failure under change-only-seat; not a wrong-part blue recolor."
+      }
+    },
+    {
+      "name": "far_chair_seat_blue_s0",
+      "task_id": "far_chair_seat_blue",
+      "seed": 0,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.191300234460845,
+        "editreward_seed42": 1.4090278148651123,
+        "editscore_task_crop_seed42": 9.397872099576585
+      },
+      "editscore_details": {
+        "prompt_following": 8.8,
+        "consistency": 9.2,
+        "perceptual_quality": 9.6,
+        "overall": 9.191300234460845,
+        "SC_reasoning": "The editing instruction was mostly followed: only the farthest chair's seat cushion was changed to royal blue, while the backrest remains rust-colored and the other elements are preserved. However, the base of the nearest chair also appears to have been edited to blue, which is a slight deviation. Overall, the changes are subtle and maintain most aspects of the original scene.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and curtains are well rendered and harmonious. There are no visible artifacts, distortions, or unnatural elements present."
+      },
+      "color_constraint_v3": 0.988235592842102,
+      "grounded_editscore_v3": 0.9191300234460845,
+      "grounded_editscore_v2": 0.9191300234460845,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Far chair seat and its lower front become blue; tall backrest stays rust. Near chair retains rust upholstery, and white table, curtains and scene remain visually consistent."
+      }
+    },
+    {
+      "name": "far_chair_seat_blue_s1",
+      "task_id": "far_chair_seat_blue",
+      "seed": 1,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.191300234460845,
+        "editreward_seed42": 1.2860398292541504,
+        "editscore_task_crop_seed42": 9.397872099576585
+      },
+      "editscore_details": {
+        "prompt_following": 8.8,
+        "consistency": 9.2,
+        "perceptual_quality": 9.6,
+        "overall": 9.191300234460845,
+        "SC_reasoning": "The editing instruction was mostly followed: only the farthest chair's seat cushion was changed to royal blue, while the backrest remains rust-colored and the other chair is untouched. However, the base/pedestal under the table also turned blue instead of remaining rust, which slightly deviates from the instruction. Minimal changes were made otherwise, preserving the rest of the scene well.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and curtains are well rendered and harmonious. There are no visible artifacts, distortions, or unnatural elements present."
+      },
+      "color_constraint_v3": 0.9761618375778198,
+      "grounded_editscore_v3": 0.9191300234460845,
+      "grounded_editscore_v2": 0.9191300234460845,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Far chair seat and its lower front become blue; tall backrest stays rust. Near chair retains rust upholstery, and white table, curtains and scene remain visually consistent."
+      }
+    },
+    {
+      "name": "far_chair_seat_blue_s2",
+      "task_id": "far_chair_seat_blue",
+      "seed": 2,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.191300234460845,
+        "editreward_seed42": 1.5323262214660645,
+        "editscore_task_crop_seed42": 9.6
+      },
+      "editscore_details": {
+        "prompt_following": 8.8,
+        "consistency": 9.2,
+        "perceptual_quality": 9.6,
+        "overall": 9.191300234460845,
+        "SC_reasoning": "The editing instruction was mostly followed: only the seat cushion of the farther chair was changed to royal blue, while the tall backrest remained rust-colored and the rest of the scene was preserved. However, there is a minor inconsistency\u2014the entire base of the table and part of the table legs also turned blue, which wasn't required. Otherwise, the changes are minimal and effective.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and curtains are well rendered and harmonious. There are no visible artifacts, distortions, or unnatural elements present."
+      },
+      "color_constraint_v3": 0.9690673351287842,
+      "grounded_editscore_v3": 0.9191300234460845,
+      "grounded_editscore_v2": 0.9191300234460845,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Far chair seat and its lower front become blue; tall backrest stays rust. Near chair retains rust upholstery, and white table, curtains and scene remain visually consistent."
+      }
+    },
+    {
+      "name": "far_chair_seat_blue_s3",
+      "task_id": "far_chair_seat_blue",
+      "seed": 3,
+      "split": "heldout",
+      "scores": {
+        "editscore_seed42": 9.6,
+        "editreward_seed42": 1.7107875347137451,
+        "editscore_task_crop_seed42": 9.797958971132712
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.6,
+        "SC_reasoning": "The editing instruction was followed very well: only the seat cushion of the farther chair (behind the white table) was changed to royal blue, while the tall backrest remained rust-colored. The nearest chair in the foreground remains unchanged in its rust color, and all other elements\u2014table, pendant light, curtains, window, walls, floor, and lighting\u2014are preserved with minimal alteration. There is almost no overediting; only the intended area was modified.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and curtains are well rendered and harmonious. There are no visible artifacts, distortions, or unnatural elements present."
+      },
+      "color_constraint_v3": 0.9248452186584473,
+      "grounded_editscore_v3": 0.9248452186584473,
+      "grounded_editscore_v2": 0.9248452186584473,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Far chair seat and its lower front become blue; tall backrest stays rust. Near chair retains rust upholstery, and white table, curtains and scene remain visually consistent."
+      }
+    },
+    {
+      "name": "armchair_seat_blue_retry_s0",
+      "task_id": "armchair_seat_blue_retry",
+      "seed": 0,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.6,
+        "editreward_seed42": 1.0046167373657227,
+        "editscore_seed43": 9.6,
+        "editscore_task_crop_seed42": 9.397872099576585
+      },
+      "editscore_details": {
+        "prompt_following": 10.0,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.6,
+        "SC_reasoning": "The editing instruction was followed very well: only the seat surface of the grey armchair was changed to royal blue fabric while the curved backrest and both armrests remained grey. The rest of the scene, including the side table, magazine holder, floor lamp, walls, window, and floor, is preserved exactly as in the original image. There is almost no overediting; only the intended area was changed.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and perspective. The furniture and materials are rendered well without visible artifacts, distortions, or unnatural features."
+      },
+      "color_constraint_v3": 0.9570327401161194,
+      "grounded_editscore_v3": 0.9570327401161194,
+      "grounded_editscore_v2": 0.9570327401161194,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Seat/front is blue; curved backrest and arms stay grey; separate magazine holder remains brown. The original protected-region violations are corrected.",
+        "judgment_note": "The retry explicitly includes the continuous lower front in the blue seat region. Human review should confirm this interpretation of seat surface; the demonstrated gain is preservation of backrest, arms and magazine holder."
+      }
+    },
+    {
+      "name": "armchair_seat_blue_retry_s1",
+      "task_id": "armchair_seat_blue_retry",
+      "seed": 1,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.591663046625438,
+        "editreward_seed42": 1.2134466171264648,
+        "editscore_seed43": 9.797958971132712,
+        "editscore_task_crop_seed42": 9.797958971132712
+      },
+      "editscore_details": {
+        "prompt_following": 9.6,
+        "consistency": 9.2,
+        "perceptual_quality": 10.0,
+        "overall": 9.591663046625438,
+        "SC_reasoning": "The editing instruction was followed very well: only the seat surface of the grey armchair was changed to royal blue fabric while the curved backrest and both armrests remained grey. The rest of the scene, including the black side table, magazine holder, floor lamp, walls, window, and floor, were preserved with no signs of overediting. There is a minor difference in lighting on the blue area compared to the original, but it's barely noticeable and does not detract from the overall effectiveness.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and proportions; there are no visible artifacts, distortions, or unnatural elements present."
+      },
+      "color_constraint_v3": 0.9539326429367065,
+      "grounded_editscore_v3": 0.9539326429367065,
+      "grounded_editscore_v2": 0.9539326429367065,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Seat/front is blue; curved backrest and arms stay grey; separate magazine holder remains brown. The original protected-region violations are corrected.",
+        "judgment_note": "The retry explicitly includes the continuous lower front in the blue seat region. Human review should confirm this interpretation of seat surface; the demonstrated gain is preservation of backrest, arms and magazine holder."
+      }
+    },
+    {
+      "name": "armchair_seat_blue_retry_s2",
+      "task_id": "armchair_seat_blue_retry",
+      "seed": 2,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.397872099576585,
+        "editreward_seed42": 1.2618330717086792,
+        "editscore_seed43": 9.6,
+        "editscore_task_crop_seed42": 9.397872099576585
+      },
+      "editscore_details": {
+        "prompt_following": 9.6,
+        "consistency": 9.2,
+        "perceptual_quality": 9.6,
+        "overall": 9.397872099576585,
+        "SC_reasoning": "The editing instruction was followed very well: only the seat surface of the grey armchair was changed to royal blue fabric while the curved backrest and both armrests remained grey. The rest of the scene, including the black side table, magazine holder, floor lamp, walls, window, and floor, were preserved with no signs of overediting. There is a minor difference in lighting on the blue area compared to the original, but it's barely noticeable and does not detract from the overall effectiveness.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and furniture arrangement. There are no visible distortions, artifacts, or oddities; all elements are well integrated and clear."
+      },
+      "color_constraint_v3": 0.9394042491912842,
+      "grounded_editscore_v3": 0.9394042491912842,
+      "grounded_editscore_v2": 0.9394042491912842,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Seat/front is blue; curved backrest and arms stay grey; separate magazine holder remains brown. The original protected-region violations are corrected.",
+        "judgment_note": "The retry explicitly includes the continuous lower front in the blue seat region. Human review should confirm this interpretation of seat surface; the demonstrated gain is preservation of backrest, arms and magazine holder."
+      }
+    },
+    {
+      "name": "armchair_seat_blue_retry_s3",
+      "task_id": "armchair_seat_blue_retry",
+      "seed": 3,
+      "split": "development",
+      "scores": {
+        "editscore_seed42": 9.6,
+        "editreward_seed42": 1.3246877193450928,
+        "editscore_seed43": 9.797958971132712,
+        "editscore_task_crop_seed42": 9.397872099576585
+      },
+      "editscore_details": {
+        "prompt_following": 9.6,
+        "consistency": 9.6,
+        "perceptual_quality": 9.6,
+        "overall": 9.6,
+        "SC_reasoning": "The editing instruction was followed very well: only the seat surface of the grey armchair was changed to royal blue fabric while the curved backrest and both armrests remained grey. The rest of the scene, including the side table, magazine holder, floor lamp, walls, window, and floor, were preserved exactly as in the original image. There is almost no overediting; only the intended area was changed.",
+        "PQ_reasoning": "The image looks very natural with realistic lighting, shadows, and furniture arrangement. There are no visible distortions, artifacts, or oddities; all elements are well integrated and clear."
+      },
+      "color_constraint_v3": 0.9701550602912903,
+      "grounded_editscore_v3": 0.96,
+      "grounded_editscore_v2": 0.96,
+      "review": {
+        "edit_success": true,
+        "protected_parts_pass": true,
+        "scene_preserved": true,
+        "joint_success": true,
+        "evidence": "Seat/front is blue; curved backrest and arms stay grey; separate magazine holder remains brown. The original protected-region violations are corrected.",
+        "judgment_note": "The retry explicitly includes the continuous lower front in the blue seat region. Human review should confirm this interpretation of seat surface; the demonstrated gain is preservation of backrest, arms and magazine holder."
+      }
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+[
+  {
+    "name": "armchair_seat_blue",
+    "source": "sources/armchair.jpg",
+    "split": "development",
+    "task_type": "part_recolor",
+    "prompt": "Change only the seat surface of the grey armchair to royal blue fabric. Keep the curved backrest and both armrests grey. Preserve the original chair shape, fabric texture, black side table, magazine holder, floor lamp, walls, window, and floor."
+  },
+  {
+    "name": "armchair_leather",
+    "source": "sources/armchair.jpg",
+    "split": "development",
+    "task_type": "material",
+    "prompt": "Replace the grey fabric upholstery of the armchair with black leather. Preserve the exact original chair silhouette, proportions and position. Keep the table, magazine holder, lamp and room unchanged."
+  },
+  {
+    "name": "sweater_one_sleeve",
+    "source": "sources/sweater.jpg",
+    "split": "development",
+    "task_type": "part_recolor",
+    "prompt": "Create a two-tone version of this sweater: change only the sleeve on the left side of the image, on the arm holding the gift box, from red to royal blue. Keep the sweater torso and the sleeve on the right red. Preserve all white printed lettering and patterns, the woman, gift box, trousers and background."
+  },
+  {
+    "name": "sweater_black_preserve_print",
+    "source": "sources/sweater.jpg",
+    "split": "development",
+    "task_type": "recolor_preserve_print",
+    "prompt": "Change the red sweater to black for a clothing catalogue color variant. Preserve the exact white printed words, lettering shapes, holiday patterns, fabric texture, folds and garment shape. Keep the woman, her hair, skin, hands, pose, gift box, trousers and background unchanged."
+  },
+  {
+    "name": "far_chair_blue",
+    "source": "sources/two_chairs.jpg",
+    "split": "heldout",
+    "task_type": "instance_recolor",
+    "prompt": "Change the rust-colored upholstery of only the farther chair, the one behind the white round table and closest to the window, to royal blue. Keep the nearer chair in the foreground completely unchanged in its original rust color. Preserve both chair shapes and fabric textures, the white table, pendant light, curtains, window, walls, floor and lighting."
+  },
+  {
+    "name": "far_chair_leather",
+    "source": "sources/two_chairs.jpg",
+    "split": "heldout",
+    "task_type": "material",
+    "prompt": "Change only the farther chair behind the white round table to cognac brown leather upholstery with realistic leather grain and subtle sheen. Keep its existing shape. Keep the nearer foreground chair in its original rust-colored boucle fabric. Preserve the white table, pendant light, curtains, window, walls, floor and lighting."
+  },
+  {
+    "name": "dining_left_teal",
+    "source": "sources/dining.jpg",
+    "split": "heldout",
+    "task_type": "instance_recolor",
+    "prompt": "Change only the burgundy seat and backrest upholstery of the chair on the left to teal blue fabric. Keep its ornate cream-colored wooden frame exactly as it is. Keep the chair on the right entirely unchanged, including its burgundy upholstery. Preserve the table, lamp, mirrors, objects on the table, floor and lighting."
+  },
+  {
+    "name": "dining_left_office",
+    "source": "sources/dining.jpg",
+    "split": "heldout",
+    "task_type": "replacement",
+    "prompt": "Replace only the ornate chair on the left with a modern black mesh office chair with armrests and a five-wheel base. Keep it in the same place at a realistic scale and perspective. Keep the ornate burgundy chair on the right, the round table, lamp, mirrors, tabletop objects, floor and lighting unchanged."
+  },
+  {
+    "name": "dining_left_seat_blue",
+    "source": "sources/dining.jpg",
+    "split": "heldout",
+    "task_type": "part_recolor",
+    "prompt": "Create a two-tone upholstery option for the chair on the left: change only its seat cushion to royal blue fabric. Keep its backrest upholstery burgundy and its ornate cream wooden frame unchanged. Keep the entire chair on the right burgundy. Preserve the table, lamp, mirrors, tabletop objects, floor and lighting."
+  },
+  {
+    "name": "far_chair_seat_blue",
+    "source": "sources/two_chairs.jpg",
+    "split": "heldout",
+    "task_type": "part_recolor",
+    "prompt": "Change only the seat cushion of the farther chair, behind the white round table near the window, to royal blue fabric. Keep its tall backrest rust-colored. Keep the entire nearer chair in the foreground in its original rust color. Preserve both chair shapes, the white table, pendant light, curtains, window, walls, floor and lighting."
+  },
+  {
+    "name": "armchair_seat_blue_retry",
+    "source": "sources/armchair.jpg",
+    "split": "development",
+    "task_type": "part_recolor",
+    "evaluation_task_id": "armchair_seat_blue",
+    "evaluation_prompt": "Change only the seat surface of the grey armchair to royal blue fabric. Keep the curved backrest and both armrests grey. Preserve the original chair shape, fabric texture, black side table, magazine holder, floor lamp, walls, window, and floor.",
+    "intervention": "One explicit localization-feedback retry after all four original seeds violated protected-region constraints. Same original source and same seeds; no postprocessing.",
+    "prompt": "Make a precise two-tone upholstery edit of the large grey armchair. Recolor ONLY the seat cushion and its continuous lower front surface royal blue. The ENTIRE curved wraparound BACKREST above the seat must remain the original grey, including the left rear section. BOTH armrests must remain grey. The separate brown leather magazine rack standing to the LEFT of the chair is NOT part of the chair: keep it brown, never blue. Keep the black side table, lamp, room, camera view and all shapes unchanged. The final chair has a blue seat below a completely grey curved backrest and grey arms."
+  }
+]
