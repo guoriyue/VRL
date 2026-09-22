@@ -51,3 +51,72 @@ def test_multiple_references_are_rejected_instead_of_silently_dropping_one(tmp_p
     )
     with pytest.raises(ValueError, match="one reference"):
         model(artifact)
+
+
+def test_locality_adapter_validates_task_identity_and_emits_separate_scores(tmp_path):
+    import json
+    from dataclasses import replace
+
+    from vrl.utils.artifacts import sha256_file
+
+    source = tmp_path / "source.png"
+    Image.new("RGB", (20, 10), "grey").save(source)
+    prompt = "Change only the left half blue."
+    config = {
+        "color_hue_degrees": {"blue": 240},
+        "hue_sigma_degrees": 25,
+        "saturation_start": 0.15,
+        "saturation_full": 0.5,
+        "quality_weight": 0.2,
+        "tasks": {
+            "test": {
+                "prompt": prompt,
+                "source_sha256": sha256_file(source),
+                "color": "blue",
+                "target": [[0, 0, 0.5, 1]],
+                "protected": {"right": [0.5, 0, 1, 1]},
+            }
+        },
+    }
+    path = tmp_path / "locality.json"
+    path.write_text(json.dumps(config))
+
+    class Judge:
+        def reward(self, **kwargs):
+            return torch.tensor([[0.5, -2.0]])
+
+    model = EditRewardModel(
+        {
+            "data_root": str(tmp_path),
+            "device": "cpu",
+            "locality_config": str(path),
+            "audit_dir": str(tmp_path / "audit"),
+        }
+    )
+    model._module = Judge()
+    image = torch.full((3, 10, 20), 128, dtype=torch.uint8)
+    image[:, :, :10] = torch.tensor([0, 0, 255], dtype=torch.uint8)[:, None, None]
+    artifact = RewardInferenceArtifact(
+        artifact_id="a",
+        sample_id="s",
+        path="",
+        prompt=prompt,
+        media=image,
+        metadata={"task_id": "test", "reference_image": "source.png"},
+    )
+    scores = model(artifact)
+    assert scores["editreward"] == 0.5
+    assert scores["completion"] > 0.99
+    assert scores["preservation_right"] == 1
+    assert scores["editreward_locality"] > 1
+    record = json.loads(next((tmp_path / "audit").glob("*.json")).read_text())
+    assert record["sample_id"] == artifact.sample_id
+    assert record["scores"] == scores
+    with Image.open(tmp_path / "audit" / record["image"]) as saved:
+        assert saved.getpixel((0, 0)) == (0, 0, 255)
+        assert saved.getpixel((19, 0)) == (128, 128, 128)
+    with pytest.raises(ValueError, match="Uncalibrated"):
+        model(replace(artifact, prompt="Change everything blue."))
+    Image.new("RGB", (20, 10), "red").save(source)
+    with pytest.raises(ValueError, match="source image changed"):
+        model(artifact)

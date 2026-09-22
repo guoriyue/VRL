@@ -9,37 +9,14 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from vrl.rewards.models.color_locality import membership
+
 
 def rgb_pixels(path: Path) -> np.ndarray:
     with Image.open(path) as im:
         rgba = im.convert("RGBA")
         rgb = Image.alpha_composite(Image.new("RGBA", rgba.size, "white"), rgba).convert("RGB")
     return np.asarray(rgb, dtype=np.float32) / 255.0
-
-
-def membership(pixels: np.ndarray, box: list[float], *, hue: float, config: dict) -> float:
-    height, width = pixels.shape[:2]
-    x0, y0, x1, y1 = [
-        round(v * n) for v, n in zip(box, [width, height, width, height], strict=True)
-    ]
-    patch = pixels[y0:y1, x0:x1]
-    if not patch.size:
-        raise ValueError(f"Empty witness patch: {box}")
-    hsv = np.asarray(
-        Image.fromarray((patch * 255).round().astype(np.uint8)).convert("HSV"), dtype=np.float32
-    )
-    hsv[..., 0] *= 360.0 / 255.0
-    hsv[..., 1:] /= 255.0
-    difference = np.abs(hsv[..., 0] - hue)
-    difference = np.minimum(difference, 360 - difference)
-    hue_score = np.exp(-0.5 * (difference / config["hue_sigma_degrees"]) ** 2)
-    saturation = np.clip(
-        (hsv[..., 1] - config["saturation_start"])
-        / (config["saturation_full"] - config["saturation_start"]),
-        0,
-        1,
-    )
-    return float((hue_score * saturation).mean())
 
 
 def main() -> None:

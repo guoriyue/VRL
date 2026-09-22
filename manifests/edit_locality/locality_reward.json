@@ -1,0 +1,85 @@
+{
+  "version": 3,
+  "color_hue_degrees": {
+    "blue": 225.0,
+    "teal": 180.0
+  },
+  "hue_sigma_degrees": 25.0,
+  "saturation_start": 0.15,
+  "saturation_full": 0.5,
+  "color_reference": "Royal blue uses the conventional #4169E1 swatch hue (~225 degrees); teal uses #008080 (~180 degrees). Broad hue tolerance accommodates shading. Version 2 corrects the pure-blue/royal-blue distinction using development data before heldout generation/scoring.",
+  "tasks": {
+    "armchair_seat_blue": {
+      "color": "blue",
+      "target": [
+        [
+          0.43,
+          0.735,
+          0.54,
+          0.77
+        ]
+      ],
+      "protected": {
+        "backrest": [
+          0.43,
+          0.64,
+          0.59,
+          0.69
+        ],
+        "right_arm": [
+          0.76,
+          0.69,
+          0.9,
+          0.73
+        ],
+        "magazine_holder": [
+          0.12,
+          0.73,
+          0.25,
+          0.85
+        ]
+      },
+      "prompt": "Change only the seat surface of the grey armchair to royal blue fabric. Keep the curved backrest and both armrests grey. Preserve the original chair shape, fabric texture, black side table, magazine holder, floor lamp, walls, window, and floor.",
+      "source_sha256": "40863a2472c17ff0d42852b3809b223e47027821785e18bbfa48e6bbff780f9a"
+    },
+    "sweater_one_sleeve": {
+      "color": "blue",
+      "target": [
+        [
+          0.25,
+          0.41,
+          0.29,
+          0.54
+        ]
+      ],
+      "protected": {
+        "other_sleeve": [
+          0.72,
+          0.43,
+          0.76,
+          0.51
+        ],
+        "torso": [
+          0.54,
+          0.565,
+          0.58,
+          0.595
+        ],
+        "gift_red_square": [
+          0.376,
+          0.643,
+          0.393,
+          0.658
+        ]
+      },
+      "prompt": "Create a two-tone version of this sweater: change only the sleeve on the left side of the image, on the arm holding the gift box, from red to royal blue. Keep the sweater torso and the sleeve on the right red. Preserve all white printed lettering and patterns, the woman, gift box, trousers and background.",
+      "source_sha256": "029f1bc1afb598be8541f3f56c0530d6f4a439dff1bc90986eaf52263c83db29"
+    }
+  },
+  "quality_weight": 0.21039109276716772,
+  "calibration": {
+    "fit_min_locality_gap": 0.8415643710686709,
+    "rule": "quality_weight = fit_min_locality_gap / 4; bounded quality range [-1,1]",
+    "source_rules_sha256": "5329d7a90b0ac9b5ce7938d0fced6e6706d787f47a13a7b0bed1ea7fc6161c48"
+  }
+}

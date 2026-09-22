@@ -1,0 +1,25 @@
+# Calibrated spatial witnesses plus the released quality judge.
+host: 127.0.0.1
+port: 8316
+model_name: editreward-locality-v1
+model_version: 51b92ab5246295637c4ab3bd71e54a26f0a5189d
+artifact_roots:
+- ../../../outputs
+max_concurrency: 1
+max_pending_requests: 16
+max_cached_requests: 1024
+max_request_bytes: 134217728
+generation_overlap_safe: false
+worker_config:
+  model_factory: vrl.rewards.models.editreward:EditRewardModel
+  device: cuda:0
+  sleep_offload: true
+  memory_parking_mode: reload
+  data_root: outputs/qwen_image_21_reward_study
+  upstream_root: /tmp/vrl-edit-research/EditReward
+  base_model: Qwen/Qwen2.5-VL-7B-Instruct
+  base_revision: cc594898137f460bfe9f0759e9844b3ce807cfb5
+  reward_model_name: TIGER-Lab/EditReward-Qwen2.5-VL-7B
+  revision: 51b92ab5246295637c4ab3bd71e54a26f0a5189d
+  locality_config: manifests/edit_locality/locality_reward.json
+  audit_dir: outputs/qwen_image_21_locality_rl/main/scored_candidates
