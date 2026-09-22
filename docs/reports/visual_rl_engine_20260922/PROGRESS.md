@@ -54,3 +54,31 @@
 - No real model inference or RL has run in this workspace for this goal.
 - No preference labels or capability improvement have been manufactured or claimed.
 - No 24-hour completion, production readiness, or working agent policy RL is established.
+
+## Independent scoring implementation
+
+- Added `vrl.rewards.evaluation` and CLI
+  `python -m vrl.scripts.rewards.score_manifest --help`.
+- Supports local and existing HTTP scoring, all raw score axes, prompt/media/
+  auxiliary-file fingerprints, atomic per-sample evidence, exclusive writers,
+  explicit failed-batch records, and validated resume without model loading.
+- Fixed another diagnostic loss in `InferenceRewardFunction`: retain model
+  axes and reject inconsistent axes across one batch.
+- Targeted initial suite: 58 passed, including actual CPU Laplacian scoring and
+  real localhost HTTP upload (no learned model or CUDA).
+- Real cached Qwen outputs: scored two `armchair_seat_blue` rl20 images using CPU
+  sharpness only. Artifact location: `outputs/reward_evaluation/qwen21_smoke/`.
+  First run scored 2; resume scored 0 and reused 2. Run fingerprint:
+  `b9650742846f065c40682d62bad170a17a96b7aafc8bde6e31f33a2712a877d3`.
+  This proves rescoring works on real generated media, not editing improvement.
+- Initial smoke manifest incorrectly resolved a source image beside the old
+  manifest; it failed before scoring. Corrected to the actual artifact-data-root
+  reference file and reran successfully. No source checkout files were changed.
+- Original Qwen evaluation process PID 4175992 has exited. Subsequent GPU query
+  showed 139 MiB used / 0% utilization; recheck before any model launch.
+- Qwen source integration currently requires pinned Diffusers git revision
+  `80c7ed262aeffbeb43ef13ae04baeb9b84515a69` and Transformers >=5.17;
+  current workspace uses Diffusers 0.40 / Transformers 5.13. Do not copy its
+  environment or family without compatibility tests.
+- Expanded verification: `pytest tests/rewards/functions tests/rewards/test_evaluation.py -q`
+  completed with 102 passed, 2 skipped. Changed-file Ruff and `git diff --check` passed.

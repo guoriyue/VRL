@@ -339,8 +339,15 @@ class InferenceRewardFunction(RewardFunction):
                 inference_total_ms=inference_total_ms,
                 total_reward_latency_ms=total_latency_ms,
             )
+            score_keys = set(results[0].scores)
+            if any(set(result.scores) != score_keys for result in results):
+                raise ValueError("reward model returned inconsistent score axes within a batch")
             output = RewardOutput(
                 scores=tuple(self._select_score(result.scores) for result in results),
+                components={
+                    key: tuple(result.scores[key] for result in results)
+                    for key in results[0].scores
+                },
                 timing_ms=_result_timing_summary(
                     results,
                     materialization_ms=materialization_ms,
