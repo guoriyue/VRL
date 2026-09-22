@@ -174,3 +174,26 @@
   propagation survives the real service -> composite -> collector -> trainer -> IO.
 - This proves resume execution and artifact continuity, not bitwise equivalence to
   an uninterrupted three-update run; that comparison remains to be executed.
+
+## Terminal reward parking failures
+
+- Fixed the original unsafe reward-side CuMem retry contract: failed sleep, wake,
+  or pool close quarantines the parking owner. Later park/activate/score/shutdown
+  refuse allocator access and require process termination. Successful park followed
+  by a cache-release error remains distinguishable from a broken CuMem operation.
+- Reward inference/service/Ray regression: 187 passed, 4 skipped. Added explicit
+  partial-wake regression afterward: in-process suite 17 passed, 4 skipped.
+- EditReward experiments use reload parking; their active service was not restarted
+  mid-run. The changed CuMem behavior is covered by fault-injection tests, not a
+  deliberately corrupted live GPU allocator.
+
+## Resume reproducibility qualification (in progress)
+
+- A separately initialized uninterrupted three-update run completed. Comparing it
+  against the earlier resumed run is NOT a controlled resume equivalence test:
+  their first-update gradient norms already differ (0.03799869 vs 0.03803318).
+  Subsequent trajectories diverge. Max final LoRA difference 0.0005340081 is recorded
+  at `outputs/qwen_image_21/resume_comparison.json`, without blaming resume.
+- Next comparison resumes the uninterrupted run's OWN checkpoint-2 and compares
+  its next update with that same run's step 3. This isolates checkpoint continuation
+  from different prefixes. Any remaining non-bitwise result needs qualification.
