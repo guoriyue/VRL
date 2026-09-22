@@ -154,9 +154,25 @@ ratio≈1）。supervisor 0 次重启，同卡别的 agent 没再撞上来。
   平面风），个别样本仍出错（1024 的 p5 "Toight Binary StandUp"）。这是 OCR reward 的
   典型 hacking 方向，下一步要配一个美学/prompt-alignment reward 或 KL 抬高再跑。
 
+**2048 px / 40 steps（官方推荐设置，README 示例），前 16 条，1 sample/prompt（`eval_2048_40/report/summary.json`）**
+
+| arm | OCR mean [95% CI] | paired Δ vs base [95% CI] | exact 1.00 |
+|---|---|---|---|
+| base | 0.718 [0.509, 0.924] | — | 10 / 16 |
+| ck60 | 0.925 [0.799, 0.996] | **+0.206** [+0.040, +0.394] | 12 / 16 |
+
+逐条：11 条两边都对，4 条 base 错 ck60 对（"Tonight Binary StandUp"、"Elevation 8000 Feet"、
+"Abandon All Hope"、"Trespassers Will Be Jousted"），1 条两边 0（"Fearless" 花体，两边都画对，
+PaddleOCR 读不出），没有 ck60 退步的例子。**base 在官方设置下 62% 完全正确，不差**；
+512px 是 32×32 latent 格子的残废工作点，对比页里 base 的"差"主要是分辨率和读取器造成的。
+
 ## 7. Verdict
 
-**LEARNED.** held-out OCR 512/10：+0.241（CI [+0.175, +0.311]）；1024/40：+0.211（CI [+0.119, +0.305]）。
+**LEARNED（在训练分辨率上显著；在官方全分辨率上方向一致、样本不足）。**
+held-out OCR 512/10：+0.241（CI [+0.175, +0.311]）；1024/40：+0.211（CI [+0.119, +0.305]）；
+2048/40（官方设置，16 条）：+0.206（CI [+0.040, +0.394]）。512px SDE 10 步训练的策略迁移到
+2048px ODE 40 步：策略学的是速度场不是图，字符身份/顺序的决策与分辨率无关，dynamic shifting
+把时间步按 token 数重归一化。一个 2048/40 样本是 512/10 的 64 倍算力，单卡 RL 只能这么训。
 
 ## 8. 路径
 
@@ -165,5 +181,6 @@ ratio≈1）。supervisor 0 次重启，同卡别的 agent 没再撞上来。
 - supervisor log: `outputs/qwen_image_21_ocr_grpo_run1/supervise.log`
 - dry run: `outputs/qwen_image_21_ocr_grpo_dryrun/`
 - eval 512/10: `outputs/qwen_image_21_ocr_grpo_run1/eval_512_10/report/{summary.json,curve.csv,contact_sheets/}`（log `eval_512_10.log`）
+- eval 2048/40（16 条）: `outputs/qwen_image_21_ocr_grpo_run1/eval_2048_40/report/`（log `eval_2048_40.log`；run dir `outputs/qwen_image_21_ocr_grpo_run1_eval2048/`；中途停掉的 64 条版本留在 `eval_2048_40_partial64/`，只有 33 张 base 图）
 - eval 1024/40: `outputs/qwen_image_21_ocr_grpo_run1/eval_1024_40/report/`（log `eval_1024_40.log`；run dir 复制在 `outputs/qwen_image_21_ocr_grpo_run1_eval1024/resolved_config.yaml`，只加了 `eval: {width: 1024, height: 1024, num_steps: 40}`）
 - checkpoints: `outputs/qwen_image_21_ocr_grpo_run1/checkpoint-{20,40,60,final}/lora_weights/`
