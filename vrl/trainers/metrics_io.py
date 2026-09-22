@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field, fields
@@ -366,7 +367,7 @@ class MetricsCSV:
 
 
 class OnlineMetricsCSV:
-    """Initialize one run's CSV files and append metrics with a fixed schema."""
+    """Fixed CSV views plus complete, evolving reward observations in JSONL."""
 
     def __init__(
         self,
@@ -388,11 +389,49 @@ class OnlineMetricsCSV:
             columns,
             resume_at=resume_at,
         )
+        self._components_path = Path(output_dir) / "reward_components.jsonl"
+        self._initialize_components(resume_epoch)
+
+    def _initialize_components(self, resume_epoch: int | None) -> None:
+        """Align complete observation records to the same checkpoint as the CSVs."""
+        path = self._components_path
+        retained = []
+        if resume_epoch is not None and path.exists():
+            previous = -1
+            with path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.endswith("\n"):
+                        break  # A crash may leave an incomplete final append.
+                    record = json.loads(line)
+                    epoch = record.get("epoch")
+                    require_int(epoch, path="reward observations epoch", minimum=0)
+                    if record.get("schema") != "vrl.reward-components.v1" or epoch <= previous:
+                        raise ValueError("invalid reward observation schema or epoch ordering")
+                    if not isinstance(record.get("components"), dict):
+                        raise ValueError("reward observations must contain a components mapping")
+                    previous = epoch
+                    if epoch < resume_epoch:
+                        retained.append(line)
+        with atomic_file(path) as handle:
+            handle.writelines(retained)
 
     def append(self, epoch: int, metrics: TrainStepMetrics) -> None:
         row = OnlineMetricRow.from_step_metrics(epoch, metrics, self.component_names)
+        # Serialize before writing any sink: malformed/nonfinite observations
+        # must not become successful CSV evidence with the offending axis hidden.
+        observations = json.dumps(
+            {
+                "schema": "vrl.reward-components.v1",
+                "epoch": epoch,
+                "components": metrics.reward_components,
+            },
+            sort_keys=True,
+            allow_nan=False,
+        )
         self._standard.append(row.to_csv())
         self._full_precision.append(row.to_csv(full_precision=True))
+        with self._components_path.open("a", encoding="utf-8") as handle:
+            handle.write(observations + "\n")
 
 
 __all__ = [

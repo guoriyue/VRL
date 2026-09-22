@@ -158,3 +158,12 @@ Changing holdout labels cannot alter fitted weights. Choose hyperparameters befo
 examining holdout; the tool cannot prevent a human from repeatedly tuning on reports.
 No human labels are fabricated, and none are bundled with this implementation.
 These commands do not change a training reward configuration automatically.
+
+## Training observations
+
+Online training retains configured top-level rewards in the stable CSV views and
+writes all observed axes to `reward_components.jsonl` beside them. Each record names
+its epoch; nested axes use `component/axis`. Missing axes are absent, not replaced
+with zero. Resume aligns this sidecar with the checkpoint, including removal of an
+incomplete final append. These are per-update mean observations, not per-sample
+labels or proof of reward validity; preserve reward archives for later rescoring.

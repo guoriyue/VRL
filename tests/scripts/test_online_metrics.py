@@ -211,3 +211,35 @@ def test_full_precision_metrics_follow_online_write_and_resume(tmp_path) -> None
     rows = list(csv.DictReader(path.open()))
     assert [row["epoch"] for row in rows] == ["0", "1", "2"]
     assert float(rows[-1]["loss"]) == 0.111111111
+
+
+def test_reward_observation_axes_survive_fixed_csv_schema_and_checkpoint_resume(tmp_path):
+    import json
+
+    run = OnlineMetricsCSV(tmp_path, component_names=("judge",))
+    for epoch in range(3):
+        run.append(
+            epoch,
+            TrainStepMetrics(
+                reward_components={
+                    "judge": 0.8,
+                    "judge/alignment": 0.123456789 + epoch,
+                    **({"judge/new_axis": 0.0} if epoch == 2 else {}),
+                }
+            ),
+        )
+    path = tmp_path / "reward_components.jsonl"
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert records[0]["components"]["judge/alignment"] == 0.123456789
+    assert "judge/new_axis" not in records[0]["components"]
+    assert records[2]["components"]["judge/new_axis"] == 0.0
+    with path.open("a") as handle:
+        handle.write('{"incomplete":')
+    resumed = OnlineMetricsCSV(tmp_path, component_names=("judge",), resume_epoch=2)
+    resumed.append(2, TrainStepMetrics(reward_components={"judge/alignment": 0.9}))
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [record["epoch"] for record in records] == [0, 1, 2]
+    assert records[2]["components"] == {"judge/alignment": 0.9}
+    with pytest.raises(ValueError, match="Out of range"):
+        resumed.append(3, TrainStepMetrics(reward_components={"judge/hidden": float("nan")}))
+    assert len(path.read_text().splitlines()) == 3

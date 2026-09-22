@@ -160,3 +160,17 @@
 - Found remaining diagnostics gap: fixed-schema CSV exports configured top-level
   reward names only. Nested axes survive collection but need a complete observation
   sidecar before claiming end-to-end training diagnostics.
+
+## Checkpoint resume and complete training observations
+
+- Added `reward_components.jsonl` beside the stable CSV views. It retains every
+  nested axis at full JSON float precision without changing legacy CSV headers.
+  Resume discards observations at/after the checkpoint's next epoch and incomplete
+  final appends. Nonfinite axes fail before any metrics sink is appended.
+- Metrics/resume tests: 51 passed. Real resume from the two-update checkpoint into
+  `outputs/qwen_image_21/edit_rl_resume_step3` completed global_step=3, epoch=3.
+- The resumed step's observation record includes `editreward/editreward_log_sigma`
+  (-1.4814392626) alongside total EditReward (-1.9464911819), proving the new axis
+  propagation survives the real service -> composite -> collector -> trainer -> IO.
+- This proves resume execution and artifact continuity, not bitwise equivalence to
+  an uninterrupted three-update run; that comparison remains to be executed.
