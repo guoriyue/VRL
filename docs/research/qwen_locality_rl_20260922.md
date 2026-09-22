@@ -104,3 +104,11 @@ Calibration report: `outputs/qwen_image_21_locality_rl/calibration.json`.
 Unit/service tests: 82 passed before adding the candidate-audit assertions;
 the subsequent focused five tests also passed. Training and quality evaluation
 remain pending and must be verified from live processes and produced artifacts.
+
+The separate `outputs/qwen_image_21_locality_rl/evaluate_after_training.sh`
+queue waits for the training wrapper to exit, acquires the same GPU job lock,
+and requires both a successful training result and the final checkpoint before
+generating any comparisons. It evaluates base, the old 20-update checkpoint,
+and the new checkpoint on seeds 303/404 at identical settings. Both comparison
+galleries initially use `--images-only`, so visual review precedes aggregate
+critic scores. These queued commands are not evidence of completed evaluation.
