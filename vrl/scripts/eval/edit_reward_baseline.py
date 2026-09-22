@@ -34,7 +34,11 @@ def main() -> None:
         cases = [case for case in cases if case["split"] == args.split]
     if args.limit:
         cases = cases[: args.limit]
-    rules = json.loads((out / "region_checks.json").read_text())["tasks"]
+    rules = (
+        json.loads((out / "region_checks.json").read_text())["tasks"]
+        if args.view == "task_crop"
+        else {}
+    )
     if args.view == "task_crop":
         cases = [
             case
@@ -147,12 +151,19 @@ def main() -> None:
             print(f"START {args.reward} {case['name']}", flush=True)
             started = time.monotonic()
             src_path = out / f"{Path(case['source']).stem}_input.png"
-            source = Image.open(src_path).convert("RGB")
+            if not src_path.exists():
+                src_path = out / case["source"]
+            with Image.open(src_path) as original:
+                rgba = original.convert("RGBA")
+                source = Image.alpha_composite(
+                    Image.new("RGBA", rgba.size, "white"), rgba
+                ).convert("RGB")
             with Image.open(out / case["output"]) as im:
                 rgba = im.convert("RGBA")
                 edited = Image.alpha_composite(
                     Image.new("RGBA", rgba.size, "white"), rgba
                 ).convert("RGB")
+            source = source.resize(edited.size, Image.Resampling.LANCZOS)
             judge_prompt = case.get("evaluation_prompt", case["prompt"])
             if args.view == "task_crop":
                 rule = rules[case.get("evaluation_task_id", case["task_id"])]
@@ -172,9 +183,8 @@ def main() -> None:
             else:
                 target_path = inputs / f"{case['name']}{suffix}.png"
                 edited.save(target_path)
-                if args.view == "task_crop":
-                    src_path = inputs / f"{case['name']}{suffix}_source.png"
-                    source.save(src_path)
+                src_path = inputs / f"{case['name']}{suffix}_source.png"
+                source.save(src_path)
                 values = (
                     scorer.reward(
                         prompts=[judge_prompt],
