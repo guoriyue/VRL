@@ -1,0 +1,84 @@
+# Small fixed-instruction editing RL pilot; no feedback prompt rewriting.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/qwen_image_21/base
+  - /sampling/image/512
+  - /sampling/denoise/10_step_no_cfg
+  - /reward/editreward_http
+  - _self_
+
+model:
+  memory:
+    cpu_resident: [text_encoder]
+    vae_decode:
+      tiling: false
+      slicing: true
+  lora:
+    rank: 16
+    alpha: 32
+
+precision:
+  float32_precision: ieee
+  training:
+    dtype: bf16
+    outer_autocast: false
+
+# The external HTTP judge shares this physical GPU without a Ray reservation.
+# Explicit leases park each model before the next phase takes ownership.
+distributed:
+  resources:
+    offload:
+      train: true
+      rollout: true
+      reward: true
+
+sampling:
+  height: 576
+  width: 384
+  num_steps: 20
+  reference_resolution: 512
+  output_mode: rgb
+
+actor:
+  optim:
+    lr: 1.0e-4
+  prompts_per_collection: 2
+  gradient_checkpointing: full
+  timestep_fraction: 0.2
+  ema:
+    enable: false
+
+rollout:
+  n_samples_per_prompt: 4
+  prompts_per_batch: 2
+  samples_per_generation_batch: 1
+  noise_level: 0.7
+  sde:
+    window_range: [0, 20]
+
+trainer:
+  output_dir: outputs/qwen_image_21_edit_rl/main
+  total_epochs: 20
+  save_freq: 5
+  debug:
+    first_step: true
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-5
+    every_update: true
+
+reward:
+  kwargs:
+    editreward:
+      archive_dir: ${trainer.output_dir}/reward_archive
+      debug_dir: ${trainer.output_dir}/reward_debug
+
+# Source images remain local artifacts; the fixed prompts match the baseline.
+data:
+  loader: prompt_manifest
+  manifest: manifests/edit_locality/train_localized.jsonl
+  eval_manifest: manifests/edit_locality/eval.jsonl
+  artifact_data_root: outputs/qwen_image_21_reward_study
+  preprocessing:
+    format: jsonl
+  sampler:
+    type: random_without_replacement

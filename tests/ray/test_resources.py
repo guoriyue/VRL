@@ -945,6 +945,34 @@ def test_http_only_reward_owns_no_local_resource_or_handoff() -> None:
     assert BundleLayout.from_resources(resolved).reward_bundle_indices == ()
 
 
+def test_http_reward_explicit_parking_has_no_local_reservation() -> None:
+    resolved = ResolvedDistributedResources.from_root(
+        parse_config(
+            _cfg(
+                {
+                    "visible_devices": [0],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [0]},
+                    "offload": {"train": True, "rollout": True, "reward": True},
+                },
+                reward_components={"editreward": 1.0},
+                reward_inference={
+                    "editreward": {
+                        "kind": "http",
+                        "endpoint": "http://localhost:8315",
+                        "expected_model": "editreward-qwen25-7b",
+                    },
+                },
+            )
+        ),
+    )
+    assert resolved.reward_devices == ()
+    assert BundleLayout.from_resources(resolved).reward_bundle_indices == ()
+    assert resolved.lifecycle.park_trainer_for_reward
+    assert resolved.lifecycle.park_rollout_for_reward
+    assert resolved.lifecycle.offload_reward
+
+
 def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> None:
     """A remote sibling does not erase a real local component's CPU execution."""
 

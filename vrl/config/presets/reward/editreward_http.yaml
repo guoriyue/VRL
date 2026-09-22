@@ -1,0 +1,9 @@
+# The operator-run judge uses the standard shared-GPU parking lease.
+reward:
+  components:
+    editreward: 1.0
+  inference:
+    editreward:
+      kind: http
+      endpoint: http://127.0.0.1:8315
+      expected_model: editreward-qwen25-7b

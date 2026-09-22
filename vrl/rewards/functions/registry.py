@@ -52,6 +52,7 @@ def get_reward(name: str) -> type[RewardFunction]:
 
 def _register_builtins() -> None:
     from vrl.rewards.functions.aesthetic import AestheticReward
+    from vrl.rewards.functions.editreward import EditReward
     from vrl.rewards.functions.geneval_owl import GenEvalOwlReward
     from vrl.rewards.functions.hpsv3 import HPSv3Reward
     from vrl.rewards.functions.image_sharpness import ImageSharpnessReward
@@ -69,6 +70,7 @@ def _register_builtins() -> None:
     _REWARD_REGISTRY.update(
         {
             "aesthetic": AestheticReward,
+            "editreward": EditReward,
             "image_sharpness": ImageSharpnessReward,
             "geneval_owl": GenEvalOwlReward,
             "nsfw_safety": NSFWSafetyReward,

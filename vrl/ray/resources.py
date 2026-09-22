@@ -637,7 +637,13 @@ class ResolvedDistributedResources:
             key = f"distributed.resources.offload.{role}"
             if setting != "auto" and not isinstance(setting, bool):
                 raise ValueError(f"{key} must be auto, true or false; got {setting!r}")
-            if setting is True and not owns_gpu:
+            # An operator-owned HTTP service has no local reservation, but
+            # may explicitly take a parking lease on this machine's GPU.
+            # The runtime still requires successful parking at the handoff.
+            external_reward_lease = (
+                role == "reward" and bool(reward_inference) and not local_reward_configured
+            )
+            if setting is True and not owns_gpu and not external_reward_lease:
                 raise ValueError(f"{key}=true but the {role} role owns no GPU to offload")
         lifecycle = replace(
             lifecycle,
