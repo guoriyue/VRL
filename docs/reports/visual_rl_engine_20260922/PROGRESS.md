@@ -113,3 +113,25 @@
   `_LATENT_TOKENS_PER_MASK_SLOT` as model geometry and tiny-model dimensions as
   fixture constants. Preserve the family-wide encode/prepare/forward/decode shape;
   reducing line count or reorganizing unrelated families is not a goal.
+
+## Reward diagnostics and frozen calibration
+
+- Added independent health/ranking CLI (`analyze_scores`) and preference-combination
+  CLI (`calibrate_scores`). Neither loads a model or starts a trainer.
+- Reports validate stored provenance, preserve errors/missing axes, expose group
+  ranges and timings, and compare only identical complete media grids. Ranking
+  agreement is explicitly not labeled human accuracy.
+- Linear logistic calibration freezes score scales/weights on calibration only;
+  source groups receive equal weight. Explicit ties and unsure annotations remain
+  visible. Holdout validates scorer recipe and rejects known prompt/source/media/
+  auxiliary-asset leakage. It does not automatically change training rewards.
+- Reused the existing deterministic bootstrap implementation; confidence intervals
+  use prompt/source units, never the number of correlated seeds/annotations.
+- Tests: 11 passed across scoring, diagnostics and calibration. Synthetic judgments
+  test fitting, holdout-label invariance, tie handling, leakage and nonconvergence;
+  they are not supplied as real preference evidence.
+- Ran the health CLI against real cached Qwen output scores at
+  `outputs/reward_evaluation/qwen21_smoke/health.json`. Two images from one prompt
+  are insufficient for population conclusions; no confidence interval is reported.
+- Still needed: independently labeled real evaluation set, candidate-model scoring,
+  frozen-combination training integration, and reward-weighted online experiments.
