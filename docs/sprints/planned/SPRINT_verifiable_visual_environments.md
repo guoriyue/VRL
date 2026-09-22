@@ -1,213 +1,226 @@
-# SPRINT: 可验证的视觉 RL 环境（任务规格 + 分层 verifier + 失败归因）
+# SPRINT: 图像与视频 RL 的奖励可靠性、多维评分与稳定优化
 
-状态：**planned（2026-09-21）**。研究与设计文档，未改代码。出发点是 CodeMidas
-（arXiv 2609.22068 §3.2–3.4）和 MiMo-V2.6 技术博客里"环境和 verifier 怎么生产、怎么
-自证可信"的机制，对照本仓 RL 环境的现状，给出三类现代视觉任务（分层拆解、局部编辑、
-组合生成）的环境定义和一个"先查 verifier 再怪模型"的归因框架。
+状态：**planned**。2026-09-21 联网研究并修订；本次只更新研究计划，未实现或验证训练收益。
 
-## 0. 结论先行
+用户目标：让现有 diffusion / flow 图像、视频 RL 的 reward 更强、更可靠；不建设 LLM
+agent 环境工厂。保留文件路径以延续引用。旧版的分层拆解/RGBA/TaskSpec 方案不再是本
+sprint 的实施计划；历史设计可在 git 提交 `2367741d3` 中查阅。
 
-1. 本仓的 RL 环境是一个 **contextual bandit**：`(prompt, reference_image?)` → 一次生成
-   → 一个标量。任务没有规格（spec），reward 没有结构，失败无法归因。这套能训
-   "PickScore 更高的图"，训不了"把这张图拆成 N 个透明层、每层一个物体"或"只改遮罩
-   内、遮罩外一像素不动"——不是算法不够，是**环境没有描述这些任务的语言，verifier
-   没有检查这些任务的手段**。
-2. CodeMidas 真正可迁移的不是"自动造任务"，而是四条纪律：**verifier 由执行落地**（跑
-   参考实现记录结果，而不是让模型描述期望）；**verifier 先过 oracle**（参考解法在 6 个
-   新容器里必须过，起始代码必须不过）；**审核 agent 找 verifier 和规格的不一致**（假阳
-   / 假阴都算）；**只保留同一模型下既有成功又有失败的任务**，并且明确区分"全失败 = 任务
-   太难"和"全失败 = 测试坏了"——后者靠前两条纪律排除。
-3. 三类任务里，**分层拆解最接近"跑测试"**：把 N 层 alpha 合成回去必须还原原图，这是纯
-   可执行的检查，不需要判别模型，oracle 也天然存在（数据集自带的层）。局部编辑一半可
-   执行（遮罩外像素恒等）、一半要判别器（遮罩内是否按指令改了）。组合生成（GenEval）
-   本仓已经有结构化 spec + 检测器 verifier + `why` 字符串，是现成的样板。
-4. 归因框架分四层，从下往上排除：**精度层**（rollout/replay 概率一致，已有 parity gate）
-   → **verifier 层**（oracle 必须过、退化输入必须不过）→ **任务层**（组内混合结果）→
-   **模型层**（只有前三层干净才把失败记到模型头上）。今天本仓只有第一层。
+## 0. 决策与证据边界
 
-## 1. 论文里可迁移的机制（精确到出处）
+优先顺序：**现有评分器离线体检 → 多维输出与校准 → 互补奖励/偏好比较 → 短程 RL
+验证 → 必要的数据正则化与规模扩展**。依据见 §2 的原始论文和官方实现。
 
-CodeMidas 把一个开源仓库变成一个 RL 任务：agent 找到公共入口和可观察行为，删掉核心
-实现留出起点；**测试不是模型写的期望，而是调用参考实现记录下来的输出**（"invoking
-reference implementations and recording outcomes"；CLI 用命令执行、纯函数用输入输出对、
-有状态 API 用调用序列）。之后三道过滤（§3.4）：
+- 一次生成、最终一个训练标量可以支持复杂的 reward，不需要 agent episode。
+- 本仓已有 `RewardOutput.components`、多评分器、零权重观测项；缺口是诊断信息的完整
+  传递、领域校准、独立验证和失败样例闭环，不能再写成“reward 没有结构”。
+- 视觉 reward 多数是人类偏好的代理，不应把评分器称为能证明答案正确的 oracle。
+  VLM 写出理由、两个评分器一致、自检通过，都不是正确性的证明。
+- 连续奖励关注组内有效排序。全不合格仍可有有效优势；不采用“30% 任务二元混合才开训”
+  的任意门槛，也不将全失败自动归因为模型能力不足。
+- 数值一致性、奖励有效性、策略分布漂移分别检查。允许有界 BF16 漂移是精度策略，
+  不能用放宽 parity 掩盖奖励问题，也不能用严格 parity 证明奖励可信。
+- 下文“论文报告”是作者在特定实验下的证据；“本仓建议”是待测假设，不是已经复现。
+  调研覆盖 2025–2026 的相关工作并保留必要的评测基础，不声称穷尽所有最新方法。
 
-| 机制 | 做法 | 排除什么 |
+## 1. 仓库现状与接入位置（路径相对仓库根目录）
+
+| 位置 | 已有能力 / 本次确认的限制 | 后续接入点 |
 |---|---|---|
-| 一致性验证 | 训练运行时设置下开 **6 个新容器：2 个装起点代码、4 个装参考解法**；参考解必须全过，起点必须不过 | verifier 坏、环境不可复现、题目已经"预先做完" |
-| 泄漏对抗 rollout | 一个 agent 专门尝试从编译产物、缓存副本里恢复答案而不做开发 | 不做任务也能拿分的漏洞 |
-| verifier 一致性审核 | 独立审核 agent 看"实现是否满足陈述"，并找**陈述与 verifier 行为的不一致**，假阳假阴都标 | 规格和测试说的不是一件事 |
-| rollout 结果过滤 | 在目标模型 + 预算下跑多次，**只保留既有成功又有失败的任务** | 全失败（太难或题坏——但前两道已经把"题坏"筛掉，剩下的全失败才归为太难）、全成功（无梯度） |
+| `vrl/rewards/types.py` | 样本 ID、metadata、逐样本 scores/components/timing；components 限有限浮点 | 保持训练接口；理由、版本和错误状态另存诊断记录 |
+| `vrl/rewards/functions/registry.py::MultiReward.score_batch` | 加权求和，零权重仍执行；当前只取每个子 reward 的 `output.scores`，未合并子 `output.components` | 先测试并修复多轴诊断传递，定义命名空间，避免重复推理和 key 冲突 |
+| `vrl/rewards/models/geneval_owl.py::GenEvalVerdict` | strict/partial/dense/why；why 不在 score 映射中 | 保留 dense 训练与 strict 评估的区别；导出失败原因 |
+| `vrl/rewards/models/kling_video_reward.py` | 本仓已拥有 VideoAlign 推理适配；VQ/MQ/TA/Overall 映射 | 优先逐轴评估，不重新移植另一份 VideoAlign |
+| `vrl/rewards/models/unified_reward_video.py` | 已有 alignment/physics/style/overall 的 pointwise 评分 | 先作为独立审计候选；不是现成的 pairwise/Flex 实现 |
+| `vrl/rewards/models/{hpsv3,pickscore,aesthetic,ocr}.py` | 偏好、审美、文字等现有信号 | 在本仓样例上比较盲点，不按榜单直接换模型 |
+| `vrl/rewards/models/motion_dynamics.py` | RAFT 流幅值；源码明确不判断时间顺序 | 静止退化诊断，不能单独代表运动质量或物理正确性 |
+| `vrl/rewards/assets/{video_judge_prompts,kling_prompt_templates,hpsv3_prompts}.py` | 提示已按域隔离 | 评分 prompt/rubric 版本记录；不把模板塞进 trainer |
+| `vrl/scripts/rewards/preflight.py` | 现有评分入口 | 复用输入/加载路径，增加离线质量报告，勿混同“能运行”与“评分正确” |
+| `vrl/algorithms/grpo/continuous.py`、`vrl/trainers/online/trainer.py` | 已有 KL 与 sft_weight / clean-latent 正则化路径 | 核查具体算法支持后做消融，不宣称已有完整 DDRL 复现 |
 
-规模：5,545 任务 / 3,185 仓库；消融里过滤后 3k 子集全面胜过未过滤 8k。这条消融是本
-文最重要的数字：**环境质量比环境数量值钱**。
+## 2. 有用材料：URL、阅读位置、迁移价值与限制
 
-MiMo-V2.6 把 RL scaling 拆成三条线——batch/吞吐（1,568 样本/更新）、环境（7,000+）、
-grader 算力（组内相对比较打分）——并列出"奖励设计、对抗性评测、异常检测、验证器交叉校
-验"四道 reward hacking 防线。博客没有写失败归因机制；把"验证器交叉校验"落到可操作的
-步骤，是本文 §4 要补的。
+以下只把论文原文、作者项目页、官方代码作为技术依据。论文写法与仓库后续功能可能不同；
+实现时记录所用 revision，而非依赖可变的 main。
 
-## 2. 本仓的环境现状
+### R1 — VideoAlign / VideoReward：视频奖励先分维度，再聚合（优先）
 
-一次 rollout 的全部输入是 `GenerationInput(prompt, task_type, reference_image,
-reference_video)`（`vrl/generation/types.py:31`），reward 侧看到的是
-`RewardSample(prompt, output, sample_id, metadata)`（`vrl/rewards/types.py:24`），返回
-`RewardOutput(scores, components)`。任务只有 `t2i / t2v / i2v / t2w / v2w` 五个字符串，
-区分的是模态，不是任务。
+- [论文](https://arxiv.org/html/2501.13918v1)，重点 §3.1–3.2、§5.1、附录 C/D。
+- [官方仓库](https://github.com/KlingAIResearch/VideoAlign)，实现位置
+  [inference.py](https://github.com/KlingAIResearch/VideoAlign/blob/main/inference.py)。
+- **论文报告**：按画质 VQ、运动质量 MQ、文本一致性 TA 标注偏好；研究成对偏好、平局
+  标签与维度解耦，并建立 VideoGen-RewardBench 检查奖励模型本身。
+- **本仓建议**：先测已有 Kling 的逐轴排序；标注允许 A/B/tie/无法判断，按 prompt 留出。
+- **限制**：偏好训练优于回归是该实验结果，不是通用定理；论文讨论 Flow-DPO/RWR/NRG，
+  不应统称在线 GRPO。视频偏好评分不能代替物理真值。
 
-已有、可复用的零件：
+### R2 — VisionReward：细粒度问题和可解释分量（优先）
 
-| 零件 | 位置 | 在新框架里的角色 |
-|---|---|---|
-| 结构化任务规格 + 可执行 verifier + 理由 | `manifests/geneval/*.jsonl` 的 `metadata.geneval.include[{class,count}]`；`GenEvalOwlRewardModel` 输出 `strict/partial/dense` 和 `why`（`vrl/rewards/models/geneval_owl.py`） | **唯一现成的"spec → 检查 → 理由"样板**，§5 契约照它推广 |
-| 多分量 reward | `RewardOutput.components`、`reward.components` 权重、0 权重观测项（SANA preset 的 aesthetic hack 探测器） | 每个检查一个分量；权重 0 的分量就是"只观测不训练"的审核信号 |
-| 组内零 advantage 过滤 | `nonzero_advantage_mask`、`adv_zero_rate`、`trained_prompt_num`（`trainer.py:1043-1081`） | 这就是 CodeMidas 的"只保留混合结果"——但今天它**在训练时静默丢弃**，不记录、不归因、不回流到数据侧 |
-| 精度对账 | `replay_parity`、`debug.first_step`、`logprob_abs_diff_*`、`mismatch_kl` | 归因框架第一层，已完成 |
-| 条件输入 | `reference_image` / `reference_video`（i2v 已用） | 局部编辑的源图、分层拆解的原图走同一个口 |
+- [论文](https://arxiv.org/abs/2412.21059)；[官方实现与数据入口](https://github.com/zai-org/VisionReward)。
+- 具体位置：`VisionReward_Image/VisionReward_image_qa.txt`、
+  `VisionReward_Video/VisionReward_video_qa.txt`、两目录的 `weight.json`，
+  `inference-image.py` / `inference-video.py`。
+- **官方实现**：把图像/视频偏好拆成细粒度问答，再加权评分。
+- **本仓建议**：借鉴维度定义和人工标注表；先选择当前失败模式对应的少数维度，避免
+  每个样本都运行整套昂贵 checklist。
+- **限制**：yes/no 是模型判断而非执行证明；权重需在本仓分布校准。不要把细粒度等同准确。
 
-缺的：任务规格没有通用字段（geneval 塞在 `metadata` 里，reward 靠 `metadata_key` 约定
-取）；没有 oracle 的概念（数据集里的参考答案不进环境）；verifier 没有自检；
-`adv_zero_rate` 是一个汇总数字而不是按 prompt 的记录；没有"哪一步检查失败"的输出——
-`GenEvalVerdict.why` 是唯一例外，且它不进 metrics。
+### R3 — ArtifactReward：直接诊断评分器共同漏掉的伪影（优先）
 
-## 3. 三类任务的环境定义
+- [原文](https://arxiv.org/html/2601.03468v1)，重点 §3、§4、Table 2、自动 prompt 优化附录。
+- **论文报告**：偏好与语义奖励组合仍漏检结构伪影；用人工标记的正常/伪影样例和
+  自动 prompt 优化构建互补的 artifact reward。
+- **本仓建议**：收集现有 checkpoint 的肢体、几何、重复结构、纹理塌缩反例，先评估一个
+  伪影评分器，零权重观察后再考虑加入训练。
+- **限制**：主实验是 Janus-Pro，不能直接声称 Wan/SANA diffusion 已验证；“轻量”描述
+  数据/适配方式，不保证 VLM 推理便宜。保留风格化、抽象画等合法反例以测误伤。
 
-统一写法：**输入 / 规格 / oracle / 可执行检查 / 需要判别器的检查 / 已知 hack**。
-"可执行"指不依赖任何学习模型、结果确定、可以像单元测试一样对 oracle 跑一遍。
+### R4 — Pref-GRPO：从绝对分数转向组内偏好比较（第二阶段）
 
-### 3.1 分层拆解（一张图 → N 个透明层，一层一个物体）
+- [论文](https://arxiv.org/html/2508.20751v1)，重点 §3.2–3.3、附录 A.2。
+- [官方仓库](https://github.com/CodeGoat24/Pref-GRPO)，`fastvideo/rewards/`；
+  [reward_paths.py](https://github.com/CodeGoat24/Pref-GRPO/blob/main/fastvideo/rewards/reward_paths.py)
+  给出 checkpoint 配置位置，README 有图像/视频配方。
+- **论文报告**：很小的 pointwise 分差经组归一化可能放大；用组内两两直接比较的胜率
+  作为 reward。主论文是 T2I，仓库后来增加视频支持。
+- **本仓建议**：先在同一批缓存样本上对比 pointwise 排序和真实 pairwise 判断；测 A/B
+  顺序偏置、平局、循环偏好与人工一致性。
+- **限制**：把已有分数排序不等于 pairwise judge；全配对 O(G²)，视频成本需实测。
+  相对比较仍会 reward hack，不是正确性的保证；稀疏配对属于另一个待测近似。
 
-- 输入：原图 `I`；规格：层数 `N` 与每层的物体描述 `[("cat", 0), ("sofa", 1), ("background", 2)]`。
-- oracle：数据集自带的层（合成数据、PSD 导出、或 SAM 分割 + 补全得到的伪层）。
-- 可执行检查：
-  1. **重建**：按 z 序 alpha 合成 `over(L_N, …, over(L_2, L_1))` 与 `I` 的 PSNR/LPIPS
-     超过阈值——这是整个任务的"跑测试"。
-  2. **层数与格式**：恰好 N 层、每层 RGBA、alpha 不全 0 不全 1。
-  3. **层间不重叠**：alpha 两两交集面积 / 并集面积 低于阈值（防止把整图复制 N 份）。
-  4. **层非空且不是全图**：每层 alpha 覆盖率在 `[lo, hi]` 内。
-- 判别器检查：每层 alpha>0 区域裁出来，检测器/CLIP 判定是规格里那个物体且**只有**那
-  一个物体（复用 `geneval_owl` 的检测 + 计数逻辑）。
-- 已知 hack（对抗 rollout 要专门试）：一层放整图其余层空 alpha（2、4 拦）；N 层平分
-  像素而不按物体（判别器拦）；alpha 半透明糊边骗重建（3 + 边缘硬度检查）。
-- 前置：需要一个输出 RGBA 的 family。`~/Desktop/VRL` 的 Qwen-Image-2.1 集成（提交
-  `80b012dd`，"reference editing and RGBA rollout outputs"）做过 RGBA 输出与参考编辑
-  的 rollout，`docs/reference/qwen_image_21_editing.md` 记录了未训练的属性编辑/整物替换
-  探针。移植时只搬 family 代码和媒体工具，不搬那边的配置分层。
+### R5 — UnifiedReward-Flex：按内容选择评价重点（第二阶段）
 
-### 3.2 局部编辑（遮罩内按指令改，遮罩外不动）
+- [原文](https://arxiv.org/html/2602.02380v1)，重点 §3.2–3.3、§4.3；
+  [作者项目页](https://codegoat24.github.io/UnifiedReward/flex)；
+  [官方仓库](https://github.com/CodeGoat24/UnifiedReward)，README Model Zoo 的 Flex
+  推理入口和 `benchmark_evaluation/`。
+- **论文报告**：从语义和视觉证据出发建立分层评价标准，训练 reward model，并用于图像
+  和视频 GRPO。
+- **本仓建议**：按图像/视频、动作/静态场景选择 rubric；先在离线审计比较与固定 rubric
+  的收益。固定评分器版本及评价规则再开一段训练。
+- **限制**：长解释可能错误，动态规则带来不可比性；不把 VLM 理由当因果归因，也不因
+  新模型名字相近就把现有 UnifiedReward-2.0 适配当作 Flex 支持。
 
-- 输入：源图 `I`、遮罩 `M`、编辑指令 `e`；规格：`(M, e, 编辑类型 ∈ {attribute, replace, remove, add})`。
-- oracle：编辑数据集的目标图（有则用；没有则只做可执行部分 + 判别器）。
-- 可执行检查：
-  1. **遮罩外恒等**：`‖(1−M)⊙(O − I)‖` 低于阈值（按 L1 和 LPIPS 各一条）。
-  2. **遮罩内确实变了**：`‖M⊙(O − I)‖` 高于阈值——防止"什么都不改"拿满分 1。
-  3. **几何不变**：输出分辨率、宽高比与源图一致。
-  4. 有 oracle 时：遮罩内与目标图的 LPIPS。
-- 判别器检查：VLM 判"遮罩内是否满足 `e`"（yes 概率，即 backlog F）；`replace/remove`
-  类另加检测器确认旧物体消失/新物体出现。
-- 已知 hack：改遮罩外一圈骗 VLM（1 拦）；只改颜色不改结构应对 replace（检测器拦）；
-  输出整体轻微模糊让 LPIPS 都很小（2 + 锐度检查，`image_sharpness` 已有）。
-- 与 3.1 的关系：3.1 是 3.2 的推广——"每一层"就是一个带 alpha 遮罩的区域；两者共用
-  "遮罩外恒等 / 遮罩内变化"两条检查。
+### R6 — DDRL：可靠 RL 不只靠换 reward，还要约束策略漂移（第二阶段）
 
-### 3.3 组合生成（GenEval 型）
+- [论文](https://arxiv.org/abs/2512.04332)；
+  [官方技术页](https://research.nvidia.com/labs/cosmos-lab/ddrl/)，重点 Methodology 的
+  Motivation / DDRL Framework / Practical Implementation 及 Results。
+- **作者报告**：在图像和视频中，将奖励优化与独立真实/合成数据上的 diffusion loss
+  结合；用 forward-KL 视角解释数据锚定，并用盲评检查收益。
+- **本仓建议**：在已有 clean-latent SFT regularizer 上做受控消融：reward 相同，比较
+  原配方与加数据正则；检查质量、语义和多样性。
+- **限制**：KL 数字稳定也不能证明没有作弊；现有 sft_weight 不代表目标、权重和采样
+  都与 DDRL 一致。数据质量与分布本身会影响结果。
 
-已有。要做的只是把 `GenEvalVerdict.why` 和三档分数按 §5 的契约输出成结构化检查，
-而不是三个平铺的浮点。它是 3.1 判别器检查的直接来源。
+### R7 — Flow-GRPO：图像在线 RL 的基础对照
 
-## 4. 归因框架："verifier 真的验证问题出在哪"
+- [论文](https://arxiv.org/abs/2505.05470)；
+  [官方实现](https://github.com/yifan123/flow_grpo)；
+  [作者报告中的 KL 对照](https://neurips.cc/media/neurips-2025/Slides/116065.pdf)。
+- **论文/报告**：将在线 RL 用于 flow matching，覆盖组合生成、文字与偏好；展示 KL
+  对 reward hacking 的缓解。
+- **本仓建议**：保留参考模型约束作为对照，不把切换 reward 与算法、采样器变化捆绑。
+- **限制**：特定 KL 实验有效不等于 KL 一定消除作弊，尤其需与 R6 的分布外问题区分。
 
-一个 prompt 组（同 prompt N 个样本）训练前后只有四种可见结果：全 0、全 1、混合、和
-"reward 高但人看是坏的"。今天本仓把前两种静默丢掉、第四种靠事后看图。改成按层排除：
+### R8 — VBench：视频独立评估，而非一个总分
 
-```text
-第 1 层  精度      rollout 与 replay 的 log-prob 一致？          已有：replay_parity / first_step
-   │ 不一致 → 训练计算的问题，与任务无关，停
-第 2 层  verifier  oracle 过所有检查？退化输入（原图原样返回、空图、
-                   整图复制 N 份）不过？                          缺：oracle 不进环境
-   │ oracle 不过 → verifier 或规格坏，任务下线送审
-   │ 退化输入过 → verifier 有洞，先补检查再训
-第 3 层  任务      同一模型、同一预算下该 prompt 组是否有混合结果？  半有：adv_zero_rate 汇总
-   │ 全 0（且第 2 层干净）→ 对当前模型太难，进"难题池"，不训
-   │ 全 1 → 太简单或被 hack，跑对抗检查（§3 每类的已知 hack 列表）
-第 4 层  模型      只有前三层干净，混合结果的组才产生梯度；这时的失败才记到模型头上
-```
+- [官方仓库与论文入口](https://github.com/Vchitect/VBench)，重点 README 的 dimensions、
+  evaluation 和 custom videos 流程；实现位于仓库的 `vbench/` 目录。
+- **官方项目**：分维度评估视频，包括主体一致性、运动平滑、动态程度等。
+- **本仓建议**：留出未参与训练的维度，单独报告运动与画质退化；固定 FPS、抽帧和分辨率。
+- **限制**：一旦作为训练 reward 就不再是独立证据；动态程度不是越大越好，静态场景
+  合法，镜头抖动也会产生流量。基准分数仍需人工检查支持。
 
-每层的产物都要落盘，不只是过滤：
+### R9 — RSA-FT：奖励对微小扰动的敏感性（探索项）
 
-- verifier 自检报告：每个任务的 oracle 检查结果 + 退化输入检查结果，一个任务一行
-  （对应 CodeMidas 的 6 容器一致性验证）。任务进 manifest 前必须有这一行。
-- 按 prompt 的结果记录：`prompt_id, step, n_pass, n_fail, checks_failed 直方图`。
-  `adv_zero_rate` 是它的一个汇总；难题池和"太简单池"从它派生，并回流到数据侧的采样权
-  重（backlog D 的 best-of-N 筛选和 `SPRINT_ngu_adaptive_sampling` 都从这张表取数）。
-- hack 观测项：0 权重分量（已有机制）+ 对抗输入的分数。SANA aesthetic 那次 texture
-  collapse 是 reward 高图坏的实例，当时靠人看曲线发现；有第 2 层后它应该在"退化输入
-  （高频噪声贴图）过 PickScore"这一步被提前抓到。
-- 判别器检查的可信度：判别器本身也要过 oracle（目标图必须 yes、源图必须 no），并记
-  录一致率；MiMo 的"验证器交叉校验"落到这里就是两个判别器对同一批样本的一致率。
+- [论文](https://arxiv.org/abs/2603.21175)；
+  [CVPR 官方摘要/PDF入口](https://openaccess.thecvf.com/content/CVPR2026/html/Kim_Reward_Sharpness-Aware_Fine-Tuning_for_Diffusion_Models_CVPR_2026_paper.html)。
+- **作者报告**：用生成器参数/生成图扰动来平滑 reward 梯度，缓解 reward hacking。
+- **本仓建议**：先借鉴图像小扰动下的分数和排名稳定性诊断。
+- **限制**：本次核查摘要层面的机制；梯度优化方案不能直接当作黑盒 GRPO 插件。
+  诊断扰动必须保持任务语义，OCR 裁剪、改色等可能真的破坏目标，不能要求分数不变。
 
-## 5. 契约草案（不写代码，先定名字和归属）
+### R10 — GARDO：质量与多样性共同检查（探索项）
 
-```python
-# vrl/rewards/verify/...（归属：reward 域；任务规格随 manifest 行走）
-@dataclass(frozen=True)
-class TaskSpec:                 # 一个 manifest 行的结构化任务，取代塞在 metadata 里的约定
-    kind: str                   # "layer_decomposition" | "masked_edit" | "geneval" | ...
-    inputs: GenerationInput     # 现有：prompt + reference_image/video
-    spec: Mapping[str, Any]     # kind 自己定义的字段（N、层描述；M、e；include）
-    oracle: Mapping[str, str] | None   # 参考答案的 artifact 路径（层文件、目标图）
+- [论文与作者项目入口](https://arxiv.org/abs/2512.24138)，摘要给出机制，后续实现前需精读公式。
+- **作者报告**：不确定样本的选择性正则、更新参考策略，以及高质量样本的多样性奖励。
+- **本仓建议**：先报告同 prompt 不同 seed 的多样性，在保持质量的子集中检查塌缩。
+- **限制**：本次未复现；不能直接奖励像素差异（噪声也多样），移动参考也可能跟随坏策略。
 
-@dataclass(frozen=True)
-class Check:                    # 一条检查的结果，是 reward 的最小单位
-    name: str                   # "reconstruction", "outside_mask_identity", ...
-    passed: bool
-    value: float                # 连续量，供 dense reward 与阈值扫描
-    why: str                    # GenEvalVerdict.why 的推广
+### 背景材料（不作为视觉训练方案）
 
-@dataclass(frozen=True)
-class Verdict:
-    checks: tuple[Check, ...]
-    def reward(self, weights) -> float      # 现有 reward.components 权重直接作用在 check 上
-    def components(self) -> dict[str, float]   # 落到 RewardOutput.components
-```
+- [CodeMidas §3.2–3.4](https://arxiv.org/html/2609.22068v1)：迁移测试可靠性和对抗审核的
+  思路，不搬代码任务的二元难度过滤。论文明确说全成功/全失败不能单独说明原因。
+- [MiMo-V2.6 博客](https://mimo.mi.com/docs/zh-CN/news/latest/v2-6)：RL 算力、环境、grader
+  三个扩展方向；7k 环境不是我们应达到的视觉数据量。
+- 检索发现 arXiv:2511.19356 的当前标题已是
+  [Rethinking Reward Signals in Video GRPO: When Scores Become Targets](https://arxiv.org/abs/2511.19356)，
+  与搜索摘要中的旧标题 Self-paced GRPO 不同；本计划不据旧摘要实施动态课程。
 
-- 每个 `kind` 一个 verifier 类，拥有：对 `TaskSpec` 的可执行检查、判别器检查、**自检**
-  （`verify_oracle(spec)` 与 `verify_degenerate(spec)`），和该 kind 的已知 hack 输入
-  生成器。三者放一起是有意的：CodeMidas 的三道过滤都是 verifier 的一部分，不是训练器
-  的一部分。
-- 现有 `RewardModel.score_media(media, prompt)` 不变；verifier 是它上面的一层，把
-  `RewardSample.metadata` 里的 `TaskSpec` 和输出媒体变成 `Verdict`。GenEval 是第一
-  个迁移对象（它已经是这个形状，只是没起名字）。
-- 训练器只多做一件事：把每组的 `Verdict` 汇总写进按 prompt 的结果记录（§4 第 3 层），
-  过滤逻辑不变。
+## 3. 实施计划：先证明 reward 更好，再花训练预算
 
-## 6. 第一个可执行 sprint：分层拆解环境
+### P0 — 固定评分器体检集与可重现评分（无需生成器训练）
 
-选它而不是局部编辑，因为它的核心检查（重建）是纯可执行的，oracle 天然存在，最接近
-"写一个测试然后跑"；局部编辑的核心检查（遮罩内是否按指令）绕不开 VLM 判别器，第 2 层
-的自检会更弱。
+- 从已有生成结果采样图像、视频，覆盖当前模型、prompt 类型、seed 和早晚 checkpoint。
+  先确认 artifact 存在，不虚构历史塌缩样例；不足的类别再补生成。
+- 建立人工偏好对和失败类别标签。按 prompt/来源组划分 calibration 与 holdout，防止
+  同一素材的扰动版本跨集合。保留 tie、无法判断和标注分歧。
+- 图像反例：结构伪影、过饱和、重复纹理、错误文字、对象缺失；同时保留合法抽象风格。
+- 视频反例：重复首帧、乱序、闪烁、身份漂移、抖动。反转只用于方向/因果明确的 prompt，
+  静止只用于要求动作的 prompt；不能把所有编辑后的媒体一律标为坏。
+- 逐样本记录 `sample_id/prompt_id/media_hash/model_revision/rubric_revision/preprocess`、
+  各轴原始分数、聚合贡献、错误状态、耗时和检查原因。解析失败不是 reward=0，单独报错。
+- 重复评分测噪声；固定 decode/FPS/抽帧/resize；测合理预处理变化下的排序稳定性。
+- 报告：人工偏好一致率（明确 tie 计分规则）、按失败类型的误排序、排名相关、组内
+  分差/饱和率、扰动敏感性、耗时。置信区间按 prompt 分组，避免重复样本虚增置信度。
 
-1. **数据**：合成 200 张 2–4 层图（物体贴图 + 背景，层文件即 oracle），manifest 行带
-   `TaskSpec(kind="layer_decomposition")`。
-2. **verifier**：§3.1 的 4 条可执行检查 + 1 条检测器检查；自检：oracle 层全过；三种退化
-   输入（整图一层、N 份复制、平分像素）全不过。这一步**不需要 GPU 训练**，先做完。
-3. **family**：移植 RGBA 输出的 family（Qwen-Image-2.1，见 §3.1 前置），rollout 一次
-   输出 N 层——或退一步，N 次条件生成拼层（每次给"前面已生成的层"作参考图），先通
-   路后效率。
-4. **未训练基线**：跑第 3 层，得到每个任务的 `n_pass/n_fail`。预期大部分是全 0——此时
-   不训，先按 §4 判断是 verifier 阈值太严（oracle 过但边缘检查卡住模型）还是任务真的
-   太难，必要时把 N 降到 2、物体换成大且分离的。
-5. **门槛**：至少 30% 的任务在未训练模型上出现混合结果，才开始 GRPO；训练指标除
-   reward 外必须报告每条 check 的通过率曲线——只有 `reconstruction` 升、检测器检查不
-   升，就是 hack 的早期信号。
+交付（**计划路径，尚未创建**）：`docs/reports/reward_reliability/` 的基线报告与样本索引，
+配套版本化的校准配置；大媒体存 artifact 目录，报告记录可追溯路径而非提交大量二进制。
+验收：已有评分器在同一 holdout 上可比较，明确至少一种实际盲点及误伤；无证据则不升级。
 
-## 7. 不做 / 不算
+### P1 — 多维评分、互补检测与聚合校准
 
-- 不做通用 agent 框架、不做 episode 循环（那是 `parked/SPRINT_agentic_visual_rl_program.md`
-  的事）。本文的任务仍是单步生成，只是规格、verifier、归因变了。
-- 不把 denoise step 的 parity 检查（第 1 层）和 verifier 检查（第 2 层）混为一谈：前者
-  保证训练计算一致，后者保证学习目标可信，各自独立通过。
-- 不用"训练 reward 上升"当环境可信的证据；证据是第 2 层自检报告和第 3 层的混合率。
-- 不用 LLM 生成任务规格来代替 oracle：CodeMidas 的规格也是 agent 写的，但测试是执行参
-  考实现录出来的——视觉任务里对应的是"检查由像素运算和 oracle 层定义"，不是"VLM 说像
-  不像"。
+- 修复/验证 §1 所列组件传递问题；一次评分保留所有可用轴，不重复加载模型。
+- 图像主奖励与互补伪影/语义信号分开；视频至少保留 VQ/MQ/TA，光流只做适用域诊断。
+- 在 calibration 上确定方向、尺度、权重和软惩罚，版本冻结后只在 holdout 验证。
+  不用每批 min-max 自动漂移目标；总体质量指标不默认设硬门槛。
+- 对“严重缺陷不能被审美高分抵消”的需求，比较加权和与有界软惩罚；硬拒绝仅用于
+  明确无效的输入/输出契约。不得在看完 holdout 后继续调权重还称它独立测试。
+- 挑一个证据支持的候选与原配方比较；不同时接入所有新 reward 模型。
+
+验收：目标失败类型的误排序改善，正常作品误伤与其他轴退化处于预先声明容忍范围；
+同时报告成本。阈值在读 holdout 前确定；样本不足/区间过宽则结论为不确定。
+
+### P2 — 可选 pairwise，与 pointwise 公平比较
+
+- 仅在 P0 显示 pointwise 分差小于评分噪声或人工分辨力明显不足时开展。
+- 用同一批输出做真实 pairwise judge，加入交换 A/B 的测试及 ties；测比较预算。
+- 在线接入必须保证真实 prompt group、跨 rank 分组与 sample 对齐正确。
+  `REWARD_GROUP_ID_METADATA_KEY` 已有，不用 prompt 文本猜 group。
+- 固定预算比较直接 pairwise、原 pointwise、校准后的 pointwise；不要把少用样本导致的
+  变化误归因于 reward 更好。未经证明不改 GRPO 优势计算默认值。
+
+### P3 — 短程 RL 与长期稳定性验证（需要 GPU，后续执行）
+
+- 同一初始 checkpoint、prompt/seed 计划、采样器、学习率和训练预算：原奖励 vs 新奖励。
+- 如需测试数据正则，再增加“新奖励 + 已有 clean-latent regularizer”一臂；不能一次换
+  reward、family、算法、KL、采样器后宣称因果。
+- 每个检查点保留媒体与各轴轨迹；并行观察训练奖励、留出评分、人工盲偏好、有效多样性、
+  ratio/clipping/KL、梯度和非有限值。parity 用事先定义的数值容忍，不要求 BF16 位级相同。
+- 配方升级依据独立偏好/质量证据及成本，不依据训练 reward 曲线上升。先做有限预算
+  canary，再多 seed/更长运行验证，短程不崩溃不能证明长期无 hack。
+- 把新出现的高分坏样本收进下一版 calibration；重新留出测试，版本变更不悄悄生效。
+
+## 4. 架构边界与非目标
+
+- **应改变**：评分诊断链路、失败样例评估、评分尺度与版本记录；新增评分器须由证据驱动。
+- **保持**：RewardSample/RewardOutput 公共边界、family 接口、runtime parking、现有
+  薄 reward adapter 的一致形状；`types.py` 的轻量导入边界有真实价值。
+- **不新建**通用 TaskSpec/Check/Verdict 层来重复现有 registry 聚合；先补明确缺口。
+- `REWARD_GROUP_ID_METADATA_KEY` 和 Kling 的特殊 token、输出 key 映射是 schema/protocol
+  边界，应保留 ALL_CAPS。大型新 rubric/反例分类表应进入命名清楚的配置或资产；
+  不把它们写成 trainer 里的硬编码词表。已有 prompt assets 无需为减少行数合并。
+- 不移植 RGBA family、不增加分层拆解任务、不开发 agent 数据工厂、不照搬 6 容器 oracle。
+- 不设通用“运动越大越好”“图像必须写实”或“所有任务都应二元可验证”的隐含目标。
+- 本次研究没有下载模型、运行 reward GPU 推理或 RL；论文收益不是本仓已实现收益。
