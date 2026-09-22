@@ -308,6 +308,7 @@ class MultiReward(RewardFunction):
         totals = [0.0] * len(samples)
         components: dict[str, tuple[float, ...]] = {}
         timing_ms: dict[str, float] = {}
+        component_names = {name for name, _, _ in self.rewards}
         for name, weight, fn in self.rewards:
             output = await fn.score_batch(samples)
             if len(output.scores) != len(samples):
@@ -316,6 +317,11 @@ class MultiReward(RewardFunction):
                     f"scores={len(output.scores)}, samples={len(samples)}",
                 )
             components[name] = output.scores
+            for axis, values in output.components.items():
+                key = f"{name}/{axis}"
+                if key in component_names or key in components:
+                    raise ValueError(f"reward observation namespace collision: {key!r}")
+                components[key] = values
             for key, value in output.timing_ms.items():
                 timing_ms[key] = timing_ms.get(key, 0.0) + value
             for index, score in enumerate(output.scores):
