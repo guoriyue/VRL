@@ -122,3 +122,44 @@ Relevant regression runs passed: the broad config/generation/data/family/media
 selection (763 passed, 1 skipped), rollout and evaluator checks (112 passed),
 and final focused checks after the geometry guard (10 passed). These selections
 overlap and should not be added together as a unique test count.
+
+## Localized attribute and object-replacement probe (2026-09-21)
+
+A separate, untrained official `QwenImage21Pipeline` probe uses two real source
+photographs to distinguish two task definitions:
+
+- **Attribute editing:** recolor an armchair or sweater; replace fabric upholstery
+  with leather while retaining the chair's silhouette.
+- **Whole-item replacement:** replace the upholstered chair with a bamboo chair
+  or a wooden stool, allowing geometry changes and newly visible background.
+
+Artifacts are saved locally under `outputs/qwen_image_21_local_edits/`:
+`index.html` contains original/edit pairs and opacity overlays; `cases.json`
+contains the exact prompts; `sources.json` attributes the photographs;
+`run_probe.py` reproduces/resumes the official-pipeline experiment;
+`report.json` records settings and timings. The experiment uses bf16, native
+Euler, CFG 1, 40 steps, seed 42 per case, KV cache, and
+`output_resolution=1024` (832 × 1248 outputs for these portraits). The text
+encoder and untiled VAE run on CPU; the transformer uses streamed block offload.
+No masks, LoRA, or post-edit background restoration are used.
+
+The first tiled-VAE attempt introduced colored vertical marks on the wall.
+A source-photo VAE round trip reproduced them without any diffusion steps:
+bf16 tiled RGBA MAE was 1.8083/255, versus 1.1375/255 untiled. Changing the
+*tiled* VAE to fp32 did not resolve them (1.8465/255). All main-gallery results
+therefore use the untiled VAE. This isolates a tiled-path artifact in this
+setup; it is not a general diagnosis of the upstream implementation. The
+initial output and round-trip checks are retained with the artifacts.
+
+Protected-patch pixel differences are descriptive diagnostics, not rewards or
+semantic success scores. The unchanged-room instruction control also passes
+through generation; it is not an identity operation. Two photos and one seed
+per edit do not establish reliability or demonstrate a training gain.
+
+In the completed probe, the chair/sweater recolors, leather upholstery, bamboo
+chair, and wooden stool followed their principal instructions visually.
+Bamboo/stool changed the silhouette and exposed background, as expected for
+replacement tasks. Fine print and alignment were not exact copies. The
+unchanged-room control explicitly failed: it added a small flower vase to the
+side table. Keep this failure in the gallery rather than presenting only
+successful edits. `observations.json` records the per-image visual review.
