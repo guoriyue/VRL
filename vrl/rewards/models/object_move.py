@@ -27,6 +27,15 @@ unchanged source earn its full consistency term, the geometric mean gives it
 zero. Every intermediate quantity is returned so evaluation can classify each
 outcome (duplicated / lost / unchanged / moved).
 
+``object_move_shaped`` is the training signal: ``(object_move + w * background)
+/ (1 + w)``, with background measured for every outcome (a copy or a lost
+object included). ``object_move`` alone is zero for almost every base sample,
+so GRPO pushed down every faithful-but-unmoved edit and the policy stopped
+following the reference photo (run1: held-out 0.107 -> 0.001, the scene
+redrawn). The shaped key ranks a correct move above a faithful no-op or copy,
+and those above a redrawn scene; with a small ``w`` a no-op still earns far
+less than any credited move.
+
 Per-artifact metadata (from the prompt manifest)::
 
     reference_images: [source path]           # the edit source
@@ -89,12 +98,15 @@ class ObjectMoveRewardModel(LazyTorchModule):
         self._stay_tolerance = float(cfg.get("stay_tolerance", 0.01))
         # Full size credit for closer/farther: the area changes by this factor.
         self._full_scale = float(cfg.get("full_scale", 2.0))
+        # Weight of background preservation in ``object_move_shaped``.
+        self._background_weight = float(cfg.get("background_weight", 0.2))
         for name, value, low, high in (
             ("count_threshold", self._count_threshold, 0.0, 1.0),
             ("nms_iou", self._nms_iou, 0.0, 1.0),
             ("identity_match", self._identity_match, 0.0, 1.0),
             ("full_shift", self._full_shift, 1e-6, 1.0),
             ("stay_tolerance", self._stay_tolerance, 1e-6, 1.0),
+            ("background_weight", self._background_weight, 0.0, 1.0),
         ):
             if not low <= value <= high:
                 raise ValueError(f"object_move {name} must lie in [{low}, {high}]")
@@ -159,6 +171,7 @@ class ObjectMoveRewardModel(LazyTorchModule):
         moved = _pick_source_instance(src_dets, spec.get("source_box"), (width, height))
         out = {
             "object_move": 0.0,
+            "object_move_shaped": 0.0,
             "object_move_geometry": 0.0,
             "object_move_consistency": 0.0,
             "object_move_source_count": 0.0,
@@ -193,7 +206,17 @@ class ObjectMoveRewardModel(LazyTorchModule):
                     assigned.append((det, row[best]))
         out["object_move_source_count"] = 1.0
         out["object_move_edit_count"] = float(len(assigned))
+        kp0, kp1 = self._match(source, edited)
+        self_kp0, _ = self._match(source, source)
         if len(assigned) != 1:
+            # A copy or a lost object: no move credit, but a scene kept in
+            # place still ranks above a redrawn one.
+            regions = (moved[0], *(det[0] for det, _ in assigned))
+            if goal is not None:
+                regions = (*regions, goal)
+            background = self._background(kp0, kp1, self_kp0, regions, width, height)
+            out["object_move_background"] = background
+            out["object_move_shaped"] = self._shaped(0.0, background)
             return out
         out["object_move_count_ok"] = 1.0
         target, identity = assigned[0]
@@ -219,8 +242,6 @@ class ObjectMoveRewardModel(LazyTorchModule):
             displacement = sign * log_ratio
             progress = min(max(displacement / math.log(self._full_scale), 0.0), 1.0)
             size_term = 1.0
-        kp0, kp1 = self._match(source, edited)
-        self_kp0, _ = self._match(source, source)
         # The target mark itself (red box lines) is meant to disappear.
         edited_regions = (moved[0], target[0]) if goal is None else (moved[0], target[0], goal)
         background = self._background(kp0, kp1, self_kp0, edited_regions, width, height)
@@ -231,6 +252,7 @@ class ObjectMoveRewardModel(LazyTorchModule):
         out.update(
             {
                 "object_move": math.sqrt(geometry * consistency),
+                "object_move_shaped": self._shaped(math.sqrt(geometry * consistency), background),
                 "object_move_geometry": geometry,
                 "object_move_consistency": consistency,
                 "object_move_displacement": displacement,
@@ -240,6 +262,9 @@ class ObjectMoveRewardModel(LazyTorchModule):
             }
         )
         return out
+
+    def _shaped(self, move: float, background: float) -> float:
+        return (move + self._background_weight * background) / (1.0 + self._background_weight)
 
     def _detect(self, images: Sequence[Any], obj: str) -> list[list[Detection]]:
         import torch
