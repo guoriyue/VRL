@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import random
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -363,66 +362,46 @@ class QwenImageModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
     # -- decode_latents ------------------------------------------------
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        """Decode packed latents → image via Qwen-Image video VAE."""
-        return decode_qwen_image_latents(
-            self.pipeline, latents, height=self._decode_height, width=self._decode_width
+        """Decode packed latents → image via Qwen-Image video VAE.
+
+        Unpack to ``[B, C, 1, H, W]``, denormalize with the VAE's per-channel
+        mean/std, decode, then drop the singleton temporal frame.
+        """
+        pipe = self.pipeline
+        vae = pipe.vae
+        vae_scale_factor = pipe.vae_scale_factor
+        height = self._decode_height
+        width = self._decode_width
+        z_dim = vae.config.z_dim
+        latents_mean = torch.tensor(vae.config.latents_mean).view(1, z_dim, 1, 1, 1)
+        latents_std = torch.tensor(vae.config.latents_std).view(1, z_dim, 1, 1, 1)
+
+        def _transform(batch: torch.Tensor) -> torch.Tensor:
+            unpacked = pipe._unpack_latents(batch, height, width, vae_scale_factor)
+            unpacked = unpacked.to(vae.dtype)
+            mean = latents_mean.to(unpacked.device, unpacked.dtype)
+            std = latents_std.to(unpacked.device, unpacked.dtype)
+            return unpacked * std + mean
+
+        decoder = ChunkedLatentDecoder(
+            LatentDecodePlan(
+                prepare_latents=_transform,
+                vae_decode=lambda batch: vae.decode(batch, return_dict=False)[0],
+                # Video VAE returns [B, C, 1, H, W]; drop the temporal frame.
+                prepare_decoded=lambda decoded: decoded[:, :, 0],
+                postprocess=lambda image: pipe.image_processor.postprocess(
+                    image,
+                    output_type="pt",
+                ),
+                output_layout="image_bchw",
+                decode_batch_size=getattr(pipe, "decode_batch_size", None),
+            ),
         )
-
-
-def decode_qwen_image_latents(
-    pipe: Any,
-    latents: torch.Tensor,
-    *,
-    height: int,
-    width: int,
-    finish: Callable[[torch.Tensor], torch.Tensor] | None = None,
-) -> torch.Tensor:
-    """Decode packed Qwen-Image latents through the pipeline's video-style VAE.
-
-    Shared by Qwen-Image and Qwen-Image-2.1: both unpack through their
-    pipeline's ``_unpack_latents`` to ``[B, C, 1, H, W]``, denormalize with the
-    VAE's per-channel mean/std, decode, drop the singleton temporal frame and
-    postprocess to ``[0, 1]``. ``finish`` runs on the postprocessed image (2.1
-    composites its alpha channel there).
-    """
-    vae = pipe.vae
-    vae_scale_factor = pipe.vae_scale_factor
-    z_dim = vae.config.z_dim
-    latents_mean = torch.tensor(vae.config.latents_mean).view(1, z_dim, 1, 1, 1)
-    latents_std = torch.tensor(vae.config.latents_std).view(1, z_dim, 1, 1, 1)
-
-    def _transform(batch: torch.Tensor) -> torch.Tensor:
-        unpacked = pipe._unpack_latents(batch, height, width, vae_scale_factor)
-        unpacked = unpacked.to(vae.dtype)
-        mean = latents_mean.to(unpacked.device, unpacked.dtype)
-        std = latents_std.to(unpacked.device, unpacked.dtype)
-        return unpacked * std + mean
-
-    def _postprocess(image: torch.Tensor) -> torch.Tensor:
-        image = pipe.image_processor.postprocess(image, output_type="pt")
-        return image if finish is None else finish(image)
-
-    decoder = ChunkedLatentDecoder(
-        LatentDecodePlan(
-            prepare_latents=_transform,
-            vae_decode=lambda batch: vae.decode(batch, return_dict=False)[0],
-            # Video VAE returns [B, C, 1, H, W]; drop the temporal frame.
-            prepare_decoded=lambda decoded: decoded[:, :, 0],
-            postprocess=_postprocess,
-            output_layout="image_bchw",
-            decode_batch_size=getattr(pipe, "decode_batch_size", None),
-        ),
-    )
-    return decoder(latents)
+        return decoder(latents)
 
 
 class QwenImageReplayModel(DiffusersReplayModelBase, QwenImageModel):
     """Replay-only Qwen-Image model that owns no prompt encoders, VAE, or pipeline."""
 
 
-__all__ = [
-    "QwenImageModel",
-    "QwenImageReplayModel",
-    "QwenImageSamplingState",
-    "decode_qwen_image_latents",
-]
+__all__ = ["QwenImageModel", "QwenImageReplayModel", "QwenImageSamplingState"]
