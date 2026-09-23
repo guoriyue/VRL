@@ -37,18 +37,17 @@ import numpy as np
 import torch
 
 from vrl.generation.types import DenoiseRequest
+from vrl.models.families.qwen_image.model import decode_qwen_image_latents
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
-    ChunkedLatentDecoder,
     DenoiseBackboneCaller,
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
-    LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
 )
@@ -483,26 +482,10 @@ class QwenImage21Model(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Decode packed latents into RGB or opt-in RGBA output.
 
-        Unpack to ``[B, C, 1, H, W]``, denormalize with the VAE's per-channel
-        mean/std, decode to RGBA, drop the singleton temporal frame, then
-        composite alpha over white only in RGB mode. RGBA output keeps all four
-        channels through generation and reward transport.
+        The 64-channel VAE decodes RGBA. RGB mode composites alpha over white;
+        RGBA output keeps all four channels through generation and reward
+        transport.
         """
-        pipe = self.pipeline
-        vae = pipe.vae
-        vae_scale_factor = pipe.vae_scale_factor
-        height = self._decode_height
-        width = self._decode_width
-        z_dim = vae.config.z_dim
-        latents_mean = torch.tensor(vae.config.latents_mean).view(1, z_dim, 1, 1, 1)
-        latents_std = torch.tensor(vae.config.latents_std).view(1, z_dim, 1, 1, 1)
-
-        def _transform(batch: torch.Tensor) -> torch.Tensor:
-            unpacked = pipe._unpack_latents(batch, height, width, vae_scale_factor)
-            unpacked = unpacked.to(vae.dtype)
-            mean = latents_mean.to(unpacked.device, unpacked.dtype)
-            std = latents_std.to(unpacked.device, unpacked.dtype)
-            return unpacked * std + mean
 
         def _composite_over_white(image: torch.Tensor) -> torch.Tensor:
             # ``postprocess`` returns [0, 1] tensors; channel 4 is alpha.
@@ -511,20 +494,13 @@ class QwenImage21Model(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
             rgb, alpha = image[:, :3], image[:, 3:4]
             return rgb * alpha + (1.0 - alpha)
 
-        decoder = ChunkedLatentDecoder(
-            LatentDecodePlan(
-                prepare_latents=_transform,
-                vae_decode=lambda batch: vae.decode(batch, return_dict=False)[0],
-                # Video-style VAE returns [B, 4, 1, H, W]; drop the temporal frame.
-                prepare_decoded=lambda decoded: decoded[:, :, 0],
-                postprocess=lambda image: _composite_over_white(
-                    pipe.image_processor.postprocess(image, output_type="pt"),
-                ),
-                output_layout="image_bchw",
-                decode_batch_size=getattr(pipe, "decode_batch_size", None),
-            ),
+        return decode_qwen_image_latents(
+            self.pipeline,
+            latents,
+            height=self._decode_height,
+            width=self._decode_width,
+            finish=_composite_over_white,
         )
-        return decoder(latents)
 
 
 class QwenImage21ReplayModel(DiffusersReplayModelBase, QwenImage21Model):

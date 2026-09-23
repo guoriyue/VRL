@@ -190,3 +190,46 @@ def test_qwen21_prepare_replay_sets_the_rollout_timestep_grid() -> None:
     plain = FlowMatchEulerDiscreteScheduler.from_config(config)
     plain.set_timesteps(num_steps, sigmas=np.linspace(1.0, 1.0 / num_steps, num_steps), mu=0.0)
     assert not torch.allclose(plain.timesteps, expected)
+
+
+def _decode_pipeline(transformer: torch.nn.Module) -> SimpleNamespace:
+    """A pipeline whose VAE decodes 4 latent channels straight into RGBA pixels."""
+
+    def unpack(latents, height, width, vae_scale_factor):
+        h, w = height // vae_scale_factor, width // vae_scale_factor
+        return latents.transpose(1, 2).reshape(latents.shape[0], -1, 1, h, w)
+
+    vae = SimpleNamespace(
+        dtype=torch.float32,
+        config=SimpleNamespace(z_dim=4, latents_mean=[0.0] * 4, latents_std=[1.0] * 4),
+        decode=lambda batch, return_dict=False: (batch,),
+    )
+    return SimpleNamespace(
+        transformer=transformer,
+        device=torch.device("cpu"),
+        vae=vae,
+        vae_scale_factor=_VSF,
+        _unpack_latents=unpack,
+        image_processor=SimpleNamespace(postprocess=lambda image, output_type: image),
+    )
+
+
+def test_qwen21_decode_composites_alpha_over_white_unless_rgba() -> None:
+    """RGB mode flattens the decoded alpha onto white; RGBA mode keeps four channels."""
+    model = QwenImage21Model(
+        pipeline=_decode_pipeline(build_tiny_transformer("qwen_image_21")),
+        device=torch.device("cpu"),
+    )
+    model._decode_height, model._decode_width = _H, _W
+    latents = torch.full((1, _SEQ, 4), 0.25)
+    latents[..., 3] = 0.5  # alpha
+
+    model._output_mode = "rgb"
+    rgb = model.decode_latents(latents)
+    model._output_mode = "rgba"
+    rgba = model.decode_latents(latents)
+
+    assert rgb.shape == (1, 3, _H // _VSF, _W // _VSF)
+    torch.testing.assert_close(rgb, torch.full_like(rgb, 0.25 * 0.5 + 0.5))
+    assert rgba.shape == (1, 4, _H // _VSF, _W // _VSF)
+    torch.testing.assert_close(rgba[:, 3], torch.full_like(rgba[:, 3], 0.5))
