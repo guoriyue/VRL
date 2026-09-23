@@ -77,10 +77,10 @@ class ObjectMoveRewardModel(LazyTorchModule):
         # match, not this floor, decides what counts as the moved object.
         self._count_threshold = float(cfg.get("count_threshold", 0.15))
         self._nms_iou = float(cfg.get("nms_iou", 0.5))
-        # A detection counts as the moved object when its DINOv2 crop embedding
-        # is at least this similar to the source instance; other members of
-        # the category (different look) are not counted in either image.
-        self._identity_match = float(cfg.get("identity_match", 0.7))
+        # Floor for assigning an edited detection to the moved object: below it
+        # a box is detector noise, not the object (it still has to be more like
+        # the moved object than like any other source instance).
+        self._identity_match = float(cfg.get("identity_match", 0.5))
         # Full displacement credit: the centre travels this fraction of the image
         # along the requested axis (a clearly visible move, not a nudge).
         self._full_shift = float(cfg.get("full_shift", 0.25))
@@ -171,29 +171,32 @@ class ObjectMoveRewardModel(LazyTorchModule):
         }
         if moved is None:
             return out
-        # Count only instances that look like the moved object. Other members of
-        # the category (parked airplanes, a second chair) appear in both images
-        # and cancel; a copy of the moved object is a second match in the edit.
-        crops = [_crop(source, moved[0])]
-        crops += [_crop(source, det[0]) for det in src_dets]
-        crops += [_crop(edited, det[0]) for det in edit_dets]
-        embeds = self._embed(crops)
-        sims = (embeds[1:] @ embeds[0]).tolist()
-        src_sims, edit_sims = sims[: len(src_dets)], sims[len(src_dets) :]
-        src_match = [
-            d for d, sim in zip(src_dets, src_sims, strict=True) if sim >= self._identity_match
-        ]
-        edit_match = [
-            (d, sim)
-            for d, sim in zip(edit_dets, edit_sims, strict=True)
-            if sim >= self._identity_match
-        ]
-        out["object_move_source_count"] = float(len(src_match))
-        out["object_move_edit_count"] = float(len(edit_match))
-        if not edit_match or len(edit_match) != len(src_match):
+        # Each edited detection belongs to the source instance it looks most
+        # like (DINOv2). Other members of the category (parked airplanes, a
+        # second chair) keep their own counterparts; the moved object must end
+        # up with exactly one detection -- two is a pasted copy, none is lost.
+        # Similarity is relative, not an absolute bar: a correctly moved object
+        # that was also resized loses sharpness and scores lower against the
+        # source crop, but still more like itself than like anything else.
+        embeds = self._embed(
+            [_crop(source, det[0]) for det in src_dets]
+            + [_crop(edited, det[0]) for det in edit_dets]
+        )
+        source_embeds, edit_embeds = embeds[: len(src_dets)], embeds[len(src_dets) :]
+        moved_index = src_dets.index(moved)
+        assigned: list[tuple[Detection, float]] = []
+        if len(edit_dets):
+            sims = edit_embeds @ source_embeds.T
+            for det, row in zip(edit_dets, sims.tolist(), strict=True):
+                best = max(range(len(row)), key=row.__getitem__)
+                if best == moved_index and row[best] >= self._identity_match:
+                    assigned.append((det, row[best]))
+        out["object_move_source_count"] = 1.0
+        out["object_move_edit_count"] = float(len(assigned))
+        if len(assigned) != 1:
             return out
         out["object_move_count_ok"] = 1.0
-        target, identity = _match_moved_instance(moved, src_match, edit_match)
+        target, identity = assigned[0]
         (sx0, sy0, sx1, sy1), (ex0, ey0, ex1, ey1) = moved[0], target[0]
         dx = ((ex0 + ex1) - (sx0 + sx1)) / 2.0 / width
         dy = ((ey0 + ey1) - (sy0 + sy1)) / 2.0 / height
@@ -330,27 +333,6 @@ def _pick_source_instance(
     x0, y0, x1, y1 = (float(v) for v in source_box)
     named = (x0 * width, y0 * height, x1 * width, y1 * height)
     return max(dets, key=lambda det: _iou(det[0], named))
-
-
-def _match_moved_instance(
-    moved: Detection,
-    src_match: Sequence[Detection],
-    edit_match: Sequence[tuple[Detection, float]],
-) -> tuple[Detection, float]:
-    """The edited instance that corresponds to ``moved``, with its identity cosine.
-
-    Look-alike instances the edit should leave alone stay put, so each claims
-    its best-overlapping edited match; the moved object is the most similar
-    match left over.
-    """
-
-    remaining = list(edit_match)
-    for det in src_match:
-        if det is moved or len(remaining) == 1:
-            continue
-        claimed = max(remaining, key=lambda item: _iou(item[0][0], det[0]))
-        remaining.remove(claimed)
-    return max(remaining, key=lambda item: item[1])
 
 
 def _crop(image: Any, box: Box) -> Any:
