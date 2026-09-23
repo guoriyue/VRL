@@ -272,3 +272,15 @@ GRPO 组内标准化后，少数非零样本拿大正优势，其余"保留了�
 - Commits（未 push）：9a1902e4 reward、57c0fbf7 target_box、9712503b 评测支持参考图编辑、984aa4c9 数据、f33995d3 实例分配、d19314ba 配方。
 - 对比页（前 16 条 COCO held-out，按顺序，不挑）：<https://claude.ai/artifact/S4dL7D8VuD6o2D2PPUfxnk>
 - 数据与输出：`outputs/qwen_image_21_object_move_run1/`（ckpt、metrics、verdict/）、`outputs/qwen_image_21_object_move_base/`（GATE B）。
+
+## 14. 事后发现：一半训练指令本身不合理（2026-09-23，用户指出）
+
+COCO 那 600 条指令是"把 X 移到画面左 / 右边"，可行性规则只查了"那一侧有空地"，没查"那里有没有能承托它的东西"，
+也没排除装在原地的物体。训练集 COCO 部分最多的类别：toilet 51、clock 40、tv 29、fire hydrant 18、stop sign 15、
+oven 14、train 14、refrigerator 13、traffic light 11——马桶、挂钟、消防栓、红绿灯"移到左边"在真实场景里不成立，
+笔记本电脑移到没有桌子的左边只能悬空。base 的"复制 / 不动"有一部分是在回应不合理的要求，reward 也在奖励不合理的结果。
+
+下一次做物体移动，指令要锚定到场景里真实存在的承托物：只选可移动类别（排除装在原地的物体），目标写成
+"把笔记本电脑放到椅子上 / 床头柜上"，用 COCO 框给出承托物位置（落点 = 承托物框的上表面区域），并用 VLM 做一次
+"这个移动在这张图里是否合理"的检查，丢掉不通过的，抽查 30 条人工确认。SpatialEdit 那一半（红框目标）没有这个问题。
+run2（shaped reward）仍在用旧指令训练，它能回答"奖励变密后还会不会重画"，但学到的移动能力会被这一半坏指令拖累。
