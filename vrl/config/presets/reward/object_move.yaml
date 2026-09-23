@@ -1,0 +1,18 @@
+# Object-move edit reward (vrl/rewards/models/object_move.py): Grounding DINO
+# finds the named object in the source photo and the edit, DINOv2 decides which
+# detections are that object (a pasted copy is an extra instance -> 0),
+# EfficientLoFTR checks the background stayed in place (a shifted or recropped
+# frame -> 0). score = sqrt(geometry * identity * background). Every prompt row
+# carries metadata.object_move ({object, direction | target_box, source_box?})
+# and exactly one reference image -- manifests/object_move does. Runs on the
+# trainer GPU (~2.5 GB resident: detector 0.9 GB, DINOv2-large 1.2 GB, matcher).
+reward:
+  components:
+    object_move: 1.0
+  kwargs:
+    object_move:
+      score_key: object_move
+      worker_config:
+        detector_model: IDEA-Research/grounding-dino-base
+        dino_model: facebook/dinov2-large
+        matcher_model: zju-community/efficientloftr

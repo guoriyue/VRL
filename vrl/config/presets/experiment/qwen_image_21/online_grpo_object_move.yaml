@@ -1,0 +1,44 @@
+# Qwen-Image-2.1 object-move edit GRPO. The base model moves a named object
+# badly (probe: 1/7 -- it adds a second copy, leaves the image unchanged or
+# loses the object) while camera/viewpoint edits already work, so only object
+# moves are trained. Single-card settings follow the OCR recipe (wide fp32-master
+# LoRA, eager with full activation checkpointing, int8 Adam moments). The
+# reference photo is encoded as a latent prefix, roughly doubling the sequence
+# at 512px, so groups are 8 samples and 6 prompts per update (48 samples).
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/qwen_image_21/lora_wide
+  - /sampling/image/512
+  - /sampling/denoise/10_step_no_cfg
+  - /reward/object_move
+  - /dataset/object_move
+
+sampling:
+  # Reference encoded at the training geometry so the prefix is 1024 tokens.
+  reference_resolution: 512
+  output_mode: rgb
+
+distributed:
+  resources:
+    reward:
+      device: trainer
+
+actor:
+  optim:
+    lr: 3.0e-4
+    optim_8bit: true
+  gradient_checkpointing: full
+  timestep_fraction: 0.5
+  prompts_per_collection: 2
+
+rollout:
+  n_samples_per_prompt: 8
+  prompts_per_batch: 6
+  samples_per_generation_batch: 4
+  noise_level: 0.7
+
+trainer:
+  output_dir: outputs/qwen_image_21_object_move
+  save_freq: 20
+  debug:
+    first_step: true
