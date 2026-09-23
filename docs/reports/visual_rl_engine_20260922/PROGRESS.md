@@ -51,7 +51,8 @@
 
 ## Evidence not yet obtained
 
-- No real model inference or RL has run in this workspace for this goal.
+- Real Qwen inference and a one-step LoRA gradient probe have now run (below).
+  Full reward-weighted policy training and capability gains remain unverified.
 - No preference labels or capability improvement have been manufactured or claimed.
 - No 24-hour completion, production readiness, or working agent policy RL is established.
 
@@ -82,3 +83,33 @@
   environment or family without compatibility tests.
 - Expanded verification: `pytest tests/rewards/functions tests/rewards/test_evaluation.py -q`
   completed with 102 passed, 2 skipped. Changed-file Ruff and `git diff --check` passed.
+
+## Qwen Image 2.1 integration
+
+- Ported only family adapters, reference-input plumbing, RGBA media boundaries,
+  and relevant tests from the read-only sibling checkout (integration 80b012dd,
+  source HEAD 90852130). Registered the family using the existing descriptor.
+- Updated and froze the local dependency lock: Diffusers git
+  `80c7ed262aeffbeb43ef13ae04baeb9b84515a69`, Transformers 5.17.0.
+- Real local checkpoint revision: `b3179ad355be050328e483a9dfdd9e60cd62adfa`.
+  All model probes used HF_HUB_OFFLINE=1; no weights were downloaded.
+- RTX 5090: single-reference edit, two-reference edit, and RGBA extraction at
+  512x512 / 20 native Euler steps succeeded. Evidence:
+  `outputs/qwen_image_21/port_parity_512/report.json` and adjacent PNGs.
+- Compared against the upstream pipeline with shared initial latent, disabled
+  prefix caching, CPU text encoding, and matched VAE preprocessing precision.
+  All three RGBA outputs had byte MAE 0 and first-action replay max error 0.
+  This does not assert equivalence to every default upstream configuration.
+- Separate 256x256 / 2-step SDE LoRA probe: log-prob replay error 0,
+  gradient norm 0.2742737933, optimizer parameter max delta 9.6713857e-06.
+  The loss is a log-prob gradient probe, NOT reward-weighted RL or a capability gain.
+- Fixed an additional transport inconsistency: RGBA tensors in video layouts
+  now composite over white like still-image reward views, instead of dropping alpha.
+  PNG exports retain alpha. Alpha-aware metrics must consume the preserved artifact.
+- Validation after dependency change: family/model/denoise/config/binding/media/
+  reward/data suites: **1489 passed, 25 skipped** (94.06s). Includes CPU real tiny
+  transformers and localhost/Ray reward transport tests, not GPU training tests.
+- Architecture: retain family runtime.py as a real executor adapter; retain
+  `_LATENT_TOKENS_PER_MASK_SLOT` as model geometry and tiny-model dimensions as
+  fixture constants. Preserve the family-wide encode/prepare/forward/decode shape;
+  reducing line count or reorganizing unrelated families is not a goal.

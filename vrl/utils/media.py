@@ -145,7 +145,12 @@ def video_tensor_to_uint8_frames(tensor: torch.Tensor) -> np.ndarray:
     if video.shape[0] == 1:
         video = video.repeat(3, 1, 1, 1)
     if video.shape[0] == 4:
-        video = video[:3]
+        # RGB consumers must see the same white composite as still-image IO.
+        scale = 1.0 if input_is_float else 255.0
+        alpha = video[3:4].float() / scale
+        video = video[:3].float() * alpha + scale * (1.0 - alpha)
+        if not input_is_float:
+            video = video.round().to(torch.uint8)
     video = video.permute(1, 2, 3, 0).contiguous()
     if input_is_float:
         return (video.numpy() * 255.0).round().astype(np.uint8)
@@ -157,14 +162,17 @@ def frames_thwc_to_float(frames: torch.Tensor) -> torch.Tensor:
 
     if frames.ndim != 4 or frames.shape[-1] not in {1, 3, 4}:
         raise ValueError(f"frames must be [T,H,W,C], got {tuple(frames.shape)}")
-    rgb = frames[..., :3]
-    if torch.is_floating_point(rgb):
+    if torch.is_floating_point(frames):
         # Float frames are assumed unit-range; tolerate an unusual 0-255 float source.
-        out = rgb.float()
+        out = frames.float()
         if float(out.max().item()) > 1.5:
             out = out / 255.0
     else:
-        out = rgb.float() / 255.0  # integer 0-255 frames
+        out = frames.float() / 255.0  # integer 0-255 frames
+    out = out.clamp(0.0, 1.0)
+    if out.shape[-1] == 4:
+        alpha = out[..., 3:4]
+        out = out[..., :3] * alpha + (1.0 - alpha)
     if out.shape[-1] == 1:
         out = out.repeat(1, 1, 1, 3)
     return out.clamp(0.0, 1.0)
