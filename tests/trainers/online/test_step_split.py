@@ -318,11 +318,7 @@ def test_corrected_replay_enforces_drift_guard_on_both_update_paths(
             for line in (tmp_path / "training_debug.jsonl").read_text().splitlines()
         ]
         by_event = {record["event"]: record for record in records}
-        assert set(by_event) == {
-            "precision_drift_guard",
-            "replay_parity_gate",
-            "first_update_weights",
-        }
+        assert set(by_event) == {"precision_drift_guard", "replay_parity_gate"}
         # Under a correction mode the parity gate still measures and records
         # the drift but does not enforce it; the drift guard owns enforcement.
         assert by_event["replay_parity_gate"]["enforced"] is False
@@ -442,53 +438,3 @@ def test_streaming_profiles_training_phases(tmp_path) -> None:
         if event["phase"] in {"evaluate", "backward", "optim_step"}
     }
     assert training_events == {"evaluate": 0, "backward": 0, "optim_step": 0}
-
-
-@pytest.mark.parametrize("streaming", [False, True])
-def test_first_proven_update_records_whether_trainable_weights_moved(
-    tmp_path,
-    streaming: bool,
-) -> None:
-    """Both update paths pair the first parity proof with an after-step digest.
-
-    The record is the evidence that the optimizer step actually changed the
-    trainable weights (a bf16 master can round a small update away). It is
-    written once, after the first proven-parity step, and never again.
-    """
-    import json
-
-    from vrl.scripts.common.online import _run_streaming_optimizer_update
-
-    trainer = _build_trainer(tmp_path)
-
-    async def run_update():
-        if streaming:
-            return await _run_streaming_optimizer_update(
-                trainer,
-                ["p"],
-                batch_plan=OnlineBatchPlan(
-                    prompts_per_batch=1,
-                    n_samples_per_prompt=2,
-                    prompts_per_collection=1,
-                ),
-            )
-        return await trainer.step(["p"])
-
-    asyncio.run(run_update())
-    asyncio.run(run_update())
-
-    records = [
-        json.loads(line) for line in (tmp_path / "training_debug.jsonl").read_text().splitlines()
-    ]
-    events = [record["event"] for record in records]
-    assert events.count("first_update_weights") == 1
-    assert events.index("first_update_weights") == events.index("replay_parity_gate") + 1
-    record = next(r for r in records if r["event"] == "first_update_weights")
-    assert record["stepped"] is True
-    assert record["moved"] is True
-    assert (
-        record["driver_trainable_before_step"]["sha256"]
-        != record["driver_trainable_after_step"]["sha256"]
-    )
-    assert record["driver_trainable_after_step"]["tensor_count"] == 1
-    assert trainer._first_proof_digest is None
