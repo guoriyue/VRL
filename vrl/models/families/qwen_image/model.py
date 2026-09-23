@@ -29,7 +29,6 @@ from typing import Any
 import torch
 
 from vrl.generation.types import DenoiseRequest
-from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
@@ -118,6 +117,10 @@ class QwenImageModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         # prepare -> denoise -> decode sequentially per batch).
         self._decode_height = 1024
         self._decode_width = 1024
+
+    def packed_token_count(self, height: int, width: int) -> int:
+        """Qwen-Image packs an 8x VAE + 2x2 patch grid: ``(H // 16) * (W // 16)`` tokens."""
+        return (height // 16) * (width // 16)
 
     def _set_dynamic_timesteps(self, num_steps: int, image_seq_len: int, device: Any) -> Any:
         """Set Qwen-Image timesteps with the resolution-derived ``mu`` (diffusers parity)."""
@@ -399,22 +402,6 @@ class QwenImageModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
 
 class QwenImageReplayModel(DiffusersReplayModelBase, QwenImageModel):
     """Replay-only Qwen-Image model that owns no prompt encoders, VAE, or pipeline."""
-
-    def prepare_replay(self, build: ModelBuild) -> None:
-        """Set the mu-shifted replay timesteps the dynamic scheduler needs.
-
-        Same contract as ``FluxReplayModel.prepare_replay``: the generic loader
-        leaves the replay scheduler without timesteps, and the SDE log-prob math
-        indexes ``scheduler.sigmas`` by timestep, so the replay grid must equal
-        the rollout's. Qwen-Image packs an 8x VAE + 2x2 patch grid:
-        seq_len = (H // 16) * (W // 16).
-        """
-        sampling = build.sampling_config or {}
-        num_steps = build.num_steps
-        height, width = sampling.get("height"), sampling.get("width")
-        if num_steps is not None and height and width:
-            image_seq_len = (int(height) // 16) * (int(width) // 16)
-            self._set_dynamic_timesteps(num_steps, image_seq_len, build.device)
 
 
 __all__ = ["QwenImageModel", "QwenImageReplayModel", "QwenImageSamplingState"]

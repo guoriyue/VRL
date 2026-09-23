@@ -184,9 +184,8 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
     def prepare_replay(self, build: ModelBuild) -> None:
         """Family hook run once by the replay builder right after construction.
 
-        Default no-op. FLUX overrides it to set its dynamic-shift replay
-        timesteps (the replay scheduler must carry the same mu-shifted schedule
-        the rollout used); the build carries the sampling block it derives from.
+        Default no-op. ``DiffusersPipelineModelBase`` rebuilds a dynamic-shift
+        replay grid here; other families re-standardize their replay scheduler.
         """
         del build
         return None
@@ -887,6 +886,41 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
             return
         scheduler.set_timesteps(n, device=self.device)
 
+    def prepare_replay(self, build: ModelBuild) -> None:
+        """Give a dynamic-shifting replay scheduler the rollout's timestep grid.
+
+        ``set_num_steps`` defers dynamic-shifting schedulers because ``mu``
+        depends on the packed latent length. Rollout sets the grid in
+        ``prepare_sampling``; replay never samples, but the SDE log-prob math
+        indexes ``scheduler.sigmas`` by timestep, so the grid must exist and
+        match. Resolution is fixed per run, so the replay rebuilds it from the
+        sampling block through the family's ``packed_token_count``.
+        """
+        if not getattr(self.scheduler.config, "use_dynamic_shifting", False):
+            return
+        sampling = build.sampling_config or {}
+        num_steps = build.num_steps
+        height, width = sampling.get("height"), sampling.get("width")
+        if num_steps is None or not height or not width:
+            return
+        self._set_dynamic_timesteps(
+            num_steps, self.packed_token_count(int(height), int(width)), build.device
+        )
+
+    def packed_token_count(self, height: int, width: int) -> int:
+        """Packed latent length of one ``height x width`` image (dynamic-shift families)."""
+        raise NotImplementedError(
+            f"{type(self).__name__} runs a dynamic-shifting scheduler and must declare "
+            "packed_token_count so its replay rebuilds the rollout timestep grid"
+        )
+
+    def _set_dynamic_timesteps(self, num_steps: int, image_seq_len: int, device: Any) -> Any:
+        """Set the resolution-shifted grid exactly as the family's diffusers pipeline does."""
+        raise NotImplementedError(
+            f"{type(self).__name__} runs a dynamic-shifting scheduler and must declare "
+            "_set_dynamic_timesteps"
+        )
+
 
 class ReplayRolloutStubs:
     """Rollout-only surface stubs shared by replay models.
@@ -920,7 +954,7 @@ class DiffusersReplayModelBase(ReplayRolloutStubs):
     Factors the byte-identical members of the per-family ``*ReplayModel``
     classes: the transformer/scheduler/device ctor, the no-pipeline guard, the
     transformer swap, and the scheduler/raw_handle accessors. A family
-    overrides only where it genuinely differs (flux/mochi/pixart_sigma
+    overrides only where it genuinely differs (mochi/pixart_sigma/sana
     re-standardize their replay scheduler in ``prepare_replay``).
     """
 

@@ -170,3 +170,63 @@ def test_flux_replay_model_restores_state_without_a_pipeline() -> None:
 
     out = model.forward_step(state, 0)
     assert out["noise_pred"].shape == (2, 64, TINY_FLUX_IN_CHANNELS)
+
+
+def _replay_build(family: str, height: int, width: int, num_steps: int):
+    from vrl.config.precision import RolePrecision
+    from vrl.models.interfaces.runtime import ModelBuild
+
+    return ModelBuild(
+        model_name_or_path="fake/repo",
+        revision=None,
+        device="cpu",
+        parameter_dtype=torch.float32,
+        family=family,
+        precision=RolePrecision("fp32", "ieee", outer_autocast=False),
+        sampling_config={"height": height, "width": width, "num_steps": num_steps},
+    )
+
+
+def _fixture_scheduler(family: str):
+    import json
+    from pathlib import Path
+
+    from diffusers import FlowMatchEulerDiscreteScheduler
+
+    fixture = Path("tests/models/steps/denoise/fixtures/scheduler_configs.json")
+    config = json.loads(fixture.read_text())[family]["config"]
+    return FlowMatchEulerDiscreteScheduler.from_config(config)
+
+
+def test_flux_prepare_replay_sets_the_rollout_timestep_grid() -> None:
+    """The replay scheduler gets the mu-shifted grid the rollout's packed length implies."""
+    rollout = _model(build_tiny_transformer("flux"))
+    rollout.pipeline.scheduler = _fixture_scheduler("flux")
+    # 512 px -> 64x64 latent cells, 2x2 patch pack -> 1024 tokens.
+    expected = rollout._set_dynamic_timesteps(10, 1024, torch.device("cpu")).clone()
+
+    replay = FluxReplayModel(
+        transformer=build_tiny_transformer("flux"),
+        scheduler=_fixture_scheduler("flux"),
+        device=torch.device("cpu"),
+    )
+    replay.prepare_replay(_replay_build("flux", 512, 512, 10))
+
+    torch.testing.assert_close(replay.scheduler.timesteps, expected)
+
+
+def test_dynamic_shift_replay_without_a_token_count_fails_loud() -> None:
+    """A new dynamic-shift family that forgets packed_token_count must not replay on no grid."""
+
+    from vrl.models.steps.denoise import DiffusersPipelineModelBase
+
+    class Forgetful(FluxReplayModel):
+        packed_token_count = DiffusersPipelineModelBase.packed_token_count
+
+    replay = Forgetful(
+        transformer=build_tiny_transformer("flux"),
+        scheduler=_fixture_scheduler("flux"),
+        device=torch.device("cpu"),
+    )
+    with pytest.raises(NotImplementedError, match="must declare packed_token_count"):
+        replay.prepare_replay(_replay_build("flux", 512, 512, 10))

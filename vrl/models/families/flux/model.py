@@ -33,7 +33,6 @@ from typing import Any
 import torch
 
 from vrl.generation.types import DenoiseRequest
-from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     DiffusersReplayModelBase,
@@ -115,6 +114,10 @@ class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         # must unpack to here. Defaults are overwritten on the first prepare call.
         self._decode_height = 1024
         self._decode_width = 1024
+
+    def packed_token_count(self, height: int, width: int) -> int:
+        """FLUX packs an 8x VAE + 2x2 patch grid: ``(H // 16) * (W // 16)`` tokens."""
+        return (height // 16) * (width // 16)
 
     def _set_dynamic_timesteps(self, num_steps: int, image_seq_len: int, device: Any) -> Any:
         """Set FLUX timesteps with the resolution-derived ``mu`` (diffusers parity)."""
@@ -439,25 +442,6 @@ class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
 
 class FluxReplayModel(DiffusersReplayModelBase, FluxModel):
     """Replay-only FLUX model that owns no prompt encoders, VAE, or pipeline."""
-
-    def prepare_replay(self, build: ModelBuild) -> None:
-        """Set the mu-shifted replay timesteps FLUX's dynamic scheduler needs.
-
-        The replay scheduler was loaded WITHOUT timesteps (mu unknown in the
-        generic loader). The replay SDE log-prob math reads scheduler.sigmas +
-        index_for_timestep, so the replay scheduler must carry the SAME
-        mu-shifted schedule the rollout used. Resolution is fixed per run, so
-        derive the packed image_seq_len from it and set the dynamic timesteps
-        now — identical to the rollout's prepare_sampling. (debug.first_step
-        asserts old==new log-prob, so any drift here surfaces immediately.)
-        FLUX packs an 8x VAE + 2x2 patch grid: seq_len = (H // 16) * (W // 16).
-        """
-        sampling = build.sampling_config or {}
-        num_steps = build.num_steps
-        height, width = sampling.get("height"), sampling.get("width")
-        if num_steps is not None and height and width:
-            image_seq_len = (int(height) // 16) * (int(width) // 16)
-            self._set_dynamic_timesteps(num_steps, image_seq_len, build.device)
 
 
 __all__ = ["FluxModel", "FluxReplayModel", "FluxSamplingState"]
