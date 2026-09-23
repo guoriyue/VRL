@@ -43,13 +43,20 @@ Per-artifact metadata (from the prompt manifest)::
                   source_box: [x0, y0, x1, y1]}   # optional, normalized
     object_move: {object: "the helicopter",       # or: a drawn target
                   target_box: [x0, y0, x1, y1]}   # normalized
+    object_move: {object: "laptop", support: "chair",  # or: onto a support
+                  support_box: [x0, y0, x1, y1],       # normalized
+                  source_box: [x0, y0, x1, y1]}
 
 ``source_box`` selects which instance moves when the source holds several;
 without it the most confident detection is the moved object. With
 ``target_box`` (a red box drawn on the source, SpatialEdit style) geometry is
 the moved box's IoU with the target, which fixes both place and size; the
 target region is excluded from the background check because the mark is meant
-to be erased.
+to be erased. With ``support_box`` ("put the laptop on the chair") the object
+has to come to rest on a real surface in the photo: geometry is full when the
+bottom centre of its edited box lies inside the support's box, and partial
+for the share of the starting distance to it that was closed; its size may
+change with depth, by at most about 2x.
 """
 
 from __future__ import annotations
@@ -156,17 +163,22 @@ class ObjectMoveRewardModel(LazyTorchModule):
         obj = str(spec.get("object") or "").strip()
         direction = str(spec.get("direction") or "")
         target_box = spec.get("target_box")
-        if not obj or (target_box is None and direction not in DIRECTIONS):
+        support_box = spec.get("support_box")
+        if not obj or (target_box is None and support_box is None and direction not in DIRECTIONS):
             raise ValueError(
-                f"object_move spec needs object and a direction in {DIRECTIONS} or a target_box"
+                f"object_move spec needs object and a direction in {DIRECTIONS}, "
+                "a target_box or a support_box"
             )
         if source.size != edited.size:
             raise ValueError("object_move compares images of equal size")
         width, height = edited.size
-        goal = None
+        goal = support = None
         if target_box is not None:
             x0, y0, x1, y1 = (float(v) for v in target_box)
             goal = (x0 * width, y0 * height, x1 * width, y1 * height)
+        elif support_box is not None:
+            x0, y0, x1, y1 = (float(v) for v in support_box)
+            support = (x0 * width, y0 * height, x1 * width, y1 * height)
         src_dets, edit_dets = self._detect([source, edited], obj)
         moved = _pick_source_instance(src_dets, spec.get("source_box"), (width, height))
         out = {
@@ -231,6 +243,17 @@ class ObjectMoveRewardModel(LazyTorchModule):
             displacement = _iou(target[0], goal) - _iou(moved[0], goal)
             progress = _iou(target[0], goal)
             size_term = 1.0
+        elif support is not None:
+            # Resting point: the bottom centre of the object's box has to land on
+            # the support (a laptop set on the chair, not hanging beside it).
+            # Credit is the share of the starting gap that was closed, so an
+            # object left where it was earns nothing however near it started.
+            start_gap = _gap(((sx0 + sx1) / 2.0, sy1), support, width, height)
+            end_gap = _gap(((ex0 + ex1) / 2.0, ey1), support, width, height)
+            displacement = start_gap - end_gap
+            progress = min(max(displacement / max(start_gap, 1e-6), 0.0), 1.0)
+            # Depth may shrink or grow it a little; halved or doubled area = 0.
+            size_term = max(0.0, 1.0 - abs(log_ratio) / math.log(2.0))
         elif direction in _LATERAL:
             ux, uy = _LATERAL[direction]
             displacement = dx * ux + dy * uy
@@ -343,6 +366,15 @@ class ObjectMoveRewardModel(LazyTorchModule):
                 threshold=0.2,
             )[0]
         return result["keypoints0"].float().cpu(), result["keypoints1"].float().cpu()
+
+
+def _gap(point: tuple[float, float], box: Box, width: int, height: int) -> float:
+    """Distance from ``point`` to ``box`` (zero inside it), in frame fractions."""
+
+    x, y = point
+    gap_x = max(box[0] - x, 0.0, x - box[2]) / width
+    gap_y = max(box[1] - y, 0.0, y - box[3]) / height
+    return math.hypot(gap_x, gap_y)
 
 
 def _pick_source_instance(

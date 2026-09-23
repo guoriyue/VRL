@@ -121,3 +121,17 @@ def test_shaped_score_ranks_move_over_faithful_failures_over_a_redrawn_scene() -
     # w = 0.2: a faithful no-op, copy or lost object keeps 0.2 / 1.2 for the scene.
     assert unchanged == duplicate == lost == pytest.approx(0.2 / 1.2)
     assert redrawn == 0.0
+
+
+def test_support_mode_credits_landing_on_the_named_surface() -> None:
+    # The support (a table top) spans x 120-180, y 60-130; the object starts at x 20-60.
+    spec = {"object": "block", "support_box": [120 / W, 60 / H, 180 / W, 130 / H]}
+    source, onto, halfway, stayed = _scene(BOX[0]), _scene(130.0), _scene(70.0), _scene(BOX[0])
+    layouts = {id(source): [BOX[0]], id(onto): [130.0], id(halfway): [70.0], id(stayed): [BOX[0]]}
+    model = _Stubbed(layouts)
+
+    assert model.score(source, onto, spec)["object_move_geometry"] == pytest.approx(1.0)
+    assert model.score(source, onto, spec)["object_move"] == pytest.approx(1.0)
+    # Bottom centre from x 40 to x 90: half of the 80 px gap to the table closed.
+    assert model.score(source, halfway, spec)["object_move_geometry"] == pytest.approx(50 / 80)
+    assert model.score(source, stayed, spec)["object_move"] == 0.0
