@@ -6,8 +6,6 @@ through the HTTP service. Generation dependencies remain independent.
 
 from __future__ import annotations
 
-import hashlib
-import json
 import sys
 import tempfile
 from collections.abc import Mapping
@@ -26,10 +24,6 @@ class EditRewardModel(LazyTorchModule):
         self.config = dict(worker_config)
         self.device = str(self.config.get("device", "cuda"))
         self.data_root = Path(self.config["data_root"]).expanduser().resolve()
-        locality_path = self.config.get("locality_config")
-        self.locality_config = (
-            json.loads(Path(locality_path).read_text()) if locality_path else None
-        )
 
     def _load_module(self) -> Any:
         import yaml
@@ -85,20 +79,8 @@ class EditRewardModel(LazyTorchModule):
             source = Image.alpha_composite(Image.new("RGBA", rgba.size, "white"), rgba).convert(
                 "RGB"
             )
-        # Match the source/candidate geometry used by the baseline experiment.
+        # Score the source at the candidate's geometry.
         source = source.resize(image.size, Image.Resampling.LANCZOS)
-        evidence = None
-        if self.locality_config is not None:
-            from vrl.rewards.models.color_locality import color_locality, combine_locality
-            from vrl.utils.artifacts import sha256_file
-
-            task_id = artifact.metadata.get("task_id")
-            rule = self.locality_config["tasks"].get(task_id)
-            if rule is None or rule["prompt"] != artifact.prompt:
-                raise ValueError(f"Uncalibrated locality task/instruction: {task_id!r}")
-            if sha256_file(source_path) != rule["source_sha256"]:
-                raise ValueError(f"Locality source image changed: {task_id!r}")
-            evidence = color_locality(source, image, rule, self.locality_config)
         with torch.inference_mode():
             values = (
                 self._module_for_inference()
@@ -107,29 +89,4 @@ class EditRewardModel(LazyTorchModule):
                 .cpu()
                 .tolist()
             )
-        scores = {"editreward": float(values[0]), "editreward_log_sigma": float(values[1])}
-        if evidence is not None:
-            scores.update(
-                combine_locality(
-                    evidence,
-                    scores["editreward"],
-                    quality_weight=self.locality_config["quality_weight"],
-                )
-            )
-        audit_dir = self.config.get("audit_dir")
-        if audit_dir:
-            root = Path(audit_dir)
-            root.mkdir(parents=True, exist_ok=True)
-            name = hashlib.sha256(artifact.artifact_id.encode()).hexdigest()
-            image.save(root / f"{name}.png")
-            record = {
-                "artifact_id": artifact.artifact_id,
-                "sample_id": artifact.sample_id,
-                "prompt": artifact.prompt,
-                "metadata": artifact.metadata,
-                "scores": scores,
-                "image": f"{name}.png",
-                "locality_config": self.locality_config,
-            }
-            (root / f"{name}.json").write_text(json.dumps(record, indent=2) + "\n")
-        return scores
+        return {"editreward": float(values[0]), "editreward_log_sigma": float(values[1])}
