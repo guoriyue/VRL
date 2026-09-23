@@ -16,7 +16,7 @@ import torch
 from tests.models.steps.denoise.fixtures import (
     TINY_QWEN21_CONTEXT_DIM,
     TINY_QWEN21_IN_CHANNELS,
-    build_tiny_qwen_image_21_transformer,
+    build_tiny_transformer,
     record_forward_calls,
     stamp_model_precision,
 )
@@ -67,7 +67,7 @@ def _state(*, txt_len: int = 3, negative_len: int | None = None) -> QwenImage21S
 
 def test_qwen21_forward_step_single_branch_when_no_cfg() -> None:
     """Default true_cfg_scale=1.0: ONE forward; img_mask spans text + target slots."""
-    transformer = build_tiny_qwen_image_21_transformer()
+    transformer = build_tiny_transformer("qwen_image_21")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = _state(txt_len=3)
@@ -94,7 +94,7 @@ def test_qwen21_forward_step_single_branch_when_no_cfg() -> None:
 
 def test_qwen21_forward_step_runs_separate_cfg_with_linear_combine() -> None:
     """do_cfg=True runs TWO forwards at different text lengths; combine is plain linear."""
-    transformer = build_tiny_qwen_image_21_transformer()
+    transformer = build_tiny_transformer("qwen_image_21")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = _state(txt_len=5, negative_len=2)
@@ -113,7 +113,7 @@ def test_qwen21_forward_step_runs_separate_cfg_with_linear_combine() -> None:
 
 def test_qwen21_replay_model_restores_state_without_a_pipeline() -> None:
     """The pipeline-less replay model rebuilds img_shapes/img_mask and matches rollout."""
-    transformer = build_tiny_qwen_image_21_transformer()
+    transformer = build_tiny_transformer("qwen_image_21")
     rollout = _model(transformer)
     state = _state(txt_len=3)
     expected = rollout.forward_step(state, 0)["noise_pred"]
@@ -161,14 +161,14 @@ def test_qwen21_prepare_replay_sets_the_rollout_timestep_grid() -> None:
     assert config["use_dynamic_shifting"] is True
     height, width, num_steps = 512, 512, 10
 
-    rollout = _model(build_tiny_qwen_image_21_transformer())
+    rollout = _model(build_tiny_transformer("qwen_image_21"))
     rollout_scheduler = FlowMatchEulerDiscreteScheduler.from_config(config)
     rollout.pipeline.scheduler = rollout_scheduler
     # 512 px -> 32x32 latent cells, packed unpatched -> 1024 tokens.
     expected = rollout._set_dynamic_timesteps(num_steps, 1024, torch.device("cpu")).clone()
 
     replay = QwenImage21ReplayModel(
-        transformer=build_tiny_qwen_image_21_transformer(),
+        transformer=build_tiny_transformer("qwen_image_21"),
         scheduler=FlowMatchEulerDiscreteScheduler.from_config(config),
         device=torch.device("cpu"),
     )

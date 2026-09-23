@@ -16,7 +16,7 @@ import torch
 from tests.models.steps.denoise.fixtures import (
     TINY_MOCHI_LATENT_SHAPE,
     TINY_MOCHI_TEXT_DIM,
-    build_tiny_mochi_transformer,
+    build_tiny_transformer,
     record_forward_calls,
     stamp_model_precision,
 )
@@ -62,7 +62,7 @@ def _state(*, do_cfg: bool) -> MochiSamplingState:
 
 def test_mochi_forward_step_runs_real_batched_cfg_on_reversed_clock() -> None:
     """One doubled-batch call; transformer sees 1000 - t; combine is standard CFG."""
-    transformer = build_tiny_mochi_transformer()
+    transformer = build_tiny_transformer("mochi")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = _state(do_cfg=True)
@@ -83,7 +83,7 @@ def test_mochi_forward_step_runs_real_batched_cfg_on_reversed_clock() -> None:
 
 def test_mochi_forward_step_negates_raw_prediction() -> None:
     """The branch output is the NEGATED raw transformer output (velocity sign)."""
-    transformer = build_tiny_mochi_transformer()
+    transformer = build_tiny_transformer("mochi")
     model = _model(transformer)
     state = _state(do_cfg=False)
 
@@ -121,7 +121,7 @@ def test_standard_mochi_scheduler_descends() -> None:
 
 def test_mochi_replay_roundtrip_restores_equivalent_state() -> None:
     """export -> restore rebuilds a state whose forward matches the original."""
-    transformer = build_tiny_mochi_transformer()
+    transformer = build_tiny_transformer("mochi")
     model = _model(transformer)
     state = _state(do_cfg=True)
 

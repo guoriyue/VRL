@@ -30,7 +30,7 @@ from tests.models.steps.denoise.fixtures import (
     TINY_WAN_TEXT_DIM,
     TINY_WAN_TEXT_LEN,
     add_lora_adapters,
-    build_tiny_wan_transformer,
+    build_tiny_transformer,
 )
 from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
@@ -155,7 +155,7 @@ class _NFTModel(DenoiseModelBase):
 def _build_model(trainable: str = "lora") -> _NFTModel:
     """A tiny real Wan DiT, trained through a LoRA adapter or fully."""
 
-    transformer = build_tiny_wan_transformer()
+    transformer = build_tiny_transformer("wan")
     if trainable == "lora":
         add_lora_adapters(transformer)
     else:

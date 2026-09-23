@@ -20,7 +20,7 @@ from diffusers.models.transformers.transformer_cosmos import (
 
 from tests.models.steps.denoise.fixtures import (
     TINY_COSMOS_TEXT_DIM,
-    build_tiny_cosmos_transformer,
+    build_tiny_transformer,
 )
 from vrl.nn.optimization import ROLLOUT_PASSES, apply_rollout_optimizations
 from vrl.nn.optimization.frame_shared_adaln import share_adaln_across_frames
@@ -42,7 +42,7 @@ def _per_frame_kwargs(seed: int = 1) -> dict:
 
 
 def test_swap_keeps_parameter_identity_and_state_dict_names() -> None:
-    transformer = build_tiny_cosmos_transformer()
+    transformer = build_tiny_transformer("cosmos")
     before = {name: param for name, param in transformer.named_parameters()}
 
     count = share_adaln_across_frames(transformer)
@@ -59,8 +59,8 @@ def test_swap_keeps_parameter_identity_and_state_dict_names() -> None:
 
 
 def test_per_frame_timestep_forward_and_backward_match_the_per_token_path() -> None:
-    reference = build_tiny_cosmos_transformer()
-    shared = build_tiny_cosmos_transformer()
+    reference = build_tiny_transformer("cosmos")
+    shared = build_tiny_transformer("cosmos")
     assert share_adaln_across_frames(shared) == 4
     kwargs = _per_frame_kwargs()
 
@@ -93,8 +93,8 @@ def test_per_frame_timestep_forward_and_backward_match_the_per_token_path() -> N
 
 
 def test_one_timestep_per_sample_takes_the_reference_path() -> None:
-    reference = build_tiny_cosmos_transformer()
-    shared = build_tiny_cosmos_transformer()
+    reference = build_tiny_transformer("cosmos")
+    shared = build_tiny_transformer("cosmos")
     share_adaln_across_frames(shared)
     kwargs = {**_per_frame_kwargs(), "timestep": torch.full((_BATCH,), 0.75)}
 
@@ -109,7 +109,7 @@ def test_one_timestep_per_sample_takes_the_reference_path() -> None:
 def test_copied_transformer_keeps_its_own_layout() -> None:
     """A previous-policy copy must not read the layout of the model it was copied from."""
 
-    shared = build_tiny_cosmos_transformer()
+    shared = build_tiny_transformer("cosmos")
     share_adaln_across_frames(shared)
     kwargs = _per_frame_kwargs()
     with torch.no_grad():
@@ -128,7 +128,7 @@ def test_compiled_forward_takes_the_shared_path_in_one_graph() -> None:
 
     import torch._dynamo as dynamo
 
-    shared = build_tiny_cosmos_transformer()
+    shared = build_tiny_transformer("cosmos")
     share_adaln_across_frames(shared)
     kwargs = _per_frame_kwargs()
     with torch.no_grad():
@@ -187,14 +187,14 @@ def test_runner_per_frame_timestep_takes_the_shared_path() -> None:
         stamp_model_precision(model)
         return model.forward_step(state(), 0)["noise_pred"]
 
-    shared = build_tiny_cosmos_transformer()
+    shared = build_tiny_transformer("cosmos")
     share_adaln_across_frames(shared)
 
     shared_pred = noise_pred(shared)
 
     assert shared.frame_layout.seq_len == _FRAMES * 4, "the runner's forward recorded a layout"
     torch.testing.assert_close(
-        shared_pred, noise_pred(build_tiny_cosmos_transformer()), rtol=1e-5, atol=1e-5
+        shared_pred, noise_pred(build_tiny_transformer("cosmos")), rtol=1e-5, atol=1e-5
     )
 
 
@@ -222,8 +222,8 @@ def test_rollout_pass_reaches_every_core_only_when_enabled() -> None:
 
     model = SimpleNamespace(
         policy_cores={
-            "transformer": build_tiny_cosmos_transformer(),
-            "transformer_2": build_tiny_cosmos_transformer(),
+            "transformer": build_tiny_transformer("cosmos"),
+            "transformer_2": build_tiny_transformer("cosmos"),
         },
         quantization_exclude=(),
     )

@@ -6,28 +6,14 @@ import pytest
 from torch import nn
 
 from tests.models.steps.denoise.fixtures import (
-    build_tiny_flux_transformer,
-    build_tiny_lumina2_transformer,
-    build_tiny_qwen_image_transformer,
-    build_tiny_sana_transformer,
-    build_tiny_sd3_transformer,
-    build_tiny_wan_transformer,
+    build_tiny_transformer,
 )
 from vrl.nn.quantization.targeting import LinearTargetProfile
 
 
-@pytest.mark.parametrize(
-    "builder",
-    [
-        build_tiny_wan_transformer,
-        build_tiny_sd3_transformer,
-        build_tiny_flux_transformer,
-        build_tiny_qwen_image_transformer,
-        build_tiny_lumina2_transformer,
-    ],
-)
-def test_nvfp4_selects_real_mlp_paths_but_not_attention(builder) -> None:
-    transformer = builder()
+@pytest.mark.parametrize("name", ["wan", "sd3", "flux", "qwen_image", "lumina2"])
+def test_nvfp4_selects_real_mlp_paths_but_not_attention(name) -> None:
+    transformer = build_tiny_transformer(name)
     linear_paths = [
         path for path, module in transformer.named_modules() if isinstance(module, nn.Linear)
     ]
@@ -40,7 +26,7 @@ def test_nvfp4_selects_real_mlp_paths_but_not_attention(builder) -> None:
 
 
 def test_nvfp4_does_not_misclassify_sana_attention_when_mlp_uses_convolutions() -> None:
-    transformer = build_tiny_sana_transformer()
+    transformer = build_tiny_transformer("sana")
     linear_paths = [
         path for path, module in transformer.named_modules() if isinstance(module, nn.Linear)
     ]

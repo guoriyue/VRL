@@ -28,7 +28,7 @@ from tests.models.steps.denoise.fixtures import (
     TINY_WAN_LATENT_SHAPE,
     TINY_WAN_TEXT_DIM,
     TINY_WAN_TEXT_LEN,
-    build_tiny_wan_i2v_transformer,
+    build_tiny_transformer,
     stamp_model_precision,
 )
 from tests.trainers._strategy_policies import free_port
@@ -152,7 +152,7 @@ def _fsdp_strategy(
 
 def _build_policy(seed: int = 0) -> WanI2VReplayModel:
     policy = WanI2VReplayModel(
-        transformer=build_tiny_wan_i2v_transformer(seed=seed),
+        transformer=build_tiny_transformer("wan_i2v", seed=seed),
         scheduler=None,
         device=torch.device("cpu"),
     )
@@ -179,8 +179,8 @@ def _build_policy(seed: int = 0) -> WanI2VReplayModel:
 
 def _build_dual_policy(seed: int = 0) -> WanI2VReplayModel:
     policy = WanI2VReplayModel(
-        transformer=build_tiny_wan_i2v_transformer(seed=seed),
-        transformer_2=build_tiny_wan_i2v_transformer(seed=seed + 1),
+        transformer=build_tiny_transformer("wan_i2v", seed=seed),
+        transformer_2=build_tiny_transformer("wan_i2v", seed=seed + 1),
         scheduler=None,
         device=torch.device("cpu"),
         boundary_ratio=0.5,

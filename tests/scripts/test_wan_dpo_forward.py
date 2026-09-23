@@ -15,7 +15,7 @@ from tests.models.steps.denoise.fixtures import (
     TINY_WAN_LATENT_SHAPE,
     TINY_WAN_TEXT_DIM,
     TINY_WAN_TEXT_LEN,
-    build_tiny_wan_transformer,
+    build_tiny_transformer,
     record_forward_calls,
 )
 from vrl.scripts.families.wan_2_1.train_dpo import wan_forward
@@ -60,7 +60,7 @@ def _real_backbone_output(transformer, noisy, timesteps, encoder_hidden_states):
 
 
 def test_wan_forward_unwraps_model_transformer() -> None:
-    transformer = build_tiny_wan_transformer().eval()
+    transformer = build_tiny_transformer("wan").eval()
     noisy, timesteps, encoder = _wan_backbone_inputs()
     # Pin against the real backbone's own output, computed BEFORE the recorder is
     # attached so the recorded count reflects only wan_forward's own invocation.
@@ -83,7 +83,7 @@ def test_wan_forward_still_accepts_raw_transformer() -> None:
     """``wan_forward`` also accepts a bare transformer (no policy wrapper) and calls it exactly
     once.
     """
-    transformer = build_tiny_wan_transformer().eval()
+    transformer = build_tiny_transformer("wan").eval()
     noisy, timesteps, encoder = _wan_backbone_inputs(batch=1)
     expected = _real_backbone_output(transformer, noisy, timesteps, encoder)
     calls = record_forward_calls(transformer)

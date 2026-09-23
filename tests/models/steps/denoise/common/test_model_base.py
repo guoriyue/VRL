@@ -13,7 +13,7 @@ import torch.nn as nn
 from tests.models.steps.denoise.fixtures import (
     RecordingModule,
     add_lora_adapters,
-    build_tiny_wan_transformer,
+    build_tiny_transformer,
 )
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
@@ -595,7 +595,7 @@ def test_disable_adapter_uses_plural_diffusers_surface() -> None:
 def test_disable_adapter_noops_for_diffusers_transformer_without_lora() -> None:
     """A plain diffusers PeftAdapterMixin transformer has plural methods but no LoRA."""
     runtime = _ModelBaseStub()
-    runtime._set_transformer(build_tiny_wan_transformer())
+    runtime._set_transformer(build_tiny_transformer("wan"))
 
     with runtime.disable_adapter():
         assert getattr(runtime.transformer, "_hf_peft_config_loaded", False) is False
@@ -604,7 +604,7 @@ def test_disable_adapter_noops_for_diffusers_transformer_without_lora() -> None:
 def test_disable_adapter_disables_real_diffusers_lora_layers() -> None:
     """A real diffusers-native LoRA transformer is disabled through the plural API."""
     runtime = _ModelBaseStub()
-    runtime._set_transformer(add_lora_adapters(build_tiny_wan_transformer()))
+    runtime._set_transformer(add_lora_adapters(build_tiny_transformer("wan")))
     flags = _peft_disable_flags(runtime.transformer)
     assert flags and not any(flags)
 
@@ -617,7 +617,7 @@ def test_disable_adapter_disables_real_diffusers_lora_layers() -> None:
 def test_disable_adapter_preserves_already_disabled_diffusers_lora_state() -> None:
     """Nested plural disable contexts must not re-enable an already-disabled model."""
     runtime = _ModelBaseStub()
-    runtime._set_transformer(add_lora_adapters(build_tiny_wan_transformer()))
+    runtime._set_transformer(add_lora_adapters(build_tiny_transformer("wan")))
     runtime.transformer.disable_adapters()
     assert all(_peft_disable_flags(runtime.transformer))
 

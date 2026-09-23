@@ -24,7 +24,7 @@ import torch.multiprocessing as mp
 pytest.importorskip("diffusers")
 pytest.importorskip("peft")
 
-from tests.models.steps.denoise.fixtures import build_tiny_sd3_transformer
+from tests.models.steps.denoise.fixtures import build_tiny_transformer
 from tests.trainers._strategy_policies import free_port
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import FSDPConfig
@@ -127,7 +127,7 @@ def test_non_primary_ranks_are_filled_from_rank_zero(
     tmp_path: Path, shard_trainable_only: bool
 ) -> None:
     repo = tmp_path / "tiny-sd3"
-    build_tiny_sd3_transformer(seed=123).save_pretrained(repo / "transformer")
+    build_tiny_transformer("sd3", seed=123).save_pretrained(repo / "transformer")
 
     context = mp.get_context("spawn")
     queue: mp.Queue = context.Queue()

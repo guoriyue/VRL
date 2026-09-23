@@ -15,7 +15,7 @@ import torch
 from tests.models.steps.denoise.fixtures import (
     TINY_SANA_CAPTION_DIM,
     TINY_SANA_LATENT_SHAPE,
-    build_tiny_sana_transformer,
+    build_tiny_transformer,
     record_forward_calls,
     stamp_model_precision,
 )
@@ -96,7 +96,7 @@ def test_sana_yaml_resolves_native_forward_precision() -> None:
 def test_sana_fp16_output_is_promoted_before_cfg() -> None:
     """SANA matches native FP32 CFG instead of combining rounded FP16 branches."""
 
-    transformer = build_tiny_sana_transformer().half()
+    transformer = build_tiny_transformer("sana").half()
     calls = record_forward_calls(transformer)
     raw_outputs: list[torch.Tensor] = []
     transformer.register_forward_hook(
@@ -120,7 +120,7 @@ def test_sana_fp16_output_is_promoted_before_cfg() -> None:
 
 def test_sana_forward_step_runs_real_batched_cfg() -> None:
     """One doubled-batch transformer call; combine matches uncond+s*(cond-uncond)."""
-    transformer = build_tiny_sana_transformer()
+    transformer = build_tiny_transformer("sana")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = _state(do_cfg=True)
@@ -141,7 +141,7 @@ def test_sana_forward_step_runs_real_batched_cfg() -> None:
 
 def test_sana_forward_step_single_branch_skips_cfg() -> None:
     """No CFG: single conditional forward, noise == cond, zero uncond placeholder."""
-    transformer = build_tiny_sana_transformer()
+    transformer = build_tiny_transformer("sana")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = _state(do_cfg=False)
@@ -156,7 +156,7 @@ def test_sana_forward_step_single_branch_skips_cfg() -> None:
 
 def test_sana_forward_step_applies_timestep_scale() -> None:
     """The raw scheduler timestep is scaled by transformer.config.timestep_scale."""
-    transformer = build_tiny_sana_transformer()
+    transformer = build_tiny_transformer("sana")
     transformer.register_to_config(timestep_scale=0.5)
     calls = record_forward_calls(transformer)
     model = _model(transformer)
@@ -173,7 +173,7 @@ def test_sana_forward_step_applies_timestep_scale() -> None:
 
 def test_sana_replay_roundtrip_restores_equivalent_state() -> None:
     """export -> restore rebuilds a state whose forward matches the original."""
-    transformer = build_tiny_sana_transformer()
+    transformer = build_tiny_transformer("sana")
     model = _model(transformer)
     state = _state(do_cfg=True)
 

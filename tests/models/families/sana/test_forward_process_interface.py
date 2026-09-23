@@ -16,7 +16,7 @@ import torch
 from tests.models.steps.denoise.fixtures import (
     TINY_SANA_CAPTION_DIM,
     TINY_SANA_LATENT_SHAPE,
-    build_tiny_sana_transformer,
+    build_tiny_transformer,
     stamp_model_precision,
 )
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
@@ -31,7 +31,7 @@ _GUIDANCE = 4.5
 
 def _model() -> SanaModel:
     model = SanaModel(
-        pipeline=SimpleNamespace(transformer=build_tiny_sana_transformer(), device="cpu"),
+        pipeline=SimpleNamespace(transformer=build_tiny_transformer("sana"), device="cpu"),
         device=torch.device("cpu"),
     )
     stamp_model_precision(model)

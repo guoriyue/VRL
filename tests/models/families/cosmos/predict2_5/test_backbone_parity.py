@@ -15,7 +15,7 @@ import torch
 from tests.models.steps.denoise.fixtures import (
     TINY_COSMOS_LATENT_SHAPE,
     TINY_COSMOS_TEXT_DIM,
-    build_tiny_cosmos_transformer,
+    build_tiny_transformer,
     lora_test_build,
     record_forward_calls,
     stamp_model_precision,
@@ -63,7 +63,7 @@ def test_cosmos_predict25_forward_step_runs_real_unbatched_cfg() -> None:
     combine but emits it as-is (no EDM sigma conversion), and the prompt still shows through
     the cond_mask blend.
     """
-    transformer = build_tiny_cosmos_transformer()
+    transformer = build_tiny_transformer("cosmos")
     calls = record_forward_calls(transformer)
     model = CosmosPredict25Model(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
@@ -86,7 +86,7 @@ def test_cosmos_predict25_forward_step_runs_real_unbatched_cfg() -> None:
 
 
 def test_predict25_full_finetune_supports_real_forward_backward() -> None:
-    transformer = build_tiny_cosmos_transformer()
+    transformer = build_tiny_transformer("cosmos")
     transformer.requires_grad_(False)
     model = CosmosPredict25ReplayModel(transformer=transformer, scheduler=object(), device="cpu")
     build = lora_test_build({}, family="cosmos-predict2.5")
@@ -120,7 +120,7 @@ def test_replay_forward_on_caller_latents_feeds_the_step_sigma() -> None:
     )
     scheduler.set_timesteps(4)
     step_idx = 2
-    transformer = build_tiny_cosmos_transformer()
+    transformer = build_tiny_transformer("cosmos")
     calls = record_forward_calls(transformer)
     model = CosmosPredict25ReplayModel(transformer=transformer, scheduler=scheduler, device="cpu")
     stamp_model_precision(model)

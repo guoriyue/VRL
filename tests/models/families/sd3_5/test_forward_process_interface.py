@@ -20,7 +20,7 @@ from tests.models.steps.denoise.fixtures import (
     TINY_SD3_JOINT_DIM,
     TINY_SD3_LATENT_SHAPE,
     TINY_SD3_POOLED_DIM,
-    build_tiny_sd3_transformer,
+    build_tiny_transformer,
     stamp_model_precision,
 )
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
@@ -103,7 +103,7 @@ def test_replay_forward_on_caller_latents_can_force_the_conditional_branch() -> 
     output on the caller's latent even though the trajectory recorded CFG; left at
     the default the rollout's CFG combine is reproduced instead."""
     torch.manual_seed(0)
-    model = _model(build_tiny_sd3_transformer())
+    model = _model(build_tiny_transformer("sd3"))
     prompt_embeds, pooled = _conditioning()
     negative_prompt_embeds, negative_pooled = _conditioning()
     xt = torch.randn(TINY_SD3_LATENT_SHAPE)
@@ -142,7 +142,7 @@ def test_replay_forward_on_caller_latents_can_force_the_conditional_branch() -> 
 
 
 def test_replay_tensors_carry_the_final_latent_for_the_forward_process_objectives() -> None:
-    model = _model(build_tiny_sd3_transformer())
+    model = _model(build_tiny_transformer("sd3"))
     prompt_embeds, pooled = _conditioning()
     latents = torch.randn(TINY_SD3_LATENT_SHAPE)
     state = SD3SamplingState(
@@ -166,7 +166,7 @@ def test_replay_tensors_carry_the_final_latent_for_the_forward_process_objective
 def _replay_model(trainable: str) -> SD3_5ReplayModel:
     """A replay model (no pipeline) whose trainable weights are a LoRA adapter or the DiT."""
 
-    base = build_tiny_sd3_transformer()
+    base = build_tiny_transformer("sd3")
     if trainable == "lora":
         from peft import LoraConfig, get_peft_model
 

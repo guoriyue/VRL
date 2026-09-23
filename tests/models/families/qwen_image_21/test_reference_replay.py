@@ -8,7 +8,7 @@ import torch
 from tests.models.steps.denoise.fixtures import (
     TINY_QWEN21_CONTEXT_DIM,
     TINY_QWEN21_IN_CHANNELS,
-    build_tiny_qwen_image_21_transformer,
+    build_tiny_transformer,
     record_forward_calls,
     stamp_model_precision,
 )
@@ -23,7 +23,7 @@ from vrl.models.families.qwen_image_21.model import (
 def test_two_reference_cfg_replay_matches_rollout_logprob_and_backpropagates() -> None:
     from diffusers import FlowMatchEulerDiscreteScheduler
 
-    transformer = build_tiny_qwen_image_21_transformer()
+    transformer = build_tiny_transformer("qwen_image_21")
     calls = record_forward_calls(transformer)
     scheduler = FlowMatchEulerDiscreteScheduler()
     scheduler.set_timesteps(3)

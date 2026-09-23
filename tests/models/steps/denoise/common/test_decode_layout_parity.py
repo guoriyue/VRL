@@ -19,9 +19,7 @@ from types import SimpleNamespace
 import torch
 
 from tests.models.steps.denoise.fixtures import (
-    build_tiny_cosmos_transformer,
-    build_tiny_sd3_transformer,
-    build_tiny_wan_transformer,
+    build_tiny_transformer,
 )
 from vrl.models.families.cosmos.predict2.model import CosmosPredict2Model
 from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25Model
@@ -62,7 +60,7 @@ def test_sd3_decode_latents_uses_shared_chunked_decoder_and_keeps_layout() -> No
     """
     vae = _IdentityDecodeVAE(SimpleNamespace(scaling_factor=2.0, shift_factor=0.5))
     pipeline = SimpleNamespace(
-        transformer=build_tiny_sd3_transformer(),
+        transformer=build_tiny_transformer("sd3"),
         vae=vae,
         image_processor=_ImageProcessor(),
         device=torch.device("cpu"),
@@ -87,7 +85,7 @@ def test_wan_decode_latents_preserves_bcthw_layout() -> None:
         SimpleNamespace(latents_mean=[1.0], latents_std=[2.0], z_dim=1),
     )
     pipeline = SimpleNamespace(
-        transformer=build_tiny_wan_transformer(),
+        transformer=build_tiny_transformer("wan"),
         vae=vae,
         video_processor=_VideoProcessor(),
         device=torch.device("cpu"),
@@ -109,7 +107,7 @@ def test_cosmos_predict2_decode_latents_applies_sigma_data_and_layout() -> None:
         SimpleNamespace(latents_mean=[1.0], latents_std=[4.0], z_dim=1),
     )
     pipeline = SimpleNamespace(
-        transformer=build_tiny_cosmos_transformer(),
+        transformer=build_tiny_transformer("cosmos"),
         scheduler=SimpleNamespace(config=SimpleNamespace(sigma_data=2.0)),
         vae=vae,
         video_processor=_VideoProcessor(),
@@ -137,7 +135,7 @@ def test_cosmos_predict25_decode_latents_matches_frames_and_layout() -> None:
         return video
 
     pipeline = SimpleNamespace(
-        transformer=build_tiny_cosmos_transformer(),
+        transformer=build_tiny_transformer("cosmos"),
         vae=vae,
         latents_mean=torch.ones(1, 1, 1, 1, 1),
         latents_std=torch.full((1, 1, 1, 1, 1), 3.0),

@@ -15,7 +15,7 @@ import torch
 from tests.models.steps.denoise.fixtures import (
     TINY_COSMOS_LATENT_SHAPE,
     TINY_COSMOS_TEXT_DIM,
-    build_tiny_cosmos_transformer,
+    build_tiny_transformer,
     record_forward_calls,
     stamp_model_precision,
 )
@@ -55,7 +55,7 @@ def test_cosmos_predict2_forward_step_runs_real_unbatched_cfg() -> None:
     and then turned into an EDM noise estimate ``(latents - combined) / sigma``, unlike the
     flow-velocity families.
     """
-    transformer = build_tiny_cosmos_transformer()
+    transformer = build_tiny_transformer("cosmos")
     calls = record_forward_calls(transformer)
     model = CosmosPredict2Model(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),

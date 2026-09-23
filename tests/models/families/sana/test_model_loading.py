@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 import torch
 
-from tests.models.steps.denoise.fixtures import RecordingModule, build_tiny_sana_transformer
+from tests.models.steps.denoise.fixtures import RecordingModule, build_tiny_transformer
 from vrl.config.precision import RolePrecision
 from vrl.models.families.sana.model import SanaModel
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
@@ -38,7 +38,7 @@ def _load(monkeypatch: pytest.MonkeyPatch, parameter_dtype: torch.dtype) -> tupl
     from diffusers import DiffusionPipeline
 
     pipeline = SimpleNamespace(
-        transformer=build_tiny_sana_transformer(),
+        transformer=build_tiny_transformer("sana"),
         vae=RecordingModule(),
         text_encoder=RecordingModule(),
         # The shipped scheduler config: DPM-Solver calls the shift ``flow_shift``.

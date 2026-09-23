@@ -16,7 +16,7 @@ from tests.models.steps.denoise.fixtures import (
     TINY_FLUX_IN_CHANNELS,
     TINY_FLUX_JOINT_DIM,
     TINY_FLUX_POOLED_DIM,
-    build_tiny_flux_transformer,
+    build_tiny_transformer,
     record_forward_calls,
     stamp_model_precision,
 )
@@ -53,7 +53,7 @@ def _state(model: FluxModel, *, guidance_embeds: bool) -> FluxSamplingState:
 
 def test_flux_forward_step_runs_single_distilled_branch() -> None:
     """One forward, no uncond branch, noise == cond, timestep fed as t / 1000."""
-    transformer = build_tiny_flux_transformer(guidance_embeds=True)
+    transformer = build_tiny_transformer("flux", guidance_embeds=True)
     calls = record_forward_calls(transformer)
     model = _model(transformer)
 
@@ -80,7 +80,7 @@ def test_flux_forward_step_runs_single_distilled_branch() -> None:
 
 def test_flux_encode_prompt_accepts_only_empty_negative_conditioning() -> None:
     negative_prompt = ""
-    transformer = build_tiny_flux_transformer(guidance_embeds=True)
+    transformer = build_tiny_transformer("flux", guidance_embeds=True)
     model = _model(transformer)
     model.pipeline.encode_prompt = lambda **_kwargs: (
         torch.zeros(1, _TEXT_LEN, TINY_FLUX_JOINT_DIM),
@@ -95,7 +95,7 @@ def test_flux_encode_prompt_accepts_only_empty_negative_conditioning() -> None:
 
 def test_flux_encode_prompt_rejects_non_empty_negative_conditioning() -> None:
     negative_prompt = "low quality"
-    transformer = build_tiny_flux_transformer(guidance_embeds=True)
+    transformer = build_tiny_transformer("flux", guidance_embeds=True)
     model = _model(transformer)
 
     with pytest.raises(ValueError, match="does not support negative prompts"):
@@ -104,7 +104,7 @@ def test_flux_encode_prompt_rejects_non_empty_negative_conditioning() -> None:
 
 def test_flux_forward_step_omits_guidance_when_not_distilled() -> None:
     """A non-distilled (schnell-like) checkpoint passes guidance=None."""
-    transformer = build_tiny_flux_transformer(guidance_embeds=False)
+    transformer = build_tiny_transformer("flux", guidance_embeds=False)
     calls = record_forward_calls(transformer)
     model = _model(transformer)
 
@@ -115,7 +115,7 @@ def test_flux_forward_step_omits_guidance_when_not_distilled() -> None:
 
 def test_flux_forward_step_casts_replay_tensors_to_transformer_dtype() -> None:
     """bf16 rollout tensors replay cleanly through an fp32 transformer."""
-    transformer = build_tiny_flux_transformer(guidance_embeds=True)
+    transformer = build_tiny_transformer("flux", guidance_embeds=True)
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = FluxSamplingState(
@@ -142,7 +142,7 @@ def test_flux_forward_step_casts_replay_tensors_to_transformer_dtype() -> None:
 
 def test_flux_replay_model_restores_state_without_a_pipeline() -> None:
     """The pipeline-less replay model rebuilds position grids and runs forward_step."""
-    transformer = build_tiny_flux_transformer(guidance_embeds=True)
+    transformer = build_tiny_transformer("flux", guidance_embeds=True)
     model = FluxReplayModel(transformer=transformer, scheduler=None, device=torch.device("cpu"))
     stamp_model_precision(model)
 

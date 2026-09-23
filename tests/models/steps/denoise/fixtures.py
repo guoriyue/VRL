@@ -1,6 +1,6 @@
 """Tiny real (cache-free) diffusion model fixtures for CPU tests.
 
-Each ``build_tiny_*`` returns a genuine diffusers transformer constructed straight
+``build_tiny_transformer`` returns a genuine diffusers transformer constructed straight
 from config — no ``from_pretrained`` / no download / no cached weights — so the
 source fully defines it, forward outputs are reproducible, and tests run real
 inference on CPU. ``add_lora_adapters`` attaches real diffusers-native LoRA.
@@ -48,333 +48,267 @@ TINY_WAN_TEXT_LEN = 3
 TINY_WAN_TEXT_DIM = 16
 _TINY_WAN_LORA_TARGETS = ["to_q", "to_v"]
 
-
-def build_tiny_wan_transformer(*, seed: int = 0) -> Any:
-    """A real ~6.7K-param ``WanTransformer3DModel`` on CPU, random-init from a seed.
-
-    Built straight from config — no ``from_pretrained`` / no download / no cached
-    weights — so the source fully defines it and forward outputs are reproducible.
-    Use this instead of a hand-written fake when a test needs the genuine
-    transformer's adapter API or real gradient flow (e.g. DiffusionNFT branches).
-    """
-
-    from diffusers import WanTransformer3DModel
-
-    torch.manual_seed(seed)
-    return WanTransformer3DModel(
-        patch_size=(1, 2, 2),
-        num_attention_heads=2,
-        attention_head_dim=8,
-        in_channels=TINY_WAN_LATENT_SHAPE[1],
-        out_channels=TINY_WAN_LATENT_SHAPE[1],
-        text_dim=TINY_WAN_TEXT_DIM,
-        freq_dim=16,
-        ffn_dim=32,
-        num_layers=1,
-        rope_max_seq_len=64,
-    )
-
-
 TINY_COSMOS_LATENT_SHAPE = (2, 4, 1, 4, 4)
 TINY_COSMOS_TEXT_DIM = 16
-
-
-def build_tiny_cosmos_transformer(*, seed: int = 0) -> Any:
-    """Tiny real ``CosmosTransformer3DModel`` on CPU, cache-free (config-init).
-
-    Cosmos predict2/2.5 concatenate a 1-channel condition mask into the latent
-    channel axis, so ``in_channels`` is the latent channels (4) + 1; ``out_channels``
-    stays at the latent channels. ``attention_head_dim`` is 16 (8 divides the 3D
-    rope unevenly and trips a div-by-zero at construction).
-    """
-
-    from diffusers import CosmosTransformer3DModel
-
-    torch.manual_seed(seed)
-    return CosmosTransformer3DModel(
-        in_channels=TINY_COSMOS_LATENT_SHAPE[1] + 1,
-        out_channels=TINY_COSMOS_LATENT_SHAPE[1],
-        num_attention_heads=2,
-        attention_head_dim=16,
-        num_layers=1,
-        mlp_ratio=2.0,
-        text_embed_dim=TINY_COSMOS_TEXT_DIM,
-        adaln_lora_dim=8,
-        max_size=(4, 16, 16),
-        patch_size=(1, 2, 2),
-        concat_padding_mask=True,
-    )
-
 
 TINY_SD3_LATENT_SHAPE = (2, 4, 8, 8)
 TINY_SD3_JOINT_DIM = 16
 TINY_SD3_POOLED_DIM = 16
 
-
-def build_tiny_sd3_transformer(*, seed: int = 0) -> Any:
-    """Tiny real ``SD3Transformer2DModel`` on CPU, cache-free (config-init)."""
-
-    from diffusers import SD3Transformer2DModel
-
-    torch.manual_seed(seed)
-    return SD3Transformer2DModel(
-        sample_size=8,
-        patch_size=2,
-        in_channels=TINY_SD3_LATENT_SHAPE[1],
-        out_channels=TINY_SD3_LATENT_SHAPE[1],
-        num_layers=1,
-        attention_head_dim=8,
-        num_attention_heads=2,
-        joint_attention_dim=TINY_SD3_JOINT_DIM,
-        caption_projection_dim=16,
-        pooled_projection_dim=TINY_SD3_POOLED_DIM,
-        pos_embed_max_size=8,
-    )
-
-
-# Tiny real FLUX geometry (CPU): PACKED latents [B, seq, C*4] with C=4 -> 16
-# in_channels (patch_size=1 in packed token space). axes_dims_rope must sum to
-# attention_head_dim (8). guidance_embeds=True mirrors FLUX.1-dev.
+# FLUX feeds PACKED latents [B, seq, C*4] with C=4 -> 16 in_channels
+# (patch_size=1 in packed token space).
 TINY_FLUX_IN_CHANNELS = 16
 TINY_FLUX_JOINT_DIM = 16
 TINY_FLUX_POOLED_DIM = 16
 
-
-def build_tiny_flux_transformer(*, seed: int = 0, guidance_embeds: bool = True) -> Any:
-    """Tiny real ``FluxTransformer2DModel`` on CPU, cache-free (config-init)."""
-
-    from diffusers import FluxTransformer2DModel
-
-    torch.manual_seed(seed)
-    return FluxTransformer2DModel(
-        patch_size=1,
-        in_channels=TINY_FLUX_IN_CHANNELS,
-        num_layers=1,
-        num_single_layers=1,
-        attention_head_dim=8,
-        num_attention_heads=2,
-        joint_attention_dim=TINY_FLUX_JOINT_DIM,
-        pooled_projection_dim=TINY_FLUX_POOLED_DIM,
-        guidance_embeds=guidance_embeds,
-        axes_dims_rope=(2, 2, 4),
-    )
-
-
-# Tiny real Qwen-Image geometry (CPU): PACKED latents [B, seq, C*4] with C=4 ->
-# 16 in_channels. out_channels(4) * patch_size**2(4) == in_channels(16) so the
-# noise_pred matches the packed latent for the SDE step. axes_dims_rope sums to
-# attention_head_dim (16).
 TINY_SANA_LATENT_SHAPE = (2, 4, 8, 8)
 TINY_SANA_CAPTION_DIM = 16
 
-
-def build_tiny_sana_transformer(*, seed: int = 0) -> Any:
-    """Tiny real ``SanaTransformer2DModel`` on CPU, cache-free (config-init)."""
-
-    from diffusers import SanaTransformer2DModel
-
-    torch.manual_seed(seed)
-    return SanaTransformer2DModel(
-        in_channels=TINY_SANA_LATENT_SHAPE[1],
-        out_channels=TINY_SANA_LATENT_SHAPE[1],
-        num_layers=1,
-        num_attention_heads=2,
-        attention_head_dim=8,
-        num_cross_attention_heads=2,
-        cross_attention_head_dim=8,
-        cross_attention_dim=16,
-        caption_channels=TINY_SANA_CAPTION_DIM,
-        sample_size=TINY_SANA_LATENT_SHAPE[2],
-        patch_size=1,
-    )
-
-
 TINY_LUMINA2_LATENT_SHAPE = (2, 4, 8, 8)
 TINY_LUMINA2_CAP_DIM = 16
-
-
-def build_tiny_lumina2_transformer(*, seed: int = 0) -> Any:
-    """Tiny real ``Lumina2Transformer2DModel`` on CPU, cache-free (config-init)."""
-
-    from diffusers import Lumina2Transformer2DModel
-
-    torch.manual_seed(seed)
-    return Lumina2Transformer2DModel(
-        sample_size=TINY_LUMINA2_LATENT_SHAPE[2],
-        patch_size=2,
-        in_channels=TINY_LUMINA2_LATENT_SHAPE[1],
-        hidden_size=16,
-        num_layers=1,
-        num_refiner_layers=1,
-        num_attention_heads=2,
-        num_kv_heads=2,
-        multiple_of=16,
-        axes_dim_rope=(4, 2, 2),
-        cap_feat_dim=TINY_LUMINA2_CAP_DIM,
-    )
-
 
 TINY_HUNYUAN_VIDEO_LATENT_SHAPE = (2, 4, 3, 8, 8)
 TINY_HUNYUAN_VIDEO_TEXT_DIM = 16
 TINY_HUNYUAN_VIDEO_POOLED_DIM = 8
 
-
-def build_tiny_hunyuan_video_transformer(*, seed: int = 0) -> Any:
-    """Tiny real ``HunyuanVideoTransformer3DModel`` on CPU, cache-free."""
-
-    from diffusers import HunyuanVideoTransformer3DModel
-
-    torch.manual_seed(seed)
-    return HunyuanVideoTransformer3DModel(
-        in_channels=TINY_HUNYUAN_VIDEO_LATENT_SHAPE[1],
-        out_channels=TINY_HUNYUAN_VIDEO_LATENT_SHAPE[1],
-        num_attention_heads=2,
-        attention_head_dim=8,
-        num_layers=1,
-        num_single_layers=1,
-        num_refiner_layers=1,
-        patch_size=2,
-        patch_size_t=1,
-        guidance_embeds=True,
-        text_embed_dim=TINY_HUNYUAN_VIDEO_TEXT_DIM,
-        pooled_projection_dim=TINY_HUNYUAN_VIDEO_POOLED_DIM,
-        rope_axes_dim=(2, 4, 2),
-    )
-
-
 TINY_MOCHI_LATENT_SHAPE = (2, 4, 3, 8, 8)
 TINY_MOCHI_TEXT_DIM = 16
-
-
-def build_tiny_mochi_transformer(*, seed: int = 0) -> Any:
-    """Tiny real ``MochiTransformer3DModel`` on CPU, cache-free (config-init)."""
-
-    from diffusers import MochiTransformer3DModel
-
-    torch.manual_seed(seed)
-    return MochiTransformer3DModel(
-        patch_size=2,
-        num_attention_heads=2,
-        attention_head_dim=8,
-        num_layers=1,
-        pooled_projection_dim=16,
-        in_channels=TINY_MOCHI_LATENT_SHAPE[1],
-        text_embed_dim=TINY_MOCHI_TEXT_DIM,
-        time_embed_dim=8,
-        max_sequence_length=16,
-    )
-
 
 TINY_COGVIDEOX_LATENT_SHAPE = (2, 3, 4, 8, 8)  # [B, F, C, H, W]
 TINY_COGVIDEOX_TEXT_DIM = 16
 TINY_COGVIDEOX_TEXT_LEN = 8
 
-
-def build_tiny_cogvideox_transformer(*, seed: int = 0, rope: bool = False) -> Any:
-    """Tiny real ``CogVideoXTransformer3DModel`` on CPU, cache-free.
-
-    ``rope=True`` mirrors the 5b config (external rotary embeddings passed
-    into forward); False mirrors 2b (learned positional embeddings).
-    """
-
-    from diffusers import CogVideoXTransformer3DModel
-
-    torch.manual_seed(seed)
-    # 3D RoPE splits head_dim across (t, h, w); 16 keeps every split even.
-    return CogVideoXTransformer3DModel(
-        num_attention_heads=2,
-        attention_head_dim=16 if rope else 8,
-        in_channels=TINY_COGVIDEOX_LATENT_SHAPE[2],
-        out_channels=TINY_COGVIDEOX_LATENT_SHAPE[2],
-        time_embed_dim=8,
-        text_embed_dim=TINY_COGVIDEOX_TEXT_DIM,
-        num_layers=1,
-        sample_width=16,
-        sample_height=16,
-        sample_frames=9,
-        patch_size=2,
-        temporal_compression_ratio=4,
-        max_text_seq_length=TINY_COGVIDEOX_TEXT_LEN,
-        use_rotary_positional_embeddings=rope,
-    )
-
-
+# Qwen-Image feeds PACKED latents [B, seq, C*4] with C=4 -> 16 in_channels.
 TINY_QWEN_IN_CHANNELS = 16
 TINY_QWEN_JOINT_DIM = 16
-
-
-def build_tiny_qwen_image_transformer(*, seed: int = 0) -> Any:
-    """Tiny real ``QwenImageTransformer2DModel`` on CPU, cache-free (config-init)."""
-
-    from diffusers import QwenImageTransformer2DModel
-
-    torch.manual_seed(seed)
-    return QwenImageTransformer2DModel(
-        patch_size=2,
-        in_channels=TINY_QWEN_IN_CHANNELS,
-        out_channels=TINY_QWEN_IN_CHANNELS // 4,
-        num_layers=1,
-        attention_head_dim=16,
-        num_attention_heads=2,
-        joint_attention_dim=TINY_QWEN_JOINT_DIM,
-        guidance_embeds=False,
-        axes_dims_rope=(8, 4, 4),
-    )
-
 
 TINY_QWEN21_IN_CHANNELS = 8
 TINY_QWEN21_CONTEXT_DIM = 16
 
+_TINY_COGVIDEOX_CONFIG: dict[str, Any] = dict(
+    num_attention_heads=2,
+    attention_head_dim=8,
+    in_channels=TINY_COGVIDEOX_LATENT_SHAPE[2],
+    out_channels=TINY_COGVIDEOX_LATENT_SHAPE[2],
+    time_embed_dim=8,
+    text_embed_dim=TINY_COGVIDEOX_TEXT_DIM,
+    num_layers=1,
+    sample_width=16,
+    sample_height=16,
+    sample_frames=9,
+    patch_size=2,
+    temporal_compression_ratio=4,
+    max_text_seq_length=TINY_COGVIDEOX_TEXT_LEN,
+    use_rotary_positional_embeddings=False,
+)
 
-def build_tiny_qwen_image_21_transformer(*, seed: int = 0) -> Any:
-    """Tiny real ``QwenImage21Transformer2DModel`` on CPU, cache-free (config-init).
+_TINY_WAN_CONFIG: dict[str, Any] = dict(
+    patch_size=(1, 2, 2),
+    num_attention_heads=2,
+    attention_head_dim=8,
+    in_channels=TINY_WAN_LATENT_SHAPE[1],
+    out_channels=TINY_WAN_LATENT_SHAPE[1],
+    text_dim=TINY_WAN_TEXT_DIM,
+    freq_dim=16,
+    ffn_dim=32,
+    num_layers=1,
+    rope_max_seq_len=64,
+)
 
-    ``patch_size=1``: the packed latent ``[B, seq, C]`` IS the transformer input,
-    and ``out_channels == in_channels`` so the noise_pred matches it for the SDE
-    step. ``axes_dims_rope`` sums to ``attention_head_dim`` (16).
+# Fixture name -> (diffusers transformer class, tiny config). One entry per
+# geometry a test needs; comments carry the constraint behind each odd value.
+_TINY_TRANSFORMERS: dict[str, tuple[str, dict[str, Any]]] = {
+    "wan": ("WanTransformer3DModel", _TINY_WAN_CONFIG),
+    # I2V cats the conditioning latent into the channel axis (4 latent + 4
+    # condition); image_dim enables the CLIP image-embed cross-attention branch.
+    "wan_i2v": (
+        "WanTransformer3DModel",
+        {
+            **_TINY_WAN_CONFIG,
+            "in_channels": 2 * TINY_WAN_LATENT_SHAPE[1],
+            "image_dim": TINY_WAN_TEXT_DIM,
+        },
+    ),
+    # Cosmos predict2/2.5 concatenate a 1-channel condition mask into the latent
+    # channel axis, so in_channels is latent + 1. attention_head_dim 16: 8
+    # divides the 3D rope unevenly and trips a div-by-zero at construction.
+    "cosmos": (
+        "CosmosTransformer3DModel",
+        dict(
+            in_channels=TINY_COSMOS_LATENT_SHAPE[1] + 1,
+            out_channels=TINY_COSMOS_LATENT_SHAPE[1],
+            num_attention_heads=2,
+            attention_head_dim=16,
+            num_layers=1,
+            mlp_ratio=2.0,
+            text_embed_dim=TINY_COSMOS_TEXT_DIM,
+            adaln_lora_dim=8,
+            max_size=(4, 16, 16),
+            patch_size=(1, 2, 2),
+            concat_padding_mask=True,
+        ),
+    ),
+    "sd3": (
+        "SD3Transformer2DModel",
+        dict(
+            sample_size=8,
+            patch_size=2,
+            in_channels=TINY_SD3_LATENT_SHAPE[1],
+            out_channels=TINY_SD3_LATENT_SHAPE[1],
+            num_layers=1,
+            attention_head_dim=8,
+            num_attention_heads=2,
+            joint_attention_dim=TINY_SD3_JOINT_DIM,
+            caption_projection_dim=16,
+            pooled_projection_dim=TINY_SD3_POOLED_DIM,
+            pos_embed_max_size=8,
+        ),
+    ),
+    # axes_dims_rope must sum to attention_head_dim (8). guidance_embeds=True
+    # mirrors FLUX.1-dev; tests pass guidance_embeds=False for schnell-style.
+    "flux": (
+        "FluxTransformer2DModel",
+        dict(
+            patch_size=1,
+            in_channels=TINY_FLUX_IN_CHANNELS,
+            num_layers=1,
+            num_single_layers=1,
+            attention_head_dim=8,
+            num_attention_heads=2,
+            joint_attention_dim=TINY_FLUX_JOINT_DIM,
+            pooled_projection_dim=TINY_FLUX_POOLED_DIM,
+            guidance_embeds=True,
+            axes_dims_rope=(2, 2, 4),
+        ),
+    ),
+    "sana": (
+        "SanaTransformer2DModel",
+        dict(
+            in_channels=TINY_SANA_LATENT_SHAPE[1],
+            out_channels=TINY_SANA_LATENT_SHAPE[1],
+            num_layers=1,
+            num_attention_heads=2,
+            attention_head_dim=8,
+            num_cross_attention_heads=2,
+            cross_attention_head_dim=8,
+            cross_attention_dim=16,
+            caption_channels=TINY_SANA_CAPTION_DIM,
+            sample_size=TINY_SANA_LATENT_SHAPE[2],
+            patch_size=1,
+        ),
+    ),
+    "lumina2": (
+        "Lumina2Transformer2DModel",
+        dict(
+            sample_size=TINY_LUMINA2_LATENT_SHAPE[2],
+            patch_size=2,
+            in_channels=TINY_LUMINA2_LATENT_SHAPE[1],
+            hidden_size=16,
+            num_layers=1,
+            num_refiner_layers=1,
+            num_attention_heads=2,
+            num_kv_heads=2,
+            multiple_of=16,
+            axes_dim_rope=(4, 2, 2),
+            cap_feat_dim=TINY_LUMINA2_CAP_DIM,
+        ),
+    ),
+    "hunyuan_video": (
+        "HunyuanVideoTransformer3DModel",
+        dict(
+            in_channels=TINY_HUNYUAN_VIDEO_LATENT_SHAPE[1],
+            out_channels=TINY_HUNYUAN_VIDEO_LATENT_SHAPE[1],
+            num_attention_heads=2,
+            attention_head_dim=8,
+            num_layers=1,
+            num_single_layers=1,
+            num_refiner_layers=1,
+            patch_size=2,
+            patch_size_t=1,
+            guidance_embeds=True,
+            text_embed_dim=TINY_HUNYUAN_VIDEO_TEXT_DIM,
+            pooled_projection_dim=TINY_HUNYUAN_VIDEO_POOLED_DIM,
+            rope_axes_dim=(2, 4, 2),
+        ),
+    ),
+    "mochi": (
+        "MochiTransformer3DModel",
+        dict(
+            patch_size=2,
+            num_attention_heads=2,
+            attention_head_dim=8,
+            num_layers=1,
+            pooled_projection_dim=16,
+            in_channels=TINY_MOCHI_LATENT_SHAPE[1],
+            text_embed_dim=TINY_MOCHI_TEXT_DIM,
+            time_embed_dim=8,
+            max_sequence_length=16,
+        ),
+    ),
+    # Mirrors the 2b config: learned positional embeddings.
+    "cogvideox": ("CogVideoXTransformer3DModel", _TINY_COGVIDEOX_CONFIG),
+    # Mirrors the 5b config: external rotary embeddings passed into forward.
+    # 3D RoPE splits head_dim across (t, h, w); 16 keeps every split even.
+    "cogvideox_rope": (
+        "CogVideoXTransformer3DModel",
+        {
+            **_TINY_COGVIDEOX_CONFIG,
+            "attention_head_dim": 16,
+            "use_rotary_positional_embeddings": True,
+        },
+    ),
+    # out_channels(4) * patch_size**2(4) == in_channels(16) so the noise_pred
+    # matches the packed latent for the SDE step. axes_dims_rope sums to
+    # attention_head_dim (16).
+    "qwen_image": (
+        "QwenImageTransformer2DModel",
+        dict(
+            patch_size=2,
+            in_channels=TINY_QWEN_IN_CHANNELS,
+            out_channels=TINY_QWEN_IN_CHANNELS // 4,
+            num_layers=1,
+            attention_head_dim=16,
+            num_attention_heads=2,
+            joint_attention_dim=TINY_QWEN_JOINT_DIM,
+            guidance_embeds=False,
+            axes_dims_rope=(8, 4, 4),
+        ),
+    ),
+    # patch_size=1: the packed latent [B, seq, C] IS the transformer input, and
+    # out_channels == in_channels so the noise_pred matches it for the SDE step.
+    # axes_dims_rope sums to attention_head_dim (16).
+    "qwen_image_21": (
+        "QwenImage21Transformer2DModel",
+        dict(
+            patch_size=1,
+            in_channels=TINY_QWEN21_IN_CHANNELS,
+            out_channels=TINY_QWEN21_IN_CHANNELS,
+            num_layers=1,
+            attention_head_dim=16,
+            num_attention_heads=2,
+            context_in_dim=TINY_QWEN21_CONTEXT_DIM,
+            mlp_ratio=2,
+            axes_dims_rope=(4, 6, 6),
+        ),
+    ),
+}
+
+
+def build_tiny_transformer(name: str, *, seed: int = 0, **overrides: Any) -> Any:
+    """A tiny real diffusers transformer on CPU, random-init from ``seed``.
+
+    Built straight from config — no ``from_pretrained`` / no download / no
+    cached weights — so the source fully defines it and forward outputs are
+    reproducible. Use this instead of a hand-written fake when a test needs the
+    genuine transformer's adapter API or real gradient flow. ``overrides``
+    replace single config fields (e.g. ``guidance_embeds=False`` for FLUX).
     """
 
-    from diffusers import QwenImage21Transformer2DModel
+    import diffusers
 
+    class_name, config = _TINY_TRANSFORMERS[name]
     torch.manual_seed(seed)
-    return QwenImage21Transformer2DModel(
-        patch_size=1,
-        in_channels=TINY_QWEN21_IN_CHANNELS,
-        out_channels=TINY_QWEN21_IN_CHANNELS,
-        num_layers=1,
-        attention_head_dim=16,
-        num_attention_heads=2,
-        context_in_dim=TINY_QWEN21_CONTEXT_DIM,
-        mlp_ratio=2,
-        axes_dims_rope=(4, 6, 6),
-    )
-
-
-def build_tiny_wan_i2v_transformer(*, seed: int = 0) -> Any:
-    """Tiny real Wan I2V ``WanTransformer3DModel`` on CPU, cache-free.
-
-    I2V cats the conditioning latent into the channel axis, so ``in_channels`` is
-    doubled (4 latent + 4 condition); ``image_dim`` enables the CLIP image-embed
-    cross-attention branch. Same config-init/no-download contract as
-    :func:`build_tiny_wan_transformer`.
-    """
-
-    from diffusers import WanTransformer3DModel
-
-    torch.manual_seed(seed)
-    return WanTransformer3DModel(
-        patch_size=(1, 2, 2),
-        num_attention_heads=2,
-        attention_head_dim=8,
-        in_channels=2 * TINY_WAN_LATENT_SHAPE[1],
-        out_channels=TINY_WAN_LATENT_SHAPE[1],
-        text_dim=TINY_WAN_TEXT_DIM,
-        freq_dim=16,
-        ffn_dim=32,
-        num_layers=1,
-        rope_max_seq_len=64,
-        image_dim=TINY_WAN_TEXT_DIM,
-    )
+    return getattr(diffusers, class_name)(**{**config, **overrides})
 
 
 def add_lora_adapters(

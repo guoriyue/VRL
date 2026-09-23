@@ -173,11 +173,11 @@ def test_real_cosmos_transformer_forward_is_unchanged() -> None:
 
     from tests.models.steps.denoise.fixtures import (
         TINY_COSMOS_TEXT_DIM,
-        build_tiny_cosmos_transformer,
+        build_tiny_transformer,
     )
 
-    reference = build_tiny_cosmos_transformer()
-    fused = build_tiny_cosmos_transformer()
+    reference = build_tiny_transformer("cosmos")
+    fused = build_tiny_transformer("cosmos")
     # time_embed.norm plus norm_q/norm_k of the self- and cross-attention.
     assert fuse_rms_norms(fused) == 5
 

@@ -61,10 +61,10 @@ class TinySanaPipeline:
 
         from tests.models.steps.denoise.fixtures import (
             build_tiny_autoencoder_kl,
-            build_tiny_sana_transformer,
+            build_tiny_transformer,
         )
 
-        self.transformer = build_tiny_sana_transformer()
+        self.transformer = build_tiny_transformer("sana")
         self.vae = build_tiny_autoencoder_kl()
         self.text_encoder = _TinyTextEncoder()
         self.scheduler = build_official_sana_scheduler()
@@ -146,11 +146,11 @@ def write_tiny_sana_snapshot(path: Path) -> Path:
     identity is the hash of this tree.
     """
 
-    from tests.models.steps.denoise.fixtures import build_tiny_sana_transformer
+    from tests.models.steps.denoise.fixtures import build_tiny_transformer
 
     path.mkdir(parents=True, exist_ok=True)
     build_official_sana_scheduler().save_pretrained(path / "scheduler")
-    build_tiny_sana_transformer().save_pretrained(path / "transformer")
+    build_tiny_transformer("sana").save_pretrained(path / "transformer")
     (path / "model_index.json").write_text('{"_class_name": "SanaPipeline"}\n', encoding="utf-8")
     return path
 
@@ -230,11 +230,11 @@ def write_tiny_cosmos25_snapshot(path: Path) -> Path:
     from diffusers import UniPCMultistepScheduler
 
     from tests.models.steps.denoise.fixtures import (
-        build_tiny_cosmos_transformer,
+        build_tiny_transformer,
         build_tiny_wan_vae,
     )
 
-    build_tiny_cosmos_transformer().save_pretrained(path / "transformer")
+    build_tiny_transformer("cosmos").save_pretrained(path / "transformer")
     build_tiny_wan_vae().save_pretrained(path / "vae")
     UniPCMultistepScheduler(
         num_train_timesteps=1000,
@@ -300,7 +300,7 @@ def write_tiny_wan_snapshot(path: Path) -> Path:
 
     from tests.models.steps.denoise.fixtures import (
         TINY_WAN_TEXT_DIM,
-        build_tiny_wan_transformer,
+        build_tiny_transformer,
         build_tiny_wan_vae,
     )
 
@@ -331,7 +331,7 @@ def write_tiny_wan_snapshot(path: Path) -> Path:
     WanPipeline(
         tokenizer=tokenizer,
         text_encoder=text_encoder,
-        transformer=build_tiny_wan_transformer(),
+        transformer=build_tiny_transformer("wan"),
         vae=build_tiny_wan_vae(),
         scheduler=UniPCMultistepScheduler(
             prediction_type="flow_prediction",

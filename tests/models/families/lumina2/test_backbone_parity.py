@@ -16,7 +16,7 @@ import torch
 from tests.models.steps.denoise.fixtures import (
     TINY_LUMINA2_CAP_DIM,
     TINY_LUMINA2_LATENT_SHAPE,
-    build_tiny_lumina2_transformer,
+    build_tiny_transformer,
     record_forward_calls,
     stamp_model_precision,
 )
@@ -61,7 +61,7 @@ def _state(*, do_cfg: bool) -> Lumina2SamplingState:
 
 def test_lumina2_forward_step_runs_separate_cfg_with_norm_rescale() -> None:
     """Two branch calls; combine matches diffusers' renormed CFG on negated preds."""
-    transformer = build_tiny_lumina2_transformer()
+    transformer = build_tiny_transformer("lumina2")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = _state(do_cfg=True)
@@ -81,7 +81,7 @@ def test_lumina2_forward_step_runs_separate_cfg_with_norm_rescale() -> None:
 
 def test_lumina2_forward_step_negates_raw_prediction() -> None:
     """The branch output is the NEGATED raw transformer output (velocity sign)."""
-    transformer = build_tiny_lumina2_transformer()
+    transformer = build_tiny_transformer("lumina2")
     model = _model(transformer)
     state = _state(do_cfg=False)
 
@@ -103,7 +103,7 @@ def test_lumina2_forward_step_negates_raw_prediction() -> None:
 
 def test_lumina2_forward_step_reverses_timestep() -> None:
     """The transformer sees 1 - t/num_train_timesteps, not the raw scheduler t."""
-    transformer = build_tiny_lumina2_transformer()
+    transformer = build_tiny_transformer("lumina2")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = _state(do_cfg=False)
@@ -118,7 +118,7 @@ def test_lumina2_forward_step_reverses_timestep() -> None:
 
 def test_lumina2_replay_roundtrip_restores_equivalent_state() -> None:
     """export -> restore rebuilds a state whose forward matches the original."""
-    transformer = build_tiny_lumina2_transformer()
+    transformer = build_tiny_transformer("lumina2")
     model = _model(transformer)
     state = _state(do_cfg=True)
 

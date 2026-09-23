@@ -17,7 +17,7 @@ from tests.models.steps.denoise.fixtures import (
     TINY_HUNYUAN_VIDEO_LATENT_SHAPE,
     TINY_HUNYUAN_VIDEO_POOLED_DIM,
     TINY_HUNYUAN_VIDEO_TEXT_DIM,
-    build_tiny_hunyuan_video_transformer,
+    build_tiny_transformer,
     record_forward_calls,
     stamp_model_precision,
 )
@@ -54,7 +54,7 @@ def _state() -> HunyuanVideoSamplingState:
 
 def test_hunyuan_video_forward_step_single_branch_with_scaled_guidance() -> None:
     """One forward (batch not doubled); guidance rides as scale*1000."""
-    transformer = build_tiny_hunyuan_video_transformer()
+    transformer = build_tiny_transformer("hunyuan_video")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = _state()
@@ -79,7 +79,7 @@ def test_hunyuan_video_forward_step_single_branch_with_scaled_guidance() -> None
 
 def test_hunyuan_video_encode_prompt_accepts_only_empty_negative_conditioning() -> None:
     negative_prompt = ""
-    transformer = build_tiny_hunyuan_video_transformer()
+    transformer = build_tiny_transformer("hunyuan_video")
     model = _model(transformer)
     model.pipeline.encode_prompt = lambda **_kwargs: (
         torch.zeros(1, _TEXT_LEN, TINY_HUNYUAN_VIDEO_TEXT_DIM),
@@ -98,7 +98,7 @@ def test_hunyuan_video_encode_prompt_accepts_only_empty_negative_conditioning() 
 
 def test_hunyuan_video_encode_prompt_rejects_non_empty_negative_conditioning() -> None:
     negative_prompt = "low quality"
-    transformer = build_tiny_hunyuan_video_transformer()
+    transformer = build_tiny_transformer("hunyuan_video")
     model = _model(transformer)
 
     with pytest.raises(ValueError, match="does not support negative prompts"):
@@ -107,7 +107,7 @@ def test_hunyuan_video_encode_prompt_rejects_non_empty_negative_conditioning() -
 
 def test_hunyuan_video_replay_roundtrip_restores_equivalent_state() -> None:
     """export -> restore rebuilds a state whose forward matches the original."""
-    transformer = build_tiny_hunyuan_video_transformer()
+    transformer = build_tiny_transformer("hunyuan_video")
     model = _model(transformer)
     state = _state()
 

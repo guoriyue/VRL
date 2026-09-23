@@ -9,7 +9,7 @@ from PIL import Image
 from tests.models.steps.denoise.fixtures import (
     TINY_QWEN21_CONTEXT_DIM,
     TINY_QWEN21_IN_CHANNELS,
-    build_tiny_qwen_image_21_transformer,
+    build_tiny_transformer,
     stamp_model_precision,
 )
 from vrl.generation.bindings.full_sequence_denoise.gather import DenoiseBatchGatherer
@@ -55,7 +55,7 @@ def test_edit_executor_encodes_rgba_references_once_per_batch_and_preserves_outp
         _unpack_latents = staticmethod(QwenImage21Pipeline._unpack_latents)
 
     pipe = Pipeline()
-    pipe.transformer = build_tiny_qwen_image_21_transformer()
+    pipe.transformer = build_tiny_transformer("qwen_image_21")
     pipe.scheduler = FlowMatchEulerDiscreteScheduler(use_dynamic_shifting=True)
     pipe.vae_scale_factor = 16
     pipe.latent_channels = TINY_QWEN21_IN_CHANNELS

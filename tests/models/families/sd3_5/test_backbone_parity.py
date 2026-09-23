@@ -15,7 +15,7 @@ from tests.models.steps.denoise.fixtures import (
     TINY_SD3_JOINT_DIM,
     TINY_SD3_LATENT_SHAPE,
     TINY_SD3_POOLED_DIM,
-    build_tiny_sd3_transformer,
+    build_tiny_transformer,
     record_forward_calls,
     stamp_model_precision,
 )
@@ -37,7 +37,7 @@ def test_sd3_forward_step_runs_real_batched_cfg() -> None:
     """Batched CFG is one forward with cond and uncond concatenated (2B rows), combined as
     ``uncond + g*(cond - uncond)`` on the real branch outputs.
     """
-    transformer = build_tiny_sd3_transformer()
+    transformer = build_tiny_transformer("sd3")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = SD3SamplingState(
@@ -63,7 +63,7 @@ def test_sd3_forward_step_runs_real_batched_cfg() -> None:
 
 
 def test_sd3_forward_step_single_branch_skips_cfg() -> None:
-    transformer = build_tiny_sd3_transformer()
+    transformer = build_tiny_transformer("sd3")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = SD3SamplingState(
@@ -92,7 +92,7 @@ def test_sd3_forward_step_single_branch_skips_cfg() -> None:
 
 def test_sd3_forward_step_casts_replay_tensors_to_transformer_dtype() -> None:
     """Checks bf16 rollout tensors replay cleanly through an fp32 transformer."""
-    transformer = build_tiny_sd3_transformer()
+    transformer = build_tiny_transformer("sd3")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = SD3SamplingState(

@@ -110,11 +110,11 @@ def test_pipeline_load_preserves_source_vae_precision(tmp_path) -> None:
     from tests.models.steps.denoise.fixtures import (
         build_tiny_autoencoder_kl,
         build_tiny_pipeline_shell,
-        build_tiny_sd3_transformer,
+        build_tiny_transformer,
     )
 
     pipeline = build_tiny_pipeline_shell(
-        transformer=build_tiny_sd3_transformer(),
+        transformer=build_tiny_transformer("sd3"),
         vae=build_tiny_autoencoder_kl(),
         scheduler=FlowMatchEulerDiscreteScheduler(),
     )
@@ -186,10 +186,10 @@ def test_model_build_rejects_coerced_scheduler_step_count(num_steps):
 def test_transformer_skeleton_reads_only_the_config(tmp_path, monkeypatch) -> None:
     """``materialize_weights=False`` yields the checkpoint's topology with meta
     parameters and real buffers, without opening any weight file."""
-    from tests.models.steps.denoise.fixtures import build_tiny_sd3_transformer
+    from tests.models.steps.denoise.fixtures import build_tiny_transformer
     from vrl.models import loader
 
-    reference = build_tiny_sd3_transformer(seed=5)
+    reference = build_tiny_transformer("sd3", seed=5)
     reference.save_pretrained(tmp_path / "transformer")
     build = ModelBuild(
         model_name_or_path=str(tmp_path),

@@ -22,7 +22,7 @@ import torch.nn as nn
 from tests.models.steps.denoise.fixtures import (
     build_tiny_autoencoder_kl,
     build_tiny_pipeline_shell,
-    build_tiny_sd3_transformer,
+    build_tiny_transformer,
 )
 from vrl.models.steps.denoise.base import DenoiseModelBase, DiffusersReplayModelBase
 
@@ -57,7 +57,7 @@ def _model() -> _TinyDiffusionModel:
     from diffusers import FlowMatchEulerDiscreteScheduler
 
     pipeline = build_tiny_pipeline_shell(
-        transformer=build_tiny_sd3_transformer(),
+        transformer=build_tiny_transformer("sd3"),
         vae=build_tiny_autoencoder_kl(),
         scheduler=FlowMatchEulerDiscreteScheduler(),
     )

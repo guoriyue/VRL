@@ -16,7 +16,7 @@ from tests.models.steps.denoise.fixtures import (
     TINY_COGVIDEOX_LATENT_SHAPE,
     TINY_COGVIDEOX_TEXT_DIM,
     TINY_COGVIDEOX_TEXT_LEN,
-    build_tiny_cogvideox_transformer,
+    build_tiny_transformer,
     record_forward_calls,
     stamp_model_precision,
 )
@@ -57,7 +57,7 @@ def _state(*, do_cfg: bool) -> CogVideoXSamplingState:
 
 def test_cogvideox_forward_step_runs_real_batched_cfg_on_bfchw() -> None:
     """One doubled-batch call on the frame-first layout; standard CFG combine."""
-    transformer = build_tiny_cogvideox_transformer()
+    transformer = build_tiny_transformer("cogvideox")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = _state(do_cfg=True)
@@ -80,7 +80,7 @@ def test_cogvideox_forward_step_runs_real_batched_cfg_on_bfchw() -> None:
 
 def test_cogvideox_rope_recompute_is_deterministic_and_threaded() -> None:
     """5b config: external RoPE derives from config+shape and reaches forward."""
-    transformer = build_tiny_cogvideox_transformer(rope=True)
+    transformer = build_tiny_transformer("cogvideox_rope")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = _state(do_cfg=False)
@@ -103,7 +103,7 @@ def test_cogvideox_rope_recompute_is_deterministic_and_threaded() -> None:
 
 def test_cogvideox_2b_passes_no_rope() -> None:
     """2b config (no rotary embeddings): forward receives image_rotary_emb=None."""
-    transformer = build_tiny_cogvideox_transformer(rope=False)
+    transformer = build_tiny_transformer("cogvideox")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
 
@@ -114,7 +114,7 @@ def test_cogvideox_2b_passes_no_rope() -> None:
 
 def test_cogvideox_replay_roundtrip_restores_equivalent_state() -> None:
     """export -> restore rebuilds a state whose forward matches the original."""
-    transformer = build_tiny_cogvideox_transformer(rope=True)
+    transformer = build_tiny_transformer("cogvideox_rope")
     model = _model(transformer)
     state = _state(do_cfg=True)
 

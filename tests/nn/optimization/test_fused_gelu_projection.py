@@ -151,14 +151,13 @@ def test_real_sd3_transformer_swaps_every_feed_forward_and_cosmos_none() -> None
         TINY_SD3_JOINT_DIM,
         TINY_SD3_LATENT_SHAPE,
         TINY_SD3_POOLED_DIM,
-        build_tiny_cosmos_transformer,
-        build_tiny_sd3_transformer,
+        build_tiny_transformer,
     )
 
-    assert fuse_gelu_projections(build_tiny_cosmos_transformer()) == 0, "exact GELU, no bias"
+    assert fuse_gelu_projections(build_tiny_transformer("cosmos")) == 0, "exact GELU, no bias"
 
-    reference = build_tiny_sd3_transformer()
-    fused = build_tiny_sd3_transformer()
+    reference = build_tiny_transformer("sd3")
+    fused = build_tiny_transformer("sd3")
     # One layer: the last joint block is context_pre_only, so only the image
     # stream's ff exists; a full-depth SD3.5 swaps ff and ff_context per block.
     assert fuse_gelu_projections(fused) == 1
