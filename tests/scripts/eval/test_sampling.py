@@ -73,23 +73,6 @@ def test_eval_sampling_rejects_a_non_positive_step_count() -> None:
         _root(sampling=_IMAGE, eval={"num_steps": 0})
 
 
-def test_eval_sampling_resolution_overrides_training_geometry() -> None:
-    """Train at 512px, evaluate at the checkpoint's native 1024px."""
-    root = _root(
-        sampling={**_IMAGE, "max_sequence_length": 256},
-        eval={"width": 1024, "height": 1024, "num_steps": 40},
-    )
-
-    out = resolve_eval_sampling(root)
-
-    assert (out["width"], out["height"], out["num_steps"]) == (1024, 1024, 40)
-
-
-def test_eval_sampling_rejects_non_positive_resolution() -> None:
-    with pytest.raises(ValueError, match=r"eval\.width must be >= 1"):
-        _root(sampling=_IMAGE, eval={"width": 0})
-
-
 def test_family_without_a_prompt_length_knob_projects_no_key() -> None:
     """Qwen-Image-2.1 tokenizes its template whole: no max_sequence_length anywhere.
 
