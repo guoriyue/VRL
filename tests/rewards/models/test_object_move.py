@@ -94,3 +94,17 @@ def test_spec_is_validated() -> None:
         model.score(_scene(20.0), _scene(20.0), {"object": "block", "direction": "sideways"})
     with pytest.raises(ValueError, match="equal size"):
         model.score(_scene(20.0), Image.new("RGB", (10, 10)), {"object": "b", "direction": "left"})
+
+
+def test_target_box_mode_scores_overlap_with_the_drawn_target() -> None:
+    source, hit, miss = _scene(BOX[0]), _scene(90.0), _scene(150.0)
+    layouts = {id(source): [BOX[0]], id(hit): [90.0], id(miss): [150.0]}
+    model = _Stubbed(layouts)
+    target = {"object": "block", "target_box": [90 / W, 80 / H, 130 / W, 120 / H]}
+
+    on_target = model.score(source, hit, target)
+    off_target = model.score(source, miss, target)
+
+    assert on_target["object_move_geometry"] == pytest.approx(1.0)
+    assert on_target["object_move"] == pytest.approx(1.0)
+    assert off_target["object_move"] == 0.0

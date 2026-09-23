@@ -32,9 +32,15 @@ Per-artifact metadata (from the prompt manifest)::
     reference_images: [source path]           # the edit source
     object_move: {object: "armchair", direction: "left",
                   source_box: [x0, y0, x1, y1]}   # optional, normalized
+    object_move: {object: "the helicopter",       # or: a drawn target
+                  target_box: [x0, y0, x1, y1]}   # normalized
 
 ``source_box`` selects which instance moves when the source holds several;
-without it the most confident detection is the moved object.
+without it the most confident detection is the moved object. With
+``target_box`` (a red box drawn on the source, SpatialEdit style) geometry is
+the moved box's IoU with the target, which fixes both place and size; the
+target region is excluded from the background check because the mark is meant
+to be erased.
 """
 
 from __future__ import annotations
@@ -137,11 +143,18 @@ class ObjectMoveRewardModel(LazyTorchModule):
 
         obj = str(spec.get("object") or "").strip()
         direction = str(spec.get("direction") or "")
-        if not obj or direction not in DIRECTIONS:
-            raise ValueError(f"object_move spec needs object and direction in {DIRECTIONS}")
+        target_box = spec.get("target_box")
+        if not obj or (target_box is None and direction not in DIRECTIONS):
+            raise ValueError(
+                f"object_move spec needs object and a direction in {DIRECTIONS} or a target_box"
+            )
         if source.size != edited.size:
             raise ValueError("object_move compares images of equal size")
         width, height = edited.size
+        goal = None
+        if target_box is not None:
+            x0, y0, x1, y1 = (float(v) for v in target_box)
+            goal = (x0 * width, y0 * height, x1 * width, y1 * height)
         src_dets, edit_dets = self._detect([source, edited], obj)
         moved = _pick_source_instance(src_dets, spec.get("source_box"), (width, height))
         out = {
@@ -186,7 +199,13 @@ class ObjectMoveRewardModel(LazyTorchModule):
         dy = ((ey0 + ey1) - (sy0 + sy1)) / 2.0 / height
         area_ratio = ((ex1 - ex0) * (ey1 - ey0)) / max((sx1 - sx0) * (sy1 - sy0), 1e-6)
         log_ratio = math.log(max(area_ratio, 1e-6))
-        if direction in _LATERAL:
+        if goal is not None:
+            # A drawn target ("into the red box"): overlap with it carries both
+            # position and size, as in SpatialEdit-Bench's move score.
+            displacement = _iou(target[0], goal) - _iou(moved[0], goal)
+            progress = _iou(target[0], goal)
+            size_term = 1.0
+        elif direction in _LATERAL:
             ux, uy = _LATERAL[direction]
             displacement = dx * ux + dy * uy
             progress = min(max(displacement / self._full_shift, 0.0), 1.0)
@@ -199,7 +218,9 @@ class ObjectMoveRewardModel(LazyTorchModule):
             size_term = 1.0
         kp0, kp1 = self._match(source, edited)
         self_kp0, _ = self._match(source, source)
-        background = self._background(kp0, kp1, self_kp0, (moved[0], target[0]), width, height)
+        # The target mark itself (red box lines) is meant to disappear.
+        edited_regions = (moved[0], target[0]) if goal is None else (moved[0], target[0], goal)
+        background = self._background(kp0, kp1, self_kp0, edited_regions, width, height)
         geometry = progress * size_term
         # Product, not a mean: a frame that shifted or was redrawn has no
         # background left in place, and that alone must sink the score.
