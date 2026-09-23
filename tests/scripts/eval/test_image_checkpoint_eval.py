@@ -142,8 +142,11 @@ def test_prompt_selection_uses_user_strata_and_preserves_reward_metadata():
     }
     with pytest.raises(ValueError, match="fewer rows"):
         checkpoint_eval.select_prompts(examples, strata=("scene",), per_stratum=4)
-    with pytest.raises(ValueError, match="text-conditioned"):
-        checkpoint_eval.select_prompts([PromptExample("scene", reference_images=["input.png"])])
+    with pytest.raises(ValueError, match="reference_video"):
+        checkpoint_eval.select_prompts([PromptExample("scene", reference_video="input.mp4")])
+    # Reference-image edits are selected; generation routes them through the family executor.
+    edit = checkpoint_eval.select_prompts([PromptExample("scene", reference_images=["input.png"])])
+    assert checkpoint_eval._reward_metadata(edit[0].example)["reference_images"] == ["input.png"]
     for example in (
         PromptExample("scene", request_overrides={"width": 64}),
         PromptExample("scene", task_type="text_to_video"),

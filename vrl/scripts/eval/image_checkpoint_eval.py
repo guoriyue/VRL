@@ -100,6 +100,10 @@ class EvaluationPlan:
     config_sha256: str
     manifest_sha256: str
     training_reward_components: tuple[str, ...]
+    # Family sampling fields beyond the shared image geometry (Qwen-Image-2.1:
+    # reference_resolution, output_mode); the family executor consumes them
+    # when prompts carry reference images.
+    family_sampling: dict[str, Any] = field(default_factory=dict)
     runtime_identity: GeneratorRuntimeIdentity = field(
         default_factory=GeneratorRuntimeIdentity.capture,
     )
@@ -119,6 +123,7 @@ class EvaluationPlan:
                 for prompt in self.prompts
             ],
             "sampling": asdict(self.sampling),
+            "family_sampling": self.family_sampling,
             "negative_prompt": self.negative_prompt,
             "generation_device": str(self.resolved_model.build.device),
             "generation_dtype": str(self.resolved_model.build.parameter_dtype),
@@ -151,9 +156,54 @@ class EvaluationPlan:
                             samples_per_prompt=self.samples_per_prompt,
                         ),
                         "prompt": prompt.example.prompt,
-                        "reward_metadata": prompt.example.reward_metadata(),
+                        "reward_metadata": _reward_metadata(prompt.example),
                         "image_path": f"images/{target.label}/prompt{prompt_index:04d}_sample{sample_index:02d}.png",
                     }
+
+    def _generate_edit(
+        self, model: Any, example: PromptExample, seed: int
+    ) -> tuple[list[Any], str]:
+        """One reference-conditioned edit through the family's own batch executor.
+
+        The executor is the rollout path (reference loading, conditioning,
+        packing), run with the native deterministic scheduler instead of the
+        SDE. The hash of the initial latent tensor proves arms were paired on
+        identical noise, not just on a seed label.
+        """
+
+        import hashlib
+
+        from vrl.generation.execution.sample_batches import GenerationSampleBatch
+        from vrl.generation.steps.denoise.config import DenoiseRequestOptions
+        from vrl.generation.types import GenerationRequest
+        from vrl.utils.config import import_from_path
+        from vrl.utils.media import to_pil_image
+
+        entry = self.resolved_model.entry
+        executor = import_from_path(entry.executor_cls)(model, gatherer=entry.new_gatherer())
+        request = GenerationRequest(
+            request_id=f"eval-{seed}",
+            family=entry.family,
+            task=entry.task,
+            inputs=[example.generation_input()],
+            samples_per_prompt=1,
+            sampling={
+                "height": self.sampling.height,
+                "width": self.sampling.width,
+                "num_steps": self.sampling.num_steps,
+                "guidance_scale": self.sampling.guidance_scale,
+                "seed": seed,
+                **self.family_sampling,
+            },
+            denoise=DenoiseRequestOptions(denoise_mode="native"),
+        )
+        batch = executor.forward_batch(
+            request, GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1)
+        )
+        initial = batch.observations[:, 0].detach().cpu().contiguous()
+        latent_hash = hashlib.sha256(initial.float().numpy().tobytes()).hexdigest()
+        generated = executor.merge_generation_batches(request, request.sample_rows(), [batch])
+        return [to_pil_image(generated.output[0])], latent_hash
 
     def blind_orders(self) -> dict[int, list[str]]:
         orders = {}
@@ -211,15 +261,20 @@ class EvaluationPlan:
                     for row in rows:
                         if row["checkpoint_label"] != target.label:
                             continue
-                        images = generate_images(
-                            model,
-                            prompt=row["prompt"],
-                            negative_prompt=self.negative_prompt,
-                            seed=row["seed"],
-                            samples_per_prompt=1,
-                            sampling=self.sampling,
-                            torch=torch,
-                        )
+                        example = self.prompts[row["prompt_index"]].example
+                        if example.reference_images:
+                            images, latent_hash = self._generate_edit(model, example, row["seed"])
+                            row["initial_latents_sha256"] = latent_hash
+                        else:
+                            images = generate_images(
+                                model,
+                                prompt=row["prompt"],
+                                negative_prompt=self.negative_prompt,
+                                seed=row["seed"],
+                                samples_per_prompt=1,
+                                sampling=self.sampling,
+                                torch=torch,
+                            )
                         if len(images) != 1:
                             raise RuntimeError(f"expected one image, received {len(images)}")
                         path = output_dir / row["image_path"]
@@ -232,6 +287,15 @@ class EvaluationPlan:
             del model, bundle
             release_cuda_memory()
         return rows
+
+
+def _reward_metadata(example: PromptExample) -> dict[str, Any]:
+    """Reward metadata, plus the reference images an edit reward compares against."""
+
+    metadata = example.reward_metadata()
+    if example.reference_images:
+        metadata["reference_images"] = list(example.reference_images)
+    return metadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,7 +321,12 @@ class EvaluationArchive:
         for row, cell in zip(rows, expected, strict=True):
             if (
                 not isinstance(row, dict)
-                or {key: value for key, value in row.items() if key != "image_sha256"} != cell
+                or {
+                    key: value
+                    for key, value in row.items()
+                    if key not in ("image_sha256", "initial_latents_sha256")
+                }
+                != cell
             ):
                 raise ValueError("generated image grid differs from the evaluation protocol")
             path = self.directory / cell["image_path"]
@@ -434,9 +503,10 @@ def select_prompts(
         raise ValueError("an evaluation stratum has fewer rows than --per-stratum")
     if not selected or any(not row.example.prompt.strip() for row in selected):
         raise ValueError("evaluation requires non-empty prompts")
-    # The stepwise text-to-image path does not consume image/video conditioning.
-    if any(row.example.reference_video or row.example.reference_images for row in selected):
-        raise ValueError("this evaluator only supports text-conditioned image generation")
+    # Reference images run through the family executor; video conditioning has
+    # no image-evaluation path.
+    if any(row.example.reference_video for row in selected):
+        raise ValueError("this evaluator does not support reference_video conditioning")
     if any(row.example.request_overrides for row in selected):
         raise ValueError(
             "per-prompt request_overrides are not supported by the fixed sampling grid"
@@ -453,7 +523,8 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     from vrl.models.families.registry import get_model_family_entry
     from vrl.run import resolve_model
     from vrl.scripts.eval._device import resolve_eval_device
-    from vrl.trainers.checkpointing import validate_checkpoint_meta_compatibility
+    from vrl.trainers.checkpointing import CheckpointTarget, validate_checkpoint_meta_compatibility
+    from vrl.trainers.data.artifacts import resolve_prompt_example_references
     from vrl.trainers.data.prompts import load_prompt_dataset_index
 
     if (
@@ -477,12 +548,19 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         raise ValueError(
             "image checkpoint evaluation requires a full-sequence denoise text-to-image family"
         )
-    targets = discover_targets(
-        config_path.parent,
-        checkpoint_specs=args.checkpoint,
-        epochs=args.epochs or (),
-        uses_lora=bool(root.model.use_lora),
-    )
+    if args.base_only:
+        # A baseline (e.g. checking a reward against a benchmark before any
+        # training): the untrained model is the only arm.
+        if args.checkpoint or args.epochs:
+            raise ValueError("--base-only takes no --checkpoint or --epochs")
+        targets = (CheckpointTarget.base(),)
+    else:
+        targets = discover_targets(
+            config_path.parent,
+            checkpoint_specs=args.checkpoint,
+            epochs=args.epochs or (),
+            uses_lora=bool(root.model.use_lora),
+        )
     resolved = resolve_model(
         entry,
         root,
@@ -542,15 +620,33 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         pending.extend(
             (f"{path}.{key}", value) for key, value in settings.items() if isinstance(value, dict)
         )
+    prompts = select_prompts(
+        [
+            resolve_prompt_example_references(example, allow_absolute=True)
+            for example in load_prompt_dataset_index(manifest_path)
+        ],
+        limit=args.limit,
+        per_stratum=args.per_stratum,
+        strata=args.strata,
+    )
+    family_sampling: dict[str, Any] = {}
+    if any(prompt.example.reference_images for prompt in prompts):
+        from vrl.config.sampling_schema import DenoiseImageSamplingSection
+        from vrl.generation.bindings.full_sequence import ReferenceConditionedBatches
+        from vrl.utils.config import import_from_path
+
+        if not issubclass(import_from_path(entry.executor_cls), ReferenceConditionedBatches):
+            raise ValueError(f"{entry.family} does not take reference images")
+        shared = set(DenoiseImageSamplingSection.model_fields) | {"max_sequence_length"}
+        family_sampling = {
+            key: value
+            for key, value in root.sampling.model_dump(exclude_none=True).items()
+            if key not in shared
+        }
     return EvaluationPlan(
         resolved,
         targets,
-        select_prompts(
-            load_prompt_dataset_index(manifest_path),
-            limit=args.limit,
-            per_stratum=args.per_stratum,
-            strata=args.strata,
-        ),
+        prompts,
         # Only geometry and step count may differ from training; the guidance
         # scale and prompt length stay the run's own.
         ImageSampling.from_root(
@@ -568,6 +664,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         sha256_file(config_path),
         sha256_file(manifest_path),
         tuple(root.reward.components) if root.reward else (),
+        family_sampling,
     )
 
 
@@ -733,6 +830,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint", action="append", default=[], metavar="[LABEL=]PATH")
     parser.add_argument(
         "--epochs", type=lambda value: tuple(int(part) for part in value.split(",")), default=()
+    )
+    parser.add_argument(
+        "--base-only", action="store_true", help="evaluate the untrained model only"
     )
     parser.add_argument("--eval-policy-config", default=None)
     parser.add_argument("--eval-policy-override", action="append", default=[])
