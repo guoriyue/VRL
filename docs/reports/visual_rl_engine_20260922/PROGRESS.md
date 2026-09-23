@@ -135,3 +135,28 @@
   are insufficient for population conclusions; no confidence interval is reported.
 - Still needed: independently labeled real evaluation set, candidate-model scoring,
   frozen-combination training integration, and reward-weighted online experiments.
+
+## First real reward-weighted online Qwen run
+
+- Ported the reference-conditioned EditReward adapter and explicit HTTP parking
+  lease exception from source 90852130. The service advertises memory_parking=true
+  and generation_overlap_safe=false; no local reward GPU reservation is fabricated.
+- Ran our adapter in the existing isolated `/tmp/vrl-edit-reward-env` environment
+  (upstream EditReward revision 77a93aaa461fe9187e0ff841b59ecc0d0620bb7f).
+  Service port 18315, process created by this goal; no existing service interrupted.
+- Attempt 1 failed config resolution because an external reward owned no local GPU.
+  Fixed the explicit lease case; resource/reward/service tests: 162 passed.
+- Attempt 2 failed because offline Hub revision lookup was attempted. Attempt 3
+  used the absolute cached Qwen snapshot. No weights downloaded or guard relaxed.
+- Successful run: `outputs/qwen_image_21/edit_rl_smoke_attempt3`;
+  final checkpoint global_step=2, completed_epoch=2. LoRA rank 4/alpha 8,
+  2 prompts x 2 samples, 256x256, 4 denoise steps, float32 stored trajectories.
+- Pre-update max log-prob difference: 1.1920928955078125e-07 in both updates.
+  Gradient norms: 0.0379986912 and 0.0300357677. No zero-advantage groups.
+- Reward means: -1.9595036507, -1.9664444923. These two training observations
+  DO NOT establish improvement (the second is lower). No heldout gain claimed.
+- Final checkpoint tree digest: c9e4b0c2c064825cee681533671f1f87e2c812203babd60b49e5ec0081015ab1.
+  Launch ID: 37a854cc6ec647249b32e5a3d7a4ef85; runtime captured artifact evidence.
+- Found remaining diagnostics gap: fixed-schema CSV exports configured top-level
+  reward names only. Nested axes survive collection but need a complete observation
+  sidecar before claiming end-to-end training diagnostics.
