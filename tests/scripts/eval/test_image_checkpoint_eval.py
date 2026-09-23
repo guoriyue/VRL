@@ -221,6 +221,16 @@ def test_independent_policy_does_not_replace_run_sampling(tmp_path, plan, monkey
             checkpoint_eval.resolve_plan(args)
     assert OmegaConf.load(run_config).reward.components == {"ocr": 1.0}
 
+    # CLI geometry/schedule flags override the run; unset ones keep it.
+    args.eval_policy_override = []
+    args.width, args.height, args.num_steps = 16, 24, 40
+    sized = checkpoint_eval.resolve_plan(args).sampling
+    assert (sized.width, sized.height, sized.num_steps) == (16, 24, 40)
+    assert (sized.guidance_scale, sized.max_sequence_length) == (2.0, 8)
+    args.width = 0
+    with pytest.raises(ValueError, match="invalid sampling"):
+        checkpoint_eval.resolve_plan(args)
+
 
 def test_base_disables_adapter_before_checkpoint_restores(tmp_path, plan, monkeypatch):
     events = []

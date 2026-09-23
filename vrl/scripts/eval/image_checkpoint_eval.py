@@ -457,7 +457,8 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     from vrl.trainers.data.prompts import load_prompt_dataset_index
 
     if (
-        args.samples_per_prompt < 1
+        any(value is not None and value < 1 for value in (args.width, args.height, args.num_steps))
+        or args.samples_per_prompt < 1
         or args.seed < 0
         or args.bootstrap_resamples < 1
         or not math.isfinite(args.tie_epsilon)
@@ -550,7 +551,12 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
             per_stratum=args.per_stratum,
             strata=args.strata,
         ),
-        ImageSampling.from_root(root),
+        # Only geometry and step count may differ from training; the guidance
+        # scale and prompt length stay the run's own.
+        ImageSampling.from_root(
+            root,
+            overrides={"width": args.width, "height": args.height, "num_steps": args.num_steps},
+        ),
         reward,
         args.samples_per_prompt,
         args.seed,
@@ -735,6 +741,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--strata", nargs="+", default=[])
     parser.add_argument("--per-stratum", type=int, default=0)
     parser.add_argument("--samples-per-prompt", type=int, default=2)
+    # Evaluate at another resolution / schedule than training (e.g. train
+    # Qwen-Image-2.1 at 512px x 10 steps, evaluate at its native 2048px x 40).
+    # Unset flags keep the run's eval/sampling values.
+    parser.add_argument("--width", type=int, default=None)
+    parser.add_argument("--height", type=int, default=None)
+    parser.add_argument("--num-steps", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--blind-seed", type=int, default=1)
     parser.add_argument("--negative-prompt", default="")

@@ -81,13 +81,13 @@ dynamic-shifting 的 mu 依赖分辨率，通用 replay loader 不知道，FLUX 
 compute-bound recipe 的常规值），`prompts_per_batch 8 → 6`（96 samples/update）。
 长跑实测 update 1 = 6.3 min（rollout ~3 min + replay ~4 min 含 first-step probe）。
 
-(e) **streaming 路径没有 after-step 摘要**（`2c92a489`）：`replay_parity_gate` 只记
-before 摘要，长跑没有"权重真的动了"的证据。两条 update 路径在第一次通过 parity 的 step 后
-各写一条 `first_update_weights`（before/after sha256 + `moved`）。长跑 update 1：
-`moved: true`（6979af2b… → 1e681942…）。
+(e) **"权重真的动了"的证据**：曾加过一条 `first_update_weights` 调试记录（`2c92a489`），
+后来 revert（`0d8ac611`）——同一事实从 checkpoint 看得到（dry run 的 LoRA B 从 0 → ‖B‖=4.45），
+不值得在 trainer 里常驻一个状态字段。
 
-(f) **eval 分辨率**（`f0a252cb`）：`EvalSection` 只有 `num_steps`，1024px 评测加
-`width/height`（`resolve_eval_sampling` 本来就按 key 读 eval 段）。
+(f) **eval 分辨率**：`image_checkpoint_eval` 加了 `--width/--height/--num-steps`，1024/2048
+评测直接传参数。（先前的 `EvalSection.width/height` 方案 `f0a252cb` 已 revert：分辨率是评测
+脚本的选择，不属于训练配置。）
 
 (g) **同卡有别的 agent 在跑 2.1 编辑探针**（~15 GB，每次几分钟）：dry run 被撞死两次
 （`RayGenerationWorker.load_policy` / `wake` OOM）。launcher 先等卡上 <1 GB 持续 45 s
@@ -98,7 +98,7 @@ before 摘要，长跑没有"权重真的动了"的证据。两条 update 路径
 | gate | 实测 |
 |---|---|
 | replay_parity_gate | 2.77e-4, passed |
-| first_update_weights | moved=true |
+| 权重更新 | dry run checkpoint-final 的 LoRA B 从 0 → ‖B‖ = 4.45 |
 | grad_norm | 2.70e-4 |
 | reward_mean / std | 0.324 / 0.416 |
 | clip_fraction | 0.108（clip_ratio 1e-4 < kernel noise 2.8e-4，所以裁剪率天然不低；stop 线 0.2） |
@@ -181,6 +181,6 @@ held-out OCR 512/10：+0.241（CI [+0.175, +0.311]）；1024/40：+0.211（CI [+
 - supervisor log: `outputs/qwen_image_21_ocr_grpo_run1/supervise.log`
 - dry run: `outputs/qwen_image_21_ocr_grpo_dryrun/`
 - eval 512/10: `outputs/qwen_image_21_ocr_grpo_run1/eval_512_10/report/{summary.json,curve.csv,contact_sheets/}`（log `eval_512_10.log`）
-- eval 2048/40（16 条）: `outputs/qwen_image_21_ocr_grpo_run1/eval_2048_40/report/`（log `eval_2048_40.log`；run dir `outputs/qwen_image_21_ocr_grpo_run1_eval2048/`；中途停掉的 64 条版本留在 `eval_2048_40_partial64/`，只有 33 张 base 图）
-- eval 1024/40: `outputs/qwen_image_21_ocr_grpo_run1/eval_1024_40/report/`（log `eval_1024_40.log`；run dir 复制在 `outputs/qwen_image_21_ocr_grpo_run1_eval1024/resolved_config.yaml`，只加了 `eval: {width: 1024, height: 1024, num_steps: 40}`）
+- eval 2048/40（16 条）: `outputs/qwen_image_21_ocr_grpo_run1/eval_2048_40/report/`（log `eval_2048_40.log`；当时用复制的 run dir `outputs/qwen_image_21_ocr_grpo_run1_eval2048/` 改分辨率，现在用 `--width 2048 --height 2048 --num-steps 40`；中途停掉的 64 条版本留在 `eval_2048_40_partial64/`，只有 33 张 base 图）
+- eval 1024/40: `outputs/qwen_image_21_ocr_grpo_run1/eval_1024_40/report/`（log `eval_1024_40.log`；当时用复制的 run dir `outputs/qwen_image_21_ocr_grpo_run1_eval1024/`，现在用 `--width 1024 --height 1024 --num-steps 40`）
 - checkpoints: `outputs/qwen_image_21_ocr_grpo_run1/checkpoint-{20,40,60,final}/lora_weights/`
