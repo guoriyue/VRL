@@ -13,6 +13,15 @@ defaults:
   - /reward/object_move
   - /dataset/object_move
 
+reward:
+  kwargs:
+    object_move:
+      # Train on the shaped key: object_move alone is zero for almost every
+      # base sample, and run1 learned to stop following the reference (the
+      # held-out scene got redrawn, 0.107 -> 0.001). Evaluation keeps the
+      # preset's object_move key, the move-success measure.
+      score_key: object_move_shaped
+
 sampling:
   # Reference encoded at the training geometry so the prefix is 1024 tokens.
   reference_resolution: 512
