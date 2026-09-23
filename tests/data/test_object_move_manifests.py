@@ -1,25 +1,32 @@
-"""Feasibility rules and red-box reading for the object-move manifests."""
+"""Placement rules and red-box reading for the object-move manifests."""
 
 from __future__ import annotations
 
 from PIL import Image, ImageDraw
 
-from vrl.scripts.data.object_move import feasible_move, red_box
+from vrl.scripts.data.object_move import landing_spot, red_box
 
 
-def test_move_goes_toward_the_free_side_and_needs_room() -> None:
+def test_landing_spot_rests_on_the_support_and_needs_it_free() -> None:
     frame = (100.0, 100.0)
-    assert feasible_move((60, 40, 90, 70), [], frame) == "left"
-    assert feasible_move((10, 40, 40, 70), [], frame) == "right"
-    # Too wide (>40% of the frame) or no side with 30% free.
-    assert feasible_move((10, 40, 60, 70), [], frame) is None
-    assert feasible_move((25, 40, 75, 70), [], frame) is None
+    cup = (10, 60, 20, 72)  # rests on the floor at the left
+    table = (50, 50, 90, 90)
+    land = landing_spot(cup, table, [], frame)
+    # Bottom edge 40% down the table box, centred on it.
+    assert land == (65, 54, 75, 66)
+    # A person sitting where the cup would go: try the other spots, then give up.
+    assert landing_spot(cup, table, [(66, 40, 90, 70)], frame) == (57, 54, 67, 66)
+    assert landing_spot(cup, table, [(50, 40, 90, 70)], frame) is None
 
 
-def test_move_is_rejected_when_another_object_sits_where_it_would_land() -> None:
+def test_landing_spot_rejects_impossible_or_trivial_moves() -> None:
     frame = (100.0, 100.0)
-    assert feasible_move((60, 40, 90, 70), [(25, 40, 55, 70)], frame) is None
-    assert feasible_move((60, 40, 90, 70), [(0, 0, 10, 10)], frame) == "left"
+    table = (50, 50, 90, 90)
+    # Already on the table, too small to see, too big to carry, or a tiny support.
+    assert landing_spot((60, 50, 70, 60), table, [], frame) is None
+    assert landing_spot((10, 60, 16, 66), table, [], frame) is None
+    assert landing_spot((0, 0, 40, 40), table, [], frame) is None
+    assert landing_spot((10, 60, 20, 72), (50, 50, 60, 60), [], frame) is None
 
 
 def test_red_box_reads_the_drawn_outline_and_never_guesses() -> None:
