@@ -63,8 +63,8 @@ def test_video_world_manifests_validate_reference_artifacts(tmp_path: Path) -> N
         train_manifest,
         eval_manifest=eval_manifest,
         data_root=data_root,
-        artifact_fields=("reference_image",),
-        required_artifact_fields=("reference_image",),
+        artifact_fields=("reference_images",),
+        required_artifact_fields=("reference_images",),
     )
 
     assert report.row_count == 1
@@ -213,7 +213,7 @@ def test_video_world_source_episode_overlap_is_reported(tmp_path: Path) -> None:
         train,
         eval_manifest=eval_manifest,
         data_root=tmp_path,
-        required_artifact_fields=("reference_image",),
+        required_artifact_fields=("reference_images",),
     )
 
     assert report.source_episode_overlap == ("episode_001",)
@@ -224,9 +224,9 @@ def test_video_world_v2w_manifest_requires_reference_image(tmp_path: Path) -> No
     manifest = tmp_path / "missing_reference.jsonl"
     manifest.write_text(json.dumps({"prompt": "no reference"}) + "\n", encoding="utf-8")
 
-    with pytest.raises(ArtifactManifestError, match="missing required field reference_image"):
+    with pytest.raises(ArtifactManifestError, match="missing required field reference_images"):
         DatasetFileReport.from_manifest(
             manifest,
             data_root=tmp_path,
-            required_artifact_fields=("reference_image",),
+            required_artifact_fields=("reference_images",),
         )

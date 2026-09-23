@@ -102,7 +102,7 @@ def test_locality_adapter_validates_task_identity_and_emits_separate_scores(tmp_
         path="",
         prompt=prompt,
         media=image,
-        metadata={"task_id": "test", "reference_image": "source.png"},
+        metadata={"task_id": "test", "reference_images": ["source.png"]},
     )
     scores = model(artifact)
     assert scores["editreward"] == 0.5

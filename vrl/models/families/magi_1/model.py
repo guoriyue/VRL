@@ -308,13 +308,18 @@ class Magi1SubprocessModel(torch.nn.Module):
 
     @staticmethod
     def _generation_mode(input_value: GenerationInput) -> tuple[str, str | None]:
-        if input_value.reference_image and input_value.reference_video:
-            raise ValueError("MAGI-1 accepts either reference_image or reference_video, not both")
+        if len(input_value.reference_images) > 1:
+            raise ValueError("MAGI-1 accepts at most one reference image")
+        reference_image = input_value.reference_images[0] if input_value.reference_images else None
+        if reference_image and input_value.reference_video:
+            raise ValueError(
+                "MAGI-1 accepts either a reference image or reference_video, not both"
+            )
 
         task_type = input_value.task_type
         if task_type in (None, ""):
-            if input_value.reference_image:
-                return "i2v", input_value.reference_image
+            if reference_image:
+                return "i2v", reference_image
             if input_value.reference_video:
                 return "v2v", input_value.reference_video
             return "t2v", None
@@ -331,12 +336,10 @@ class Magi1SubprocessModel(torch.nn.Module):
             mode = aliases[task_type]
         except KeyError as error:
             raise ValueError(f"unsupported MAGI-1 task_type: {task_type!r}") from error
-        conditioning_path = (
-            input_value.reference_image if mode == "i2v" else input_value.reference_video
-        )
+        conditioning_path = reference_image if mode == "i2v" else input_value.reference_video
         if mode != "t2v" and not conditioning_path:
             raise ValueError(f"MAGI-1 {mode} mode requires its reference input")
-        if mode == "t2v" and (input_value.reference_image or input_value.reference_video):
+        if mode == "t2v" and (reference_image or input_value.reference_video):
             raise ValueError("MAGI-1 t2v task_type cannot carry a reference input")
         return mode, conditioning_path
 

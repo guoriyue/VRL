@@ -25,7 +25,7 @@ def _write_manifest(path: Path, row: dict) -> None:
 
 
 def test_artifact_manifest_resolves_relative_references_via_data_root(tmp_path: Path) -> None:
-    """A relative ``reference_image`` stays relative on the loaded example while the report
+    """A relative reference image stays relative on the loaded example while the report
     resolves it under ``data_root`` and counts it as one artifact.
     """
     data_root = tmp_path / "external"
@@ -44,10 +44,10 @@ def test_artifact_manifest_resolves_relative_references_via_data_root(tmp_path: 
     report = DatasetFileReport.from_manifest(
         manifest,
         data_root=data_root,
-        required_artifact_fields=("reference_image",),
+        required_artifact_fields=("reference_images",),
     )
 
-    assert examples[0].reference_image == "video_world/references/ref.ppm"
+    assert examples[0].reference_images == ["video_world/references/ref.ppm"]
     assert report.row_count == 1
     assert report.artifact_count == 1
     assert report.resolved_artifacts[0].resolved_path == reference.resolve()
@@ -74,13 +74,13 @@ def test_target_artifacts_are_prompt_fields_and_validate(tmp_path: Path) -> None
     report = DatasetFileReport.from_manifest(
         manifest,
         data_root=data_root,
-        required_artifact_fields=("reference_image", "target_image"),
+        required_artifact_fields=("reference_images", "target_image"),
     )
 
     assert examples[0].target_image == "video_world/targets/target.ppm"
     assert report.artifact_count == 2
     assert {item.field for item in report.resolved_artifacts} == {
-        "reference_image",
+        "reference_images",
         "target_image",
     }
 
@@ -90,7 +90,7 @@ def test_reference_resolution_preserves_target_identity_fields(tmp_path: Path) -
 
     example = PromptExample(
         prompt="open the drawer",
-        reference_image="references/frame.ppm",
+        reference_images=["references/frame.ppm"],
         reference_video="references/context.mp4",
         target_image="targets/result.ppm",
         target_video="targets/result.mp4",
@@ -99,20 +99,14 @@ def test_reference_resolution_preserves_target_identity_fields(tmp_path: Path) -
 
     resolved = resolve_prompt_example_references(example, data_root=tmp_path)
 
-    assert resolved.reference_image == str((tmp_path / "references/frame.ppm").resolve())
+    assert resolved.reference_images == [str((tmp_path / "references/frame.ppm").resolve())]
     assert resolved.reference_video == str((tmp_path / "references/context.mp4").resolve())
     assert resolved.references == [
         str((tmp_path / "references/alternate.ppm").resolve()),
     ]
     assert resolved.target_image == "targets/result.ppm"
     assert resolved.target_video == "targets/result.mp4"
-    assert example.reference_image == "references/frame.ppm"
-
-    blank = resolve_prompt_example_references(
-        PromptExample(prompt="no reference", reference_image="  "),
-        data_root=tmp_path,
-    )
-    assert blank.reference_image is None
+    assert example.reference_images == ["references/frame.ppm"]
 
 
 def test_missing_reference_image_fails_with_manifest_row(tmp_path: Path) -> None:
@@ -128,11 +122,11 @@ def test_missing_reference_image_fails_with_manifest_row(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    with pytest.raises(ArtifactManifestError, match=r"row 0 reference_image does not exist"):
+    with pytest.raises(ArtifactManifestError, match=r"row 0 reference_images does not exist"):
         DatasetFileReport.from_manifest(
             manifest,
             data_root=tmp_path,
-            required_artifact_fields=("reference_image",),
+            required_artifact_fields=("reference_images",),
         )
 
 
@@ -162,7 +156,7 @@ def test_production_metadata_domain_is_rejected(tmp_path: Path) -> None:
         DatasetFileReport.from_manifest(
             manifest,
             data_root=tmp_path,
-            required_artifact_fields=("reference_image",),
+            required_artifact_fields=("reference_images",),
         )
 
 
@@ -240,3 +234,20 @@ def test_artifact_field_preserves_path_sequences(tmp_path, container):
     )
     assert report.artifact_count == 1
     assert report.resolved_artifacts[0].raw_path == "ref.ppm"
+
+
+def test_single_reference_image_row_key_loads_as_a_one_element_list() -> None:
+    """``reference_image: str`` is manifest spelling for a one-element ``reference_images``."""
+    from vrl.trainers.data.prompts import load_prompt_examples_from_jsonl_bytes
+
+    single, blank = load_prompt_examples_from_jsonl_bytes(
+        b'{"prompt":"p","reference_image":"ref.png"}\n{"prompt":"q","reference_image":"  "}\n'
+    )
+
+    assert single.reference_images == ["ref.png"]
+    assert "reference_image" not in single.metadata
+    assert blank.reference_images == []
+    with pytest.raises(ValueError, match="not both"):
+        load_prompt_examples_from_jsonl_bytes(
+            b'{"prompt":"p","reference_image":"a.png","reference_images":["b.png"]}'
+        )

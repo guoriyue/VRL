@@ -286,7 +286,7 @@ class DatasetFileReport:
         """Build the report for a Video2World manifest, requiring first-frame provenance."""
 
         artifact_fields = (
-            ("reference_image", "target_video") if require_target_video else ("reference_image",)
+            ("reference_images", "target_video") if require_target_video else ("reference_images",)
         )
         return cls.from_manifest(
             manifest_path,
@@ -354,18 +354,6 @@ def resolve_prompt_example_references(
         str(resolve_artifact_path(item, data_root=data_root, allow_absolute=allow_absolute))
         for item in example.references
     ]
-    reference_image_text = str(example.reference_image or "").strip()
-    reference_image = (
-        str(
-            resolve_artifact_path(
-                reference_image_text,
-                data_root=data_root,
-                allow_absolute=allow_absolute,
-            ),
-        )
-        if reference_image_text
-        else None
-    )
     reference_video_text = str(example.reference_video or "").strip()
     reference_video = (
         str(
@@ -380,7 +368,6 @@ def resolve_prompt_example_references(
     )
     return replace(
         example,
-        reference_image=reference_image,
         reference_video=reference_video,
         reference_images=[
             str(resolve_artifact_path(item, data_root=data_root, allow_absolute=allow_absolute))
@@ -396,7 +383,11 @@ def resolve_required_reference_images_(
     manifest_path: str | Path,
     default_reference_image: str | None = None,
 ) -> None:
-    """Fill missing reference images and resolve paths in place, requiring existence."""
+    """Fill missing reference images and resolve paths in place, requiring existence.
+
+    A row without ``reference_images`` takes ``default_reference_image`` (the
+    recipe's ``data.preprocessing.reference_image``) as its single image.
+    """
 
     manifest = Path(manifest_path)
     default_text = str(default_reference_image or "").strip()
@@ -410,17 +401,19 @@ def resolve_required_reference_images_(
         default_path = default_path.resolve()
 
     for row_index, example in enumerate(examples):
-        raw = str(example.reference_image or "").strip()
-        path = Path(raw).expanduser() if raw else default_path
-        if path is None:
+        paths = [Path(raw).expanduser() for raw in example.reference_images]
+        if not paths and default_path is not None:
+            paths = [default_path]
+        if not paths:
             raise ValueError(
-                f"{manifest}: row {row_index} is missing required field reference_image",
+                f"{manifest}: row {row_index} is missing required field reference_images",
             )
-        if not path.exists():
-            raise FileNotFoundError(
-                f"{manifest}: row {row_index} reference_image does not exist: {path}",
-            )
-        example.reference_image = str(path.resolve())
+        for path in paths:
+            if not path.exists():
+                raise FileNotFoundError(
+                    f"{manifest}: row {row_index} reference image does not exist: {path}",
+                )
+        example.reference_images = [str(path.resolve()) for path in paths]
 
 
 __all__ = [

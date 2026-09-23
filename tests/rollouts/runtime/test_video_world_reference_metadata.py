@@ -50,8 +50,8 @@ def test_resolved_reference_image_flows_to_collector_metadata(tmp_path: Path) ->
         metadata=example.reward_metadata(),
     )
 
-    assert collector_request.metadata["reference_image"].endswith("ref.ppm")
-    assert collector_request.request.inputs[0].reference_image.endswith("ref.ppm")
+    assert collector_request.metadata["reference_images"][0].endswith("ref.ppm")
+    assert collector_request.request.inputs[0].reference_images[0].endswith("ref.ppm")
 
 
 def test_cosmos_per_sample_reference_uses_vrl_data_root(monkeypatch, tmp_path: Path) -> None:
@@ -69,9 +69,9 @@ def test_cosmos_per_sample_reference_uses_vrl_data_root(monkeypatch, tmp_path: P
         manifest_path=manifest,
     )
 
-    assert examples[0].reference_image == str(
-        (tmp_path / "video_world" / "references" / "ref.ppm").resolve(),
-    )
+    assert examples[0].reference_images == [
+        str((tmp_path / "video_world" / "references" / "ref.ppm").resolve()),
+    ]
     assert "reference_image" not in examples[0].metadata
 
 
@@ -91,7 +91,7 @@ def test_cosmos_per_sample_reference_uses_artifact_data_root(tmp_path: Path) -> 
         manifest_path=manifest,
     )
 
-    assert examples[0].reference_image == str(
-        (tmp_path / "video_world" / "references" / "ref.ppm").resolve(),
-    )
+    assert examples[0].reference_images == [
+        str((tmp_path / "video_world" / "references" / "ref.ppm").resolve()),
+    ]
     assert "reference_image" not in examples[0].metadata

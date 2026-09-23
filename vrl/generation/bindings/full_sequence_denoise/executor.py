@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from typing import Any
 
 import torch
@@ -100,13 +99,18 @@ class DenoiseBatchResult:
 class ReferenceConditionedBatches:
     """Reference-image threading for per-batch encode/prepare.
 
-    Cosmos Predict2 Video2World and Wan 2.1 I2V condition every batch on a
-    reference image carried by its ``GenerationInput``. Shared hooks load and
-    pass that image to encoding and sampling preparation. Tensor expansion is
-    owned by the base executor; families may specialize the encoded payload.
+    Families conditioned on the ``GenerationInput.reference_images`` of each
+    prompt load them here. The default (Cosmos Predict2 Video2World, Wan 2.1
+    I2V) is exactly one RGB image, handed to the model as ``reference_image``;
+    a family taking an ordered set widens the bounds and overrides the encode
+    hook. Tensor expansion is owned by the base executor.
     """
 
     model: Any
+    min_reference_images: int = 1
+    max_reference_images: int = 1
+    # PIL mode the loaded images are converted to (RGBA keeps alpha).
+    reference_image_mode: str = "RGB"
 
     def encode_prompt_for_batch(
         self,
@@ -140,22 +144,38 @@ class ReferenceConditionedBatches:
             reference_image = self._reference_image_for_batch(generation_request, batch)
         return {"reference_image": reference_image}
 
+    def _reference_images_for_batch(
+        self,
+        request: GenerationRequest,
+        batch: GenerationSampleBatch,
+    ) -> list[Any]:
+        """Load this prompt's reference images, enforcing the family's count bounds."""
+
+        paths = request.inputs[batch.prompt_index].reference_images
+        low, high = self.min_reference_images, self.max_reference_images
+        if not low <= len(paths) <= high:
+            expected = str(low) if low == high else f"{low}-{high}"
+            raise ValueError(
+                f"{request.family} takes {expected} reference image(s) per prompt; "
+                f"prompt index {batch.prompt_index} has {len(paths)}",
+            )
+        from PIL import Image
+
+        images = []
+        for path in paths:
+            with Image.open(path) as image:
+                images.append(image.convert(self.reference_image_mode))
+        return images
+
     def _reference_image_for_batch(
         self,
         request: GenerationRequest,
         batch: GenerationSampleBatch,
     ) -> Any:
-        ref = request.inputs[batch.prompt_index].reference_image
-        if ref is None:
-            raise ValueError(
-                f"{request.family} requires reference_image for prompt index {batch.prompt_index}",
-            )
-        if not isinstance(ref, (str, Path)) or not ref:
-            return ref
-        from PIL import Image
+        """The single reference image of a one-image family."""
 
-        with Image.open(ref) as image:
-            return image.convert("RGB")
+        (image,) = self._reference_images_for_batch(request, batch)
+        return image
 
 
 class DenoiseBatchExecutorBase(BatchExecutorBase):

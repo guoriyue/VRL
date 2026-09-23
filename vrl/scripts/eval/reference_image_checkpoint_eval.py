@@ -124,7 +124,9 @@ def main() -> None:
                     request_id=f"{args.label}-{name}",
                     family=entry.family,
                     task=entry.task,
-                    inputs=[GenerationInput(prompt=task["prompt"], reference_image=str(source))],
+                    inputs=[
+                        GenerationInput(prompt=task["prompt"], reference_images=[str(source)])
+                    ],
                     samples_per_prompt=1,
                     sampling={
                         "height": height,

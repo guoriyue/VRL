@@ -71,7 +71,9 @@ def test_manifest_references_reach_encoder_in_order_with_alpha(tmp_path) -> None
 
 def test_ambiguous_and_invalid_reference_lists_fail_before_generation() -> None:
     with pytest.raises(ValueError, match="not both"):
-        GenerationInput(prompt="edit", reference_image="a.png", reference_images=["b.png"])
+        load_prompt_examples_from_jsonl_bytes(
+            b'{"prompt":"edit", "reference_image":"a.png", "reference_images":["b.png"]}'
+        )
     with pytest.raises(ValueError, match="list of non-empty"):
         GenerationInput(prompt="edit", reference_images="a.png")
     with pytest.raises(ValueError, match="reference_images must be a list"):
@@ -88,7 +90,9 @@ def test_single_reference_alias_and_text_only_requests_share_the_executor(tmp_pa
         family="qwen_image_21",
         task="t2i",
         inputs=[
-            GenerationInput(prompt="edit", reference_image=str(source)),
+            load_prompt_examples_from_jsonl_bytes(
+                b'{"prompt":"edit", "reference_image":"%s"}' % str(source).encode()
+            )[0].generation_input(),
             GenerationInput(prompt="draw"),
         ],
         samples_per_prompt=1,

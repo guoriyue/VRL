@@ -119,7 +119,7 @@ def test_edit_executor_encodes_rgba_references_once_per_batch_and_preserves_outp
     # Fail before VAE work if the vision processor would independently resize
     # an undersized reference and break the shared token geometry.
     pipe.processor.image_processor.size["shortest_edge"] = 65536
-    request.inputs = [GenerationInput(prompt="edit", reference_image=str(source))]
+    request.inputs = [GenerationInput(prompt="edit", reference_images=[str(source)])]
     with pytest.raises(ValueError, match="checkpoint vision processor's pixel limits"):
         executor.forward_plan(request, request.sample_rows(), EnginePlan.from_request(request))
     assert len(encoded_images) == 2

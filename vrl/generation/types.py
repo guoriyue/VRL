@@ -33,22 +33,20 @@ class GenerationInput:
 
     prompt: str
     task_type: str | None = None
-    reference_image: str | None = None
     reference_video: str | None = None
+    # Ordered conditioning images. Single-image families (Wan I2V, Cosmos
+    # Video2World, MAGI-1 i2v) require exactly one; Qwen-Image-2.1 takes 0-10.
     reference_images: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.prompt:
             raise ValueError("GenerationInput.prompt must be non-empty")
-        for name in ("reference_image", "reference_video"):
-            if getattr(self, name) == "":
-                raise ValueError(f"GenerationInput.{name} must be None or non-empty")
+        if self.reference_video == "":
+            raise ValueError("GenerationInput.reference_video must be None or non-empty")
         if not isinstance(self.reference_images, list) or any(
             not isinstance(path, str) or not path.strip() for path in self.reference_images
         ):
             raise ValueError("GenerationInput.reference_images must be a list of non-empty paths")
-        if self.reference_image is not None and self.reference_images:
-            raise ValueError("Use reference_image or reference_images, not both")
         self.reference_images = list(self.reference_images)
 
 

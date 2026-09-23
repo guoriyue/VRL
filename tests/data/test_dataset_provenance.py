@@ -159,7 +159,7 @@ def test_image_to_video_provenance_loads_rows_through_the_image_caption_loader(t
 
     assert provenance.spec is PROVENANCE_SPECS["image_to_video"]
     assert provenance.train.row_count == 2
-    assert {item.field for item in provenance.train.resolved_artifacts} == {"reference_image"}
+    assert {item.field for item in provenance.train.resolved_artifacts} == {"reference_images"}
     assert provenance.report is not None and provenance.report.dataset == "videophy_i2v"
 
 
@@ -184,12 +184,12 @@ def test_video_world_provenance_resolves_the_reference_and_any_target_clip(tmp_p
     fails in the reward preflight); when present they resolve like any artifact."""
     provenance = DatasetProvenance.from_config(_v2w_dataset(tmp_path, with_target=False))
     assert provenance.spec is PROVENANCE_SPECS["video2world"]
-    assert {item.field for item in provenance.train.resolved_artifacts} == {"reference_image"}
+    assert {item.field for item in provenance.train.resolved_artifacts} == {"reference_images"}
 
     with_target = DatasetProvenance.from_config(
         _v2w_dataset(tmp_path / "targets", with_target=True)
     )
-    assert {item.field for item in with_target.train.resolved_artifacts} == {"reference_image"}
+    assert {item.field for item in with_target.train.resolved_artifacts} == {"reference_images"}
 
 
 def test_video_world_report_needs_its_validation_summary(tmp_path) -> None:

@@ -41,7 +41,7 @@ def test_runtime_data_loader_derives_plain_prompt_manifest(tmp_path: Path) -> No
     )
 
     assert [example.prompt for example in examples] == ["a red fox"]
-    assert examples[0].reference_image is None
+    assert examples[0].reference_images == []
 
 
 def test_runtime_data_loader_derives_image_prompt_manifest(tmp_path: Path) -> None:
@@ -67,7 +67,7 @@ def test_runtime_data_loader_derives_image_prompt_manifest(tmp_path: Path) -> No
     )
 
     assert [example.prompt for example in examples] == ["a red fox"]
-    assert examples[0].reference_image == "reference.png"
+    assert examples[0].reference_images == ["reference.png"]
 
 
 def _write_prompts(path: Path, prompts: list[str]) -> Path:
@@ -234,7 +234,7 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
         manifest_path=manifest,
     )
     assert examples[0].metadata["source_episode"] == "000001"
-    assert Path(examples[0].reference_image).exists()
+    assert Path(examples[0].reference_images[0]).exists()
 
 
 def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path) -> None:

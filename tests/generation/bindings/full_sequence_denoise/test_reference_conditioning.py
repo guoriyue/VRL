@@ -20,8 +20,7 @@ def _batch(prompt_index: int) -> GenerationSampleBatch:
     )
 
 
-@pytest.mark.parametrize("path_object", [False, True])
-def test_reference_conditioning_selects_the_batch_prompt_input(tmp_path, path_object) -> None:
+def test_reference_conditioning_selects_the_batch_prompt_input(tmp_path) -> None:
     first = tmp_path / "first.png"
     second = tmp_path / "second.png"
     Image.new("RGB", (2, 2), (255, 0, 0)).save(first)
@@ -31,10 +30,8 @@ def test_reference_conditioning_selects_the_batch_prompt_input(tmp_path, path_ob
         family="unit-i2v",
         task="i2v",
         inputs=[
-            GenerationInput(prompt="first", reference_image=first if path_object else str(first)),
-            GenerationInput(
-                prompt="second", reference_image=second if path_object else str(second)
-            ),
+            GenerationInput(prompt="first", reference_images=[str(first)]),
+            GenerationInput(prompt="second", reference_images=[str(second)]),
         ],
         samples_per_prompt=1,
     )
@@ -54,7 +51,7 @@ def test_reference_conditioning_rejects_missing_prompt_reference() -> None:
         samples_per_prompt=1,
     )
 
-    with pytest.raises(ValueError, match="requires reference_image for prompt index 0"):
+    with pytest.raises(ValueError, match=r"takes 1 reference image.*prompt index 0 has 0"):
         ReferenceConditionedBatches()._reference_image_for_batch(
             request,
             _batch(0),
@@ -90,7 +87,7 @@ def test_encode_and_prepare_share_the_loaded_reference(tmp_path, monkeypatch, fa
         request_id="shared-reference",
         family=executor.family,
         task=executor.task,
-        inputs=[GenerationInput(prompt="prompt", reference_image=path)],
+        inputs=[GenerationInput(prompt="prompt", reference_images=[str(path)])],
         samples_per_prompt=1,
     )
     encoded = executor.encode_prompt_for_batch(
@@ -106,6 +103,21 @@ def test_encode_and_prepare_share_the_loaded_reference(tmp_path, monkeypatch, fa
         encoded=encoded, generation_request=request, batch=_batch(0)
     )
 
-    assert opens == [path]
+    assert opens == [str(path)]
     assert prepare["reference_image"] is encoded["reference_image"]
     assert batch_encoded["reference_image"] is encoded["reference_image"]
+
+
+def test_reference_conditioning_rejects_extra_references_for_single_image_families(
+    tmp_path,
+) -> None:
+    request = GenerationRequest(
+        request_id="two-references",
+        family="unit-i2v",
+        task="i2v",
+        inputs=[GenerationInput(prompt="prompt", reference_images=["a.png", "b.png"])],
+        samples_per_prompt=1,
+    )
+
+    with pytest.raises(ValueError, match=r"takes 1 reference image.*has 2"):
+        ReferenceConditionedBatches()._reference_image_for_batch(request, _batch(0))

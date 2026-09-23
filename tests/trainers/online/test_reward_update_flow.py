@@ -113,7 +113,7 @@ class TestRewardUpdateFlow:
         example = PromptExample(
             prompt="sign says HELLO",
             target_text="HELLO",
-            reference_image="/tmp/reference.png",
+            reference_images=["/tmp/reference.png"],
             task_type="text_to_video",
             metadata={"difficulty": "easy"},
         )
@@ -126,7 +126,7 @@ class TestRewardUpdateFlow:
         assert kw["metadata"]["target_text"] == "HELLO"
         assert kw["metadata"]["difficulty"] == "easy"
         assert len(captured_inputs) == 1
-        assert captured_inputs[0].reference_image == "/tmp/reference.png"
+        assert captured_inputs[0].reference_images == ["/tmp/reference.png"]
         assert captured_inputs[0].task_type == "text_to_video"
 
     def test_cea_batches_plain_prompts_for_rollout_but_splits_training(self) -> None:

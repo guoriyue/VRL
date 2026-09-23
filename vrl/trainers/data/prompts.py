@@ -25,7 +25,6 @@ class PromptExample:
 
     prompt: str
     target_text: str = ""
-    reference_image: str | None = field(default=None, metadata={"artifact": True})
     reference_video: str | None = field(default=None, metadata={"artifact": True})
     reference_images: list[str] = field(default_factory=list, metadata={"artifact": True})
     # CONTRACT: clean targets stay manifest-relative for the whole run. Exactly
@@ -58,7 +57,6 @@ class PromptExample:
         return GenerationInput(
             prompt=self.prompt,
             task_type=self.task_type or None,
-            reference_image=self.reference_image or None,
             reference_video=self.reference_video or None,
             reference_images=self.reference_images,
         )
@@ -139,6 +137,19 @@ def load_prompt_examples_from_jsonl_bytes(
         prompt_fields = {key: value for key, value in obj.items() if key in known_fields}
         if not isinstance(prompt_fields.get("prompt"), str):
             raise ValueError(f"{context}:{line_number}: prompt must be a string")
+        # A row may spell one conditioning image as ``reference_image: str``
+        # (existing single-image manifests); it is the same field as a
+        # one-element ``reference_images`` list.
+        if "reference_image" in obj:
+            if "reference_images" in obj:
+                raise ValueError(
+                    f"{context}:{line_number}: use reference_image or reference_images, not both"
+                )
+            single = obj["reference_image"]
+            if not isinstance(single, str):
+                raise ValueError(f"{context}:{line_number}: reference_image must be a path")
+            extra_metadata.pop("reference_image")
+            prompt_fields["reference_images"] = [single] if single.strip() else []
         images = prompt_fields.get("reference_images", [])
         if not isinstance(images, list) or any(
             not isinstance(path, str) or not path.strip() for path in images
@@ -326,7 +337,7 @@ class ImageCaptionPromptDataset(Dataset):
                 self.examples.append(
                     PromptExample(
                         prompt=caption,
-                        reference_image=image,
+                        reference_images=[image],
                         task_type=task_type,
                         request_overrides=request_overrides,
                         metadata=metadata,

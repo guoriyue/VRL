@@ -908,7 +908,7 @@ def test_reward_output_rejects_missing_or_unsupported_output_ref(
 
 
 def test_collector_forwards_reference_metadata_to_request() -> None:
-    """A ``GenerationInput.reference_image`` reaches both the request input (for the executor) and
+    """``GenerationInput.reference_images`` reaches both the request input (for the executor) and
     the collector metadata (for the reward side).
     """
     from vrl.rollouts.collector.config import RolloutCollectorConfig
@@ -919,12 +919,12 @@ def test_collector_forwards_reference_metadata_to_request() -> None:
     )
 
     collector_request = builder.build(
-        [GenerationInput(prompt="prompt", reference_image="/tmp/reference.png")],
+        [GenerationInput(prompt="prompt", reference_images=["/tmp/reference.png"])],
         1,
     )
 
-    assert collector_request.request.inputs[0].reference_image == "/tmp/reference.png"
-    assert collector_request.metadata["reference_image"] == "/tmp/reference.png"
+    assert collector_request.request.inputs[0].reference_images == ["/tmp/reference.png"]
+    assert collector_request.metadata["reference_images"] == ["/tmp/reference.png"]
 
 
 def test_collector_forwards_target_metadata_to_request() -> None:
@@ -941,7 +941,7 @@ def test_collector_forwards_target_metadata_to_request() -> None:
         [
             GenerationInput(
                 prompt="prompt",
-                reference_image="/tmp/reference.png",
+                reference_images=["/tmp/reference.png"],
             ),
         ],
         1,

@@ -541,7 +541,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         # The executor reads the reference image off the GenerationInput that
         # PromptExample.generation_input() builds; a bare string prompt carries
         # none (production fills the dataset default in via resolve_required_reference_images_).
-        step_inputs = [PromptExample(prompt=case.prompt, reference_image=str(reference_image))]
+        step_inputs = [PromptExample(prompt=case.prompt, reference_images=[str(reference_image)])]
     if case.use_config_reward:
         case_overrides.extend(_local_reward_overrides(tmp_path, case.reward_model_factory))
 

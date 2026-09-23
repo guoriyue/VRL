@@ -70,16 +70,12 @@ class EditRewardModel(LazyTorchModule):
         import torch
         from PIL import Image
 
-        reference = artifact.metadata.get("reference_image")
         references = artifact.metadata.get("reference_images") or []
-        if reference and references:
-            raise ValueError("EditReward requires one unambiguous reference image")
-        if references:
-            if len(references) != 1:
-                raise ValueError("This EditReward checkpoint adapter supports one reference")
-            reference = references[0]
+        if len(references) != 1:
+            raise ValueError("This EditReward checkpoint adapter supports exactly one reference")
+        reference = references[0]
         if not isinstance(reference, str) or not reference or not artifact.prompt.strip():
-            raise ValueError("EditReward requires reference_image and a non-empty instruction")
+            raise ValueError("EditReward requires a reference image and a non-empty instruction")
         source_path = resolve_artifact_path(
             reference, data_root=self.data_root, allow_absolute=True
         )

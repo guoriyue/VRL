@@ -31,7 +31,7 @@ class QwenImage21BatchExecutor(DenoiseBatchExecutorBase):
         item = generation_request.inputs[batch.prompt_index]
         if item.reference_video:
             raise ValueError("Qwen-Image-2.1 accepts reference images, not reference_video")
-        paths = item.reference_images or ([item.reference_image] if item.reference_image else [])
+        paths = item.reference_images
         if len(paths) > 10:
             raise ValueError("Qwen-Image-2.1 accepts at most 10 reference images")
         images = []

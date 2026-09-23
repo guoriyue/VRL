@@ -7,7 +7,7 @@ replay model. The family retains task `t2i` to select image reward transport.
 
 ## Inputs and output modes
 
-Use `reference_image` for one source, or `reference_images` for an ordered list.
+Use `reference_images` for an ordered list; a row may spell a single source as `reference_image`, which loads as a one-element `reference_images`.
 Do not supply both. Image numbers in the prompt follow list order.
 `PromptExample.references` remains reward-only; it is not a generation input.
 Relative reference paths resolve against `data.artifact_data_root` / `VRL_DATA_ROOT`.

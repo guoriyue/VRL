@@ -132,13 +132,13 @@ class DatasetProvenanceSpec:
 PROVENANCE_SPECS: dict[str, DatasetProvenanceSpec] = {
     "video2world": DatasetProvenanceSpec(
         task_type="video2world",
-        artifact_fields=("reference_image",),
+        artifact_fields=("reference_images",),
         required_metadata_fields=SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
         report_fields=("source", "repo_id", "validation_summary"),
     ),
     "image_to_video": DatasetProvenanceSpec(
         task_type="image_to_video",
-        artifact_fields=("reference_image",),
+        artifact_fields=("reference_images",),
         # Shares the {source_repo, source_frame_index, decode_method,
         # conditioning} sub-vocabulary with the video-world fields; the rows
         # name a URL (``source_video_url``) rather than a local ``source_video``.

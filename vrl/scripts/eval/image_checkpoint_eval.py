@@ -435,10 +435,7 @@ def select_prompts(
     if not selected or any(not row.example.prompt.strip() for row in selected):
         raise ValueError("evaluation requires non-empty prompts")
     # The stepwise text-to-image path does not consume image/video conditioning.
-    if any(
-        row.example.reference_image or row.example.reference_video or row.example.reference_images
-        for row in selected
-    ):
+    if any(row.example.reference_video or row.example.reference_images for row in selected):
         raise ValueError("this evaluator only supports text-conditioned image generation")
     if any(row.example.request_overrides for row in selected):
         raise ValueError(
