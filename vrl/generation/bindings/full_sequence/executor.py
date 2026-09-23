@@ -16,7 +16,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.bindings.full_sequence_denoise.layout import (
+from vrl.generation.bindings.full_sequence.layout import (
     DenoiseRequestLayout,
     DenoiseSamplingParams,
 )

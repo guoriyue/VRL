@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 # Import-path protocol value shared by registry dispatch and generation workers.
 # Keeping it here avoids making the neutral family table import a runtime module.
 GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR = (
-    "vrl.generation.bindings.full_sequence_denoise.executor:GenericDenoiseBatchExecutor"
+    "vrl.generation.bindings.full_sequence.executor:GenericDenoiseBatchExecutor"
 )
 SHARED_MODEL_SECTION_CLS = "vrl.config.model_schema:ModelSection"
 # Lazy public-sampling schema protocol values. Families share a path only when
@@ -386,7 +386,7 @@ def _register_model_family(entry: ModelFamilyEntry) -> ModelFamilyEntry:
     return entry
 
 
-def _full_sequence_denoise_entry(
+def _full_sequence_entry(
     *,
     family: str,
     task: str,
@@ -411,7 +411,7 @@ def _full_sequence_denoise_entry(
         task=task,
         policy_semantics=PolicySemantics(generation_regime="full_sequence"),
         executor_cls=executor_cls,
-        gatherer_cls="vrl.generation.bindings.full_sequence_denoise.gather:DenoiseBatchGatherer",
+        gatherer_cls="vrl.generation.bindings.full_sequence.gather:DenoiseBatchGatherer",
         model_section_cls=model_section_cls,
         sampling_section_cls=sampling_section_cls,
         family_build=build,
@@ -419,7 +419,7 @@ def _full_sequence_denoise_entry(
     )
 
 
-def _chunk_autoregressive_denoise_entry(
+def _chunk_autoregressive_entry(
     *,
     family: str,
     model_section_cls: str,
@@ -437,7 +437,7 @@ def _chunk_autoregressive_denoise_entry(
         policy_semantics=PolicySemantics(generation_regime="chunk_autoregressive"),
         executor_cls=executor_cls,
         gatherer_cls=(
-            "vrl.generation.bindings.chunk_autoregressive_denoise.gather:"
+            "vrl.generation.bindings.chunk_autoregressive.gather:"
             "ChunkAutoregressiveDenoiseGatherer"
         ),
         model_section_cls=model_section_cls,
@@ -452,7 +452,7 @@ def _chunk_autoregressive_denoise_entry(
 
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="sd3_5",
         task="t2i",
         model_section_cls="vrl.models.families.sd3_5.config:SD3_5ModelSection",
@@ -475,7 +475,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _chunk_autoregressive_denoise_entry(
+    _chunk_autoregressive_entry(
         family="causvid",
         model_section_cls="vrl.models.families.causvid.config:CausVidModelSection",
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
@@ -493,7 +493,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _chunk_autoregressive_denoise_entry(
+    _chunk_autoregressive_entry(
         family="magi_1",
         model_section_cls="vrl.models.families.magi_1.config:Magi1ModelSection",
         sampling_section_cls="vrl.config.sampling_schema:MagiSamplingSection",
@@ -515,7 +515,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="flux",
         task="t2i",
         model_section_cls="vrl.models.families.flux.config:FluxModelSection",
@@ -529,7 +529,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="qwen_image",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
@@ -546,7 +546,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="qwen_image_21",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
@@ -563,7 +563,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="sana",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
@@ -577,7 +577,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="lumina2",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
@@ -591,7 +591,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="hunyuan_video",
         task="t2v",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
@@ -605,7 +605,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="mochi",
         task="t2v",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
@@ -619,7 +619,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="hunyuan_image",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
@@ -633,7 +633,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="pixart_sigma",
         task="t2i",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
@@ -651,7 +651,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="cogvideox",
         task="t2v",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
@@ -668,7 +668,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="wan_2_1",
         task="t2v",
         model_section_cls="vrl.models.families.wan_2_1.config:WanModelSection",
@@ -691,7 +691,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="wan_2_1_i2v",
         task="i2v",
         model_section_cls="vrl.models.families.wan_2_1.config:WanModelSection",
@@ -710,7 +710,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="cosmos-predict2",
         task="v2w",
         model_section_cls="vrl.models.families.cosmos.config:CosmosVideoModelSection",
@@ -725,7 +725,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="cosmos-predict2.5",
         task="t2w",
         model_section_cls=(
@@ -747,7 +747,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="vdn_h3",
         task="t2v",
         model_section_cls="vrl.models.families.vdn_h3.config:VDNH3ModelSection",
@@ -763,7 +763,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="minimax_h3",
         task="t2v",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
@@ -779,7 +779,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="cosmos3",
         task="t2v",
         model_section_cls=SHARED_MODEL_SECTION_CLS,
@@ -795,7 +795,7 @@ _register_model_family(
 )
 
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="echo",
         task="t2v",
         model_section_cls="vrl.models.families.echo.config:EchoModelSection",

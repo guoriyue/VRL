@@ -194,7 +194,7 @@ def _executor(
 
 @pytest.mark.asyncio
 async def test_failed_gather_rejects_misaligned_media_references() -> None:
-    from vrl.generation.bindings.full_sequence_denoise import (
+    from vrl.generation.bindings.full_sequence import (
         DenoiseBatchGatherer,
         DenoiseBatchResult,
     )

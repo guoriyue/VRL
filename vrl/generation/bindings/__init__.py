@@ -1,7 +1,7 @@
 """Concrete composition-by-step generation bindings.
 
-One subpackage per generation regime — ``full_sequence_denoise`` and
-``chunk_autoregressive_denoise`` — because the regime, not the model family,
+One subpackage per generation regime — ``full_sequence`` and
+``chunk_autoregressive`` — because the regime, not the model family,
 fixes the trajectory schema and the per-batch control flow; model families
 subclass their regime's executor base and are wired in by registry dotted
 strings. Each binding adapts the family-neutral step/loop machinery

@@ -689,8 +689,8 @@ ran inside them.
 ### Upstream reds (untouched)
 
 - `tests/architecture/test_generation_rollout_boundaries.py::test_generation_model_imports_stay_on_public_floor`
-- `tests/generation/bindings/chunk_autoregressive_denoise/test_binding.py::test_serialized_replay_records_preserve_axes_values_and_sample_order`
-- `tests/generation/bindings/full_sequence_denoise/test_layout.py::test_unseeded_window_survives_serialized_batch_split_retry`
+- `tests/generation/bindings/chunk_autoregressive/test_binding.py::test_serialized_replay_records_preserve_axes_values_and_sample_order`
+- `tests/generation/bindings/full_sequence/test_layout.py::test_unseeded_window_survives_serialized_batch_split_retry`
 - the five tests in `tests/scripts/test_train_signals.py` -- fixed after the
   report: they were a real production defect, not a stale test (see below)
 

@@ -2403,7 +2403,7 @@
       "why": "the patched _http_download stands in for an HTTP GET against danbooru.donmai.us; a test that reaches the live site is neither reproducible nor free, and what is asserted here is the setup.main CLI wiring above it"
     },
     {
-      "file": "tests/generation/bindings/full_sequence_denoise/test_forward_plan_pipelined_equiv.py",
+      "file": "tests/generation/bindings/full_sequence/test_forward_plan_pipelined_equiv.py",
       "lineno": 57,
       "owner": "test_forward_plan_pipelined_matches_serial_forward_plan",
       "problem": null,

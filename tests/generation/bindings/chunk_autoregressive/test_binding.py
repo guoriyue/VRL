@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.generation.bindings.chunk_autoregressive_denoise import (
+from vrl.generation.bindings.chunk_autoregressive import (
     ChunkAutoregressiveDenoiseExecutorBase,
     ChunkAutoregressiveDenoiseGatherer,
     ChunkAutoregressiveDenoiseResult,

@@ -25,7 +25,7 @@ The existing `sd3_5` family is the smallest complete example.
 
 Use the descriptor-driven denoise path when one trainable transformer and one
 scheduler are enough to build rollout and replay runtimes. The shared
-`GenericDiffusionBatchExecutor` in the `full_sequence_denoise` binding owns prompt, prepare,
+`GenericDiffusionBatchExecutor` in the `full_sequence` binding owns prompt, prepare,
 denoise, and decode orchestration; `DenoiseFamilyBuild` tells the shared builders
 which model classes and upstream transformer to load. The retained `Diffusion*`
 class names are implementation APIs, not model taxonomy.
@@ -69,11 +69,11 @@ Do not add algorithm code for a model family.
 
 ## 3. Register a descriptor-driven full-sequence denoise family
 
-Add one `_full_sequence_denoise_entry` in `vrl/models/families/registry.py`:
+Add one `_full_sequence_entry` in `vrl/models/families/registry.py`:
 
 ```python
 _register_model_family(
-    _full_sequence_denoise_entry(
+    _full_sequence_entry(
         family="my_model",
         task="t2i",
         build=DenoiseFamilyBuild(
@@ -99,12 +99,12 @@ still name the exact registry entry rather than relying on an algorithm-based
 inference rule. The algorithm validates compatibility; it never rewrites the
 configured family.
 
-`executor_cls` is intentionally absent above, so `_full_sequence_denoise_entry` selects
-`vrl.generation.bindings.full_sequence_denoise.executor:GenericDiffusionBatchExecutor`. Add a
+`executor_cls` is intentionally absent above, so `_full_sequence_entry` selects
+`vrl.generation.bindings.full_sequence.executor:GenericDiffusionBatchExecutor`. Add a
 family executor only when its body performs family-specific work; a renamed
 pass-through executor is not an extension point.
 
-For a temporal-chunk policy, use `_chunk_autoregressive_denoise_entry` with an
+For a temporal-chunk policy, use `_chunk_autoregressive_entry` with an
 explicit family executor under `vrl.models.families.<family>.runtime`. Do not
 infer the generation regime from the checkpoint or selected algorithm.
 
@@ -170,7 +170,7 @@ trainer. The probe fails on non-finite/collapsed output and can verify the first
 rollout-to-replay step with `--check-replay`:
 
 ```bash
-python -m vrl.scripts.generation.full_sequence_denoise_probe \
+python -m vrl.scripts.generation.full_sequence_probe \
   --family my_model --path <checkpoint> --dtype bf16 \
   --float32-precision tf32 --outer-autocast --check-replay
 ```

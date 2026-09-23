@@ -24,7 +24,7 @@ from vrl.trajectory.builders import (
 )
 
 if TYPE_CHECKING:
-    from vrl.generation.bindings.chunk_autoregressive_denoise.executor import (
+    from vrl.generation.bindings.chunk_autoregressive.executor import (
         ChunkAutoregressiveDenoiseResult,
     )
 

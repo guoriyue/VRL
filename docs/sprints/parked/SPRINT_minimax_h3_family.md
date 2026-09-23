@@ -103,7 +103,7 @@ transformer 的 batch 轴只是复制轴，一个 layout 服务整批。所以�
 ## 5. 阻塞与风险（给用户的决定）
 
 1. **硬件**：t2va 分区 ≈ 144 GB bf16（33B + 32B 条件器）。RTX 5090 32 GB 单卡
-   装不下任何一半；"Runnable" 的 `full_sequence_denoise_probe --check-replay`
+   装不下任何一半；"Runnable" 的 `full_sequence_probe --check-replay`
    和 preview 都做不了。需要多卡 FSDP（README 表标 🔌 Integrated）。
 2. **许可**：MiniMax-H3 Community License 对美国 / 欧盟 / 英国 / 韩国的本地部署
    有限制（需申请）。部署前请自行核对许可文本。
@@ -112,7 +112,7 @@ transformer 的 batch 轴只是复制轴，一个 layout 服务整批。所以�
 
 ## 6. 下一步（按顺序）
 
-1. 多卡环境上：`python -m vrl.scripts.generation.full_sequence_denoise_probe --family minimax_h3 --path MiniMaxAI/MiniMax-H3 --dtype bf16 --check-replay`。
+1. 多卡环境上：`python -m vrl.scripts.generation.full_sequence_probe --family minimax_h3 --path MiniMaxAI/MiniMax-H3 --dtype bf16 --check-replay`。
 2. 通过后跑 `experiment/minimax_h3/online_grpo_kling_video_reward` 的 smoke，
    把 README 从 Integrated 提到 Runnable。
 3. 如需音轨奖励：给 trajectory 加第二个 reward view（音频）。

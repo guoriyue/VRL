@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import pytest
 import torch
 
-from vrl.generation.bindings.full_sequence_denoise.executor import DenoiseBatchExecutorBase
+from vrl.generation.bindings.full_sequence.executor import DenoiseBatchExecutorBase
 from vrl.generation.protocols import BatchSizeProbeExecutor
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
 from vrl.generation.types import DenoiseRequest

@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.generation.bindings.full_sequence_denoise import DenoiseBatchExecutorBase
+from vrl.generation.bindings.full_sequence import DenoiseBatchExecutorBase
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams
 from vrl.generation.steps.denoise.loop import DenoiseTrajectoryBuffers

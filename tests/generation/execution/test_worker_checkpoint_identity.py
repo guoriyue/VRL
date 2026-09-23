@@ -18,7 +18,7 @@ from tests.scripts.eval.fixtures import (
     tiny_sana_online_config,
 )
 from vrl import run
-from vrl.generation.bindings.full_sequence_denoise.executor import GenericDenoiseBatchExecutor
+from vrl.generation.bindings.full_sequence.executor import GenericDenoiseBatchExecutor
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 

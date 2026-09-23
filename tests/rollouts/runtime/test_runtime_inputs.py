@@ -12,7 +12,7 @@ from omegaconf import OmegaConf
 from tests.generation.execution._helpers import launch_contract
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
-from vrl.generation.bindings.full_sequence_denoise import DenoiseBatchGatherer
+from vrl.generation.bindings.full_sequence import DenoiseBatchGatherer
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationBatchExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs

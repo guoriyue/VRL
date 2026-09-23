@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.generation.bindings.full_sequence_denoise import (
+from vrl.generation.bindings.full_sequence import (
     DenoiseBatchExecutorBase,
     ReferenceConditionedBatches,
 )
-from vrl.generation.bindings.full_sequence_denoise.layout import DenoiseSamplingParams
+from vrl.generation.bindings.full_sequence.layout import DenoiseSamplingParams
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import DenoiseRequest, GenerationRequest
 

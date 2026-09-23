@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from vrl.generation.bindings.chunk_autoregressive_denoise import (
+from vrl.generation.bindings.chunk_autoregressive import (
     ChunkAutoregressiveDenoiseExecutorBase,
 )
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle

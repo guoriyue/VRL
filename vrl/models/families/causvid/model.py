@@ -20,7 +20,7 @@ from typing import Any, ClassVar
 
 import torch
 
-from vrl.generation.bindings.chunk_autoregressive_denoise import (
+from vrl.generation.bindings.chunk_autoregressive import (
     ChunkAutoregressiveDenoiseResult,
 )
 from vrl.math.denoise.renoise import renoise_step_with_logprob

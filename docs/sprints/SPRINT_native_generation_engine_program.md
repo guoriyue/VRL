@@ -42,7 +42,7 @@ Diffusers-backed forward 误写成“没有自研 engine”。
 | Runtime | `GenerationRuntime` 定义统一 collector shape；`RayGenerationLauncher.create_runtime` 总是返回唯一的 `RayGenerationRuntime`，resolved lifecycle 只选择 eager session 或 deferred session factory | 保持 structural protocol；`RayGenerationSession` 只拥有 launched resources，不建第二个 runtime/base/manager |
 | Distributed launch | `GenerationRuntimeLaunchContract` 只传 primitive config 与 import path，拒绝 live tensor/module/pipeline | 继续作为 worker 构造与进程隔离边界 |
 | Worker | `GenerationWorkerCore` 构造 family executor、安装版本化权重、执行 chunk、sleep/wake 与故障清理 | 外部 provider 必须进入此生命周期，不能另起旁路服务 |
-| Full-sequence × denoise | `bindings/full_sequence_denoise.DiffusionChunkExecutorBase` 组合 prompt/prepare、共享 denoise loop、trajectory、decode 与 gather | native path 是语义 oracle；provider 只能从明确的 family-executor boundary 接入 |
+| Full-sequence × denoise | `bindings/full_sequence.DiffusionChunkExecutorBase` 组合 prompt/prepare、共享 denoise loop、trajectory、decode 与 gather | native path 是语义 oracle；provider 只能从明确的 family-executor boundary 接入 |
 | Token-autoregressive × token | `bindings/token_autoregressive.ARChunkExecutorBase` 与 `composition.token_autoregressive.TokenAutoregressiveLoop` 拥有 prefill/decode/cache/token trajectory | 保持 native；本轮不做第二个 token-autoregressive full engine |
 | Replay | family model 导出 replay tensors/context，trainer 侧按 trajectory schema 重放 | provider 输出必须投影到同一 schema，不能让 trainer 认识 provider 私有对象 |
 | Native transformer forward | Wan/Cosmos 当前主要仍调用 Diffusers transformer | 保持事件门控的独立 Layer-B sprint，不在本 program 重复实现 |
@@ -374,7 +374,7 @@ upstream + 可重复应用变更”，但不复制长期膨胀的单文件 patch
 - `vrl/generation/ray/launcher.py`
 - `vrl/generation/ray/runtime.py`
 - `vrl/generation/ray/session.py`
-- `vrl/generation/bindings/full_sequence_denoise/executor.py`
+- `vrl/generation/bindings/full_sequence/executor.py`
 - `vrl/generation/bindings/token_autoregressive/executor.py`
 - `vrl/generation/steps/denoise/loop.py`
 - `vrl/generation/composition/token_autoregressive/token_loop.py`

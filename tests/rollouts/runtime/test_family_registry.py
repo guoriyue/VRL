@@ -214,7 +214,7 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
         assert entry.executor_cls.startswith(
             (
                 "vrl.models.families.",
-                "vrl.generation.bindings.full_sequence_denoise.",
+                "vrl.generation.bindings.full_sequence.",
             ),
         )
 

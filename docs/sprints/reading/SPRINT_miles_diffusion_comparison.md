@@ -103,7 +103,7 @@ Ray worker 返回后、trainer 拿到 `RolloutBatch` 前，driver 进程要做�
 | 步骤 | 位置 | 性质 |
 |---|---|---|
 | Ray object 反序列化（GenerationBatchResult，含 `[B,T,*latent]` 轨迹张量） | `vrl/generation/ray/executor.py` `ray.get` | pickle，持 GIL |
-| 多 batch 拼接、覆盖校验、replay 张量对齐、轨迹构建 | `vrl/generation/bindings/full_sequence_denoise/gather.py:36-115` → `vrl/trajectory/builders.py:30-135` | 纯 CPU 张量 cat/校验 |
+| 多 batch 拼接、覆盖校验、replay 张量对齐、轨迹构建 | `vrl/generation/bindings/full_sequence/gather.py:36-115` → `vrl/trajectory/builders.py:30-135` | 纯 CPU 张量 cat/校验 |
 | 存储策略再应用（dtype/device） | `vrl/trajectory/storage.py` | 张量拷贝 |
 | reward 样本构建、artifact 采纳 | `vrl/rollouts/collector/batch_builder.py`、`vrl/rewards/artifacts.py` | 已在 WS-A 第 1 步瘦身 |
 | 训练 batch 组装（rewards/group_ids/extras） | `vrl/rollouts/collector/core.py` `prepare_training_batches` | 小 |

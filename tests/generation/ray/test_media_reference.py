@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from vrl.generation.bindings.full_sequence_denoise import (
+from vrl.generation.bindings.full_sequence import (
     DenoiseBatchGatherer,
     DenoiseBatchResult,
 )

@@ -12,7 +12,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from vrl.generation.bindings.full_sequence_denoise.executor import (  # noqa: E402
+from vrl.generation.bindings.full_sequence.executor import (  # noqa: E402
     DenoiseBatchExecutorBase,
 )
 from vrl.generation.execution.executor_base import BatchExecutorBase  # noqa: E402

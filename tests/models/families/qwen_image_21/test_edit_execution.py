@@ -12,7 +12,7 @@ from tests.models.steps.denoise.fixtures import (
     build_tiny_transformer,
     stamp_model_precision,
 )
-from vrl.generation.bindings.full_sequence_denoise.gather import DenoiseBatchGatherer
+from vrl.generation.bindings.full_sequence.gather import DenoiseBatchGatherer
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.types import GenerationInput, GenerationRequest
 from vrl.models.families.qwen_image_21.model import QwenImage21Model

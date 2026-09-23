@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from vrl.generation.bindings.full_sequence_denoise import (
+from vrl.generation.bindings.full_sequence import (
     DenoiseBatchGatherer,
     DenoiseBatchResult,
 )

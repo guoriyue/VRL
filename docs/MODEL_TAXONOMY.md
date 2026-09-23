@@ -98,8 +98,8 @@ vrl/models/
 
 vrl/generation/
   steps/denoise/              denoise config, hot loop, and TeaCache
-  bindings/full_sequence_denoise/     full-sequence × denoise binding
-  bindings/chunk_autoregressive_denoise/ temporal-chunk × denoise contract
+  bindings/full_sequence/     full-sequence × denoise binding
+  bindings/chunk_autoregressive/ temporal-chunk × denoise contract
   execution/                  step-neutral chunk planning, pipelining, and workers
   ray/                        distributed lifecycle and transport
 ```
@@ -113,7 +113,7 @@ variant uses different policy semantics.
 There is intentionally no generalized `composition/` state-machine layer (the
 one that existed served only the removed token regime). The two causal-chunk families
 now prove a shared typed result/gather/replay-axis boundary, which lives in
-`bindings/chunk_autoregressive_denoise`; their cache lifecycles and denoise
+`bindings/chunk_autoregressive`; their cache lifecycles and denoise
 schedules remain family-owned because those algorithms differ materially.
 `SampleChunk` is execution batching over requests/samples, not an
 autoregressive temporal chunk.

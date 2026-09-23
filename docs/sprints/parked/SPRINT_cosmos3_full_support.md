@@ -123,7 +123,7 @@ audio/action = 非目标
   helper；`forward_step` 每步 splice `vision_timesteps` + latents，返回 raw velocity、
   cond 与 uncond，CFG 与 logprob 留给共享 denoise loop。
 - `runtime.py`：`Cosmos3ChunkExecutor` 复用
-  `vrl/generation/bindings/full_sequence_denoise/`，并因 pipeline 契约固定 batch=1；
+  `vrl/generation/bindings/full_sequence/`，并因 pipeline 契约固定 batch=1；
   `build_cosmos3_replay_runtime_bundle` 构造 trainer replay runtime。
 - `vrl/models/families/registry.py` 是 family/executor/replay builder 的唯一 binding；
   `vrl/config/presets/model/cosmos/cosmos3_nano.yaml` 是当前唯一 Cosmos3 model preset，

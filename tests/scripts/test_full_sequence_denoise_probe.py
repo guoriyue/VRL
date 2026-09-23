@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from vrl.models.families.registry import get_model_family_entry
-from vrl.scripts.generation import full_sequence_denoise_probe as generate
+from vrl.scripts.generation import full_sequence_probe as generate
 
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-1"])
@@ -56,7 +56,7 @@ def test_probe_uses_existing_cosmos_lora_preset():
     assert build.model_config["skip_text_encoder"] is False
 
 
-def test_generate_rejects_non_full_sequence_denoise_family_before_build(
+def test_generate_rejects_non_full_sequence_family_before_build(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(

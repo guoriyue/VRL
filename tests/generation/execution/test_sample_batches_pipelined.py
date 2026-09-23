@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vrl.generation.bindings.full_sequence_denoise.executor import DenoiseBatchResult
+from vrl.generation.bindings.full_sequence.executor import DenoiseBatchResult
 from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.trajectory import device as device_module

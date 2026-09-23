@@ -34,7 +34,7 @@
   timestep"思路同源。
 - **VRL 现状**：生成侧无开关。`v_grpo.py` 的 `_group_shared_noise` 只在 loss 侧。
 - **做什么**：`rollout.group_shared_noise: bool`（默认 False 保持现状）；在
-  full_sequence_denoise 的 executor 按 prompt 组派生同一初始 latent（组内样本索引
+  full_sequence 的 executor 按 prompt 组派生同一初始 latent（组内样本索引
   不进种子）。SDE 的每步噪声仍各自独立。
 - **落地**：`DenoiseSamplingParams.group_noise_seed`（sampling seed 或请求自带的
   `sde_window_seed`，加盐）→ `initial_noise_seed(prompt_index)` →

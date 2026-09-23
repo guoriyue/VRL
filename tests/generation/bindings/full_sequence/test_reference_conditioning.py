@@ -8,7 +8,7 @@ import pytest
 from PIL import Image
 
 from vrl.generation import GenerationInput, GenerationRequest
-from vrl.generation.bindings.full_sequence_denoise.executor import ReferenceConditionedBatches
+from vrl.generation.bindings.full_sequence.executor import ReferenceConditionedBatches
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 
 

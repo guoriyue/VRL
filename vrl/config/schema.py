@@ -324,7 +324,7 @@ class SdeConfig(ConfigBase):
     word ``sde``."""
 
     type: Literal["flow_grpo", "ddim", "cps"]
-    # reader: vrl/generation/bindings/full_sequence_denoise/layout.py, which
+    # reader: vrl/generation/bindings/full_sequence/layout.py, which
     # owns the range/size checks against num_steps at the request boundary.
     window_size: StrictInt | None = None
     window_range: list[StrictInt] | None = None
@@ -343,14 +343,14 @@ class RolloutConfig(ConfigBase):
     # Strict: a bool is not a batch dimension (OnlineBatchPlan rejects it too).
     n_samples_per_prompt: StrictInt | None = None
     prompts_per_batch: StrictInt | None = None
-    # reader: vrl/generation/bindings/full_sequence_denoise/layout.py
+    # reader: vrl/generation/bindings/full_sequence/layout.py
     # _parse_denoise_mode (request boundary).
     # Allowed set is the type; the layout guard stays for over-the-wire request dicts.
     denoise_mode: Literal["native", "sde"] | None = Field(
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
-    # reader: vrl/generation/bindings/full_sequence_denoise/layout.py — opt-in to storing
+    # reader: vrl/generation/bindings/full_sequence/layout.py — opt-in to storing
     # each denoise step's rollout proposal mean for trust-region replay.
     return_prev_sample_mean: StrictBool | None = Field(
         default=None,

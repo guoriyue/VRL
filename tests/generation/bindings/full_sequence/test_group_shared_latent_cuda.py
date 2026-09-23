@@ -16,7 +16,7 @@ torch = pytest.importorskip("torch")
 from diffusers import UniPCMultistepScheduler  # noqa: E402
 from diffusers.pipelines.wan.pipeline_wan import WanPipeline  # noqa: E402
 
-from vrl.generation.bindings.full_sequence_denoise.executor import (  # noqa: E402
+from vrl.generation.bindings.full_sequence.executor import (  # noqa: E402
     DenoiseBatchExecutorBase,
 )
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig, DenoiseSDEParams  # noqa: E402

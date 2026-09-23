@@ -96,7 +96,7 @@ scheduler log-prob parity 套件加了 `vdn_h3` 的 pin fixture（沿用 H3 的 
 
 ## 6. 下一步
 
-多卡环境上：`python -m vrl.scripts.generation.full_sequence_denoise_probe --family vdn_h3
+多卡环境上：`python -m vrl.scripts.generation.full_sequence_probe --family vdn_h3
 --path MiniMaxAI/MiniMax-H3 --dtype bf16 --check-replay`，再跑
 `experiment/vdn_h3/online_grpo_kling_video_reward` 的 smoke，把 README 提到 Runnable。
 

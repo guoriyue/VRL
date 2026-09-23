@@ -17,7 +17,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.bindings.full_sequence_denoise import (
+from vrl.generation.bindings.full_sequence import (
     DenoiseBatchExecutorBase,
     DenoiseSamplingParams,
 )

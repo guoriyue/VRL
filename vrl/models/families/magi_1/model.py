@@ -31,7 +31,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.bindings.chunk_autoregressive_denoise import (
+from vrl.generation.bindings.chunk_autoregressive import (
     ChunkAutoregressiveDenoiseResult,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.generation.bindings.full_sequence_denoise import (
+from vrl.generation.bindings.full_sequence import (
     DenoiseBatchExecutorBase,
     DenoiseSamplingParams,
 )
