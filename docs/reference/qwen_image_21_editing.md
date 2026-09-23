@@ -1,7 +1,7 @@
 # Qwen-Image-2.1 editing and transparent assets
 
 The `qwen_image_21` family supports text-only generation, single-image editing,
-ordered multi-reference editing (up to ten images), and RGBA subject extraction.
+ordered multi-reference editing (the model card documents up to ten images; more are not rejected), and RGBA subject extraction.
 They use the same VRL batch executor, denoise loop, trajectory collection, and
 replay model. The family retains task `t2i` to select image reward transport.
 

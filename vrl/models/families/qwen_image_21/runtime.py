@@ -16,8 +16,9 @@ from vrl.generation.types import DenoiseRequest, GenerationRequest
 class QwenImage21BatchExecutor(ReferenceConditionedBatches, DenoiseBatchExecutorBase):
     """Load each prompt's references once, before expanding its sample group.
 
-    Text-to-image takes no reference; editing takes up to ten, in order, with
-    alpha kept (the VAE encodes RGBA). The references and the family's
+    Text-to-image takes no reference; editing takes any number, in order, with
+    alpha kept (the VAE encodes RGBA). The model card documents up to ten, but
+    that is a quality envelope, not a pipeline limit, so it is not enforced. The references and the family's
     ``reference_resolution`` / ``output_mode`` sampling fields all go to
     ``encode_prompt``, which fixes the latent prefix for the whole denoise.
     """
@@ -25,7 +26,7 @@ class QwenImage21BatchExecutor(ReferenceConditionedBatches, DenoiseBatchExecutor
     family = "qwen_image_21"
     task = "t2i"
     min_reference_images = 0
-    max_reference_images = 10
+    max_reference_images = None
     reference_image_mode = "RGBA"
 
     def encode_prompt_for_batch(

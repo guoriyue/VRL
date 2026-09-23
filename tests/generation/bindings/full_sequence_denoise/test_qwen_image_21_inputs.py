@@ -108,26 +108,3 @@ def test_single_reference_alias_and_text_only_requests_share_the_executor(tmp_pa
         )
     assert model.encode_prompt.call_args_list[0].kwargs["reference_images"][0].mode == "RGBA"
     assert model.encode_prompt.call_args_list[1].kwargs["reference_images"] == []
-
-
-def test_more_than_ten_references_fail_before_any_image_is_opened() -> None:
-    model = SimpleNamespace(encode_prompt=Mock(return_value={}))
-    executor = QwenImage21BatchExecutor(model)
-    request = GenerationRequest(
-        request_id="too-many",
-        family="qwen_image_21",
-        task="t2i",
-        inputs=[GenerationInput(prompt="edit", reference_images=[f"{i}.png" for i in range(11)])],
-        samples_per_prompt=1,
-        sampling={"height": 64, "width": 64, "num_steps": 3, "guidance_scale": 1.0},
-    )
-    params = executor.parse_sampling_params(request)
-
-    with pytest.raises(ValueError, match=r"takes 0-10 reference image.*has 11"):
-        executor.encode_prompt_for_batch(
-            generation_request=request,
-            model_request=params.model_request,
-            params=params,
-            batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1),
-        )
-    model.encode_prompt.assert_not_called()

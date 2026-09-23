@@ -108,7 +108,8 @@ class ReferenceConditionedBatches:
 
     model: Any
     min_reference_images: int = 1
-    max_reference_images: int = 1
+    # None: no upper bound (the model takes as many as the user supplies).
+    max_reference_images: int | None = 1
     # PIL mode the loaded images are converted to (RGBA keeps alpha).
     reference_image_mode: str = "RGB"
 
@@ -153,8 +154,10 @@ class ReferenceConditionedBatches:
 
         paths = request.inputs[batch.prompt_index].reference_images
         low, high = self.min_reference_images, self.max_reference_images
-        if not low <= len(paths) <= high:
-            expected = str(low) if low == high else f"{low}-{high}"
+        if len(paths) < low or (high is not None and len(paths) > high):
+            expected = (
+                f"at least {low}" if high is None else str(low) if low == high else f"{low}-{high}"
+            )
             raise ValueError(
                 f"{request.family} takes {expected} reference image(s) per prompt; "
                 f"prompt index {batch.prompt_index} has {len(paths)}",

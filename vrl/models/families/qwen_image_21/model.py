@@ -204,8 +204,6 @@ class QwenImage21Model(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         from vrl.utils.validation import require_int
 
         references = kwargs.get("reference_images") or []
-        if len(references) > 10:
-            raise ValueError("Qwen-Image-2.1 accepts at most 10 reference images")
         resolution = require_int(
             kwargs.get("reference_resolution", 1024), path="reference_resolution", minimum=32
         )
