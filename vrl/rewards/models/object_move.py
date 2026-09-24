@@ -13,14 +13,16 @@ image with released models; no region, color or position rule is hand-written:
   source. "Move it to the left side" is not supported -- in a real photo it
   usually leaves the object nowhere to stand.
 * **Consistency**. Object identity is the cosine of the DINOv2 global
-  embeddings of the two object crops. Background preservation is geometric:
-  EfficientLoFTR matches source to edit, and the score is the share of
-  background matches (outside both boxes) that stayed within a pixel-level
-  tolerance, times how many background matches survived relative to matching
-  the source with itself. Shifting or cropping the whole frame -- which also
-  "moves" the object -- displaces every background match; a redrawn scene
-  loses them. An appearance similarity is not enough: shifted patches still
-  look alike (measured, GATE A round 2).
+  embeddings of the two object crops. Background preservation is the share of
+  DINOv2 patch tokens outside the edited boxes whose cosine to the same patch
+  of the source stays above ``patch_match``, times a frame-shift guard: the
+  global translation between the two images, read off the phase-correlation
+  peak, must stay within ``stay_tolerance`` of the diagonal. Shifting or
+  cropping the whole frame -- which also "moves" the object -- trips the
+  guard; a redrawn scene keeps almost no patch (run3 verdict set: 60 redrawn
+  scenes all <= 0.33, 108 kept scenes all >= 0.75). The earlier EfficientLoFTR
+  stay-share mismatched on uniform textures (couch fabric, asphalt) and gave a
+  correct move 0.06 while the pixels had not changed.
 
 The score is ``sqrt(geometry * identity * background)``: a weighted sum would let an
 unchanged source earn its full consistency term, the geometric mean gives it
@@ -82,7 +84,6 @@ class ObjectMoveRewardModel(LazyTorchModule):
         self.device = str(cfg.get("device", "cuda"))
         self.data_root = str(cfg.get("data_root") or default_data_root())
         self._detector_model = str(cfg.get("detector_model", "IDEA-Research/grounding-dino-base"))
-        self._matcher_model = str(cfg.get("matcher_model", "zju-community/efficientloftr"))
         self._dino_model = str(cfg.get("dino_model", "facebook/dinov2-large"))
         self._query_template = str(cfg.get("query_template", "{obj}."))
         # Detection floor. Low on purpose: an object moved out of its usual context
@@ -99,8 +100,11 @@ class ObjectMoveRewardModel(LazyTorchModule):
         # detector noise: an object set down on a bed is seen from a new side
         # (an upright suitcase lying flat: cosine 0.2 to its source crop).
         self._support_identity_match = float(cfg.get("support_identity_match", 0.15))
-        # A background match "stayed" when it moved less than this fraction of
-        # the image diagonal (sub-pixel noise and resampling, not a shift).
+        # A background patch is kept when its DINOv2 token still matches the
+        # source's at this cosine (kept scenes sit at 0.8-0.9, redrawn at 0.3).
+        self._patch_match = float(cfg.get("patch_match", 0.5))
+        # The whole frame "stayed" when its global translation is under this
+        # fraction of the diagonal (resampling noise, not a shift or recrop).
         self._stay_tolerance = float(cfg.get("stay_tolerance", 0.01))
         # Weight of background preservation in ``object_move_shaped``.
         self._background_weight = float(cfg.get("background_weight", 0.2))
@@ -109,6 +113,7 @@ class ObjectMoveRewardModel(LazyTorchModule):
             ("nms_iou", self._nms_iou, 0.0, 1.0),
             ("identity_match", self._identity_match, 0.0, 1.0),
             ("support_identity_match", self._support_identity_match, 0.0, 1.0),
+            ("patch_match", self._patch_match, -1.0, 1.0),
             ("stay_tolerance", self._stay_tolerance, 1e-6, 1.0),
             ("background_weight", self._background_weight, 0.0, 1.0),
         ):
@@ -122,18 +127,15 @@ class ObjectMoveRewardModel(LazyTorchModule):
             AutoModel,
             AutoModelForZeroShotObjectDetection,
             AutoProcessor,
-            EfficientLoFTRForKeypointMatching,
         )
 
         self._processor = (
             AutoProcessor.from_pretrained(self._detector_model),
             AutoImageProcessor.from_pretrained(self._dino_model),
-            AutoImageProcessor.from_pretrained(self._matcher_model),
         )
         detector = AutoModelForZeroShotObjectDetection.from_pretrained(self._detector_model).eval()
         dino = AutoModel.from_pretrained(self._dino_model).eval()
-        matcher = EfficientLoFTRForKeypointMatching.from_pretrained(self._matcher_model).eval()
-        return detector.to(self.device), dino.to(self.device), matcher.to(self.device)
+        return detector.to(self.device), dino.to(self.device)
 
     def __call__(self, artifact: RewardInferenceArtifact) -> dict[str, float]:
         spec = artifact.metadata.get("object_move")
@@ -214,15 +216,14 @@ class ObjectMoveRewardModel(LazyTorchModule):
                     assigned.append((det, row[best]))
         out["object_move_source_count"] = 1.0
         out["object_move_edit_count"] = float(len(assigned))
-        kp0, kp1 = self._match(source, edited)
-        self_kp0, _ = self._match(source, source)
+        patches = (self._patches(source), self._patches(edited))
         if len(assigned) != 1:
             # A copy or a lost object: no move credit, but a scene kept in
             # place still ranks above a redrawn one.
             regions = (moved[0], *(det[0] for det, _ in assigned))
             if goal is not None:
                 regions = (*regions, goal)
-            background = self._background(kp0, kp1, self_kp0, regions, width, height)
+            background = self._background(patches, (source, edited), regions, width, height)
             out["object_move_background"] = background
             out["object_move_shaped"] = self._shaped(0.0, background)
             return out
@@ -250,7 +251,7 @@ class ObjectMoveRewardModel(LazyTorchModule):
             size_term = 1.0 - _scale_penalty(target[0], moved[0])
         # The target mark itself (red box lines) is meant to disappear.
         edited_regions = (moved[0], target[0]) if goal is None else (moved[0], target[0], goal)
-        background = self._background(kp0, kp1, self_kp0, edited_regions, width, height)
+        background = self._background(patches, (source, edited), edited_regions, width, height)
         geometry = progress * size_term
         # Product, not a mean: a frame that shifted or was redrawn has no
         # background left in place, and that alone must sink the score.
@@ -275,8 +276,8 @@ class ObjectMoveRewardModel(LazyTorchModule):
     def _detect(self, images: Sequence[Any], obj: str) -> list[list[Detection]]:
         import torch
 
-        detector, _, _ = self._module_for_inference()
-        processor, _, _ = self._processor
+        detector, _ = self._module_for_inference()
+        processor, _ = self._processor
         text = self._query_template.format(obj=obj)
         found: list[list[Detection]] = []
         with torch.no_grad():
@@ -303,52 +304,87 @@ class ObjectMoveRewardModel(LazyTorchModule):
 
         import torch
 
-        _, dino, _ = self._module_for_inference()
-        _, dino_processor, _ = self._processor
+        _, dino = self._module_for_inference()
+        _, dino_processor = self._processor
         with torch.no_grad():
             inputs = dino_processor(images=list(images), return_tensors="pt").to(self.device)
             cls = dino(**inputs).last_hidden_state[:, 0]
         return torch.nn.functional.normalize(cls.float(), dim=-1)
 
-    def _tolerance_px(self, width: int, height: int) -> float:
-        """Largest move, in pixels, that still counts as staying in place."""
+    def _patches(self, image: Any) -> Any:
+        """Unit-norm DINOv2 patch tokens of one image as an ``[n, n, d]`` grid."""
 
-        return self._stay_tolerance * math.hypot(width, height)
+        import torch
+
+        _, dino = self._module_for_inference()
+        _, dino_processor = self._processor
+        with torch.no_grad():
+            inputs = dino_processor(images=image, return_tensors="pt").to(self.device)
+            tokens = dino(**inputs).last_hidden_state[0, 1:].float().cpu()
+        side = round(tokens.shape[0] ** 0.5)
+        return torch.nn.functional.normalize(tokens, dim=-1).reshape(side, side, -1)
 
     def _background(
-        self, kp0: Any, kp1: Any, self_kp0: Any, boxes: Sequence[Box], width: int, height: int
+        self,
+        patches: tuple[Any, Any],
+        images: tuple[Any, Any],
+        boxes: Sequence[Box],
+        width: int,
+        height: int,
     ) -> float:
-        """Share of the source background that is still in place in the edit."""
+        """Share of the source background still in place in the edit."""
 
         import torch
 
-        outside = _outside_boxes(kp0, boxes) & _outside_boxes(kp1, boxes)
+        first, second = patches
+        side = first.shape[0]
+        rows, cols = torch.meshgrid(torch.arange(side), torch.arange(side), indexing="ij")
+        centers = torch.stack(
+            [(cols.flatten() + 0.5) * width / side, (rows.flatten() + 0.5) * height / side], -1
+        )
+        outside = _outside_boxes(centers, boxes)
         if not bool(outside.any()):
             return 0.0
-        stayed = torch.linalg.norm(kp1 - kp0, dim=-1) <= self._tolerance_px(width, height)
-        stay_share = float((stayed & outside).sum() / outside.sum())
-        # Matches a redrawn scene cannot produce: compare with the source's own count.
-        reference = int(_outside_boxes(self_kp0, boxes).sum())
-        coverage = min(1.0, int(outside.sum()) / max(reference, 1))
-        return stay_share * coverage
+        cosine = (first * second).sum(-1).flatten()[outside]
+        kept = float((cosine >= self._patch_match).float().mean())
+        # Full credit within the tolerance, none once the frame moved twice it.
+        shift = _global_shift(*images, boxes)
+        stayed = min(max(2.0 - shift / self._stay_tolerance, 0.0), 1.0)
+        return kept * stayed
 
-    def _match(self, first: Any, second: Any) -> tuple[Any, Any]:
-        """EfficientLoFTR correspondences as ``[N, 2]`` pixel coordinates in each image."""
 
-        import torch
+def _global_shift(first: Any, second: Any, boxes: Sequence[Box], side: int = 256) -> float:
+    """Translation of ``second`` relative to ``first`` (phase-correlation peak) as a share of the diagonal.
 
-        _, _, matcher = self._module_for_inference()
-        _, _, matcher_processor = self._processor
-        with torch.no_grad():
-            inputs = matcher_processor(images=[[first, second]], return_tensors="pt").to(
-                self.device
+    The edited boxes are blanked first: a large object set down in a flat scene
+    (a suitcase on grass) would otherwise own the correlation peak.
+    """
+
+    import torch
+
+    width, height = first.size
+
+    def gray(image: Any) -> Any:
+        values = image.resize((side, side)).convert("L").getdata()
+        plane = torch.tensor(list(values), dtype=torch.float32).reshape(side, side)
+        keep = torch.ones_like(plane, dtype=torch.bool)
+        margin = side // 50  # resampling halo around a blanked box
+        for x0, y0, x1, y1 in boxes:
+            rows = slice(
+                max(int(y0 * side / height) - margin, 0), int(y1 * side / height) + margin + 1
             )
-            result = matcher_processor.post_process_keypoint_matching(
-                matcher(**inputs),
-                target_sizes=[[first.size[::-1], second.size[::-1]]],
-                threshold=0.2,
-            )[0]
-        return result["keypoints0"].float().cpu(), result["keypoints1"].float().cpu()
+            cols = slice(
+                max(int(x0 * side / width) - margin, 0), int(x1 * side / width) + margin + 1
+            )
+            keep[rows, cols] = False
+        plane = torch.where(keep, plane - plane[keep].mean(), torch.zeros(()))
+        return plane * (torch.hann_window(side)[:, None] * torch.hann_window(side)[None, :])
+
+    spectrum = torch.fft.fft2(gray(first)) * torch.fft.fft2(gray(second)).conj()
+    correlation = torch.fft.ifft2(spectrum / (spectrum.abs() + 1e-8)).real
+    dy, dx = divmod(int(correlation.argmax()), side)
+    dy, dx = (d - side if d > side // 2 else d for d in (dy, dx))
+    return math.hypot(dx, dy) / math.hypot(side, side)
 
 
 def _scale_penalty(box: Box, source: Box) -> float:
