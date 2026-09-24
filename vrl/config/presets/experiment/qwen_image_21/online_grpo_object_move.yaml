@@ -1,7 +1,8 @@
-# Qwen-Image-2.1 object-move edit GRPO. The base model moves a named object
-# badly (probe: 1/7 -- it adds a second copy, leaves the image unchanged or
-# loses the object) while camera/viewpoint edits already work, so only object
-# moves are trained. Single-card settings follow the OCR recipe (wide fp32-master
+# Qwen-Image-2.1 object-move edit GRPO: put a loose object onto real furniture
+# in the photo ("Move the laptop from the table onto the chair") or into a drawn
+# red box, without copying, losing or redrawing it. The base model often adds a
+# second copy, leaves the image unchanged or loses the object, while
+# camera/viewpoint edits already work, so only object moves are trained. Single-card settings follow the OCR recipe (wide fp32-master
 # LoRA, eager with full activation checkpointing, int8 Adam moments). The
 # reference photo is encoded as a latent prefix, roughly doubling the sequence
 # at 512px, so groups are 8 samples and 6 prompts per update (48 samples).

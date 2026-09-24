@@ -1,6 +1,8 @@
 # Object-move edit prompts (vrl/scripts/data/object_move.py): COCO train2017
-# photos with a direction and ground-truth box, plus SpatialEdit-500K
-# "into the red box" rows. Held out: COCO val2017 (heldout_coco.jsonl) and
+# photos where a loose object is put onto real furniture in the photo ("Move the
+# laptop from the table onto the chair"; every row reviewed by eye), plus
+# SpatialEdit-500K "into the red box" rows. Held out: reviewed COCO val2017 rows
+# and train2017 rows split off by image (heldout_coco.jsonl), and
 # SpatialEdit-Bench move (heldout_bench.jsonl). Images live under the data root
 # (data/external/object_move); regenerate them with the builder script.
 data:

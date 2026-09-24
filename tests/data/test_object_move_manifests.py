@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
 from PIL import Image, ImageDraw
 
-from vrl.scripts.data.object_move import landing_spot, red_box
+from vrl.scripts.data.object_move import landing_spot, red_box, reviewed
 
 
 def test_landing_spot_rests_on_the_support_and_needs_it_free() -> None:
@@ -47,3 +48,16 @@ def test_red_box_reads_the_drawn_outline_and_never_guesses() -> None:
     ImageDraw.Draw(filled).rectangle((50, 20, 149, 79), fill=(255, 0, 0))
     assert red_box(filled) is None
     assert red_box(Image.new("RGB", (50, 50), (90, 120, 90))) is None
+
+
+def test_only_rows_reviewed_yes_are_kept_and_unreviewed_rows_stop_the_build() -> None:
+    def row(image_id: int) -> dict:
+        return {"metadata": {"source": "coco_val2017", "coco_image_id": image_id}}
+
+    review = {
+        "coco_val2017:1": {"verdict": "yes", "reason": "laptop onto an empty chair"},
+        "coco_val2017:2": {"verdict": "no", "reason": "the chair box is a lampshade"},
+    }
+    assert reviewed([row(1), row(2)], review) == [row(1)]
+    with pytest.raises(ValueError, match="no review verdict"):
+        reviewed([row(1), row(3)], review)

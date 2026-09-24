@@ -1,0 +1,2492 @@
+{
+ "coco_train2017:101084": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Floor plant, sofa seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:10145": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Plant on stand, loveseat seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:102488": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "Small plant on floor, armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:102609": {
+  "prompt": "Move the mouse onto the chair.",
+  "reason": "Mouse on mousepad, chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:104349": {
+  "prompt": "Move the keyboard onto the couch.",
+  "reason": "Keyboard cut off; couch occluded by flowers",
+  "verdict": "no"
+ },
+ "coco_train2017:10466": {
+  "prompt": "Move the potted plant from the bed onto the couch.",
+  "reason": "Plant box is a mirror reflection",
+  "verdict": "no"
+ },
+ "coco_train2017:105538": {
+  "prompt": "Move the mouse onto the bed.",
+  "reason": "Blue box mostly speakers; bed barely visible",
+  "verdict": "no"
+ },
+ "coco_train2017:108431": {
+  "prompt": "Move the cup from the dining table onto the chair.",
+  "reason": "Only chair back rail visible, no seat",
+  "verdict": "no"
+ },
+ "coco_train2017:108751": {
+  "prompt": "Move the suitcase from the dining table onto the chair.",
+  "reason": "Suitcase on floor not table; only chair back visible",
+  "verdict": "no"
+ },
+ "coco_train2017:109084": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Blue box dark, not clearly a couch",
+  "verdict": "no"
+ },
+ "coco_train2017:109776": {
+  "prompt": "Move the cell phone from the bed onto the chair.",
+  "reason": "green box is a mouse, not phone",
+  "verdict": "no"
+ },
+ "coco_train2017:109836": {
+  "prompt": "Move the cat onto the chair.",
+  "reason": "cat on sofa, recliner seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:109895": {
+  "prompt": "Move the cake from the dining table onto the couch.",
+  "reason": "cake on table, couch seat has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:112059": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "keyboard on shelf, chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:114187": {
+  "prompt": "Move the mouse onto the chair.",
+  "reason": "Chair barely visible, only a green edge",
+  "verdict": "no"
+ },
+ "coco_train2017:114729": {
+  "prompt": "Move the mouse onto the chair.",
+  "reason": "Only chair backrest visible, no seat",
+  "verdict": "no"
+ },
+ "coco_train2017:116570": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "Laptop on desk, empty chair seat",
+  "verdict": "yes"
+ },
+ "coco_train2017:119101": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Plant by window, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:119909": {
+  "prompt": "Move the laptop onto the bed.",
+  "reason": "laptop on desk, bed free",
+  "verdict": "yes"
+ },
+ "coco_train2017:121841": {
+  "prompt": "Move the vase onto the chair.",
+  "reason": "vase on books, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:123757": {
+  "prompt": "Move the cat onto the dining table.",
+  "reason": "seen through glass, table box unclear",
+  "verdict": "no"
+ },
+ "coco_train2017:124827": {
+  "prompt": "Move the bottle onto the couch.",
+  "reason": "bottle tiny and blurry at frame edge",
+  "verdict": "no"
+ },
+ "coco_train2017:124985": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "blue box too dark, couch not identifiable",
+  "verdict": "no"
+ },
+ "coco_train2017:126235": {
+  "prompt": "Move the book onto the chair.",
+  "reason": "book on desk, chair seat reachable",
+  "verdict": "yes"
+ },
+ "coco_train2017:127256": {
+  "prompt": "Move the keyboard onto the bed.",
+  "reason": "only bedpost visible, no bed top",
+  "verdict": "no"
+ },
+ "coco_train2017:128607": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on shelf, office chair free",
+  "verdict": "yes"
+ },
+ "coco_train2017:129030": {
+  "prompt": "Move the laptop onto the bench.",
+  "reason": "laptop is part of bronze statue",
+  "verdict": "no"
+ },
+ "coco_train2017:130215": {
+  "prompt": "Move the mouse onto the chair.",
+  "reason": "blue box shows desk edge, not chair",
+  "verdict": "no"
+ },
+ "coco_train2017:130856": {
+  "prompt": "Move the laptop onto the bed.",
+  "reason": "laptop on side table, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:131352": {
+  "prompt": "Move the cup onto the bed.",
+  "reason": "glass on table, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:134673": {
+  "prompt": "Move the teddy bear onto the bed.",
+  "reason": "toy figure on cabinet; bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:138100": {
+  "prompt": "Move the skateboard onto the bench.",
+  "reason": "skateboard being ridden by child",
+  "verdict": "no"
+ },
+ "coco_train2017:138186": {
+  "prompt": "Move the cat onto the dining table.",
+  "reason": "cat in high chair; table top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:138785": {
+  "prompt": "Move the potted plant from the couch onto the chair.",
+  "reason": "flower vase on table; armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:140936": {
+  "prompt": "Move the mouse onto the chair.",
+  "reason": "Chair too dark, seat not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:141278": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "Laptop on desk, office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:142248": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "Potted tree, armchair seat mostly free",
+  "verdict": "yes"
+ },
+ "coco_train2017:142481": {
+  "prompt": "Move the cell phone onto the couch.",
+  "reason": "Blue box is table/book area, not couch",
+  "verdict": "no"
+ },
+ "coco_train2017:142958": {
+  "prompt": "Move the laptop from the chair onto the bed.",
+  "reason": "Laptop is on desk, prompt wrongly says chair",
+  "verdict": "no"
+ },
+ "coco_train2017:144162": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Keyboard on console; chair seat visible and free",
+  "verdict": "yes"
+ },
+ "coco_train2017:145163": {
+  "prompt": "Move the cat from the bed onto the chair.",
+  "reason": "Cat on bed; wooden chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:145746": {
+  "prompt": "Move the suitcase onto the bed.",
+  "reason": "Suitcase on rack; bed corner top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:146638": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "green box is a wastebasket, not cup",
+  "verdict": "no"
+ },
+ "coco_train2017:147290": {
+  "prompt": "Move the vase onto the couch.",
+  "reason": "vase on floor, couch seat partly visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:147941": {
+  "prompt": "Move the tennis racket onto the chair.",
+  "reason": "racket held by player",
+  "verdict": "no"
+ },
+ "coco_train2017:149306": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "green object not clearly a laptop",
+  "verdict": "no"
+ },
+ "coco_train2017:150127": {
+  "prompt": "Move the laptop onto the bed.",
+  "reason": "Laptop on desk, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:154123": {
+  "prompt": "Move the laptop onto the bed.",
+  "reason": "Laptop on desk, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:154790": {
+  "prompt": "Move the vase onto the couch.",
+  "reason": "Vase on nightstand, couch seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:155869": {
+  "prompt": "Move the potted plant onto the bed.",
+  "reason": "Plant on chest, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:156073": {
+  "prompt": "Move the backpack onto the dining table.",
+  "reason": "backpack on chair, island top has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:1573": {
+  "prompt": "Move the teddy bear onto the chair.",
+  "reason": "blue box mostly washing machine, chair barely visible",
+  "verdict": "no"
+ },
+ "coco_train2017:158222": {
+  "prompt": "Move the book onto the bed.",
+  "reason": "box covers a whole row of books",
+  "verdict": "no"
+ },
+ "coco_train2017:158378": {
+  "prompt": "Move the laptop from the couch onto the chair.",
+  "reason": "chair seat occupied by a cat",
+  "verdict": "no"
+ },
+ "coco_train2017:158384": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:159463": {
+  "prompt": "Move the dog onto the dining table.",
+  "reason": "dog, low table top partly free",
+  "verdict": "yes"
+ },
+ "coco_train2017:160811": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk, stool seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:161599": {
+  "prompt": "Move the cat from the chair onto the bed.",
+  "reason": "cat in chair, bed top visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:161725": {
+  "prompt": "Move the suitcase onto the bench.",
+  "reason": "case on ground, bench seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:161941": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "plant on island, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:163348": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "chair seat not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:163444": {
+  "prompt": "Move the bowl onto the dining table.",
+  "reason": "blue box is fridge/counter, not dining table",
+  "verdict": "no"
+ },
+ "coco_train2017:164091": {
+  "prompt": "Move the teddy bear onto the bed.",
+  "reason": "teddy in pram, bed has free space",
+  "verdict": "yes"
+ },
+ "coco_train2017:164211": {
+  "prompt": "Move the cat onto the couch.",
+  "reason": "cat barely visible in shadow",
+  "verdict": "no"
+ },
+ "coco_train2017:164224": {
+  "prompt": "Move the suitcase onto the bed.",
+  "reason": "suitcase by door; bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:166225": {
+  "prompt": "Move the laptop from the dining table onto the couch.",
+  "reason": "laptop on table; couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:167273": {
+  "prompt": "Move the skateboard onto the bench.",
+  "reason": "skateboard in use by jumping skater",
+  "verdict": "no"
+ },
+ "coco_train2017:172422": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "Only chair backrest visible, no seat",
+  "verdict": "no"
+ },
+ "coco_train2017:172597": {
+  "prompt": "Move the remote from the bed onto the chair.",
+  "reason": "Chair seat occupied by cat and blankets",
+  "verdict": "no"
+ },
+ "coco_train2017:172874": {
+  "prompt": "Move the handbag onto the couch.",
+  "reason": "Couch occupied by seated woman",
+  "verdict": "no"
+ },
+ "coco_train2017:177088": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "Small plant on floor, armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:177496": {
+  "prompt": "Move the remote onto the couch.",
+  "reason": "Remote not visible in dark green box",
+  "verdict": "no"
+ },
+ "coco_train2017:177824": {
+  "prompt": "Move the laptop from the chair onto the bed.",
+  "reason": "Laptop is on desk, prompt wrongly says chair",
+  "verdict": "no"
+ },
+ "coco_train2017:179965": {
+  "prompt": "Move the potted plant onto the bed.",
+  "reason": "Potted plant in doorway; bed has free space",
+  "verdict": "yes"
+ },
+ "coco_train2017:180578": {
+  "prompt": "Move the handbag onto the couch.",
+  "reason": "Handbag on armchair; couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:181493": {
+  "prompt": "Move the dog onto the couch.",
+  "reason": "dog on floor, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:182612": {
+  "prompt": "Move the book onto the bed.",
+  "reason": "book on nightstand, bed free",
+  "verdict": "yes"
+ },
+ "coco_train2017:182758": {
+  "prompt": "Move the cat onto the chair.",
+  "reason": "chair seat not visible, only backrest",
+  "verdict": "no"
+ },
+ "coco_train2017:183202": {
+  "prompt": "Move the cell phone onto the couch.",
+  "reason": "object unclear, couch only arm visible",
+  "verdict": "no"
+ },
+ "coco_train2017:184903": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "Chair seat hidden by jacket and crop",
+  "verdict": "no"
+ },
+ "coco_train2017:187064": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "Plant on floor, armchair cushion free",
+  "verdict": "yes"
+ },
+ "coco_train2017:187642": {
+  "prompt": "Move the baseball glove onto the bench.",
+  "reason": "Glove worn by catcher",
+  "verdict": "no"
+ },
+ "coco_train2017:189045": {
+  "prompt": "Move the potted plant onto the bed.",
+  "reason": "Plant tiny, hanging high on shelf",
+  "verdict": "no"
+ },
+ "coco_train2017:193661": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "chair seat mostly covered by large pillow",
+  "verdict": "no"
+ },
+ "coco_train2017:194208": {
+  "prompt": "Move the backpack onto the couch.",
+  "reason": "bag on floor, couch has free area",
+  "verdict": "yes"
+ },
+ "coco_train2017:194553": {
+  "prompt": "Move the laptop onto the bed.",
+  "reason": "laptop on desk, bed free",
+  "verdict": "yes"
+ },
+ "coco_train2017:19544": {
+  "prompt": "Move the bottle onto the chair.",
+  "reason": "Only chair back visible, no seat",
+  "verdict": "no"
+ },
+ "coco_train2017:19589": {
+  "prompt": "Move the bowl onto the chair.",
+  "reason": "Basket bowl on table; egg chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:196611": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on table, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:197125": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk, office chair free",
+  "verdict": "yes"
+ },
+ "coco_train2017:197427": {
+  "prompt": "Move the dog onto the chair.",
+  "reason": "blue box dark fragment, chair not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:197568": {
+  "prompt": "Move the cat onto the chair.",
+  "reason": "rocking chair seat covered by toys and bag",
+  "verdict": "no"
+ },
+ "coco_train2017:197806": {
+  "prompt": "Move the handbag onto the bench.",
+  "reason": "bag on ground, bench has free seat",
+  "verdict": "yes"
+ },
+ "coco_train2017:198027": {
+  "prompt": "Move the book from the chair onto the bed.",
+  "reason": "green box shows no clear book",
+  "verdict": "no"
+ },
+ "coco_train2017:198947": {
+  "prompt": "Move the dog onto the bench.",
+  "reason": "bench seat barely visible",
+  "verdict": "no"
+ },
+ "coco_train2017:200116": {
+  "prompt": "Move the vase from the dining table onto the chair.",
+  "reason": "vase on table, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:200680": {
+  "prompt": "Move the wine glass onto the chair.",
+  "reason": "chair occupied by seated person",
+  "verdict": "no"
+ },
+ "coco_train2017:203119": {
+  "prompt": "Move the bowl onto the chair.",
+  "reason": "bowl in dish rack unclear; chair dark",
+  "verdict": "no"
+ },
+ "coco_train2017:20481": {
+  "prompt": "Move the mouse onto the chair.",
+  "reason": "Only wicker chair back visible, no seat",
+  "verdict": "no"
+ },
+ "coco_train2017:206584": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "chair only blurry black back, no seat",
+  "verdict": "no"
+ },
+ "coco_train2017:208557": {
+  "prompt": "Move the laptop onto the couch.",
+  "reason": "laptop on table; couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:208995": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "chair occupied by seated person",
+  "verdict": "no"
+ },
+ "coco_train2017:210404": {
+  "prompt": "Move the sports ball onto the dining table.",
+  "reason": "Green box is a candle, not ball",
+  "verdict": "no"
+ },
+ "coco_train2017:210884": {
+  "prompt": "Move the cell phone onto the bed.",
+  "reason": "Phone on nightstand, bed blanket has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:211260": {
+  "prompt": "Move the vase onto the chair.",
+  "reason": "Chair dark, seat not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:213579": {
+  "prompt": "Move the cake from the dining table onto the bench.",
+  "reason": "Bench seat not visible, only backrest",
+  "verdict": "no"
+ },
+ "coco_train2017:214024": {
+  "prompt": "Move the handbag onto the chair.",
+  "reason": "Green box object unclear, not a recognizable handbag",
+  "verdict": "no"
+ },
+ "coco_train2017:215092": {
+  "prompt": "Move the potted plant onto the bed.",
+  "reason": "Bonsai on dresser; bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:215901": {
+  "prompt": "Move the apple onto the dining table.",
+  "reason": "Apple already on table; blue box unclear",
+  "verdict": "no"
+ },
+ "coco_train2017:21645": {
+  "prompt": "Move the backpack onto the couch.",
+  "reason": "Bag on chair edge; couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:219269": {
+  "prompt": "Move the laptop from the chair onto the bed.",
+  "reason": "Laptop is on desk, prompt wrongly says chair",
+  "verdict": "no"
+ },
+ "coco_train2017:219861": {
+  "prompt": "Move the vase onto the chair.",
+  "reason": "armchair seen from back, seat hidden",
+  "verdict": "no"
+ },
+ "coco_train2017:221663": {
+  "prompt": "Move the vase from the dining table onto the couch.",
+  "reason": "vase on side table, futon side free",
+  "verdict": "yes"
+ },
+ "coco_train2017:22256": {
+  "prompt": "Move the handbag onto the dining table.",
+  "reason": "bag on floor, counter top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:225228": {
+  "prompt": "Move the bowl onto the couch.",
+  "reason": "recliner seat not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:225609": {
+  "prompt": "Move the laptop onto the couch.",
+  "reason": "laptop on stand, red couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:2270": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "floor plant, couch seats free",
+  "verdict": "yes"
+ },
+ "coco_train2017:227440": {
+  "prompt": "Move the potted plant onto the dining table.",
+  "reason": "Table fully cluttered, people eating",
+  "verdict": "no"
+ },
+ "coco_train2017:229241": {
+  "prompt": "Move the keyboard from the chair onto the bed.",
+  "reason": "Keyboard on desk, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:229342": {
+  "prompt": "Move the cat onto the couch.",
+  "reason": "Cat tiny and dark by door",
+  "verdict": "no"
+ },
+ "coco_train2017:230665": {
+  "prompt": "Move the backpack from the couch onto the chair.",
+  "reason": "Backpack on couch, papasan chair free",
+  "verdict": "yes"
+ },
+ "coco_train2017:230991": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "keyboard on desk, chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:231062": {
+  "prompt": "Move the laptop onto the couch.",
+  "reason": "laptop obscured by cloth, couch cluttered",
+  "verdict": "no"
+ },
+ "coco_train2017:231536": {
+  "prompt": "Move the vase onto the dining table.",
+  "reason": "vase on fridge, counter top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:232720": {
+  "prompt": "Move the dog onto the couch.",
+  "reason": "dog on floor, couch free",
+  "verdict": "yes"
+ },
+ "coco_train2017:233528": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "keyboard, office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:236340": {
+  "prompt": "Move the umbrella onto the dining table.",
+  "reason": "umbrella is photo reflector on stand, cut off",
+  "verdict": "no"
+ },
+ "coco_train2017:2389": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "keyboard on desk, office chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:23917": {
+  "prompt": "Move the bowl onto the chair.",
+  "reason": "dog bowl, plastic chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:240434": {
+  "prompt": "Move the book onto the couch.",
+  "reason": "book tiny and unclear under table",
+  "verdict": "no"
+ },
+ "coco_train2017:241148": {
+  "prompt": "Move the vase onto the chair.",
+  "reason": "vase on stand, lounge chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:242296": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on couch, white chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:2434": {
+  "prompt": "Move the cell phone onto the chair.",
+  "reason": "blue box shows no identifiable chair",
+  "verdict": "no"
+ },
+ "coco_train2017:244428": {
+  "prompt": "Move the orange from the dining table onto the chair.",
+  "reason": "object unclear, chair seat not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:247234": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "small potted tree, couch has free space",
+  "verdict": "yes"
+ },
+ "coco_train2017:247680": {
+  "prompt": "Move the book onto the chair.",
+  "reason": "only chair back visible, no seat",
+  "verdict": "no"
+ },
+ "coco_train2017:248132": {
+  "prompt": "Move the cup onto the bed.",
+  "reason": "blue box is a table, not a bed",
+  "verdict": "no"
+ },
+ "coco_train2017:250124": {
+  "prompt": "Move the backpack onto the chair.",
+  "reason": "backpack on floor; office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:252679": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk; chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:253395": {
+  "prompt": "Move the vase from the dining table onto the chair.",
+  "reason": "vase on table; armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:25377": {
+  "prompt": "Move the vase onto the dining table.",
+  "reason": "close-up, no table visible in blue box",
+  "verdict": "no"
+ },
+ "coco_train2017:253785": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "Mug on side table, chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:254169": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "Chair almost black, seat not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:256707": {
+  "prompt": "Move the vase onto the dining table.",
+  "reason": "Vase already on the table",
+  "verdict": "no"
+ },
+ "coco_train2017:258265": {
+  "prompt": "Move the bottle onto the chair.",
+  "reason": "Only chair back visible; bottle tiny",
+  "verdict": "no"
+ },
+ "coco_train2017:259188": {
+  "prompt": "Move the laptop onto the bed.",
+  "reason": "Collage of separate photos; different scenes",
+  "verdict": "no"
+ },
+ "coco_train2017:2608": {
+  "prompt": "Move the keyboard onto the couch.",
+  "reason": "keyboard on desk, futon seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:261077": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Flower vase on table; chaise couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:261511": {
+  "prompt": "Move the bottle from the dining table onto the chair.",
+  "reason": "Bottle cropped out of view; chair blurry",
+  "verdict": "no"
+ },
+ "coco_train2017:262162": {
+  "prompt": "Move the laptop onto the bed.",
+  "reason": "Laptop on desk; bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:262172": {
+  "prompt": "Move the teddy bear onto the chair.",
+  "reason": "stuffed toy, wicker chair seat partly free",
+  "verdict": "yes"
+ },
+ "coco_train2017:264855": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "small plant on sill, rocking chair seat",
+  "verdict": "yes"
+ },
+ "coco_train2017:266117": {
+  "prompt": "Move the dog from the couch onto the chair.",
+  "reason": "dog on couch, armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:267321": {
+  "prompt": "Move the baseball glove onto the couch.",
+  "reason": "glove on table, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:26735": {
+  "prompt": "Move the suitcase onto the bed.",
+  "reason": "suitcase under loft bed, bed top visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:267932": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Keyboard on desk, empty chair",
+  "verdict": "yes"
+ },
+ "coco_train2017:268052": {
+  "prompt": "Move the cat onto the dining table.",
+  "reason": "Cat on chair, table has free space",
+  "verdict": "yes"
+ },
+ "coco_train2017:269848": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Couch mostly cropped, seat barely visible",
+  "verdict": "no"
+ },
+ "coco_train2017:272242": {
+  "prompt": "Move the cup onto the couch.",
+  "reason": "Cup is reflection on laptop screen",
+  "verdict": "no"
+ },
+ "coco_train2017:272741": {
+  "prompt": "Move the vase onto the dining table.",
+  "reason": "green box shows no visible vase",
+  "verdict": "no"
+ },
+ "coco_train2017:272882": {
+  "prompt": "Move the potted plant onto the dining table.",
+  "reason": "plant on sideboard, table has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:273049": {
+  "prompt": "Move the potted plant from the chair onto the couch.",
+  "reason": "plant on side table, couch free",
+  "verdict": "yes"
+ },
+ "coco_train2017:273142": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "chair seat hidden, only backrest visible",
+  "verdict": "no"
+ },
+ "coco_train2017:273276": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "flower pot, couch seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:273808": {
+  "prompt": "Move the bowl onto the couch.",
+  "reason": "blue box unclear, not identifiable couch",
+  "verdict": "no"
+ },
+ "coco_train2017:276849": {
+  "prompt": "Move the book onto the bed.",
+  "reason": "green box is tray, not a clear book",
+  "verdict": "no"
+ },
+ "coco_train2017:279265": {
+  "prompt": "Move the handbag onto the couch.",
+  "reason": "couch covered with bags, object unclear",
+  "verdict": "no"
+ },
+ "coco_train2017:279777": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:281123": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant on side table, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:281194": {
+  "prompt": "Move the dog onto the chair.",
+  "reason": "chair occupied by a person",
+  "verdict": "no"
+ },
+ "coco_train2017:281578": {
+  "prompt": "Move the dog from the bed onto the chair.",
+  "reason": "dog on floor bed, folding chair free",
+  "verdict": "yes"
+ },
+ "coco_train2017:282720": {
+  "prompt": "Move the cup onto the dining table.",
+  "reason": "cup already on the table",
+  "verdict": "no"
+ },
+ "coco_train2017:28462": {
+  "prompt": "Move the laptop onto the dining table.",
+  "reason": "Laptop held overhead by a person",
+  "verdict": "no"
+ },
+ "coco_train2017:285236": {
+  "prompt": "Move the keyboard onto the dining table.",
+  "reason": "green box is a device, not keyboard",
+  "verdict": "no"
+ },
+ "coco_train2017:286575": {
+  "prompt": "Move the cat onto the chair.",
+  "reason": "cat is outside the window",
+  "verdict": "no"
+ },
+ "coco_train2017:286717": {
+  "prompt": "Move the donut onto the dining table.",
+  "reason": "donut already on plate on table",
+  "verdict": "no"
+ },
+ "coco_train2017:288236": {
+  "prompt": "Move the tennis racket onto the chair.",
+  "reason": "Racket held by player",
+  "verdict": "no"
+ },
+ "coco_train2017:290076": {
+  "prompt": "Move the cup from the dining table onto the chair.",
+  "reason": "Glass on coffee table, armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:290420": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Chair covered by jacket, seat hidden",
+  "verdict": "no"
+ },
+ "coco_train2017:291589": {
+  "prompt": "Move the cup from the dining table onto the chair.",
+  "reason": "Pitcher on table, yellow chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:29176": {
+  "prompt": "Move the dog onto the couch.",
+  "reason": "Dog barely visible, cropped at frame edge",
+  "verdict": "no"
+ },
+ "coco_train2017:292912": {
+  "prompt": "Move the bowl from the couch onto the chair.",
+  "reason": "Bowl at left; chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:293757": {
+  "prompt": "Move the cat onto the chair.",
+  "reason": "Cat on dresser; chair cushion free",
+  "verdict": "yes"
+ },
+ "coco_train2017:294330": {
+  "prompt": "Move the remote onto the chair.",
+  "reason": "Remote not identifiable in dark green box",
+  "verdict": "no"
+ },
+ "coco_train2017:295970": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "Chair covered by scarf, seat not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:296698": {
+  "prompt": "Move the broccoli onto the dining table.",
+  "reason": "broccoli is inside sandwich filling",
+  "verdict": "no"
+ },
+ "coco_train2017:301963": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "couch barely visible, covered by cardboard",
+  "verdict": "no"
+ },
+ "coco_train2017:303204": {
+  "prompt": "Move the potted plant onto the dining table.",
+  "reason": "plant beside table, table has free space",
+  "verdict": "yes"
+ },
+ "coco_train2017:303392": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "small plant on table, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:304315": {
+  "prompt": "Move the cat from the chair onto the couch.",
+  "reason": "Couch mostly cropped, cat small and dark",
+  "verdict": "no"
+ },
+ "coco_train2017:304341": {
+  "prompt": "Move the potted plant onto the bench.",
+  "reason": "Object looks like bin, plant unclear, tiny",
+  "verdict": "no"
+ },
+ "coco_train2017:305093": {
+  "prompt": "Move the dog onto the couch.",
+  "reason": "Dog on floor, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:30526": {
+  "prompt": "Move the banana onto the dining table.",
+  "reason": "Banana already on plate on that table",
+  "verdict": "no"
+ },
+ "coco_train2017:305278": {
+  "prompt": "Move the cup from the dining table onto the couch.",
+  "reason": "Green box is a bottle; dog on couch",
+  "verdict": "no"
+ },
+ "coco_train2017:305660": {
+  "prompt": "Move the book from the couch onto the chair.",
+  "reason": "book on coffee table, armchair free",
+  "verdict": "yes"
+ },
+ "coco_train2017:306249": {
+  "prompt": "Move the potted plant from the dining table onto the couch.",
+  "reason": "plant vases on table, couch free",
+  "verdict": "yes"
+ },
+ "coco_train2017:306485": {
+  "prompt": "Move the cell phone onto the bed.",
+  "reason": "support is a bassinet, not a bed",
+  "verdict": "no"
+ },
+ "coco_train2017:307113": {
+  "prompt": "Move the bottle onto the dining table.",
+  "reason": "blue box is a food plate",
+  "verdict": "no"
+ },
+ "coco_train2017:307573": {
+  "prompt": "Move the laptop from the couch onto the chair.",
+  "reason": "laptop on couch, armchair free",
+  "verdict": "yes"
+ },
+ "coco_train2017:309405": {
+  "prompt": "Move the potted plant onto the dining table.",
+  "reason": "plant on TV, table has free space",
+  "verdict": "yes"
+ },
+ "coco_train2017:310134": {
+  "prompt": "Move the dog onto the couch.",
+  "reason": "dog tiny, not clearly visible",
+  "verdict": "no"
+ },
+ "coco_train2017:310150": {
+  "prompt": "Move the banana onto the chair.",
+  "reason": "banana cut off, chair covered by bags",
+  "verdict": "no"
+ },
+ "coco_train2017:311066": {
+  "prompt": "Move the cat from the dining table onto the chair.",
+  "reason": "chair seat not visible, cat on floor",
+  "verdict": "no"
+ },
+ "coco_train2017:313129": {
+  "prompt": "Move the carrot from the dining table onto the couch.",
+  "reason": "carrots on table, couch seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:314626": {
+  "prompt": "Move the cell phone onto the chair.",
+  "reason": "phone on desk, papasan seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:315467": {
+  "prompt": "Move the cat onto the chair.",
+  "reason": "cat on floor, armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:31587": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Keyboard on desk, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:316671": {
+  "prompt": "Move the cup onto the dining table.",
+  "reason": "cup already on dining table",
+  "verdict": "no"
+ },
+ "coco_train2017:317521": {
+  "prompt": "Move the vase from the dining table onto the couch.",
+  "reason": "couch seat hidden behind chair",
+  "verdict": "no"
+ },
+ "coco_train2017:318701": {
+  "prompt": "Move the handbag onto the dining table.",
+  "reason": "handbag on bed; table has free space",
+  "verdict": "yes"
+ },
+ "coco_train2017:318726": {
+  "prompt": "Move the laptop onto the couch.",
+  "reason": "laptop on desk; couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:319057": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "Laptop on stool, camp chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:321064": {
+  "prompt": "Move the book onto the dining table.",
+  "reason": "Table fully covered with vegetables",
+  "verdict": "no"
+ },
+ "coco_train2017:321885": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Chair dark and cut off, no seat",
+  "verdict": "no"
+ },
+ "coco_train2017:322321": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "Only chair back visible, seat hidden",
+  "verdict": "no"
+ },
+ "coco_train2017:325989": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Couch occupied by people",
+  "verdict": "no"
+ },
+ "coco_train2017:32611": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant dark and small, couch barely visible",
+  "verdict": "no"
+ },
+ "coco_train2017:326111": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "Laptop on desk; chair seat visible though dim",
+  "verdict": "yes"
+ },
+ "coco_train2017:326410": {
+  "prompt": "Move the handbag onto the couch.",
+  "reason": "Handbag unclear; couch barely visible at edge",
+  "verdict": "no"
+ },
+ "coco_train2017:326968": {
+  "prompt": "Move the dog onto the chair.",
+  "reason": "Dog on floor; armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:329343": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant on piano, settee seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:330493": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "plants in built-in partition planter",
+  "verdict": "no"
+ },
+ "coco_train2017:331444": {
+  "prompt": "Move the handbag onto the couch.",
+  "reason": "bag on coffee table, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:334050": {
+  "prompt": "Move the vase onto the dining table.",
+  "reason": "vase on shelf, table top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:334587": {
+  "prompt": "Move the potted plant onto the dining table.",
+  "reason": "Plant on sideboard, table has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:336752": {
+  "prompt": "Move the mouse from the dining table onto the chair.",
+  "reason": "Only chair backrest visible, no seat",
+  "verdict": "no"
+ },
+ "coco_train2017:340611": {
+  "prompt": "Move the bowl onto the chair.",
+  "reason": "Chair barely visible, dark and cluttered",
+  "verdict": "no"
+ },
+ "coco_train2017:340754": {
+  "prompt": "Move the backpack onto the bed.",
+  "reason": "Backpack in closet, bed surface free",
+  "verdict": "yes"
+ },
+ "coco_train2017:341350": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "chair seat hidden behind backrest",
+  "verdict": "no"
+ },
+ "coco_train2017:341354": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "couch covered with bags and clothes",
+  "verdict": "no"
+ },
+ "coco_train2017:344276": {
+  "prompt": "Move the vase onto the bed.",
+  "reason": "bed is mirror reflection, vase box dark",
+  "verdict": "no"
+ },
+ "coco_train2017:345047": {
+  "prompt": "Move the vase from the dining table onto the bench.",
+  "reason": "vase on table, bench visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:345536": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant on shelf, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:346302": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant on side table, couch free",
+  "verdict": "yes"
+ },
+ "coco_train2017:348091": {
+  "prompt": "Move the umbrella onto the bed.",
+  "reason": "umbrella leaning at door, bed free",
+  "verdict": "yes"
+ },
+ "coco_train2017:34831": {
+  "prompt": "Move the handbag onto the couch.",
+  "reason": "red handbag on door, couch has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:349337": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:349918": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk, office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:350089": {
+  "prompt": "Move the suitcase onto the chair.",
+  "reason": "suitcase on floor, armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:350617": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "plant atop hutch, armchair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:353982": {
+  "prompt": "Move the potted plant onto the dining table.",
+  "reason": "green box cut off, object unclear",
+  "verdict": "no"
+ },
+ "coco_train2017:355194": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "plant in background outdoors; chair seat hidden",
+  "verdict": "no"
+ },
+ "coco_train2017:355256": {
+  "prompt": "Move the bottle onto the chair.",
+  "reason": "bottle on shelf; white chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:35696": {
+  "prompt": "Move the bottle onto the couch.",
+  "reason": "bottle on table, couch seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:357194": {
+  "prompt": "Move the vase onto the couch.",
+  "reason": "couch seat not visible, back only",
+  "verdict": "no"
+ },
+ "coco_train2017:357511": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant on floor; couch seat partly free",
+  "verdict": "yes"
+ },
+ "coco_train2017:357604": {
+  "prompt": "Move the laptop onto the bed.",
+  "reason": "Laptop on desk, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:357750": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Floor plant, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:357881": {
+  "prompt": "Move the bowl from the dining table onto the couch.",
+  "reason": "Bowl on table, couch seat partly free",
+  "verdict": "yes"
+ },
+ "coco_train2017:360068": {
+  "prompt": "Move the handbag onto the dining table.",
+  "reason": "Green box object unclear, hanging on wall",
+  "verdict": "no"
+ },
+ "coco_train2017:361885": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Couch mostly cropped at frame edge",
+  "verdict": "no"
+ },
+ "coco_train2017:362500": {
+  "prompt": "Move the bowl onto the couch.",
+  "reason": "Bowl on floor; couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:363326": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "Mug on desk; office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:368510": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "Laptop on desk; chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:368702": {
+  "prompt": "Move the dog onto the chair.",
+  "reason": "stool seat occupied by object",
+  "verdict": "no"
+ },
+ "coco_train2017:36962": {
+  "prompt": "Move the cat onto the chair.",
+  "reason": "cat on TV, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:373073": {
+  "prompt": "Move the potted plant onto the dining table.",
+  "reason": "blue box is counter corner, not dining table",
+  "verdict": "no"
+ },
+ "coco_train2017:373101": {
+  "prompt": "Move the backpack from the couch onto the dining table.",
+  "reason": "backpack on couch, table has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:374845": {
+  "prompt": "Move the bottle onto the dining table.",
+  "reason": "soap bottle on counter, table free",
+  "verdict": "yes"
+ },
+ "coco_train2017:375904": {
+  "prompt": "Move the potted plant onto the bed.",
+  "reason": "Plant cropped at edge, barely visible",
+  "verdict": "no"
+ },
+ "coco_train2017:3789": {
+  "prompt": "Move the dog onto the couch.",
+  "reason": "couch seat covered by bags and items",
+  "verdict": "no"
+ },
+ "coco_train2017:378905": {
+  "prompt": "Move the potted plant onto the dining table.",
+  "reason": "Green box is window view, not plant",
+  "verdict": "no"
+ },
+ "coco_train2017:379241": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Plant on side table, couch seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:379771": {
+  "prompt": "Move the handbag onto the chair.",
+  "reason": "Handbag cropped at bottom, dark",
+  "verdict": "no"
+ },
+ "coco_train2017:381384": {
+  "prompt": "Move the vase from the chair onto the couch.",
+  "reason": "blue box is a white edge, not couch",
+  "verdict": "no"
+ },
+ "coco_train2017:382564": {
+  "prompt": "Move the cat onto the dining table.",
+  "reason": "cat on floor, table top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:38276": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "chair seen from back, no free seat visible",
+  "verdict": "no"
+ },
+ "coco_train2017:383549": {
+  "prompt": "Move the potted plant from the chair onto the couch.",
+  "reason": "plant on chair, couch visible with space",
+  "verdict": "yes"
+ },
+ "coco_train2017:384375": {
+  "prompt": "Move the book onto the couch.",
+  "reason": "book on coffee table, loveseat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:384641": {
+  "prompt": "Move the book onto the chair.",
+  "reason": "green box not clearly a book",
+  "verdict": "no"
+ },
+ "coco_train2017:385082": {
+  "prompt": "Move the suitcase onto the chair.",
+  "reason": "suitcase on rack, clear chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:385700": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:386018": {
+  "prompt": "Move the laptop onto the couch.",
+  "reason": "laptop on floor, couch seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:389429": {
+  "prompt": "Move the wine glass onto the couch.",
+  "reason": "wine glass on table, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:389743": {
+  "prompt": "Move the tennis racket onto the chair.",
+  "reason": "racket held by player",
+  "verdict": "no"
+ },
+ "coco_train2017:391771": {
+  "prompt": "Move the potted plant onto the bench.",
+  "reason": "planter on ground, bench seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:392476": {
+  "prompt": "Move the mouse onto the chair.",
+  "reason": "blue box is bed frame, not chair",
+  "verdict": "no"
+ },
+ "coco_train2017:392961": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk; chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:394229": {
+  "prompt": "Move the potted plant onto the bench.",
+  "reason": "plant hangs from lamp post",
+  "verdict": "no"
+ },
+ "coco_train2017:395995": {
+  "prompt": "Move the orange onto the dining table.",
+  "reason": "blue box is knife/board, not table",
+  "verdict": "no"
+ },
+ "coco_train2017:396269": {
+  "prompt": "Move the vase onto the chair.",
+  "reason": "vase on table; chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:396622": {
+  "prompt": "Move the backpack onto the chair.",
+  "reason": "Backpack on floor, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:397044": {
+  "prompt": "Move the remote onto the bed.",
+  "reason": "Remote on nightstand, bed free",
+  "verdict": "yes"
+ },
+ "coco_train2017:397253": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Keyboard on desk, office chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:400592": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "Chair covered by sweater, seat hidden",
+  "verdict": "no"
+ },
+ "coco_train2017:402623": {
+  "prompt": "Move the sports ball from the dining table onto the chair.",
+  "reason": "Illustrated collage scene; ball not real object",
+  "verdict": "no"
+ },
+ "coco_train2017:408955": {
+  "prompt": "Move the laptop onto the bed.",
+  "reason": "Blue box is a pet bed, not a bed",
+  "verdict": "no"
+ },
+ "coco_train2017:411068": {
+  "prompt": "Move the teddy bear onto the bed.",
+  "reason": "Teddy bear on shelf; bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:41345": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "green box tiny unclear object on mantel",
+  "verdict": "no"
+ },
+ "coco_train2017:415694": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "Laptop on desk; office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:415787": {
+  "prompt": "Move the book onto the couch.",
+  "reason": "box covers shelved record row, not one book",
+  "verdict": "no"
+ },
+ "coco_train2017:419501": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk, office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:419689": {
+  "prompt": "Move the tennis racket onto the chair.",
+  "reason": "racket held by player",
+  "verdict": "no"
+ },
+ "coco_train2017:423310": {
+  "prompt": "Move the teddy bear onto the dining table.",
+  "reason": "teddy bear is a wall decoration picture",
+  "verdict": "no"
+ },
+ "coco_train2017:423513": {
+  "prompt": "Move the cat onto the bench.",
+  "reason": "Cat on ground, bench seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:42355": {
+  "prompt": "Move the dog onto the chair.",
+  "reason": "dog on floor, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:424485": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Keyboard on desk, chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:424542": {
+  "prompt": "Move the mouse onto the chair.",
+  "reason": "Chair dark back only, no seat visible",
+  "verdict": "no"
+ },
+ "coco_train2017:425359": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Keyboard on desk, empty leather chair",
+  "verdict": "yes"
+ },
+ "coco_train2017:426520": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "flower vase on dresser, daybed free",
+  "verdict": "yes"
+ },
+ "coco_train2017:427335": {
+  "prompt": "Move the orange onto the chair.",
+  "reason": "chair barely visible, seat occluded",
+  "verdict": "no"
+ },
+ "coco_train2017:433101": {
+  "prompt": "Move the bottle onto the couch.",
+  "reason": "bottle visible, couch free",
+  "verdict": "yes"
+ },
+ "coco_train2017:433854": {
+  "prompt": "Move the cup from the dining table onto the chair.",
+  "reason": "chair seat not visible, dark backrest only",
+  "verdict": "no"
+ },
+ "coco_train2017:436814": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk, chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:438932": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant on stand, armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:441900": {
+  "prompt": "Move the teddy bear onto the bed.",
+  "reason": "teddy on floor, bed has free space",
+  "verdict": "yes"
+ },
+ "coco_train2017:443575": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "plant on sill, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:44372": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "sill plant, couch seat visible and free",
+  "verdict": "yes"
+ },
+ "coco_train2017:445009": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "couch dark and covered with box",
+  "verdict": "no"
+ },
+ "coco_train2017:445371": {
+  "prompt": "Move the dog onto the bench.",
+  "reason": "dog beside bench, bench seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:446420": {
+  "prompt": "Move the handbag onto the bed.",
+  "reason": "handbag not identifiable under towels",
+  "verdict": "no"
+ },
+ "coco_train2017:447865": {
+  "prompt": "Move the cup onto the dining table.",
+  "reason": "pen cup movable, table top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:448928": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "mug on desk; office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:44950": {
+  "prompt": "Move the book onto the bed.",
+  "reason": "bed is a mirror reflection",
+  "verdict": "no"
+ },
+ "coco_train2017:450160": {
+  "prompt": "Move the dog onto the bench.",
+  "reason": "dog near bench; bench seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:450672": {
+  "prompt": "Move the bottle onto the chair.",
+  "reason": "bottle tiny and dark; seat has dog",
+  "verdict": "no"
+ },
+ "coco_train2017:451131": {
+  "prompt": "Move the vase onto the chair.",
+  "reason": "glass vase on table; bench seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:451529": {
+  "prompt": "Move the potted plant onto the bed.",
+  "reason": "Floor vase plant, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:452502": {
+  "prompt": "Move the laptop onto the couch.",
+  "reason": "Laptop on ottoman, sofa seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:45292": {
+  "prompt": "Move the suitcase onto the chair.",
+  "reason": "suitcase not visible, seat only partial",
+  "verdict": "no"
+ },
+ "coco_train2017:453625": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "Chair back faces camera, seat not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:453643": {
+  "prompt": "Move the book onto the bench.",
+  "reason": "Scene is an illustration, not real",
+  "verdict": "no"
+ },
+ "coco_train2017:454225": {
+  "prompt": "Move the cup onto the bench.",
+  "reason": "Bench occupied by seated person",
+  "verdict": "no"
+ },
+ "coco_train2017:455275": {
+  "prompt": "Move the vase onto the couch.",
+  "reason": "Vase on table; couch cushions visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:457827": {
+  "prompt": "Move the bowl onto the dining table.",
+  "reason": "Pot on stove; island top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:458058": {
+  "prompt": "Move the cup onto the chair.",
+  "reason": "Only chair back visible; cup cropped",
+  "verdict": "no"
+ },
+ "coco_train2017:458282": {
+  "prompt": "Move the bowl onto the bed.",
+  "reason": "soap dish on sink, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:458549": {
+  "prompt": "Move the bowl from the dining table onto the couch.",
+  "reason": "bowl on glass table, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:46024": {
+  "prompt": "Move the cat onto the chair.",
+  "reason": "chair barely visible at frame edge",
+  "verdict": "no"
+ },
+ "coco_train2017:461340": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant on shelf, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:462379": {
+  "prompt": "Move the potted plant onto the bench.",
+  "reason": "planter on lawn, bench seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:463055": {
+  "prompt": "Move the book onto the couch.",
+  "reason": "Card box on table, armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:464766": {
+  "prompt": "Move the wine glass onto the bed.",
+  "reason": "Bed occupied by people",
+  "verdict": "no"
+ },
+ "coco_train2017:464814": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Flowers on side table, couch free",
+  "verdict": "yes"
+ },
+ "coco_train2017:467988": {
+  "prompt": "Move the laptop from the dining table onto the chair.",
+  "reason": "Laptop on desk, empty chair",
+  "verdict": "yes"
+ },
+ "coco_train2017:468830": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "chair seat covered by draped jacket",
+  "verdict": "no"
+ },
+ "coco_train2017:469047": {
+  "prompt": "Move the potted plant onto the bed.",
+  "reason": "plant on stool, bed free",
+  "verdict": "yes"
+ },
+ "coco_train2017:469356": {
+  "prompt": "Move the cup onto the dining table.",
+  "reason": "green box shows fries, not a cup",
+  "verdict": "no"
+ },
+ "coco_train2017:471039": {
+  "prompt": "Move the cup from the dining table onto the chair.",
+  "reason": "chair seat unclear, covered by cloth",
+  "verdict": "no"
+ },
+ "coco_train2017:471711": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "plant on stand, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:4761": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "keyboard on desk, office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:476235": {
+  "prompt": "Move the vase onto the chair.",
+  "reason": "vase on cabinet, chair seat reachable",
+  "verdict": "yes"
+ },
+ "coco_train2017:478859": {
+  "prompt": "Move the cat onto the bed.",
+  "reason": "cat is a poster on wall",
+  "verdict": "no"
+ },
+ "coco_train2017:479935": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant on stand, futon seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:481125": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk, chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:483175": {
+  "prompt": "Move the suitcase onto the bed.",
+  "reason": "suitcase on floor, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:484257": {
+  "prompt": "Move the broccoli onto the dining table.",
+  "reason": "broccoli already on the table",
+  "verdict": "no"
+ },
+ "coco_train2017:484476": {
+  "prompt": "Move the vase onto the chair.",
+  "reason": "vase on shelf, office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:487033": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "keyboard on desk; chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:488866": {
+  "prompt": "Move the cat onto the couch.",
+  "reason": "cat is part of a poster",
+  "verdict": "no"
+ },
+ "coco_train2017:488980": {
+  "prompt": "Move the handbag onto the bed.",
+  "reason": "child is using the bag",
+  "verdict": "no"
+ },
+ "coco_train2017:489415": {
+  "prompt": "Move the wine glass onto the chair.",
+  "reason": "shop window reflection; no real chair",
+  "verdict": "no"
+ },
+ "coco_train2017:49037": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "flower pot on side table, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:495387": {
+  "prompt": "Move the potted plant onto the dining table.",
+  "reason": "Flowers on mantel, table top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:495680": {
+  "prompt": "Move the laptop onto the dining table.",
+  "reason": "Laptop on desk, other table has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:4963": {
+  "prompt": "Move the vase onto the couch.",
+  "reason": "vase loose; couch seat partly free",
+  "verdict": "yes"
+ },
+ "coco_train2017:496766": {
+  "prompt": "Move the keyboard onto the bed.",
+  "reason": "Keyboard on desk, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:497010": {
+  "prompt": "Move the cat from the chair onto the bed.",
+  "reason": "Cat in cubby, bed has free area",
+  "verdict": "yes"
+ },
+ "coco_train2017:498125": {
+  "prompt": "Move the bottle onto the chair.",
+  "reason": "Only chair back visible, no seat",
+  "verdict": "no"
+ },
+ "coco_train2017:498638": {
+  "prompt": "Move the tennis racket onto the bench.",
+  "reason": "Racket held by player; no real bench",
+  "verdict": "no"
+ },
+ "coco_train2017:498768": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Keyboard on desk; office chair in view",
+  "verdict": "yes"
+ },
+ "coco_train2017:499500": {
+  "prompt": "Move the remote onto the couch.",
+  "reason": "Remote on table; couch visible behind",
+  "verdict": "yes"
+ },
+ "coco_train2017:501138": {
+  "prompt": "Move the bottle onto the chair.",
+  "reason": "bottle on desk, office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:501786": {
+  "prompt": "Move the cup onto the bed.",
+  "reason": "glass on coffee table, bed top visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:503294": {
+  "prompt": "Move the cat onto the couch.",
+  "reason": "cat on rug, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:503412": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant on table, couch has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:504125": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Plant on side table, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:504896": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "Blue box is black, no chair visible",
+  "verdict": "no"
+ },
+ "coco_train2017:504980": {
+  "prompt": "Move the cup from the dining table onto the chair.",
+  "reason": "Only blurry chair backrest visible",
+  "verdict": "no"
+ },
+ "coco_train2017:505827": {
+  "prompt": "Move the handbag onto the bed.",
+  "reason": "Handbag on armchair, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:506296": {
+  "prompt": "Move the cat from the chair onto the dining table.",
+  "reason": "cat on chair, table has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:506582": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on windowsill, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:508568": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "keyboard too dark, chair seat hidden",
+  "verdict": "no"
+ },
+ "coco_train2017:509210": {
+  "prompt": "Move the potted plant onto the dining table.",
+  "reason": "table fully covered with clutter",
+  "verdict": "no"
+ },
+ "coco_train2017:509497": {
+  "prompt": "Move the umbrella onto the bench.",
+  "reason": "umbrella held by walking person",
+  "verdict": "no"
+ },
+ "coco_train2017:510820": {
+  "prompt": "Move the book from the dining table onto the chair.",
+  "reason": "green box tissues, not a book",
+  "verdict": "no"
+ },
+ "coco_train2017:511024": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant on mantel, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:512276": {
+  "prompt": "Move the handbag onto the couch.",
+  "reason": "green box is wall decoration, not handbag",
+  "verdict": "no"
+ },
+ "coco_train2017:512854": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "green box cut off, plant not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:513219": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "plant on mantel, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:513850": {
+  "prompt": "Move the dog onto the couch.",
+  "reason": "only couch arm visible, no seat",
+  "verdict": "no"
+ },
+ "coco_train2017:514773": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "small plant on shelf, chair seat usable",
+  "verdict": "yes"
+ },
+ "coco_train2017:515210": {
+  "prompt": "Move the bowl onto the dining table.",
+  "reason": "object unclear, not a visible bowl",
+  "verdict": "no"
+ },
+ "coco_train2017:515754": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "dark scene; couch barely visible",
+  "verdict": "no"
+ },
+ "coco_train2017:515803": {
+  "prompt": "Move the laptop onto the bed.",
+  "reason": "laptop on desk; bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:517521": {
+  "prompt": "Move the dog onto the chair.",
+  "reason": "dog on floor; armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:517878": {
+  "prompt": "Move the laptop from the couch onto the chair.",
+  "reason": "Laptop visible, sling chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:522782": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Keyboard on desk, office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:523096": {
+  "prompt": "Move the laptop onto the bed.",
+  "reason": "Bed barely visible in dark corner",
+  "verdict": "no"
+ },
+ "coco_train2017:525807": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Keyboard by monitor, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:526414": {
+  "prompt": "Move the cat onto the couch.",
+  "reason": "Cat not discernible in dark green box",
+  "verdict": "no"
+ },
+ "coco_train2017:528782": {
+  "prompt": "Move the handbag from the couch onto the bed.",
+  "reason": "Handbag on armchair; bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:530002": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "Chair all dark, seat not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:534173": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "Chair occupied by person; plant tiny",
+  "verdict": "no"
+ },
+ "coco_train2017:540012": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "plant unclear; armchair seat hidden from back",
+  "verdict": "no"
+ },
+ "coco_train2017:541367": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "CGI scene; chair occupied by figure",
+  "verdict": "no"
+ },
+ "coco_train2017:541464": {
+  "prompt": "Move the suitcase from the bed onto the chair.",
+  "reason": "green box not a suitcase; chair seat hidden",
+  "verdict": "no"
+ },
+ "coco_train2017:542431": {
+  "prompt": "Move the dog onto the couch.",
+  "reason": "dog on rug, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:542509": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Chair seen from back, seat not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:542685": {
+  "prompt": "Move the potted plant onto the bed.",
+  "reason": "Plant on counter, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:542962": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Plant tiny, couch cluttered with toys",
+  "verdict": "no"
+ },
+ "coco_train2017:544451": {
+  "prompt": "Move the bottle onto the chair.",
+  "reason": "Chair back only, seat not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:545071": {
+  "prompt": "Move the scissors onto the chair.",
+  "reason": "chair seat not visible, only legs",
+  "verdict": "no"
+ },
+ "coco_train2017:546569": {
+  "prompt": "Move the vase onto the bed.",
+  "reason": "vase on cabinet, bed free",
+  "verdict": "yes"
+ },
+ "coco_train2017:548698": {
+  "prompt": "Move the suitcase onto the bed.",
+  "reason": "trunk on floor, bed has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:548946": {
+  "prompt": "Move the dog onto the couch.",
+  "reason": "dog on floor, couch free",
+  "verdict": "yes"
+ },
+ "coco_train2017:549729": {
+  "prompt": "Move the potted plant onto the dining table.",
+  "reason": "plant on stand, table top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:5522": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "couch mostly hidden behind large plant",
+  "verdict": "no"
+ },
+ "coco_train2017:554920": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "keyboard on desk, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:554982": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "green box object unclear, not a plant",
+  "verdict": "no"
+ },
+ "coco_train2017:555905": {
+  "prompt": "Move the handbag from the bed onto the chair.",
+  "reason": "bag on bed, chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:556775": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:557174": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "green box object unclear, not clearly potted",
+  "verdict": "no"
+ },
+ "coco_train2017:557589": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant tiny and blurry behind lamp",
+  "verdict": "no"
+ },
+ "coco_train2017:559277": {
+  "prompt": "Move the dog from the couch onto the chair.",
+  "reason": "dog on couch, chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:560088": {
+  "prompt": "Move the cat onto the chair.",
+  "reason": "cat on desk; chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:563342": {
+  "prompt": "Move the cat onto the bench.",
+  "reason": "cat beside bench; seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:564099": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "chair barely visible dark sliver",
+  "verdict": "no"
+ },
+ "coco_train2017:566583": {
+  "prompt": "Move the laptop onto the couch.",
+  "reason": "laptop on coffee table; couch seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:567657": {
+  "prompt": "Move the suitcase onto the chair.",
+  "reason": "Green box is a storage box, not suitcase",
+  "verdict": "no"
+ },
+ "coco_train2017:568111": {
+  "prompt": "Move the teddy bear onto the bed.",
+  "reason": "Teddy on shelf, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:568925": {
+  "prompt": "Move the bowl onto the bench.",
+  "reason": "Bowl tiny and unclear",
+  "verdict": "no"
+ },
+ "coco_train2017:569602": {
+  "prompt": "Move the laptop from the couch onto the dining table.",
+  "reason": "Laptop on bed, coffee table has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:570066": {
+  "prompt": "Move the potted plant onto the dining table.",
+  "reason": "Plant on counter; dining table top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:571550": {
+  "prompt": "Move the vase from the dining table onto the couch.",
+  "reason": "Only couch back visible, no free seat",
+  "verdict": "no"
+ },
+ "coco_train2017:572734": {
+  "prompt": "Move the backpack from the bed onto the chair.",
+  "reason": "Chair covered by jacket; bag not backpack",
+  "verdict": "no"
+ },
+ "coco_train2017:572814": {
+  "prompt": "Move the potted plant onto the dining table.",
+  "reason": "Blue box is kitchen countertop, not dining table",
+  "verdict": "no"
+ },
+ "coco_train2017:573341": {
+  "prompt": "Move the handbag onto the chair.",
+  "reason": "chair covered by jacket, seat hidden",
+  "verdict": "no"
+ },
+ "coco_train2017:573997": {
+  "prompt": "Move the cup onto the bed.",
+  "reason": "cup tiny; top bunk hard to reach",
+  "verdict": "no"
+ },
+ "coco_train2017:57403": {
+  "prompt": "Move the bottle onto the chair.",
+  "reason": "chair barely visible dark back only",
+  "verdict": "no"
+ },
+ "coco_train2017:57708": {
+  "prompt": "Move the dog onto the couch.",
+  "reason": "dog is outside behind glass door",
+  "verdict": "no"
+ },
+ "coco_train2017:578107": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on desk, kneeling chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:578343": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "keyboard on desk, office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:578972": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Keyboard on tray, empty chair seat",
+  "verdict": "yes"
+ },
+ "coco_train2017:580822": {
+  "prompt": "Move the dog from the bed onto the bench.",
+  "reason": "Bench barely visible at edge",
+  "verdict": "no"
+ },
+ "coco_train2017:58851": {
+  "prompt": "Move the backpack onto the bench.",
+  "reason": "green box not a clear backpack",
+  "verdict": "no"
+ },
+ "coco_train2017:60040": {
+  "prompt": "Move the donut from the dining table onto the chair.",
+  "reason": "chair back only, blurry, no seat visible",
+  "verdict": "no"
+ },
+ "coco_train2017:60167": {
+  "prompt": "Move the orange onto the couch.",
+  "reason": "Box is bowl of oranges; couch seat not visible",
+  "verdict": "no"
+ },
+ "coco_train2017:62261": {
+  "prompt": "Move the remote onto the chair.",
+  "reason": "Blue box shows no identifiable chair seat",
+  "verdict": "no"
+ },
+ "coco_train2017:66516": {
+  "prompt": "Move the cup onto the couch.",
+  "reason": "Cup unrecognizable; couch only partial armrest",
+  "verdict": "no"
+ },
+ "coco_train2017:67116": {
+  "prompt": "Move the bowl from the dining table onto the couch.",
+  "reason": "Bowl on table, chaise couch free",
+  "verdict": "yes"
+ },
+ "coco_train2017:6720": {
+  "prompt": "Move the teddy bear onto the dining table.",
+  "reason": "teddy bear not clearly identifiable in clutter",
+  "verdict": "no"
+ },
+ "coco_train2017:67470": {
+  "prompt": "Move the suitcase onto the dining table.",
+  "reason": "Suitcase is pannier bag attached to bicycle",
+  "verdict": "no"
+ },
+ "coco_train2017:68162": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "Flower vase on counter; armchair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:69214": {
+  "prompt": "Move the bottle onto the bed.",
+  "reason": "Bottle tiny and cropped at frame edge",
+  "verdict": "no"
+ },
+ "coco_train2017:71264": {
+  "prompt": "Move the dog onto the couch.",
+  "reason": "Couch cropped and covered with blankets",
+  "verdict": "no"
+ },
+ "coco_train2017:72120": {
+  "prompt": "Move the vase onto the chair.",
+  "reason": "large garden urn sculpture; support is built-in bench",
+  "verdict": "no"
+ },
+ "coco_train2017:73494": {
+  "prompt": "Move the keyboard onto the couch.",
+  "reason": "blue box mostly desk, couch barely visible",
+  "verdict": "no"
+ },
+ "coco_train2017:73973": {
+  "prompt": "Move the bowl onto the couch.",
+  "reason": "bowl on coffee table, couch seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:74458": {
+  "prompt": "Move the remote onto the bed.",
+  "reason": "remote on ottoman, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:74894": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Keyboard on tray, empty chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_train2017:75285": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "Closed laptop on desk, empty office chair",
+  "verdict": "yes"
+ },
+ "coco_train2017:76846": {
+  "prompt": "Move the handbag from the dining table onto the couch.",
+  "reason": "Handbag on table, couch seat available",
+  "verdict": "yes"
+ },
+ "coco_train2017:7762": {
+  "prompt": "Move the book onto the couch.",
+  "reason": "boxed items look like mantel pictures, not book",
+  "verdict": "no"
+ },
+ "coco_train2017:78253": {
+  "prompt": "Move the teddy bear from the bed onto the chair.",
+  "reason": "Teddy bear on bed, chair seat available",
+  "verdict": "yes"
+ },
+ "coco_train2017:80065": {
+  "prompt": "Move the laptop from the chair onto the couch.",
+  "reason": "laptop on desk, couch free",
+  "verdict": "yes"
+ },
+ "coco_train2017:81239": {
+  "prompt": "Move the bowl onto the couch.",
+  "reason": "couch seat not visible, only backrest behind glasses",
+  "verdict": "no"
+ },
+ "coco_train2017:82198": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "flowers on ledge, couch has free seat",
+  "verdict": "yes"
+ },
+ "coco_train2017:83368": {
+  "prompt": "Move the book onto the couch.",
+  "reason": "book on coffee table, couch has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:83462": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "keyboard, office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:84648": {
+  "prompt": "Move the laptop onto the bed.",
+  "reason": "laptop on chair, bed top free",
+  "verdict": "yes"
+ },
+ "coco_train2017:85856": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant on side table, empty couch",
+  "verdict": "yes"
+ },
+ "coco_train2017:87334": {
+  "prompt": "Move the cat from the couch onto the chair.",
+  "reason": "cat on couch, armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:87574": {
+  "prompt": "Move the vase onto the dining table.",
+  "reason": "vase already on the table",
+  "verdict": "no"
+ },
+ "coco_train2017:88244": {
+  "prompt": "Move the potted plant onto the chair.",
+  "reason": "green box shows no potted plant",
+  "verdict": "no"
+ },
+ "coco_train2017:88647": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "laptop on coffee table, armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_train2017:9113": {
+  "prompt": "Move the potted plant from the dining table onto the couch.",
+  "reason": "Green box is a tree outside window",
+  "verdict": "no"
+ },
+ "coco_train2017:9119": {
+  "prompt": "Move the laptop from the chair onto the couch.",
+  "reason": "Laptop on desk, futon couch has space",
+  "verdict": "yes"
+ },
+ "coco_train2017:91374": {
+  "prompt": "Move the book onto the couch.",
+  "reason": "couch seat mostly out of frame",
+  "verdict": "no"
+ },
+ "coco_train2017:92331": {
+  "prompt": "Move the backpack onto the chair.",
+  "reason": "backpack is a mirror reflection",
+  "verdict": "no"
+ },
+ "coco_train2017:99108": {
+  "prompt": "Move the cat onto the couch.",
+  "reason": "cat too dark to see",
+  "verdict": "no"
+ },
+ "coco_train2017:99222": {
+  "prompt": "Move the banana from the dining table onto the couch.",
+  "reason": "bananas clear; futon seat available",
+  "verdict": "yes"
+ },
+ "coco_train2017:99817": {
+  "prompt": "Move the backpack onto the couch.",
+  "reason": "backpack tiny and unclear in background",
+  "verdict": "no"
+ },
+ "coco_val2017:135872": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "Laptop on desk, office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_val2017:147415": {
+  "prompt": "Move the remote onto the chair.",
+  "reason": "Remote tiny/dark; chair mostly occluded by laptop",
+  "verdict": "no"
+ },
+ "coco_val2017:159458": {
+  "prompt": "Move the dog from the bed onto the chair.",
+  "reason": "Dog on bed, wooden chair seat visible",
+  "verdict": "yes"
+ },
+ "coco_val2017:182162": {
+  "prompt": "Move the suitcase onto the couch.",
+  "reason": "Bag on floor, couch has free seat",
+  "verdict": "yes"
+ },
+ "coco_val2017:190236": {
+  "prompt": "Move the laptop onto the chair.",
+  "reason": "Laptop on desk; office chair seat free",
+  "verdict": "yes"
+ },
+ "coco_val2017:231831": {
+  "prompt": "Move the remote onto the chair.",
+  "reason": "Blue box is cluttered shelf/stool, not a clear chair",
+  "verdict": "no"
+ },
+ "coco_val2017:27620": {
+  "prompt": "Move the bottle onto the chair.",
+  "reason": "clear bottle on desk; chair seat free",
+  "verdict": "yes"
+ },
+ "coco_val2017:29596": {
+  "prompt": "Move the potted plant onto the couch.",
+  "reason": "plant is inside a framed painting",
+  "verdict": "no"
+ },
+ "coco_val2017:363461": {
+  "prompt": "Move the keyboard onto the chair.",
+  "reason": "Keyboard on desk; armchair seat visible and free",
+  "verdict": "yes"
+ },
+ "coco_val2017:367569": {
+  "prompt": "Move the book onto the couch.",
+  "reason": "Book is sheet music on piano; blue box mostly coffee table",
+  "verdict": "no"
+ },
+ "coco_val2017:37740": {
+  "prompt": "Move the laptop onto the couch.",
+  "reason": "couch barely visible, only arm corner",
+  "verdict": "no"
+ },
+ "coco_val2017:379441": {
+  "prompt": "Move the laptop from the bench onto the couch.",
+  "reason": "laptop on bench, couch seat partly free",
+  "verdict": "yes"
+ },
+ "coco_val2017:384651": {
+  "prompt": "Move the cup onto the bed.",
+  "reason": "green box unclear, not recognizably a cup",
+  "verdict": "no"
+ },
+ "coco_val2017:385997": {
+  "prompt": "Move the dog from the bed onto the chair.",
+  "reason": "dog in pet bed, rocking chair seat free",
+  "verdict": "yes"
+ },
+ "coco_val2017:415716": {
+  "prompt": "Move the vase onto the couch.",
+  "reason": "couch barely visible, no seat shown",
+  "verdict": "no"
+ },
+ "coco_val2017:425361": {
+  "prompt": "Move the pizza onto the chair.",
+  "reason": "Chair occupied by seated man",
+  "verdict": "no"
+ },
+ "coco_val2017:435208": {
+  "prompt": "Move the laptop from the chair onto the dining table.",
+  "reason": "Green box is a screen, laptop unclear and tiny",
+  "verdict": "no"
+ },
+ "coco_val2017:472046": {
+  "prompt": "Move the vase onto the couch.",
+  "reason": "Green box object unclear, not a clear vase",
+  "verdict": "no"
+ },
+ "coco_val2017:512476": {
+  "prompt": "Move the bowl onto the couch.",
+  "reason": "Blue box is blurry car seat, not a couch",
+  "verdict": "no"
+ },
+ "coco_val2017:520531": {
+  "prompt": "Move the teddy bear onto the chair.",
+  "reason": "object tiny and unclear on dresser top",
+  "verdict": "no"
+ },
+ "coco_val2017:532761": {
+  "prompt": "Move the potted plant from the couch onto the chair.",
+  "reason": "plant on side table, armchair seat free",
+  "verdict": "yes"
+ },
+ "coco_val2017:543581": {
+  "prompt": "Move the cat onto the couch.",
+  "reason": "cat on floor, couch has free seat",
+  "verdict": "yes"
+ },
+ "coco_val2017:571313": {
+  "prompt": "Move the keyboard onto the bed.",
+  "reason": "keyboard on desk, bed top visible and free",
+  "verdict": "yes"
+ },
+ "coco_val2017:580410": {
+  "prompt": "Move the handbag onto the couch.",
+  "reason": "bag on floor, couch has free seat",
+  "verdict": "yes"
+ },
+ "coco_val2017:81061": {
+  "prompt": "Move the suitcase onto the couch.",
+  "reason": "suitcase on ground; couch seat free",
+  "verdict": "yes"
+ }
+}

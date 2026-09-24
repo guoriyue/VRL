@@ -21,9 +21,14 @@ category, >= 8% of the frame, and the object is not already resting on it (its
 bottom centre is >= 8% of the frame away from the support's box); an
 object-sized spot on the support -- its bottom edge 40% of the way down the
 support's box, where a table top or seat is -- is free of every other
-annotated thing, people included. Plausibility beyond boxes (is that a seat
-or a backrest?) is not decidable from annotations; a VLM check filters rows
-afterwards (SPRINT_qwen21_object_move_edit_rl section 14).
+annotated thing, people included. Plausibility beyond boxes is not decidable
+from annotations -- COCO labels a painting of a plant "potted plant" and a
+person's back "chair" -- so every COCO row is reviewed on its source image
+with both boxes drawn (Claude Opus reviewers, 2026-09-23; 20/23 agreement with
+a second reviewer on val2017), and ``manifests/object_move/coco_review.json`` records
+the verdicts; rows without a verdict stop the build, rows marked "no" are
+dropped. COCO val2017 alone yields too few rows for a held-out set, so reviewed
+train2017 rows are split off by image as well.
 
 Binary images are written under ``data/external/object_move`` (or
 ``VRL_DATA_ROOT``); manifests hold paths relative to that root.
@@ -171,7 +176,7 @@ def landing_spot(
     return None
 
 
-def coco_rows(annotations: Path, split: str, out: Path, limit: int, skip: set[int]) -> list[dict]:
+def coco_rows(annotations: Path, split: str, out: Path, limit: int) -> list[dict]:
     """Square-cropped, placement-checked COCO rows (one per image)."""
 
     data = json.loads(annotations.read_text())
@@ -185,8 +190,6 @@ def coco_rows(annotations: Path, split: str, out: Path, limit: int, skip: set[in
     for image_id in sorted(by_image):
         if len(rows) >= limit:
             break
-        if image_id in skip:
-            continue
         info = images[image_id]
         row = _coco_row(info, by_image[image_id], cats, split, out)
         if row is not None:
@@ -387,20 +390,31 @@ def _write(path: Path, rows: Sequence[dict]) -> None:
     path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
 
 
+def reviewed(rows: Sequence[dict], review: dict[str, dict]) -> list[dict]:
+    """Rows whose recorded verdict is "yes"; a row nobody reviewed is an error."""
+
+    def key(row: dict) -> str:
+        return f"{row['metadata']['source']}:{row['metadata']['coco_image_id']}"
+
+    missing = [key(row) for row in rows if key(row) not in review]
+    if missing:
+        raise ValueError(f"{len(missing)} COCO rows have no review verdict, e.g. {missing[:3]}")
+    return [row for row in rows if review[key(row)]["verdict"] == "yes"]
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--coco-train-annotations", type=Path, required=True)
     parser.add_argument("--coco-val-annotations", type=Path, required=True)
-    parser.add_argument("--coco-train", type=int, default=600)
-    parser.add_argument("--coco-heldout", type=int, default=48)
+    parser.add_argument("--coco-train", type=int, default=1200)
+    parser.add_argument("--coco-val", type=int, default=120)
     parser.add_argument(
-        "--coco-heldout-skip",
+        "--coco-heldout-from-train",
         type=int,
-        nargs="*",
-        default=[],
-        help="COCO val image ids already used by the reward gate",
+        default=48,
+        help="reviewed train2017 rows moved to the held-out set",
     )
-    parser.add_argument("--spatialedit-shards", type=int, default=10)
+    parser.add_argument("--spatialedit-shards", type=int, default=14)
     parser.add_argument("--bench", type=int, default=64)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--data-root", type=Path, default=None)
@@ -408,22 +422,27 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     root = (args.data_root or default_data_root()) / "object_move"
     manifests = repo_root() / "manifests" / "object_move"
-    train = coco_rows(
-        args.coco_train_annotations,
-        "train2017",
-        root / "coco_onto_train2017",
-        args.coco_train,
-        set(),
+    review = json.loads((manifests / "coco_review.json").read_text())
+    coco_train = reviewed(
+        coco_rows(
+            args.coco_train_annotations,
+            "train2017",
+            root / "coco_onto_train2017",
+            args.coco_train,
+        ),
+        review,
     )
-    train += spatialedit_rows(range(args.spatialedit_shards), root / "spatialedit_500k")
+    coco_val = reviewed(
+        coco_rows(args.coco_val_annotations, "val2017", root / "coco_onto_val2017", args.coco_val),
+        review,
+    )
+    random.Random(args.seed).shuffle(coco_train)
+    split = args.coco_heldout_from_train
+    heldout_coco = coco_val + coco_train[:split]
+    train = coco_train[split:] + spatialedit_rows(
+        range(args.spatialedit_shards), root / "spatialedit_500k"
+    )
     random.Random(args.seed).shuffle(train)
-    heldout_coco = coco_rows(
-        args.coco_val_annotations,
-        "val2017",
-        root / "coco_onto_val2017",
-        args.coco_heldout,
-        set(args.coco_heldout_skip),
-    )
     heldout_bench = bench_rows(root / "spatialedit_bench", args.bench)
     _write(manifests / "train.jsonl", train)
     _write(manifests / "heldout_coco.jsonl", heldout_coco)
