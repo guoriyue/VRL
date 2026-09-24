@@ -339,8 +339,8 @@ class ParkingSession:
     Failures are typed and carry no policy: :class:`ParkingBroken` when a move
     and its rollback both failed, :class:`CumemBroken` when a pool operation
     failed midway. Any other error propagates unchanged and leaves the session
-    retryable (a failed move was rolled back, a failed pool sleep changed no
-    state).
+    retryable (for example, a failed move was rolled back). A failed pool
+    sleep is always CumemBroken because the allocator has no rollback.
     """
 
     def __init__(

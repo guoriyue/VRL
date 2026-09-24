@@ -179,7 +179,7 @@ class TestOnlineTrainerResumeState:
 
         class _SpyStrategy:
             def __init__(self, name: str) -> None:
-                self.context = SimpleNamespace(strategy=name)
+                self.context = SimpleNamespace(strategy=name, rank=0)
                 self.prepared = False
                 self._delegate = SingleProcessStrategy()
 

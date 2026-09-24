@@ -19,6 +19,25 @@ from vrl.rollouts.evaluators.base import Evaluator
 class TestAdvantageAndMetrics:
     """Groups tests for advantage and metrics."""
 
+    def test_admission_audit_failure_prevents_backward_on_local_and_peer_rank(self, monkeypatch):
+        import asyncio
+
+        trainer = self._make_cea_trainer([0.1, 0.9])
+
+        def disk_failure(*args, **kwargs):
+            raise OSError("audit volume full")
+
+        monkeypatch.setattr(trainer.admission_ledger, "record", disk_failure)
+        with pytest.raises(OSError, match="audit volume full"):
+            asyncio.run(trainer.step(["prompt"]))
+        assert trainer.algorithm.loss_calls == 0
+
+        peer = self._make_cea_trainer([0.1, 0.9])
+        monkeypatch.setattr(peer._strategy.collectives, "all_true", lambda value: False)
+        with pytest.raises(RuntimeError, match="another training rank"):
+            asyncio.run(peer.step(["prompt"]))
+        assert peer.algorithm.loss_calls == 0
+
     def _make_cea_trainer(
         self,
         rewards: list[float],
@@ -349,7 +368,7 @@ class TestAdvantageAndMetrics:
                     GenerationSampleRow(
                         prompt_index=index // group_size,
                         sample_index=index % group_size,
-                        prompt=prompts[index // group_size],
+                        prompt=request.inputs[index // group_size].prompt,
                         sample_id=f"sample-{index}",
                     )
                     for index in range(len(prompts) * group_size)

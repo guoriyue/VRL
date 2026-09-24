@@ -52,6 +52,15 @@ def atomic_file(
             temporary.unlink(missing_ok=True)
 
 
+def fsync_directory(path: str | Path) -> None:
+    """Flush published directory entries on filesystems supporting directory fsync."""
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def sha256_file(path: str | Path) -> str:
     """Canonical SHA-256 hex digest of one file's bytes.
 

@@ -22,7 +22,7 @@ from vrl.trainers.weight_sync import (
     require_trainable_modules,
     to_cpu_snapshot,
 )
-from vrl.utils.artifacts import sha256_file
+from vrl.utils.artifacts import atomic_file, fsync_directory, sha256_file
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
@@ -331,6 +331,14 @@ class TrainingCheckpoint:
         checkpoint_dir = checkpoint_path.parent
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"training checkpoint file not found: {checkpoint_path}")
+        meta = read_checkpoint_meta(checkpoint_dir)
+        expected_digest = meta.get("checkpoint_file_sha256")
+        if "checkpoint_file_sha256" in meta and (
+            not isinstance(expected_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None
+            or sha256_file(checkpoint_path) != expected_digest
+        ):
+            raise ValueError("checkpoint payload integrity mismatch")
         payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         if not isinstance(payload, dict):
             raise TypeError(f"{checkpoint_path} must contain a dict payload")
@@ -339,7 +347,6 @@ class TrainingCheckpoint:
             source="checkpoint payload",
         )
         TrainingCheckpoint._validate_payload(payload, schema_version=schema_version)
-        meta = read_checkpoint_meta(checkpoint_dir)
         TrainingCheckpoint._validate_meta_matches_payload(
             meta,
             payload=payload,
@@ -935,6 +942,7 @@ class _CheckpointSaveTransaction:
                 for name in adapter_sources
             ),
             checkpoint_file_bytes=checkpoint_file.stat().st_size,
+            checkpoint_file_sha256=sha256_file(checkpoint_file),
         )
         self._publish()
         return meta
@@ -948,14 +956,17 @@ class _CheckpointSaveTransaction:
         discovery ignores ``*.tmp-*`` so no reader can observe a partial state.
         """
 
+        # Persist payload, metadata, adapter exports and their directory entries
+        # before making the complete tree discoverable. Parent fsync follows rename.
+        for directory, _, filenames in os.walk(self.staging, topdown=False):
+            for filename in filenames:
+                with (Path(directory) / filename).open("rb") as handle:
+                    os.fsync(handle.fileno())
+            fsync_directory(directory)
         if self.final_path.exists():
             shutil.rmtree(self.final_path)
         os.replace(self.staging, self.final_path)
-        directory_fd = os.open(self.final_path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        fsync_directory(self.final_path.parent)
 
 
 def save_training_checkpoint(
@@ -1706,6 +1717,7 @@ def write_checkpoint_meta(
     progress: dict[str, Any],
     uses_lora: bool,
     checkpoint_file_bytes: int | None = None,
+    checkpoint_file_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Write human-readable checkpoint metadata next to ``checkpoint.pt``.
 
@@ -1713,6 +1725,8 @@ def write_checkpoint_meta(
     so completeness checks (supervisor resume discovery) can reject truncated
     copies without loading the payload. ``model_identity`` is a provenance-only
     copy for cheap pre-model preflight; ``checkpoint.pt`` remains authoritative.
+    New saves also bind its SHA-256; load verifies that digest before deserializing.
+    Legacy sidecars without a digest keep their existing compatibility contract.
     """
 
     TrainingCheckpoint._validate_family(family, field="family")
@@ -1728,6 +1742,13 @@ def write_checkpoint_meta(
         ),
         "uses_lora": bool(uses_lora),
     }
+    if checkpoint_file_sha256 is not None:
+        if (
+            not isinstance(checkpoint_file_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", checkpoint_file_sha256) is None
+        ):
+            raise ValueError("checkpoint_file_sha256 must be a lowercase SHA-256 digest")
+        meta["checkpoint_file_sha256"] = checkpoint_file_sha256
     # Mirror explicit progress without converting optimizer steps into epochs.
     for name in ("completed_epoch", "next_epoch", "completed_step", "next_step", "global_step"):
         if name in progress:
@@ -1739,7 +1760,9 @@ def write_checkpoint_meta(
         meta["trainer_step"] = trainer_state["step"]
     path = Path(checkpoint_dir)
     path.mkdir(parents=True, exist_ok=True)
-    (path / CHECKPOINT_META_NAME).write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
+    with atomic_file(path / CHECKPOINT_META_NAME) as handle:
+        json.dump(meta, handle, indent=2, sort_keys=True)
+        handle.write("\n")
     return meta
 
 
@@ -1748,7 +1771,8 @@ def is_complete_checkpoint(checkpoint_dir: str | Path) -> bool:
 
     Complete means: not a staging leftover, meta present, ``checkpoint.pt``
     present, and (when recorded) the published byte size matches. This is the
-    supervisor's trust boundary — anything else is treated as absent.
+    supervisor's structural discovery boundary — anything else is treated as
+    absent. Payload digests are checked by load, not by scanning every saved step.
     """
 
     path = Path(checkpoint_dir)

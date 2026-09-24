@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 import torch.nn as nn
 
-from vrl.algorithms.advantages import all_reduce_sufficient_stats, nonzero_advantage_mask
+from vrl.algorithms.advantages import all_reduce_sufficient_stats
 from vrl.algorithms.base import Algorithm, ComponentAdvantageAlgorithm
 from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
@@ -32,6 +32,7 @@ from vrl.models.precision import (
     float32_precision_state,
     model_precision,
 )
+from vrl.rollouts.admission import AdmissionLedger, select_advantage_rows
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.orchestration import build_rollout_schedule
@@ -553,6 +554,9 @@ class OnlineTrainer:
         # default keeps current single-GPU behavior; FSDP2 swaps this in later
         # without the trainer loop changing. See vrl/trainers/strategy.py.
         self._strategy: Strategy = strategy or SingleProcessStrategy()
+        self.admission_ledger = AdmissionLedger(
+            self.config.output_dir, rank=self._strategy.context.rank
+        )
         if self._strategy.context.strategy != "single_process" and any(
             parameter.requires_grad and parameter.dtype == torch.float16
             for parameter in self.model.parameters()
@@ -1067,22 +1071,26 @@ class OnlineTrainer:
         # accumulation (prompts_per_collection>0) splits the optimizer
         # target into prompt microbatches in the recipe loop, so the collector
         # no longer rebatches internally; advantage stays per-group either way.
-        filtered_batches: list[RolloutBatch] = []
-        filtered_advs: list[torch.Tensor] = []
-        if cfg.drop_zero_advantage:
-            for b, adv_b in zip(all_batches, adv_split, strict=True):
-                mask = nonzero_advantage_mask(adv_b)
-                if not bool(mask.any()):
-                    continue
-                if not bool(mask.all()):
-                    b = b.select(mask)
-                    adv_b = adv_b[mask.to(adv_b.device)]
-                if b.rewards.shape[0] > 0:
-                    filtered_batches.append(b)
-                    filtered_advs.append(adv_b)
-        else:
-            filtered_batches = list(all_batches)
-            filtered_advs = adv_split
+        admission_error = None
+        try:
+            filtered_batches, filtered_advs, decisions = select_advantage_rows(
+                all_batches,
+                adv_split,
+                drop_zero_advantage=cfg.drop_zero_advantage,
+            )
+            self.admission_ledger.record(
+                decisions,
+                trainer_step=int(self.state.step),
+                global_step=int(self.state.global_step),
+            )
+        except Exception as error:
+            admission_error = error
+        # A rank-local disk or audit failure must not strand peers in backward.
+        admission_succeeded = self._strategy.collectives.all_true(admission_error is None)
+        if admission_error is not None:
+            raise admission_error
+        if not admission_succeeded:
+            raise RuntimeError("rollout admission or audit failed on another training rank")
 
         return TrainingBatch(
             iteration=iteration,
@@ -1593,6 +1601,148 @@ class OnlineTrainer:
         )
         return metrics
 
+    def _first_step_parity_probe(
+        self,
+        microbatch: _TrainingMicrobatch,
+        *,
+        timestep_index: int,
+        defer_replay_tensors: bool,
+    ) -> dict[str, Any] | None:
+        """Collect bounded first-step evidence; the full-update gate owns enforcement.
+
+        Log-prob algorithms compare the first selected replay transition. Algorithms
+        without likelihoods can supply their own optional invariant instead.
+        """
+        from vrl.utils.profiling import profile_range
+
+        cfg = self.config
+        if not cfg.debug.first_step or self.state.step != 0:
+            return None
+        precision_metadata = self._precision_metadata()
+        record = None
+        if self.algorithm.uses_evaluator:
+            replay_batch = microbatch.batch.to_device(
+                self.device,
+                defer_replay_tensors=defer_replay_tensors,
+            )
+            with torch.no_grad():
+                signals = self._evaluate_signals(replay_batch, timestep_index)
+            fresh_log_prob = signals.primary.log_prob
+            old_log_prob = signals.primary.old_log_prob
+            difference = (fresh_log_prob - old_log_prob).abs()
+            ratio = torch.exp(fresh_log_prob - old_log_prob)
+            old_first = old_log_prob.reshape(-1)[0]
+            fresh_first = fresh_log_prob.reshape(-1)[0]
+            limit = float(cfg.replay_parity.max_abs_logprob_diff)
+            local_finite = bool(
+                torch.isfinite(old_log_prob).all().item()
+                and torch.isfinite(fresh_log_prob).all().item()
+                and torch.isfinite(difference).all().item()
+                and torch.isfinite(ratio).all().item()
+            )
+            local_max = float(difference.max().item())
+            finite, max_difference, passed = _distributed_parity_verdict(
+                local_finite=local_finite,
+                local_max_abs_diff=local_max,
+                limit=limit,
+                strategy=self._strategy,
+            )
+            logger.info(
+                "DEBUG first-step log-prob diff: mean=%.6f max=%.6f | "
+                "old_lp[0]=%.6f fresh_lp[0]=%.6f",
+                difference.mean().item(),
+                difference.max().item(),
+                old_first.item(),
+                fresh_first.item(),
+            )
+            record = {
+                "event": "first_step_logprob_parity",
+                "passed": passed,
+                "finite": finite,
+                "max_abs_diff": max_difference,
+                "local_finite": local_finite,
+                "local_max_abs_diff": local_max,
+                "max_abs_diff_limit": limit,
+                "trainer_step": int(self.state.step),
+                "global_step": int(self.state.global_step),
+                "device": str(self.device),
+                "precision_policy": precision_metadata,
+                "old_log_prob": tensor_stats(old_log_prob),
+                "fresh_log_prob": tensor_stats(fresh_log_prob),
+                "abs_diff": tensor_stats(difference),
+                "ratio": tensor_stats(ratio),
+                "driver_trainable_before_step": trainable_state_digest(self.model),
+                "driver_parameter_state_before_step": parameter_state_summary(self.model),
+                "rollout_context": {
+                    key: value
+                    for key, value in replay_batch.context.items()
+                    if key != "runtime_debug"
+                },
+                "runtime_debug": replay_batch.context.get("runtime_debug"),
+            }
+            # Persist a failing probe immediately: the mandatory full-update
+            # gate below owns enforcement, while this optional probe owns the
+            # tensor/provenance evidence needed to diagnose that failure.
+            if not passed and self._strategy.context.is_primary:
+                append_jsonl_record(
+                    f"{cfg.output_dir}/training_debug.jsonl",
+                    record,
+                )
+        else:
+            # Non-evaluator algorithms (NFT) compute no log-prob ratio, so the
+            # parity probe above is blind to them. Ask the algorithm for its
+            # own lr=0 invariant through the optional protocol method instead
+            # of hardcoding algorithm checks here.
+            invariant_check = getattr(self.algorithm, "first_step_invariant_check", None)
+            if callable(invariant_check):
+                replay_batch = microbatch.batch.to_device(
+                    self.device,
+                    defer_replay_tensors=defer_replay_tensors,
+                )
+                advantages = microbatch.advantages.to(self.device)
+                with (
+                    torch.no_grad(),
+                    profile_range("trainer.replay"),
+                ):
+                    invariant = invariant_check(
+                        model=self.model,
+                        batch=replay_batch,
+                        advantages=advantages,
+                        timestep_index=0,
+                    )
+                algorithm_name = type(self.algorithm).__name__
+                logger.info(
+                    "DEBUG first-step %s advantage-flip invariant: abs_diff=%.3e (threshold %.1e)",
+                    algorithm_name,
+                    invariant["abs_diff"],
+                    invariant["threshold"],
+                )
+                if not invariant.get("passed", True):
+                    logger.warning(
+                        "first-step %s advantage-flip invariant violated: abs_diff %.3e > %.1e. "
+                        "The collection-time training signal is untrustworthy; "
+                        "suspect replay-side conditioning/scheduler-domain drift.",
+                        algorithm_name,
+                        invariant["abs_diff"],
+                        invariant["threshold"],
+                    )
+                record = {
+                    "event": "first_step_invariant",
+                    "algorithm": algorithm_name,
+                    **invariant,
+                    "trainer_step": int(self.state.step),
+                    "global_step": int(self.state.global_step),
+                    "device": str(self.device),
+                    "precision_policy": precision_metadata,
+                    "rollout_context": {
+                        key: value
+                        for key, value in replay_batch.context.items()
+                        if key != "runtime_debug"
+                    },
+                }
+
+        return record
+
     async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
         """Train on a collected batch — the compute half of one step.
 
@@ -1600,7 +1750,6 @@ class OnlineTrainer:
         replay evaluation, backward, and the optimizer step are synchronous.
         """
         from vrl.algorithms.trajectory import AlgorithmAdapter
-        from vrl.utils.profiling import profile_range
 
         cfg = self.config
         optimizer = self._ensure_optimizer()
@@ -1673,133 +1822,16 @@ class OnlineTrainer:
 
         # Debug first step: compare old vs fresh log-probs on the first selected timestep
         # (using first filtered batch so memory footprint is bounded).
-        first_step_debug_record: dict[str, Any] | None = None
-        precision_metadata = self._precision_metadata()
         first_debug_batch = _TrainingMicrobatch.from_prompt_group(
             filtered_batches[0],
             filtered_advs[0],
             training_microbatch_size,
         )[0]
-        if cfg.debug.first_step and self.state.step == 0 and uses_evaluator:
-            _dbg_batch = first_debug_batch.batch.to_device(
-                self.device,
-                defer_replay_tensors=defer_replay_tensor_move,
-            )
-            with torch.no_grad():
-                _dbg_signals = self._evaluate_signals(_dbg_batch, train_indices[0])
-            _dbg_log_prob = _dbg_signals.primary.log_prob
-            _old_lp_0 = _dbg_signals.primary.old_log_prob
-            _diff = (_dbg_log_prob - _old_lp_0).abs()
-            _ratio = torch.exp(_dbg_log_prob - _old_lp_0)
-            _old_lp_first = _old_lp_0.reshape(-1)[0]
-            _fresh_lp_first = _dbg_log_prob.reshape(-1)[0]
-            _parity_limit = float(cfg.replay_parity.max_abs_logprob_diff)
-            _local_parity_finite = bool(
-                torch.isfinite(_old_lp_0).all().item()
-                and torch.isfinite(_dbg_log_prob).all().item()
-                and torch.isfinite(_diff).all().item()
-                and torch.isfinite(_ratio).all().item()
-            )
-            _local_parity_max = float(_diff.max().item())
-            _parity_finite, _parity_max, _parity_passed = _distributed_parity_verdict(
-                local_finite=_local_parity_finite,
-                local_max_abs_diff=_local_parity_max,
-                limit=_parity_limit,
-                strategy=self._strategy,
-            )
-            logger.info(
-                "DEBUG first-step log-prob diff: mean=%.6f max=%.6f | "
-                "old_lp[0]=%.6f fresh_lp[0]=%.6f",
-                _diff.mean().item(),
-                _diff.max().item(),
-                _old_lp_first.item(),
-                _fresh_lp_first.item(),
-            )
-            first_step_debug_record = {
-                "event": "first_step_logprob_parity",
-                "passed": _parity_passed,
-                "finite": _parity_finite,
-                "max_abs_diff": _parity_max,
-                "local_finite": _local_parity_finite,
-                "local_max_abs_diff": _local_parity_max,
-                "max_abs_diff_limit": _parity_limit,
-                "trainer_step": int(self.state.step),
-                "global_step": int(self.state.global_step),
-                "device": str(self.device),
-                "precision_policy": precision_metadata,
-                "old_log_prob": tensor_stats(_old_lp_0),
-                "fresh_log_prob": tensor_stats(_dbg_log_prob),
-                "abs_diff": tensor_stats(_diff),
-                "ratio": tensor_stats(_ratio),
-                "driver_trainable_before_step": trainable_state_digest(self.model),
-                "driver_parameter_state_before_step": parameter_state_summary(self.model),
-                "rollout_context": {
-                    key: value
-                    for key, value in _dbg_batch.context.items()
-                    if key != "runtime_debug"
-                },
-                "runtime_debug": _dbg_batch.context.get("runtime_debug"),
-            }
-            # Persist a failing probe immediately: the mandatory full-update
-            # gate below owns enforcement, while this optional probe owns the
-            # tensor/provenance evidence needed to diagnose that failure.
-            if not _parity_passed and self._strategy.context.is_primary:
-                append_jsonl_record(
-                    f"{cfg.output_dir}/training_debug.jsonl",
-                    first_step_debug_record,
-                )
-        elif cfg.debug.first_step and self.state.step == 0:
-            # Non-evaluator algorithms (NFT) compute no log-prob ratio, so the
-            # parity probe above is blind to them. Ask the algorithm for its
-            # own lr=0 invariant through the optional protocol method instead
-            # of hardcoding algorithm checks here.
-            _invariant_check = getattr(self.algorithm, "first_step_invariant_check", None)
-            if callable(_invariant_check):
-                _dbg_batch = first_debug_batch.batch.to_device(
-                    self.device,
-                    defer_replay_tensors=defer_replay_tensor_move,
-                )
-                _dbg_adv = first_debug_batch.advantages.to(self.device)
-                with (
-                    torch.no_grad(),
-                    profile_range("trainer.replay"),
-                ):
-                    _invariant = _invariant_check(
-                        model=self.model,
-                        batch=_dbg_batch,
-                        advantages=_dbg_adv,
-                        timestep_index=0,
-                    )
-                _algorithm_name = type(self.algorithm).__name__
-                logger.info(
-                    "DEBUG first-step %s advantage-flip invariant: abs_diff=%.3e (threshold %.1e)",
-                    _algorithm_name,
-                    _invariant["abs_diff"],
-                    _invariant["threshold"],
-                )
-                if not _invariant.get("passed", True):
-                    logger.warning(
-                        "first-step %s advantage-flip invariant violated: abs_diff %.3e > %.1e. "
-                        "The collection-time training signal is untrustworthy; "
-                        "suspect replay-side conditioning/scheduler-domain drift.",
-                        _algorithm_name,
-                        _invariant["abs_diff"],
-                        _invariant["threshold"],
-                    )
-                first_step_debug_record = {
-                    "event": "first_step_invariant",
-                    "algorithm": _algorithm_name,
-                    **_invariant,
-                    "trainer_step": int(self.state.step),
-                    "global_step": int(self.state.global_step),
-                    "device": str(self.device),
-                    "precision_policy": precision_metadata,
-                    "rollout_context": {
-                        key: value
-                        for key, value in _dbg_batch.context.items()
-                        if key != "runtime_debug"
-                    },
-                }
+        first_step_debug_record = self._first_step_parity_probe(
+            first_debug_batch,
+            timestep_index=train_indices[0],
+            defer_replay_tensors=defer_replay_tensor_move,
+        )
 
         guard_record = self._check_initial_precision_drift(first_debug_batch.batch, train_indices)
         if guard_record is not None and first_step_debug_record is not None:
