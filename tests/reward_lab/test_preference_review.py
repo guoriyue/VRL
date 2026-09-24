@@ -6,9 +6,9 @@ import json
 import pytest
 from PIL import Image
 
-from vrl.rewards.annotation import export_preference_review, import_preference_review
-from vrl.rewards.calibration import load_preferences
-from vrl.scripts.rewards.calibrate_scores import main
+from reward_lab.annotation import export_preference_review, import_preference_review
+from reward_lab.calibration import load_preferences
+from reward_lab.scripts.calibrate_scores import main
 from vrl.utils.artifacts import sha256_file
 
 

@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from vrl.rewards.calibration import PreferencePair, apply_combination, fit_combination
+from reward_lab.calibration import PreferencePair, apply_combination, fit_combination
 from vrl.utils.json_files import canonical_json_sha256
 
 

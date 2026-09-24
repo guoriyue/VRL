@@ -7,14 +7,15 @@ import asyncio
 import json
 from pathlib import Path
 
-from vrl.rewards.annotation import export_preference_review, import_preference_review
-from vrl.rewards.calibration import (
+from reward_lab.annotation import export_preference_review, import_preference_review
+from reward_lab.calibration import (
     apply_combination,
     evaluate_combination,
     fit_combination,
     load_preferences,
 )
-from vrl.rewards.diagnostics import join_evaluations, read_evaluation
+from reward_lab.diagnostics import join_evaluations
+from vrl.rewards.evaluation import read_evaluation
 from vrl.utils.artifacts import atomic_file
 from vrl.utils.json_files import write_json
 
@@ -83,9 +84,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "qualify":
         import yaml
 
+        from reward_lab.qualification import qualify_reward_deployment
         from vrl.config.builders import RewardRuntimeConfig
         from vrl.config.schema import RewardConfig
-        from vrl.rewards.deployment import qualify_reward_deployment
 
         if args.output.exists():
             raise FileExistsError("use a new output path for qualification")

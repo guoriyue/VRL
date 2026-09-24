@@ -6,8 +6,8 @@ import json
 import pytest
 from PIL import Image
 
-from vrl.rewards.diagnostics import compare_rankings, health_report, read_evaluation
-from vrl.rewards.evaluation import ScoringConfig, rescore_media
+from reward_lab.diagnostics import compare_rankings, health_report
+from vrl.rewards.evaluation import ScoringConfig, read_evaluation, rescore_media
 from vrl.utils.json_files import canonical_json_sha256
 
 

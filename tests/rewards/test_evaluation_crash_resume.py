@@ -11,8 +11,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from vrl.rewards.diagnostics import read_evaluation
-from vrl.rewards.evaluation import ScoringConfig, rescore_media
+from vrl.rewards.evaluation import ScoringConfig, read_evaluation, rescore_media
 
 
 @pytest.mark.asyncio

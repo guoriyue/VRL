@@ -4,8 +4,9 @@ import copy
 
 import pytest
 
+from reward_lab.calibration import apply_combination
 from vrl.rewards.base import RewardFunction
-from vrl.rewards.calibration import FrozenRewardCombination, apply_combination
+from vrl.rewards.calibration import FrozenRewardCombination
 from vrl.rewards.functions.registry import MultiReward
 from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.json_files import canonical_json_sha256

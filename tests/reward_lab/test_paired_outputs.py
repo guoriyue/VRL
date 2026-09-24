@@ -4,7 +4,7 @@ import copy
 
 import pytest
 
-from vrl.rewards.diagnostics import compare_paired_outputs
+from reward_lab.diagnostics import compare_paired_outputs
 
 
 def test_repeated_draws_are_grouped_and_failed_pairs_never_become_zero_scores():

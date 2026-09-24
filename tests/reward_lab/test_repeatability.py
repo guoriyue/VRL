@@ -5,7 +5,7 @@ import math
 
 import pytest
 
-from vrl.rewards.diagnostics import repeatability_report
+from reward_lab.diagnostics import repeatability_report
 
 
 def test_repeated_scores_distinguish_jitter_missingness_and_source_weights():

@@ -7,6 +7,4 @@ and small weight files loaded via ``importlib.resources``
 (``sac+logos+ava1-l14-linearMSE.pth`` for the aesthetic head; see the
 ``vrl.rewards.assets`` package-data entry in ``pyproject.toml``). Keeping the
 taxonomy here keeps model loaders free of large business-prompt constants.
-The standalone preference-review HTML belongs to the offline annotation boundary;
-it contains presentation behavior, not scoring logic or model prompt instructions.
 """

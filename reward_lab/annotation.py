@@ -14,7 +14,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
-from vrl.rewards.calibration import PreferencePair, validate_preferences
+from reward_lab.calibration import PreferencePair, validate_preferences
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import canonical_json_sha256, write_json
 
@@ -117,7 +117,7 @@ def export_preference_review(
         public = json.dumps(
             {"review_id": manifest["review_id"], "pairs": display}, ensure_ascii=True
         ).replace("<", "\\u003c")
-        template = files("vrl.rewards.assets").joinpath("preference_review.html").read_text()
+        template = files("reward_lab").joinpath("preference_review.html").read_text()
         (stage / "index.html").write_text(template.replace("__REVIEW_DATA__", public))
         stage.rename(output)
         return {"review_id": manifest["review_id"], "pairs": len(display), "output": str(output)}

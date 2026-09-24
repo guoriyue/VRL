@@ -4,8 +4,8 @@ import copy
 
 import pytest
 
-from vrl.rewards.calibration import PreferencePair, evaluate_combination, fit_combination
-from vrl.rewards.diagnostics import join_evaluations
+from reward_lab.calibration import PreferencePair, evaluate_combination, fit_combination
+from reward_lab.diagnostics import join_evaluations
 
 
 def test_join_binds_observations_and_supports_source_disjoint_holdout():

@@ -1,4 +1,4 @@
-"""Model-free reward health and paired ranking reports from persisted evidence."""
+"""Model-free reward health and paired ranking reports from persisted scoring runs."""
 
 from __future__ import annotations
 
@@ -10,59 +10,11 @@ import statistics
 from collections import Counter, defaultdict
 from collections.abc import Mapping
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
 
-from vrl.rewards.evaluation import evaluation_access
 from vrl.rewards.inference import RewardInferenceResult
 from vrl.utils.json_files import canonical_json_sha256
 from vrl.utils.score_statistics import bootstrap_mean_interval, distribution
-
-
-def read_evaluation(directory: Path) -> dict[str, Any]:
-    """Read an immutable scoring snapshot, retaining failures and missing rows.
-
-    Checks stored provenance and identities, without reopening potentially moved
-    media or loading any model. Hashes attest the recorded inputs, not score truth.
-    """
-    with evaluation_access(directory, writing=False):
-        provenance = json.loads((directory / "provenance.json").read_text())
-        run_id = provenance.pop("run_id")
-        if provenance.get("schema") != "vrl.reward-evaluation.v1":
-            raise ValueError("unsupported evaluation schema")
-        if canonical_json_sha256(provenance, allow_nan=False) != run_id:
-            raise ValueError("evaluation provenance digest mismatch")
-        inputs = provenance["inputs"]
-        identities = [row["sample_id"] for row in inputs]
-        if not inputs or len(set(identities)) != len(inputs):
-            raise ValueError("evaluation inputs must be non-empty and uniquely identified")
-        expected = {
-            f"{canonical_json_sha256(sample_id, allow_nan=False)}.json" for sample_id in identities
-        }
-        unexpected = {p.name for p in (directory / "samples").glob("*.json")} - expected
-        if unexpected:
-            raise ValueError(f"unexpected sample records: {sorted(unexpected)}")
-        records = {}
-        for item in inputs:
-            sample_id = item["sample_id"]
-            path = (
-                directory / "samples" / f"{canonical_json_sha256(sample_id, allow_nan=False)}.json"
-            )
-            if not path.exists():
-                records[sample_id] = {"input": item, "status": "missing"}
-                continue
-            record = json.loads(path.read_text())
-            if record.get("run_id") != run_id or record.get("input") != item:
-                raise ValueError(f"incompatible sample record: {sample_id}")
-            if record.get("status") == "success":
-                result = RewardInferenceResult(**record["result"])
-                if result.artifact_id != sample_id or not result.scores:
-                    raise ValueError(f"invalid result for {sample_id}")
-                record["result"] = asdict(result)
-            elif record.get("status") != "error" or not isinstance(record.get("error"), dict):
-                raise ValueError(f"invalid sample status: {sample_id}")
-            records[sample_id] = record
-        return {"run_id": run_id, **provenance, "records": records}
 
 
 def join_evaluations(evaluations: Mapping[str, dict[str, Any]]) -> dict[str, Any]:

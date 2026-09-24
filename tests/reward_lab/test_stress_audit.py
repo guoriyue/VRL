@@ -7,9 +7,14 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from vrl.rewards.diagnostics import read_evaluation, stress_report
-from vrl.rewards.evaluation import ScoringConfig, load_media_manifest, rescore_media
-from vrl.scripts.rewards.stress_media import build_stress_manifest
+from reward_lab.diagnostics import stress_report
+from reward_lab.scripts.stress_media import build_stress_manifest
+from vrl.rewards.evaluation import (
+    ScoringConfig,
+    load_media_manifest,
+    read_evaluation,
+    rescore_media,
+)
 from vrl.utils.artifacts import sha256_file
 
 

@@ -1,5 +1,9 @@
 # Score existing media independently
 
+> Scoring (`vrl.scripts.rewards.rescore_media`) is part of the framework. Analysis,
+> calibration fitting, qualification receipts and review packets live in the
+> separate `reward_lab` package, which depends on `vrl` and is never imported by it.
+
 `vrl.scripts.rewards.rescore_media` scores a JSONL media manifest through the
 existing local or HTTP reward scorer. It does not construct a trainer, generation
 worker, optimizer, or Ray cluster. It preserves every score axis rather than
@@ -129,9 +133,9 @@ without rerunning compatible model inference.
 ## Health and candidate ranking comparison
 
 ```bash
-python -m vrl.scripts.rewards.analyze_scores health outputs/sharpness-audit \
+python -m reward_lab.scripts.analyze_scores health outputs/sharpness-audit \
   --output outputs/reports/sharpness-health.json
-python -m vrl.scripts.rewards.analyze_scores compare outputs/candidate-a outputs/candidate-b \
+python -m reward_lab.scripts.analyze_scores compare outputs/candidate-a outputs/candidate-b \
   --first-axis quality --second-axis overall \
   --output outputs/reports/candidate-rankings.json
 ```
@@ -170,7 +174,7 @@ fields but **omit `preference`**. Choose pairs and source-separated splits befor
 looking at holdout results. Export a portable browser review:
 
 ```bash
-python -m vrl.scripts.rewards.calibrate_scores prepare-review \
+python -m reward_lab.scripts.calibrate_scores prepare-review \
   --evaluation outputs/multiaxis-audit --pairs review-pairs.jsonl \
   --seed 42 --output outputs/preference-review
 ```
@@ -190,7 +194,7 @@ download answers to keep them independently of the browser. Convert explicit
 answers back to the original sample orientation:
 
 ```bash
-python -m vrl.scripts.rewards.calibrate_scores import-review \
+python -m reward_lab.scripts.calibrate_scores import-review \
   --review outputs/preference-review/audit.json --answers review-answers.json \
   --output preferences.jsonl
 ```
@@ -202,11 +206,11 @@ it. A single-source demonstration cannot support source-separated calibration.
 Multiple annotators need distinct pair IDs when their labels are combined.
 
 ```bash
-python -m vrl.scripts.rewards.calibrate_scores fit \
+python -m reward_lab.scripts.calibrate_scores fit \
   --evaluation outputs/multiaxis-audit --preferences preferences.jsonl \
   --axes alignment quality --l2 0.1 --tie-margin 0.1 \
   --output outputs/reports/frozen-combination.json
-python -m vrl.scripts.rewards.calibrate_scores evaluate \
+python -m reward_lab.scripts.calibrate_scores evaluate \
   --evaluation outputs/multiaxis-audit --preferences preferences.jsonl \
   --combination outputs/reports/frozen-combination.json \
   --output outputs/reports/preference-holdout.json
@@ -221,7 +225,7 @@ implement a visual pairwise judge or guarantee calibrated probabilities.
 Independent scorers can be joined without rerunning models:
 
 ```bash
-python -m vrl.scripts.rewards.calibrate_scores fit \
+python -m reward_lab.scripts.calibrate_scores fit \
   --component semantic=outputs/editreward-audit \
   --component locality=outputs/masked-edit-audit \
   --preferences preferences.jsonl \
@@ -248,7 +252,7 @@ Apply a frozen combination to a new scoring snapshot without labels or model
 inference:
 
 ```bash
-python -m vrl.scripts.rewards.calibrate_scores apply \
+python -m reward_lab.scripts.calibrate_scores apply \
   --evaluation outputs/reward_evaluation/new-candidates \
   --combination outputs/reports/frozen-combination.json \
   --output outputs/reports/candidate-combination-scores.json
@@ -280,7 +284,7 @@ from frozen axes to runtime raw axes, for example
 These illustrative axes must actually exist in the selected source evaluations.
 
 ```bash
-python -m vrl.scripts.rewards.calibrate_scores qualify \
+python -m reward_lab.scripts.calibrate_scores qualify \
   --component semantic=outputs/reward_evaluation/semantic \
   --component local=outputs/reward_evaluation/local \
   --combination outputs/reports/frozen-combination.json \
@@ -371,13 +375,13 @@ Build diagnostic variants of existing image outputs, then use the same standalon
 scorers and transports as ordinary evaluation:
 
 ```bash
-python -m vrl.scripts.rewards.stress_media \
+python -m reward_lab.scripts.stress_media \
   --manifest outputs/candidates/media.jsonl \
   --output-dir outputs/reward_stress/candidates --seed 42
 python -m vrl.scripts.rewards.rescore_media \
   --manifest outputs/reward_stress/candidates/media.jsonl \
   --config path/to/scorer.yaml --output-dir outputs/reward_stress/scores
-python -m vrl.scripts.rewards.analyze_scores stress \
+python -m reward_lab.scripts.analyze_scores stress \
   outputs/reward_stress/scores --output outputs/reward_stress/report.json
 ```
 
@@ -408,7 +412,7 @@ but the scorer and task inputs stay fixed. This differs from `compare`, which
 compares reward rankings on the same images.
 
 ```bash
-python -m vrl.scripts.rewards.analyze_scores paired \
+python -m reward_lab.scripts.analyze_scores paired \
   --baseline outputs/reward_evaluation/base-seed1 \
   --candidate outputs/reward_evaluation/trained-seed1 \
   --baseline outputs/reward_evaluation/base-seed2 \
@@ -488,7 +492,7 @@ After independently scoring all states of an editing sequence under one fixed
 recipe and task, report when requirements are achieved or broken:
 
 ```bash
-python -m vrl.scripts.rewards.analyze_scores sequence outputs/sequence-scores \
+python -m reward_lab.scripts.analyze_scores sequence outputs/sequence-scores \
   --spec sequence.json --output outputs/sequence-report.json
 ```
 
@@ -528,7 +532,7 @@ Score the same manifest under the same frozen configuration into separate fresh
 output directories, then compare those independent executions without inference:
 
 ```bash
-python -m vrl.scripts.rewards.analyze_scores repeat \
+python -m reward_lab.scripts.analyze_scores repeat \
   outputs/reward-repeat-0 outputs/reward-repeat-1 outputs/reward-repeat-2 \
   --output outputs/reward-repeatability.json
 ```

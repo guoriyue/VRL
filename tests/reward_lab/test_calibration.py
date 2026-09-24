@@ -4,7 +4,7 @@ import copy
 
 import pytest
 
-from vrl.rewards.calibration import PreferencePair, evaluate_combination, fit_combination
+from reward_lab.calibration import PreferencePair, evaluate_combination, fit_combination
 
 
 def test_frozen_fit_excludes_holdout_labels_and_retains_ties_unsure_and_leakage_checks():

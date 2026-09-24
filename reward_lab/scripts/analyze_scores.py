@@ -6,14 +6,14 @@ import argparse
 import json
 from pathlib import Path
 
-from vrl.rewards.diagnostics import (
+from reward_lab.diagnostics import (
     compare_paired_outputs,
     compare_rankings,
     health_report,
-    read_evaluation,
     repeatability_report,
     stress_report,
 )
+from vrl.rewards.evaluation import read_evaluation
 from vrl.rewards.sequences import EditSequenceSpec, sequence_report
 from vrl.utils.json_files import write_json
 

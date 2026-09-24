@@ -1300,8 +1300,8 @@ async def test_parking_service_refuses_to_overlap_safe_and_resident_services_ref
 async def test_geneval_reason_survives_one_detector_pass_http_and_offline_audit(tmp_path):
     from PIL import Image
 
-    from vrl.rewards.diagnostics import health_report, read_evaluation
-    from vrl.rewards.evaluation import ScoringConfig, rescore_media
+    from reward_lab.diagnostics import health_report
+    from vrl.rewards.evaluation import ScoringConfig, read_evaluation, rescore_media
     from vrl.rewards.models.geneval_owl import GenEvalOwlRewardModel
     from vrl.rewards.runtime import InProcessRewardScorer
 

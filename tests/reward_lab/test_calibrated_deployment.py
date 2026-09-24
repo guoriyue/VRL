@@ -9,14 +9,14 @@ import pytest
 import torch
 from PIL import Image
 
+from reward_lab.qualification import qualify_reward_deployment
 from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.reward_calibration import RewardCalibrationConfig
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.config.schema import RewardConfig
 from vrl.rewards.calibration import FrozenRewardCombination
-from vrl.rewards.deployment import load_reward_deployment, qualify_reward_deployment
-from vrl.rewards.diagnostics import read_evaluation
-from vrl.rewards.evaluation import ScoringConfig, rescore_media
+from vrl.rewards.deployment import load_reward_deployment
+from vrl.rewards.evaluation import ScoringConfig, read_evaluation, rescore_media
 from vrl.rewards.runtime import InProcessRewardScorer
 from vrl.rewards.service.server import RewardService
 from vrl.rewards.types import RewardSample
