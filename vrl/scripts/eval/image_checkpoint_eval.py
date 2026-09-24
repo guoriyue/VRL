@@ -582,6 +582,11 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     reward = OmegaConf.to_container(raw_reward, resolve=True) if raw_reward is not None else None
     if not isinstance(reward, dict) or not reward.get("components"):
         raise ValueError("evaluation policy must select reward.components")
+    if reward.get("calibration") is not None:
+        raise ValueError(
+            "image checkpoint evaluation has no qualified calibrated-reward input contract; "
+            "use standalone scoring/application or the qualified visual episode path"
+        )
     reward = {key: reward.get(key) or {} for key in ("components", "kwargs", "inference")}
     RewardConfig.model_validate(reward)
     if any(not math.isfinite(float(weight)) for weight in reward["components"].values()):

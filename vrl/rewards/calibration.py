@@ -11,6 +11,8 @@ from __future__ import annotations
 import math
 import statistics
 from collections import Counter, defaultdict
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -18,8 +20,8 @@ import numpy as np
 from pydantic import Field
 
 from vrl.config.base import ConfigBase
-from vrl.rewards.evaluation import fingerprint
-from vrl.scripts.eval.score_report import bootstrap_mean_interval
+from vrl.utils.json_files import canonical_json_sha256
+from vrl.utils.score_statistics import bootstrap_mean_interval
 
 
 class PreferencePair(ConfigBase):
@@ -98,7 +100,11 @@ def fit_combination(
     redundant axes. Failure to converge raises instead of publishing weights.
     """
     validate_preferences(evaluation, pairs)
-    if not axes or len(set(axes)) != len(axes):
+    if (
+        not axes
+        or any(not isinstance(axis, str) or not axis for axis in axes)
+        or len(set(axes)) != len(axes)
+    ):
         raise ValueError("axes must be non-empty and unique")
     if not math.isfinite(l2) or l2 <= 0 or not math.isfinite(tie_margin) or tie_margin < 0:
         raise ValueError("l2 must be positive and tie_margin non-negative, both finite")
@@ -172,9 +178,11 @@ def fit_combination(
         raise RuntimeError("calibration did not converge")
     payload = {
         "schema": "vrl.reward-combination.v1",
-        "scoring_config_hash": fingerprint(evaluation["config"]),
+        "scoring_config_hash": canonical_json_sha256(evaluation["config"], allow_nan=False),
         "fit_run_id": evaluation["run_id"],
-        "calibration_labels_hash": fingerprint([p.model_dump(mode="json") for p in selected]),
+        "calibration_labels_hash": canonical_json_sha256(
+            [p.model_dump(mode="json") for p in selected], allow_nan=False
+        ),
         "dimension": dimension,
         "axes": axes,
         "means": means.tolist(),
@@ -203,7 +211,130 @@ def fit_combination(
         "iterations": _iteration,
         "objective": objective(weights),
     }
-    return {"combination_id": fingerprint(payload), **payload}
+    return {"combination_id": canonical_json_sha256(payload, allow_nan=False), **payload}
+
+
+def _combination_vectors(
+    evaluation: dict[str, Any], combination: dict[str, Any]
+) -> tuple[dict[str, Any], list[str], np.ndarray, np.ndarray, np.ndarray]:
+    """Validate the artifact and recipe before either application or evaluation."""
+    payload = {k: v for k, v in combination.items() if k != "combination_id"}
+    if payload.get("schema") != "vrl.reward-combination.v1" or canonical_json_sha256(
+        payload, allow_nan=False
+    ) != combination.get("combination_id"):
+        raise ValueError("invalid frozen combination digest or schema")
+    if (
+        canonical_json_sha256(evaluation["config"], allow_nan=False)
+        != payload["scoring_config_hash"]
+    ):
+        raise ValueError("scoring recipe differs from calibration")
+    axes = payload["axes"]
+    if (
+        not isinstance(axes, list)
+        or not axes
+        or any(not isinstance(axis, str) or not axis for axis in axes)
+        or len(set(axes)) != len(axes)
+    ):
+        raise ValueError("invalid combination axes")
+    weights, means, scales = (
+        np.asarray(payload[key], dtype=np.float64) for key in ("weights", "means", "scales")
+    )
+    if (
+        any(
+            value.shape != (len(axes),) or not np.isfinite(value).all()
+            for value in (weights, means, scales)
+        )
+        or (scales <= 0).any()
+        or not math.isfinite(payload["tie_margin"])
+        or payload["tie_margin"] < 0
+    ):
+        raise ValueError("invalid combination vectors or tie margin")
+    return payload, axes, weights, means, scales
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class FrozenRewardCombination:
+    """Immutable, recipe-bound arithmetic shared by offline and runtime aggregation.
+
+    Construction checks the saved digest and exact scoring recipe. Only detached
+    tuples survive construction, so modifying caller dictionaries cannot change
+    the objective of an already loaded run. This performs no model inference.
+    """
+
+    combination_id: str
+    scoring_config_hash: str
+    dimension: str
+    axes: tuple[str, ...]
+    weights: tuple[float, ...]
+    means: tuple[float, ...]
+    scales: tuple[float, ...]
+
+    def __init__(self, combination: dict[str, Any], *, scoring_config: Mapping[str, Any]) -> None:
+        payload, axes, weights, means, scales = _combination_vectors(
+            {"config": dict(scoring_config)}, combination
+        )
+        for name, value in (
+            ("combination_id", combination["combination_id"]),
+            ("scoring_config_hash", payload["scoring_config_hash"]),
+            ("dimension", payload["dimension"]),
+            ("axes", tuple(axes)),
+            ("weights", tuple(weights.tolist())),
+            ("means", tuple(means.tolist())),
+            ("scales", tuple(scales.tolist())),
+        ):
+            object.__setattr__(self, name, value)
+
+    def apply(
+        self, scores: Mapping[str, float], *, sample_id: str = "sample"
+    ) -> tuple[float, dict[str, float]]:
+        """Return one total and signed axis contributions without fitting batch statistics."""
+        try:
+            raw = np.asarray([scores[axis] for axis in self.axes], dtype=np.float64)
+        except KeyError as error:
+            raise ValueError(f"combination score axis missing: {sample_id}") from error
+        if raw.shape != (len(self.axes),) or not np.isfinite(raw).all():
+            raise ValueError(f"combination scores must be finite scalars: {sample_id}")
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            contributions = ((raw - self.means) / self.scales) * self.weights
+            score = float(contributions.sum())
+        if not np.isfinite(contributions).all() or not math.isfinite(score):
+            raise ValueError(f"combination arithmetic is nonfinite: {sample_id}")
+        return score, dict(zip(self.axes, contributions.tolist(), strict=True))
+
+
+def apply_combination(evaluation: dict[str, Any], combination: dict[str, Any]) -> dict[str, Any]:
+    """Apply frozen coefficients to new raw scores, without labels or refitting.
+
+    Failed or absent source measurements remain unscored. This is a derived
+    report, not a replacement raw evaluation or proof of preference accuracy.
+    The report identity binds the actual observed results, not only their recipe.
+    """
+    frozen = FrozenRewardCombination(combination, scoring_config=evaluation["config"])
+    records = {}
+    for sample_id, row in evaluation["records"].items():
+        result = {"input": row["input"], "status": row["status"]}
+        if row["status"] == "success":
+            score, contributions = frozen.apply(row["result"]["scores"], sample_id=sample_id)
+            result.update(
+                score=score,
+                contributions=contributions,
+                source_result=row["result"],
+            )
+        elif row["status"] == "error":
+            result["error"] = row["error"]
+        elif row["status"] != "missing":
+            raise ValueError(f"invalid source status: {sample_id}")
+        records[sample_id] = result
+    report = {
+        "schema": "vrl.reward-combination-application.v1",
+        "combination_id": combination["combination_id"],
+        "evaluation_run_id": evaluation["run_id"],
+        "scoring_config_hash": frozen.scoring_config_hash,
+        "dimension": frozen.dimension,
+        "status_counts": dict(Counter(row["status"] for row in records.values())),
+        "records": records,
+    }
+    return {"application_id": canonical_json_sha256(report, allow_nan=False), **report}
 
 
 def evaluate_combination(
@@ -212,27 +343,12 @@ def evaluate_combination(
     combination: dict[str, Any],
 ) -> dict[str, Any]:
     """Evaluate the frozen combination on holdout with explicit three-way ties."""
-    payload = {k: v for k, v in combination.items() if k != "combination_id"}
-    if payload.get("schema") != "vrl.reward-combination.v1" or fingerprint(
-        payload
-    ) != combination.get("combination_id"):
-        raise ValueError("invalid frozen combination digest or schema")
-    if fingerprint(evaluation["config"]) != payload["scoring_config_hash"]:
-        raise ValueError("scoring recipe differs from calibration")
+    frozen = FrozenRewardCombination(combination, scoring_config=evaluation["config"])
+    payload = combination
     validate_preferences(evaluation, pairs)
     selected = [p for p in pairs if p.split == "holdout" and p.dimension == payload["dimension"]]
     if not selected:
         raise ValueError("holdout has no labels for this dimension")
-    axes = payload["axes"]
-    weights, means, scales = (np.asarray(payload[key]) for key in ("weights", "means", "scales"))
-    if (
-        any(
-            value.shape != (len(axes),) or not np.isfinite(value).all()
-            for value in (weights, means, scales)
-        )
-        or (scales <= 0).any()
-    ):
-        raise ValueError("invalid combination vectors")
     outcomes, grouped = [], defaultdict(list)
     tags: dict[str, list[float]] = defaultdict(list)
     for pair in selected:
@@ -249,16 +365,11 @@ def evaluate_combination(
                 & set(payload["calibration_asset_hashes"])
             ):
                 raise ValueError("holdout media, prompt, or reference was used for calibration")
-            try:
-                raw = np.asarray(
-                    [row["result"]["scores"][axis] for axis in axes], dtype=np.float64
-                )
-            except KeyError as error:
-                raise ValueError("holdout score axis missing") from error
-            if not np.isfinite(raw).all():
-                raise ValueError("holdout scores must be finite")
-            scores.append(float(((raw - means) / scales) @ weights))
+            score, _ = frozen.apply(row["result"]["scores"], sample_id=sample_id)
+            scores.append(score)
         delta = scores[0] - scores[1]
+        if not math.isfinite(delta):
+            raise ValueError("combination difference is nonfinite")
         prediction = (
             "tie" if abs(delta) <= payload["tie_margin"] else "left" if delta > 0 else "right"
         )
@@ -279,7 +390,9 @@ def evaluate_combination(
     return {
         "combination_id": combination["combination_id"],
         "evaluation_run_id": evaluation["run_id"],
-        "holdout_labels_hash": fingerprint([p.model_dump(mode="json") for p in selected]),
+        "holdout_labels_hash": canonical_json_sha256(
+            [p.model_dump(mode="json") for p in selected], allow_nan=False
+        ),
         "source_balanced_agreement": statistics.fmean(group_means) if group_means else None,
         "bootstrap_95ci": list(
             bootstrap_mean_interval(

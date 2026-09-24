@@ -547,26 +547,39 @@ class InProcessRewardScorer:
     def _infer(self, model: Any, request: RewardInferenceRequest) -> list[RewardInferenceResult]:
         """Run the reward model over the request's artifacts and build results.
 
-        A model may expose a ``score_batch(artifacts) -> list[Mapping]`` hook;
-        otherwise its per-artifact ``__call__`` is looped. ``model`` stays
-        ``Any`` because the factory path is genuinely unvalidated plugin input.
+        A model may expose ``score_results(artifacts)`` for structured evidence,
+        or the existing ``score_batch(artifacts)`` hook; otherwise ``__call__``
+        is looped. Results may be numeric mappings or RewardInferenceResult.
+        ``model`` stays Any because the factory is unvalidated plugin input.
         """
 
         reward_model_version = self._launch.reward_model_version
 
         def build_result(
             artifact: RewardInferenceArtifact,
-            raw_scores: Mapping[str, Any],
+            raw_scores: Mapping[str, Any] | RewardInferenceResult,
             inference_ms: float,
         ) -> RewardInferenceResult:
+            diagnostics, timings, version = {}, {}, reward_model_version or None
+            if isinstance(raw_scores, RewardInferenceResult):
+                if raw_scores.artifact_id != artifact.artifact_id:
+                    raise ValueError("reward model result artifact identity mismatch")
+                if version and raw_scores.reward_model_version not in {None, version}:
+                    raise ValueError("reward model result revision differs from its deployment")
+                diagnostics, timings = raw_scores.diagnostics, raw_scores.timing_ms
+                version = version or raw_scores.reward_model_version
+                raw_scores = raw_scores.scores
             return RewardInferenceResult(
                 artifact_id=artifact.artifact_id,
                 scores=raw_scores,
-                reward_model_version=reward_model_version or None,
-                timing_ms={"inference_ms": inference_ms},
+                reward_model_version=version,
+                timing_ms={**timings, "inference_ms": inference_ms},
+                diagnostics=diagnostics,
             )
 
-        batch_score = getattr(model, "score_batch", None)
+        batch_score = getattr(model, "score_results", None)
+        if not callable(batch_score):
+            batch_score = getattr(model, "score_batch", None)
         if callable(batch_score):
             started = time.perf_counter()
             score_maps = list(batch_score(request.artifacts))

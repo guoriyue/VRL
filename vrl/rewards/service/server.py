@@ -18,10 +18,11 @@ import json
 import signal
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack, suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +33,7 @@ from vrl.config.base import ConfigBase
 from vrl.rewards.launch_contract import RewardRuntimeLaunchContract
 from vrl.rewards.service.owner import RewardScoringThread
 from vrl.rewards.service.protocol import (
+    SERVICE_INSTANCE_HEADER,
     RewardServiceErrorCode,
     RewardServiceInfo,
     RewardServiceProtocolError,
@@ -59,6 +61,7 @@ logger = init_logger(__name__)
 class _Reply:
     status: int
     body: dict[str, Any]
+    auxiliary_sha256: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -209,6 +212,7 @@ class RewardService:
         # is set (the same contract the driver-side runtime used to fulfil).
         memory_parking = bool(getattr(runtime, "requires_memory_parking", False))
         self._info = RewardServiceInfo(
+            instance_id=uuid.uuid4().hex,
             model_name=str(model_name).strip() or type(runtime).__name__,
             model_version=str(model_version).strip(),
             generation_overlap_safe=bool(generation_overlap_safe),
@@ -235,6 +239,16 @@ class RewardService:
             handler: Any,
         ) -> web.StreamResponse:
             try:
+                if (
+                    (request.method == "POST" and request.path in {"/score", "/park", "/wake"})
+                    or (request.method == "DELETE" and request.path.startswith("/requests/"))
+                ) and request.headers.get(SERVICE_INSTANCE_HEADER) != self._info.instance_id:
+                    raise RewardServiceProtocolError(
+                        RewardServiceErrorCode.SERVICE_IDENTITY_CHANGED,
+                        "reward service instance differs from the validated handshake; "
+                        "create and preflight a new client before scheduling more work",
+                        status_code=409,
+                    )
                 return await handler(request)
             except RewardServiceProtocolError as error:
                 return self._error_response(error)
@@ -366,8 +380,9 @@ class RewardService:
     async def _handle_park(self, request: web.Request) -> web.Response:
         """Release this service's physical GPU pages for the phase handoff.
 
-        Idempotent and retryable: the runtime's park is a no-op once asleep and
-        a failed sleep leaves it retryable. Refused while a score is in flight,
+        Idempotent after success: the runtime's park is a no-op once asleep.
+        A failed CuMem sleep quarantines the runtime and requires process
+        replacement. Refused while a score is in flight,
         because the trainer's lease serializes score -> park -> restore and a
         concurrent request means the caller's ordering is already broken.
         """
@@ -508,7 +523,7 @@ class RewardService:
     async def _execute(self, request: RewardInferenceRequest) -> _Reply:
         try:
             validation_started = time.perf_counter()
-            request = await self._validate_artifact_paths(request)
+            request, auxiliary_sha256 = await self._validate_artifact_paths(request)
             artifact_validation_ms = (time.perf_counter() - validation_started) * 1000.0
             queued_at = time.perf_counter()
             async with self._concurrency:
@@ -517,6 +532,15 @@ class RewardService:
                 results = list(await self._owner.score_batch(request))
                 service_inference_wall_ms = (time.perf_counter() - inference_started) * 1000.0
                 results = request.validate_and_order_results(results)
+                revalidation_started = time.perf_counter()
+                _, current_auxiliary = await self._validate_artifact_paths(request)
+                if current_auxiliary != auxiliary_sha256:
+                    raise RewardServiceProtocolError(
+                        RewardServiceErrorCode.PATH_NOT_ALLOWED,
+                        "reward auxiliary files changed during scoring",
+                        request_id=request.request_id,
+                    )
+                revalidation_ms = (time.perf_counter() - revalidation_started) * 1000.0
                 results = [
                     replace(
                         result,
@@ -528,6 +552,7 @@ class RewardService:
                             ),
                             "service_artifact_validation_ms": artifact_validation_ms,
                             "service_inference_wall_ms": service_inference_wall_ms,
+                            "service_artifact_revalidation_ms": revalidation_ms,
                         },
                     )
                     for result in results
@@ -535,6 +560,7 @@ class RewardService:
             return _Reply(
                 status=200,
                 body=score_response_to_wire(request.request_id, results),
+                auxiliary_sha256=auxiliary_sha256,
             )
         except RewardServiceProtocolError as error:
             return _Reply(error.status_code, error_to_wire(error))
@@ -570,7 +596,13 @@ class RewardService:
         cached_reply: _Reply,
     ) -> _Reply:
         try:
-            await self._validate_artifact_paths(request)
+            _, auxiliary_sha256 = await self._validate_artifact_paths(request)
+            if auxiliary_sha256 != cached_reply.auxiliary_sha256:
+                raise RewardServiceProtocolError(
+                    RewardServiceErrorCode.PATH_NOT_ALLOWED,
+                    "reward auxiliary files changed since the cached score",
+                    request_id=request.request_id,
+                )
             return cached_reply
         except RewardServiceProtocolError as error:
             return _Reply(error.status_code, error_to_wire(error))
@@ -616,7 +648,7 @@ class RewardService:
     async def _validate_artifact_paths(
         self,
         request: RewardInferenceRequest,
-    ) -> RewardInferenceRequest:
+    ) -> tuple[RewardInferenceRequest, dict[str, str]]:
         # Video artifacts can be large; hash them outside the HTTP loop so
         # liveness, cancellation, and admission responses remain responsive.
         validation = asyncio.create_task(
@@ -629,16 +661,51 @@ class RewardService:
             # A Python file read cannot be preempted safely. Keep the admission
             # slot until it has stopped touching the artifact, then publish the
             # request cancellation.
+            while not validation.done():
+                try:
+                    await asyncio.shield(validation)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
             with suppress(Exception, asyncio.CancelledError):
-                await asyncio.shield(validation)
+                validation.result()
             raise
 
     def _validate_artifact_paths_sync(
         self,
         request: RewardInferenceRequest,
-    ) -> RewardInferenceRequest:
+    ) -> tuple[RewardInferenceRequest, dict[str, str]]:
         artifacts = []
+        auxiliary_sha256 = {}
         for artifact in request.artifacts:
+            try:
+                auxiliary_paths = artifact.metadata_file_paths()
+            except ValueError as error:
+                raise RewardServiceProtocolError(
+                    RewardServiceErrorCode.BAD_REQUEST,
+                    str(error),
+                    request_id=request.request_id,
+                ) from error
+            for auxiliary_path in auxiliary_paths:
+                path = Path(auxiliary_path).expanduser()
+                if self._artifact_paths is None or not path.is_absolute():
+                    raise RewardServiceProtocolError(
+                        RewardServiceErrorCode.PATH_NOT_ALLOWED,
+                        "reward auxiliary files require absolute paths within artifact_roots",
+                        request_id=request.request_id,
+                    )
+                try:
+                    resolved = self._artifact_paths.resolve(path, strict=True)
+                    if not resolved.is_file():
+                        raise ValueError("auxiliary path is not a file")
+                    auxiliary_sha256[auxiliary_path] = sha256_file(resolved)
+                except (OSError, ValueError) as error:
+                    raise RewardServiceProtocolError(
+                        RewardServiceErrorCode.PATH_NOT_ALLOWED,
+                        f"reward auxiliary file is unavailable or outside artifact_roots: {auxiliary_path!r}",
+                        request_id=request.request_id,
+                    ) from error
             if artifact.media is not None:
                 artifacts.append(artifact)
                 continue
@@ -714,7 +781,7 @@ class RewardService:
                     request_id=request.request_id,
                 )
             artifacts.append(replace(artifact, path=str(resolved)))
-        return replace(request, artifacts=tuple(artifacts))
+        return replace(request, artifacts=tuple(artifacts)), auxiliary_sha256
 
     def _evict_completed_records(self, *, completing: str) -> None:
         completed = sum(

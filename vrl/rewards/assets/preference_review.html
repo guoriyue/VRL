@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Visual preference review</title>
+<style>
+body{font:16px system-ui,sans-serif;margin:24px auto;max-width:1400px;padding:0 20px;color:#17212e;background:#f5f7fa}
+h1{font-size:24px}.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:18px 0}
+button{padding:10px 18px;border:1px solid #687a90;border-radius:6px;background:white;cursor:pointer;font:inherit}
+button[aria-pressed=true]{background:#164e82;color:white}button:disabled{opacity:.4;cursor:default}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}figure{margin:0;background:white;border-radius:8px;padding:12px}
+img,video{display:block;max-width:100%;max-height:65vh;margin:auto;background:repeating-conic-gradient(#ddd 0% 25%,white 0% 50%) 0 / 20px 20px}
+#reference img,#reference video{max-height:260px}#reference{margin:16px 0}figcaption{font-weight:600;margin-bottom:10px}
+#prompt{white-space:pre-wrap}#notice{color:#614300}.hint{color:#536477}@media(max-width:640px){.grid{grid-template-columns:1fr}}
+</style>
+<h1>Visual preference review</h1>
+<p class="hint">Judge the requested dimension using the prompt and original image. Scores and model names are hidden. No answer is selected automatically.</p>
+<div class="toolbar"><button id="previous">Previous</button><span id="progress"></span><button id="next">Next</button><button id="export">Download answers</button></div>
+<p id="notice" role="status"></p><p id="prompt"></p><p id="dimension"></p>
+<figure id="reference"><figcaption>Original reference</figcaption><div></div></figure>
+<div class="grid"><figure><figcaption>A</figcaption><div id="a"></div></figure><figure><figcaption>B</figcaption><div id="b"></div></figure></div>
+<div class="toolbar" id="choices"><button data-choice="a">Prefer A</button><button data-choice="b">Prefer B</button><button data-choice="tie">Tie</button><button data-choice="unsure">Cannot judge</button><button id="clear">Clear answer</button></div>
+<p class="hint">Answers are saved in this browser when local storage is available. Download them before closing or moving this folder. Unanswered pairs are omitted.</p>
+<script id="review-data" type="application/json">__REVIEW_DATA__</script>
+<script>
+"use strict";
+const data=JSON.parse(document.getElementById("review-data").textContent);
+const storageKey="vrl-preference-"+data.review_id;
+let cursor=0, answers={};
+const notice=document.getElementById("notice");
+try { const saved=JSON.parse(localStorage.getItem(storageKey)||"{}");
+  for (const pair of data.pairs) if (["a","b","tie","unsure"].includes(saved[pair.key])) answers[pair.key]=saved[pair.key];
+} catch (_) { notice.textContent="Browser storage is unavailable. Download answers to save your work."; }
+function media(container,item) {
+  container.replaceChildren();
+  if (!item) return;
+  const element=document.createElement(item.kind==="video"?"video":"img");
+  element.src=item.path;
+  if (item.kind==="video") {element.controls=true;element.preload="metadata";}
+  else element.alt="Review image";
+  container.append(element);
+}
+function render() {
+  const pair=data.pairs[cursor];
+  document.getElementById("progress").textContent=`${cursor+1} / ${data.pairs.length} · ${Object.keys(answers).length} answered`;
+  document.getElementById("prompt").textContent=pair.prompt;
+  document.getElementById("dimension").textContent="Dimension: "+pair.dimension;
+  const reference=document.getElementById("reference");reference.hidden=!pair.reference;
+  media(reference.querySelector("div"),pair.reference);
+  for (const side of ["a","b"]) media(document.getElementById(side),pair[side]);
+  for (const button of document.querySelectorAll("[data-choice]")) button.setAttribute("aria-pressed",String(answers[pair.key]===button.dataset.choice));
+  document.getElementById("previous").disabled=cursor===0;
+  document.getElementById("next").disabled=cursor===data.pairs.length-1;
+  document.getElementById("export").disabled=Object.keys(answers).length===0;
+}
+function save() {try {localStorage.setItem(storageKey,JSON.stringify(answers));} catch (_) {notice.textContent="Could not save in browser storage. Download answers now.";} render();}
+for (const button of document.querySelectorAll("[data-choice]")) button.onclick=()=>{answers[data.pairs[cursor].key]=button.dataset.choice;save();};
+document.getElementById("clear").onclick=()=>{delete answers[data.pairs[cursor].key];save();};
+document.getElementById("previous").onclick=()=>{cursor--;render();};
+document.getElementById("next").onclick=()=>{cursor++;render();};
+document.getElementById("export").onclick=()=>{
+  const blob=new Blob([JSON.stringify({review_id:data.review_id,answers},null,2)+"\n"],{type:"application/json"});
+  const url=URL.createObjectURL(blob),link=document.createElement("a");
+  link.href=url;link.download="review-answers.json";document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+render();
+</script></html>

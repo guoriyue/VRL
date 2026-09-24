@@ -205,23 +205,14 @@ def build_reward_function(
     """
 
     config = reward.config
-    if not any(weight > 0 for weight in config.weights.values()):
-        raise ValueError("At least one reward component must have weight > 0.")
-    in_process = sorted(
-        name
-        for name, inference in config.inference_configs.items()
-        if inference.kind == "in_process"
-    )
-    if in_process:
-        # A reward scoring inside the driver competes with the launch-bound
-        # replay for the interpreter (measured +61 s/epoch on SD3.5); online
-        # training isolates every reward in its own process.
-        raise ValueError(
-            f"reward.inference.{{{', '.join(in_process)}}}.kind=in_process is not admitted "
-            "for online training; drop the key (Ray actor, the default) or "
-            "point it at an operator-run service with kind=http",
-        )
+    config.require_online_training()
     from vrl.rewards.functions.registry import MultiReward
+
+    combination, axis_mapping = None, None
+    if config.calibration is not None:
+        from vrl.rewards.deployment import load_reward_deployment
+
+        combination, axis_mapping = load_reward_deployment(config)
 
     if reward.memory_parking_required and not config.all_external_inference:
         from vrl.rewards.functions.registry import (
@@ -242,6 +233,9 @@ def build_reward_function(
         memory_parking_required=reward.memory_parking_required,
         inference_configs=config.inference_configs,
         ray_placement=ray_placement,
+        combination=combination,
+        axis_mapping=axis_mapping,
+        image_float32_inputs=combination is not None,
     )
 
 

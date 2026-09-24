@@ -41,6 +41,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.models.base import LazyTorchModule
 from vrl.rewards.models.media import artifact_middle_frame_image
 
@@ -119,9 +120,27 @@ class GenEvalOwlRewardModel(LazyTorchModule):
     # -- RewardModel protocol ----------------------------------------------
 
     def score_batch(self, artifacts: Sequence[Any]) -> list[dict[str, float]]:
+        """Compatibility API for direct callers that only consume numeric scores."""
+        return [result.scores for result in self.score_results(artifacts)]
+
+    def score_results(self, artifacts: Sequence[Any]) -> list[RewardInferenceResult]:
+        """Retain the verdict explanation through local/Ray/HTTP result auditing."""
         specs = [self._spec(artifact) for artifact in artifacts]
         images = [artifact_middle_frame_image(artifact) for artifact in artifacts]
-        return [verdict.scores for verdict in self.judge_images(images, specs)]
+        return [
+            RewardInferenceResult(
+                artifact_id=artifact.artifact_id,
+                scores=verdict.scores,
+                diagnostics={
+                    "why": verdict.why,
+                    "spec": spec,
+                    "kind": "detector-based-geneval-verdict",
+                },
+            )
+            for artifact, spec, verdict in zip(
+                artifacts, specs, self.judge_images(images, specs), strict=True
+            )
+        ]
 
     def __call__(self, artifact: Any) -> dict[str, float]:
         return self.score_batch([artifact])[0]

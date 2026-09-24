@@ -30,6 +30,7 @@ from vrl.rewards.inference import (
     RewardInferenceResult,
 )
 from vrl.rewards.service.protocol import (
+    SERVICE_INSTANCE_HEADER,
     RemoteRewardServiceError,
     RewardServiceErrorCode,
     RewardServiceInfo,
@@ -115,6 +116,7 @@ class HttpRewardScorer:
         self._session_lock = asyncio.Lock()
         self._identity_lock = asyncio.Lock()
         self._identity_checked = False
+        self._instance_id = ""
         self._external_accelerator_isolation_verified = False
         self._memory_parking = False
         self._closed = False
@@ -189,8 +191,9 @@ class HttpRewardScorer:
     async def ensure_ready(self) -> None:
         """Startup preflight: readiness plus model identity, before any scoring.
 
-        ``score_batch`` still re-checks identity lazily; this exists so the
-        trainer fails at launch rather than after the first generation batch.
+        ``score_batch`` also establishes identity lazily if needed, then binds
+        every mutation to that instance. Preflight lets the trainer validate
+        scheduling capabilities before the first generation batch.
         """
 
         try:
@@ -297,6 +300,7 @@ class HttpRewardScorer:
                 )
             self._external_accelerator_isolation_verified = info.generation_overlap_safe
             self._memory_parking = info.memory_parking
+            self._instance_id = info.instance_id
             self._identity_checked = True
 
     # -- MemoryParkingScorer: the phase lease over HTTP ------------------------
@@ -379,6 +383,12 @@ class HttpRewardScorer:
         *,
         json_body: dict[str, Any] | None = None,
     ) -> tuple[Any, int]:
+        headers = {}
+        if method in {"POST", "DELETE"}:
+            await self._ensure_identity()
+            headers[SERVICE_INSTANCE_HEADER] = self._instance_id
+        if json_body is not None:
+            headers["Content-Type"] = "application/json"
         session = await self._get_session()
         encoded = (
             None
@@ -392,7 +402,7 @@ class HttpRewardScorer:
                 method,
                 f"{self._base_url}{path}",
                 data=encoded,
-                headers={"Content-Type": "application/json"} if encoded is not None else None,
+                headers=headers,
             ) as response:
                 status = response.status
                 try:

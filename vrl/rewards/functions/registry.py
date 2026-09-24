@@ -14,6 +14,7 @@ resolved device inside its own memory frame.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -29,6 +30,7 @@ from vrl.rewards.runtime import build_reward_scorer
 from vrl.rewards.types import RewardOutput, RewardSample
 
 if TYPE_CHECKING:
+    from vrl.rewards.calibration import FrozenRewardCombination
     from vrl.rewards.ray import RayRewardPlacement
 
 # Registry of reward function factories.
@@ -94,6 +96,28 @@ def _register_builtins() -> None:
     )
 
 
+def _validate_aggregation(
+    weights: Sequence[float],
+    *,
+    combination: FrozenRewardCombination | None,
+    axis_mapping: Mapping[str, str] | None,
+) -> None:
+    """Validate the objective before allocating any scorer resources."""
+    if combination is None and axis_mapping is not None:
+        raise ValueError("axis_mapping requires a frozen reward combination")
+    if combination is not None:
+        if any(weight != 1.0 for weight in weights):
+            raise ValueError(
+                "frozen aggregation requires unit component weights; its coefficients own weighting"
+            )
+        if axis_mapping is None or set(axis_mapping) != set(combination.axes):
+            raise ValueError("axis_mapping must cover exactly the frozen combination axes")
+        if any(not isinstance(value, str) or not value for value in axis_mapping.values()) or len(
+            set(axis_mapping.values())
+        ) != len(axis_mapping):
+            raise ValueError("axis_mapping destinations must be nonempty and unique")
+
+
 class MultiReward(RewardFunction):
     """Weighted combination of named reward functions.
 
@@ -115,12 +139,26 @@ class MultiReward(RewardFunction):
     def __init__(
         self,
         rewards: list[tuple[str, float, RewardFunction]],
+        *,
+        combination: FrozenRewardCombination | None = None,
+        axis_mapping: Mapping[str, str] | None = None,
+        image_float32_inputs: bool = False,
     ) -> None:
         names = [name for name, _, _ in rewards]
         if any(not isinstance(name, str) or not name for name in names):
             raise ValueError("reward component names must be non-empty strings")
         if len(set(names)) != len(names):
             raise ValueError("reward component names must be unique")
+        if any(not math.isfinite(weight) for _, weight, _ in rewards):
+            raise ValueError("reward component weights must be finite")
+        _validate_aggregation(
+            [weight for _, weight, _ in rewards],
+            combination=combination,
+            axis_mapping=axis_mapping,
+        )
+        self.combination = combination
+        self._axis_mapping = dict(axis_mapping or {})
+        self._image_float32_inputs = image_float32_inputs
         self.rewards = rewards
         # Composite teardown is retryable: remember children whose shutdown
         # already succeeded so a retry reaches only the ones that actually
@@ -177,6 +215,10 @@ class MultiReward(RewardFunction):
         memory_parking_required: bool | None = None,
         inference_configs: Mapping[str, RewardInferenceConfig] | None = None,
         ray_placement: RayRewardPlacement | None = None,
+        *,
+        combination: FrozenRewardCombination | None = None,
+        axis_mapping: Mapping[str, str] | None = None,
+        image_float32_inputs: bool = False,
     ) -> MultiReward:
         """Build from ``{"name": weight}`` dict, like flow_grpo config.reward_fn.
 
@@ -190,6 +232,13 @@ class MultiReward(RewardFunction):
         _register_builtins()
         reward_kwargs = reward_kwargs or {}
         configured_weights = {name: float(weight) for name, weight in score_dict.items()}
+        if any(not math.isfinite(weight) for weight in configured_weights.values()):
+            raise ValueError("reward component weights must be finite")
+        _validate_aggregation(
+            list(configured_weights.values()),
+            combination=combination,
+            axis_mapping=axis_mapping,
+        )
         reward_classes = {name: get_reward(name) for name in configured_weights}
         resolved_inference_configs: Mapping[str, RewardInferenceConfig] = (
             {name: RewardInferenceConfig(kind="in_process") for name in configured_weights}
@@ -299,7 +348,12 @@ class MultiReward(RewardFunction):
                 extra.pop("sleep_offload", None)
             component = reward_cls(device=component_device, **extra)
             triples.append((name, weight, component))
-        return cls(triples)
+        return cls(
+            triples,
+            combination=combination,
+            axis_mapping=axis_mapping,
+            image_float32_inputs=image_float32_inputs,
+        )
 
     async def score(self, sample: RewardSample) -> float:
         return (await self.score_batch((sample,))).scores[0]
@@ -307,6 +361,26 @@ class MultiReward(RewardFunction):
     async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
         """Return weighted totals plus per-component observations from one call."""
 
+        if self._image_float32_inputs:
+            import torch
+
+            for sample in samples:
+                media = sample.output
+                if (
+                    not isinstance(media, torch.Tensor)
+                    or media.dtype != torch.float32
+                    or media.ndim != 4
+                    or media.shape[0] not in (3, 4)
+                    or media.shape[1] != 1
+                    or media.numel() == 0
+                    or not torch.isfinite(media).all()
+                    or media.min() < 0
+                    or media.max() > 1
+                ):
+                    raise ValueError(
+                        "qualified reward requires finite float32 RGB/RGBA C,1,H,W "
+                        f"images in [0,1]: {sample.sample_id}"
+                    )
         totals = [0.0] * len(samples)
         components: dict[str, tuple[float, ...]] = {}
         timing_ms: dict[str, float] = {}
@@ -326,8 +400,28 @@ class MultiReward(RewardFunction):
                 components[key] = values
             for key, value in output.timing_ms.items():
                 timing_ms[key] = timing_ms.get(key, 0.0) + value
-            for index, score in enumerate(output.scores):
-                totals[index] += weight * score
+            if self.combination is None:
+                for index, score in enumerate(output.scores):
+                    totals[index] += weight * score
+        if self.combination is not None:
+            missing = sorted(set(self._axis_mapping.values()) - set(components))
+            if missing and samples:
+                raise ValueError(f"frozen aggregation score axes missing: {missing}")
+            contribution_keys = {
+                axis: f"calibration/contribution/{axis}" for axis in self.combination.axes
+            }
+            if set(contribution_keys.values()) & set(components):
+                raise ValueError("calibration contribution namespace collision")
+            contributions = {key: [] for key in contribution_keys.values()}
+            for index, sample in enumerate(samples):
+                score, parts = self.combination.apply(
+                    {axis: components[key][index] for axis, key in self._axis_mapping.items()},
+                    sample_id=sample.sample_id,
+                )
+                totals[index] = score
+                for axis, value in parts.items():
+                    contributions[contribution_keys[axis]].append(value)
+            components.update({key: tuple(values) for key, values in contributions.items()})
         return RewardOutput(
             scores=tuple(totals),
             components=components,

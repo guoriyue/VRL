@@ -1,0 +1,90 @@
+{
+  "schema": "vrl.reward-reliability-evidence.v1",
+  "scope": "existing locally verified observations; no human labels",
+  "studies": [
+    {
+      "study": "editreward-photo",
+      "evaluation": "outputs/reward_evaluation/masked_edit_audit/editreward_with_repair",
+      "records": 4,
+      "success": 4,
+      "prompt_count": 1,
+      "run_ids": [
+        "42148275ebd4e0d17fe0b50a75f843989bda3c202b206608c487e6c44c621bc7"
+      ],
+      "files": [
+        {
+          "path": "outputs/reward_evaluation/masked_edit_audit/editreward_with_repair/provenance.json",
+          "sha256": "c4ebb40db6d6bbd714776a8b69d6fd0ba83911e534eb0989ebd3456ed77525a2"
+        },
+        {
+          "path": "outputs/reward_evaluation/masked_edit_audit/editreward_with_repair/summary.json",
+          "sha256": "2a3a63cecb54afae4afefc1118d62fb754b25743b1698994f57213b21ddfb954"
+        }
+      ],
+      "media_and_auxiliary_digests_verified": true
+    },
+    {
+      "study": "protected-region-photo",
+      "evaluation": "outputs/reward_evaluation/masked_edit_audit/locality_with_repair",
+      "records": 4,
+      "success": 4,
+      "prompt_count": 1,
+      "run_ids": [
+        "82e318a2094056a8acb2b538bb892e28e49e7246f3d5f9681a1615fc64cd10d6"
+      ],
+      "files": [
+        {
+          "path": "outputs/reward_evaluation/masked_edit_audit/locality_with_repair/provenance.json",
+          "sha256": "a29f7df0839314086d3ceee2180bd3da514aa1f0384c619adf4042c3245a04cb"
+        },
+        {
+          "path": "outputs/reward_evaluation/masked_edit_audit/locality_with_repair/summary.json",
+          "sha256": "e8c1e9717145f1297cb4cdf57b34712184c21c52afd62990904066af4f367d62"
+        }
+      ],
+      "media_and_auxiliary_digests_verified": true
+    },
+    {
+      "study": "rgba-stress",
+      "evaluation": "outputs/reward_evaluation/rgba_oracle_stress200/rgba_scores",
+      "records": 1400,
+      "success": 1400,
+      "prompt_count": 200,
+      "run_ids": [
+        "3546cc3b1d32ace2f0f4345523d0ed373767faa56329471d9dc07848bb2273fe"
+      ],
+      "files": [
+        {
+          "path": "outputs/reward_evaluation/rgba_oracle_stress200/rgba_scores/provenance.json",
+          "sha256": "089332751ed50ebd3c5c9f295fd8a799bd50e35850e01a88e669bf806025b547"
+        },
+        {
+          "path": "outputs/reward_evaluation/rgba_oracle_stress200/rgba_scores/summary.json",
+          "sha256": "6ed9189b99bccb91e19d8487aa51d1dcdaf06c22dff0eac918c84c106ad75650"
+        }
+      ],
+      "media_and_auxiliary_digests_verified": true
+    },
+    {
+      "study": "sharpness-stress",
+      "evaluation": "outputs/reward_evaluation/rgba_oracle_stress200/sharpness_scores",
+      "records": 1400,
+      "success": 1400,
+      "prompt_count": 200,
+      "run_ids": [
+        "ed413b69c40e9d864890140ebfeecfd03ac1805be548bb5867fa92faefd1260e"
+      ],
+      "files": [
+        {
+          "path": "outputs/reward_evaluation/rgba_oracle_stress200/sharpness_scores/provenance.json",
+          "sha256": "2c36445bf0b4a1b2eb7ca7a48d0b5f84616af0eb971047b715d8ce93e41e1608"
+        },
+        {
+          "path": "outputs/reward_evaluation/rgba_oracle_stress200/sharpness_scores/summary.json",
+          "sha256": "8a648ad904de6ea264c624c7f9e21c3cec65cf1dba9cbdd26ccebaf94004f2ee"
+        }
+      ],
+      "media_and_auxiliary_digests_verified": true
+    }
+  ]
+}

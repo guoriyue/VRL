@@ -271,7 +271,8 @@ def _synthetic_media(sampling: Any, task: str, seed: int) -> torch.Tensor:
     if task_modality(task) == "video":
         frames = int(getattr(sampling, "num_frames", None) or 9)
         return torch.rand(3, frames, height, width, generator=generator)
-    return torch.rand(3, height, width, generator=generator)
+    channels = 4 if getattr(sampling, "output_mode", None) == "rgba" else 3
+    return torch.rand(channels, height, width, generator=generator)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

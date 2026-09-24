@@ -791,3 +791,19 @@ def test_every_model_reward_can_run_as_a_ray_actor(tmp_path, name, device, kwarg
     assert scorer._launch.device == type(component).resolve_execution_device(
         device=device, kwargs=kwargs
     )
+
+
+def test_nonfinite_weights_fail_before_reward_construction(monkeypatch) -> None:
+    from vrl.config.schema import RewardConfig
+
+    def unexpected_factory(name):
+        raise AssertionError(f"invalid weights reached reward construction: {name}")
+
+    monkeypatch.setattr(reward_registry, "get_reward", unexpected_factory)
+    for weight in (float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="finite"):
+            RewardConfig(components={"image_sharpness": weight})
+        with pytest.raises(ValueError, match="finite"):
+            MultiReward.from_dict({"image_sharpness": weight})
+    with pytest.raises(ValueError, match="finite"):
+        MultiReward([("invalid", float("nan"), _QueuedBatchReward([]))])

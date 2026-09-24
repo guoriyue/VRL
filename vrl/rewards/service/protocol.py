@@ -18,9 +18,12 @@ from vrl.utils.validation import require_int
 # instead of silently misreading fields. v3 dropped the protocol string, the
 # capability array, and the artifact-transport field; v4 adds the original
 # sample identity to artifact provenance; v5 adds safe typed tensor uploads
-# and removes the obsolete managed-child launch token. Fixed facts of the
+# and removes the obsolete managed-child launch token; v6 adds structured,
+# non-numeric result diagnostics; v7 binds mutations to a validated instance.
+# Fixed facts of the
 # service are guaranteed by this version, not advertised per request.
-WIRE_VERSION = 5
+WIRE_VERSION = 7
+SERVICE_INSTANCE_HEADER = "X-VRL-Service-Instance"
 
 
 # Keep the exported enum's historical ``str(member)`` representation; the wire
@@ -40,6 +43,7 @@ class RewardServiceErrorCode(str, Enum):  # noqa: UP042
     REQUEST_COMPLETED = "request_completed"
     REQUEST_NOT_FOUND = "request_not_found"
     SCORING_FAILED = "scoring_failed"
+    SERVICE_IDENTITY_CHANGED = "service_identity_changed"
     SERVICE_SHUTTING_DOWN = "service_shutting_down"
     TRANSPORT_ERROR = "transport_error"
     UNSUPPORTED_VERSION = "unsupported_version"
@@ -51,6 +55,7 @@ class RewardServiceInfo:
 
     model_name: str
     model_version: str
+    instance_id: str
     # The one genuinely deployment-dependent fact: whether the operator proved
     # this service's accelerators are isolated from the training topology, so
     # the collector may overlap reward N with generation N+1.
@@ -64,6 +69,12 @@ class RewardServiceInfo:
     memory_parking: bool = False
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.instance_id, str)
+            or len(self.instance_id) != 32
+            or any(char not in "0123456789abcdef" for char in self.instance_id)
+        ):
+            raise ValueError("reward service instance_id must be 32 lowercase hexadecimal digits")
         if not isinstance(self.memory_parking, bool):
             raise ValueError("reward service memory_parking must be a boolean")
         if self.memory_parking and self.generation_overlap_safe:
@@ -136,6 +147,7 @@ class RemoteRewardServiceError(RuntimeError):
 
 
 __all__ = [
+    "SERVICE_INSTANCE_HEADER",
     "WIRE_VERSION",
     "RemoteRewardServiceError",
     "RewardServiceErrorCode",

@@ -39,7 +39,11 @@ def test_preflight_scores_every_row_with_every_component(tmp_path) -> None:
     report = preflight_rewards(_config(tmp_path), prompts=2, device=torch.device("cpu"), seed=3)
 
     assert len(report.prompts) == 2
-    assert set(report.output.components) == {"image_sharpness"}
+    assert set(report.output.components) == {"image_sharpness", "image_sharpness/image_sharpness"}
+    assert (
+        report.output.components["image_sharpness"]
+        == report.output.components["image_sharpness/image_sharpness"]
+    )
     assert len(report.output.scores) == 2
     assert report.lines()[0].startswith("prompt")
     assert ray.is_initialized() == initialized_before

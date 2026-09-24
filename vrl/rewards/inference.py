@@ -11,6 +11,7 @@ artifacts.py, and the worker launch contract in launch_contract.py.
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -93,6 +94,29 @@ class RewardInferenceArtifact:
             f"reward artifact {self.artifact_id!r} has no in-memory media and "
             f"path is not a loadable tensor: {self.path!r}",
         )
+
+    def metadata_file_paths(self) -> tuple[str, ...]:
+        """Declared shared-file metadata consumed by the built-in reward models.
+
+        These names are an input schema boundary, not arbitrary string metadata.
+        Custom file-consuming rewards must extend this contract rather than hide
+        an unvalidated path in another metadata field.
+        """
+        paths = []
+        for name in ("target_image", "target_video"):
+            value = self.metadata.get(name)
+            if value is not None and value != "":
+                if not isinstance(value, str):
+                    raise ValueError(f"reward metadata.{name} must be a file path string")
+                paths.append(value)
+        references = self.metadata.get("reference_images")
+        if references is not None:
+            if not isinstance(references, (list, tuple)) or any(
+                not isinstance(value, str) or not value for value in references
+            ):
+                raise ValueError("reward metadata.reference_images must be file path strings")
+            paths.extend(references)
+        return tuple(dict.fromkeys(paths))
 
     def as_path(self) -> str:
         """Return the materialized file path (required by file-based models)."""
@@ -202,6 +226,9 @@ class RewardInferenceResult:
     # display/provenance-only: which reward model scored this; wire + debug JSONL.
     reward_model_version: str | None = None
     timing_ms: dict[str, float] = field(default_factory=dict)
+    # Non-numeric evidence is retained in audits, never aggregated into the loss.
+    # These are scorer observations/explanations, not proofs of semantic truth.
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.artifact_id:
@@ -222,6 +249,15 @@ class RewardInferenceResult:
                 )
         object.__setattr__(self, "scores", scores)
         object.__setattr__(self, "timing_ms", timing_ms)
+        if not isinstance(self.diagnostics, dict):
+            raise ValueError("reward diagnostics must be a JSON object")
+        try:
+            diagnostics = json.loads(json.dumps(self.diagnostics, allow_nan=False, sort_keys=True))
+        except (TypeError, ValueError, RecursionError) as error:
+            raise ValueError("reward diagnostics must contain finite JSON values") from error
+        if diagnostics != self.diagnostics:
+            raise ValueError("reward diagnostics must use JSON-native string keys and arrays")
+        object.__setattr__(self, "diagnostics", diagnostics)
 
 
 __all__ = [

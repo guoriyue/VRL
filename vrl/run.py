@@ -342,6 +342,8 @@ def resolve_online_run(cfg: DictConfig) -> ResolvedOnlineRun:
     """
 
     built = builders.build_configs(cfg)
+    if built.reward is not None:
+        built.reward.require_online_training()
     run = OnlineRunConfig.from_root(built.root)
     family = _model_family(built)
     resources = ray_resources.ResolvedDistributedResources.from_root(

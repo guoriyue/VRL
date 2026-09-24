@@ -625,3 +625,46 @@ async def test_real_aesthetic_score_parks_stably_across_two_cycles() -> None:
         assert second_delta <= first_delta + 4 * 1024 * 1024
     finally:
         await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_structured_results_preserve_evidence_but_cannot_replace_identity_or_runtime_timing():
+    from vrl.rewards.inference import RewardInferenceResult
+
+    class Model:
+        wrong_id = True
+        version = "unit-v1"
+
+        def score_results(self, artifacts):
+            return [
+                RewardInferenceResult(
+                    artifact_id="wrong" if self.wrong_id else artifact.artifact_id,
+                    scores={"overall": 0.25},
+                    reward_model_version=self.version,
+                    timing_ms={"inference_ms": 1e12, "detector_ms": 2},
+                    diagnostics={"why": "missing:cat"},
+                )
+                for artifact in artifacts
+            ]
+
+        def score_batch(self, artifacts):
+            raise AssertionError("numeric fallback must not run a second inference")
+
+    model = Model()
+    runtime = InProcessRewardScorer(
+        {"device": "cpu", "reward_model_version": "unit-v1"}, model=model
+    )
+    with pytest.raises(ValueError, match="artifact identity mismatch"):
+        await runtime.score_batch(_make_request())
+    model.wrong_id = False
+    model.version = "other-version"
+    with pytest.raises(ValueError, match="revision differs"):
+        await runtime.score_batch(_make_request())
+    model.version = None
+    results = await runtime.score_batch(_make_request())
+    assert [row.artifact_id for row in results] == ["a", "b"]
+    assert results[0].reward_model_version == "unit-v1"
+    assert results[0].timing_ms["inference_ms"] < 1e12
+    assert results[0].timing_ms["detector_ms"] == 2
+    assert results[0].diagnostics == {"why": "missing:cat"}
+    await runtime.shutdown()

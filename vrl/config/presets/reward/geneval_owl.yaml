@@ -1,15 +1,17 @@
-# GenEval compositional reward scored in-process: OWLv2 open-vocabulary
+# GenEval compositional reward: OWLv2 open-vocabulary
 # detection + CLIP colour classification under the official GenEval rules.
 # Every prompt row must carry `metadata.geneval` ({include, exclude, tag}) —
 # the Flow-GRPO manifests under manifests/geneval do. The score key is the
 # graded satisfied-condition fraction; the strict all-or-nothing verdict is
-# what the held-out eval reports. Runs on the trainer GPU by default
-# (distributed.resources.reward.device: trainer), ~2.3 GB resident.
+# what the held-out eval reports. Worker device and memory parking are resolved
+# from the resource topology; model state is approximately 2.3 GB.
 reward:
   components:
     geneval_owl: 1.0
   kwargs:
     geneval_owl:
+      # Structured detector verdicts are evidence, not scalar loss components.
+      debug_dir: ${trainer.output_dir}/reward_debug
       detector_model: google/owlv2-base-patch16-ensemble
       clip_model: openai/clip-vit-large-patch14
       # OWLv2 score floor. 0.2 dropped clearly drawn objects (traffic light

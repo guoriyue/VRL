@@ -506,3 +506,25 @@ def test_ray_rewards_do_not_materialize_transport_files_in_the_run_output(tmp_pa
     assert isinstance(component.scorer, RayRewardScorer)
     assert isinstance(component.artifact_store, InMemoryRewardArtifactStore)
     assert not (tmp_path / "run" / "reward_artifacts").exists()
+
+
+def test_online_reward_transport_is_rejected_before_resource_resolution(monkeypatch):
+    from vrl.run import resolve_online_run
+
+    cfg = load_config(
+        "experiment/sana/online_grpo_pickscore_pickapic_sfw",
+        overrides=["reward.inference.pickscore.kind=in_process"],
+    )
+
+    def unexpected_resources(*args, **kwargs):
+        raise AssertionError("invalid reward deployment reached resource resolution")
+
+    monkeypatch.setattr(ResolvedDistributedResources, "from_root", unexpected_resources)
+    with pytest.raises(ValueError, match="in_process is not admitted for online training"):
+        resolve_online_run(cfg)
+    # Offline diagnostics can still resolve an in-process, zero-weight observer.
+    offline = _built_reward(
+        {"image_sharpness": 0}, {}, {"image_sharpness": {"kind": "in_process"}}
+    )
+    with pytest.raises(ValueError, match="weight > 0"):
+        offline.reward.require_online_training()

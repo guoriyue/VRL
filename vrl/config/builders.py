@@ -11,6 +11,7 @@ from omegaconf import DictConfig
 from vrl.config.precision import (
     PrecisionPolicy,
 )
+from vrl.config.reward_calibration import RewardCalibrationConfig
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.config.schema import RewardConfig, RootConfig
 from vrl.config.validation import require_training_config
@@ -31,6 +32,7 @@ class RewardRuntimeConfig:
     # Per-component inference deployment, resolved once here (compute-once) so GPU
     # placement reads it off this bundle instead of re-walking the raw reward cfg.
     inference_configs: dict[str, RewardInferenceConfig]
+    calibration: RewardCalibrationConfig | None = None
 
     def __post_init__(self) -> None:
         for name, component_kwargs in self.kwargs.items():
@@ -60,6 +62,26 @@ class RewardRuntimeConfig:
             )
         return worker_config
 
+    def require_online_training(self) -> None:
+        """Admit the resolved deployment before allocating models or Ray actors.
+
+        Offline scoring may use in-process or zero-weight observations. Online
+        training isolates every reward from the driver's training interpreter.
+        """
+        if not any(weight > 0 for weight in self.weights.values()):
+            raise ValueError("At least one reward component must have weight > 0.")
+        in_process = sorted(
+            name
+            for name, inference in self.inference_configs.items()
+            if inference.kind == "in_process"
+        )
+        if in_process:
+            raise ValueError(
+                f"reward.inference.{{{', '.join(in_process)}}}.kind=in_process is not admitted "
+                "for online training; drop the key (Ray actor, the default) or "
+                "point it at an operator-run service with kind=http"
+            )
+
     @classmethod
     def from_cfg(cls, cfg: DictConfig | RewardConfig) -> RewardRuntimeConfig:
         """Resolve one public reward section into its runtime config.
@@ -85,6 +107,7 @@ class RewardRuntimeConfig:
             weights=weights,
             kwargs=kwargs,
             inference_configs=inference_configs,
+            calibration=reward.calibration,
         )
 
     @property

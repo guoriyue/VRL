@@ -142,3 +142,15 @@ def test_video_judge_uses_artifact_prompt_without_metadata_override(tmp_path):
         "the actual caption",
         str(path.resolve()),
     )
+
+
+def test_diagnostics_are_detached_finite_json_without_becoming_score_axes():
+    evidence = {"why": "missing:cat", "checks": [{"name": "count", "passed": False}]}
+    result = RewardInferenceResult("a", {"dense": 0.2}, diagnostics=evidence)
+    evidence["checks"][0]["passed"] = True
+    assert result.diagnostics["checks"][0]["passed"] is False
+    assert result.scores == {"dense": 0.2}
+    with pytest.raises(ValueError, match="finite JSON"):
+        RewardInferenceResult("a", {"dense": 0.2}, diagnostics={"confidence": float("nan")})
+    with pytest.raises(ValueError, match="JSON-native"):
+        RewardInferenceResult("a", {"dense": 0.2}, diagnostics={1: "ambiguous key"})

@@ -185,6 +185,7 @@ def test_wire_decodes_only_typed_scalars() -> None:
             # bool("false") is True; a stringly flag must be rejected, not
             # silently flipped into a scheduling permission.
             "generation_overlap_safe": "false",
+            "instance_id": "a" * 32,
             "max_concurrency": 1,
             "max_pending_requests": 1,
         },
@@ -414,6 +415,7 @@ async def test_server_rejects_unsupported_wire_version_with_typed_error(tmp_path
             session.post(
                 f"http://{host}:{port}/score",
                 json={"version": 999, "request": {}},
+                headers={"X-VRL-Service-Instance": (await _client.info()).instance_id},
             ) as response,
         ):
             body = await response.json()
@@ -914,6 +916,7 @@ def test_obsolete_managed_launch_token_is_rejected_by_config_and_wire() -> None:
     with pytest.raises(ValueError, match="unknown launch_token"):
         RewardServiceConfig.from_mapping({"launch_token": "obsolete-child-token"})
     info = RewardServiceInfo(
+        instance_id="a" * 32,
         model_name="external-model",
         model_version="v1",
         generation_overlap_safe=False,
@@ -1158,6 +1161,7 @@ def test_service_info_rejects_noninteger_capacity(field, value) -> None:
         "model_name": "test",
         "model_version": "v1",
         "generation_overlap_safe": False,
+        "instance_id": "a" * 32,
         "max_concurrency": 1,
         "max_pending_requests": 8,
     }
@@ -1175,6 +1179,7 @@ def test_service_info_rejects_nonstring_identity(field, value) -> None:
         "model_name": "test",
         "model_version": "",
         "generation_overlap_safe": False,
+        "instance_id": "a" * 32,
         "max_concurrency": 1,
         "max_pending_requests": 8,
     }
@@ -1266,6 +1271,7 @@ async def test_parking_service_refuses_to_overlap_safe_and_resident_services_ref
 
     with pytest.raises(ValueError, match="cannot be generation_overlap_safe"):
         RewardServiceInfo(
+            instance_id="a" * 32,
             model_name="m",
             model_version="v",
             generation_overlap_safe=True,
@@ -1282,6 +1288,80 @@ async def test_parking_service_refuses_to_overlap_safe_and_resident_services_ref
         host, port = _service.address
         async with (
             aiohttp.ClientSession() as probe,
-            probe.post(f"http://{host}:{port}/park") as response,
+            probe.post(
+                f"http://{host}:{port}/park",
+                headers={"X-VRL-Service-Instance": (await client.info()).instance_id},
+            ) as response,
         ):
             assert response.status == 405
+
+
+@pytest.mark.asyncio
+async def test_geneval_reason_survives_one_detector_pass_http_and_offline_audit(tmp_path):
+    from PIL import Image
+
+    from vrl.rewards.diagnostics import health_report, read_evaluation
+    from vrl.rewards.evaluation import ScoringConfig, rescore_media
+    from vrl.rewards.models.geneval_owl import GenEvalOwlRewardModel
+    from vrl.rewards.runtime import InProcessRewardScorer
+
+    calls = []
+
+    def detector(images, classes):
+        calls.append(len(images))
+        return [{"cat": []} for _ in images]
+
+    model = GenEvalOwlRewardModel({"device": "cpu", "detector": detector})
+    runtime = InProcessRewardScorer(
+        {"device": "cpu", "reward_model_version": "unit-v1"}, model=model
+    )
+    path = tmp_path / "image.png"
+    Image.new("RGB", (16, 16), "white").save(path)
+    spec = {"include": [{"class": "cat", "count": 1}]}
+    request = _request(str(path))
+    request = replace(
+        request, artifacts=(replace(request.artifacts[0], metadata={"geneval": spec}),)
+    )
+    async with _running_service(runtime, tmp_path) as (service, client):
+        results = await client.score_batch(request)
+        assert calls == [1]
+        assert results[0].diagnostics["why"] == "missing:cat"
+        assert results[0].scores["geneval_owl_strict"] == 0
+        manifest = tmp_path / "media.jsonl"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "sample_id": "cat",
+                    "prompt_id": "one-cat",
+                    "prompt": "A cat",
+                    "path": str(path),
+                    "metadata": {"geneval": spec},
+                }
+            )
+            + "\n"
+        )
+        host, port = service.address
+        config = ScoringConfig(
+            name="geneval-fixture",
+            revision="unit-v1",
+            preprocessing_revision="native",
+            rubric_revision="geneval-fixture-v1",
+            media_mode="file",
+            inference=RewardInferenceConfig(
+                kind="http",
+                endpoint=f"http://{host}:{port}",
+                expected_model="unit-model",
+                expected_model_version="unit-v1",
+            ),
+        )
+        await rescore_media(manifest, config, tmp_path / "audit")
+        evaluation = read_evaluation(tmp_path / "audit")
+        persisted = evaluation["records"]["cat"]["result"]
+        assert persisted["diagnostics"]["why"] == "missing:cat"
+        assert persisted["diagnostics"]["spec"] == spec
+        assert persisted["reward_model_version"] == "unit-v1"
+        assert health_report(evaluation)["diagnostics"] == {
+            "rows_with_evidence": 1,
+            "why_counts": {"missing:cat": 1},
+        }
+        assert calls == [1, 1]  # No second inference to obtain the explanation.

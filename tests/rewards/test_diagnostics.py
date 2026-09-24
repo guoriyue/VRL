@@ -7,7 +7,8 @@ import pytest
 from PIL import Image
 
 from vrl.rewards.diagnostics import compare_rankings, health_report, read_evaluation
-from vrl.rewards.evaluation import ScoringConfig, fingerprint, score_manifest
+from vrl.rewards.evaluation import ScoringConfig, rescore_media
+from vrl.utils.json_files import canonical_json_sha256
 
 
 @pytest.mark.asyncio
@@ -38,12 +39,12 @@ async def test_health_reads_real_scores_and_exposes_missing_and_tampered_records
         },
     )
     output = tmp_path / "scores"
-    await score_manifest(manifest, config, output)
+    await rescore_media(manifest, config, output)
     evaluation = read_evaluation(output)
     report = health_report(evaluation)
     assert report["status_counts"] == {"success": 2}
     assert report["axes"]["image_sharpness"]["zero_spread_prompt_ids"] == ["white"]
-    path = output / "samples" / f"{fingerprint('b')}.json"
+    path = output / "samples" / f"{canonical_json_sha256('b', allow_nan=False)}.json"
     original = path.read_text()
     path.unlink()
     assert health_report(read_evaluation(output))["status_counts"] == {"success": 1, "missing": 1}
