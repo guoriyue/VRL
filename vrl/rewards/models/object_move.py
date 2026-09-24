@@ -54,7 +54,10 @@ to be erased. With ``support_box`` ("put the laptop on the chair") the object
 has to come to rest on a real surface in the photo: geometry is full when the
 bottom centre of its edited box lies inside the support's box, and partial
 for the share of the starting distance to it that was closed; its size may
-change with depth, by at most about 2x.
+change with depth (full credit within 4x of its source area, none past 8x).
+The source holds exactly one instance of the category there, so the DINOv2
+match only has to beat detector noise (``support_identity_match``): an object
+set down somewhere new is seen from a new side.
 """
 
 from __future__ import annotations
@@ -91,6 +94,11 @@ class ObjectMoveRewardModel(LazyTorchModule):
         # a box is detector noise, not the object (it still has to be more like
         # the moved object than like any other source instance).
         self._identity_match = float(cfg.get("identity_match", 0.5))
+        # The same floor for support moves, where the source holds exactly one
+        # instance (the manifests guarantee it), so similarity only has to beat
+        # detector noise: an object set down on a bed is seen from a new side
+        # (an upright suitcase lying flat: cosine 0.2 to its source crop).
+        self._support_identity_match = float(cfg.get("support_identity_match", 0.15))
         # A background match "stayed" when it moved less than this fraction of
         # the image diagonal (sub-pixel noise and resampling, not a shift).
         self._stay_tolerance = float(cfg.get("stay_tolerance", 0.01))
@@ -100,6 +108,7 @@ class ObjectMoveRewardModel(LazyTorchModule):
             ("count_threshold", self._count_threshold, 0.0, 1.0),
             ("nms_iou", self._nms_iou, 0.0, 1.0),
             ("identity_match", self._identity_match, 0.0, 1.0),
+            ("support_identity_match", self._support_identity_match, 0.0, 1.0),
             ("stay_tolerance", self._stay_tolerance, 1e-6, 1.0),
             ("background_weight", self._background_weight, 0.0, 1.0),
         ):
@@ -191,12 +200,17 @@ class ObjectMoveRewardModel(LazyTorchModule):
         )
         source_embeds, edit_embeds = embeds[: len(src_dets)], embeds[len(src_dets) :]
         moved_index = src_dets.index(moved)
+        floor = self._identity_match if support is None else self._support_identity_match
         assigned: list[tuple[Detection, float]] = []
         if len(edit_dets):
             sims = edit_embeds @ source_embeds.T
             for det, row in zip(edit_dets, sims.tolist(), strict=True):
                 best = max(range(len(row)), key=row.__getitem__)
-                if best == moved_index and row[best] >= self._identity_match:
+                # A box far outside the object's plausible size (the whole bed
+                # detected as "suitcase") is not the object, whatever its cosine.
+                if support is not None and _scale_penalty(det[0], moved[0]) >= 1.0:
+                    continue
+                if best == moved_index and row[best] >= floor:
                     assigned.append((det, row[best]))
         out["object_move_source_count"] = 1.0
         out["object_move_edit_count"] = float(len(assigned))
@@ -216,7 +230,6 @@ class ObjectMoveRewardModel(LazyTorchModule):
         target, identity = assigned[0]
         (sx0, sy0, sx1, sy1), (ex0, ey0, ex1, ey1) = moved[0], target[0]
         area_ratio = ((ex1 - ex0) * (ey1 - ey0)) / max((sx1 - sx0) * (sy1 - sy0), 1e-6)
-        log_ratio = math.log(max(area_ratio, 1e-6))
         if goal is not None:
             # A drawn target ("into the red box"): overlap with it carries both
             # position and size, as in SpatialEdit-Bench's move score.
@@ -232,8 +245,9 @@ class ObjectMoveRewardModel(LazyTorchModule):
             end_gap = _gap(((ex0 + ex1) / 2.0, ey1), support, width, height)
             displacement = start_gap - end_gap
             progress = min(max(displacement / max(start_gap, 1e-6), 0.0), 1.0)
-            # Depth may shrink or grow it a little; halved or doubled area = 0.
-            size_term = max(0.0, 1.0 - abs(log_ratio) / math.log(2.0))
+            # Moving it nearer or farther rescales it (a floor plant set on a bed
+            # across the room shrank 3.6x): full credit within 4x, none past 8x.
+            size_term = 1.0 - _scale_penalty(target[0], moved[0])
         # The target mark itself (red box lines) is meant to disappear.
         edited_regions = (moved[0], target[0]) if goal is None else (moved[0], target[0], goal)
         background = self._background(kp0, kp1, self_kp0, edited_regions, width, height)
@@ -335,6 +349,14 @@ class ObjectMoveRewardModel(LazyTorchModule):
                 threshold=0.2,
             )[0]
         return result["keypoints0"].float().cpu(), result["keypoints1"].float().cpu()
+
+
+def _scale_penalty(box: Box, source: Box) -> float:
+    """0 while ``box``'s area is within 4x of ``source``'s, rising to 1 at 8x."""
+
+    area = max((box[2] - box[0]) * (box[3] - box[1]), 1e-6)
+    source_area = max((source[2] - source[0]) * (source[3] - source[1]), 1e-6)
+    return min(max(abs(math.log(area / source_area)) - math.log(4.0), 0.0) / math.log(2.0), 1.0)
 
 
 def _gap(point: tuple[float, float], box: Box, width: int, height: int) -> float:

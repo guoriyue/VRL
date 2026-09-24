@@ -124,3 +124,40 @@ def test_shaped_score_ranks_move_over_faithful_failures_over_a_redrawn_scene() -
     # w = 0.2: a faithful no-op, copy or lost object keeps 0.2 / 1.2 for the scene.
     assert unchanged == duplicate == lost == pytest.approx(0.2 / 1.2)
     assert redrawn == 0.0
+
+
+class _SeenFromANewSide(_Stubbed):
+    """Edit crops look only faintly like the source crop (cosine ``edit_cosine``)."""
+
+    def __init__(self, layouts, edit_cosine, boxes=None):
+        super().__init__(layouts)
+        self._cos = edit_cosine
+        self._boxes = boxes or {}
+
+    def _detect(self, images, obj):
+        return [self._boxes.get(id(image)) or super()._detect([image], obj)[0] for image in images]
+
+    def _embed(self, images):
+        # First crop is the source object; the rest are edit crops at the given cosine.
+        source = torch.tensor([1.0, 0.0])
+        edit = torch.tensor([self._cos, (1 - self._cos**2) ** 0.5])
+        return torch.stack([source] + [edit] * (len(images) - 1))
+
+
+def test_support_moves_count_a_reposed_object_but_not_a_furniture_sized_box() -> None:
+    source, onto = _scene(BOX[0]), _scene(130.0)
+    layouts = {id(source): [BOX[0]], id(onto): [130.0]}
+    # Cosine 0.2 to its source crop: below the 0.5 instance floor, above noise.
+    reposed = _SeenFromANewSide(layouts, edit_cosine=0.2).score(source, onto, SUPPORT)
+    assert reposed["object_move_edit_count"] == 1.0 and reposed["object_move_geometry"] == 1.0
+    # The whole table detected as the object (10x its area) is not a second copy.
+    boxes = {id(onto): [((130.0, 80.0, 170.0, 120.0), 0.9), ((0.0, 0.0, 200.0, 80.0), 0.3)]}
+    noisy = _SeenFromANewSide(layouts, edit_cosine=0.9, boxes=boxes).score(source, onto, SUPPORT)
+    assert noisy["object_move_edit_count"] == 1.0
+
+
+def test_support_moves_allow_a_depth_rescale_up_to_four_times() -> None:
+    source, onto = _scene(BOX[0]), _scene(130.0)
+    far = {id(onto): [((135.0, 100.0, 155.0, 120.0), 0.9)]}  # a quarter of the area
+    out = _SeenFromANewSide({id(source): [BOX[0]]}, 0.9, far).score(source, onto, SUPPORT)
+    assert out["object_move_geometry"] == pytest.approx(1.0)
