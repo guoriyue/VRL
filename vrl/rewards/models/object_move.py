@@ -29,14 +29,18 @@ unchanged source earn its full consistency term, the geometric mean gives it
 zero. Every intermediate quantity is returned so evaluation can classify each
 outcome (duplicated / lost / unchanged / moved).
 
-``object_move_shaped`` is the training signal: ``(object_move + w * background)
-/ (1 + w)``, with background measured for every outcome (a copy or a lost
-object included). ``object_move`` alone is zero for almost every base sample,
-so GRPO pushed down every faithful-but-unmoved edit and the policy stopped
-following the reference photo (run1: held-out 0.107 -> 0.001, the scene
-redrawn). The shaped key ranks a correct move above a faithful no-op or copy,
-and those above a redrawn scene; with a small ``w`` a no-op still earns far
-less than any credited move.
+``object_move_shaped`` is the training signal: ``(object_move + w * background
+* (1 + vacated) / 2) / (1 + w)``, with background measured for every outcome (a
+copy or a lost object included) and ``vacated`` = 1 when no instance of the
+object is left in its source box. ``object_move`` alone is zero for almost
+every base sample, so GRPO pushed down every faithful-but-unmoved edit and the
+policy stopped following the reference photo (run1: held-out 0.107 -> 0.001,
+the scene redrawn). The shaped key ranks a correct move above a faithful
+failure and those above a redrawn scene; among the faithful failures an edit
+that cleared the origin (the half of the task the base model does not do:
+54% of its outputs are a copy with the original left in place) ranks above a
+copy or a no-op. With a small ``w`` a no-op still earns far less than any
+credited move.
 
 Per-artifact metadata (from the prompt manifest)::
 
@@ -186,6 +190,7 @@ class ObjectMoveRewardModel(LazyTorchModule):
             "object_move_area_ratio": 0.0,
             "object_move_identity": 0.0,
             "object_move_background": 0.0,
+            "object_move_vacated": 0.0,
         }
         if moved is None:
             return out
@@ -216,6 +221,10 @@ class ObjectMoveRewardModel(LazyTorchModule):
                     assigned.append((det, row[best]))
         out["object_move_source_count"] = 1.0
         out["object_move_edit_count"] = float(len(assigned))
+        # The origin is vacated when no instance of the object still sits in its
+        # source box: the erase half of a move, which a copy or a no-op skips.
+        vacated = not any(_iou(det[0], moved[0]) >= 0.5 for det, _ in assigned)
+        out["object_move_vacated"] = float(vacated)
         patches = (self._patches(source), self._patches(edited))
         if len(assigned) != 1:
             # A copy or a lost object: no move credit, but a scene kept in
@@ -225,7 +234,7 @@ class ObjectMoveRewardModel(LazyTorchModule):
                 regions = (*regions, goal)
             background = self._background(patches, (source, edited), regions, width, height)
             out["object_move_background"] = background
-            out["object_move_shaped"] = self._shaped(0.0, background)
+            out["object_move_shaped"] = self._shaped(0.0, background, vacated)
             return out
         out["object_move_count_ok"] = 1.0
         target, identity = assigned[0]
@@ -259,7 +268,9 @@ class ObjectMoveRewardModel(LazyTorchModule):
         out.update(
             {
                 "object_move": math.sqrt(geometry * consistency),
-                "object_move_shaped": self._shaped(math.sqrt(geometry * consistency), background),
+                "object_move_shaped": self._shaped(
+                    math.sqrt(geometry * consistency), background, vacated
+                ),
                 "object_move_geometry": geometry,
                 "object_move_consistency": consistency,
                 "object_move_displacement": displacement,
@@ -270,8 +281,9 @@ class ObjectMoveRewardModel(LazyTorchModule):
         )
         return out
 
-    def _shaped(self, move: float, background: float) -> float:
-        return (move + self._background_weight * background) / (1.0 + self._background_weight)
+    def _shaped(self, move: float, background: float, vacated: bool) -> float:
+        floor = self._background_weight * background * (1.0 + float(vacated)) / 2.0
+        return (move + floor) / (1.0 + self._background_weight)
 
     def _detect(self, images: Sequence[Any], obj: str) -> list[list[Detection]]:
         import torch

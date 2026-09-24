@@ -136,7 +136,7 @@ def test_target_box_mode_scores_overlap_with_the_drawn_target() -> None:
     assert off_target["object_move"] == 0.0
 
 
-def test_shaped_score_ranks_move_over_faithful_failures_over_a_redrawn_scene() -> None:
+def test_shaped_score_ranks_move_over_cleared_origin_over_copy_over_a_redrawn_scene() -> None:
     moved = _score(edited_x=130.0)["object_move_shaped"]
     unchanged = _score(edited_x=BOX[0])["object_move_shaped"]
     duplicate = _score(edited_x=BOX[0], copy_x=120.0)["object_move_shaped"]
@@ -144,8 +144,11 @@ def test_shaped_score_ranks_move_over_faithful_failures_over_a_redrawn_scene() -
     redrawn = _score(edited_x=None, seed=1)["object_move_shaped"]  # another texture entirely
 
     assert moved == pytest.approx(1.0)
-    # w = 0.2: a faithful no-op, copy or lost object keeps 0.2 / 1.2 for the scene.
-    assert unchanged == duplicate == lost == pytest.approx(0.2 / 1.2)
+    # w = 0.2: a faithful failure keeps up to 0.2 / 1.2 for the scene, the full
+    # amount only when the origin was cleared (lost), half when the original
+    # is still there (no-op, copy).
+    assert lost == pytest.approx(0.2 / 1.2)
+    assert unchanged == duplicate == pytest.approx(0.1 / 1.2)
     assert redrawn < 0.05
 
 
