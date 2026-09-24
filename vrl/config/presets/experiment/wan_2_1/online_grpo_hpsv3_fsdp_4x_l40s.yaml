@@ -149,10 +149,11 @@ rollout:
     # (iso-temporal grouping). Reference: index ~ U{0..9}.
     window_size: 1
     window_range: [0, 10]
-  # 24 trajectories x 81 frames per rank per update: bf16 host-side leaves or
-  # host RAM becomes the wall before GPU memory does.
+  # Preserve fp32 rollout inputs for the exact unchanged-policy parity gate.
+  # BF16 storage quantizes the sampled latents even when model compute is BF16.
+  # This increases host trajectory memory; recheck host capacity at this geometry.
   trajectory_storage:
-    dtype: bfloat16
+    dtype: float32
 
 reward:
   kwargs:

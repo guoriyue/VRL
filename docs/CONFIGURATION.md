@@ -311,3 +311,19 @@ Completed `ScoredRollout` records enter `ScoredRolloutQueue`.
 `ContinuousRolloutConsumer` retrieves the requested complete batch and returns
 the shared `RolloutIteration` type. Configuration keys and metric names are
 unchanged.
+
+## Documented-command compilation gate
+
+`tests/config/test_documented_launches.py` scans shell fences in `docs/*.md` and
+`docs/sprints/info/*.md`. Literal `python -m vrl.scripts... --config` commands
+using bundled `experiment/` or `recipe/` names pass their config and dotlist/group
+overrides through `load_config` and `parse_config`; `--config=NAME` also works.
+This catches removed keys and stale recipe names without loading models or
+executing the command. It does not certify CLI flags, data paths or GPU resources.
+External standalone scorer YAMLs and dynamic shell config variables need their
+own integration checks and are outside this bundled-config gate.
+
+Fences explicitly tagged `bash historical` retain commands from recorded
+experiments and are excluded. Marking a block historical preserves evidence; it
+must not be used to exempt a current launch instruction from validation.
+`docs/sprints/done` and research archives are outside the scan.
