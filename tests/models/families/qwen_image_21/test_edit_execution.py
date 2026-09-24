@@ -85,7 +85,7 @@ def test_edit_executor_encodes_rgba_references_once_per_batch_and_preserves_outp
         initial_noise_seeds=[42, 42],
         sampling={
             "height": 64,
-            "width": 64,
+            "width": 96,
             "num_steps": 3,
             "guidance_scale": 1.0,
             "reference_resolution": 64,
@@ -103,12 +103,13 @@ def test_edit_executor_encodes_rgba_references_once_per_batch_and_preserves_outp
     assert encoded_images[1].shape == (1, 4, 1, 32, 128)
     assert (encoded_images[0][:, 3] == -1).all()
     assert [im.size for im in prompt_images[0]] == [(64, 64), (128, 32)]
-    assert output.output.shape == (2, 4, 64, 64)
+    assert output.output.shape == (2, 4, 64, 96)
     assert output.output.dtype == torch.uint8
     assert (output.output[:, 3] == 0).all()
     # A later text-only RGB request must reset both reference and decode state.
     request.inputs = [GenerationInput(prompt="plain image")]
     request.sampling["output_mode"] = "rgb"
+    request.sampling["width"] = 64
     with torch.no_grad():
         plain = executor.forward_plan(
             request, request.sample_rows(), EnginePlan.from_request(request)

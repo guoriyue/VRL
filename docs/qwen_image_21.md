@@ -9,8 +9,8 @@ Qwen 2.1 implementation; sync with the cosmos extra before running it. The base
 preset keeps the frozen text encoder on CPU for a 32 GB GPU. Sampling uses
 `reference_resolution` (default 1024) and `output_mode` (`rgb` or `rgba`).
 
-A prompt manifest may supply either `reference_image` or an ordered
-`reference_images` list of up to ten paths. Paths resolve against the existing
+A prompt manifest supplies an ordered `reference_images` list; a row may spell
+a single image as `reference_image`, which the loader maps to a one-element list. Paths resolve against the existing
 artifact data root. Reference latents are fixed conditioning: replay stores them,
 but only generated target latents enter the SDE transition likelihood.
 
@@ -33,6 +33,21 @@ shares the initial latent and VAE preprocessing precision with the upstream
 pipeline. The separate SDE probe checks likelihood replay, finite gradients, and
 one LoRA optimizer update. It does not train on task reward or demonstrate an RL
 improvement. Full online training and agentic control require their own validation.
+
+For an existing edit dataset, use `--manifest /absolute/path/to/tasks.jsonl` in
+place of `--source`/`--reference`. The probe defaults to `--output-mode rgba`;
+select `--output-mode rgb` for ordinary local-edit candidates. RGB is the decoded
+RGBA composited over white, as in the family runtime, and emits three-channel
+PNGs without alpha statistics. Official comparison applies the same composite
+before recording `official_rgb_mae_255`; native latent replay is checked in both
+modes. `--seed-mode independent` derives each sample seed from the base seed,
+prompt and reference content, allowing reproducible source-paired comparisons.
+For a rectangular canvas, set both `--width` and `--height`, for example
+`--width 320 --height 480`. Dimensions must be positive multiples of 32. Without
+these options, `--resolution` remains the square output size. Reference encoding
+keeps its separate `--reference-resolution` budget. The native and official paths
+receive the same output canvas, which is checked against the decoded tensor.
+The optional LoRA backward probe remains a separate fixed 256x256 smoke test.
 
 See `docs/reports/visual_rl_engine_20260922/PROGRESS.md` for actual measurements.
 
@@ -77,7 +92,11 @@ was `77a93aaa461fe9187e0ff841b59ecc0d0620bb7f`; preserve its dependencies separa
 Its initial base-model warning about uninitialized reward heads precedes a strict
 load of the released reward checkpoint. A successful strict load is required.
 
-```bash
+The smoke recipe below trained on the two-row `edit_locality` study, which main
+removed in `a415a0d78`; the command is kept as a record. A new editing recipe
+composes `reward/editreward_http` with a real editing dataset.
+
+```bash historical
 HF_HUB_OFFLINE=1 .venv/bin/python -m vrl.scripts.train \
   --config experiment/qwen_image_21/online_grpo_editreward_smoke \
   model.path=/absolute/path/to/cached/Qwen-Image-2.1-snapshot \
