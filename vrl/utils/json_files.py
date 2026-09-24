@@ -17,16 +17,20 @@ from typing import Any
 from vrl.utils.artifacts import atomic_file
 
 
-def write_json(path: str | Path, value: Any, *, overwrite: bool = True) -> Path:
+def write_json(
+    path: str | Path, value: Any, *, overwrite: bool = True, allow_nan: bool = True
+) -> Path:
     """Write ``value`` as pretty-printed, key-sorted JSON.
 
     With ``overwrite=False`` an existing file is left untouched and
     ``FileExistsError`` is raised, for records that must never be replaced.
+    ``allow_nan=False`` refuses NaN/infinity, which JSON itself cannot express,
+    before anything is published.
     """
 
     path = Path(path)
     with atomic_file(path, overwrite=overwrite) as handle:
-        json.dump(value, handle, indent=2, sort_keys=True)
+        json.dump(value, handle, indent=2, sort_keys=True, allow_nan=allow_nan)
         handle.write("\n")
 
     return path
