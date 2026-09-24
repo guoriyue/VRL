@@ -1,17 +1,17 @@
 """Object-move edit reward: did the named object move as instructed, and only it?
 
-An instruction-based edit ("move the armchair to the left") is judged from the
-source photo and the edited image with two released models; no region, color or
-position rule is hand-written:
+An instruction-based edit ("move the laptop onto the chair", "move the
+helicopter into the red box") is judged from the source photo and the edited
+image with released models; no region, color or position rule is hand-written:
 
-* **Geometry** (OWLv2 open-vocabulary detection of ``object`` in both images).
+* **Geometry** (Grounding DINO detection of ``object`` in both images).
   Instances are counted only when their DINOv2 crop embedding matches the
   moved object, so other members of the category cancel out; that count must
   be unchanged -- a second copy or a lost object scores zero, which is the base
-  model's dominant failure. The moved instance's box
-  centre must travel along ``direction`` (left/right/up/down), or its area must
-  grow/shrink for ``closer``/``farther``; lateral moves keep the area, so a crop
-  or zoom does not count as a move.
+  model's dominant failure. Where the moved instance has to end up comes from
+  the scene itself: a support it must rest on, or a target box drawn on the
+  source. "Move it to the left side" is not supported -- in a real photo it
+  usually leaves the object nowhere to stand.
 * **Consistency**. Object identity is the cosine of the DINOv2 global
   embeddings of the two object crops. Background preservation is geometric:
   EfficientLoFTR matches source to edit, and the score is the share of
@@ -39,13 +39,11 @@ less than any credited move.
 Per-artifact metadata (from the prompt manifest)::
 
     reference_images: [source path]           # the edit source
-    object_move: {object: "armchair", direction: "left",
-                  source_box: [x0, y0, x1, y1]}   # optional, normalized
-    object_move: {object: "the helicopter",       # or: a drawn target
-                  target_box: [x0, y0, x1, y1]}   # normalized
-    object_move: {object: "laptop", support: "chair",  # or: onto a support
+    object_move: {object: "laptop", support: "chair",  # onto a support
                   support_box: [x0, y0, x1, y1],       # normalized
-                  source_box: [x0, y0, x1, y1]}
+                  source_box: [x0, y0, x1, y1]}        # optional, normalized
+    object_move: {object: "the helicopter",            # or: a drawn target
+                  target_box: [x0, y0, x1, y1]}        # normalized
 
 ``source_box`` selects which instance moves when the source holds several;
 without it the most confident detection is the moved object. With
@@ -71,10 +69,6 @@ from vrl.rewards.models.geneval_owl import Box, Detection, _iou, nms
 from vrl.rewards.models.media import artifact_middle_frame_image
 from vrl.utils.artifacts import default_data_root, resolve_artifact_path
 
-DIRECTIONS = ("left", "right", "up", "down", "closer", "farther")
-# Unit image-plane vector each lateral direction asks the box centre to travel.
-_LATERAL = {"left": (-1.0, 0.0), "right": (1.0, 0.0), "up": (0.0, -1.0), "down": (0.0, 1.0)}
-
 
 class ObjectMoveRewardModel(LazyTorchModule):
     """Score one edited image against its source and ``metadata.object_move``."""
@@ -97,28 +91,20 @@ class ObjectMoveRewardModel(LazyTorchModule):
         # a box is detector noise, not the object (it still has to be more like
         # the moved object than like any other source instance).
         self._identity_match = float(cfg.get("identity_match", 0.5))
-        # Full displacement credit: the centre travels this fraction of the image
-        # along the requested axis (a clearly visible move, not a nudge).
-        self._full_shift = float(cfg.get("full_shift", 0.25))
         # A background match "stayed" when it moved less than this fraction of
         # the image diagonal (sub-pixel noise and resampling, not a shift).
         self._stay_tolerance = float(cfg.get("stay_tolerance", 0.01))
-        # Full size credit for closer/farther: the area changes by this factor.
-        self._full_scale = float(cfg.get("full_scale", 2.0))
         # Weight of background preservation in ``object_move_shaped``.
         self._background_weight = float(cfg.get("background_weight", 0.2))
         for name, value, low, high in (
             ("count_threshold", self._count_threshold, 0.0, 1.0),
             ("nms_iou", self._nms_iou, 0.0, 1.0),
             ("identity_match", self._identity_match, 0.0, 1.0),
-            ("full_shift", self._full_shift, 1e-6, 1.0),
             ("stay_tolerance", self._stay_tolerance, 1e-6, 1.0),
             ("background_weight", self._background_weight, 0.0, 1.0),
         ):
             if not low <= value <= high:
                 raise ValueError(f"object_move {name} must lie in [{low}, {high}]")
-        if self._full_scale <= 1.0:
-            raise ValueError("object_move full_scale must exceed 1")
         self._processor: Any | None = None
 
     def _load_module(self) -> Any:
@@ -161,14 +147,10 @@ class ObjectMoveRewardModel(LazyTorchModule):
         """All object-move quantities for one (source, edited) pair of PIL images."""
 
         obj = str(spec.get("object") or "").strip()
-        direction = str(spec.get("direction") or "")
         target_box = spec.get("target_box")
         support_box = spec.get("support_box")
-        if not obj or (target_box is None and support_box is None and direction not in DIRECTIONS):
-            raise ValueError(
-                f"object_move spec needs object and a direction in {DIRECTIONS}, "
-                "a target_box or a support_box"
-            )
+        if not obj or (target_box is None) == (support_box is None):
+            raise ValueError("object_move spec needs object and one of target_box, support_box")
         if source.size != edited.size:
             raise ValueError("object_move compares images of equal size")
         width, height = edited.size
@@ -176,7 +158,7 @@ class ObjectMoveRewardModel(LazyTorchModule):
         if target_box is not None:
             x0, y0, x1, y1 = (float(v) for v in target_box)
             goal = (x0 * width, y0 * height, x1 * width, y1 * height)
-        elif support_box is not None:
+        else:
             x0, y0, x1, y1 = (float(v) for v in support_box)
             support = (x0 * width, y0 * height, x1 * width, y1 * height)
         src_dets, edit_dets = self._detect([source, edited], obj)
@@ -233,8 +215,6 @@ class ObjectMoveRewardModel(LazyTorchModule):
         out["object_move_count_ok"] = 1.0
         target, identity = assigned[0]
         (sx0, sy0, sx1, sy1), (ex0, ey0, ex1, ey1) = moved[0], target[0]
-        dx = ((ex0 + ex1) - (sx0 + sx1)) / 2.0 / width
-        dy = ((ey0 + ey1) - (sy0 + sy1)) / 2.0 / height
         area_ratio = ((ex1 - ex0) * (ey1 - ey0)) / max((sx1 - sx0) * (sy1 - sy0), 1e-6)
         log_ratio = math.log(max(area_ratio, 1e-6))
         if goal is not None:
@@ -243,7 +223,7 @@ class ObjectMoveRewardModel(LazyTorchModule):
             displacement = _iou(target[0], goal) - _iou(moved[0], goal)
             progress = _iou(target[0], goal)
             size_term = 1.0
-        elif support is not None:
+        else:
             # Resting point: the bottom centre of the object's box has to land on
             # the support (a laptop set on the chair, not hanging beside it).
             # Credit is the share of the starting gap that was closed, so an
@@ -254,17 +234,6 @@ class ObjectMoveRewardModel(LazyTorchModule):
             progress = min(max(displacement / max(start_gap, 1e-6), 0.0), 1.0)
             # Depth may shrink or grow it a little; halved or doubled area = 0.
             size_term = max(0.0, 1.0 - abs(log_ratio) / math.log(2.0))
-        elif direction in _LATERAL:
-            ux, uy = _LATERAL[direction]
-            displacement = dx * ux + dy * uy
-            progress = min(max(displacement / self._full_shift, 0.0), 1.0)
-            # Lateral moves keep the object's size: area halved or doubled = 0.
-            size_term = max(0.0, 1.0 - abs(log_ratio) / math.log(2.0))
-        else:
-            sign = 1.0 if direction == "closer" else -1.0
-            displacement = sign * log_ratio
-            progress = min(max(displacement / math.log(self._full_scale), 0.0), 1.0)
-            size_term = 1.0
         # The target mark itself (red box lines) is meant to disappear.
         edited_regions = (moved[0], target[0]) if goal is None else (moved[0], target[0], goal)
         background = self._background(kp0, kp1, self_kp0, edited_regions, width, height)
@@ -414,4 +383,4 @@ def _outside_boxes(points: Any, boxes: Sequence[Box]) -> Any:
     return keep
 
 
-__all__ = ["DIRECTIONS", "ObjectMoveRewardModel"]
+__all__ = ["ObjectMoveRewardModel"]

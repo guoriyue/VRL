@@ -4,7 +4,7 @@ The detector, DINOv2 and EfficientLoFTR are large downloads, so each test
 feeds the score path what those models would return for a hand-built image:
 detections from the known pasted positions, embeddings that are identical for
 the same object crop, and correspondences computed from the known motion. The
-arithmetic under test -- instance matching, direction, size, background
+arithmetic under test -- instance matching, landing, size, background
 geometry, the composed score -- is the production code.
 """
 
@@ -18,6 +18,8 @@ from vrl.rewards.models.object_move import ObjectMoveRewardModel
 
 W = H = 200
 BOX = (20.0, 80.0, 60.0, 120.0)  # the object in the source
+# A table top to the right of it: the object rests on it when its bottom centre is inside.
+SUPPORT = {"object": "block", "support_box": [120 / W, 60 / H, 180 / W, 130 / H]}
 
 
 def _scene(object_x: float | None, copy_x: float | None = None) -> Image.Image:
@@ -56,44 +58,45 @@ class _Stubbed(ObjectMoveRewardModel):
         return grid, moved
 
 
-def _score(edited_x, copy_x=None, direction="right", background_shift=0.0):
+def _score(edited_x, copy_x=None, background_shift=0.0):
     source, edited = _scene(BOX[0]), _scene(edited_x, copy_x)
     layouts = {id(source): [BOX[0]], id(edited): [x for x in (edited_x, copy_x) if x is not None]}
     model = _Stubbed(layouts, background_shift)
-    return model.score(source, edited, {"object": "block", "direction": direction})
+    return model.score(source, edited, SUPPORT)
 
 
-def test_a_clean_move_in_the_instructed_direction_scores_high() -> None:
-    out = _score(edited_x=90.0)
+def test_setting_the_object_on_the_support_scores_high() -> None:
+    out = _score(edited_x=130.0)
     assert out["object_move_count_ok"] == 1.0
-    assert out["object_move_displacement"] == pytest.approx(0.35)
     assert out["object_move_background"] == pytest.approx(1.0)
+    assert out["object_move_geometry"] == pytest.approx(1.0)
     assert out["object_move"] == pytest.approx(1.0)
 
 
-def test_unchanged_wrong_direction_duplicate_and_shift_all_score_zero() -> None:
+def test_unchanged_away_duplicate_and_shift_all_score_zero() -> None:
     assert _score(edited_x=BOX[0])["object_move"] == 0.0
-    assert _score(edited_x=90.0, direction="left")["object_move"] == 0.0
-    duplicate = _score(edited_x=BOX[0], copy_x=90.0)
+    assert _score(edited_x=0.0)["object_move"] == 0.0  # moved away from the table
+    duplicate = _score(edited_x=BOX[0], copy_x=130.0)
     assert duplicate["object_move_edit_count"] == 2.0 and duplicate["object_move"] == 0.0
     # The whole frame moved with the object: no background stayed in place.
-    shifted = _score(edited_x=90.0, background_shift=70.0)
+    shifted = _score(edited_x=130.0, background_shift=70.0)
     assert shifted["object_move_background"] == 0.0 and shifted["object_move"] == 0.0
 
 
 def test_a_lost_object_scores_zero_and_a_partial_move_scores_partially() -> None:
     assert _score(edited_x=None)["object_move"] == 0.0
-    partial = _score(edited_x=45.0)  # an eighth of the image, half of full credit
+    # Bottom centre from x 40 to x 90: 50 of the 80 px gap to the table closed.
+    partial = _score(edited_x=70.0)
     assert 0.0 < partial["object_move"] < 1.0
-    assert partial["object_move_geometry"] == pytest.approx(0.5)
+    assert partial["object_move_geometry"] == pytest.approx(50 / 80)
 
 
 def test_spec_is_validated() -> None:
     model = _Stubbed({})
-    with pytest.raises(ValueError, match="direction"):
-        model.score(_scene(20.0), _scene(20.0), {"object": "block", "direction": "sideways"})
+    with pytest.raises(ValueError, match="target_box, support_box"):
+        model.score(_scene(20.0), _scene(20.0), {"object": "block", "direction": "left"})
     with pytest.raises(ValueError, match="equal size"):
-        model.score(_scene(20.0), Image.new("RGB", (10, 10)), {"object": "b", "direction": "left"})
+        model.score(_scene(20.0), Image.new("RGB", (10, 10)), SUPPORT)
 
 
 def test_target_box_mode_scores_overlap_with_the_drawn_target() -> None:
@@ -111,9 +114,9 @@ def test_target_box_mode_scores_overlap_with_the_drawn_target() -> None:
 
 
 def test_shaped_score_ranks_move_over_faithful_failures_over_a_redrawn_scene() -> None:
-    moved = _score(edited_x=90.0)["object_move_shaped"]
+    moved = _score(edited_x=130.0)["object_move_shaped"]
     unchanged = _score(edited_x=BOX[0])["object_move_shaped"]
-    duplicate = _score(edited_x=BOX[0], copy_x=90.0)["object_move_shaped"]
+    duplicate = _score(edited_x=BOX[0], copy_x=130.0)["object_move_shaped"]
     lost = _score(edited_x=None)["object_move_shaped"]
     redrawn = _score(edited_x=None, background_shift=70.0)["object_move_shaped"]
 
@@ -121,17 +124,3 @@ def test_shaped_score_ranks_move_over_faithful_failures_over_a_redrawn_scene() -
     # w = 0.2: a faithful no-op, copy or lost object keeps 0.2 / 1.2 for the scene.
     assert unchanged == duplicate == lost == pytest.approx(0.2 / 1.2)
     assert redrawn == 0.0
-
-
-def test_support_mode_credits_landing_on_the_named_surface() -> None:
-    # The support (a table top) spans x 120-180, y 60-130; the object starts at x 20-60.
-    spec = {"object": "block", "support_box": [120 / W, 60 / H, 180 / W, 130 / H]}
-    source, onto, halfway, stayed = _scene(BOX[0]), _scene(130.0), _scene(70.0), _scene(BOX[0])
-    layouts = {id(source): [BOX[0]], id(onto): [130.0], id(halfway): [70.0], id(stayed): [BOX[0]]}
-    model = _Stubbed(layouts)
-
-    assert model.score(source, onto, spec)["object_move_geometry"] == pytest.approx(1.0)
-    assert model.score(source, onto, spec)["object_move"] == pytest.approx(1.0)
-    # Bottom centre from x 40 to x 90: half of the 80 px gap to the table closed.
-    assert model.score(source, halfway, spec)["object_move_geometry"] == pytest.approx(50 / 80)
-    assert model.score(source, stayed, spec)["object_move"] == 0.0
