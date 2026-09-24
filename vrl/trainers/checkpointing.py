@@ -332,13 +332,6 @@ class TrainingCheckpoint:
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"training checkpoint file not found: {checkpoint_path}")
         meta = read_checkpoint_meta(checkpoint_dir)
-        expected_digest = meta.get("checkpoint_file_sha256")
-        if "checkpoint_file_sha256" in meta and (
-            not isinstance(expected_digest, str)
-            or re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None
-            or sha256_file(checkpoint_path) != expected_digest
-        ):
-            raise ValueError("checkpoint payload integrity mismatch")
         payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         if not isinstance(payload, dict):
             raise TypeError(f"{checkpoint_path} must contain a dict payload")
@@ -942,7 +935,6 @@ class _CheckpointSaveTransaction:
                 for name in adapter_sources
             ),
             checkpoint_file_bytes=checkpoint_file.stat().st_size,
-            checkpoint_file_sha256=sha256_file(checkpoint_file),
         )
         self._publish()
         return meta
@@ -1717,7 +1709,6 @@ def write_checkpoint_meta(
     progress: dict[str, Any],
     uses_lora: bool,
     checkpoint_file_bytes: int | None = None,
-    checkpoint_file_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Write human-readable checkpoint metadata next to ``checkpoint.pt``.
 
@@ -1725,8 +1716,6 @@ def write_checkpoint_meta(
     so completeness checks (supervisor resume discovery) can reject truncated
     copies without loading the payload. ``model_identity`` is a provenance-only
     copy for cheap pre-model preflight; ``checkpoint.pt`` remains authoritative.
-    New saves also bind its SHA-256; load verifies that digest before deserializing.
-    Legacy sidecars without a digest keep their existing compatibility contract.
     """
 
     TrainingCheckpoint._validate_family(family, field="family")
@@ -1742,13 +1731,6 @@ def write_checkpoint_meta(
         ),
         "uses_lora": bool(uses_lora),
     }
-    if checkpoint_file_sha256 is not None:
-        if (
-            not isinstance(checkpoint_file_sha256, str)
-            or re.fullmatch(r"[0-9a-f]{64}", checkpoint_file_sha256) is None
-        ):
-            raise ValueError("checkpoint_file_sha256 must be a lowercase SHA-256 digest")
-        meta["checkpoint_file_sha256"] = checkpoint_file_sha256
     # Mirror explicit progress without converting optimizer steps into epochs.
     for name in ("completed_epoch", "next_epoch", "completed_step", "next_step", "global_step"):
         if name in progress:

@@ -46,8 +46,6 @@ from vrl.rollouts.stats import (
 from vrl.trainers.core.types import TrainState
 from vrl.trainers.diagnostics import (
     append_jsonl_record,
-    parameter_state_summary,
-    tensor_stats,
     trainable_state_digest,
 )
 from vrl.trainers.online.config import TrainerConfig
@@ -400,22 +398,6 @@ class _TrainingMicrobatch:
             for _ in range(target_count - len(sample_batches))
         )
         return sample_batches
-
-
-def _distributed_parity_verdict(
-    *,
-    local_finite: bool,
-    local_max_abs_diff: float,
-    limit: float,
-    strategy: Strategy,
-) -> tuple[bool, float, bool]:
-    """Return one rank-consistent parity verdict for every training process."""
-
-    finite = strategy.collectives.all_true(local_finite)
-    max_abs_diff = strategy.collectives.max_float(
-        local_max_abs_diff if local_finite else float("inf"),
-    )
-    return finite, max_abs_diff, finite and max_abs_diff <= limit
 
 
 def _distributed_initial_replay_stats(
@@ -1512,6 +1494,7 @@ class OnlineTrainer:
             training_microbatch_size,
         )[0]
         self._check_initial_precision_drift(first_batch.batch, train_indices)
+        self._check_first_step_invariant(first_batch, defer_replay_tensors=defer)
         self._run_replay_pass(
             batch.batches,
             batch.advantages,
@@ -1601,147 +1584,61 @@ class OnlineTrainer:
         )
         return metrics
 
-    def _first_step_parity_probe(
-        self,
-        microbatch: _TrainingMicrobatch,
-        *,
-        timestep_index: int,
-        defer_replay_tensors: bool,
-    ) -> dict[str, Any] | None:
-        """Collect bounded first-step evidence; the full-update gate owns enforcement.
+    def _check_first_step_invariant(
+        self, microbatch: _TrainingMicrobatch, *, defer_replay_tensors: bool
+    ) -> None:
+        """Run an algorithm's own lr=0 invariant on the first trainable batch.
 
-        Log-prob algorithms compare the first selected replay transition. Algorithms
-        without likelihoods can supply their own optional invariant instead.
+        Log-prob algorithms are covered by the replay parity gate before the
+        optimizer step. Algorithms without likelihoods (NFT, V-GRPO) expose
+        ``first_step_invariant_check`` instead; its record goes to
+        ``training_debug.jsonl`` and a violation warns, since the gate cannot
+        see it.
         """
         from vrl.utils.profiling import profile_range
 
         cfg = self.config
-        if not cfg.debug.first_step or self.state.step != 0:
-            return None
-        precision_metadata = self._precision_metadata()
-        record = None
-        if self.algorithm.uses_evaluator:
-            replay_batch = microbatch.batch.to_device(
-                self.device,
-                defer_replay_tensors=defer_replay_tensors,
+        invariant_check = getattr(self.algorithm, "first_step_invariant_check", None)
+        if (
+            not cfg.debug.first_step
+            or self.state.step != 0
+            or self.algorithm.uses_evaluator
+            or not callable(invariant_check)
+        ):
+            return
+        replay_batch = microbatch.batch.to_device(
+            self.device, defer_replay_tensors=defer_replay_tensors
+        )
+        with torch.no_grad(), profile_range("trainer.replay"):
+            invariant = invariant_check(
+                model=self.model,
+                batch=replay_batch,
+                advantages=microbatch.advantages.to(self.device),
+                timestep_index=0,
             )
-            with torch.no_grad():
-                signals = self._evaluate_signals(replay_batch, timestep_index)
-            fresh_log_prob = signals.primary.log_prob
-            old_log_prob = signals.primary.old_log_prob
-            difference = (fresh_log_prob - old_log_prob).abs()
-            ratio = torch.exp(fresh_log_prob - old_log_prob)
-            old_first = old_log_prob.reshape(-1)[0]
-            fresh_first = fresh_log_prob.reshape(-1)[0]
-            limit = float(cfg.replay_parity.max_abs_logprob_diff)
-            local_finite = bool(
-                torch.isfinite(old_log_prob).all().item()
-                and torch.isfinite(fresh_log_prob).all().item()
-                and torch.isfinite(difference).all().item()
-                and torch.isfinite(ratio).all().item()
+        algorithm_name = type(self.algorithm).__name__
+        if not invariant.get("passed", True):
+            logger.warning(
+                "first-step %s advantage-flip invariant violated: abs_diff %.3e > %.1e. "
+                "The collection-time training signal is untrustworthy; "
+                "suspect replay-side conditioning/scheduler-domain drift.",
+                algorithm_name,
+                invariant["abs_diff"],
+                invariant["threshold"],
             )
-            local_max = float(difference.max().item())
-            finite, max_difference, passed = _distributed_parity_verdict(
-                local_finite=local_finite,
-                local_max_abs_diff=local_max,
-                limit=limit,
-                strategy=self._strategy,
-            )
-            logger.info(
-                "DEBUG first-step log-prob diff: mean=%.6f max=%.6f | "
-                "old_lp[0]=%.6f fresh_lp[0]=%.6f",
-                difference.mean().item(),
-                difference.max().item(),
-                old_first.item(),
-                fresh_first.item(),
-            )
-            record = {
-                "event": "first_step_logprob_parity",
-                "passed": passed,
-                "finite": finite,
-                "max_abs_diff": max_difference,
-                "local_finite": local_finite,
-                "local_max_abs_diff": local_max,
-                "max_abs_diff_limit": limit,
-                "trainer_step": int(self.state.step),
-                "global_step": int(self.state.global_step),
-                "device": str(self.device),
-                "precision_policy": precision_metadata,
-                "old_log_prob": tensor_stats(old_log_prob),
-                "fresh_log_prob": tensor_stats(fresh_log_prob),
-                "abs_diff": tensor_stats(difference),
-                "ratio": tensor_stats(ratio),
-                "driver_trainable_before_step": trainable_state_digest(self.model),
-                "driver_parameter_state_before_step": parameter_state_summary(self.model),
-                "rollout_context": {
-                    key: value
-                    for key, value in replay_batch.context.items()
-                    if key != "runtime_debug"
-                },
-                "runtime_debug": replay_batch.context.get("runtime_debug"),
-            }
-            # Persist a failing probe immediately: the mandatory full-update
-            # gate below owns enforcement, while this optional probe owns the
-            # tensor/provenance evidence needed to diagnose that failure.
-            if not passed and self._strategy.context.is_primary:
-                append_jsonl_record(
-                    f"{cfg.output_dir}/training_debug.jsonl",
-                    record,
-                )
-        else:
-            # Non-evaluator algorithms (NFT) compute no log-prob ratio, so the
-            # parity probe above is blind to them. Ask the algorithm for its
-            # own lr=0 invariant through the optional protocol method instead
-            # of hardcoding algorithm checks here.
-            invariant_check = getattr(self.algorithm, "first_step_invariant_check", None)
-            if callable(invariant_check):
-                replay_batch = microbatch.batch.to_device(
-                    self.device,
-                    defer_replay_tensors=defer_replay_tensors,
-                )
-                advantages = microbatch.advantages.to(self.device)
-                with (
-                    torch.no_grad(),
-                    profile_range("trainer.replay"),
-                ):
-                    invariant = invariant_check(
-                        model=self.model,
-                        batch=replay_batch,
-                        advantages=advantages,
-                        timestep_index=0,
-                    )
-                algorithm_name = type(self.algorithm).__name__
-                logger.info(
-                    "DEBUG first-step %s advantage-flip invariant: abs_diff=%.3e (threshold %.1e)",
-                    algorithm_name,
-                    invariant["abs_diff"],
-                    invariant["threshold"],
-                )
-                if not invariant.get("passed", True):
-                    logger.warning(
-                        "first-step %s advantage-flip invariant violated: abs_diff %.3e > %.1e. "
-                        "The collection-time training signal is untrustworthy; "
-                        "suspect replay-side conditioning/scheduler-domain drift.",
-                        algorithm_name,
-                        invariant["abs_diff"],
-                        invariant["threshold"],
-                    )
-                record = {
+        if self._strategy.context.is_primary:
+            append_jsonl_record(
+                f"{cfg.output_dir}/training_debug.jsonl",
+                {
                     "event": "first_step_invariant",
                     "algorithm": algorithm_name,
                     **invariant,
                     "trainer_step": int(self.state.step),
                     "global_step": int(self.state.global_step),
                     "device": str(self.device),
-                    "precision_policy": precision_metadata,
-                    "rollout_context": {
-                        key: value
-                        for key, value in replay_batch.context.items()
-                        if key != "runtime_debug"
-                    },
-                }
-
-        return record
+                    "precision_policy": self._precision_metadata(),
+                },
+            )
 
     async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
         """Train on a collected batch — the compute half of one step.
@@ -1820,22 +1717,15 @@ class OnlineTrainer:
 
         training_microbatch_size = cfg.batch_plan.training_microbatch_size
 
-        # Debug first step: compare old vs fresh log-probs on the first selected timestep
-        # (using first filtered batch so memory footprint is bounded).
-        first_debug_batch = _TrainingMicrobatch.from_prompt_group(
+        first_batch = _TrainingMicrobatch.from_prompt_group(
             filtered_batches[0],
             filtered_advs[0],
             training_microbatch_size,
         )[0]
-        first_step_debug_record = self._first_step_parity_probe(
-            first_debug_batch,
-            timestep_index=train_indices[0],
-            defer_replay_tensors=defer_replay_tensor_move,
+        self._check_initial_precision_drift(first_batch.batch, train_indices)
+        self._check_first_step_invariant(
+            first_batch, defer_replay_tensors=defer_replay_tensor_move
         )
-
-        guard_record = self._check_initial_precision_drift(first_debug_batch.batch, train_indices)
-        if guard_record is not None and first_step_debug_record is not None:
-            first_step_debug_record["precision_drift_guard"] = guard_record
 
         initial_replay = InitialReplayStats()
         policy_updated = False
@@ -1917,20 +1807,6 @@ class OnlineTrainer:
             phase_times=phase_times,
             initial_replay=initial_replay,
         )
-        if first_step_debug_record is not None:
-            first_step_debug_record["driver_trainable_after_step"] = trainable_state_digest(
-                self.model
-            )
-            first_step_debug_record["driver_parameter_state_after_step"] = parameter_state_summary(
-                self.model
-            )
-            first_step_debug_record["post_step_global_step"] = int(self.state.global_step)
-            if self._strategy.context.is_primary:
-                append_jsonl_record(
-                    f"{cfg.output_dir}/training_debug.jsonl",
-                    first_step_debug_record,
-                )
-
         return metrics
 
     def _step_stats(self, iteration: Any, timer: PhaseTimer) -> RolloutStats:

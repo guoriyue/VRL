@@ -39,7 +39,6 @@ from vrl.trainers.online.trainer import (
     PhaseTimer,
     TrainingBatch,
     _distributed_initial_replay_stats,
-    _distributed_parity_verdict,
     _ReplayMetrics,
     _TrainingMicrobatch,
 )
@@ -140,18 +139,6 @@ def _run_parity_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None
     os.environ["MASTER_PORT"] = str(port)
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
     try:
-        finite_result = _distributed_parity_verdict(
-            local_finite=True,
-            local_max_abs_diff=(0.1, 0.9)[rank],
-            limit=0.5,
-            strategy=_rank_strategy(),
-        )
-        nonfinite_result = _distributed_parity_verdict(
-            local_finite=(rank == 0),
-            local_max_abs_diff=(0.1, 0.9)[rank],
-            limit=1.0,
-            strategy=_rank_strategy(),
-        )
         initial_replay, initial_has_measurements = _distributed_initial_replay_stats(
             InitialReplayStats(
                 clip_fraction=(0.2, 0.8)[rank],
@@ -192,8 +179,6 @@ def _run_parity_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None
         q.put(
             (
                 rank,
-                finite_result,
-                nonfinite_result,
                 initial_replay,
                 initial_has_measurements,
                 mixed_rank_replay,
@@ -206,7 +191,7 @@ def _run_parity_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None
         dist.destroy_process_group()
 
 
-def test_parity_verdict_is_rank_consistent() -> None:
+def test_initial_replay_stats_are_rank_consistent() -> None:
     ctx = mp.get_context("spawn")
     q: mp.Queue = ctx.Queue()
     port = free_port()
@@ -220,8 +205,6 @@ def test_parity_verdict_is_rank_consistent() -> None:
 
     for (
         _rank,
-        finite_result,
-        nonfinite_result,
         initial_replay,
         initial_has_measurements,
         mixed_rank_replay,
@@ -229,10 +212,6 @@ def test_parity_verdict_is_rank_consistent() -> None:
         empty_rank_replay,
         empty_has_measurements,
     ) in results:
-        assert finite_result == pytest.approx((True, 0.9, False))
-        assert nonfinite_result[0] is False
-        assert nonfinite_result[1] == float("inf")
-        assert nonfinite_result[2] is False
         assert initial_replay.clip_fraction == pytest.approx(0.65)
         assert initial_replay.active_clip_fraction == pytest.approx(0.325)
         assert initial_replay.logprob_abs_diff_max == pytest.approx(0.9)

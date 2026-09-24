@@ -60,7 +60,8 @@ class EMAConfig:
 class DebugConfig:
     """Diagnostic toggles consumed by the trainer."""
 
-    # Rich first-step provenance for rollout/replay diagnosis and NFT probes.
+    # On step 0: request generation runtime diagnostics with the rollout, and run
+    # the algorithm's own first-step invariant when it has no log-prob gate.
     first_step: bool = field(default=False)
 
 

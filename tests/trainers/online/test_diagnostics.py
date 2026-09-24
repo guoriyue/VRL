@@ -198,22 +198,12 @@ class TestDiagnostics:
         debug_path = tmp_path / "training_debug.jsonl"
         records = [json.loads(line) for line in debug_path.read_text().splitlines()]
         by_event = {record["event"]: record for record in records}
+        assert set(by_event) == {"replay_parity_gate"}
         if failure_pattern is not None:
-            expected_events = {"replay_parity_gate"}
-            if debug_enabled and model_value != 0.0:
-                expected_events.add("first_step_logprob_parity")
-            assert set(by_event) == expected_events
             full_record = by_event["replay_parity_gate"]
             assert full_record["passed"] is False
             assert full_record["finite"] is expected_finite
-            if "first_step_logprob_parity" in by_event:
-                assert by_event["first_step_logprob_parity"]["passed"] is False
-                assert by_event["first_step_logprob_parity"]["finite"] is expected_finite
         else:
-            assert set(by_event) == {
-                "replay_parity_gate",
-                "first_step_logprob_parity",
-            }
             assert all(record["passed"] for record in records)
             assert by_event["replay_parity_gate"]["max_abs_diff"] == 0.0
 
@@ -222,26 +212,6 @@ class TestDiagnostics:
             assert trainer.state.global_step == 0
             torch.testing.assert_close(model.weight, before, equal_nan=True)
             return
-
-        record = by_event["first_step_logprob_parity"]
-        assert record["finite"] is expected_finite
-        assert record["precision_policy"]["training_precision"] == "fp32"
-        assert record["precision_policy"]["rollout_precision"] == "fp32"
-        assert record["precision_policy"]["math_precision"] == "fp32"
-        assert record["precision_policy"]["effective_float32_precision"] == {
-            "matmul": "ieee",
-            "cudnn": "ieee",
-        }
-        assert record["precision_policy"]["trainer_transformer_dtype"] == "float32"
-        assert record["abs_diff"]["mean"] == pytest.approx(0.0)
-        assert record["ratio"]["mean"] == pytest.approx(1.0)
-        assert record["driver_trainable_before_step"]["tensor_count"] == 1
-        assert record["driver_trainable_after_step"]["tensor_count"] == 1
-        assert record["rollout_context"]["guidance_scale"] == 4.5
-        assert "runtime_debug" not in record["rollout_context"]
-        assert record["runtime_debug"]["ray_chunks"][0]["worker_id"] == "rollout-0"
-        assert grad_enabled[0] is False
-        assert any(grad_enabled[1:])
 
     @pytest.mark.parametrize("difference", [0.0, 2.980232238769531e-7, 0.00230485200881958])
     def test_zero_parity_limit_rejects_even_small_finite_drift(self, tmp_path, difference):
@@ -447,7 +417,6 @@ class TestDiagnostics:
         assert len(precision_records) == 1
         assert precision_records[0]["violated"] is False
         assert precision_records[0]["worst_stats"]["logprob_abs_diff_max"] == 0.0
-        assert all(record["event"] != "first_step_logprob_parity" for record in records)
 
     def test_fully_filtered_update_still_serializes_metrics_row(
         self,
