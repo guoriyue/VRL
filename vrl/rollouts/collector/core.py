@@ -43,6 +43,7 @@ from vrl.rollouts.collector.requests import (
     GenerationRequestBuilder,
 )
 from vrl.rollouts.stats import RolloutStats
+from vrl.trainers.data.edit_chains import EditChain
 from vrl.utils.profiling import TimeIntervals, profile_range
 
 
@@ -480,6 +481,10 @@ class RolloutCollector:
             return request, indices
 
         for prompt_idx, item in enumerate(prompts):
+            if isinstance(item, EditChain):
+                raise ValueError(
+                    "edit chains are collected step by step through prepare_training_batches"
+                )
             if not isinstance(item, (str, bytes)) and hasattr(item, "generation_input"):
                 if pending_prompts:
                     yield build(
@@ -534,6 +539,19 @@ class RolloutCollector:
 
         if not prompts:
             return []
+        if any(isinstance(item, EditChain) for item in prompts):
+            from vrl.rollouts.collector.chains import collect_edit_chains
+
+            if not all(isinstance(item, EditChain) for item in prompts):
+                raise ValueError("edit chains and one-shot prompts cannot share a collection call")
+            return await collect_edit_chains(
+                self,
+                prompts,
+                group_size=group_size,
+                runtime_debug=runtime_debug,
+                policy_version=policy_version,
+                stats=stats,
+            )
 
         collection_started = time.perf_counter()
         reward_intervals: list[tuple[float, float]] = []

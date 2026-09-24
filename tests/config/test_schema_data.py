@@ -37,6 +37,12 @@ def test_valid_data_loaders_are_accepted(loader: str) -> None:
             },
             sampler={"type": "random_without_replacement"},
         )
+    elif loader == "edit_chain_manifest":
+        data = DataConfig(
+            loader=loader,
+            manifest="manifests/edits/chains.jsonl",
+            sampler={"type": "random_without_replacement"},
+        )
     else:
         data = DataConfig(
             loader=loader,

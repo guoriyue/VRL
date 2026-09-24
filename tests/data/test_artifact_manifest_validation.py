@@ -238,16 +238,16 @@ def test_artifact_field_preserves_path_sequences(tmp_path, container):
 
 def test_single_reference_image_row_key_loads_as_a_one_element_list() -> None:
     """``reference_image: str`` is manifest spelling for a one-element ``reference_images``."""
-    from vrl.trainers.data.prompts import load_prompt_examples_from_jsonl_bytes
+    from vrl.trainers.data.prompts import prompt_example_from_row
 
-    single, blank = load_prompt_examples_from_jsonl_bytes(
-        b'{"prompt":"p","reference_image":"ref.png"}\n{"prompt":"q","reference_image":"  "}\n'
-    )
+    single = prompt_example_from_row({"prompt": "p", "reference_image": "ref.png"}, context="r")
+    blank = prompt_example_from_row({"prompt": "q", "reference_image": "  "}, context="r")
 
     assert single.reference_images == ["ref.png"]
     assert "reference_image" not in single.metadata
     assert blank.reference_images == []
     with pytest.raises(ValueError, match="not both"):
-        load_prompt_examples_from_jsonl_bytes(
-            b'{"prompt":"p","reference_image":"a.png","reference_images":["b.png"]}'
+        prompt_example_from_row(
+            {"prompt": "p", "reference_image": "a.png", "reference_images": ["b.png"]},
+            context="r",
         )

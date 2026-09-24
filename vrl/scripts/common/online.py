@@ -58,6 +58,7 @@ from vrl.trainers.checkpointing import (
     validate_rng_state,
 )
 from vrl.trainers.data.artifacts import resolve_prompt_example_references
+from vrl.trainers.data.edit_chains import EditChain
 from vrl.trainers.data.prompt_sampler import PromptBatchSampler
 from vrl.trainers.data.prompts import PromptExample, load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, run_on_primary_rank
@@ -925,12 +926,18 @@ async def run_online_recipe(
         else provided_examples
     )
     artifact_data_root = data_config.artifact_data_root if data_config is not None else None
-    examples = [
-        resolve_prompt_example_references(
+
+    def resolve_references(example: PromptExample) -> PromptExample:
+        return resolve_prompt_example_references(
             example,
             data_root=artifact_data_root,
             allow_absolute=True,
         )
+
+    examples = [
+        example.map_steps(resolve_references)
+        if isinstance(example, EditChain)
+        else resolve_references(example)
         for example in examples
     ]
     if family_entry.task in {"i2v", "v2w"}:

@@ -6,13 +6,18 @@ import pytest
 
 from vrl.trainers.data.prompts import (
     ImageCaptionPromptDataset,
-    JsonlPromptDataset,
     PromptExample,
-    load_prompt_examples_from_jsonl_bytes,
+    load_prompt_dataset_index,
 )
 
 
-def test_jsonl_bytes_loader_preserves_prompt_manifest_field_behavior(tmp_path) -> None:
+def _load(tmp_path, payload: bytes) -> list[PromptExample]:
+    manifest = tmp_path / "prompts.jsonl"
+    manifest.write_bytes(payload)
+    return load_prompt_dataset_index(manifest)
+
+
+def test_jsonl_rows_map_known_fields_and_fold_unknown_keys_into_metadata(tmp_path) -> None:
     rows = [
         {
             "prompt": "six dancers",
@@ -22,13 +27,7 @@ def test_jsonl_bytes_loader_preserves_prompt_manifest_field_behavior(tmp_path) -
         },
         {"prompt": "eight dancers", "task_type": "text_to_image"},
     ]
-    payload = ("\n" + "\n".join(json.dumps(row) for row in rows) + "\n").encode()
-
-    loaded = load_prompt_examples_from_jsonl_bytes(payload, source="frozen-prompts.jsonl")
-    manifest = tmp_path / "prompts.jsonl"
-    manifest.write_bytes(payload)
-
-    assert loaded == JsonlPromptDataset(manifest).examples
+    loaded = _load(tmp_path, ("\n" + "\n".join(json.dumps(row) for row in rows) + "\n").encode())
     assert loaded == [
         PromptExample(
             prompt="six dancers",
@@ -40,34 +39,32 @@ def test_jsonl_bytes_loader_preserves_prompt_manifest_field_behavior(tmp_path) -
     assert loaded[0].generation_input().task_type is None
 
 
-def test_jsonl_bytes_loader_rejects_non_utf8_payload() -> None:
-    with pytest.raises(ValueError, match=r"snapshot\.jsonl: prompt manifest must be valid UTF-8"):
-        load_prompt_examples_from_jsonl_bytes(b'\xff{"prompt":"x"}\n', source="snapshot.jsonl")
+def test_jsonl_loader_rejects_non_utf8_payload(tmp_path) -> None:
+    with pytest.raises(ValueError, match=r"prompts\.jsonl: prompt manifest must be valid UTF-8"):
+        _load(tmp_path, b'\xff{"prompt":"x"}\n')
 
 
-def test_jsonl_bytes_loader_rejects_non_object_row_with_line_number() -> None:
-    payload = b'\n{"prompt":"valid"}\n["not", "an", "object"]\n'
-
-    with pytest.raises(ValueError, match=r"snapshot.jsonl:3: JSONL rows must be objects"):
-        load_prompt_examples_from_jsonl_bytes(payload, source="snapshot.jsonl")
+def test_jsonl_loader_rejects_non_object_row_with_line_number(tmp_path) -> None:
+    with pytest.raises(ValueError, match=r"prompts\.jsonl:3: JSONL rows must be objects"):
+        _load(tmp_path, b'\n{"prompt":"valid"}\n["not", "an", "object"]\n')
 
 
 @pytest.mark.parametrize("field", ["metadata", "request_overrides"])
-def test_jsonl_loader_rejects_nonobject_fields_at_source_line(field):
+def test_jsonl_loader_rejects_nonobject_fields_at_source_line(tmp_path, field):
     payload = ("\n" + json.dumps({"prompt": "p", field: [["key", "value"]]})).encode()
-    with pytest.raises(ValueError, match=f"snapshot.jsonl:2: {field} must be an object"):
-        load_prompt_examples_from_jsonl_bytes(payload, source="snapshot.jsonl")
+    with pytest.raises(ValueError, match=f"prompts.jsonl:2: {field} must be an object"):
+        _load(tmp_path, payload)
 
 
 @pytest.mark.parametrize("row", [{}, {"prompt": 123}])
-def test_jsonl_loader_requires_string_prompt_at_source_line(row):
-    with pytest.raises(ValueError, match=r"snapshot.jsonl:1: prompt must be a string"):
-        load_prompt_examples_from_jsonl_bytes(json.dumps(row).encode(), source="snapshot.jsonl")
+def test_jsonl_loader_requires_string_prompt_at_source_line(tmp_path, row):
+    with pytest.raises(ValueError, match=r"prompts\.jsonl:1: prompt must be a string"):
+        _load(tmp_path, json.dumps(row).encode())
 
 
-def test_jsonl_loader_preserves_empty_prompt_and_optional_null_mappings():
-    examples = load_prompt_examples_from_jsonl_bytes(
-        b'{"prompt":"", "metadata":null, "request_overrides":null, "extra":3}'
+def test_jsonl_loader_preserves_empty_prompt_and_optional_null_mappings(tmp_path):
+    examples = _load(
+        tmp_path, b'{"prompt":"", "metadata":null, "request_overrides":null, "extra":3}'
     )
     assert examples == [PromptExample(prompt="", metadata={"extra": 3}, request_overrides={})]
 
@@ -102,7 +99,4 @@ def test_image_caption_json_error_identifies_manifest_and_physical_row(tmp_path)
 def test_jsonl_preserves_unicode_separators_in_prompt(tmp_path, separator, newline):
     prompt = f"first{separator}second"
     payload = (json.dumps({"prompt": prompt}, ensure_ascii=False) + newline).encode("utf-8")
-    manifest = tmp_path / "prompts.jsonl"
-    manifest.write_bytes(payload)
-    assert load_prompt_examples_from_jsonl_bytes(payload)[0].prompt == prompt
-    assert JsonlPromptDataset(manifest).examples[0].prompt == prompt
+    assert _load(tmp_path, payload)[0].prompt == prompt

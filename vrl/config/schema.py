@@ -282,6 +282,16 @@ class DataConfig(ConfigBase):
                     raise ValueError(f"config missing required field: data.preprocessing.{field}")
             self._validate_sampler_type()
 
+        if self.loader == "edit_chain_manifest":
+            if not self.manifest:
+                raise ValueError("config missing required field: data.manifest")
+            if not isinstance(self.manifest, str):
+                raise ValueError(
+                    "data.loader='edit_chain_manifest' takes a single data.manifest path, "
+                    "not a mixture mapping",
+                )
+            self._validate_sampler_type()
+
         if self.loader == "pickapic_preference":
             for field in ("dataset_name", "split", "cache_dir"):
                 # Allow empty strings (only None/absent is invalid)

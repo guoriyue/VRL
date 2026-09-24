@@ -1,6 +1,5 @@
 """Manifest reference ordering and RGBA options reach the Qwen batch encoder."""
 
-import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -14,21 +13,19 @@ from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trainers.data.artifacts import resolve_prompt_example_references
-from vrl.trainers.data.prompts import load_prompt_examples_from_jsonl_bytes
+from vrl.trainers.data.prompts import prompt_example_from_row
 
 
 def test_manifest_references_reach_encoder_in_order_with_alpha(tmp_path) -> None:
     Image.new("RGBA", (64, 64), (255, 0, 0, 0)).save(tmp_path / "source.png")
     Image.new("RGB", (96, 64), (0, 255, 0)).save(tmp_path / "leaf.png")
-    payload = json.dumps(
-        {
-            "prompt": "Put image 2 onto image 1",
-            "reference_images": ["source.png", "leaf.png"],
-            "request_overrides": {"output_mode": "rgba", "reference_resolution": 512},
-        }
-    ).encode()
+    row = {
+        "prompt": "Put image 2 onto image 1",
+        "reference_images": ["source.png", "leaf.png"],
+        "request_overrides": {"output_mode": "rgba", "reference_resolution": 512},
+    }
     example = resolve_prompt_example_references(
-        load_prompt_examples_from_jsonl_bytes(payload)[0], data_root=tmp_path
+        prompt_example_from_row(row, context="row"), data_root=tmp_path
     )
     built = GenerationRequestBuilder(
         entry=get_model_family_entry("qwen_image_21"),
@@ -71,13 +68,14 @@ def test_manifest_references_reach_encoder_in_order_with_alpha(tmp_path) -> None
 
 def test_ambiguous_and_invalid_reference_lists_fail_before_generation() -> None:
     with pytest.raises(ValueError, match="not both"):
-        load_prompt_examples_from_jsonl_bytes(
-            b'{"prompt":"edit", "reference_image":"a.png", "reference_images":["b.png"]}'
+        prompt_example_from_row(
+            {"prompt": "edit", "reference_image": "a.png", "reference_images": ["b.png"]},
+            context="row",
         )
     with pytest.raises(ValueError, match="list of non-empty"):
         GenerationInput(prompt="edit", reference_images="a.png")
     with pytest.raises(ValueError, match="reference_images must be a list"):
-        load_prompt_examples_from_jsonl_bytes(b'{"prompt":"edit", "reference_images":"a.png"}')
+        prompt_example_from_row({"prompt": "edit", "reference_images": "a.png"}, context="row")
 
 
 def test_single_reference_alias_and_text_only_requests_share_the_executor(tmp_path) -> None:
@@ -90,9 +88,9 @@ def test_single_reference_alias_and_text_only_requests_share_the_executor(tmp_pa
         family="qwen_image_21",
         task="t2i",
         inputs=[
-            load_prompt_examples_from_jsonl_bytes(
-                b'{"prompt":"edit", "reference_image":"%s"}' % str(source).encode()
-            )[0].generation_input(),
+            prompt_example_from_row(
+                {"prompt": "edit", "reference_image": str(source)}, context="row"
+            ).generation_input(),
             GenerationInput(prompt="draw"),
         ],
         samples_per_prompt=1,

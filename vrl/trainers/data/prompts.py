@@ -79,17 +79,32 @@ class PromptExample:
 def load_prompt_dataset_index(path: str | Path) -> list[PromptExample]:
     """Load prompt examples from a manifest file. Supports two formats:
 
-    * ``.jsonl``: one JSON per line with explicit fields — native
-      :class:`PromptExample` manifest.
+    * ``.jsonl``: one JSON object per line with explicit fields; unknown keys
+      are merged into ``PromptExample.metadata`` after any explicit entries.
     * ``.txt``:   one prompt per line with target in double quotes,
       matching flow_grpo's ``dataset/ocr/train.txt`` convention. The
       target is extracted via ``prompt.split('"')[1]``.
     """
     p = Path(path)
+    examples: list[PromptExample] = []
     if p.suffix == ".jsonl":
-        return load_prompt_examples_from_jsonl_bytes(p.read_bytes(), source=p)
+        try:
+            text = p.read_bytes().decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError(f"{p}: prompt manifest must be valid UTF-8") from error
+        for line_number, line in enumerate(io.StringIO(text, newline=None), 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"{p}:{line_number}: invalid JSON") from error
+            if not isinstance(obj, dict):
+                raise ValueError(f"{p}:{line_number}: JSONL rows must be objects")
+            examples.append(prompt_example_from_row(obj, context=f"{p}:{line_number}"))
+        return examples
     if p.suffix == ".txt":
-        examples: list[PromptExample] = []
         with p.open(encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -102,70 +117,42 @@ def load_prompt_dataset_index(path: str | Path) -> list[PromptExample]:
     raise ValueError(f"Unsupported manifest suffix: {p.suffix}")
 
 
-def load_prompt_examples_from_jsonl_bytes(
-    payload: bytes,
-    *,
-    source: str | Path = "<prompt manifest>",
-) -> list[PromptExample]:
-    """Parse an immutable UTF-8 JSONL snapshot into prompt examples.
+def prompt_example_from_row(obj: dict[str, Any], *, context: str) -> PromptExample:
+    """Build one example from a manifest row; unknown keys become metadata.
 
-    Callers that already authenticated manifest bytes can pass that exact
-    snapshot through training without reopening a mutable filesystem path.
-    Unknown row fields retain the native manifest behavior: they are merged
-    into ``PromptExample.metadata`` after any explicit metadata entries.
+    A row may spell one conditioning image as ``reference_image: str`` (existing
+    single-image manifests); it is the same field as a one-element
+    ``reference_images`` list.
     """
 
-    context = str(source)
-    try:
-        text = payload.decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise ValueError(f"{context}: prompt manifest must be valid UTF-8") from error
-
-    examples: list[PromptExample] = []
     known_fields = set(PromptExample.__dataclass_fields__)
-    for line_number, line in enumerate(io.StringIO(text, newline=None), 1):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise ValueError(f"{context}:{line_number}: invalid JSON") from error
-        if not isinstance(obj, dict):
-            raise ValueError(f"{context}:{line_number}: JSONL rows must be objects")
-        extra_metadata = {key: value for key, value in obj.items() if key not in known_fields}
-        prompt_fields = {key: value for key, value in obj.items() if key in known_fields}
-        if not isinstance(prompt_fields.get("prompt"), str):
-            raise ValueError(f"{context}:{line_number}: prompt must be a string")
-        # A row may spell one conditioning image as ``reference_image: str``
-        # (existing single-image manifests); it is the same field as a
-        # one-element ``reference_images`` list.
-        if "reference_image" in obj:
-            if "reference_images" in obj:
-                raise ValueError(
-                    f"{context}:{line_number}: use reference_image or reference_images, not both"
-                )
-            single = obj["reference_image"]
-            if not isinstance(single, str):
-                raise ValueError(f"{context}:{line_number}: reference_image must be a path")
-            extra_metadata.pop("reference_image")
-            prompt_fields["reference_images"] = [single] if single.strip() else []
-        images = prompt_fields.get("reference_images", [])
-        if not isinstance(images, list) or any(
-            not isinstance(path, str) or not path.strip() for path in images
-        ):
-            raise ValueError(f"{context}:{line_number}: reference_images must be a list of paths")
-        for name in ("metadata", "request_overrides"):
-            value = prompt_fields.get(name)
-            if value is None:
-                prompt_fields[name] = {}
-            elif not isinstance(value, dict):
-                raise ValueError(f"{context}:{line_number}: {name} must be an object")
-        metadata = dict(prompt_fields["metadata"])
-        metadata.update(extra_metadata)
-        prompt_fields["metadata"] = metadata
-        examples.append(PromptExample(**prompt_fields))
-    return examples
+    extra_metadata = {key: value for key, value in obj.items() if key not in known_fields}
+    prompt_fields = {key: value for key, value in obj.items() if key in known_fields}
+    if not isinstance(prompt_fields.get("prompt"), str):
+        raise ValueError(f"{context}: prompt must be a string")
+    if "reference_image" in obj:
+        if "reference_images" in obj:
+            raise ValueError(f"{context}: use reference_image or reference_images, not both")
+        single = obj["reference_image"]
+        if not isinstance(single, str):
+            raise ValueError(f"{context}: reference_image must be a path")
+        extra_metadata.pop("reference_image")
+        prompt_fields["reference_images"] = [single] if single.strip() else []
+    images = prompt_fields.get("reference_images", [])
+    if not isinstance(images, list) or any(
+        not isinstance(path, str) or not path.strip() for path in images
+    ):
+        raise ValueError(f"{context}: reference_images must be a list of paths")
+    for name in ("metadata", "request_overrides"):
+        value = prompt_fields.get(name)
+        if value is None:
+            prompt_fields[name] = {}
+        elif not isinstance(value, dict):
+            raise ValueError(f"{context}: {name} must be an object")
+    metadata = dict(prompt_fields["metadata"])
+    metadata.update(extra_metadata)
+    prompt_fields["metadata"] = metadata
+    return PromptExample(**prompt_fields)
 
 
 def load_prompt_mixture(
@@ -207,27 +194,12 @@ def load_prompt_mixture(
     return picked
 
 
-def load_prompt_image_manifest(
-    path: str | Path,
-    *,
-    image_field: str = "image",
-    caption_field: str = "caption",
-    default_task_type: str = "image_to_video",
-) -> list[PromptExample]:
-    """Load image-caption JSONL rows as image-conditioned prompt examples."""
+def load_prompt_examples_from_config(data: DataConfig) -> list[Any]:
+    """Load examples the way the parsed ``data`` section declares.
 
-    return list(
-        ImageCaptionPromptDataset(
-            path,
-            image_field=image_field,
-            caption_field=caption_field,
-            default_task_type=default_task_type,
-        ).examples,
-    )
-
-
-def load_prompt_examples_from_config(data: DataConfig) -> list[PromptExample]:
-    """Load examples the way the parsed ``data`` section declares."""
+    Prompt manifests yield ``PromptExample`` rows; an edit-chain manifest yields
+    ``EditChain`` rows, which the collector expands into one prompt group per step.
+    """
 
     manifest = data.manifest
     if not manifest:
@@ -243,30 +215,12 @@ def load_prompt_examples_from_config(data: DataConfig) -> list[PromptExample]:
     if data.loader == "prompt_image_manifest":
         return list(ImageCaptionPromptDataset.from_config(data, path=manifest).examples)
 
+    if data.loader == "edit_chain_manifest":
+        from vrl.trainers.data.edit_chains import load_edit_chains
+
+        return load_edit_chains(manifest)
+
     raise ValueError(f"unknown data.loader={data.loader!r}")
-
-
-class JsonlPromptDataset(Dataset):
-    """Dataset that loads :class:`PromptExample` objects from a JSONL file.
-
-    Each line must be a JSON object. Known keys populate :class:`PromptExample`;
-    unknown keys are merged into metadata. Only ``prompt`` is required; other
-    fields use their dataclass defaults when absent.
-    """
-
-    def __init__(self, path: str | Path) -> None:
-        manifest_path = Path(path)
-        self.examples = load_prompt_examples_from_jsonl_bytes(
-            manifest_path.read_bytes(),
-            source=manifest_path,
-        )
-
-    def __len__(self) -> int:
-        return len(self.examples)
-
-    def __getitem__(self, idx: int) -> dict[str, Any]:
-        ex = self.examples[idx]
-        return {"prompt": ex.prompt, "metadata": ex.metadata, "example": ex}
 
 
 class ImageCaptionPromptDataset(Dataset):
@@ -368,11 +322,9 @@ class ImageCaptionPromptDataset(Dataset):
 
 __all__ = [
     "ImageCaptionPromptDataset",
-    "JsonlPromptDataset",
     "PromptExample",
     "load_prompt_dataset_index",
     "load_prompt_examples_from_config",
-    "load_prompt_examples_from_jsonl_bytes",
-    "load_prompt_image_manifest",
     "load_prompt_mixture",
+    "prompt_example_from_row",
 ]
