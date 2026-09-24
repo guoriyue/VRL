@@ -283,12 +283,17 @@ def test_torchrun_failure_restarts_all_ranks_from_complete_checkpoint(tmp_path) 
 def test_stop_kills_whole_child_process_group(tmp_path) -> None:
     out = tmp_path / "run"
     grandchild_pid_file = tmp_path / "grandchild.pid"
-    # Child spawns a grandchild in the SAME group, then sleeps forever.
+    # The worker publishes readiness only after installing its TERM handler.
+    worker = (
+        "import os,pathlib,signal,time; "
+        "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+        f"pathlib.Path({str(grandchild_pid_file)!r}).write_text(str(os.getpid())); "
+        "time.sleep(600)"
+    )
     command = _child_script(
         tmp_path,
-        "import pathlib, subprocess, sys, time\n"
-        + "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
-        + f"pathlib.Path({str(grandchild_pid_file)!r}).write_text(str(p.pid))\n"
+        "import subprocess, sys, time\n"
+        + f"subprocess.Popen([sys.executable, '-c', {worker!r}])\n"
         + "time.sleep(600)\n",
     )
     supervisor = RunSupervisor(

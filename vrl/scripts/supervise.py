@@ -37,6 +37,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
@@ -537,6 +538,7 @@ class RunSupervisor:
     _child: subprocess.Popen | None = field(default=None, init=False, repr=False)
     _stop_requested: bool = field(default=False, init=False, repr=False)
     _health_gate: MetricsHealthGate | None = field(default=None, init=False, repr=False)
+    _group_cleanup_lock: Any = field(default_factory=threading.RLock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.expected_world_size < 1:
@@ -635,6 +637,9 @@ class RunSupervisor:
             raise
         finally:
             if self._child.poll() is not None:
+                # The leader's exit does not prove its workers stopped. Drain
+                # the owned session before another attempt can allocate a GPU.
+                self._drain_child_group(self._child)
                 self._child = None
         return AttemptOutcome(
             exit_code=exit_code, result=self._collect_attempt_result(exit_code=exit_code)
@@ -804,19 +809,68 @@ class RunSupervisor:
 
         self._stop_requested = True
         child = self._child
-        if child is None or child.poll() is not None:
+        if child is None:
             return
-        group = child.pid  # start_new_session=True makes pid == pgid
-        if not self._signal_child_group(child, signum):
-            return
-        deadline = time.monotonic() + self.term_grace_seconds
-        while time.monotonic() < deadline:
-            if child.poll() is not None:
+        self._drain_child_group(child, signum=signum)
+
+    @staticmethod
+    def _group_has_live_members(group: int) -> bool:
+        """Ignore exited zombies while checking the process group we created."""
+        try:
+            os.killpg(group, 0)
+        except ProcessLookupError:
+            return False
+        proc = Path("/proc")
+        if not proc.is_dir():
+            # On systems without procfs, retain the conservative killpg result.
+            return True
+        for entry in proc.iterdir():
+            if not entry.name.isdecimal():
+                continue
+            try:
+                # comm can contain spaces and closing parentheses. The fields
+                # after its final ')' start with state, ppid, and process group.
+                fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+                if fields[0] != "Z" and int(fields[2]) == group:
+                    return True
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            except (PermissionError, IndexError, ValueError):
+                # Never declare cleanup complete when membership is unknown.
+                try:
+                    if os.getpgid(int(entry.name)) == group:
+                        return True
+                except ProcessLookupError:
+                    continue
+        return False
+
+    def _drain_child_group(self, child: subprocess.Popen, *, signum: int = signal.SIGTERM) -> None:
+        """Bound cleanup independently of whether the session leader has exited."""
+        group = child.pid  # start_new_session=True establishes this ownership.
+        # A signal handler may reenter on this thread; tests also stop from a
+        # second thread. Keep one cleanup owner without deadlocking that handler.
+        with self._group_cleanup_lock:
+            if not self._group_has_live_members(group):
                 return
-            time.sleep(0.2)
-        logger.warning("child group %d survived grace period; SIGKILL", group)
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(group, signal.SIGKILL)
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(group, signum)
+            deadline = time.monotonic() + self.term_grace_seconds
+            while self._group_has_live_members(group):
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.05)
+            else:
+                return
+            logger.warning("child group %d survived grace period; SIGKILL", group)
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(group, signal.SIGKILL)
+            kill_deadline = time.monotonic() + 5.0
+            while self._group_has_live_members(group):
+                if time.monotonic() >= kill_deadline:
+                    raise RuntimeError(
+                        f"owned child group {group} still has live workers after SIGKILL"
+                    )
+                time.sleep(0.05)
 
 
 def _bounded_number(cast: type, minimum: float, *, exclusive: bool = False) -> Any:
