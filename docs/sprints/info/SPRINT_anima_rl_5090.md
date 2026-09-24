@@ -1,5 +1,9 @@
 # SPRINT: Anima RL post-training on a single RTX 5090
 
+> Command maintenance (2026-09-22): fences tagged `bash historical` preserve
+> commands from the recorded experiments; their old paths and overrides are not
+> current launch instructions and are excluded from the config compilation gate.
+
 Configuration migration (2026-09-04): historical model/reward/dataset experiment
 names and commands below record past runs. The combination-only Anima presets
 have been retired in favor of [runtime composition](../CONFIGURATION.md).
@@ -709,7 +713,7 @@ Required full-parameter differences from the LoRA quality recipe:
 The installed `vrl-train` console script pointed at a different editable
 checkout, so the accepted launch used the current repository explicitly:
 
-```bash
+```bash historical
 CUDA_VISIBLE_DEVICES=0 \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 TOKENIZERS_PARALLELISM=false \
@@ -763,7 +767,7 @@ padded into a corrupted reward vector.
 The accepted launch used the documented Anima parking tolerance and the
 supervisor's checkpoint/resume path:
 
-```bash
+```bash historical
 CUDA_VISIBLE_DEVICES=0 \
 VRL_PROFILE=1 \
 VRL_CUDA_RESIDUAL_BYTES_LIMIT_MIB=1024 \

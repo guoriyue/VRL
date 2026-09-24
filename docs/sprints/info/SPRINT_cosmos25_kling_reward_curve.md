@@ -1,5 +1,9 @@
 # SPRINT (info / measurement archive): Cosmos Predict2.5-2B + Kling GRPO/NFT reward run
 
+> Command maintenance (2026-09-22): fences tagged `bash historical` preserve
+> commands from the recorded experiments; their old paths and overrides are not
+> current launch instructions and are excluded from the config compilation gate.
+
 状态：measurement archive（`info/`）。这是一次单卡训练观测记录，**不是 action item**；保留下来供以后复查。
 日期：2026-06-16，单张 RTX 5090（32GB，host RAM 94GB），VRL @ `main`（含 `prompts_per_collection` streaming）。
 
@@ -69,7 +73,7 @@ epoch  reward_mean  grad_norm
 
 resume 支持：`trainer.resume_from=<checkpoint dir>`（`vrl/trainers/checkpointing.py:load_training_checkpoint_from_config`）。本次 `checkpoint-10` 完整（`lora_weights/adapter_model.safetensors` + `checkpoint.pt`）。从 epoch 10 续跑 11→50：
 
-```bash
+```bash historical
 cd ~/Desktop/VRL && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 \
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python -u -m vrl.scripts.train \
   --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward \

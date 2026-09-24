@@ -1,5 +1,9 @@
 # SPRINT: Cosmos Performance
 
+> Command maintenance (2026-09-22): fences tagged `bash historical` preserve
+> commands from the recorded experiments; their old paths and overrides are not
+> current launch instructions and are excluded from the config compilation gate.
+
 状态：**done（2026-06-11 收口）**。P1.4 已落地且 live gate 通过（motion run
 全程每 epoch 恰 1 次 reward 构建，epoch 13.4 → 12.35 min）；P0 trace 已分析
 （launch-bound 结论）；P1（多卡 reward 常驻）随多卡 sprint 走；P1.5/P2 已按
@@ -228,7 +232,7 @@ Command shape (note: `/profile=torch_profiler` does NOT work here — defaults
 overrides only substitute an existing group entry, and this experiment has no
 `profile` group in its defaults; use dotlist overrides instead):
 
-```bash
+```bash historical
 python -u -m vrl.scripts.train \
   --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward \
   trainer.profile=true \

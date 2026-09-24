@@ -1,5 +1,21 @@
 # SPRINT (info / runbook): Cosmos Predict2.5-2B + Kling — paper-aligned RL recipe & reward-confirmation loop
 
+## Current config/reward preflight (2026-09-22)
+
+```bash
+python -m vrl.scripts.rewards.preflight \
+  --config experiment/cosmos_predict2_5/online_nft_kling_video_reward \
+  --prompts 1 --device auto
+```
+
+This is the current entrypoint for checking the configured reward dependency.
+It requires the configured local data and reward backend. The older training
+wrappers below preserve their original experiment conditions and are historical.
+
+> Command maintenance (2026-09-22): fences tagged `bash historical` preserve
+> commands from the recorded experiments; their old paths and overrides are not
+> current launch instructions and are excluded from the config compilation gate.
+
 状态：runbook（`info/`，长期复用）。这是把 Cosmos-Predict2.5 论文 §4.2.2 的 RL 配方落到单卡可跑的步骤，
 并用**固定 prompt+seed eval** 确认 reward 是否真的在涨。承接 `SPRINT_cosmos25_kling_reward_curve.md`
 （2026-06-16 那次持平的观测记录）。配方改动已落在 VRL `main`（commit `5738914`）。
@@ -65,7 +81,7 @@ epoch loop 的 `except BaseException`（`online.py:710`）**不补存 checkpoint
 续跑**（`resume_from` + RNG 恢复 → prompt 采样可复现，`online.py:573-580`；resume 不重跑 baseline，
 `eval_metrics.csv` 累积，`online.py:635`），可以反复 `nohup`/再跑直到 64 步跑满：
 
-```bash
+```bash historical
 cd ~/Desktop/wm-infra          # 真正的 cosmos run 落在这个 clone 的 outputs/（不是 ~/Desktop/VRL，二者是同 repo 的两份独立 clone）
 OUT=outputs/cosmos25_kling_probe_1e4_64ep
 CKPT=$(ls -d "$OUT"/checkpoint-* 2>/dev/null | grep -oE 'checkpoint-[0-9]+' | sort -t- -k2 -n | tail -1)

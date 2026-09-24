@@ -1,5 +1,9 @@
 # SPRINT: Rollout Performance
 
+> Command maintenance (2026-09-22): fences tagged `bash historical` preserve
+> commands from the recorded experiments; their old paths and overrides are not
+> current launch instructions and are excluded from the config compilation gate.
+
 > Precision naming note (2026-07-12): raw 2026-06 measurements below retain
 > their historical `compute`/`mixed_precision`/`bf16` labels. Current public
 > config uses `precision.training.dtype` and `precision.rollout.dtype`, with
@@ -121,7 +125,7 @@ Implementation: keep `record_function(...)` ranges in the denoise loop and read
 them from rollout torch profiler traces. For D0 diagnosis, enable CPU+CUDA
 activities on rollout so the custom ranges and CUDA kernels are both visible:
 
-```bash
+```bash historical
 python -m vrl.scripts.train \
   --config experiment/diffusion/sd3_5/online_grpo_ocr \
   /profile=torch_profiler \
@@ -635,7 +639,7 @@ denoise batch 和 VAE decode micro-batch 分开。它直接覆盖上面 `compile
 
 命令：
 
-```bash
+```bash historical
 timeout 900 python -u -m vrl.scripts.train \
   --config experiment/diffusion/sd3_5/online_grpo_ocr \
   trainer.total_epochs=1 \
@@ -662,7 +666,7 @@ legacy rollout.sample_batch_size: 8
 
 同配置 b8 control：
 
-```bash
+```bash historical
 timeout 900 python -u -m vrl.scripts.train \
   --config experiment/diffusion/sd3_5/online_grpo_ocr \
   trainer.total_epochs=1 \
@@ -895,7 +899,7 @@ per-sample 不更快，所以这只是容量问题、非性能问题，优先级
 想知道 compile 在 steady-state 是否还在帮忙、有没有静默 recompile 吃掉收益——但**不为这个
 往代码里加任何观测脚本/模块**。torch 自己就提供 recompile 可观测性，零 repo 代码：
 
-```bash
+```bash historical
 # 每次 recompile 打印一行，含触发它的 guard（哪个 shape/值变了）
 TORCH_LOGS=recompiles python -m vrl.scripts.train \
   --config experiment/diffusion/sd3_5/online_grpo_ocr \

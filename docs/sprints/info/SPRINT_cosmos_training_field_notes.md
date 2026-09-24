@@ -1,5 +1,9 @@
 # Sprint: Cosmos Predict2.5 Training Field Notes (480p/49f NFT run)
 
+> Command maintenance (2026-09-22): fences tagged `bash historical` preserve
+> commands from the recorded experiments; their old paths and overrides are not
+> current launch instructions and are excluded from the config compilation gate.
+
 状态：**INFO field report（single-L40S historical run）**。本文按 KIND 归档当时的实跑观察，
 不是当前 launch runbook，也不拥有 action；旧问题的当前结论与责任归属统一写在 §8。
 
@@ -13,7 +17,7 @@
 
 以下命令记录当时机器与旧配置布局，只用于解释测量环境：
 
-```bash
+```bash historical
 # prerequisites (one-time)
 pip install qwen-vl-utils decord          # reward backend + video reader (UNDECLARED in pyproject)
 # HF cache must live on local NVMe instance store, NOT the EBS root volume

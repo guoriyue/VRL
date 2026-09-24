@@ -1,5 +1,8 @@
 # SPRINT: Cosmos generation is launch/bandwidth-bound — torch.compile = 1.68×
 
+> Command maintenance (2026-09-22): `bash historical` fences preserve the
+> measured experiment commands; they are not current launch instructions.
+
 状态：info / measured（2026-06-18，单 L40S 46GB）。结论可直接落地：**给 Cosmos
 Predict2.5 rollout 打开 `model.torch_compile.enable=true`**。
 
@@ -64,7 +67,7 @@ flash attention（torch SDPA 自带，无需 `flash_attn` 包）本就在用，*
 ## 4. 工具（本 sprint 新增的长期资产）
 
 `vrl/scripts/perf/generation_bottleneck_profile.py`：
-```bash
+```bash historical
 python -m vrl.scripts.perf.generation_bottleneck_profile \
   --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward \
   --steps 6 [--compile]      # --compile 量化融合效果
