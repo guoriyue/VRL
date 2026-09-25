@@ -11,11 +11,15 @@ Two measurements, both from released models, multiplied:
   blanked (both taken from the object-move reward, where kept scenes all
   scored >= 0.75 and redrawn scenes <= 0.33 on 183 blind-labelled edits).
 
-``local_edit = sqrt(execution * keep)``; a redrawn frame has no keep and an
-untouched frame has no execution, so neither shortcut scores. The training key
-``local_edit_shaped = (local_edit + w * keep) / (1 + w)`` leaves a faithful
-no-op a small floor, so GRPO does not push every faithful-but-unfinished sample
-below a redraw (the run1 failure mode of the move reward).
+``local_edit = sqrt(execution * keep)`` and ``local_edit_shaped`` (a small keep
+floor for a faithful no-op) are reported, but the validated training key is
+``local_edit_execution`` alone. On 160 blind-labelled held-out edits (sprint doc
+S7-8) execution separated done from not-done at AUC 0.94, while keep separated
+clean edits from judge-labelled collateral at only 0.70: what judges call
+"changed something else" is mostly a small object gone, text garbled or the
+framing nudged, which patch agreement cannot see, and a legitimate edit placed
+outside the reference edit's box is charged as damage. Keep still reads whole-
+frame redraws reliably (all <= 0.39), so it stays as a logged observation.
 
 Per-artifact metadata (from the prompt manifest, vrl/scripts/data/local_edit.py)::
 

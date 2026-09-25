@@ -1,4 +1,4 @@
-"""Local-edit reward (EditReward execution x DINOv2 keep outside the edit box)."""
+"""Local-edit reward (EditReward execution; DINOv2 keep outside the edit box as an observation)."""
 
 from __future__ import annotations
 
