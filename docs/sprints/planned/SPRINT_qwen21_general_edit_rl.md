@@ -199,3 +199,14 @@ dry run 结果（2026-09-25 05:08–05:57，fc780443，`outputs/qwen_image_21_lo
 - 训练键 `local_edit_execution`（EditReward sigmoid），keep 项只记录不训练（81bb25d8）。其余与 dry run 相同（16 样本 × 6 指令，512/10，噪声 0.7，LoRA r=256 fp32，8-bit Adam）。
 - 启动：`scratchpad local_edit/launch_run1.sh`（supervise，60 轮，每 10 轮存档，gpu_retry 28000 MiB，最多重试 6 次），输出 `outputs/qwen_image_21_local_edit_run1`。
 - 判定计划：ck20 在 46 条 held-out 上 1024/40 出图 → 盲评"没做"是否下降、"改坏别处"是否上升；两者都对才让它跑到 60，collateral 上升即停。
+
+### 9.1 第二个 held-out：非 OmniEdit 的删除 / 添加集（用户问"Qwen 2.1 是否见过 OmniEdit"）
+
+不能排除：Qwen-Image / 2.0 技术报告和 2.1 README 都不列公开编辑数据集也没有去污染说明，OmniEdit 2024-11 就公开，且其源图来自 LAION-5B / OpenImages。
+RL 不用目标图所以训练不受影响，但同分布 held-out 的数字可能偏好看，所以判定时再加两个外部集（都是 base 关卡里的同一 `local_edit` 元数据，框设全图、无提示，只看执行分和盲评）：
+
+- `manifests/local_edit/heldout_gedit_remove_add.jsonl`：GEdit-Bench-EN subject-remove 57 + subject-add 60 = 117（`input_image_raw` 中心裁方，25 条短边 < 768）。
+- `manifests/local_edit/heldout_imgedit_remove_add.jsonl`：ImgEdit-Bench 单轮 remove 86 + add 95 = 181（短边均 ≥ 1024）。
+
+图片在 `data/external/{gedit_bench,imgedit_bench}/img`（不入库）。另：2.1 README 明说支持 "specify local edits via circles, painted annotations, or separate masks"，
+所以 §7 的红框效应是训练过的能力；"不给框自己找"才是没练过的。
