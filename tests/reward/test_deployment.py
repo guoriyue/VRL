@@ -8,7 +8,7 @@ import pytest
 import torch
 from PIL import Image
 
-from reward_lab.calibration import Calibration
+from reward.calibration import Calibration
 from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.reward_calibration import RewardCalibrationConfig
 from vrl.config.reward_inference import RewardInferenceConfig

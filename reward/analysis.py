@@ -120,7 +120,7 @@ class Analysis:
         return report
 
     def stress(self) -> dict[str, Any]:
-        """Pair each perturbed sample with its baseline (see ``reward_lab.stress``)."""
+        """Pair each perturbed sample with its baseline (see ``reward.stress``)."""
 
         records = self.evaluation.records
         observations, by_transform = [], defaultdict(lambda: defaultdict(list))

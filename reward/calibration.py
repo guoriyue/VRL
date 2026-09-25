@@ -426,7 +426,7 @@ class Calibration:
             public = json.dumps(
                 {"review_id": manifest["review_id"], "pairs": display}, ensure_ascii=True
             ).replace("<", "\\u003c")
-            template = files("reward_lab").joinpath("preference_review.html").read_text()
+            template = files("reward").joinpath("preference_review.html").read_text()
             (stage / "index.html").write_text(template.replace("__REVIEW_DATA__", public))
             stage.rename(output)
             return {

@@ -6,8 +6,8 @@ import json
 import pytest
 from PIL import Image
 
-from reward_lab.__main__ import main
-from reward_lab.calibration import Calibration, PreferencePair
+from reward.__main__ import main
+from reward.calibration import Calibration, PreferencePair
 from vrl.rewards.evaluation import Evaluation
 from vrl.utils.artifacts import sha256_file
 

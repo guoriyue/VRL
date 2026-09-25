@@ -2,7 +2,7 @@
 
 > Scoring (`vrl.scripts.rewards.rescore_media`, the `Evaluation` class) is part of
 > the framework. Analysis, calibration fitting, qualification receipts and review
-> packets live in the separate `reward_lab` package (`python -m reward_lab
+> packets live in the separate `reward` package (`python -m reward
 > <command>`), which depends on `vrl` and is never imported by it.
 
 `vrl.scripts.rewards.rescore_media` scores a JSONL media manifest through the
@@ -118,9 +118,9 @@ without rerunning compatible model inference.
 ## Health and candidate ranking comparison
 
 ```bash
-python -m reward_lab health --evaluation outputs/sharpness-audit \
+python -m reward health --evaluation outputs/sharpness-audit \
   --output outputs/reports/sharpness-health.json
-python -m reward_lab compare --evaluation outputs/candidate-a --other outputs/candidate-b \
+python -m reward compare --evaluation outputs/candidate-a --other outputs/candidate-b \
   --first-axis quality --second-axis overall \
   --output outputs/reports/candidate-rankings.json
 ```
@@ -159,7 +159,7 @@ fields but **omit `preference`**. Choose pairs and source-separated splits befor
 looking at holdout results. Export a portable browser review:
 
 ```bash
-python -m reward_lab review-export \
+python -m reward review-export \
   --evaluation outputs/multiaxis-audit --pairs review-pairs.jsonl \
   --seed 42 --output outputs/preference-review
 ```
@@ -179,7 +179,7 @@ download answers to keep them independently of the browser. Convert explicit
 answers back to the original sample orientation:
 
 ```bash
-python -m reward_lab review-import \
+python -m reward review-import \
   --review outputs/preference-review/audit.json --answers review-answers.json \
   --output preferences.jsonl
 ```
@@ -191,11 +191,11 @@ it. A single-source demonstration cannot support source-separated calibration.
 Multiple annotators need distinct pair IDs when their labels are combined.
 
 ```bash
-python -m reward_lab fit \
+python -m reward fit \
   --evaluation outputs/multiaxis-audit --preferences preferences.jsonl \
   --axes alignment quality --l2 0.1 --tie-margin 0.1 \
   --output outputs/reports/frozen-combination.json
-python -m reward_lab evaluate \
+python -m reward evaluate \
   --evaluation outputs/multiaxis-audit --preferences preferences.jsonl \
   --combination outputs/reports/frozen-combination.json \
   --output outputs/reports/preference-holdout.json
@@ -210,7 +210,7 @@ implement a visual pairwise judge or guarantee calibrated probabilities.
 Independent scorers can be joined without rerunning models:
 
 ```bash
-python -m reward_lab fit \
+python -m reward fit \
   --component semantic=outputs/editreward-audit \
   --component locality=outputs/masked-edit-audit \
   --preferences preferences.jsonl \
@@ -237,7 +237,7 @@ Apply a frozen combination to a new scoring snapshot without labels or model
 inference:
 
 ```bash
-python -m reward_lab apply \
+python -m reward apply \
   --evaluation outputs/reward_evaluation/new-candidates \
   --combination outputs/reports/frozen-combination.json \
   --output outputs/reports/candidate-combination-scores.json
@@ -268,7 +268,7 @@ from frozen axes to runtime raw axes, for example
 These illustrative axes must actually exist in the selected source evaluations.
 
 ```bash
-python -m reward_lab qualify \
+python -m reward qualify \
   --component semantic=outputs/reward_evaluation/semantic \
   --component local=outputs/reward_evaluation/local \
   --combination outputs/reports/frozen-combination.json \
@@ -346,13 +346,13 @@ Build diagnostic variants of existing image outputs, then use the same standalon
 scorers and transports as ordinary evaluation:
 
 ```bash
-python -m reward_lab stress-manifest \
+python -m reward stress-manifest \
   --manifest outputs/candidates/media.jsonl \
   --output-dir outputs/reward_stress/candidates --seed 42
 python -m vrl.scripts.rewards.rescore_media \
   --manifest outputs/reward_stress/candidates/media.jsonl \
   --config path/to/scorer.yaml --output-dir outputs/reward_stress/scores
-python -m reward_lab stress \
+python -m reward stress \
   --evaluation outputs/reward_stress/scores --output outputs/reward_stress/report.json
 ```
 
@@ -372,7 +372,7 @@ quality direction. A score increase under noise is a case to inspect, not automa
 proof of reward hacking. These perturbations are not human annotations and never
 enter preference calibration as invented labels.
 
-The perturbation recipe lives in `reward_lab.stress`; the report is
+The perturbation recipe lives in `reward.stress`; the report is
 `Analysis.stress`. The trainer, reward scalar aggregation, model adapter shapes
 and generation family APIs remain unchanged.
 
@@ -383,7 +383,7 @@ but the scorer and task inputs stay fixed. This differs from `compare`, which
 compares reward rankings on the same images.
 
 ```bash
-python -m reward_lab paired \
+python -m reward paired \
   --baseline outputs/reward_evaluation/base-seed1 \
   --candidate outputs/reward_evaluation/trained-seed1 \
   --baseline outputs/reward_evaluation/base-seed2 \
@@ -457,7 +457,7 @@ After independently scoring all states of an editing sequence under one fixed
 recipe and task, report when requirements are achieved or broken:
 
 ```bash
-python -m reward_lab sequence --evaluation outputs/sequence-scores \
+python -m reward sequence --evaluation outputs/sequence-scores \
   --spec sequence.json --output outputs/sequence-report.json
 ```
 
@@ -495,7 +495,7 @@ Score the same manifest under the same frozen configuration into separate fresh
 output directories, then compare those independent executions without inference:
 
 ```bash
-python -m reward_lab repeat \
+python -m reward repeat \
   outputs/reward-repeat-0 outputs/reward-repeat-1 outputs/reward-repeat-2 \
   --output outputs/reward-repeatability.json
 ```

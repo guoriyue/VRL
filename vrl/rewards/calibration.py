@@ -1,6 +1,6 @@
 """A frozen linear reward combination, applied identically offline and online.
 
-A combination is fitted offline (``reward_lab.calibration``) from pairwise
+A combination is fitted offline (``reward.calibration``) from pairwise
 preferences over standardized score axes. This class only checks a saved
 combination against the scoring recipe it was fitted on and applies it.
 """

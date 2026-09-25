@@ -9,5 +9,5 @@ combinations and deployment receipts. Training only reads the results through
 * ``analysis.Analysis``: health, stress, sequence, ranking, paired and repeatability reports.
 * ``calibration.Calibration``: preference fitting, application, holdout evaluation, review packets.
 * ``stress.build_stress_manifest``: deterministic perturbations for stress audits.
-* ``python -m reward_lab``: one command-line entry point for all of the above.
+* ``python -m reward``: one command-line entry point for all of the above.
 """

@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from reward_lab.analysis import Analysis
-from reward_lab.calibration import Calibration, PreferencePair
-from reward_lab.stress import build_stress_manifest
+from reward.analysis import Analysis
+from reward.calibration import Calibration, PreferencePair
+from reward.stress import build_stress_manifest
 from vrl.rewards.evaluation import Evaluation, ScoringConfig, load_media_manifest
 from vrl.utils.artifacts import sha256_file
 

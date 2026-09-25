@@ -1,4 +1,4 @@
-"""``python -m reward_lab <command>``: analyze, calibrate and qualify rewards offline.
+"""``python -m reward <command>``: analyze, calibrate and qualify rewards offline.
 
 Every command reads scoring runs written by ``vrl.scripts.rewards.rescore_media``
 and writes one JSON report. ``--evaluation DIR`` names one run; ``--component
@@ -13,9 +13,9 @@ import asyncio
 import json
 from pathlib import Path
 
-from reward_lab.analysis import Analysis
-from reward_lab.calibration import Calibration, PreferencePair
-from reward_lab.stress import build_stress_manifest
+from reward.analysis import Analysis
+from reward.calibration import Calibration, PreferencePair
+from reward.stress import build_stress_manifest
 from vrl.rewards.evaluation import Evaluation
 from vrl.rewards.sequences import EditSequenceSpec
 from vrl.utils.artifacts import atomic_file
@@ -37,7 +37,7 @@ def _load(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Evaluati
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="reward_lab", description=__doc__)
+    parser = argparse.ArgumentParser(prog="reward", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
 
     def command(name: str, *, source: bool = True, output: bool = True) -> argparse.ArgumentParser:
