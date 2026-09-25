@@ -171,3 +171,20 @@ EditReward（Qwen2.5-VL-7B，仓库 reward service，wire v5，端口 18316）�
 `LocalEditRewardModel` 原来逐张调用 EditReward 服务且从不让它休眠，7B 判官会在 rollout 和训练期间一直占 17 GB。改为 `score_batch`：每个奖励阶段唤醒一次、
 整批一个请求、再让它休眠（服务 `memory_parking_mode: reload`，唤醒 = 从磁盘重载）。执行分一律用干净源图 + 原指令——给它红框图 + 带后缀指令时有框行 AUC 0.89 → 0.72。
 3 轮 dry run（`outputs/qwen_image_21_local_edit_dry`，训练键仍是 `local_edit_shaped`）只为量：parity、峰值显存、一轮耗时、组内奖励标准差（§8 的 512×4 ODE 探测里只有 0.03–0.07）。
+
+dry run 结果（2026-09-25 05:08–05:57，fc780443，`outputs/qwen_image_21_local_edit_dry`，16 样本 × 6 指令，512 px / 10 步 / 噪声 0.7）：
+
+| 轮 | reward_mean（shaped） | reward_std | grad_norm | clip_fraction | adv_zero_rate |
+|---|---|---|---|---|---|
+| 1 | 0.789 | 0.132 | 8.1e-5 | 0.000 | 0 |
+| 2 | 0.756 | 0.105 | 1.4e-4 | 0.096 | 0 |
+| 3 | 0.635 | 0.137 | 7.2e-5 | 0.094 | 0 |
+
+- replay parity 通过（最大差 1.2e-7，上限 0.01）；grad_norm 有限非零；rollout 峰值 20.3 GB（预算 28.8 GB），训练期 nvidia-smi 23.9 GB；
+  奖励服务每个阶段唤醒 → 整批（按 48 MiB 分请求）→ 休眠，9 个阶段全部正常。
+- 一轮 16 分钟（rollout 96 样本约 8 分钟 + 训练约 8 分钟），和 run4 同量级，超过目标里的 10 分钟。
+- 第一次 dry run 暴露两个真问题并已修：逐张调服务且从不休眠（20dfe99b）、整批上传超过服务 64 MiB 上限且失败后 Ray actor 关闭导致 park 也失败（fc780443）。
+- reward_std 0.10–0.14 是全批的；adv_zero_rate 0 说明 16 样本 + SDE 下没有整组同分的指令（512×4 ODE 探测里只有 24% 的组有成有败，训练采样比它散）。
+- 三轮 reward_mean 下滑是采样噪声（每轮换 6 条指令），不是学习信号。
+
+**状态：dry run 关卡全过（除每轮耗时），正式 60 轮等用户在 §8 的 A / B 之间定。**
