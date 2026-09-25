@@ -28,7 +28,6 @@ from vrl.rewards.inference import (
 from vrl.rewards.runtime import build_reward_scorer
 from vrl.rewards.service.client import HttpRewardScorer
 from vrl.rewards.service.protocol import (
-    WIRE_VERSION,
     RemoteRewardServiceError,
     RewardServiceErrorCode,
     RewardServiceProtocolError,
@@ -129,7 +128,6 @@ def test_wire_roundtrip_is_versioned_and_preserves_request(tmp_path) -> None:
     payload = request_to_wire(request)
     restored = request_from_wire(payload)
 
-    assert payload["version"] == WIRE_VERSION
     assert restored.request_id == request.request_id
     assert restored == request
     assert restored.artifacts[0].path == str(artifact_file)
@@ -164,11 +162,6 @@ def test_wire_rejects_unknown_fields_and_versions(tmp_path) -> None:
         request_from_wire(payload)
 
     payload = request_to_wire(_request(str(artifact_file)))
-    payload["version"] = WIRE_VERSION + 1
-    with pytest.raises(ValueError, match="unsupported reward wire version"):
-        request_from_wire(payload)
-
-    payload = request_to_wire(_request(str(artifact_file)))
     payload["surprise"] = True
     with pytest.raises(ValueError, match="unsupported reward envelope fields"):
         request_from_wire(payload)
@@ -178,14 +171,12 @@ def test_wire_decodes_only_typed_scalars() -> None:
     from vrl.rewards.service.wire import error_from_wire, info_from_wire
 
     info_envelope = {
-        "version": WIRE_VERSION,
         "info": {
             "model_name": "m",
             "model_version": "v",
             # bool("false") is True; a stringly flag must be rejected, not
             # silently flipped into a scheduling permission.
             "generation_overlap_safe": "false",
-            "instance_id": "a" * 32,
             "max_concurrency": 1,
             "max_pending_requests": 1,
         },
@@ -194,7 +185,6 @@ def test_wire_decodes_only_typed_scalars() -> None:
         info_from_wire(info_envelope)
 
     error_envelope = {
-        "version": WIRE_VERSION,
         "error": {
             "code": "scoring_failed",
             "message": "boom",
@@ -404,25 +394,6 @@ async def test_service_scoring_error_is_typed(tmp_path) -> None:
     assert caught.value.status_code == 500
     assert caught.value.retryable
     assert caught.value.request_id == "req-1"
-
-
-@pytest.mark.asyncio
-async def test_server_rejects_unsupported_wire_version_with_typed_error(tmp_path) -> None:
-    async with _running_service(_FakeRuntime(), tmp_path) as (service, _client):
-        host, port = service.address
-        async with (
-            aiohttp.ClientSession() as session,
-            session.post(
-                f"http://{host}:{port}/score",
-                json={"version": 999, "request": {}},
-                headers={"X-VRL-Service-Instance": (await _client.info()).instance_id},
-            ) as response,
-        ):
-            body = await response.json()
-
-    assert response.status == 426
-    assert body["error"]["code"] == RewardServiceErrorCode.UNSUPPORTED_VERSION.value
-    assert body["error"]["details"]["supported_versions"] == [WIRE_VERSION]
 
 
 @pytest.mark.asyncio
@@ -916,7 +887,6 @@ def test_obsolete_managed_launch_token_is_rejected_by_config_and_wire() -> None:
     with pytest.raises(ValueError, match="unknown launch_token"):
         RewardServiceConfig.from_mapping({"launch_token": "obsolete-child-token"})
     info = RewardServiceInfo(
-        instance_id="a" * 32,
         model_name="external-model",
         model_version="v1",
         generation_overlap_safe=False,
@@ -1040,7 +1010,6 @@ def test_wire_rejects_nonobject_error_details(details):
 
     error = error_from_wire(
         {
-            "version": WIRE_VERSION,
             "error": {"code": "scoring_failed", "message": "failed", "details": details},
         },
         status_code=500,
@@ -1161,13 +1130,12 @@ def test_service_info_rejects_noninteger_capacity(field, value) -> None:
         "model_name": "test",
         "model_version": "v1",
         "generation_overlap_safe": False,
-        "instance_id": "a" * 32,
         "max_concurrency": 1,
         "max_pending_requests": 8,
     }
     info[field] = value
     with pytest.raises(RewardServiceProtocolError, match=field):
-        info_from_wire({"version": WIRE_VERSION, "info": info})
+        info_from_wire({"info": info})
 
 
 @pytest.mark.parametrize("field", ["model_name", "model_version"])
@@ -1179,13 +1147,12 @@ def test_service_info_rejects_nonstring_identity(field, value) -> None:
         "model_name": "test",
         "model_version": "",
         "generation_overlap_safe": False,
-        "instance_id": "a" * 32,
         "max_concurrency": 1,
         "max_pending_requests": 8,
     }
     info[field] = value
     with pytest.raises(RewardServiceProtocolError, match=field):
-        info_from_wire({"version": WIRE_VERSION, "info": info})
+        info_from_wire({"info": info})
 
 
 @pytest.mark.asyncio
@@ -1271,7 +1238,6 @@ async def test_parking_service_refuses_to_overlap_safe_and_resident_services_ref
 
     with pytest.raises(ValueError, match="cannot be generation_overlap_safe"):
         RewardServiceInfo(
-            instance_id="a" * 32,
             model_name="m",
             model_version="v",
             generation_overlap_safe=True,
@@ -1290,7 +1256,6 @@ async def test_parking_service_refuses_to_overlap_safe_and_resident_services_ref
             aiohttp.ClientSession() as probe,
             probe.post(
                 f"http://{host}:{port}/park",
-                headers={"X-VRL-Service-Instance": (await client.info()).instance_id},
             ) as response,
         ):
             assert response.status == 405

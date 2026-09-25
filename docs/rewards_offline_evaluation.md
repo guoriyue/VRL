@@ -351,23 +351,11 @@ plain `why` strings; joined evaluations retain diagnostics under scorer names.
 A detector's explanation is evidence about its decision, not proof that it saw the
 image correctly or a causal diagnosis of the generator's failure.
 
-The HTTP wire version is **7**. Version 6 introduced structured diagnostics;
-version 7 adds a service-instance identity to the handshake. Upgrade/restart
-clients and services together; older peers fail explicitly at the version
-handshake. Existing persisted evaluations without diagnostics still read with
-an empty object.
-
-Each service instance generates an ID returned by `GET /info`. The client binds
-scoring, wake, park and cancellation requests to that validated ID using
-`X-VRL-Service-Instance`. Missing or stale IDs fail with HTTP 409 and the
-non-retryable `service_identity_changed` code before artifact decoding or model
-work. This also applies when a replacement uses the same model name and version:
-its request ownership and accelerator isolation have not been validated by the
-old client. Create and preflight a new client before resuming scheduling; do not
-silently refresh an active client's cached memory-placement assumptions. An
-ambiguous request on the old instance remains unresolved if cancellation reaches
-a replacement, so shared artifacts must remain retained. The instance ID binds
-request ownership; it is not authentication or a durable cross-restart lease.
+Requests and responses are typed envelopes and unknown fields are rejected, so
+a client and service built from different checkouts fail at the first
+mismatched field. Restart clients and services together after protocol changes.
+Existing persisted evaluations without diagnostics still read with an empty
+object.
 
 ## Reproducible perturbation stress audits
 

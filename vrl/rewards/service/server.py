@@ -18,7 +18,6 @@ import json
 import signal
 import threading
 import time
-import uuid
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack, suppress
@@ -33,7 +32,6 @@ from vrl.config.base import ConfigBase
 from vrl.rewards.launch_contract import RewardRuntimeLaunchContract
 from vrl.rewards.service.owner import RewardScoringThread
 from vrl.rewards.service.protocol import (
-    SERVICE_INSTANCE_HEADER,
     RewardServiceErrorCode,
     RewardServiceInfo,
     RewardServiceProtocolError,
@@ -212,7 +210,6 @@ class RewardService:
         # is set (the same contract the driver-side runtime used to fulfil).
         memory_parking = bool(getattr(runtime, "requires_memory_parking", False))
         self._info = RewardServiceInfo(
-            instance_id=uuid.uuid4().hex,
             model_name=str(model_name).strip() or type(runtime).__name__,
             model_version=str(model_version).strip(),
             generation_overlap_safe=bool(generation_overlap_safe),
@@ -239,16 +236,6 @@ class RewardService:
             handler: Any,
         ) -> web.StreamResponse:
             try:
-                if (
-                    (request.method == "POST" and request.path in {"/score", "/park", "/wake"})
-                    or (request.method == "DELETE" and request.path.startswith("/requests/"))
-                ) and request.headers.get(SERVICE_INSTANCE_HEADER) != self._info.instance_id:
-                    raise RewardServiceProtocolError(
-                        RewardServiceErrorCode.SERVICE_IDENTITY_CHANGED,
-                        "reward service instance differs from the validated handshake; "
-                        "create and preflight a new client before scheduling more work",
-                        status_code=409,
-                    )
                 return await handler(request)
             except RewardServiceProtocolError as error:
                 return self._error_response(error)

@@ -93,16 +93,14 @@ def test_result_rejects_nonfinite_scores() -> None:
 @pytest.mark.parametrize("value", [None, [], 1])
 @pytest.mark.parametrize("wire", [False, True])
 def test_result_rejects_nonmapping_fields(field, value, wire):
-    from vrl.rewards.service.protocol import WIRE_VERSION, RewardServiceProtocolError
+    from vrl.rewards.service.protocol import RewardServiceProtocolError
     from vrl.rewards.service.wire import score_response_from_wire
 
     row = {"artifact_id": "a", "scores": {"reward": 1.0}, "timing_ms": {}}
     row[field] = value
     with pytest.raises(RewardServiceProtocolError if wire else TypeError, match=field):
         if wire:
-            score_response_from_wire(
-                {"version": WIRE_VERSION, "request_id": "req", "results": [row]}
-            )
+            score_response_from_wire({"request_id": "req", "results": [row]})
         else:
             RewardInferenceResult(**row)
 

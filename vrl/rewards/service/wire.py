@@ -1,12 +1,12 @@
-"""Versioned JSON wire format for standalone reward scoring.
+"""JSON wire format for standalone reward scoring.
 
 The single owner of the envelope encode/decode pair: client.py and server.py
 both import only these functions, so the two endpoints cannot drift apart.
 Field sets derive from the inference.py dataclasses via ``fields(...)``, which
 keeps those dataclasses the one schema source — adding a field changes the
-wire, and unknown keys are rejected rather than ignored. The envelope pins
-``WIRE_VERSION`` so a mismatched peer fails before any scoring, and
-``request_fingerprint`` canonicalizes a request for the server's idempotency
+wire, and unknown keys are rejected rather than ignored, so peers built from
+different checkouts fail at the first mismatched field. ``request_fingerprint``
+canonicalizes a request for the server's idempotency
 check. Image/video tensors cross as explicit typed, checksummed numeric bytes,
 never Python pickle. Shared filesystem paths remain an optional compatibility
 transport for operators who explicitly configure allowed roots.
@@ -28,7 +28,6 @@ from vrl.rewards.inference import (
     RewardInferenceResult,
 )
 from vrl.rewards.service.protocol import (
-    WIRE_VERSION,
     RemoteRewardServiceError,
     RewardServiceErrorCode,
     RewardServiceInfo,
@@ -38,10 +37,7 @@ from vrl.utils.json_files import canonical_json_sha256
 
 
 def _wire_envelope(**payload: Any) -> dict[str, Any]:
-    return {
-        "version": WIRE_VERSION,
-        **payload,
-    }
+    return dict(payload)
 
 
 def _require_mapping(value: Any, *, context: str) -> Mapping[str, Any]:
@@ -55,24 +51,9 @@ def _require_mapping(value: Any, *, context: str) -> Mapping[str, Any]:
 
 def _validate_envelope(payload: Any, *, expected_keys: set[str]) -> Mapping[str, Any]:
     envelope = _require_mapping(payload, context="reward service payload")
-    # Version first: a cross-version peer must get the explicit 426, not a
-    # confusing unknown-field complaint about an envelope key that moved.
-    version = envelope.get("version")
-    if isinstance(version, bool) or not isinstance(version, int):
-        raise RewardServiceProtocolError(
-            RewardServiceErrorCode.BAD_REQUEST,
-            "reward wire version must be an integer",
-        )
-    if version != WIRE_VERSION:
-        raise RewardServiceProtocolError(
-            RewardServiceErrorCode.UNSUPPORTED_VERSION,
-            f"unsupported reward wire version {version}; supported={WIRE_VERSION}",
-            status_code=426,
-            details={"supported_versions": [WIRE_VERSION]},
-        )
     _reject_unknown_keys(
         envelope,
-        {"version", *expected_keys},
+        set(expected_keys),
         context="reward envelope",
     )
     return envelope
