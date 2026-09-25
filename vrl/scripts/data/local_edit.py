@@ -101,10 +101,16 @@ def rows_from_omniedit(
     hint_fraction: float,
     min_area: float,
     max_area: float,
+    min_side: int,
     size: int,
     seed: int,
 ) -> list[dict]:
-    """Stream OmniEdit until every local task has ``per_task`` rows; write images, return manifest rows."""
+    """Stream OmniEdit until every local task has ``per_task`` rows; write images, return manifest rows.
+
+    Sources shorter than ``min_side`` are skipped; ``size`` > 0 resizes the square
+    crop (0 keeps the native side -- the trainer samples at 512 and evaluation
+    resamples the reference to its own geometry, as it did for 442 px COCO crops).
+    """
 
     from datasets import load_dataset
     from PIL import Image
@@ -114,7 +120,11 @@ def rows_from_omniedit(
     (out / "hint").mkdir(parents=True, exist_ok=True)
     counts = dict.fromkeys(LOCAL_TASKS, 0)
     rows: list[dict] = []
+    seen = 0
     for example in load_dataset("TIGER-Lab/OmniEdit-Filtered-1.2M", split="train", streaming=True):
+        seen += 1
+        if seen % 500 == 0:
+            print(f"scanned {seen} rows, kept {counts}", flush=True)
         task = str(example.get("task"))
         prompts = example.get("edited_prompt_list") or []
         if task not in counts or counts[task] >= per_task or not prompts:
@@ -123,9 +133,9 @@ def rows_from_omniedit(
             v if isinstance(v, Image.Image) else Image.open(io.BytesIO(v["bytes"]))
             for v in (example["src_img"], example["edited_img"])
         )
-        if min(source.size) < size or source.size != edited.size:
+        if min(source.size) < min_side or source.size != edited.size:
             continue
-        source, edited = square_crop(source, size), square_crop(edited, size)
+        source, edited = square_crop(source, size or None), square_crop(edited, size or None)
         box = change_box(source, edited)
         if box is None:
             continue
@@ -183,7 +193,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--hint-fraction", type=float, default=0.5)
     parser.add_argument("--min-area", type=float, default=0.01)
     parser.add_argument("--max-area", type=float, default=0.45)
-    parser.add_argument("--size", type=int, default=1024)
+    parser.add_argument("--min-side", type=int, default=768)
+    parser.add_argument(
+        "--size", type=int, default=0, help="resize the square crop; 0 keeps the native side"
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--manifest-dir", type=Path, default=Path("manifests/local_edit"))
     args = parser.parse_args(argv)
@@ -196,6 +209,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         args.hint_fraction,
         args.min_area,
         args.max_area,
+        args.min_side,
         args.size,
         args.seed,
     )
