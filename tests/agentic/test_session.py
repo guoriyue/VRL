@@ -66,10 +66,7 @@ async def test_visual_reward_recipe_requires_explicit_remote_identity_and_cpu_lo
                         "expected_model_version": "v1",
                     }
                 },
-                "calibration": {
-                    "deployment_path": str(tmp_path / "missing-receipt.json"),
-                    "deployment_id": "0" * 64,
-                },
+                "calibration": {"deployment_path": str(tmp_path / "missing-receipt.json")},
             }
         )
     )

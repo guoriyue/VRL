@@ -92,11 +92,10 @@ async def open_session(args: argparse.Namespace, *, output: Path):
         combination, axis_mapping = None, None
         if recipe.calibration is not None:
             from vrl.config.builders import RewardRuntimeConfig
-            from vrl.rewards.deployment import load_reward_deployment
+            from vrl.rewards.deployment import RewardDeployment
 
-            combination, axis_mapping = load_reward_deployment(
-                RewardRuntimeConfig.from_cfg(recipe)
-            )
+            deployment = RewardDeployment.load(RewardRuntimeConfig.from_cfg(recipe))
+            combination, axis_mapping = deployment.combination, deployment.axis_mapping
         reward_function = MultiReward.from_dict(
             recipe.components,
             device="cpu",

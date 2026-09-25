@@ -1265,8 +1265,8 @@ async def test_parking_service_refuses_to_overlap_safe_and_resident_services_ref
 async def test_geneval_reason_survives_one_detector_pass_http_and_offline_audit(tmp_path):
     from PIL import Image
 
-    from reward_lab.diagnostics import health_report
-    from vrl.rewards.evaluation import ScoringConfig, read_evaluation, rescore_media
+    from reward_lab.analysis import Analysis
+    from vrl.rewards.evaluation import Evaluation, ScoringConfig
     from vrl.rewards.models.geneval_owl import GenEvalOwlRewardModel
     from vrl.rewards.runtime import InProcessRewardScorer
 
@@ -1319,13 +1319,12 @@ async def test_geneval_reason_survives_one_detector_pass_http_and_offline_audit(
                 expected_model_version="unit-v1",
             ),
         )
-        await rescore_media(manifest, config, tmp_path / "audit")
-        evaluation = read_evaluation(tmp_path / "audit")
-        persisted = evaluation["records"]["cat"]["result"]
+        evaluation = await Evaluation.score(manifest, config, tmp_path / "audit")
+        persisted = evaluation.records["cat"]["result"]
         assert persisted["diagnostics"]["why"] == "missing:cat"
         assert persisted["diagnostics"]["spec"] == spec
         assert persisted["reward_model_version"] == "unit-v1"
-        assert health_report(evaluation)["diagnostics"] == {
+        assert Analysis(evaluation).health()["diagnostics"] == {
             "rows_with_evidence": 1,
             "why_counts": {"missing:cat": 1},
         }

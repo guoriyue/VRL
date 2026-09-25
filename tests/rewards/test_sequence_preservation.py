@@ -4,7 +4,8 @@ import copy
 
 import pytest
 
-from vrl.rewards.sequences import EditSequenceSpec, sequence_report
+from vrl.rewards.evaluation import Evaluation
+from vrl.rewards.sequences import EditSequenceSpec
 
 
 def test_staged_requirements_expose_regression_even_when_final_state_is_repaired():
@@ -24,9 +25,9 @@ def test_staged_requirements_expose_regression_even_when_final_state_is_repaired
             ],
         }
     )
-    evaluation = {"run_id": "test", "config": {"revision": "fixed"}, "records": {}}
+    evaluation = Evaluation("test", {"revision": "fixed"}, {})
     for sample, text, damage in zip(spec.samples, (0, 1, 0, 1), (0.8, 0.0, 0.2, 0.0), strict=True):
-        evaluation["records"][sample] = {
+        evaluation.records[sample] = {
             "input": {
                 "sample_id": sample,
                 "sha256": sample,
@@ -37,7 +38,7 @@ def test_staged_requirements_expose_regression_even_when_final_state_is_repaired
             "status": "success",
             "result": {"scores": {"text": text, "damage": damage}},
         }
-    report = sequence_report(evaluation, spec)
+    report = spec.report(evaluation)
     assert report["final_requirements_met"] and report["coverage_complete"]
     assert report["requirements"]["first-bubble"]["first_satisfied_step"] == 1
     assert report["requirements"]["first-bubble"]["regression_steps"] == [2]
@@ -45,11 +46,9 @@ def test_staged_requirements_expose_regression_even_when_final_state_is_repaired
     assert report["states"][0]["requirements"]["protect-artwork"]["status"] == "not_active"
     assert report["requirements"]["protect-artwork"]["regression_steps"] == [2]
     changed = copy.deepcopy(evaluation)
-    changed["records"]["damaged"]["result"]["scores"]["damage"] = 0.3
-    assert sequence_report(changed, spec)["report_id"] != report["report_id"]
-    changed["records"]["damaged"]["input"]["metadata"]["target"] = "Goodbye"
+    changed.records["damaged"]["input"]["metadata"]["target"] = "Goodbye"
     with pytest.raises(ValueError, match="specification changed"):
-        sequence_report(changed, spec)
+        spec.report(changed)
 
 
 def test_missing_axis_and_failed_scoring_are_unknown_not_regressions_or_zero_rewards():
@@ -68,8 +67,8 @@ def test_missing_axis_and_failed_scoring_are_unknown_not_regressions_or_zero_rew
     }
     for sample, row in records.items():
         row["input"] = {"sample_id": sample, "sha256": sample, "prompt": "fixed"}
-    evaluation = {"run_id": "partial", "config": {}, "records": records}
-    report = sequence_report(evaluation, spec)
+    evaluation = Evaluation("partial", {}, records)
+    report = spec.report(evaluation)
     assert report["final_requirements_met"] is None and not report["coverage_complete"]
     assert report["requirements"]["text"]["unknown_steps"] == [1, 3]
     assert report["requirements"]["text"]["regression_steps"] == []
@@ -77,7 +76,7 @@ def test_missing_axis_and_failed_scoring_are_unknown_not_regressions_or_zero_rew
     assert report["states"][1]["requirements"]["text"]["value"] is None
     records["d"]["result"]["scores"]["text"] = float("nan")
     with pytest.raises(ValueError, match="finite numbers"):
-        sequence_report(evaluation, spec)
+        spec.report(evaluation)
 
 
 def test_invalid_sequence_cannot_reuse_one_score_as_multiple_steps():

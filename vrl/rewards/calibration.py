@@ -1,8 +1,8 @@
-"""Frozen linear reward combinations applied identically offline and online.
+"""A frozen linear reward combination, applied identically offline and online.
 
-A combination is fitted offline in ``reward_lab.calibration``; this module
-only validates a saved combination against its scoring recipe and applies it.
-No model inference or fitting happens here.
+A combination is fitted offline (``reward_lab.calibration``) from pairwise
+preferences over standardized score axes. This class only checks a saved
+combination against the scoring recipe it was fitted on and applies it.
 """
 
 from __future__ import annotations
@@ -16,52 +16,15 @@ import numpy as np
 
 from vrl.utils.json_files import canonical_json_sha256
 
-
-def combination_vectors(
-    evaluation: dict[str, Any], combination: dict[str, Any]
-) -> tuple[dict[str, Any], list[str], np.ndarray, np.ndarray, np.ndarray]:
-    """Validate the artifact and recipe before either application or evaluation."""
-    payload = {k: v for k, v in combination.items() if k != "combination_id"}
-    if payload.get("schema") != "vrl.reward-combination.v1" or canonical_json_sha256(
-        payload, allow_nan=False
-    ) != combination.get("combination_id"):
-        raise ValueError("invalid frozen combination digest or schema")
-    if (
-        canonical_json_sha256(evaluation["config"], allow_nan=False)
-        != payload["scoring_config_hash"]
-    ):
-        raise ValueError("scoring recipe differs from calibration")
-    axes = payload["axes"]
-    if (
-        not isinstance(axes, list)
-        or not axes
-        or any(not isinstance(axis, str) or not axis for axis in axes)
-        or len(set(axes)) != len(axes)
-    ):
-        raise ValueError("invalid combination axes")
-    weights, means, scales = (
-        np.asarray(payload[key], dtype=np.float64) for key in ("weights", "means", "scales")
-    )
-    if (
-        any(
-            value.shape != (len(axes),) or not np.isfinite(value).all()
-            for value in (weights, means, scales)
-        )
-        or (scales <= 0).any()
-        or not math.isfinite(payload["tie_margin"])
-        or payload["tie_margin"] < 0
-    ):
-        raise ValueError("invalid combination vectors or tie margin")
-    return payload, axes, weights, means, scales
+COMBINATION_SCHEMA = "vrl.reward-combination.v1"
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class FrozenRewardCombination:
-    """Immutable, recipe-bound arithmetic shared by offline and runtime aggregation.
+    """Standardize the named axes with fitted means and scales, then weight them.
 
-    Construction checks the saved digest and exact scoring recipe. Only detached
-    tuples survive construction, so modifying caller dictionaries cannot change
-    the objective of an already loaded run. This performs no model inference.
+    Only detached tuples survive construction, so the objective of a loaded run
+    cannot change under it. This performs no model inference.
     """
 
     combination_id: str
@@ -73,13 +36,30 @@ class FrozenRewardCombination:
     scales: tuple[float, ...]
 
     def __init__(self, combination: dict[str, Any], *, scoring_config: Mapping[str, Any]) -> None:
-        payload, axes, weights, means, scales = combination_vectors(
-            {"config": dict(scoring_config)}, combination
+        if combination.get("schema") != COMBINATION_SCHEMA:
+            raise ValueError("unsupported reward combination schema")
+        expected = canonical_json_sha256(dict(scoring_config), allow_nan=False)
+        if combination["scoring_config_hash"] != expected:
+            raise ValueError("scoring recipe differs from calibration")
+        axes = combination["axes"]
+        if not axes or len(set(axes)) != len(axes):
+            raise ValueError("invalid combination axes")
+        weights, means, scales = (
+            np.asarray(combination[key], dtype=np.float64)
+            for key in ("weights", "means", "scales")
         )
+        if (
+            any(
+                v.shape != (len(axes),) or not np.isfinite(v).all()
+                for v in (weights, means, scales)
+            )
+            or (scales <= 0).any()
+        ):
+            raise ValueError("invalid combination vectors")
         for name, value in (
             ("combination_id", combination["combination_id"]),
-            ("scoring_config_hash", payload["scoring_config_hash"]),
-            ("dimension", payload["dimension"]),
+            ("scoring_config_hash", combination["scoring_config_hash"]),
+            ("dimension", combination["dimension"]),
             ("axes", tuple(axes)),
             ("weights", tuple(weights.tolist())),
             ("means", tuple(means.tolist())),
@@ -90,7 +70,8 @@ class FrozenRewardCombination:
     def apply(
         self, scores: Mapping[str, float], *, sample_id: str = "sample"
     ) -> tuple[float, dict[str, float]]:
-        """Return one total and signed axis contributions without fitting batch statistics."""
+        """One total and the signed contribution of each axis."""
+
         try:
             raw = np.asarray([scores[axis] for axis in self.axes], dtype=np.float64)
         except KeyError as error:
@@ -103,3 +84,6 @@ class FrozenRewardCombination:
         if not np.isfinite(contributions).all() or not math.isfinite(score):
             raise ValueError(f"combination arithmetic is nonfinite: {sample_id}")
         return score, dict(zip(self.axes, contributions.tolist(), strict=True))
+
+
+__all__ = ["COMBINATION_SCHEMA", "FrozenRewardCombination"]

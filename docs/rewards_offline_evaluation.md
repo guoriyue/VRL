@@ -1,8 +1,9 @@
 # Score existing media independently
 
-> Scoring (`vrl.scripts.rewards.rescore_media`) is part of the framework. Analysis,
-> calibration fitting, qualification receipts and review packets live in the
-> separate `reward_lab` package, which depends on `vrl` and is never imported by it.
+> Scoring (`vrl.scripts.rewards.rescore_media`, the `Evaluation` class) is part of
+> the framework. Analysis, calibration fitting, qualification receipts and review
+> packets live in the separate `reward_lab` package (`python -m reward_lab
+> <command>`), which depends on `vrl` and is never imported by it.
 
 `vrl.scripts.rewards.rescore_media` scores a JSONL media manifest through the
 existing local or HTTP reward scorer. It does not construct a trainer, generation
@@ -23,14 +24,9 @@ files are resolved and hashed, then their absolute paths are passed in metadata.
 These keys must not also appear in `metadata`. All external file dependencies
 must be declared as assets to participate in resume identity.
 
-Optional `sha256` declares the expected media digest (64 lowercase hexadecimal
-characters). Record it when producing the candidate, then copy it into the scoring
-manifest. A mismatch fails before constructing a scorer or creating the output
-directory, and scoring rechecks the digest around inference. The Qwen Image 2.1
-edit probe records `sha256` for each generated PNG and `official_sha256` for its
-optional comparison. Legacy manifests remain supported; their first scoring run
-binds the bytes present at scoring time, without proving generation-time identity.
-Adding a matching digest does not change an existing evaluation's run identity.
+Optional `sha256` lets a producer note the digest it wrote (the Qwen Image 2.1
+edit probe records one per generated PNG). The run records its own digest of the
+bytes it actually scored; resume compares against that, not the declared value.
 
 Create a standalone YAML (not a training preset):
 
@@ -109,22 +105,11 @@ The declared revision fields are operator provenance: pin actual model weights,
 code and preprocessing, and change revisions when those change. A revision
 string is not an automatic attestation of model bytes.
 
-On the local POSIX filesystem, an exclusive directory lock covers scoring and
-shared locks cover complete snapshot reads. Concurrent writes (or reads during a
-write) fail promptly. The kernel releases ownership even after SIGKILL, so a
-committed partial run can resume without deleting lock files. The persistent
-`.writer.lock` contains a protocol marker, not live ownership; do not remove it.
-It also prevents older sentinel-only writers from modifying these directories.
-Legacy unversioned lock files remain an explicit error because their ownership
-cannot be inferred safely. Remote in-flight scoring may outlive a killed client;
-resuming can repeat that computation, but the dead client cannot publish results.
-This tool neither stops another process nor takes over a live writer's directory.
-Filesystems without the required directory-lock semantics fail rather than provide
-this guarantee. A kill before initial provenance publication may require a fresh
-output directory; no completed samples exist to reuse at that stage.
-HTTP deadlines/cancellation use the existing client; a blocking in-process model
-cannot be forcibly interrupted by an asyncio timeout. Use an isolated service
-when enforceable process responsiveness is required.
+Each sample is persisted as it completes, so a killed run resumes from what it
+finished. Do not run two scorers into one directory. Remote in-flight scoring may
+outlive a killed client; resuming repeats that computation. HTTP deadlines use the
+existing client; a blocking in-process model cannot be interrupted by an asyncio
+timeout, so use an isolated service when process responsiveness matters.
 
 Historical training scores are never edited. Each candidate evaluation gets
 its own directory. Versioned raw scores can later support calibrated aggregation
@@ -133,9 +118,9 @@ without rerunning compatible model inference.
 ## Health and candidate ranking comparison
 
 ```bash
-python -m reward_lab.scripts.analyze_scores health outputs/sharpness-audit \
+python -m reward_lab health --evaluation outputs/sharpness-audit \
   --output outputs/reports/sharpness-health.json
-python -m reward_lab.scripts.analyze_scores compare outputs/candidate-a outputs/candidate-b \
+python -m reward_lab compare --evaluation outputs/candidate-a --other outputs/candidate-b \
   --first-axis quality --second-axis overall \
   --output outputs/reports/candidate-rankings.json
 ```
@@ -174,13 +159,13 @@ fields but **omit `preference`**. Choose pairs and source-separated splits befor
 looking at holdout results. Export a portable browser review:
 
 ```bash
-python -m reward_lab.scripts.calibrate_scores prepare-review \
+python -m reward_lab review-export \
   --evaluation outputs/multiaxis-audit --pairs review-pairs.jsonl \
   --seed 42 --output outputs/preference-review
 ```
 
-Open `outputs/preference-review/index.html`. Original media bytes are copied after
-checking their recorded hashes; alpha is preserved and shown over a checkerboard.
+Open `outputs/preference-review/index.html`. Original media bytes are copied;
+alpha is preserved and shown over a checkerboard.
 Supported browser media are PNG/JPEG/WebP/GIF and MP4/WebM. Each pair shows the
 prompt, requested dimension and original reference when available. Candidate order
 and A/B assignment are randomized reproducibly. Scores, sample/model names and
@@ -194,23 +179,23 @@ download answers to keep them independently of the browser. Convert explicit
 answers back to the original sample orientation:
 
 ```bash
-python -m reward_lab.scripts.calibrate_scores import-review \
+python -m reward_lab review-import \
   --review outputs/preference-review/audit.json --answers review-answers.json \
   --output preferences.jsonl
 ```
 
-Import validates the review identity and rejects altered mappings or unknown choices.
+Import matches answers to their review packet and rejects unknown choices.
 It never fills unanswered pairs and refuses to overwrite an existing label file.
 The packet is a collection tool, not human evidence until a person actually judges
 it. A single-source demonstration cannot support source-separated calibration.
 Multiple annotators need distinct pair IDs when their labels are combined.
 
 ```bash
-python -m reward_lab.scripts.calibrate_scores fit \
+python -m reward_lab fit \
   --evaluation outputs/multiaxis-audit --preferences preferences.jsonl \
   --axes alignment quality --l2 0.1 --tie-margin 0.1 \
   --output outputs/reports/frozen-combination.json
-python -m reward_lab.scripts.calibrate_scores evaluate \
+python -m reward_lab evaluate \
   --evaluation outputs/multiaxis-audit --preferences preferences.jsonl \
   --combination outputs/reports/frozen-combination.json \
   --output outputs/reports/preference-holdout.json
@@ -225,7 +210,7 @@ implement a visual pairwise judge or guarantee calibrated probabilities.
 Independent scorers can be joined without rerunning models:
 
 ```bash
-python -m reward_lab.scripts.calibrate_scores fit \
+python -m reward_lab fit \
   --component semantic=outputs/editreward-audit \
   --component locality=outputs/masked-edit-audit \
   --preferences preferences.jsonl \
@@ -252,7 +237,7 @@ Apply a frozen combination to a new scoring snapshot without labels or model
 inference:
 
 ```bash
-python -m reward_lab.scripts.calibrate_scores apply \
+python -m reward_lab apply \
   --evaluation outputs/reward_evaluation/new-candidates \
   --combination outputs/reports/frozen-combination.json \
   --output outputs/reports/candidate-combination-scores.json
@@ -264,8 +249,7 @@ stay frozen, including negative coefficients for measured costs; no new labels
 are inferred. Each successful row reports its combined score, signed standardized
 axis contributions, and original scorer evidence. Failed/missing rows stay
 unscored; missing required axes, nonfinite arithmetic, and changed recipes fail.
-The application digest binds observed results as well as the combination and run
-identities. This derived JSON report does not overwrite raw scores, install a
+This derived JSON report does not overwrite raw scores, install a
 training reward, or measure held-out preference accuracy. Use `evaluate` with
 independent annotations for that final claim.
 
@@ -284,7 +268,7 @@ from frozen axes to runtime raw axes, for example
 These illustrative axes must actually exist in the selected source evaluations.
 
 ```bash
-python -m reward_lab.scripts.calibrate_scores qualify \
+python -m reward_lab qualify \
   --component semantic=outputs/reward_evaluation/semantic \
   --component local=outputs/reward_evaluation/local \
   --combination outputs/reports/frozen-combination.json \
@@ -295,22 +279,21 @@ python -m reward_lab.scripts.calibrate_scores qualify \
 ```
 
 Choose tolerances deliberately for the actual measurements; the example is not
-a universal precision recommendation. All source rows must succeed and all media
-and auxiliary hashes must match. A failed comparison emits no successful receipt.
+a universal precision recommendation. All source rows must succeed. A failed
+comparison emits no receipt.
 The comparison is raw-axis parity, separate from diffusion log-prob replay parity.
 
-Add the returned `deployment_id` and file path to the same training reward section:
+Name the receipt in the same training reward section:
 
 ```yaml
 reward:
   # Keep components, kwargs and inference identical to qualification.
   calibration:
     deployment_path: outputs/reports/reward-deployment.json
-    deployment_id: <the 64-character deployment_id from that file>
 ```
 
-The factory validates this pin and the resolved reward configuration before
-constructing scorer clients. Frozen coefficients replace the usual component
+`RewardDeployment.load` checks the receipt against the resolved reward
+configuration before the factory constructs scorer clients. Frozen coefficients replace the usual component
 weighted sum. `calibration/contribution/<axis>` and original axes remain available.
 Editing the artifact after construction cannot alter the loaded objective.
 
@@ -363,14 +346,14 @@ Build diagnostic variants of existing image outputs, then use the same standalon
 scorers and transports as ordinary evaluation:
 
 ```bash
-python -m reward_lab.scripts.stress_media \
+python -m reward_lab stress-manifest \
   --manifest outputs/candidates/media.jsonl \
   --output-dir outputs/reward_stress/candidates --seed 42
 python -m vrl.scripts.rewards.rescore_media \
   --manifest outputs/reward_stress/candidates/media.jsonl \
   --config path/to/scorer.yaml --output-dir outputs/reward_stress/scores
-python -m reward_lab.scripts.analyze_scores stress \
-  outputs/reward_stress/scores --output outputs/reward_stress/report.json
+python -m reward_lab stress \
+  --evaluation outputs/reward_stress/scores --output outputs/reward_stress/report.json
 ```
 
 The recipe creates a baseline, RGB blur, seeded additive RGB noise, checkerboard
@@ -389,9 +372,9 @@ quality direction. A score increase under noise is a case to inspect, not automa
 proof of reward hacking. These perturbations are not human annotations and never
 enter preference calibration as invented labels.
 
-The small perturbation recipe belongs in the independent audit CLI; analysis lives
-in the existing reward diagnostics module. The trainer, reward scalar aggregation,
-model adapter shapes and generation family APIs remain unchanged.
+The perturbation recipe lives in `reward_lab.stress`; the report is
+`Analysis.stress`. The trainer, reward scalar aggregation, model adapter shapes
+and generation family APIs remain unchanged.
 
 ## Compare generated outputs after a short RL run
 
@@ -400,7 +383,7 @@ but the scorer and task inputs stay fixed. This differs from `compare`, which
 compares reward rankings on the same images.
 
 ```bash
-python -m reward_lab.scripts.analyze_scores paired \
+python -m reward_lab paired \
   --baseline outputs/reward_evaluation/base-seed1 \
   --candidate outputs/reward_evaluation/trained-seed1 \
   --baseline outputs/reward_evaluation/base-seed2 \
@@ -426,8 +409,8 @@ while the paired difference is signed toward improvement.
 Failures and missing rows retain their statuses and have no invented scores.
 The report marks incomplete comparisons and states both expected and measured
 coverage; numerical summaries are conditional on successfully paired observations.
-The comparison ID binds the observations and source grouping. These are frozen
-score changes, not automatic proof of human preference or production readiness.
+These are frozen score changes, not automatic proof of human preference or
+production readiness.
 
 Add `--stratify-by foreground_alpha` to inspect a categorical metadata field that
 exists in every sample. The report retains its overall source-balanced comparison
@@ -474,7 +457,7 @@ After independently scoring all states of an editing sequence under one fixed
 recipe and task, report when requirements are achieved or broken:
 
 ```bash
-python -m reward_lab.scripts.analyze_scores sequence outputs/sequence-scores \
+python -m reward_lab sequence --evaluation outputs/sequence-scores \
   --spec sequence.json --output outputs/sequence-report.json
 ```
 
@@ -487,9 +470,8 @@ Example `sequence.json`:
 The region exact criterion has a literal OCR interpretation. The pixel threshold
 above is illustrative, not a validated default; choose tolerances using the task's
 actual reconstruction/noise behavior before examining results. Use namespaced
-axes when auditing a joined scoring view. The current CLI reads a single scoring
-directory; the Python `sequence_report` function also accepts an explicitly joined
-evaluation from `join_evaluations`.
+axes when auditing a joined scoring view (`--component NAME=DIRECTORY` entries
+in place of `--evaluation`).
 
 Every state needs its own sample ID, even if the image bytes repeat. Step zero is
 the initial state. `active_from` specifies when a requirement becomes due, allowing
@@ -503,8 +485,7 @@ Reports retain each raw value, pass/fail/unknown/not-active state, adjacent meas
 regressions and improvements, first satisfaction, final status and missing
 coverage. A final repaired page does not erase intermediate regressions. Failed
 scoring or missing axes remain unknown, never zero; no transition is inferred
-across an unknown interval. Criteria and observations participate in the report
-digest. This report neither changes reward weights nor proves that the generator
+across an unknown interval. This report neither changes reward weights nor proves that the generator
 used one state as the next edit's input: actual run lineage must be
 verified separately. It measures declared score criteria, not human preference.
 
@@ -514,7 +495,7 @@ Score the same manifest under the same frozen configuration into separate fresh
 output directories, then compare those independent executions without inference:
 
 ```bash
-python -m reward_lab.scripts.analyze_scores repeat \
+python -m reward_lab repeat \
   outputs/reward-repeat-0 outputs/reward-repeat-1 outputs/reward-repeat-2 \
   --output outputs/reward-repeatability.json
 ```

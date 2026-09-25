@@ -1,20 +1,19 @@
-"""Standalone scoring of existing media with immutable, resumable evidence.
+"""Score existing media into a resumable scoring run, and read one back.
 
-Uses the same scorer transports as training without constructing a generator,
-trainer, or Ray cluster. Each successful sample is atomically persisted; resume
-requires identical inputs and scorer provenance. Calibration is deliberately
-separate from raw measurements.
+An ``Evaluation`` is the unit every offline reward tool consumes: the scoring
+recipe, one input record per sample (with content digests) and one result or
+error per sample. ``Evaluation.score`` produces it with the same scorer
+transports as training, without a generator, trainer or Ray cluster; each
+sample is persisted as it completes, so a killed run resumes from what it
+finished. ``Evaluation.load`` reads a persisted run.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import uuid
-from collections.abc import Iterator
-from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -27,43 +26,10 @@ from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
 )
-from vrl.utils.artifacts import atomic_file, sha256_file
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import canonical_json_sha256, write_json
 
-
-@contextmanager
-def evaluation_access(directory: Path, *, writing: bool) -> Iterator[None]:
-    """Hold a POSIX directory lock for the entire snapshot read or write.
-
-    Kernel locks are released on process death. The persistent marker identifies
-    this protocol and makes older sentinel-only writers refuse these directories;
-    an unversioned legacy lock is never guessed to be stale.
-    """
-    import fcntl
-
-    descriptor = os.open(directory, os.O_RDONLY)
-    try:
-        try:
-            fcntl.flock(descriptor, (fcntl.LOCK_EX if writing else fcntl.LOCK_SH) | fcntl.LOCK_NB)
-        except BlockingIOError as error:
-            if writing:
-                raise FileExistsError(
-                    "evaluation is already in use by another reader or writer"
-                ) from error
-            raise ValueError("evaluation is still being written") from error
-        marker = directory / ".writer.lock"
-        protocol = "vrl.reward-evaluation-lock.v2\n"
-        if marker.exists():
-            if marker.read_text() != protocol:
-                if writing:
-                    raise FileExistsError("legacy or unrecognized evaluation writer lock")
-                raise ValueError("evaluation has a legacy or unrecognized writer lock")
-        elif writing:
-            with atomic_file(marker, overwrite=False) as handle:
-                handle.write(protocol)
-        yield
-    finally:
-        os.close(descriptor)
+EVALUATION_SCHEMA = "vrl.reward-evaluation.v1"
 
 
 class ScoringConfig(ConfigBase):
@@ -101,10 +67,10 @@ class MediaRow(ConfigBase):
     prompt_id: str = Field(min_length=1)
     prompt: str
     path: Path
-    sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    # A producer may note the digest it wrote; the run records its own digest.
+    sha256: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-    # Auxiliary files (reference image, mask, etc.) enter metadata by key, and
-    # their content digests participate in input identity just like the output.
+    # Auxiliary files (reference image, mask, ...) enter reward metadata by key.
     assets: dict[str, Path] = Field(default_factory=dict)
 
 
@@ -119,19 +85,11 @@ def load_media_manifest(path: Path) -> list[MediaRow]:
             if row.sample_id in seen:
                 raise ValueError(f"duplicate sample_id at {path}:{number}: {row.sample_id!r}")
             seen.add(row.sample_id)
-            if set(row.assets) & set(row.metadata) or (
-                "reference_image" in row.assets and "reference_images" in row.metadata
-            ):
-                raise ValueError(f"asset keys collide with metadata for {row.sample_id!r}")
             row.path = (path.parent / row.path.expanduser()).resolve(strict=True)
             row.assets = {
                 key: (path.parent / asset.expanduser()).resolve(strict=True)
                 for key, asset in row.assets.items()
             }
-            if not all(item.is_file() for item in (row.path, *row.assets.values())):
-                raise ValueError(f"media and assets must be files: {row.sample_id!r}")
-            if row.sha256 is not None and sha256_file(row.path) != row.sha256:
-                raise ValueError(f"declared media SHA-256 mismatch: {row.sample_id!r}")
             rows.append(row)
     if not rows:
         raise ValueError("media manifest is empty")
@@ -139,14 +97,21 @@ def load_media_manifest(path: Path) -> list[MediaRow]:
 
 
 def _input_record(row: MediaRow) -> dict[str, Any]:
-    digest = sha256_file(row.path)
-    if row.sha256 is not None and digest != row.sha256:
-        raise ValueError(f"declared media SHA-256 mismatch: {row.sample_id!r}")
     return {
         **row.model_dump(mode="json"),
-        "sha256": digest,
+        "sha256": sha256_file(row.path),
         "asset_sha256": {key: sha256_file(path) for key, path in row.assets.items()},
     }
+
+
+def _asset_metadata(assets: dict[str, Path]) -> dict[str, Any]:
+    """Manifest assets as reward metadata; ``reference_image`` becomes the one-element list."""
+
+    metadata: dict[str, Any] = {key: str(path) for key, path in assets.items()}
+    reference = metadata.pop("reference_image", None)
+    if reference is not None:
+        metadata["reference_images"] = [reference]
+    return metadata
 
 
 def _artifact(row: MediaRow, record: dict[str, Any], media_mode: str) -> RewardInferenceArtifact:
@@ -157,10 +122,8 @@ def _artifact(row: MediaRow, record: dict[str, Any], media_mode: str) -> RewardI
         source = RewardInferenceArtifact(
             artifact_id=row.sample_id, sample_id=row.sample_id, path=str(row.path)
         )
-        # Explicit RGB decode is part of this mode. Alpha-aware scorers must use
-        # file mode until the transport has an explicit RGBA contract.
-        frames = decode_artifact_frames(source)
-        media = frames.permute(3, 0, 1, 2).contiguous()
+        # Explicit RGB decode is part of this mode; alpha-aware scorers use file mode.
+        media = decode_artifact_frames(source).permute(3, 0, 1, 2).contiguous()
     return RewardInferenceArtifact(
         artifact_id=row.sample_id,
         sample_id=row.sample_id,
@@ -173,94 +136,95 @@ def _artifact(row: MediaRow, record: dict[str, Any], media_mode: str) -> RewardI
     )
 
 
-def _asset_metadata(assets: dict[str, Path]) -> dict[str, Any]:
-    """Project manifest assets into reward metadata.
+def _record_path(directory: Path, sample_id: str) -> Path:
+    return directory / "samples" / f"{canonical_json_sha256(sample_id, allow_nan=False)}.json"
 
-    A media manifest names one source image ``reference_image`` (one file per
-    asset key); rewards read the ordered ``reference_images`` list, so it enters
-    as a one-element list, the same mapping the prompt JSONL loader applies.
+
+@dataclass
+class Evaluation:
+    """One scoring run: its recipe, and one input plus result (or error) per sample.
+
+    ``records`` maps sample id to ``{"input", "status", "result" | "error"}`` with
+    status ``success``, ``error`` or ``missing``. ``run_id`` identifies the recipe
+    and inputs, not one inference attempt.
     """
-    metadata: dict[str, Any] = {key: str(path) for key, path in assets.items()}
-    reference = metadata.pop("reference_image", None)
-    if reference is not None:
-        metadata["reference_images"] = [reference]
-    return metadata
 
+    run_id: str
+    config: dict[str, Any]
+    records: dict[str, dict[str, Any]]
+    schema: str = EVALUATION_SCHEMA
+    # Scoring runs joined from several scorers keep their sources here.
+    source_run_ids: dict[str, str] = field(default_factory=dict)
+    # Filled by ``score``: how many samples were scored now versus reused.
+    summary: dict[str, int] = field(default_factory=dict)
 
-async def rescore_media(
-    manifest: Path,
-    config: ScoringConfig,
-    output_dir: Path,
-    *,
-    resume: bool = False,
-) -> dict[str, Any]:
-    """Score and persist all axes, failing visibly on invalid or failed work.
+    @classmethod
+    def load(cls, directory: Path) -> Evaluation:
+        """Read a persisted run; samples without a record are ``missing``."""
 
-    Resume reuses only successful rows. Failed batches are recorded and cause
-    this call to raise; rerunning with resume retries them. File-mode HTTP needs
-    shared paths allowed by the service. Auxiliary assets always need shared
-    paths for remote execution, even with uploaded tensor media.
-    """
-    from vrl.rewards.runtime import build_reward_scorer
+        provenance = json.loads((directory / "provenance.json").read_text())
+        records = {}
+        for item in provenance["inputs"]:
+            path = _record_path(directory, item["sample_id"])
+            if path.exists():
+                record = json.loads(path.read_text())
+                record.pop("run_id", None)
+                records[item["sample_id"]] = record
+            else:
+                records[item["sample_id"]] = {"input": item, "status": "missing"}
+        return cls(provenance["run_id"], provenance["config"], records)
 
-    rows = load_media_manifest(manifest.resolve())
-    inputs = [_input_record(row) for row in rows]
-    provenance = {
-        "schema": "vrl.reward-evaluation.v1",
-        "config": config.model_dump(mode="json"),
-        "inputs": inputs,
-    }
-    run_id = canonical_json_sha256(provenance, allow_nan=False)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    with evaluation_access(output_dir, writing=True):
-        lock_path = output_dir / ".writer.lock"
+    @classmethod
+    async def score(
+        cls, manifest: Path, config: ScoringConfig, output_dir: Path, *, resume: bool = False
+    ) -> Evaluation:
+        """Score every manifest row and persist the run under ``output_dir``.
+
+        ``resume`` reuses samples the same run already scored successfully and
+        retries the rest; the inputs and recipe must be the ones the run was
+        started with. A failed batch is recorded per sample and re-raised.
+        """
+
+        from vrl.rewards.runtime import build_reward_scorer
+
+        rows = load_media_manifest(manifest.resolve())
+        inputs = [_input_record(row) for row in rows]
+        provenance = {"schema": EVALUATION_SCHEMA, "config": config.model_dump(mode="json")}
+        provenance = {
+            **provenance,
+            "inputs": inputs,
+            "run_id": canonical_json_sha256({**provenance, "inputs": inputs}, allow_nan=False),
+        }
+        run_id = provenance["run_id"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        provenance_path = output_dir / "provenance.json"
+        if provenance_path.exists():
+            if not resume:
+                raise FileExistsError("evaluation exists; use resume or a new output directory")
+            if json.loads(provenance_path.read_text()) != provenance:
+                raise ValueError("resume inputs or scorer configuration changed")
+        else:
+            write_json(provenance_path, provenance)
+        (output_dir / "samples").mkdir(exist_ok=True)
+        todo = []
+        for row, record in zip(rows, inputs, strict=True):
+            path = _record_path(output_dir, row.sample_id)
+            if resume and path.exists():
+                saved = json.loads(path.read_text())
+                if saved.get("run_id") == run_id and saved.get("status") == "success":
+                    continue
+            todo.append((row, record, path))
         scorer = None
         try:
-            provenance_path = output_dir / "provenance.json"
-            if provenance_path.exists():
-                if not resume:
-                    raise FileExistsError(
-                        "evaluation exists; use resume or a new output directory"
-                    )
-                saved = json.loads(provenance_path.read_text())
-                if saved != {"run_id": run_id, **provenance}:
-                    raise ValueError("resume inputs or scorer configuration changed")
-            else:
-                if any(path != lock_path for path in output_dir.iterdir()):
-                    raise ValueError("output directory has files but no evaluation provenance")
-                write_json(provenance_path, {"run_id": run_id, **provenance})
-            records_dir = output_dir / "samples"
-            records_dir.mkdir(exist_ok=True)
-            pending = []
-            for row, record in zip(rows, inputs, strict=True):
-                record_path = (
-                    records_dir / f"{canonical_json_sha256(row.sample_id, allow_nan=False)}.json"
-                )
-                if resume and record_path.exists():
-                    saved = json.loads(record_path.read_text())
-                    if saved.get("run_id") != run_id or saved.get("input") != record:
-                        raise ValueError(f"incompatible cached sample: {row.sample_id}")
-                    if saved.get("status") == "success":
-                        result = RewardInferenceResult(**saved["result"])
-                        if result.artifact_id != row.sample_id or not result.scores:
-                            raise ValueError(f"invalid cached result: {row.sample_id}")
-                        pending.append((row, record, record_path, True))
-                        continue
-                pending.append((row, record, record_path, False))
-            todo = [item for item in pending if not item[3]]
             if todo:
                 scorer = build_reward_scorer(config.worker_config, inference=config.inference)
             for start in range(0, len(todo), config.batch_size):
                 batch = todo[start : start + config.batch_size]
                 try:
-                    for row, record, _, _ in batch:
-                        if _input_record(row) != record:
-                            raise ValueError(f"input changed during evaluation: {row.sample_id}")
                     request = RewardInferenceRequest(
                         request_id=f"eval-{uuid.uuid4().hex}",
                         artifacts=tuple(
-                            _artifact(row, record, config.media_mode)
-                            for row, record, _, _ in batch
+                            _artifact(row, record, config.media_mode) for row, record, _ in batch
                         ),
                     )
                     results = request.validate_and_order_results(
@@ -270,9 +234,7 @@ async def rescore_media(
                     )
                     if any(not result.scores for result in results):
                         raise ValueError("scorer returned no score axes")
-                    for (row, record, path, _), result in zip(batch, results, strict=True):
-                        if _input_record(row) != record:
-                            raise ValueError(f"input changed during scoring: {row.sample_id}")
+                    for (_, record, path), result in zip(batch, results, strict=True):
                         write_json(
                             path,
                             {
@@ -283,7 +245,7 @@ async def rescore_media(
                             },
                         )
                 except Exception as error:
-                    for _, record, path, _ in batch:
+                    for _, record, path in batch:
                         write_json(
                             path,
                             {
@@ -294,60 +256,29 @@ async def rescore_media(
                             },
                         )
                     raise
-            summary = {
-                "run_id": run_id,
-                "samples": len(rows),
-                "scored": len(todo),
-                "reused": len(rows) - len(todo),
-            }
-            write_json(output_dir / "summary.json", summary)
-            return summary
         finally:
             if scorer is not None:
                 await scorer.shutdown()
+        summary = {"samples": len(rows), "scored": len(todo), "reused": len(rows) - len(todo)}
+        write_json(output_dir / "summary.json", {"run_id": run_id, **summary})
+        evaluation = cls.load(output_dir)
+        evaluation.summary = summary
+        return evaluation
 
+    def results(self) -> dict[str, RewardInferenceResult]:
+        """Successful samples as typed results."""
 
-def read_evaluation(directory: Path) -> dict[str, Any]:
-    """Read an immutable scoring snapshot, retaining failures and missing rows.
-
-    Checks stored provenance and identities, without reopening potentially moved
-    media or loading any model. Hashes attest the recorded inputs, not score truth.
-    """
-    with evaluation_access(directory, writing=False):
-        provenance = json.loads((directory / "provenance.json").read_text())
-        run_id = provenance.pop("run_id")
-        if provenance.get("schema") != "vrl.reward-evaluation.v1":
-            raise ValueError("unsupported evaluation schema")
-        if canonical_json_sha256(provenance, allow_nan=False) != run_id:
-            raise ValueError("evaluation provenance digest mismatch")
-        inputs = provenance["inputs"]
-        identities = [row["sample_id"] for row in inputs]
-        if not inputs or len(set(identities)) != len(inputs):
-            raise ValueError("evaluation inputs must be non-empty and uniquely identified")
-        expected = {
-            f"{canonical_json_sha256(sample_id, allow_nan=False)}.json" for sample_id in identities
+        return {
+            sample_id: RewardInferenceResult(**row["result"])
+            for sample_id, row in self.records.items()
+            if row["status"] == "success"
         }
-        unexpected = {p.name for p in (directory / "samples").glob("*.json")} - expected
-        if unexpected:
-            raise ValueError(f"unexpected sample records: {sorted(unexpected)}")
-        records = {}
-        for item in inputs:
-            sample_id = item["sample_id"]
-            path = (
-                directory / "samples" / f"{canonical_json_sha256(sample_id, allow_nan=False)}.json"
-            )
-            if not path.exists():
-                records[sample_id] = {"input": item, "status": "missing"}
-                continue
-            record = json.loads(path.read_text())
-            if record.get("run_id") != run_id or record.get("input") != item:
-                raise ValueError(f"incompatible sample record: {sample_id}")
-            if record.get("status") == "success":
-                result = RewardInferenceResult(**record["result"])
-                if result.artifact_id != sample_id or not result.scores:
-                    raise ValueError(f"invalid result for {sample_id}")
-                record["result"] = asdict(result)
-            elif record.get("status") != "error" or not isinstance(record.get("error"), dict):
-                raise ValueError(f"invalid sample status: {sample_id}")
-            records[sample_id] = record
-        return {"run_id": run_id, **provenance, "records": records}
+
+
+__all__ = [
+    "EVALUATION_SCHEMA",
+    "Evaluation",
+    "MediaRow",
+    "ScoringConfig",
+    "load_media_manifest",
+]

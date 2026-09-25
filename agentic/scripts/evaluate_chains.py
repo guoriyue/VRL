@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,8 @@ import torch
 from agentic.chains import EditChain, Editor, Judge, load_edit_chains, run_chain
 from agentic.export import export_chain_media
 from agentic.scripts.session import add_session_arguments, open_session
-from vrl.rewards.sequences import EditSequenceSpec, SequenceRequirement, sequence_report
+from vrl.rewards.evaluation import Evaluation
+from vrl.rewards.sequences import EditSequenceSpec, SequenceRequirement
 from vrl.run import OnlineRunConfig
 from vrl.utils.json_files import canonical_json_sha256, write_json
 
@@ -49,23 +51,23 @@ async def evaluate_chain(
         if score is not None:
             record.update(status="success", result={"scores": score["components"]})
         records[row["sample_id"]] = record
-    observations = {
-        "run_id": canonical_json_sha256(trace, allow_nan=False),
-        "config": {"kind": "recorded-judge", "revision": judge.revision},
-        "records": records,
-    }
+    observations = Evaluation(
+        canonical_json_sha256(trace, allow_nan=False),
+        {"kind": "recorded-judge", "revision": judge.revision},
+        records,
+    )
     spec = EditSequenceSpec(
         sequence_id=chain.chain_id, samples=exported["sample_order"], requirements=requirements
     )
     report = {
         "schema": "vrl.edit-chain-evaluation.v1",
         "chain_id": chain.chain_id,
-        "run_id": observations["run_id"],
+        "run_id": observations.run_id,
         "export_id": exported["export_id"],
         "final_score": trace["final_score"],
-        "sequence_report": sequence_report(observations, spec),
+        "sequence_report": spec.report(observations),
     }
-    write_json(output_dir / "judge_observations.json", observations)
+    write_json(output_dir / "judge_observations.json", asdict(observations))
     write_json(output_dir / "report.json", report)
     return report
 

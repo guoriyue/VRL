@@ -7,7 +7,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from vrl.rewards.evaluation import ScoringConfig, rescore_media
+from vrl.rewards.evaluation import Evaluation, ScoringConfig
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -20,10 +20,10 @@ def main(argv: list[str] | None = None) -> None:
     import yaml
 
     config = ScoringConfig.model_validate(yaml.safe_load(args.config.read_text()))
-    summary = asyncio.run(
-        rescore_media(args.manifest, config, args.output_dir, resume=args.resume)
+    evaluation = asyncio.run(
+        Evaluation.score(args.manifest, config, args.output_dir, resume=args.resume)
     )
-    print(json.dumps(summary, sort_keys=True))
+    print(json.dumps({"run_id": evaluation.run_id, **evaluation.summary}, sort_keys=True))
 
 
 if __name__ == "__main__":

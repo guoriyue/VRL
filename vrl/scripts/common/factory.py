@@ -210,9 +210,10 @@ def build_reward_function(
 
     combination, axis_mapping = None, None
     if config.calibration is not None:
-        from vrl.rewards.deployment import load_reward_deployment
+        from vrl.rewards.deployment import RewardDeployment
 
-        combination, axis_mapping = load_reward_deployment(config)
+        deployment = RewardDeployment.load(config)
+        combination, axis_mapping = deployment.combination, deployment.axis_mapping
 
     if reward.memory_parking_required and not config.all_external_inference:
         from vrl.rewards.functions.registry import (

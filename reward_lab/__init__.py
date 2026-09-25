@@ -1,14 +1,13 @@
 """Offline reward development: analyze, calibrate and qualify rewards without training.
 
 This package sits beside ``vrl`` and depends on it; ``vrl`` never imports it.
-It consumes scoring runs written by ``vrl.scripts.rewards.rescore_media`` and
-produces reports, fitted combinations and deployment receipts. Training only
-reads the results through ``vrl.rewards.calibration.FrozenRewardCombination``
-and ``vrl.rewards.deployment.load_reward_deployment``.
+It consumes scoring runs written by ``vrl.scripts.rewards.rescore_media``
+(``vrl.rewards.evaluation.Evaluation``) and produces reports, fitted
+combinations and deployment receipts. Training only reads the results through
+``vrl.rewards.deployment.RewardDeployment``.
 
-* ``diagnostics``: health, stress, ranking, paired and repeatability reports.
-* ``calibration``: preference pairs, logistic fitting, application, holdout evaluation.
-* ``qualification``: measure offline-versus-runtime parity and write the receipt.
-* ``annotation``: blinded preference review packets and answer import.
-* ``scripts``: ``analyze_scores``, ``calibrate_scores``, ``stress_media``.
+* ``analysis.Analysis``: health, stress, sequence, ranking, paired and repeatability reports.
+* ``calibration.Calibration``: preference fitting, application, holdout evaluation, review packets.
+* ``stress.build_stress_manifest``: deterministic perturbations for stress audits.
+* ``python -m reward_lab``: one command-line entry point for all of the above.
 """
