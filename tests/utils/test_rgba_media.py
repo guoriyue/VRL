@@ -5,9 +5,15 @@ import torch
 from PIL import Image
 
 from vrl.rewards.artifacts import DiskRewardArtifactStore, InMemoryRewardArtifactStore
-from vrl.rewards.models.media import artifact_middle_frame_image
+from vrl.rewards.models.media import artifact_middle_frame_image, pil_frames_from_media
 from vrl.rewards.types import RewardSample
-from vrl.utils.media import image_to_uint8_hwc, read_image_as_frames, write_png
+from vrl.utils.media import (
+    frames_thwc_to_float,
+    image_to_uint8_hwc,
+    read_image_as_frames,
+    video_tensor_to_uint8_frames,
+    write_png,
+)
 
 
 def test_rgba_png_and_reward_transport_preserve_alpha_with_consistent_rgb_view(tmp_path) -> None:
@@ -39,3 +45,19 @@ def test_rgba_png_and_reward_transport_preserve_alpha_with_consistent_rgb_view(t
         assert media.shape == (4, 5, 6)
         np.testing.assert_array_equal(np.asarray(artifact_middle_frame_image(artifact)), expected)
         store.release([artifact])
+
+
+def test_rgba_video_and_frame_layouts_use_the_image_reward_composite() -> None:
+    rgba = torch.zeros(4, 5, 6, dtype=torch.uint8)
+    rgba[0] = 255
+    rgba[3, :, 2:4] = 128
+    rgba[3, :, 4:] = 255
+    expected = image_to_uint8_hwc(rgba)
+    video = rgba.unsqueeze(1).expand(-1, 2, -1, -1)
+    np.testing.assert_array_equal(video_tensor_to_uint8_frames(video)[0], expected)
+    np.testing.assert_array_equal(video_tensor_to_uint8_frames(video.float() / 255)[1], expected)
+    np.testing.assert_array_equal(np.asarray(pil_frames_from_media(video)[0][0]), expected)
+    thwc = video.permute(1, 2, 3, 0)
+    converted = frames_thwc_to_float(thwc)
+    np.testing.assert_array_equal((converted[0] * 255).round().byte().numpy(), expected)
+    torch.testing.assert_close(frames_thwc_to_float(thwc.float() / 255), converted)

@@ -287,8 +287,10 @@ async def test_failed_pooled_preparation_rolls_back_before_retry(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_reward_memory_parking_retries_after_sleep_failure(monkeypatch) -> None:
-    """A failed allocator sleep does not poison a retry."""
+async def test_reward_sleep_failure_quarantines_all_later_allocator_operations(
+    monkeypatch,
+) -> None:
+    """A partial CuMem sleep cannot safely be retried, restored or closed."""
     import vrl.models.parking as parking_mod
 
     class _FlakyAllocator(_FakeCumemAllocator):
@@ -317,10 +319,41 @@ async def test_reward_memory_parking_retries_after_sleep_failure(monkeypatch) ->
     assert runtime._parking.pool is not None
     assert runtime._parking.pool.asleep is False
 
-    await runtime.park_memory()
+    model = runtime._model
+    for operation in (runtime.park_memory, runtime.activate, runtime.shutdown):
+        with pytest.raises(parking_mod.CumemBroken, match="terminate the owning process"):
+            await operation()
+    with pytest.raises(parking_mod.CumemBroken, match="terminate the owning process"):
+        await runtime.score_batch(_parking_request())
+    assert allocator.sleep_attempts == 1
+    assert runtime._model is model
+    assert runtime._parking.pool.asleep is False
 
-    assert allocator.sleep_attempts == 2
-    assert runtime._parking.pool.asleep is True
+
+@pytest.mark.asyncio
+async def test_reward_partial_wake_never_reaches_model_inference_again(monkeypatch) -> None:
+    import vrl.models.parking as parking_mod
+
+    class BrokenWake(_FakeCumemAllocator):
+        def wake_up(self, *, tags):
+            super().wake_up(tags=tags)
+            raise RuntimeError("partial wake")
+
+    allocator = BrokenWake()
+    monkeypatch.setattr(parking_mod, "cumem_allocator", lambda: allocator)
+    runtime = InProcessRewardScorer(
+        {
+            "sleep_offload": True,
+            "model_factory": f"{__name__}:_immovable_factory",
+        }
+    )
+    await runtime.score_batch(_parking_request())
+    await runtime.park_memory()
+    with pytest.raises(parking_mod.CumemBroken, match="partial wake"):
+        await runtime.score_batch(_parking_request())
+    with pytest.raises(parking_mod.CumemBroken, match="terminate the owning process"):
+        await runtime.activate()
+    assert len(allocator.wakes) == 1
 
 
 @pytest.mark.asyncio
