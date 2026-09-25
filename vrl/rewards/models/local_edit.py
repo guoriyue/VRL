@@ -30,7 +30,7 @@ this reward has no localisation rule of its own.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from vrl.rewards.inference import RewardInferenceArtifact
@@ -73,7 +73,6 @@ class LocalEditRewardModel(LazyTorchModule):
             if not low <= value <= high:
                 raise ValueError(f"local_edit {name} must lie in [{low}, {high}]")
         self._processor: Any | None = None
-        self._scorer: Any | None = None
 
     def _load_module(self) -> Any:
         from transformers import AutoImageProcessor, AutoModel
@@ -81,26 +80,52 @@ class LocalEditRewardModel(LazyTorchModule):
         self._processor = AutoImageProcessor.from_pretrained(self._dino_model)
         return AutoModel.from_pretrained(self._dino_model).eval().to(self.device)
 
-    def __call__(self, artifact: RewardInferenceArtifact) -> dict[str, float]:
-        spec = artifact.metadata.get("local_edit")
-        if not isinstance(spec, Mapping):
-            raise ValueError("local_edit reward needs metadata.local_edit")
-        references = artifact.metadata.get("reference_images") or []
-        source_ref = spec.get("source_image") or (references[0] if references else None)
-        if not source_ref:
-            raise ValueError(
-                "local_edit reward needs local_edit.source_image or one reference image"
-            )
+    def score_batch(self, artifacts: Sequence[RewardInferenceArtifact]) -> list[dict[str, float]]:
+        """Score one reward phase: a single wake -> score -> park cycle of the execution service.
+
+        The service parks its 7B judge between phases (the rollout and the
+        trainer own the card then); scoring per artifact would pay that reload
+        every image, so the whole phase goes to it in one request.
+        """
+
         from PIL import Image
 
-        source_path = resolve_artifact_path(
-            str(source_ref), data_root=self.data_root, allow_absolute=True
-        )
-        edited = artifact_middle_frame_image(artifact)
-        with Image.open(source_path) as image:
-            source = image.convert("RGB").resize(edited.size, Image.Resampling.LANCZOS)
-        execution = self._execution(artifact, str(source_path))
-        return self.score(source, edited, spec, execution)
+        specs: list[Mapping[str, Any]] = []
+        sources: list[Any] = []
+        source_paths: list[str] = []
+        instructions: list[str] = []
+        editeds: list[Any] = []
+        for artifact in artifacts:
+            spec = artifact.metadata.get("local_edit")
+            if not isinstance(spec, Mapping):
+                raise ValueError("local_edit reward needs metadata.local_edit")
+            references = artifact.metadata.get("reference_images") or []
+            source_ref = spec.get("source_image") or (references[0] if references else None)
+            if not source_ref:
+                raise ValueError(
+                    "local_edit reward needs local_edit.source_image or one reference image"
+                )
+            source_path = resolve_artifact_path(
+                str(source_ref), data_root=self.data_root, allow_absolute=True
+            )
+            edited = artifact_middle_frame_image(artifact)
+            with Image.open(source_path) as image:
+                source = image.convert("RGB").resize(edited.size, Image.Resampling.LANCZOS)
+            specs.append(spec)
+            sources.append(source)
+            source_paths.append(str(source_path))
+            instructions.append(artifact.prompt.removesuffix(HINT_SUFFIX).strip())
+            editeds.append(edited)
+        executions = self._executions(artifacts, instructions, source_paths)
+        return [
+            self.score(source, edited, spec, execution)
+            for source, edited, spec, execution in zip(
+                sources, editeds, specs, executions, strict=True
+            )
+        ]
+
+    def __call__(self, artifact: RewardInferenceArtifact) -> dict[str, float]:
+        return self.score_batch([artifact])[0]
 
     def score(
         self, source: Any, edited: Any, spec: Mapping[str, Any], execution: float
@@ -162,22 +187,30 @@ class LocalEditRewardModel(LazyTorchModule):
         side = round(tokens.shape[0] ** 0.5)
         return torch.nn.functional.normalize(tokens, dim=-1).reshape(side, side, -1)
 
-    def _execution(self, artifact: RewardInferenceArtifact, source_path: str) -> float:
-        """Sigmoid of the EditReward score for (clean source, edited, plain instruction)."""
+    def _executions(
+        self,
+        artifacts: Sequence[RewardInferenceArtifact],
+        instructions: Sequence[str],
+        source_paths: Sequence[str],
+    ) -> list[float]:
+        """Sigmoid of each EditReward score for (clean source, edited, plain instruction).
+
+        The judge is asked exactly what it was validated on: the clean source
+        and the instruction without the hint suffix. Shown the red-box copy and
+        the suffixed prompt instead, its done-vs-rest AUC on the hint arm fell
+        from 0.89 to 0.72.
+        """
+
+        import asyncio
+        import concurrent.futures
+        import uuid
 
         from vrl.rewards.inference import RewardInferenceRequest
         from vrl.rewards.service.client import HttpRewardScorer
 
-        if self._scorer is None:
-            self._scorer = HttpRewardScorer(
-                self._execution_endpoint,
-                timeout_s=self._execution_timeout_s,
-                expected_model=self._execution_model,
-            )
-        instruction = artifact.prompt.removesuffix(HINT_SUFFIX).strip()
         request = RewardInferenceRequest(
-            request_id=f"local-edit-{artifact.artifact_id}",
-            artifacts=(
+            request_id=f"local-edit-{uuid.uuid4().hex}",
+            artifacts=tuple(
                 RewardInferenceArtifact(
                     artifact_id=artifact.artifact_id,
                     sample_id=artifact.sample_id,
@@ -185,23 +218,39 @@ class LocalEditRewardModel(LazyTorchModule):
                     prompt=instruction,
                     metadata={"reference_images": [source_path]},
                     media=artifact.as_media(),
-                ),
+                )
+                for artifact, instruction, source_path in zip(
+                    artifacts, instructions, source_paths, strict=True
+                )
             ),
         )
-        (result,) = _run(self._scorer.score_batch(request))
-        raw = float(result.scores[self._execution_key])
-        return 1.0 / (1.0 + math.exp(-raw))
 
+        async def cycle() -> list[float]:
+            # A client per cycle: its HTTP session is bound to the loop that made it.
+            scorer = HttpRewardScorer(
+                self._execution_endpoint,
+                timeout_s=self._execution_timeout_s,
+                expected_model=self._execution_model,
+            )
+            try:
+                await scorer.activate()
+                try:
+                    results = request.validate_and_order_results(await scorer.score_batch(request))
+                finally:
+                    if scorer.requires_memory_parking:
+                        await scorer.park_memory()
+            finally:
+                await scorer.shutdown()
+            return [
+                1.0 / (1.0 + math.exp(-float(result.scores[self._execution_key])))
+                for result in results
+            ]
 
-def _run(coroutine: Any) -> Any:
-    """Drive one coroutine to completion from sync scoring code, inside or outside a running loop."""
-
-    import asyncio
-    import concurrent.futures
-
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coroutine)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coroutine).result()
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(cycle())
+        # Called from inside a running loop (the reward runtime is async): drive
+        # the cycle on its own loop in a worker thread instead of nesting.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, cycle()).result()

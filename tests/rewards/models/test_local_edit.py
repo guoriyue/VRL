@@ -61,6 +61,40 @@ def test_a_change_outside_the_box_a_shifted_frame_and_a_redraw_lose_keep() -> No
     assert redrawn["local_edit_keep"] < 0.05 and redrawn["local_edit_shaped"] < 0.05
 
 
+def test_a_phase_is_one_execution_request_against_the_clean_source(tmp_path) -> None:
+    from vrl.rewards.inference import RewardInferenceArtifact
+    from vrl.scripts.data.local_edit import HINT_SUFFIX
+
+    source = _scene(None)
+    source.save(tmp_path / "src.jpg")
+    calls: list[tuple[list[str], list[str]]] = []
+
+    class _Batched(_Stubbed):
+        def _executions(self, artifacts, instructions, source_paths):
+            calls.append((list(instructions), list(source_paths)))
+            return [0.81, 0.0]
+
+    def artifact(index: int, image: Image.Image) -> RewardInferenceArtifact:
+        pixels = torch.frombuffer(bytearray(image.tobytes()), dtype=torch.uint8)
+        return RewardInferenceArtifact(
+            artifact_id=f"a{index}",
+            sample_id=f"s{index}",
+            path="",
+            prompt="paint the box red" + HINT_SUFFIX,
+            metadata={
+                "reference_images": [str(tmp_path / "hint.jpg")],
+                "local_edit": {**SPEC, "source_image": str(tmp_path / "src.jpg")},
+            },
+            media=pixels.reshape(H, W, 3).permute(2, 0, 1).float() / 255.0,
+        )
+
+    out = _Batched().score_batch([artifact(0, _scene((20, 80, 60, 120))), artifact(1, source)])
+    # One request for the phase, carrying the plain instruction and the clean source.
+    assert calls == [(["paint the box red", "paint the box red"], [str(tmp_path / "src.jpg")] * 2)]
+    assert out[0]["local_edit"] == pytest.approx(0.9)
+    assert out[1]["local_edit"] == 0.0 and out[1]["local_edit_keep"] == pytest.approx(1.0)
+
+
 def test_a_faithful_no_op_keeps_only_the_floor_and_the_spec_is_validated() -> None:
     model = _Stubbed()
     noop = model.score(_scene(None), _scene(None), SPEC, execution=0.0)
