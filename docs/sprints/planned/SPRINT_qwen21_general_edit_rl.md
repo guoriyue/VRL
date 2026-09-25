@@ -218,8 +218,9 @@ RL 不用目标图所以训练不受影响，但同分布 held-out 的数字可�
 
 - **删除** `object_move` 奖励整套（模型、函数、注册项、reward/dataset/experiment 预设、数据脚本、测试）。它作为测量是准的（§22：区分真移动 vs 复制 AUC 0.90，比所有训练过的打分器都强），
   但位移→分数是手写公式，且 run4 证明 20 轮后就被钻空子；任务已放弃。`manifests/object_move/` 与 done/ 里的 sprint 文档保留为记录。
-- **删除** `local_edit` 奖励模型（EditReward × DINOv2 keep 的合成分）：keep 项是启发式且在盲评标签上不成立（§7）。
-  局部编辑配方改为直接用 `/reward/editreward_http` 组件（端口 18316 的服务，训练器的共享 GPU 休眠租约接管唤醒/休眠），训练集换成 `/dataset/local_edit_plain_remove_add`（无框删除 + 添加）。
+- ~~删除 `local_edit` 奖励模型~~ → **保留**（用户："EditReward × DINOv2 — if they are valid models I would think we can use them"）：
+  两个都是训练过的模型，不属于用户反对的手写公式一类；它作为可用组件留在仓库（`/reward/local_edit`），keep 项也继续作为观测记录。
+  但训练键仍只用执行分——keep 在盲评标签上判"别处不动"只有 0.70（§7），没过关的东西不进训练键。局部编辑配方用 `/reward/editreward_http` 组件（端口 18316 的服务，训练器的共享 GPU 休眠租约接管唤醒/休眠），训练集换成 `/dataset/local_edit_plain_remove_add`（无框删除 + 添加）。
   无框行的 `reference_images[0]` 就是干净源图、指令没有后缀，所以 EditReward 看到的正是它被验证过的输入（§8）。
 - 数据脚本 `vrl/scripts/data/local_edit.py` 保留（红框 arm 仍是有用的评测诊断），`metadata.local_edit` 字段留在清单里作记录，奖励不读它。
 - 下一个可信打分器候选（针对"别处不动"）：ImgEdit 仓库自带的训练过的判官 `ImgEdit_Judge`（Qwen2.5-VL，带保真维度）、FIRM-Edit 一致性头——先在 400 张盲评标签上过 0.85 再进奖励。
