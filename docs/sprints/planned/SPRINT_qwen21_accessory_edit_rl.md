@@ -102,3 +102,33 @@
 
 共同的坑：基准没有动漫子集，Qwen-Image-2.1 没有按类别的编辑分数；社区反馈输出会整体错位几像素、轻微放大（Qwen-Image #229），
 奖励里的原位检查要保留——但 object_move 的 LoFTR 背景项在单调纹理上会冤枉正确编辑（见 SPRINT_qwen21_object_move_edit_rl §16），先修再复用。
+
+## 8. 扩成"动漫角色任意属性编辑"（2026-09-24，用户要求：不只是表情，脸、发色、衣服颜色、饰品都要能改）
+
+**任务定义**：一条指令改角色的一个属性，其余不变。七个家族共用一套元数据 `metadata.attribute_edit = {family, target_tags, removed_tags, head_box, ...}`：
+
+| 家族 | 指令例子 | 应出现的标签 | 应消失的标签 |
+|---|---|---|---|
+| expression | Change her facial expression from a smile to an angry frown… | frown, angry | — |
+| hair_color | Change her long blonde hair to mint green… | green_hair | blonde_hair |
+| eye_color | Change the color of her blue eyes (the irises) to red… | red_eyes | blue_eyes |
+| outfit_color | Recolor her pink dress to navy blue, keeping its shape… | blue_dress | pink_dress |
+| add_accessory | Add round thin-framed glasses to her face / Put a red beret on her head | glasses / hat | — |
+| remove_accessory | Remove her hair ornament completely and fill in what was behind it | — | hair_ornament |
+| background_swap | Replace the plain background with a snowy forest… | snow, forest | simple_background |
+
+**数据**（已就位，`data/external/anime_attribute/`，manifest 提交在 `manifests/anime_attribute/candidates.jsonl`）：
+按 Danbooru 评分 ≥15、宽高 ≥1024 重取的 1,000 张 + 30 张旧核实图；WD-v3 标签、头部框；由标签程序化生成 **7,194 条**候选
+（发色 1,414、加饰品 1,383、表情 1,334、瞳色 1,162、衣色 950、去饰品 549、换背景 402），其中 30 条表情指令逐张核实过，其余靠
+Qwen2.5-VL 可执行性检查过滤（`probe/vlm_check.py`）。要更多图：`probe/refetch_more.py`（按索引单张取，不整包下载）。
+
+**Phase 0 探测包**（`data/external/anime_attribute/probe/run_probe.sh`，单张 48 GB 卡约 1.5 h）：可执行性过滤 → base 在 1024/40 与 512/10×4 出图 →
+BEFORE|AFTER 盲判图。关卡：每个家族的 base 成功率（盲判）落在 20–60% 才进 RL；基本都成的家族（预计换背景、换发色）不练，只做回归检查。
+
+**奖励设计（对齐"要 solid、不要启发式"的要求）**：主信号用 VLM 判官——对每张编辑图问"目标属性是否变成了 X""原属性是否不见了""角色是否还是同一个""其余是否没变"，
+取 yes 概率的几何平均，不经过框和阈值（物体移动那边同一套判官的对照实验正在验证，一致率达标就沿用）。
+WD-v3 标签差（头部裁剪放大）、CCIP 角色相似度、DINOv2 分块背景一致率作为**诊断量**并入日志，用来核对判官、不进训练键。
+无论哪种，都先在 Phase 0 的盲判输出上验证排序（改对 > 忠实没改 > 改错 > 重画），再开训。
+
+**4×48 GB 训练**：沿用 OCR/物体移动的单卡配方做数据并行（FSDP2 路径），每条指令样本数可以开到 16–32；VLM 判官单独占一张卡走 reward service，
+不与训练争显存。多家族混训时按家族分层采样，held-out 按图片划分、每个家族 ≥40 条。
