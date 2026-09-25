@@ -29,13 +29,20 @@ _REQUIRED_SAMPLING_KEYS: tuple[tuple[str, type], ...] = (
     ("num_steps", int),
     ("guidance_scale", float),
 )
-# Keys only some families declare (video geometry, text-encoder length); carried
-# exactly when the family's sampling section has the field.
-_FAMILY_SAMPLING_KEYS: tuple[tuple[str, type], ...] = (
-    ("num_frames", int),
-    ("fps", int),
-    ("max_sequence_length", int),
-)
+
+
+def family_sampling_keys(section: Any) -> tuple[str, ...]:
+    """Sampling keys the family's section declares beyond the shared denoise geometry.
+
+    Video frame count and rate, a text-encoder length knob, Qwen-Image-2.1's
+    reference preprocessing: whatever the family schema adds is carried, so a
+    new family field reaches evaluation without a hand-kept list here.
+    """
+
+    from vrl.config.sampling_schema import DenoiseImageSamplingSection
+
+    shared = DenoiseImageSamplingSection.model_fields
+    return tuple(name for name in type(section).model_fields if name not in shared)
 
 
 def resolve_eval_sampling(
@@ -62,23 +69,22 @@ def resolve_eval_sampling(
 
     executor = root.model.executor if root.model is not None else None
 
-    def pick(name: str, cast: type, *, executor_fallback: bool = False) -> Any:
+    def pick(name: str, cast: type | None, *, executor_fallback: bool = False) -> Any:
         override = cli.get(name)
         use_override = override is not None if name == "guidance_scale" else bool(override)
         value = override if use_override else getattr(eval_sampling, name, None)
         if value is None:
             value = getattr(sampling, name, None)
         if value is None and executor_fallback and executor is not None:
-            value = getattr(executor, name)
+            value = getattr(executor, name, None)
         if value is None:
             raise ValueError(f"config missing required field: sampling.{name}")
-        return cast(value)
+        return value if cast is None else cast(value)
 
     out: dict[str, Any] = {name: pick(name, cast) for name, cast in _REQUIRED_SAMPLING_KEYS}
-    declared = type(sampling).model_fields
-    for name, cast in _FAMILY_SAMPLING_KEYS:
-        if name in declared:
-            out[name] = pick(name, cast, executor_fallback=True)
+    # Family keys arrive typed by the family's own schema; nothing to cast.
+    for name in family_sampling_keys(sampling):
+        out[name] = pick(name, None, executor_fallback=True)
 
     rollout = root.rollout
     if rollout is not None:

@@ -100,10 +100,6 @@ class EvaluationPlan:
     config_sha256: str
     manifest_sha256: str
     training_reward_components: tuple[str, ...]
-    # Family sampling fields beyond the shared image geometry (Qwen-Image-2.1:
-    # reference_resolution, output_mode); the family executor consumes them
-    # when prompts carry reference images.
-    family_sampling: dict[str, Any] = field(default_factory=dict)
     runtime_identity: GeneratorRuntimeIdentity = field(
         default_factory=GeneratorRuntimeIdentity.capture,
     )
@@ -122,8 +118,7 @@ class EvaluationPlan:
                 {"manifest_index": prompt.manifest_index, **asdict(prompt.example)}
                 for prompt in self.prompts
             ],
-            "sampling": asdict(self.sampling),
-            "family_sampling": self.family_sampling,
+            "sampling": self.sampling.to_record(),
             "negative_prompt": self.negative_prompt,
             "generation_device": str(self.resolved_model.build.device),
             "generation_dtype": str(self.resolved_model.build.parameter_dtype),
@@ -187,13 +182,11 @@ class EvaluationPlan:
             task=entry.task,
             inputs=[example.generation_input()],
             samples_per_prompt=1,
+            # A key the family declares but left unset (max_sequence_length is
+            # None for Qwen-Image-2.1) is not a request value.
             sampling={
-                "height": self.sampling.height,
-                "width": self.sampling.width,
-                "num_steps": self.sampling.num_steps,
-                "guidance_scale": self.sampling.guidance_scale,
+                **{k: v for k, v in self.sampling.to_record().items() if v is not None},
                 "seed": seed,
-                **self.family_sampling,
             },
             denoise=DenoiseRequestOptions(denoise_mode="native"),
         )
@@ -629,20 +622,12 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         per_stratum=args.per_stratum,
         strata=args.strata,
     )
-    family_sampling: dict[str, Any] = {}
     if any(prompt.example.reference_images for prompt in prompts):
-        from vrl.config.sampling_schema import DenoiseImageSamplingSection
         from vrl.generation.bindings.full_sequence import ReferenceConditionedBatches
         from vrl.utils.config import import_from_path
 
         if not issubclass(import_from_path(entry.executor_cls), ReferenceConditionedBatches):
             raise ValueError(f"{entry.family} does not take reference images")
-        shared = set(DenoiseImageSamplingSection.model_fields) | {"max_sequence_length"}
-        family_sampling = {
-            key: value
-            for key, value in root.sampling.model_dump(exclude_none=True).items()
-            if key not in shared
-        }
     return EvaluationPlan(
         resolved,
         targets,
@@ -664,7 +649,6 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         sha256_file(config_path),
         sha256_file(manifest_path),
         tuple(root.reward.components) if root.reward else (),
-        family_sampling,
     )
 
 

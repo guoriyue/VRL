@@ -155,3 +155,34 @@ def test_video_to_cthw_accepts_btchw_layout() -> None:
 
     assert tuple(out.shape) == (3, 5, 8, 8)
     assert torch.all(out[0] == 1.0)
+
+
+def test_image_sampling_carries_family_keys_in_one_flat_record() -> None:
+    from omegaconf import OmegaConf
+
+    from vrl.config.schema import parse_config
+    from vrl.scripts.eval.denoise_generation import ImageSampling
+
+    root = parse_config(
+        OmegaConf.create(
+            {
+                "model": {"family": "qwen_image_21"},
+                "sampling": {
+                    "width": 512,
+                    "height": 512,
+                    "num_steps": 10,
+                    "guidance_scale": 1.0,
+                    "reference_resolution": 512,
+                },
+            }
+        )
+    )
+
+    sampling = ImageSampling.from_root(root, overrides={"num_steps": 40})
+
+    assert sampling.family == {"reference_resolution": 512, "output_mode": "rgb"}
+    record = sampling.to_record()
+    assert record["num_steps"] == 40 and record["reference_resolution"] == 512
+    assert ImageSampling.from_mapping(record) == sampling
+    with pytest.raises(ValueError, match="missing keys"):
+        ImageSampling.from_mapping({"width": 8})

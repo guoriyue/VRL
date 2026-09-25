@@ -91,3 +91,33 @@ def test_family_without_a_prompt_length_knob_projects_no_key() -> None:
     sampling = ImageSampling.from_root(root)
     assert sampling.max_sequence_length is None
     assert ImageSampling.from_mapping(sampling.to_record()) == sampling
+
+
+def test_family_keys_come_from_the_family_schema_not_a_hand_list() -> None:
+    root = parse_config(
+        OmegaConf.create(
+            {
+                "model": {"family": "qwen_image_21"},
+                "sampling": {
+                    **_IMAGE,
+                    "guidance_scale": 1.0,
+                    "reference_resolution": 512,
+                    "output_mode": "rgb",
+                    "negative_prompt": "blurry",
+                },
+            }
+        )
+    )
+
+    out = resolve_eval_sampling(root, overrides={"width": 1024, "height": 1024})
+
+    # Qwen-Image-2.1 declares reference preprocessing and no prompt-length knob;
+    # negative_prompt and teacache belong to the shared section and never ride along.
+    assert out == {
+        "width": 1024,
+        "height": 1024,
+        "num_steps": 10,
+        "guidance_scale": 1.0,
+        "reference_resolution": 512,
+        "output_mode": "rgb",
+    }

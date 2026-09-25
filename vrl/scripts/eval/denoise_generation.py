@@ -9,7 +9,7 @@ import importlib.metadata
 import math
 import platform
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
@@ -47,6 +47,10 @@ class ImageSampling:
     # None for families whose sampling section declares no prompt-length knob
     # (Qwen-Image-2.1); the projection carries the key only when declared.
     max_sequence_length: int | None = None
+    # Every other key the family's sampling section declares beyond the shared
+    # geometry (Qwen-Image-2.1: reference_resolution, output_mode), resolved
+    # by the same projection and handed to the family executor as-is.
+    family: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in ("width", "height", "num_steps", "max_sequence_length"):
@@ -74,17 +78,23 @@ class ImageSampling:
     ) -> ImageSampling:
         """Project the parsed config (CLI ``overrides`` on top) into the image fields."""
 
-        from vrl.scripts.eval._sampling import resolve_eval_sampling
+        from vrl.scripts.eval._sampling import family_sampling_keys, resolve_eval_sampling
 
         sampling = resolve_eval_sampling(root, overrides=overrides)
+        named = cls._named_fields()
         return cls(
-            **{
-                field.name: sampling[field.name]
-                for field in fields(cls)
-                if field.name != "max_sequence_length"
-            },
+            **{name: sampling[name] for name in named if name != "max_sequence_length"},
             max_sequence_length=sampling.get("max_sequence_length"),
+            family={
+                key: sampling[key]
+                for key in family_sampling_keys(root.sampling)
+                if key not in named
+            },
         )
+
+    @classmethod
+    def _named_fields(cls) -> tuple[str, ...]:
+        return tuple(f.name for f in fields(cls) if f.name != "family")
 
     @classmethod
     def from_mapping(
@@ -93,14 +103,27 @@ class ImageSampling:
         *,
         what: str = "sampling",
     ) -> ImageSampling:
-        """Build sampling values from one persisted record, rejecting missing or unknown keys."""
+        """Build sampling values from one persisted record (flat, as ``to_record`` wrote it).
 
-        return cls(**require_mapping_keys(value, (field.name for field in fields(cls)), what=what))
+        The named fields must all be present; any other key is a family key
+        and rides along unchanged.
+        """
 
-    def to_record(self) -> dict[str, int | float]:
-        """Serialize with keys derived from the typed source of truth."""
+        if not isinstance(value, Mapping):
+            raise TypeError(f"{what} must be a mapping, got {type(value).__name__}")
+        named = cls._named_fields()
+        missing = sorted(set(named) - set(value))
+        if missing:
+            raise ValueError(f"{what} missing keys: {missing}")
+        return cls(
+            **{name: value[name] for name in named},
+            family={key: item for key, item in value.items() if key not in named},
+        )
 
-        return {field.name: getattr(self, field.name) for field in fields(self)}
+    def to_record(self) -> dict[str, Any]:
+        """One flat mapping of every effective sampling value, family keys included."""
+
+        return {**{name: getattr(self, name) for name in self._named_fields()}, **self.family}
 
 
 @dataclass(frozen=True, slots=True)
