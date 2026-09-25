@@ -1,0 +1,14 @@
+# Unhinted removal + addition rows of the local-edit manifests
+# (vrl/scripts/data/local_edit.py; hinted and attribute/swap rows filtered
+# out). The held-out probe found these the only rows where the base model
+# fails by doing nothing, so they are the training set for the local-edit
+# recipe; the held-out file is the matching unhinted removal/addition subset.
+# Images live under the data root (data/external/local_edit).
+data:
+  loader: prompt_manifest
+  manifest: manifests/local_edit/train_plain_remove_add.jsonl
+  eval_manifest: manifests/local_edit/heldout_plain_remove_add.jsonl
+  preprocessing:
+    format: jsonl
+  sampler:
+    type: random_without_replacement

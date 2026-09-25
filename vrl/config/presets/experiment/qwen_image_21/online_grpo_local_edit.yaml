@@ -2,38 +2,31 @@
 # shown where. The held-out probe (sprint doc S7-8) found the base model's one
 # real hole is "does nothing" on unhinted removal (74%) and addition (26%) --
 # shown the region as a red box it succeeds (69% / 86%), so the skill to train
-# is finding the target itself. Training rows are therefore the unhinted
-# removal + addition rows only, and the training key is the EditReward
-# execution score alone: it separates done from not-done at AUC 0.94, while
-# the DINOv2 keep term could not see judge-labelled collateral (AUC 0.70) and
-# is kept as a logged observation. Single-card settings follow the OCR
-# recipe; the group is 16 samples x 6 prompts like the OCR run that learned.
+# is finding the target itself. Training rows are the unhinted removal +
+# addition rows only, and the reward is the released EditReward judge alone,
+# served by an operator-run service (outputs/local_edit/editreward_service.yaml,
+# port 18316) under the standard shared-GPU parking lease: it separates done
+# from not-done at AUC 0.94 on blind labels. No hand-written consistency term
+# -- the DINOv2 keep heuristic could not see judge-labelled collateral (AUC
+# 0.70) and was dropped. Single-card settings follow the OCR recipe; the group
+# is 16 samples x 6 prompts like the OCR run that learned.
 defaults:
   - /recipe/online/flow_matching_grpo
   - /model/qwen_image_21/lora_wide
   - /sampling/image/512
   - /sampling/denoise/10_step_no_cfg
-  - /reward/local_edit
-  - /dataset/local_edit
-
-data:
-  manifest: manifests/local_edit/train_plain_remove_add.jsonl
-  eval_manifest: manifests/local_edit/heldout_plain_remove_add.jsonl
+  - /reward/editreward_http
+  - /dataset/local_edit_plain_remove_add
 
 reward:
-  kwargs:
-    local_edit:
-      score_key: local_edit_execution
+  inference:
+    editreward:
+      endpoint: http://127.0.0.1:18316
 
 sampling:
   # Reference encoded at the training geometry so the prefix is 1024 tokens.
   reference_resolution: 512
   output_mode: rgb
-
-distributed:
-  resources:
-    reward:
-      device: trainer
 
 actor:
   optim:

@@ -210,3 +210,16 @@ RL 不用目标图所以训练不受影响，但同分布 held-out 的数字可�
 
 图片在 `data/external/{gedit_bench,imgedit_bench}/img`（不入库）。另：2.1 README 明说支持 "specify local edits via circles, painted annotations, or separate masks"，
 所以 §7 的红框效应是训练过的能力；"不给框自己找"才是没练过的。
+
+## 10. 决定（2026-09-25）：不要启发式奖励，只用训练过的判官
+
+用户："if we have some valid reward model like edit or something that would be good but i don't want heuristic reward like object_move."
+据此：
+
+- **删除** `object_move` 奖励整套（模型、函数、注册项、reward/dataset/experiment 预设、数据脚本、测试）。它作为测量是准的（§22：区分真移动 vs 复制 AUC 0.90，比所有训练过的打分器都强），
+  但位移→分数是手写公式，且 run4 证明 20 轮后就被钻空子；任务已放弃。`manifests/object_move/` 与 done/ 里的 sprint 文档保留为记录。
+- **删除** `local_edit` 奖励模型（EditReward × DINOv2 keep 的合成分）：keep 项是启发式且在盲评标签上不成立（§7）。
+  局部编辑配方改为直接用 `/reward/editreward_http` 组件（端口 18316 的服务，训练器的共享 GPU 休眠租约接管唤醒/休眠），训练集换成 `/dataset/local_edit_plain_remove_add`（无框删除 + 添加）。
+  无框行的 `reference_images[0]` 就是干净源图、指令没有后缀，所以 EditReward 看到的正是它被验证过的输入（§8）。
+- 数据脚本 `vrl/scripts/data/local_edit.py` 保留（红框 arm 仍是有用的评测诊断），`metadata.local_edit` 字段留在清单里作记录，奖励不读它。
+- 下一个可信打分器候选（针对"别处不动"）：ImgEdit 仓库自带的训练过的判官 `ImgEdit_Judge`（Qwen2.5-VL，带保真维度）、FIRM-Edit 一致性头——先在 400 张盲评标签上过 0.85 再进奖励。
