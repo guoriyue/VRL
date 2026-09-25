@@ -130,7 +130,10 @@ class ArtifactRetainingError(Protocol):
 
 @runtime_checkable
 class MemoryParkingScorer(Protocol):
-    """Transport boundary for retryable, verifiable reward GPU parking."""
+    """Transport boundary for verifiable reward GPU parking.
+
+    Retryability depends on the backend: a partial CuMem failure is terminal.
+    """
 
     @property
     def requires_memory_parking(self) -> bool: ...

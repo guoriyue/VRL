@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 from vrl.config.reward_inference import (
     RewardInferenceConfig,
 )
-from vrl.models.parking import CumemPool, ParkingSession
+from vrl.models.parking import CumemBroken, CumemPool, ParkingSession
 from vrl.rewards.base import RewardCleanupError, RewardFunction
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
@@ -297,6 +297,14 @@ class RewardParking:
             _host_memory_trim() if launch.memory_parking_mode == "reload" else None
         )
         self._session: ParkingSession | None = None
+        self._broken_reason: str | None = None
+
+    def _require_healthy(self) -> None:
+        if self._broken_reason is not None:
+            raise CumemBroken(
+                "reward CuMem state is unrecoverable; terminate the owning process "
+                f"before retrying: {self._broken_reason}"
+            )
 
     @property
     def required(self) -> bool:
@@ -315,6 +323,7 @@ class RewardParking:
     def build(self, factory: Callable[[], Any]) -> Any:
         """Build the model where its parking mechanism can reach it."""
 
+        self._require_healthy()
         if self._trim_host_memory is not None:
             # Training and checkpoint export can retain freed host pages
             # between reward activations in this shared process.
@@ -329,6 +338,12 @@ class RewardParking:
         session = ParkingSession("reward runtime", required=True, device=self._launch.device)
         try:
             model = session.build(factory, cumem=not self.by_reload)
+        except CumemBroken as error:
+            # A failed pool close is just as terminal as a partial sleep/wake.
+            # Retain the session and avoid touching the corrupted allocator.
+            self._session = session
+            self._broken_reason = str(error)
+            raise
         except BaseException as load_error:
             # Commit neither half of a failed model/pool build. The session
             # already closed its pool; drop traceback-held locals of the
@@ -351,12 +366,18 @@ class RewardParking:
     def restore(self) -> None:
         """Wake a parked model before scoring; no-op while resident."""
 
+        self._require_healthy()
         if self._session is not None:
-            self._session.restore()
+            try:
+                self._session.restore()
+            except CumemBroken as error:
+                self._broken_reason = str(error)
+                raise
 
     def park(self) -> None:
-        """Park the CuMem session and release cached CUDA memory; safe to retry."""
+        """Park the session; partial CuMem failures require process termination."""
 
+        self._require_healthy()
         if not self.required:
             raise RuntimeError(
                 "reward runtime was not configured for complete memory parking",
@@ -365,21 +386,28 @@ class RewardParking:
             raise RuntimeError(
                 "reward runtime cannot park memory before its CuMem-pooled model is built",
             )
-        # A failed allocator sleep leaves the session unparked, so this call
-        # is retryable.
-        self._session.park()
+        try:
+            self._session.park()
+        except CumemBroken as error:
+            self._broken_reason = str(error)
+            raise
         self._release_device_cache()
 
     @contextmanager
     def release_scope(self) -> Iterator[None]:
         """Let the owner drop its model, then release every device and host page."""
 
+        self._require_healthy()
         session = self._session
         if session is None:
             yield
         else:
-            with session.release_scope():
-                yield
+            try:
+                with session.release_scope():
+                    yield
+            except CumemBroken as error:
+                self._broken_reason = str(error)
+                raise
         # Dedicated CUDA rewards use torch's caching allocator rather than a
         # CuMem pool. Dropping the model alone leaves those physical pages
         # reserved in this long-lived driver process, so terminal cleanup must
@@ -437,7 +465,7 @@ class InProcessRewardScorer:
         self._parking.restore()
 
     async def park_memory(self) -> None:
-        """Park reward pages and release cached CUDA memory; safe to retry."""
+        """Park pages; retry only while the parking owner remains healthy."""
 
         if self._parking.required and self._parking.by_reload:
             await self.shutdown()

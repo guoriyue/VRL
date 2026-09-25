@@ -155,6 +155,45 @@ async def test_zero_weight_component_is_scored_without_changing_total() -> None:
 
 
 @pytest.mark.asyncio
+async def test_nested_observations_survive_without_affecting_training_reward() -> None:
+    """An observation-only composite keeps its axes across repeated calls."""
+    nested = MultiReward(
+        [
+            ("quality", 2.0, _QueuedBatchReward([[0.2, 0.8], [0.5]])),
+            ("alignment", 1.0, _QueuedBatchReward([[0.6, 0.4], [0.9]])),
+        ]
+    )
+    reward = MultiReward(
+        [
+            ("train", 1.0, _QueuedBatchReward([[3.0, 4.0], [2.0]])),
+            ("audit", 0.0, nested),
+        ]
+    )
+    first = await reward.score_batch([_make_sample("a"), _make_sample("b")])
+    second = await reward.score_batch([_make_sample("c")])
+    assert first.scores == (3.0, 4.0)
+    assert first.components["audit"] == pytest.approx((1.0, 2.0))
+    assert first.components["audit/quality"] == (0.2, 0.8)
+    assert first.components["audit/alignment"] == (0.6, 0.4)
+    assert second.scores == (2.0,)
+    assert second.components["audit/quality"] == (0.5,)
+
+
+@pytest.mark.asyncio
+async def test_observation_cannot_overwrite_another_component() -> None:
+    """A flat component name must not impersonate a nested observation."""
+    nested = MultiReward([("quality", 1.0, _QueuedBatchReward([[0.8]]))])
+    reward = MultiReward(
+        [
+            ("audit", 0.0, nested),
+            ("audit/quality", 1.0, _QueuedBatchReward([[9.0]])),
+        ]
+    )
+    with pytest.raises(ValueError, match="namespace collision"):
+        await reward.score_batch([_make_sample("a")])
+
+
+@pytest.mark.asyncio
 async def test_multi_reward_aggregates_inference_observations() -> None:
     """Checks multi reward exposes child reward inference timings."""
     reward = MultiReward(

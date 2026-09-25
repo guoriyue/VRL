@@ -63,7 +63,33 @@ async def test_reward_function_in_process_scores_without_disk() -> None:
     )
 
     assert report.scores == pytest.approx([0.5, 1.0])
+    assert report.components["fake"] == pytest.approx([0.5, 1.0])
     await reward.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_missing_axis_fails_instead_of_silently_losing_observations() -> None:
+    class InconsistentModel:
+        def __call__(self, artifact):
+            if artifact.sample_id == "sample-0":
+                return {"fake": 1.0, "quality": 0.5}
+            return {"fake": 2.0}
+
+    reward = InferenceRewardFunction(
+        reward_name="fake",
+        score_key="fake",
+        scorer=InProcessRewardScorer(model=InconsistentModel()),
+    )
+    try:
+        with pytest.raises(ValueError, match="inconsistent score axes"):
+            await reward.score_batch(
+                [
+                    _sample(torch.zeros(3, 2, 2)),
+                    _sample(torch.ones(3, 2, 2), sample_id="sample-1"),
+                ]
+            )
+    finally:
+        await reward.shutdown()
 
 
 @pytest.mark.asyncio

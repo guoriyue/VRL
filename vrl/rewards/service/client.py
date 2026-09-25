@@ -329,7 +329,7 @@ class HttpRewardScorer:
             )
 
     async def park_memory(self) -> None:
-        """Ask the service to release its physical GPU pages; safe to retry."""
+        """Ask the service to release its GPU pages; a broken backend rejects retries."""
 
         await self._ensure_identity()
         if not self._memory_parking:
