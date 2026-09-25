@@ -59,6 +59,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.hpsv3 import HPSv3Reward
     from vrl.rewards.functions.image_sharpness import ImageSharpnessReward
     from vrl.rewards.functions.kling_video_reward import KlingVideoReward
+    from vrl.rewards.functions.local_edit import LocalEditReward
     from vrl.rewards.functions.motion_dynamics import MotionDynamicsReward
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
     from vrl.rewards.functions.object_move import ObjectMoveReward
@@ -75,6 +76,7 @@ def _register_builtins() -> None:
             "aesthetic": AestheticReward,
             "editreward": EditReward,
             "image_sharpness": ImageSharpnessReward,
+            "local_edit": LocalEditReward,
             "geneval_owl": GenEvalOwlReward,
             "nsfw_safety": NSFWSafetyReward,
             "object_move": ObjectMoveReward,

@@ -1,0 +1,13 @@
+# Local edit prompts (vrl/scripts/data/local_edit.py): OmniEdit attribute /
+# swap / removal / addition rows, centre-cropped square, each with the change
+# box of its reference edit; half the rows show that box in red on the image
+# ("hint" arm). Held out per task by row. Images live under the data root
+# (data/external/local_edit); rebuild with the builder script.
+data:
+  loader: prompt_manifest
+  manifest: manifests/local_edit/train.jsonl
+  eval_manifest: manifests/local_edit/heldout.jsonl
+  preprocessing:
+    format: jsonl
+  sampler:
+    type: random_without_replacement

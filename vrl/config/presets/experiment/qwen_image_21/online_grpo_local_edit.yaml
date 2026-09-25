@@ -1,0 +1,51 @@
+# Qwen-Image-2.1 local-edit GRPO: carry out an attribute / swap / removal /
+# addition instruction and change nothing outside its region. The base model
+# executes most such instructions but often redraws or shifts the whole frame
+# (its weakest benchmark dimension), so the reward multiplies a trained
+# execution scorer by a DINOv2 keep term outside the row's edit box. Half the
+# rows show the box in red ("hint" arm). Single-card settings follow the OCR
+# recipe; the group is 16 samples x 6 prompts like the OCR run that learned.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/qwen_image_21/lora_wide
+  - /sampling/image/512
+  - /sampling/denoise/10_step_no_cfg
+  - /reward/local_edit
+  - /dataset/local_edit
+
+reward:
+  kwargs:
+    local_edit:
+      # Train on the shaped key: a faithful no-op keeps a small floor so GRPO
+      # never ranks it below a redrawn frame. Evaluation keeps local_edit.
+      score_key: local_edit_shaped
+
+sampling:
+  # Reference encoded at the training geometry so the prefix is 1024 tokens.
+  reference_resolution: 512
+  output_mode: rgb
+
+distributed:
+  resources:
+    reward:
+      device: trainer
+
+actor:
+  optim:
+    lr: 3.0e-4
+    optim_8bit: true
+  gradient_checkpointing: full
+  timestep_fraction: 0.5
+  prompts_per_collection: 2
+
+rollout:
+  n_samples_per_prompt: 16
+  prompts_per_batch: 6
+  samples_per_generation_batch: 4
+  noise_level: 0.7
+
+trainer:
+  output_dir: outputs/qwen_image_21_local_edit
+  save_freq: 20
+  debug:
+    first_step: true
