@@ -172,61 +172,65 @@ def rows_from_omniedit(
         {k: [u.rsplit("/", 1)[1] for u in v] for k, v in shards.items()},
         flush=True,
     )
-    files = [url for task in LOCAL_TASKS for url in shards[task]]
-    for example in load_dataset(
-        "parquet", data_files={"train": files}, split="train", streaming=True
-    ):
-        seen += 1
-        if seen % 500 == 0:
-            print(f"scanned {seen} rows, kept {counts}", flush=True)
-        task = str(example.get("task"))
-        prompts = example.get("edited_prompt_list") or []
-        if task not in counts or counts[task] >= per_task or not prompts:
-            continue
-        source, edited = (
-            v if isinstance(v, Image.Image) else Image.open(io.BytesIO(v["bytes"]))
-            for v in (example["src_img"], example["edited_img"])
+    for wanted in LOCAL_TASKS:
+        # One task's shards at a time, stopping as soon as that task is full.
+        stream = load_dataset(
+            "parquet", data_files={"train": shards[wanted]}, split="train", streaming=True
         )
-        if min(source.size) < min_side:
-            continue
-        # The reference edit is stored at its own resolution (the source is the
-        # 768-side copy); bring it onto the source's grid before differencing.
-        if source.size != edited.size:
-            if abs(source.size[0] / source.size[1] - edited.size[0] / edited.size[1]) > 0.1:
+        for example in stream:
+            seen += 1
+            if seen % 500 == 0:
+                print(f"scanned {seen} rows, kept {counts}", flush=True)
+            task = str(example.get("task"))
+            prompts = example.get("edited_prompt_list") or []
+            if task != wanted or not prompts:
                 continue
-            edited = edited.resize(source.size, Image.Resampling.LANCZOS)
-        source, edited = square_crop(source, size or None), square_crop(edited, size or None)
-        box = change_box(source, edited)
-        if box is None:
-            continue
-        area = (box[2] - box[0]) * (box[3] - box[1])
-        if not min_area <= area <= max_area:
-            continue
-        stem = f"{task}_{counts[task]:04d}"
-        source.convert("RGB").save(out / "img" / f"{stem}.jpg", quality=94)
-        hint = rng.random() < hint_fraction
-        if hint:
-            draw_hint(source.convert("RGB"), box).save(out / "hint" / f"{stem}.jpg", quality=94)
-        rel = out.relative_to(root)
-        rows.append(
-            {
-                "prompt": prompts[0].strip() + (HINT_SUFFIX if hint else ""),
-                "reference_image": str(rel / ("hint" if hint else "img") / f"{stem}.jpg"),
-                "metadata": {
-                    "source": "OmniEdit-Filtered-1.2M/train",
-                    "license": "MIT",
-                    "local_edit": {
-                        "task": task,
-                        "box": [round(v, 4) for v in box],
-                        "hint": hint,
-                        "source_image": str(rel / "img" / f"{stem}.jpg"),
+            source, edited = (
+                v if isinstance(v, Image.Image) else Image.open(io.BytesIO(v["bytes"]))
+                for v in (example["src_img"], example["edited_img"])
+            )
+            if min(source.size) < min_side:
+                continue
+            # The reference edit is stored at its own resolution (the source is the
+            # 768-side copy); bring it onto the source's grid before differencing.
+            if source.size != edited.size:
+                if abs(source.size[0] / source.size[1] - edited.size[0] / edited.size[1]) > 0.1:
+                    continue
+                edited = edited.resize(source.size, Image.Resampling.LANCZOS)
+            source, edited = square_crop(source, size or None), square_crop(edited, size or None)
+            box = change_box(source, edited)
+            if box is None:
+                continue
+            area = (box[2] - box[0]) * (box[3] - box[1])
+            if not min_area <= area <= max_area:
+                continue
+            stem = f"{task}_{counts[task]:04d}"
+            source.convert("RGB").save(out / "img" / f"{stem}.jpg", quality=94)
+            hint = rng.random() < hint_fraction
+            if hint:
+                draw_hint(source.convert("RGB"), box).save(
+                    out / "hint" / f"{stem}.jpg", quality=94
+                )
+            rel = out.relative_to(root)
+            rows.append(
+                {
+                    "prompt": prompts[0].strip() + (HINT_SUFFIX if hint else ""),
+                    "reference_image": str(rel / ("hint" if hint else "img") / f"{stem}.jpg"),
+                    "metadata": {
+                        "source": "OmniEdit-Filtered-1.2M/train",
+                        "license": "MIT",
+                        "local_edit": {
+                            "task": task,
+                            "box": [round(v, 4) for v in box],
+                            "hint": hint,
+                            "source_image": str(rel / "img" / f"{stem}.jpg"),
+                        },
                     },
-                },
-            }
-        )
-        counts[task] += 1
-        if all(v >= per_task for v in counts.values()):
-            break
+                }
+            )
+            counts[task] += 1
+            if counts[task] >= per_task:
+                break
     short = {k: v for k, v in counts.items() if v < per_task}
     if short:
         print(f"short of {per_task} for {short}; raise --shards-per-task", flush=True)
