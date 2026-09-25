@@ -71,7 +71,9 @@ htmlcov/
 
 outputs/
 # Claude Code
-.claude/
+.claude/*
+# Project skills are shared; the rest of .claude/ is per-machine session state.
+!.claude/skills/
 
 # Third-party submodules: track gitlinks via .gitmodules, ignore any
 # stray content placed under third_party/ that isn't a tracked submodule.

@@ -175,6 +175,70 @@ class Analysis:
 
         return spec.report(self.evaluation)
 
+    def spread(
+        self,
+        *,
+        axis: str,
+        threshold: float,
+        band: tuple[float, float] = (0.2, 0.6),
+        tie_epsilon: float = 0.0,
+    ) -> dict[str, Any]:
+        """Does a run sampled like training carry a GRPO signal on ``axis``?
+
+        Rows share a ``prompt_id`` per group. A sample succeeds at
+        ``score >= threshold`` (the operating point fitted on labels). The
+        report gives the success rate against the target band, the share of
+        prompts whose group holds both successes and failures, and the
+        within-prompt score spread -- a high-AUC judge whose scores barely
+        differ within a group still gives the policy nothing to climb.
+        """
+
+        if not (0.0 <= band[0] < band[1] <= 1.0):
+            raise ValueError("band must be 0 <= low < high <= 1")
+        if not math.isfinite(threshold):
+            raise ValueError("threshold must be finite")
+        groups: dict[str, list[float]] = defaultdict(list)
+        for row in self.evaluation.records.values():
+            if row["status"] == "success" and axis in row["result"]["scores"]:
+                groups[row["input"]["prompt_id"]].append(float(row["result"]["scores"][axis]))
+        if not groups:
+            raise ValueError(f"no successful scores on axis {axis!r}")
+        multi = {key: values for key, values in groups.items() if len(values) >= 2}
+        if not multi:
+            raise ValueError("spread needs prompts with at least two samples")
+        prompts = {}
+        for key, values in groups.items():
+            successes = sum(value >= threshold for value in values)
+            prompts[key] = {
+                "samples": len(values),
+                "success_share": successes / len(values),
+                "mixed": 0 < successes < len(values),
+                "within_std": statistics.pstdev(values) if len(values) >= 2 else None,
+                "score_range": max(values) - min(values),
+            }
+        all_values = [value for values in groups.values() for value in values]
+        success_rate = sum(value >= threshold for value in all_values) / len(all_values)
+        return {
+            "run_id": self.evaluation.run_id,
+            "axis": axis,
+            "threshold": threshold,
+            "band": list(band),
+            "sample_count": len(all_values),
+            "prompt_count": len(groups),
+            "multi_sample_prompt_count": len(multi),
+            "success_rate": success_rate,
+            "in_band": band[0] <= success_rate <= band[1],
+            "mixed_prompt_share": sum(prompts[key]["mixed"] for key in multi) / len(multi),
+            "mean_within_prompt_std": statistics.fmean(
+                prompts[key]["within_std"] for key in multi
+            ),
+            "zero_spread_prompt_share": sum(
+                prompts[key]["score_range"] <= tie_epsilon for key in multi
+            )
+            / len(multi),
+            "prompts": prompts,
+        }
+
     # ── two or more runs ─────────────────────────────────────────────────────
 
     def compare_rankings(

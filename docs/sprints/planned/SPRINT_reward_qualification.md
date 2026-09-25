@@ -56,11 +56,12 @@
 ## 5. 复用什么、补什么
 
 已有（上游 2026-09-22 合入）：`vrl.scripts.rewards.rescore_media`（独立重打分、内容哈希）、`reward analysis health/stress/ranking/paired/repeatability`、`reward review-export/import`（盲评页）、`reward fit/evaluate`（偏好对）、`reward qualify`（receipt）、`stress.build_stress_manifest`（通用扰动）、`image_checkpoint_eval`（同噪声出图、bootstrap CI）、rollout admission ledger（`adv_zero_rate`）。
-要补：
-1. **任务专属作弊清单**的声明格式 + 生成器（每个任务一个小函数：从源图/参考构造作弊样本），接进 `stress`。
-2. **按维度的标注 schema** 和 `review-export` 的多维度版本（现在只有一维偏好）；Opus 盲评作为第一轮标注源，人工抽检 10%。
-3. **奖励卡**的汇总命令：读 rescore/analysis/评测输出，填卡，判每一关。
-4. **在采样设置下的组内差异探测**作为 `image_checkpoint_eval` 的一个报告项（现在要手算）。
+已补（2026-09-25，`reward/` 包 + `.claude/skills/reward-qualification/SKILL.md`）：
+1. `reward shortcut-manifest`（`reward/shortcuts.py`）：通用的"不做任务"候选——原图不动、整图平移、裁切放大、换一张图——写成和 `stress` 同一套 `reward_stress` 元数据，`reward stress` 直接配对；任务专属作弊按同一契约加 transform。
+2. `reward agreement`（`reward/labels.py`）：按维度的分类标签 + contrast 列表 → 每个 contrast 的 AUC 与 bootstrap 区间；没过的 contrast 就是盲区。
+3. `reward card`（`reward/card.py`）：读四个报告，逐关判定，`ready_for_training_key` 只在四关全过时为真，输出 JSON + Markdown。
+4. `reward spread`（`Analysis.spread`）：训练采样设置下的成功率带、有成有败的组的比例、组内标准差。
+还没做：多维度分类标签的盲评页（`review-export` 只有成对偏好；分类标签目前由 Opus 判官协议产出）；每个奖励的卡还没填。
 
 ## 6. 先拿哪些奖励开刀
 

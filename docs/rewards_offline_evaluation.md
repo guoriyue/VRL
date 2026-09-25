@@ -520,3 +520,29 @@ uncertainty estimate. Keep preprocessing, rubric and model revision fixed; use
 ranking comparison separately to assess whether measured variation changes the
 ordering of actual candidates. Retain the number of repetitions and failures when
 interpreting small or apparently zero variation.
+
+## Qualification gates and the reward card
+
+`python -m reward` also carries the four pre-training gates a reward must pass
+before it becomes a training key, and the card that records them
+(`.claude/skills/reward-qualification/SKILL.md` walks through the commands;
+`docs/sprints/planned/SPRINT_reward_qualification.md` has the rationale):
+
+| Gate | Command | Passes when |
+| --- | --- | --- |
+| 1 repeatability | `repeat` | `max_score_range` on the axis within tolerance |
+| 2 agreement | `agreement --labels --contrasts --axis` | every contrast the reward must rank has AUC >= 0.85 (bootstrap 95% CI reported); failed contrasts are the reward's blind spots |
+| 3 shortcuts | `shortcut-manifest` / `stress-manifest`, score, `stress` | no transform scores at or above the genuine candidate on more than 10% of sources |
+| 4 spread | `spread --axis --threshold` | success rate inside the band and enough prompts with mixed outcomes under the training sampler |
+
+`agreement` takes categorical per-sample labels (`{"sample_id": ..., "labels":
+{"outcome": "done", "collateral": false}}`) and a contrast list naming each
+question as positive-vs-negative label selectors, so a judge's strengths and
+blind spots are reported side by side rather than as one overall number.
+`shortcut-manifest` builds the task-avoiding candidates an edit policy could
+return (unchanged source, shifted or re-cropped frame, another scene) with the
+same `reward_stress` metadata as `stress-manifest`, so one `stress` report
+covers damage and shortcuts alike. `card` folds the reports into
+`docs/rewards/cards/<reward>.json` and a Markdown twin; `ready_for_training_key`
+is true only when every gate ran and passed. None of this supplies labels: the
+labels must come from people or blind judges independent of the reward.

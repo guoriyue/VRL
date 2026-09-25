@@ -15,6 +15,9 @@ from pathlib import Path
 
 from reward.analysis import Analysis
 from reward.calibration import Calibration, PreferencePair
+from reward.card import build_card, write_card
+from reward.labels import Contrast, OutcomeLabel, agreement
+from reward.shortcuts import build_shortcut_manifest
 from reward.stress import build_stress_manifest
 from vrl.rewards.evaluation import Evaluation
 from vrl.rewards.sequences import EditSequenceSpec
@@ -98,10 +101,66 @@ def main(argv: list[str] | None = None) -> None:
     stress_manifest.add_argument("--manifest", required=True, type=Path)
     stress_manifest.add_argument("--output-dir", required=True, type=Path)
     stress_manifest.add_argument("--seed", type=int, default=42)
+    shortcut_manifest = command("shortcut-manifest", source=False, output=False)
+    shortcut_manifest.add_argument("--manifest", required=True, type=Path)
+    shortcut_manifest.add_argument("--output-dir", required=True, type=Path)
+    shortcut_manifest.add_argument("--shortcuts", nargs="+")
+    shortcut_manifest.add_argument("--seed", type=int, default=42)
+    agree = command("agreement")
+    agree.add_argument("--labels", required=True, type=Path)
+    agree.add_argument("--contrasts", required=True, type=Path)
+    agree.add_argument("--axis", required=True)
+    agree.add_argument("--direction", type=int, choices=(-1, 1), default=1)
+    agree.add_argument("--gate", type=float, default=0.85)
+    agree.add_argument("--seed", type=int, default=0)
+    spread = command("spread")
+    spread.add_argument("--axis", required=True)
+    spread.add_argument("--threshold", required=True, type=float)
+    spread.add_argument("--band", nargs=2, type=float, default=(0.2, 0.6), metavar=("LOW", "HIGH"))
+    spread.add_argument("--tie-epsilon", type=float, default=0.0)
+    card = command("card", source=False)
+    card.add_argument("--name", required=True)
+    card.add_argument("--kind", required=True, choices=("verifiable", "learned"))
+    card.add_argument("--axis", required=True)
+    card.add_argument("--repeat", type=Path)
+    card.add_argument("--agreement", type=Path)
+    card.add_argument("--stress", type=Path)
+    card.add_argument("--spread", type=Path)
+    card.add_argument("--post-training", type=Path)
+    card.add_argument("--repeat-tolerance", type=float, default=1e-6)
+    card.add_argument("--shortcut-tolerance", type=float, default=0.1)
+    card.add_argument("--min-mixed-share", type=float, default=0.3)
+    card.add_argument("--blind-spot", action="append", default=[])
     args = parser.parse_args(argv)
 
     if args.command == "stress-manifest":
         print(build_stress_manifest(args.manifest, args.output_dir, seed=args.seed))
+        return
+    if args.command == "shortcut-manifest":
+        print(
+            build_shortcut_manifest(
+                args.manifest, args.output_dir, shortcuts=args.shortcuts, seed=args.seed
+            )
+        )
+        return
+    if args.command == "card":
+        write_card(
+            build_card(
+                name=args.name,
+                kind=args.kind,
+                axis=args.axis,
+                repeat=args.repeat,
+                agreement=args.agreement,
+                stress=args.stress,
+                spread=args.spread,
+                post_training=args.post_training,
+                repeat_tolerance=args.repeat_tolerance,
+                shortcut_tolerance=args.shortcut_tolerance,
+                min_mixed_share=args.min_mixed_share,
+                blind_spots=args.blind_spot,
+            ),
+            args.output,
+        )
         return
     if args.command == "review-import":
         pairs = PreferencePair.from_review(
@@ -132,6 +191,23 @@ def main(argv: list[str] | None = None) -> None:
         elif args.command == "sequence":
             result = analysis.sequence(
                 EditSequenceSpec.model_validate(json.loads(args.spec.read_text()))
+            )
+        elif args.command == "agreement":
+            result = agreement(
+                evaluation,
+                OutcomeLabel.load_jsonl(args.labels),
+                Contrast.load_json(args.contrasts),
+                axis=args.axis,
+                direction=args.direction,
+                gate=args.gate,
+                seed=args.seed,
+            )
+        elif args.command == "spread":
+            result = analysis.spread(
+                axis=args.axis,
+                threshold=args.threshold,
+                band=tuple(args.band),
+                tie_epsilon=args.tie_epsilon,
             )
         elif args.command == "compare":
             result = analysis.compare_rankings(

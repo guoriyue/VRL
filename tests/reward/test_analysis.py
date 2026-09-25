@@ -373,3 +373,29 @@ async def test_stress_preserves_alpha_except_explicit_probes_and_records_score_c
     failed = next(row for row in failed_report["observations"] if row["transform"] == "noise_rgb")
     assert failed["deltas"] == {} and failed["status"] == "error"
     assert "noise_rgb" not in failed_report["transforms"]
+
+
+def test_spread_reports_success_band_and_within_prompt_signal():
+    records = {}
+    for sample_id, prompt_id, score in [
+        ("a", "p", 0.9),
+        ("b", "p", 0.1),
+        ("c", "q", 0.1),
+        ("d", "q", 0.2),
+        ("e", "r", 0.9),
+        ("f", "r", 0.9),
+    ]:
+        records[sample_id] = {
+            "input": {"sample_id": sample_id, "prompt_id": prompt_id},
+            "status": "success",
+            "result": {"scores": {"judge": score}},
+        }
+    report = Analysis(Evaluation("run", {}, records)).spread(axis="judge", threshold=0.5)
+    assert report["success_rate"] == pytest.approx(0.5) and report["in_band"] is True
+    assert report["mixed_prompt_share"] == pytest.approx(1 / 3)
+    assert report["zero_spread_prompt_share"] == pytest.approx(1 / 3)
+    assert report["prompts"]["p"]["mixed"] is True and report["prompts"]["r"]["mixed"] is False
+    with pytest.raises(ValueError, match="band"):
+        Analysis(Evaluation("run", {}, records)).spread(
+            axis="judge", threshold=0.5, band=(0.6, 0.2)
+        )
