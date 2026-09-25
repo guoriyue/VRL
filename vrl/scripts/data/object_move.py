@@ -14,10 +14,11 @@ photo as ``reference_image`` and the reward's ``metadata.object_move`` spec:
 - ``bench``: SpatialEdit-Bench ``move`` items (held out; ``bbox_gt`` is the
   target box).
 
-Placement rules: the object is the only instance of a ``MOVABLE`` category,
+Placement rules (``ONTO_FURNITURE``, a curriculum choice -- see the
+dataclass): the object is the only instance of one of its categories,
 0.8-12% of the frame and not in anyone's hands (no person box covers a third
-of it); the support is the only instance of a ``SUPPORTS``
-category, >= 8% of the frame, and the object is not already resting on it (its
+of it); the support is the only instance of one of its furniture categories,
+>= 8% of the frame, and the object is not already resting on it (its
 bottom centre is >= 8% of the frame away from the support's box); an
 object-sized spot on the support -- its bottom edge 40% of the way down the
 support's box, where a table top or seat is -- is free of every other
@@ -45,6 +46,7 @@ import re
 import tarfile
 import urllib.request
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -56,48 +58,75 @@ SPATIALEDIT_TRAIN = (
     "object_moving/worker0-{shard:06d}.tar"
 )
 SPATIALEDIT_BENCH = "https://huggingface.co/datasets/EasonXiao-888/SpatialEdit-Bench/resolve/main/"
-MOVABLE = frozenset(
-    (
-        "backpack",
-        "umbrella",
-        "handbag",
-        "suitcase",
-        "frisbee",
-        "sports ball",
-        "baseball glove",
-        "skateboard",
-        "tennis racket",
-        "bottle",
-        "wine glass",
-        "cup",
-        "bowl",
-        "banana",
-        "apple",
-        "sandwich",
-        "orange",
-        "broccoli",
-        "carrot",
-        "donut",
-        "cake",
-        "pizza",
-        "potted plant",
-        "laptop",
-        "mouse",
-        "remote",
-        "keyboard",
-        "cell phone",
-        "book",
-        "vase",
-        "scissors",
-        "teddy bear",
-        "cat",
-        "dog",
-        "hair drier",
-        "toothbrush",
-    )
+
+
+@dataclass(frozen=True)
+class OntoFurnitureCurriculum:
+    """The one task family these COCO rows teach: a loose thing set down on furniture.
+
+    This is a curriculum choice, not a definition of what can move. The
+    category lists only decide which annotations become candidate rows (they
+    keep the builder from writing "move the toilet onto the chair"); whether a
+    particular instance can really be picked up and set down there is decided
+    per row by the reviewed verdicts in ``coco_review.json``. Results on these
+    manifests therefore speak to moving loose objects onto furniture, not to
+    object movement in general. The thresholds are fractions of the frame.
+    """
+
+    objects: frozenset[str]
+    supports: frozenset[str]
+    min_area: float = 0.008  # smaller than this the object is a few pixels
+    max_area: float = 0.12  # larger than this it is furniture-sized itself
+    min_support_area: float = 0.08
+    min_gap: float = 0.08  # closer than this it is already on the support
+    # Where the landing spot's bottom edge sits down the support's box: a table
+    # top or a seat, not the backrest above or the legs below.
+    rest_depth: float = 0.4
+
+
+ONTO_FURNITURE = OntoFurnitureCurriculum(
+    objects=frozenset(
+        (
+            "backpack",
+            "umbrella",
+            "handbag",
+            "suitcase",
+            "frisbee",
+            "sports ball",
+            "baseball glove",
+            "skateboard",
+            "tennis racket",
+            "bottle",
+            "wine glass",
+            "cup",
+            "bowl",
+            "banana",
+            "apple",
+            "sandwich",
+            "orange",
+            "broccoli",
+            "carrot",
+            "donut",
+            "cake",
+            "pizza",
+            "potted plant",
+            "laptop",
+            "mouse",
+            "remote",
+            "keyboard",
+            "cell phone",
+            "book",
+            "vase",
+            "scissors",
+            "teddy bear",
+            "cat",
+            "dog",
+            "hair drier",
+            "toothbrush",
+        )
+    ),
+    supports=frozenset(("dining table", "chair", "couch", "bed", "bench")),
 )
-SUPPORTS = frozenset(("dining table", "chair", "couch", "bed", "bench"))
-MIN_AREA, MAX_AREA, MIN_SUPPORT_AREA, MIN_GAP, REST_DEPTH = 0.008, 0.12, 0.08, 0.08, 0.4
 _MOVE_PHRASE = re.compile(r"^move (.+?) into the red box", re.IGNORECASE)
 
 
@@ -158,14 +187,15 @@ def landing_spot(
     width, height = size
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
-    if not MIN_AREA <= w * h / (width * height) <= MAX_AREA:
+    rules = ONTO_FURNITURE
+    if not rules.min_area <= w * h / (width * height) <= rules.max_area:
         return None
     sx0, sy0, sx1, sy1 = support
-    if (sx1 - sx0) * (sy1 - sy0) < MIN_SUPPORT_AREA * width * height:
+    if (sx1 - sx0) * (sy1 - sy0) < rules.min_support_area * width * height:
         return None
-    if _gap(_rest_point(box), support, size) < MIN_GAP:
+    if _gap(_rest_point(box), support, size) < rules.min_gap:
         return None
-    rest_y = sy0 + REST_DEPTH * (sy1 - sy0)
+    rest_y = sy0 + rules.rest_depth * (sy1 - sy0)
     for fraction in (0.5, 0.3, 0.7):
         rest_x = sx0 + fraction * (sx1 - sx0)
         land = (rest_x - w / 2, rest_y - h, rest_x + w / 2, rest_y)
@@ -210,11 +240,11 @@ def _coco_row(info: dict, anns: list[dict], cats: dict, split: str, out: Path) -
     movables = [
         a
         for a in unique
-        if cats[a["category_id"]] in MOVABLE
+        if cats[a["category_id"]] in ONTO_FURNITURE.objects
         # Held or carried (a glass in a hand, a board under a skater): not free to set down.
         and all(_overlap(_xyxy(a["bbox"]), p) <= a["bbox"][2] * a["bbox"][3] / 3 for p in people)
     ]
-    supports = [a for a in unique if cats[a["category_id"]] in SUPPORTS]
+    supports = [a for a in unique if cats[a["category_id"]] in ONTO_FURNITURE.supports]
     for ann in movables:
         for sup in supports:
             obj_box, sup_box = _xyxy(ann["bbox"]), _xyxy(sup["bbox"])
