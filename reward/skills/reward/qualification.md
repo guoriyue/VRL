@@ -1,8 +1,3 @@
----
-name: reward-qualification
-description: Qualify a reward for RL before it enters a training key -- run the five gates (repeatability, label agreement, shortcuts, spread under the training sampler, post-training check) with `python -m reward` and write the reward card. Use when adding a reward, choosing between scorers, or before launching a GRPO run on a reward without a card.
----
-
 # Reward qualification
 
 A reward is usable for GRPO only when it is **repeatable**, **agrees with independent
