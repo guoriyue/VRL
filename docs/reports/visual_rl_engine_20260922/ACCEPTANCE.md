@@ -142,7 +142,7 @@ learned scoring on these new candidates has not yet run.
 
 - [Reward reliability baseline and verified artifact index](../reward_reliability/README.md)
 - [Independent reward scoring and calibration](../../rewards_offline_evaluation.md)
-- [Visual controller training, restore and comparison](../../visual_controller_rl.md)
+- Visual controller training, restore and comparison: removed on 2026-09-24 (commits before then keep the code); multi-step editing continues as [edit chains](../../edit_chains.md)
 - Frozen GPU queue: `outputs/qwen_image_21/followup_gpu_queue_20260922/`
 - Controller run: `outputs/qwen_image_21/controller_rgba_exploration16/`
 - Source-paired controller analysis: `outputs/qwen_image_21/controller_rgba_exploration_analysis.json`

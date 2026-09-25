@@ -1,6 +1,5 @@
-"""The editor consumes the current image; the judge scores against the original task."""
+"""The editor consumes the current image; the judge scores states against the source."""
 
-from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -8,24 +7,24 @@ import pytest
 import torch
 from PIL import Image
 
-from agentic.episode import Action, Artifact, Observation, PolicyStamp, Score, Task
+from agentic.chains import Artifact, EditChain, PolicyStamp
 from agentic.roles import LocalEditor, RewardJudge
 from vrl.rewards.types import RewardOutput
+from vrl.trainers.data.prompts import PromptExample
 
 
 @pytest.mark.asyncio
-async def test_editor_consumes_current_image_judge_checks_original_and_parking_failure(tmp_path):
+async def test_editor_consumes_current_image_judge_scores_against_source(tmp_path):
     original, current = tmp_path / "original.png", tmp_path / "current.png"
     Image.new("RGB", (8, 8), "black").save(original)
     Image.new("RGBA", (8, 8), (255, 0, 0, 0)).save(current)
-    action = Action("blue", "edit", "Make the object blue")
-    task = Task(
+    chain = EditChain(
         "blue-task",
-        "A blue object with its background unchanged",
         Artifact.from_path(original),
-        (action, Action("stop", "stop")),
+        [PromptExample(prompt="Make the object blue"), PromptExample(prompt="Sharpen")],
+        tmp_path,
+        requirement="Keep the background unchanged",
     )
-    observation = Observation(1, 1, Artifact.from_path(current), Score(0.2))
     requests = []
 
     class Model(torch.nn.Linear):
@@ -50,41 +49,39 @@ async def test_editor_consumes_current_image_judge_checks_original_and_parking_f
     )
     await editor.park()
     await editor.activate()
-    output = await editor.edit(task, observation, action, seed=91, output_dir=tmp_path / "edit")
+    first = Artifact.from_path(current)
+    output = await editor.edit(chain, 0, first, seed=91, output_dir=tmp_path / "edit")
     assert requests[0].inputs[0].reference_images == [str(current)]
-    assert requests[0].inputs[0].prompt == action.instruction
+    assert requests[0].inputs[0].prompt == "Make the object blue"
     assert requests[0].sampling["seed"] == 91
     with Image.open(output.path) as image:
         assert image.mode == "RGBA" and image.getpixel((0, 0))[3] == 127
-    second = await editor.edit(
-        task,
-        replace(observation, step=2, current=output),
-        action,
-        seed=92,
-        output_dir=tmp_path / "edit",
-    )
+    second = await editor.edit(chain, 1, output, seed=92, output_dir=tmp_path / "edit")
     assert second.path != output.path
+    assert requests[1].inputs[0].reference_images == [output.path]
     await editor.park()
     with pytest.raises(RuntimeError, match="healthy and active"):
-        await editor.edit(task, observation, action, seed=91, output_dir=tmp_path / "bad")
+        await editor.edit(chain, 0, first, seed=91, output_dir=tmp_path / "bad")
 
     runtime = SimpleNamespace(
         activate=AsyncMock(),
         park_memory=AsyncMock(),
-        score=AsyncMock(return_value=RewardOutput((0.7,), {"locality": (0.9,)})),
+        score=AsyncMock(return_value=RewardOutput((0.2, 0.7), {"locality": (0.5, 0.9)})),
     )
     judge = RewardJudge(runtime, revision="fake-v1", require_memory_release=True)
     await judge.park()  # Even an external service must acknowledge the initial handoff.
     runtime.activate.assert_awaited_once()
     runtime.park_memory.assert_awaited_once_with(required=True)
     await judge.activate()
-    score = (await judge.score(task, [observation.current]))[0]
-    sample = runtime.score.call_args.args[0][0]
-    assert sample.prompt == task.instruction
-    assert sample.metadata["reference_images"] == [str(original)]
-    assert sample.output.shape == (4, 1, 8, 8)
-    assert torch.all(sample.output[0] == 1) and torch.all(sample.output[3] == 0)
-    assert score.total == 0.7 and score.components == {"locality": 0.9}
+    scores = await judge.score(chain, [chain.source, first])
+    samples = runtime.score.call_args.args[0]
+    assert [sample.prompt for sample in samples] == ["Make the object blue Sharpen"] * 2
+    assert samples[1].metadata["reference_images"] == [str(original)]
+    assert samples[1].metadata["requirement"] == "Keep the background unchanged"
+    assert samples[1].output.shape == (4, 1, 8, 8)
+    assert torch.all(samples[1].output[0] == 1) and torch.all(samples[1].output[3] == 0)
+    assert [score.total for score in scores] == [0.2, 0.7]
+    assert scores[1].components == {"locality": 0.9}
     runtime.park_memory.side_effect = RuntimeError("partial release")
     with pytest.raises(RuntimeError, match="partial release"):
         await judge.park()
@@ -93,7 +90,7 @@ async def test_editor_consumes_current_image_judge_checks_original_and_parking_f
 
 
 @pytest.mark.asyncio
-async def test_judge_preserves_alpha_and_passes_reward_only_targets_by_path(tmp_path):
+async def test_judge_preserves_alpha_and_passes_reward_assets_by_path(tmp_path):
     source, target, candidate = (
         tmp_path / name for name in ("source.png", "target.png", "candidate.png")
     )
@@ -102,16 +99,12 @@ async def test_judge_preserves_alpha_and_passes_reward_only_targets_by_path(tmp_
     layer.paste((255, 0, 0, 255), (4, 4, 12, 12))
     layer.save(target)
     layer.save(candidate)
-    task = Task.from_manifest_record(
-        {
-            "task_id": "extract",
-            "instruction": "Extract the red square",
-            "source": "source.png",
-            "actions": [{"name": "stop", "kind": "stop"}],
-            "requirement": "Keep the square edges crisp",
-            "reward_assets": {"target_image": "target.png"},
-        },
-        base_dir=tmp_path,
+    chain = EditChain(
+        "extract",
+        Artifact.from_path(source),
+        [PromptExample(prompt="Extract the red square")],
+        tmp_path,
+        reward_assets={"target_image": Artifact.from_path(target)},
     )
     runtime = SimpleNamespace(
         activate=AsyncMock(),
@@ -120,11 +113,10 @@ async def test_judge_preserves_alpha_and_passes_reward_only_targets_by_path(tmp_
     )
     judge = RewardJudge(runtime, revision="pixel-fixture", require_memory_release=False)
     await judge.activate()
-    await judge.score(task, [Artifact.from_path(candidate)])
+    await judge.score(chain, [Artifact.from_path(candidate)])
     sample = runtime.score.call_args.args[0][0]
     # The judge sends straight RGBA and names the reward-only target by path.
     assert sample.metadata["target_image"] == str(target)
-    assert sample.metadata["requirement"] == "Keep the square edges crisp"
     assert sample.output.shape == (4, 1, 16, 16)
     assert torch.all(sample.output[3, 0, 4:12, 4:12] == 1)
     assert torch.all(sample.output[3, 0, :4] == 0)

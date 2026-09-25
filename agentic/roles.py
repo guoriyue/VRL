@@ -1,10 +1,10 @@
-"""Episode roles over the framework's own runtimes, plus the scripted controller.
+"""Evaluation roles for a chain run, over the framework's own runtimes.
 
 ``LocalEditor`` runs a frozen family model in-process through its batch
-executor; ``RewardJudge`` scores through a ``RewardRuntime``;
-``OrderedController`` plays a declared action schedule. None of them owns an
-optimizer or a scheduler. On a shared GPU each model-holding role parks its
-memory between turns, and a failed memory transition retires the role.
+executor, one image per step; ``RewardJudge`` scores every state through a
+``RewardRuntime`` in one call. Neither owns an optimizer or a scheduler. On a
+shared GPU each role parks its memory between turns, and a failed memory
+transition retires the role rather than reusing it.
 """
 
 from __future__ import annotations
@@ -16,15 +16,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from agentic.episode import (
-    Action,
-    Artifact,
-    Decision,
-    Observation,
-    PolicyStamp,
-    Score,
-    Task,
-)
+from agentic.chains import Artifact, EditChain, PolicyStamp, Score
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.generation.types import GenerationInput, GenerationRequest
@@ -32,7 +24,6 @@ from vrl.models.parking import ModelParking
 from vrl.rewards.protocols import RewardRuntime
 from vrl.rewards.types import RewardSample
 from vrl.trajectory.storage import TrajectoryStoragePolicy
-from vrl.utils.json_files import canonical_json_sha256
 from vrl.utils.media import to_pil_image, write_png
 
 
@@ -88,20 +79,18 @@ class LocalEditor:
             raise
 
     async def edit(
-        self, task: Task, observation: Observation, action: Action, *, seed: int, output_dir: Path
+        self, chain: EditChain, index: int, current: Artifact, *, seed: int, output_dir: Path
     ) -> Artifact:
-        """One edit: the action's instruction applied to the current image."""
+        """One edit: the step's instruction applied to the current image."""
 
         if not self._active or self._broken:
             raise RuntimeError("editor must be healthy and active")
         request = GenerationRequest(
-            request_id=f"visual-edit-{uuid.uuid4().hex}",
+            request_id=f"chain-edit-{uuid.uuid4().hex}",
             family=self.family,
             task="t2i",
             inputs=[
-                GenerationInput(
-                    prompt=action.instruction, reference_images=[observation.current.path]
-                )
+                GenerationInput(prompt=chain.steps[index].prompt, reference_images=[current.path])
             ],
             samples_per_prompt=1,
             sampling={**self.sampling, "seed": seed},
@@ -116,13 +105,13 @@ class LocalEditor:
             result = self.executor.merge_generation_batches(
                 request, request.sample_rows(), [batch]
             )
-        path = output_dir / f"edit-{observation.step:04d}.png"
+        path = output_dir / f"step{index:02d}.png"
         write_png(result.output[0], path)
         return Artifact.from_path(path)
 
 
 class RewardJudge:
-    """Score every state against the original task and source image, in one call."""
+    """Score every state against the chain's instructions and source image, in one call."""
 
     def __init__(
         self, runtime: RewardRuntime, *, revision: str, require_memory_release: bool
@@ -160,7 +149,7 @@ class RewardJudge:
             self._broken = True
             raise
 
-    async def score(self, task: Task, artifacts: list[Artifact]) -> list[Score | None]:
+    async def score(self, chain: EditChain, artifacts: list[Artifact]) -> list[Score | None]:
         from PIL import Image
 
         if not self._activated or self._broken:
@@ -172,14 +161,14 @@ class RewardJudge:
             media = torch.from_numpy(pixels).permute(2, 0, 1).unsqueeze(1).float() / 255.0
             samples.append(
                 RewardSample(
-                    prompt=task.instruction,
+                    prompt=chain.instruction,
                     output=media,
-                    sample_id=f"{task.task_id}:{artifact.sha256}",
+                    sample_id=f"{chain.chain_id}:{artifact.sha256}",
                     metadata={
-                        "reference_images": [task.source.path],
-                        "visual_task_id": task.task_id,
-                        **({"requirement": task.requirement} if task.requirement else {}),
-                        **{name: asset.path for name, asset in task.reward_assets.items()},
+                        "reference_images": [chain.source.path],
+                        "chain_id": chain.chain_id,
+                        **({"requirement": chain.requirement} if chain.requirement else {}),
+                        **{name: asset.path for name, asset in chain.reward_assets.items()},
                     },
                 )
             )
@@ -188,41 +177,3 @@ class RewardJudge:
             Score(total, {name: values[index] for name, values in result.components.items()})
             for index, total in enumerate(result.scores)
         ]
-
-
-class OrderedController:
-    """Plays a declared action schedule, then stops; its zero log-probs are not policy data."""
-
-    def __init__(self, actions: tuple[str, ...]) -> None:
-        if not actions or any(not isinstance(action, str) or not action for action in actions):
-            raise ValueError("ordered controller needs nonempty edit action names")
-        self.actions = tuple(actions)
-        self.policy_stamp = PolicyStamp(
-            "scripted-edit-sequence", canonical_json_sha256(self.actions, allow_nan=False), 0
-        )
-
-    async def activate(self) -> None:
-        pass
-
-    async def park(self) -> None:
-        pass
-
-    async def decide(self, task: Task, observation: Observation, *, seed: int) -> Decision:
-        if not 0 <= observation.step <= len(self.actions):
-            raise ValueError("ordered controller received a step outside its plan")
-        expected_previous = self.actions[observation.step - 1] if observation.step else None
-        if observation.previous_action != expected_previous:
-            raise ValueError("ordered controller received a different action history")
-        if observation.step < len(self.actions):
-            action = self.actions[observation.step]
-            if not any(item.name == action and item.kind == "edit" for item in task.actions):
-                raise ValueError("ordered controller action is not an available edit")
-        else:
-            action = next(item.name for item in task.actions if item.kind == "stop")
-        return Decision(
-            action,
-            self.policy_stamp,
-            0.0,
-            observation.digest(task),
-            {"kind": "scripted-sequence", "actions": list(self.actions), "seed": seed},
-        )

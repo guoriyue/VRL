@@ -1,4 +1,4 @@
-"""Visual reward recipes admit CPU verification and reject unsafe placement before models."""
+"""Chain sessions admit CPU verification and reject unsafe reward placement before models."""
 
 import json
 from argparse import Namespace
@@ -6,8 +6,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from agentic.controller import CategoricalController
-from agentic.scripts.visual_episode import open_visual_session
+import vrl.run
+from agentic.scripts.session import open_session
 
 
 @pytest.mark.asyncio
@@ -27,14 +27,13 @@ async def test_visual_reward_recipe_requires_explicit_remote_identity_and_cpu_lo
         device="cpu",
         path="unused",
         revision="test",
-        temperature=4,
     )
-    allocate = Mock(side_effect=RuntimeError("reached controller allocation"))
-    monkeypatch.setattr(CategoricalController, "from_qwen_checkpoint", allocate)
+    allocate = Mock(side_effect=RuntimeError("reached editor allocation"))
+    monkeypatch.setattr(vrl.run, "resolve_model", allocate)
     recipe.write_text("components: {image_sharpness: 1.0}\n")
-    with pytest.raises(RuntimeError, match="reached controller allocation"):
-        async with open_visual_session(args, output=output):
-            pytest.fail("fixture stops before allocating the controller")
+    with pytest.raises(RuntimeError, match="reached editor allocation"):
+        async with open_session(args, output=output):
+            pytest.fail("fixture stops before allocating the editor")
     allocate.assert_called_once()
     assert json.loads((output / "reward_recipe.json").read_text())["recipe"]["components"] == {
         "image_sharpness": 1.0
@@ -44,13 +43,13 @@ async def test_visual_reward_recipe_requires_explicit_remote_identity_and_cpu_lo
         "components: {image_sharpness: 1.0}\ninference: {image_sharpness: {kind: ray}}\n"
     )
     with pytest.raises(ValueError, match="CPU or operator-owned HTTP"):
-        async with open_visual_session(args, output=output):
+        async with open_session(args, output=output):
             pytest.fail("invalid placement admitted")
     recipe.write_text(
         "components: {editreward: 1.0}\ninference:\n  editreward:\n    kind: http\n    endpoint: http://127.0.0.1:18315\n    expected_model: test\n"
     )
     with pytest.raises(ValueError, match="expected_model_version"):
-        async with open_visual_session(args, output=output):
+        async with open_session(args, output=output):
             pytest.fail("unpinned service admitted")
     allocate.assert_not_called()
 
@@ -75,7 +74,7 @@ async def test_visual_reward_recipe_requires_explicit_remote_identity_and_cpu_lo
         )
     )
     with pytest.raises(FileNotFoundError, match="missing-receipt"):
-        async with open_visual_session(args, output=output):
+        async with open_session(args, output=output):
             pytest.fail("missing calibration receipt admitted")
     allocate.assert_not_called()
 
@@ -120,10 +119,9 @@ async def test_live_cpu_http_judge_needs_no_gpu_lease_but_unverified_service_is_
         device="cpu",
         path="unused",
         revision="test",
-        temperature=4,
     )
-    allocate = Mock(side_effect=RuntimeError("reached controller allocation"))
-    monkeypatch.setattr(CategoricalController, "from_qwen_checkpoint", allocate)
+    allocate = Mock(side_effect=RuntimeError("reached editor allocation"))
+    monkeypatch.setattr(vrl.run, "resolve_model", allocate)
     try:
         host, port = service.address
         recipe.write_text(
@@ -141,8 +139,8 @@ async def test_live_cpu_http_judge_needs_no_gpu_lease_but_unverified_service_is_
                 }
             )
         )
-        with pytest.raises(RuntimeError, match="reached controller allocation"):
-            async with open_visual_session(args, output=output):
+        with pytest.raises(RuntimeError, match="reached editor allocation"):
+            async with open_session(args, output=output):
                 pytest.fail("fixture stops before model allocation")
         allocate.assert_called_once()
     finally:
@@ -179,7 +177,7 @@ async def test_live_cpu_http_judge_needs_no_gpu_lease_but_unverified_service_is_
             )
         )
         with pytest.raises(ValueError, match="prove accelerator isolation or memory parking"):
-            async with open_visual_session(args, output=output):
+            async with open_session(args, output=output):
                 pytest.fail("unverified reward placement admitted")
         allocate.assert_not_called()
     finally:

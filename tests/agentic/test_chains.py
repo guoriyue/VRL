@@ -1,4 +1,4 @@
-"""Edit chains condition each step on a drawn sample of the previous one."""
+"""A chain edits each step on the previous output, scores once, and trains per step."""
 
 from __future__ import annotations
 
@@ -6,13 +6,23 @@ import json
 import random
 from collections.abc import Sequence
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
 import torch
 from PIL import Image
 
-from agentic.chains import EditChain, load_edit_chains, sample_image
+from agentic.chains import (
+    Artifact,
+    EditChain,
+    PolicyStamp,
+    Score,
+    load_edit_chains,
+    run_chain,
+    sample_image,
+)
 from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards import RewardOutput, RewardSample
@@ -23,6 +33,91 @@ from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.data.prompts import PromptExample
 from vrl.trajectory.builders import build_diffusion_trajectory
 from vrl.utils.media_reference import MediaReference
+
+
+def _chain(tmp_path: Path, steps: list[str], chain_id: str = "chain") -> EditChain:
+    source = tmp_path / f"{chain_id}.png"
+    Image.new("RGB", (2, 2), "black").save(source)
+    return EditChain(
+        chain_id,
+        Artifact.from_path(source),
+        [PromptExample(prompt=step) for step in steps],
+        tmp_path / "edit_chains",
+    )
+
+
+# ── run_chain with fake roles ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_each_step_edits_the_previous_output_and_states_are_scored_once(tmp_path):
+    chain = _chain(tmp_path, ["whiten", "keep"])
+    parents, active = [], set()
+
+    class Role:
+        def __init__(self, name):
+            self.name = name
+            self.policy_stamp = PolicyStamp(name, "fake", 0)
+            self.revision = "fake"
+
+        async def activate(self):
+            assert not active, "a previous owner did not release memory"
+            active.add(self.name)
+
+        async def park(self):
+            active.discard(self.name)
+
+    class Editor(Role):
+        async def edit(self, chain, index, current, *, seed, output_dir):
+            parents.append((index, current, seed))
+            path = output_dir / f"out{index}.png"
+            Image.new("RGB", (2, 2), "white").save(path)
+            return Artifact.from_path(path)
+
+    class Judge(Role):
+        async def score(self, chain, artifacts):
+            scores = []
+            for artifact in artifacts:
+                with Image.open(artifact.path) as image:
+                    scores.append(Score(image.getpixel((0, 0))[0] / 255, {"white": 1.0}))
+            return scores
+
+    trace = await run_chain(
+        chain, Editor("editor"), Judge("judge"), output_dir=tmp_path / "run", seed=5
+    )
+    assert trace["status"] == "success" and not active
+    assert [(index, parent.sha256, seed) for index, parent, seed in parents] == [
+        (0, chain.source.sha256, 5),
+        (1, Artifact(**trace["steps"][0]["artifact"]).sha256, 6),
+    ]
+    assert [score["total"] for score in trace["state_scores"]] == [0.0, 1.0, 1.0]
+    assert trace["final_score"] == {"total": 1.0, "components": {"white": 1.0}}
+    assert trace["chain"]["instruction"] == "whiten keep"
+    assert json.loads((tmp_path / "run/run.json").read_text()) == json.loads(json.dumps(trace))
+
+
+@pytest.mark.asyncio
+async def test_failed_edit_leaves_an_error_record_and_never_scores(tmp_path):
+    chain = _chain(tmp_path, ["a"])
+    editor = SimpleNamespace(
+        policy_stamp=PolicyStamp("editor", "fake", 0),
+        activate=AsyncMock(),
+        park=AsyncMock(),
+        edit=AsyncMock(side_effect=RuntimeError("tool failed")),
+    )
+    judge = SimpleNamespace(
+        revision="fake", activate=AsyncMock(), park=AsyncMock(), score=AsyncMock()
+    )
+    with pytest.raises(RuntimeError, match="tool failed"):
+        await run_chain(chain, editor, judge, output_dir=tmp_path / "run")
+    trace = json.loads((tmp_path / "run/run.json").read_text())
+    assert trace["status"] == "error" and trace["steps"][0]["status"] == "error"
+    assert "final_score" not in trace
+    assert judge.score.await_count == 0
+    assert editor.park.await_count == 2  # Initial handoff and failed operation cleanup.
+
+
+# ── training through the collector ───────────────────────────────────────────
 
 
 class _Runtime:
@@ -108,19 +203,8 @@ def _collector() -> tuple[RolloutCollector, _Runtime, _RewardRuntime]:
     return collector, runtime, reward
 
 
-def _chain(tmp_path: Path, steps: list[str], chain_id: str = "chain") -> EditChain:
-    source = tmp_path / f"{chain_id}.png"
-    Image.new("RGB", (2, 2), "white").save(source)
-    return EditChain(
-        chain_id,
-        str(source),
-        [PromptExample(prompt=step) for step in steps],
-        tmp_path / "edit_chains",
-    )
-
-
 @pytest.mark.asyncio
-async def test_each_step_conditions_on_a_drawn_sample_and_scores_against_it(tmp_path) -> None:
+async def test_training_draws_each_next_state_and_scores_all_groups_at_once(tmp_path) -> None:
     collector, runtime, reward = _collector()
     chain = _chain(tmp_path, ["recolor", "letter", "sharpen"])
     stats = RolloutStats()
@@ -138,7 +222,7 @@ async def test_each_step_conditions_on_a_drawn_sample_and_scores_against_it(tmp_
         ["sharpen"],
     ]
     references = [request.inputs[0].reference_images for request in runtime.requests]
-    assert references[0] == [chain.source]
+    assert references[0] == [chain.source.path]
     for step, (draw, reference) in enumerate(zip(expected_draws[:2], references[1:], strict=True)):
         parent = Path(reference[0])
         assert parent.parent.parent == tmp_path / "edit_chains" / "chain"
@@ -168,24 +252,16 @@ async def test_each_step_conditions_on_a_drawn_sample_and_scores_against_it(tmp_
     assert stats.counters["collect.group_count"] == 3
     assert stats.counters["collect.sample_count"] == 6
 
-    # The chain ran as one episode: its trace records the schedule and the drawn scores.
-    (episode_path,) = (tmp_path / "edit_chains" / "chain").glob("*/episode.json")
-    trace = json.loads(episode_path.read_text())
-    assert trace["schema"] == "vrl.visual-episode.v2"
-    assert trace["termination"] == "tool_budget" and trace["tool_calls"] == 3
-    assert [step["decision"]["action"] for step in trace["steps"]] == [
-        "step-00",
-        "step-01",
-        "step-02",
-    ]
-    # The source is not scored; each edited state carries its drawn sample's score.
+    # The run record holds the drawn samples' scores; the source is unscored.
+    (run_path,) = (tmp_path / "edit_chains" / "chain").glob("*/run.json")
+    trace = json.loads(run_path.read_text())
+    assert trace["status"] == "success" and len(trace["steps"]) == 3
     assert trace["state_scores"][0] is None
     assert [score["total"] for score in trace["state_scores"][1:]] == [
         float(expected_draws[0]),
         2.0 + expected_draws[1],
         4.0 + expected_draws[2],
     ]
-    assert trace["final_score"]["total"] == 4.0 + expected_draws[2]
 
 
 @pytest.mark.asyncio
@@ -201,8 +277,12 @@ async def test_two_chains_in_one_call_get_distinct_group_ids(tmp_path) -> None:
     assert [batch.group_ids.tolist() for batch in batches] == [[0, 0], [1, 1], [2, 2]]
 
 
-def test_manifest_rows_resolve_source_and_accept_string_or_object_steps(tmp_path) -> None:
+# ── manifest ────────────────────────────────────────────────────────────────
+
+
+def test_manifest_rows_resolve_paths_and_accept_string_or_object_steps(tmp_path) -> None:
     Image.new("RGB", (4, 4), "white").save(tmp_path / "page.png")
+    Image.new("RGB", (4, 4), "red").save(tmp_path / "target.png")
     path = tmp_path / "chains.jsonl"
     rows = [
         {
@@ -212,6 +292,8 @@ def test_manifest_rows_resolve_source_and_accept_string_or_object_steps(tmp_path
                 "Recolor the coat blue.",
                 {"prompt": "Fix the second bubble.", "target_text": "HELLO", "panel": 2},
             ],
+            "requirement": "Keep the face unchanged.",
+            "reward_assets": {"target_image": "target.png"},
             "metadata": {"page": "p1"},
         },
         {"source": "./page.png", "steps": ["Sharpen."]},
@@ -220,15 +302,17 @@ def test_manifest_rows_resolve_source_and_accept_string_or_object_steps(tmp_path
     chains = load_edit_chains(path, media_dir=tmp_path / "media")
     assert [chain.chain_id for chain in chains] == ["comic-1", "chains:2"]
     first = chains[0]
-    assert first.source == str(tmp_path / "page.png")
+    assert first.source == Artifact.from_path(tmp_path / "page.png")
+    assert first.reward_assets["target_image"] == Artifact.from_path(tmp_path / "target.png")
+    assert first.requirement == "Keep the face unchanged."
     assert first.media_dir == tmp_path / "media"
     assert first.steps[0] == PromptExample(prompt="Recolor the coat blue.")
-    assert first.steps[1].target_text == "HELLO"
-    assert first.steps[1].metadata == {"panel": 2}
+    assert first.steps[1].target_text == "HELLO" and first.steps[1].metadata == {"panel": 2}
     step = first.step_example(1, "/tmp/parent.png", parent_sample_id="req:0:1")
     assert step.reference_images == ["/tmp/parent.png"]
     assert step.reward_metadata()["prompt_id"] == "comic-1:1"
-    assert step.reward_metadata()["chain_source"] == first.source
+    assert step.reward_metadata()["chain_source"] == first.source.path
+    assert step.reward_metadata()["page"] == "p1"
 
 
 @pytest.mark.parametrize(
@@ -237,6 +321,10 @@ def test_manifest_rows_resolve_source_and_accept_string_or_object_steps(tmp_path
         ({"source": "page.png", "steps": []}, "non-empty list"),
         ({"source": "missing.png", "steps": ["a"]}, "does not exist"),
         ({"source": "page.png", "steps": ["a"], "extra": 1}, "unknown edit chain fields"),
+        (
+            {"source": "page.png", "steps": ["a"], "reward_assets": {"t": "no.png"}},
+            "does not exist",
+        ),
         (
             {"source": "page.png", "steps": [{"prompt": "a", "reference_image": "x.png"}]},
             "conditioning",

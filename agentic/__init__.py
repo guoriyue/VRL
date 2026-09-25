@@ -1,22 +1,16 @@
-"""Agentic visual control: a bounded editing environment and a trainable controller.
+"""Multi-step image editing above the ``vrl`` framework: edit chains.
 
-This package sits beside the ``vrl`` framework and depends on it; ``vrl`` never
-imports it. It owns episode state, the finite action vocabulary, transitions
-through a frozen editor, termination, credit assignment, the Qwen3-VL controller
-policy and its on-policy trainer. Rewards stay an independent role (``Judge``)
-supplied by ``vrl.rewards``; one-shot collection and editor training stay in
-``vrl``.
+This package sits beside ``vrl`` and depends on it; ``vrl`` never imports it.
+A chain is one source image and an ordered list of editing instructions. The
+same loop runs it for evaluation (a frozen editor, a reward judge) and for
+training (sample groups per step through ``vrl``'s collector, trained by
+``vrl``'s one-shot trainer).
 
-* ``episode``: ``Task``/``Observation``/``Decision`` records, the three role
-  protocols, and ``Episode``, which runs one episode and rebuilds training steps.
-* ``roles``: ``LocalEditor`` (frozen family model), ``RewardJudge``, ``OrderedController``.
-* ``chains``: editor-only mode; a declared schedule runs the same ``Episode`` with
-  ``GroupEditor`` over vrl's collector, and the groups train the editor.
-* ``controller``: the categorical Qwen3-VL policy and its replay records.
-* ``trainer``: on-policy controller updates over episode groups.
-* ``export``: an episode's images as a media manifest for offline rescoring.
-* ``scripts``: collect, train the controller, train the editor on chains, compare,
-  probe, scripted sequences, media export.
+* ``chains``: ``EditChain``, the manifest loader, the ``Editor`` / ``Judge``
+  protocols, ``run_chain``, and ``GroupEditor`` for training.
+* ``roles``: ``LocalEditor`` and ``RewardJudge`` for evaluation.
+* ``export``: a run's images as a media manifest for offline rescoring.
+* ``scripts``: ``train_edit_chains``, ``evaluate_chains``, ``export_chain_media``.
 
 Consumers import the concrete modules directly; this facade re-exports nothing.
 """

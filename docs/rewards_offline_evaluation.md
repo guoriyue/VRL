@@ -315,7 +315,7 @@ weighted sum. `calibration/contribution/<axis>` and original axes remain availab
 Editing the artifact after construction cannot alter the loaded objective.
 
 Initial support is deliberately limited to HTTP services and explicit float32
-RGB/RGBA `[C,1,H,W]` tensors in `[0,1]`, matching the visual episode judge.
+RGB/RGBA `[C,1,H,W]` tensors in `[0,1]`, matching the chain judge.
 Videos, boxed object-store outputs and other tensor contracts are rejected by
 this qualified mode. Qualification measures one image per request; it does not
 establish arbitrary batch-size invariance or future-input parity. Service version
@@ -459,30 +459,24 @@ multiple comparisons; they are not independent confirmation experiments.
 
 ## Sequential edit preservation
 
-Export a completed visual episode directly instead of assembling media paths by
-hand. This validates the same image-lineage, task/replay identity, causal-return
-and termination contracts used by controller training, and checks current file
-hashes without constructing a trainer or generator:
+Export a completed edit-chain run (see `edit_chains.md`) instead of assembling
+media paths by hand:
 
 ```bash
-python -m vrl.scripts.rewards.export_episode_media \
-  --episode outputs/visual-episode/episode.json \
-  --output-dir outputs/episode-export
+python -m agentic.scripts.export_chain_media \
+  --run outputs/chain-eval/chains/page-12/run/run.json \
+  --output-dir outputs/chain-export
 python -m vrl.scripts.rewards.rescore_media \
-  --manifest outputs/episode-export/media.jsonl --config scorer.yaml \
-  --output-dir outputs/episode-rescore
+  --manifest outputs/chain-export/media.jsonl --config scorer.yaml \
+  --output-dir outputs/chain-rescore
 ```
 
-The fresh export directory contains a snapshot of the source episode, a
-content-bound `media.jsonl`, and `provenance.json` with ordered sample IDs and
-parent relationships. Each actual edit contributes one new state; a stop does
-not duplicate the last image. All states retain the original task reference and
-verifier assets/text specification. These files remain at their original paths;
-the export does not copy large media. Changed or unavailable original files reject
-export/rescoring. A partial/failed episode is not admitted by this successful-chain
-exporter. An immediate-stop episode can export its initial state, but contains no
-edit transitions to audit. Interrupted exports need a fresh directory; provenance
-is published last as the completion marker. Do not consume partial exports.
+The export directory contains a copy of the run record, a content-bound
+`media.jsonl` (the source, then every step's output, each naming the source as
+its reference and carrying the chain's reward assets), and `provenance.json`
+with ordered sample IDs and parent relationships. Media stay at their original
+paths. Only a successful run exports; provenance is written last as the
+completion marker, so do not consume partial exports.
 
 This validates recorded lineage, not an independent attestation that the generator
 internals used the reference. It does not rerun the policy or prove likelihood
@@ -523,7 +517,7 @@ coverage. A final repaired page does not erase intermediate regressions. Failed
 scoring or missing axes remain unknown, never zero; no transition is inferred
 across an unknown interval. Criteria and observations participate in the report
 digest. This report neither changes reward weights nor proves that the generator
-used one state as the next edit's input: actual episode/tool lineage must be
+used one state as the next edit's input: actual run lineage must be
 verified separately. It measures declared score criteria, not human preference.
 
 ## Repeated scoring variation
