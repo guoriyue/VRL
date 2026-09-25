@@ -56,6 +56,7 @@ class LocalEditRewardModel(LazyTorchModule):
         self._execution_model = str(cfg.get("execution_model", "editreward-qwen25-7b"))
         self._execution_key = str(cfg.get("execution_key", "editreward"))
         self._execution_timeout_s = float(cfg.get("execution_timeout_s", 600.0))
+        self._request_budget_bytes = int(cfg.get("request_budget_bytes", 48 * 1024 * 1024))
         # A patch is kept when its DINOv2 token still matches the source's at this cosine.
         self._patch_match = float(cfg.get("patch_match", 0.5))
         # The frame stayed when its global translation is under this share of the diagonal.
@@ -208,22 +209,35 @@ class LocalEditRewardModel(LazyTorchModule):
         from vrl.rewards.inference import RewardInferenceRequest
         from vrl.rewards.service.client import HttpRewardScorer
 
-        request = RewardInferenceRequest(
-            request_id=f"local-edit-{uuid.uuid4().hex}",
-            artifacts=tuple(
+        # Media goes over the wire as base64 float32; the service caps a request
+        # (max_request_bytes, 64 MiB by default), so a phase is split into
+        # requests under this budget -- all inside the one wake/park cycle.
+        requests: list[RewardInferenceRequest] = []
+        chunk: list[RewardInferenceArtifact] = []
+        chunk_bytes = 0
+        for artifact, instruction, source_path in zip(
+            artifacts, instructions, source_paths, strict=True
+        ):
+            media = artifact.as_media()
+            wire_bytes = 4 * media.numel() * 4 // 3 if hasattr(media, "numel") else 0
+            if chunk and chunk_bytes + wire_bytes > self._request_budget_bytes:
+                requests.append(
+                    RewardInferenceRequest(f"local-edit-{uuid.uuid4().hex}", tuple(chunk))
+                )
+                chunk, chunk_bytes = [], 0
+            chunk.append(
                 RewardInferenceArtifact(
                     artifact_id=artifact.artifact_id,
                     sample_id=artifact.sample_id,
                     path="",
                     prompt=instruction,
                     metadata={"reference_images": [source_path]},
-                    media=artifact.as_media(),
+                    media=media,
                 )
-                for artifact, instruction, source_path in zip(
-                    artifacts, instructions, source_paths, strict=True
-                )
-            ),
-        )
+            )
+            chunk_bytes += wire_bytes
+        if chunk:
+            requests.append(RewardInferenceRequest(f"local-edit-{uuid.uuid4().hex}", tuple(chunk)))
 
         async def cycle() -> list[float]:
             # A client per cycle: its HTTP session is bound to the loop that made it.
@@ -232,10 +246,14 @@ class LocalEditRewardModel(LazyTorchModule):
                 timeout_s=self._execution_timeout_s,
                 expected_model=self._execution_model,
             )
+            results = []
             try:
                 await scorer.activate()
                 try:
-                    results = request.validate_and_order_results(await scorer.score_batch(request))
+                    for request in requests:
+                        results += request.validate_and_order_results(
+                            await scorer.score_batch(request)
+                        )
                 finally:
                     if scorer.requires_memory_parking:
                         await scorer.park_memory()
