@@ -525,7 +525,7 @@ interpreting small or apparently zero variation.
 
 `python -m reward` also carries the four pre-training gates a reward must pass
 before it becomes a training key, and the card that records them
-(`.claude/skills/reward-qualification/SKILL.md` walks through the commands;
+(`reward/skills/reward-qualification/SKILL.md` (linked from `.claude/skills/` so Claude Code discovers it) walks through the commands;
 `docs/sprints/planned/SPRINT_reward_qualification.md` has the rationale):
 
 | Gate | Command | Passes when |

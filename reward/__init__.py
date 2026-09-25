@@ -15,4 +15,6 @@ combinations and deployment receipts. Training only reads the results through
 * ``Analysis.spread``: success band and within-prompt spread under the training sampler.
 * ``card.build_card``: the reward card -- every qualification gate's verdict in one place.
 * ``python -m reward``: one command-line entry point for all of the above.
+* ``skills/reward-qualification/SKILL.md``: the gate-by-gate workflow as a Claude Code
+  skill (``.claude/skills/`` links to it).
 """
