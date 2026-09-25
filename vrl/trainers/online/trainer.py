@@ -32,7 +32,7 @@ from vrl.models.precision import (
     float32_precision_state,
     model_precision,
 )
-from vrl.rollouts.admission import AdmissionLedger, select_advantage_rows
+from vrl.rollouts.admission import AdmissionLedger
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.orchestration import build_rollout_schedule
@@ -1055,13 +1055,10 @@ class OnlineTrainer:
         # no longer rebatches internally; advantage stays per-group either way.
         admission_error = None
         try:
-            filtered_batches, filtered_advs, decisions = select_advantage_rows(
+            filtered_batches, filtered_advs = self.admission_ledger.admit(
                 all_batches,
                 adv_split,
                 drop_zero_advantage=cfg.drop_zero_advantage,
-            )
-            self.admission_ledger.record(
-                decisions,
                 trainer_step=int(self.state.step),
                 global_step=int(self.state.global_step),
             )

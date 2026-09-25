@@ -27,7 +27,7 @@ class TestAdvantageAndMetrics:
         def disk_failure(*args, **kwargs):
             raise OSError("audit volume full")
 
-        monkeypatch.setattr(trainer.admission_ledger, "record", disk_failure)
+        monkeypatch.setattr(trainer.admission_ledger, "_record", disk_failure)
         with pytest.raises(OSError, match="audit volume full"):
             asyncio.run(trainer.step(["prompt"]))
         assert trainer.algorithm.loss_calls == 0
