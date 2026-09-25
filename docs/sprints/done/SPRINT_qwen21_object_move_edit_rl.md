@@ -506,3 +506,13 @@ run4 未启动。
 **结论与下一步**：这个任务用当前奖励能推动一次（+16 个点），但奖励的上限约在 20 轮就到了，再练就往缝里走；继续投入应换判定更硬的任务或专门训练过的打分器
 （§22 的候选对照正在跑：EditReward、EditScore）。交付物：对比页 <https://claude.ai/artifact/AGRP3kgHKsU5nxTNKBLqT6>（三 checkpoint 四列）；
 其余见 §21、§23。ck20 的 Bench、ck40 的 512×4、EditReward / EditScore 三方对照出来后补到本节。
+
+## 25. 收口（2026-09-24 22:47，用户决定放弃"物体移动"任务）
+
+四次 run 的结论：任务本身要求"擦掉 + 补背景 + 在新位置画出同一个物体"三步同时成立，而每一步的判定都没有干净的度量；
+当前奖励能推动一次（ck20 +16 个点）但约 20 轮后模型转向学奖励的缝。用户据此放弃该任务，转向判定更硬的编辑任务
+（保留设计的文字替换；动漫 / 真人属性编辑，探测包见 SPRINT_qwen21_accessory_edit_rl §8）。
+未完成并**不再补**的项：ck40 的 512×4、ck20 的 SpatialEdit-Bench。仍在跑的：§22 的打分器三方对照（EditReward、EditScore 对 263 张标注图），
+因为它回答的是"哪个编辑打分器可信"，对下一个任务有用。
+资产留存：奖励 `vrl/rewards/models/object_move.py`（作诊断量）、数据构建器与清单、评测扩展（参考图、同噪声哈希、`--base-only`）、
+263 + 61 张 Opus 标签集（scratchpad `onto/label/`、`verdict3/labels*/`）、四个 checkpoint（run3 ck20/40、run4 ck20/40）。
