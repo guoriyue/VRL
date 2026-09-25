@@ -132,3 +132,7 @@ WD-v3 标签差（头部裁剪放大）、CCIP 角色相似度、DINOv2 分块�
 
 **4×48 GB 训练**：沿用 OCR/物体移动的单卡配方做数据并行（FSDP2 路径），每条指令样本数可以开到 16–32；VLM 判官单独占一张卡走 reward service，
 不与训练争显存。多家族混训时按家族分层采样，held-out 按图片划分、每个家族 ≥40 条。
+
+**真人肖像同样打了一套探测包**（2026-09-24）：`data/external/portrait_attribute/`（160 张 Open Images 肖像，CC BY 2.0）+
+`manifests/portrait_attribute/candidates.jsonl`（150 条，五个家族各 30：换衣服款式/加一层、表情、衣服颜色、发型发色、换背景；
+每条都逐张核实过），`probe/run_probe.sh` 与动漫包同一流程。内容边界同 §7：普通换装、不暴露化、不改体型年龄、未成年与公众人物排除。
