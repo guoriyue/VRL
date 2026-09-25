@@ -1,0 +1,42 @@
+# Qwen-Image-2.1 edit-chain GRPO — single-GPU smoke recipe.
+#
+# Smallest end-to-end probe of multi-step editor training: each chain step
+# generates a small group on the previous step's drawn output, every group is
+# scored by a CPU verifier, and the editor's LoRA takes one step. Run it with
+# the agentic entry, which supplies the chains as the prompt rows:
+#
+#   CUDA_VISIBLE_DEVICES=0 python -m agentic.scripts.train_edit_chains \
+#     --config experiment/qwen_image_21/edit_chains_smoke_single_gpu \
+#     --chains /absolute/path/to/chains.jsonl
+#
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/qwen_image_21/base
+  - /sampling/image/512
+  - /sampling/denoise/10_step_no_cfg
+  - /reward/image_sharpness
+  - /dataset/edit_chains
+  - _self_
+
+sampling:
+  height: 256
+  width: 256
+  num_steps: 4
+
+actor:
+  optim:
+    lr: 1.0e-4
+  prompts_per_collection: 1
+  gradient_checkpointing: true
+
+rollout:
+  n_samples_per_prompt: 2
+  prompts_per_batch: 1
+  samples_per_generation_batch: 1
+  sde:
+    window_range: [0, 4]
+
+trainer:
+  output_dir: outputs/qwen_image_21_edit_chains_smoke
+  total_epochs: 1
+  save_freq: 9999

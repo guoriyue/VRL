@@ -54,6 +54,21 @@ The trainer sees one GRPO group per step; no credit flows from a later step to a
 earlier one, and a chain can continue from a failed edit. `vrl` knows none of
 this: a chain is an `OwnedCollection`, a prompt item with a `collect` method.
 
+### Smoke run
+
+`experiment/qwen_image_21/edit_chains_smoke_single_gpu` is the smallest real
+run: 256 px, 4 denoise steps, groups of 2, one optimizer step, scored by the
+CPU sharpness verifier so no reward service is needed. Build a two-chain
+manifest from any two images, then:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -m agentic.scripts.train_edit_chains \
+  --config experiment/qwen_image_21/edit_chains_smoke_single_gpu \
+  --chains /abs/smoke/chains.jsonl
+```
+
+It proves the pipeline, not quality: sharpness is a placeholder reward.
+
 ## Evaluate the editor
 
 ```bash

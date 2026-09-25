@@ -1,0 +1,10 @@
+# Edit-chain manifests are read by agentic.scripts.train_edit_chains, which
+# passes the chains to the recipe as its prompt rows; this data section only
+# declares the sampler, and the manifest path is a provenance label.
+data:
+  loader: prompt_manifest
+  manifest: chains.jsonl
+  preprocessing:
+    format: text
+  sampler:
+    type: random_without_replacement
