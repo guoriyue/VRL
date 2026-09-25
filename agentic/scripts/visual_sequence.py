@@ -11,16 +11,9 @@ from typing import Any
 import torch
 from pydantic import ConfigDict, Field
 
-from agentic.episode import (
-    Decision,
-    Editor,
-    Episode,
-    Judge,
-    Observation,
-    PolicyStamp,
-    Task,
-)
+from agentic.episode import Editor, Episode, Judge, Task
 from agentic.export import export_episode_media
+from agentic.roles import OrderedController
 from agentic.scripts.visual_episode import add_visual_session_arguments, open_visual_session
 from vrl.config.base import ConfigBase
 from vrl.rewards.sequences import (
@@ -49,44 +42,6 @@ class SequencePlan(ConfigBase):
             sequence_id=self.sequence_id,
             samples=[f"{task.task_id}:state:{i:04d}" for i in range(len(self.actions) + 1)],
             requirements=list(self.requirements),
-        )
-
-
-class OrderedController:
-    """Deterministic protocol adapter; never treat its zero log-probs as learned policy data."""
-
-    def __init__(self, actions: tuple[str, ...]) -> None:
-        if not actions or any(not isinstance(action, str) or not action for action in actions):
-            raise ValueError("ordered controller needs nonempty edit action names")
-        self.actions = tuple(actions)
-        self.policy_stamp = PolicyStamp(
-            "scripted-edit-sequence", canonical_json_sha256(self.actions, allow_nan=False), 0
-        )
-
-    async def activate(self) -> None:
-        pass
-
-    async def park(self) -> None:
-        pass
-
-    async def decide(self, task: Task, observation: Observation, *, seed: int) -> Decision:
-        if not 0 <= observation.step <= len(self.actions):
-            raise ValueError("ordered controller received a step outside its plan")
-        expected_previous = self.actions[observation.step - 1] if observation.step else None
-        if observation.previous_action != expected_previous:
-            raise ValueError("ordered controller received a different action history")
-        if observation.step < len(self.actions):
-            action = self.actions[observation.step]
-            if not any(item.name == action and item.kind == "edit" for item in task.actions):
-                raise ValueError("ordered controller action is not an available edit")
-        else:
-            action = next(item.name for item in task.actions if item.kind == "stop")
-        return Decision(
-            action,
-            self.policy_stamp,
-            0.0,
-            observation.digest(task),
-            {"kind": "scripted-sequence-baseline", "actions": list(self.actions), "seed": seed},
         )
 
 
@@ -125,7 +80,7 @@ async def run_visual_sequence(
     rows = [
         json.loads(line) for line in (output_dir / "media/media.jsonl").read_text().splitlines()
     ]
-    scores = [step["observation"]["score"] for step in trace["steps"]] + [trace["final_score"]]
+    scores = trace["state_scores"]
     records = {
         row["sample_id"]: {
             "input": row,

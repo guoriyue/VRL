@@ -42,7 +42,7 @@ async def test_export_cli_keeps_the_original_reference_and_edit_lineage(tmp_path
         revision="fixture-judge",
         activate=AsyncMock(),
         park=AsyncMock(),
-        score=AsyncMock(return_value=Score(0.5)),
+        score=AsyncMock(return_value=[Score(0.5), Score(0.5)]),
     )
     trace = await Episode().run(
         task, BaselineController("fixed"), editor, judge, output_dir=tmp_path / "episode", seed=1

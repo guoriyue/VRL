@@ -12,11 +12,11 @@ next, or to stop, while Qwen Image 2.1 stays frozen. In editor-only mode
 | Module | Contents |
 | --- | --- |
 | `agentic/episode.py` | `Task`, `Action`, `Artifact`, `Observation`, `Decision`, `Score`, `PolicyStamp`; the `Controller` / `Editor` / `Judge` protocols; `Episode`, which runs one episode and rebuilds training steps from a trace |
-| `agentic/roles.py` | `LocalEditor` (frozen family model through its batch executor) and `RewardJudge` (a `RewardRuntime`) |
+| `agentic/roles.py` | `LocalEditor` (frozen family model through its batch executor), `RewardJudge` (a `RewardRuntime`, one batched call per episode), `OrderedController` (a declared schedule) |
 | `agentic/controller.py` | `CategoricalController`: single-token action labels, softmax with temperature, replay tensors on disk |
 | `agentic/trainer.py` | `ControllerTrainer`: return-to-go credit, leave-one-out baseline, GRPO clipped surrogate, checkpoints |
 | `agentic/export.py` | an episode's images as a media manifest for independent rescoring |
-| `agentic/chains.py` | `EditChain`: editor-only mode, one prompt group per declared step, collected through `vrl`'s `OwnedCollection` seam |
+| `agentic/chains.py` | `EditChain` and `GroupEditor`: editor-only mode; the same `Episode` with an `OrderedController`, one sample group per step through `vrl`'s collector |
 | `agentic/scripts/` | collect one episode, train, compare to baselines, probe replay, run a scripted sequence, export media |
 
 ## Task and episode
@@ -46,12 +46,13 @@ The prompt itself is one template in `agentic/prompt.py`, rendered from those
 fields plus the previous action and the remaining budget; the action list is
 lettered and the controller answers with one letter.
 
-One episode: the judge scores the source; the controller sees the original and
-current images and picks an action; an edit runs the editor on the current image
-and the judge scores the result at cost `tool_cost`; stop or the call budget
-ends it. The final score is paid once on the last decision. Controller, editor
-and judge activate and park in turn on a shared GPU; a failed park retires the
-role and the episode ends with an error trace, which never trains.
+One episode: the controller sees the original and current images and picks an
+action; an edit runs the editor on the current image at cost `tool_cost`; stop
+or the call budget ends it. The judge then scores every state (source and each
+edit output) in one call, and the final state's score is paid once on the last
+decision. Controller, editor and judge activate and park in turn on a shared
+GPU; a failed park retires the role and the episode ends with an error trace,
+which never trains.
 
 `episode.json` records the task, seed, the three policy identities, every
 observation and decision with its old log-probability, each edit output, the
@@ -121,16 +122,19 @@ python -m agentic.scripts.train_edit_chains --config experiment/qwen_image_21/<r
 ```
 
 The config is an ordinary `vrl` training config; its `data` section still
-declares the sampler, and the chains replace its prompt rows. Step 0 is
-generated from `source`; one sample of the group is drawn uniformly from the
-driver RNG, written under `<output_dir>/edit_chains/<chain_id>/`, and becomes
-the reference image of step 1, and so on. All groups of a call are scored in
-one reward call after generation. Each sample's reward metadata names its
-parent as `reference_images`, plus `prompt_id` (`<chain_id>:<step>`),
-`chain_id`, `chain_step`, `chain_length`, `chain_source` and
-`chain_parent_sample_id`, so rewards judge each step against the image it
-actually edited. The trainer sees one group per step; no credit flows from a
-later step to an earlier one, and a chain can continue from a failed edit.
+declares the sampler, and the chains replace its prompt rows. A chain runs as
+one `Episode`: the schedule is an `OrderedController`, and `GroupEditor` plays
+both editor and judge over `vrl`'s rollout collector. Each step generates a
+group of `n_samples_per_prompt` candidates, draws one uniformly from the
+driver RNG as the next state (written under `<output_dir>/edit_chains/<chain_id>/`),
+and after the last step all groups are scored in one reward call; the drawn
+sample's score becomes that state's score in the trace, and the source is left
+unscored. Each sample's reward metadata names its parent as
+`reference_images`, plus `prompt_id` (`<chain_id>:<step>`), `chain_id`,
+`chain_step`, `chain_length`, `chain_source` and `chain_parent_sample_id`, so
+rewards judge each step against the image it actually edited. The trainer sees
+one group per step; no credit flows from a later step to an earlier one, and a
+chain can continue from a failed edit.
 
 `vrl` knows none of this: a chain is an `OwnedCollection`, a prompt item with a
 `collect` method that the collector runs and whose groups it takes as-is.

@@ -131,7 +131,7 @@ async def compare_visual_policies(
                 "net_return": trace["discounted_return"],
                 "tool_calls": trace["tool_calls"],
                 "controller_decisions": len(trace["steps"]) if name == "controller" else 0,
-                "judge_calls": 1 + trace["tool_calls"],
+                "judge_calls": 1,
                 "seconds": time.monotonic() - start,
                 "trace_paths": [str(output_dir / name / "episode.json")],
             }
@@ -161,7 +161,7 @@ async def compare_visual_policies(
             "net_return": selected["final_score"]["total"] - tool_cost * calls,
             "tool_calls": calls,
             "controller_decisions": 0,
-            "judge_calls": len(candidates) + calls,
+            "judge_calls": len(candidates),
             "seconds": time.monotonic() - start,
             "trace_paths": paths,
             "selected_index": best,

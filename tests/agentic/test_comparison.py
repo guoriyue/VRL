@@ -30,9 +30,12 @@ async def test_comparison_charges_all_candidates_and_stops_after_failed_handoff(
         Image.new("RGB", (4, 4), "white").save(path)
         return Artifact.from_path(path)
 
-    async def score(task, artifact):
-        with Image.open(artifact.path) as image:
-            return Score(image.getpixel((0, 0))[0] / 255)
+    async def score(task, artifacts):
+        scores = []
+        for artifact in artifacts:
+            with Image.open(artifact.path) as image:
+                scores.append(Score(image.getpixel((0, 0))[0] / 255))
+        return scores
 
     editor = SimpleNamespace(policy_stamp=stamp, activate=AsyncMock(), park=AsyncMock(), edit=edit)
     judge = SimpleNamespace(revision="fake", activate=AsyncMock(), park=AsyncMock(), score=score)
@@ -52,7 +55,7 @@ async def test_comparison_charges_all_candidates_and_stops_after_failed_handoff(
     assert methods["controller"]["controller_decisions"] == 2
     best = methods["best_of_n"]
     assert best["net_return"] == pytest.approx(0.4)
-    assert best["tool_calls"] == 3 and best["judge_calls"] == 6
+    assert best["tool_calls"] == 3 and best["judge_calls"] == 3
     assert len(best["trace_paths"]) == 3 and best["selected_index"] == 0
     assert [digest for digest, _ in seen[-3:]] == [task.source.sha256] * 3
     assert len({seed for _, seed in seen[-3:]}) == 3

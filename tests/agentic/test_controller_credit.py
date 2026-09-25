@@ -87,9 +87,12 @@ async def test_variable_length_credit_matches_hand_derived_policy_gradient(tmp_p
         async def park(self):
             pass
 
-        async def score(self, task, artifact):
-            with Image.open(artifact.path) as image:
-                return Score(image.getpixel((0, 0))[0] / 255)
+        async def score(self, task, artifacts):
+            scores = []
+            for artifact in artifacts:
+                with Image.open(artifact.path) as image:
+                    scores.append(Score(image.getpixel((0, 0))[0] / 255))
+            return scores
 
     controller, editor, judge = Controller(), Editor(), Judge()
     traces = [

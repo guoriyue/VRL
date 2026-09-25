@@ -45,10 +45,13 @@ async def test_stages_preserve_lineage_and_report_regression_without_changing_cr
         Image.new("RGB", (4, 4), (255, 0, 0) if action.name == "red" else (0, 255, 0)).save(path)
         return Artifact.from_path(path)
 
-    async def score(task, artifact):
-        with Image.open(artifact.path) as image:
-            r, g, _ = image.getpixel((0, 0))
-        return Score((r + g) / 510, {"red": r / 255, "green": g / 255})
+    async def score(task, artifacts):
+        scores = []
+        for artifact in artifacts:
+            with Image.open(artifact.path) as image:
+                r, g, _ = image.getpixel((0, 0))
+            scores.append(Score((r + g) / 510, {"red": r / 255, "green": g / 255}))
+        return scores
 
     editor = SimpleNamespace(policy_stamp=stamp, activate=AsyncMock(), park=AsyncMock(), edit=edit)
     judge = SimpleNamespace(

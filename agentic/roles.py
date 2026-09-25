@@ -1,9 +1,10 @@
-"""The editor and judge roles of an episode, over the framework's own runtimes.
+"""Episode roles over the framework's own runtimes, plus the scripted controller.
 
 ``LocalEditor`` runs a frozen family model in-process through its batch
-executor; ``RewardJudge`` scores through a ``RewardRuntime``. Neither owns an
-optimizer or a scheduler. On a shared GPU each role parks its memory between
-turns, and a failed memory transition retires the role rather than reusing it.
+executor; ``RewardJudge`` scores through a ``RewardRuntime``;
+``OrderedController`` plays a declared action schedule. None of them owns an
+optimizer or a scheduler. On a shared GPU each model-holding role parks its
+memory between turns, and a failed memory transition retires the role.
 """
 
 from __future__ import annotations
@@ -15,7 +16,15 @@ from typing import Any
 import numpy as np
 import torch
 
-from agentic.episode import Action, Artifact, Observation, PolicyStamp, Score, Task
+from agentic.episode import (
+    Action,
+    Artifact,
+    Decision,
+    Observation,
+    PolicyStamp,
+    Score,
+    Task,
+)
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.generation.types import GenerationInput, GenerationRequest
@@ -23,6 +32,7 @@ from vrl.models.parking import ModelParking
 from vrl.rewards.protocols import RewardRuntime
 from vrl.rewards.types import RewardSample
 from vrl.trajectory.storage import TrajectoryStoragePolicy
+from vrl.utils.json_files import canonical_json_sha256
 from vrl.utils.media import to_pil_image, write_png
 
 
@@ -112,7 +122,7 @@ class LocalEditor:
 
 
 class RewardJudge:
-    """Score every state against the original task and source image."""
+    """Score every state against the original task and source image, in one call."""
 
     def __init__(
         self, runtime: RewardRuntime, *, revision: str, require_memory_release: bool
@@ -150,16 +160,17 @@ class RewardJudge:
             self._broken = True
             raise
 
-    async def score(self, task: Task, artifact: Artifact) -> Score:
+    async def score(self, task: Task, artifacts: list[Artifact]) -> list[Score | None]:
         from PIL import Image
 
         if not self._activated or self._broken:
             raise RuntimeError("judge must be healthy and active")
-        with Image.open(artifact.path) as image:
-            pixels = np.array(to_pil_image(image, preserve_alpha=True), copy=True)
-        media = torch.from_numpy(pixels).permute(2, 0, 1).unsqueeze(1).float() / 255.0
-        result = await self.runtime.score(
-            [
+        samples = []
+        for artifact in artifacts:
+            with Image.open(artifact.path) as image:
+                pixels = np.array(to_pil_image(image, preserve_alpha=True), copy=True)
+            media = torch.from_numpy(pixels).permute(2, 0, 1).unsqueeze(1).float() / 255.0
+            samples.append(
                 RewardSample(
                     prompt=task.instruction,
                     output=media,
@@ -171,8 +182,47 @@ class RewardJudge:
                         **{name: asset.path for name, asset in task.reward_assets.items()},
                     },
                 )
-            ]
+            )
+        result = await self.runtime.score(samples)
+        return [
+            Score(total, {name: values[index] for name, values in result.components.items()})
+            for index, total in enumerate(result.scores)
+        ]
+
+
+class OrderedController:
+    """Plays a declared action schedule, then stops; its zero log-probs are not policy data."""
+
+    def __init__(self, actions: tuple[str, ...]) -> None:
+        if not actions or any(not isinstance(action, str) or not action for action in actions):
+            raise ValueError("ordered controller needs nonempty edit action names")
+        self.actions = tuple(actions)
+        self.policy_stamp = PolicyStamp(
+            "scripted-edit-sequence", canonical_json_sha256(self.actions, allow_nan=False), 0
         )
-        return Score(
-            result.scores[0], {name: values[0] for name, values in result.components.items()}
+
+    async def activate(self) -> None:
+        pass
+
+    async def park(self) -> None:
+        pass
+
+    async def decide(self, task: Task, observation: Observation, *, seed: int) -> Decision:
+        if not 0 <= observation.step <= len(self.actions):
+            raise ValueError("ordered controller received a step outside its plan")
+        expected_previous = self.actions[observation.step - 1] if observation.step else None
+        if observation.previous_action != expected_previous:
+            raise ValueError("ordered controller received a different action history")
+        if observation.step < len(self.actions):
+            action = self.actions[observation.step]
+            if not any(item.name == action and item.kind == "edit" for item in task.actions):
+                raise ValueError("ordered controller action is not an available edit")
+        else:
+            action = next(item.name for item in task.actions if item.kind == "stop")
+        return Decision(
+            action,
+            self.policy_stamp,
+            0.0,
+            observation.digest(task),
+            {"kind": "scripted-sequence", "actions": list(self.actions), "seed": seed},
         )

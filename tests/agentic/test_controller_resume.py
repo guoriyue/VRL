@@ -124,9 +124,12 @@ async def test_collection_failure_resumes_without_duplicate_or_missing_episodes(
         async def park(self):
             pass
 
-        async def score(self, task, artifact):
-            with Image.open(artifact.path) as image:
-                return Score(image.getpixel((0, 0))[0] / 255)
+        async def score(self, task, artifacts):
+            scores = []
+            for artifact in artifacts:
+                with Image.open(artifact.path) as image:
+                    scores.append(Score(image.getpixel((0, 0))[0] / 255))
+            return scores
 
     @asynccontextmanager
     async def session(args, *, output):

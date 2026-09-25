@@ -4,6 +4,12 @@ An edit is one semantic action; its denoising steps are not controller
 decisions. The controller, editor and judge keep separate identities so a
 trace says which policy produced each decision and image. This module owns
 scheduling and credit only; models and optimizers live elsewhere.
+
+The same loop serves every training mode: a learned controller with a frozen
+editor, a declared schedule with an editor trained by ``vrl`` (edit chains),
+and, later, both. The judge scores every state once, after the last edit, so
+an editor that scores its own sample groups in one batched reward call fits
+the same contract as a per-image judge.
 """
 
 from __future__ import annotations
@@ -150,7 +156,6 @@ class Observation:
     step: int
     remaining_tool_calls: int
     current: Artifact
-    score: Score
     previous_action: str | None = None
 
     @classmethod
@@ -159,7 +164,6 @@ class Observation:
             record["step"],
             record["remaining_tool_calls"],
             Artifact(**record["current"]),
-            Score(**record["score"]),
             record["previous_action"],
         )
 
@@ -210,17 +214,23 @@ class Editor(Protocol):
 
 
 class Judge(Protocol):
+    """Scores every state of an episode once, after the last edit.
+
+    ``artifacts`` is the source followed by each edit output. A state the judge
+    cannot score is ``None``; the final state must be scored.
+    """
+
     @property
     def revision(self) -> str: ...
     async def activate(self) -> None: ...
     async def park(self) -> None: ...
-    async def score(self, task: Task, artifact: Artifact) -> Score: ...
+    async def score(self, task: Task, artifacts: list[Artifact]) -> list[Score | None]: ...
 
 
 class Episode:
     """Budget and credit rules for one bounded episode; ``run`` executes and persists it."""
 
-    schema = "vrl.visual-episode.v1"
+    schema = "vrl.visual-episode.v2"
 
     def __init__(
         self,
@@ -349,15 +359,14 @@ class _EpisodeRun:
                 # Every role starts parked, so the first activation finds a free GPU.
                 for role in (self.controller, self.editor, self.judge):
                     await role.park()
-                current, calls = task.source, 0
-                score = await self.in_role(self.judge, self.judge.score, task, current)
+                states = [task.source]
                 previous_action = None
                 while True:
+                    calls = len(states) - 1
                     observation = Observation(
                         len(trace["steps"]),
                         rules.max_tool_calls - calls,
-                        current,
-                        score,
+                        states[-1],
                         previous_action,
                     )
                     decision = await self.in_role(
@@ -386,7 +395,7 @@ class _EpisodeRun:
                         trace["termination"] = "stop"
                         step["status"] = "complete"
                         break
-                    current = await self.in_role(
+                    edited = await self.in_role(
                         self.editor,
                         self.editor.edit,
                         task,
@@ -395,11 +404,10 @@ class _EpisodeRun:
                         seed=self.seed + observation.step * 2 + 1,
                         output_dir=self.output_dir,
                     )
-                    calls += 1
-                    score = await self.in_role(self.judge, self.judge.score, task, current)
+                    states.append(edited)
                     step.update(
                         tool_result={
-                            "artifact": asdict(current),
+                            "artifact": asdict(edited),
                             "policy": asdict(self.editor.policy_stamp),
                         },
                         reward=-rules.tool_cost,
@@ -407,11 +415,14 @@ class _EpisodeRun:
                     )
                     previous_action = action.name
                     self.save()
-                    if calls == rules.max_tool_calls:
+                    if len(states) - 1 == rules.max_tool_calls:
                         trace["termination"] = "tool_budget"
                         break
+                scores = await self.in_role(self.judge, self.judge.score, task, list(states))
+                if len(scores) != len(states) or scores[-1] is None:
+                    raise ValueError("judge must score every state and the final one")
                 # The terminal objective is paid exactly once, including on an immediate stop.
-                trace["steps"][-1]["reward"] += score.total
+                trace["steps"][-1]["reward"] += scores[-1].total
                 returns = Episode.returns(
                     [step["reward"] for step in trace["steps"]], gamma=rules.gamma
                 )
@@ -419,9 +430,10 @@ class _EpisodeRun:
                     step["return_to_go"] = value
                 trace.update(
                     status="success",
-                    tool_calls=calls,
-                    final_artifact=asdict(current),
-                    final_score=asdict(score),
+                    tool_calls=len(states) - 1,
+                    state_scores=[None if s is None else asdict(s) for s in scores],
+                    final_artifact=asdict(states[-1]),
+                    final_score=asdict(scores[-1]),
                     discounted_return=returns[0],
                 )
                 self.save()

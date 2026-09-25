@@ -59,9 +59,12 @@ async def test_observed_edit_stop_budget_and_failed_handoff_are_distinct(tmp_pat
     class Judge(Role):
         revision = "pixel-fixture-v1"
 
-        async def score(self, task, artifact):
-            with Image.open(artifact.path) as image:
-                return Score(image.getpixel((0, 0))[0] / 255)
+        async def score(self, task, artifacts):
+            scores = []
+            for artifact in artifacts:
+                with Image.open(artifact.path) as image:
+                    scores.append(Score(image.getpixel((0, 0))[0] / 255))
+            return scores
 
     controller, editor, judge = Controller("controller"), Editor("editor"), Judge("judge")
     trace = await Episode(tool_cost=0.2).run(
@@ -71,6 +74,7 @@ async def test_observed_edit_stop_budget_and_failed_handoff_are_distinct(tmp_pat
     assert [step["decision"]["action"] for step in trace["steps"]] == ["whiten", "accept"]
     assert [step["reward"] for step in trace["steps"]] == [-0.2, 1.0]
     assert [step["return_to_go"] for step in trace["steps"]] == [0.8, 1.0]
+    assert [score["total"] for score in trace["state_scores"]] == [0.0, 1.0]
     assert trace["steps"][0]["tool_result"]["artifact"]["path"] == str(candidate)
     assert "tool_result" not in trace["steps"][1]
     assert trace["tool_calls"] == 1 and not active
@@ -141,7 +145,7 @@ async def test_failed_edit_records_attempt_without_fabricating_training_returns(
         revision="fixture",
         activate=AsyncMock(),
         park=AsyncMock(),
-        score=AsyncMock(return_value=Score(0.0)),
+        score=AsyncMock(return_value=[Score(0.0)]),
     )
     with pytest.raises(RuntimeError, match="tool failed"):
         await Episode().run(
@@ -152,7 +156,7 @@ async def test_failed_edit_records_attempt_without_fabricating_training_returns(
     assert trace["steps"][0]["status"] == "error"
     assert "return_to_go" not in trace["steps"][0]
     assert "final_score" not in trace
-    assert judge.score.await_count == 1  # Only the unchanged initial image was scored.
+    assert judge.score.await_count == 0  # Scoring happens once, after the edits.
     assert editor.park.await_count == 2  # Initial handoff and failed operation cleanup.
     with pytest.raises(ValueError, match="successful"):
         Episode.training_steps(trace, policy=stamp)

@@ -125,7 +125,7 @@ async def test_each_step_conditions_on_a_drawn_sample_and_scores_against_it(tmp_
     chain = _chain(tmp_path, ["recolor", "letter", "sharpen"])
     stats = RolloutStats()
     random.seed(0)
-    expected_draws = [random.randrange(2) for _ in range(2)]
+    expected_draws = [random.randrange(2) for _ in range(3)]
     random.seed(0)
 
     batches = await collector.prepare_training_batches(
@@ -139,10 +139,10 @@ async def test_each_step_conditions_on_a_drawn_sample_and_scores_against_it(tmp_
     ]
     references = [request.inputs[0].reference_images for request in runtime.requests]
     assert references[0] == [chain.source]
-    for step, (draw, reference) in enumerate(zip(expected_draws, references[1:], strict=True)):
+    for step, (draw, reference) in enumerate(zip(expected_draws[:2], references[1:], strict=True)):
         parent = Path(reference[0])
-        assert parent.parent == tmp_path / "edit_chains" / "chain"
-        assert parent.name.startswith(f"step{step:02d}-")
+        assert parent.parent.parent == tmp_path / "edit_chains" / "chain"
+        assert parent.name == f"step{step:02d}.png"
         # The written parent is the drawn sample of the previous step.
         pixels = np.array(Image.open(parent))
         assert int(pixels[0, 0, 0]) == round((draw + 1) / 10 * 255)
@@ -167,6 +167,25 @@ async def test_each_step_conditions_on_a_drawn_sample_and_scores_against_it(tmp_
     )
     assert stats.counters["collect.group_count"] == 3
     assert stats.counters["collect.sample_count"] == 6
+
+    # The chain ran as one episode: its trace records the schedule and the drawn scores.
+    (episode_path,) = (tmp_path / "edit_chains" / "chain").glob("*/episode.json")
+    trace = json.loads(episode_path.read_text())
+    assert trace["schema"] == "vrl.visual-episode.v2"
+    assert trace["termination"] == "tool_budget" and trace["tool_calls"] == 3
+    assert [step["decision"]["action"] for step in trace["steps"]] == [
+        "step-00",
+        "step-01",
+        "step-02",
+    ]
+    # The source is not scored; each edited state carries its drawn sample's score.
+    assert trace["state_scores"][0] is None
+    assert [score["total"] for score in trace["state_scores"][1:]] == [
+        float(expected_draws[0]),
+        2.0 + expected_draws[1],
+        4.0 + expected_draws[2],
+    ]
+    assert trace["final_score"]["total"] == 4.0 + expected_draws[2]
 
 
 @pytest.mark.asyncio

@@ -78,7 +78,7 @@ async def test_editor_consumes_current_image_judge_checks_original_and_parking_f
     runtime.activate.assert_awaited_once()
     runtime.park_memory.assert_awaited_once_with(required=True)
     await judge.activate()
-    score = await judge.score(task, observation.current)
+    score = (await judge.score(task, [observation.current]))[0]
     sample = runtime.score.call_args.args[0][0]
     assert sample.prompt == task.instruction
     assert sample.metadata["reference_images"] == [str(original)]
@@ -120,7 +120,7 @@ async def test_judge_preserves_alpha_and_passes_reward_only_targets_by_path(tmp_
     )
     judge = RewardJudge(runtime, revision="pixel-fixture", require_memory_release=False)
     await judge.activate()
-    await judge.score(task, Artifact.from_path(candidate))
+    await judge.score(task, [Artifact.from_path(candidate)])
     sample = runtime.score.call_args.args[0][0]
     # The judge sends straight RGBA and names the reward-only target by path.
     assert sample.metadata["target_image"] == str(target)

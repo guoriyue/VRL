@@ -10,7 +10,7 @@ from PIL import Image
 from transformers import Qwen3VLConfig, Qwen3VLForConditionalGeneration
 
 from agentic.controller import CategoricalController
-from agentic.episode import Action, Artifact, Observation, PolicyStamp, Score, Task
+from agentic.episode import Action, Artifact, Observation, PolicyStamp, Task
 
 
 @pytest.mark.asyncio
@@ -70,7 +70,7 @@ async def test_image_conditioned_likelihood_replay_and_gradient(tmp_path):
         Artifact.from_path(source),
         (Action("black", "edit", "Make it black"), Action("stop", "stop")),
     )
-    observation = Observation(0, 2, task.source, Score(0))
+    observation = Observation(0, 2, task.source)
     controller = CategoricalController(
         model,
         Processor(),
@@ -133,7 +133,7 @@ def test_prompt_and_images_come_from_the_task_row(tmp_path):
         },
         base_dir=tmp_path,
     )
-    observation = Observation(1, 1, Artifact.from_path(current), Score(0), "edit")
+    observation = Observation(1, 1, Artifact.from_path(current), "edit")
     processor = Processor()
     controller = CategoricalController(
         torch.nn.Linear(1, 1),

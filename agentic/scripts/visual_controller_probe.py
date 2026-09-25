@@ -14,7 +14,6 @@ from agentic.episode import (
     Artifact,
     Observation,
     PolicyStamp,
-    Score,
     Task,
 )
 from vrl.utils.json_files import write_json
@@ -47,7 +46,7 @@ async def run(args: argparse.Namespace) -> None:
         ),
     )
     current = Artifact.from_path(Path(args.current or args.source))
-    observation = Observation(0, 2, current, Score(0.0))
+    observation = Observation(0, 2, current)
     await controller.activate()
     try:
         decision = await controller.decide(task, observation, seed=args.seed)
