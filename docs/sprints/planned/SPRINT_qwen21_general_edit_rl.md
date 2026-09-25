@@ -188,3 +188,14 @@ dry run 结果（2026-09-25 05:08–05:57，fc780443，`outputs/qwen_image_21_lo
 - 三轮 reward_mean 下滑是采样噪声（每轮换 6 条指令），不是学习信号。
 
 **状态：dry run 关卡全过（除每轮耗时），正式 60 轮等用户在 §8 的 A / B 之间定。**
+
+## 9. run1（2026-09-25 09:32 起）：无框删除 + 添加，EditReward 执行分做训练键
+
+用户看过 §7–8 后的方向："base 已经不错，还能提升什么？"——按数据只剩一个能练的洞：**无框删除 74% 没做、无框添加 26% 没做**，
+给红框它就会做（69% / 86%），所以要教的是"自己找到目标"；而 EditReward 判"做对 vs 没做"AUC 0.94 是唯一过关的信号。
+"改坏别处"没有打分器看得见（§7–8），不进奖励，只在每 20 轮的 held-out 盲评里盯。
+
+- 训练集 `manifests/local_edit/train_plain_remove_add.jsonl`（363 条：删除 182 + 添加 181，全部无框）；held-out `heldout_plain_remove_add.jsonl`（46 条：27 + 19）。
+- 训练键 `local_edit_execution`（EditReward sigmoid），keep 项只记录不训练（81bb25d8）。其余与 dry run 相同（16 样本 × 6 指令，512/10，噪声 0.7，LoRA r=256 fp32，8-bit Adam）。
+- 启动：`scratchpad local_edit/launch_run1.sh`（supervise，60 轮，每 10 轮存档，gpu_retry 28000 MiB，最多重试 6 次），输出 `outputs/qwen_image_21_local_edit_run1`。
+- 判定计划：ck20 在 46 条 held-out 上 1024/40 出图 → 盲评"没做"是否下降、"改坏别处"是否上升；两者都对才让它跑到 60，collateral 上升即停。
