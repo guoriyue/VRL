@@ -133,8 +133,14 @@ def rows_from_omniedit(
             v if isinstance(v, Image.Image) else Image.open(io.BytesIO(v["bytes"]))
             for v in (example["src_img"], example["edited_img"])
         )
-        if min(source.size) < min_side or source.size != edited.size:
+        if min(source.size) < min_side:
             continue
+        # The reference edit is stored at its own resolution (the source is the
+        # 768-side copy); bring it onto the source's grid before differencing.
+        if source.size != edited.size:
+            if abs(source.size[0] / source.size[1] - edited.size[0] / edited.size[1]) > 0.1:
+                continue
+            edited = edited.resize(source.size, Image.Resampling.LANCZOS)
         source, edited = square_crop(source, size or None), square_crop(edited, size or None)
         box = change_box(source, edited)
         if box is None:
