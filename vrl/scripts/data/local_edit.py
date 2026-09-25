@@ -37,6 +37,50 @@ from vrl.utils.artifacts import default_data_root
 
 LOCAL_TASKS = ("attribute_modification", "swap", "removal", "addition")
 HINT_SUFFIX = " Edit only inside the red box, then remove the red box."
+OMNIEDIT = "TIGER-Lab/OmniEdit-Filtered-1.2M"
+OMNIEDIT_SHARD = (
+    "https://huggingface.co/datasets/"
+    + OMNIEDIT
+    + "/resolve/main/data/train-{:05d}-of-00571.parquet"
+)
+OMNIEDIT_SHARDS = 571
+
+
+def task_shards(shards_per_task: int, stride: int = 20) -> dict[str, list[str]]:
+    """Shard files to stream per local task.
+
+    The train split is grouped by task (additions in the first shards, then
+    removals, swaps, attribute edits, environments, styles), so scanning it
+    from the start would read a hundred shards before the first swap. Peek at
+    one row every ``stride`` shards and take ``shards_per_task`` shards from
+    where each task begins.
+    """
+
+    from datasets import load_dataset
+
+    found: dict[str, list[str]] = {}
+    for index in range(0, OMNIEDIT_SHARDS, stride):
+        url = OMNIEDIT_SHARD.format(index)
+        first = next(
+            iter(
+                load_dataset(
+                    "parquet",
+                    data_files={"train": [url]},
+                    split="train",
+                    streaming=True,
+                    columns=["task"],
+                )
+            )
+        )
+        task = str(first["task"])
+        if task in LOCAL_TASKS and task not in found:
+            found[task] = [OMNIEDIT_SHARD.format(index + k) for k in range(shards_per_task)]
+        if len(found) == len(LOCAL_TASKS):
+            break
+    missing = sorted(set(LOCAL_TASKS) - set(found))
+    if missing:
+        raise RuntimeError(f"no OmniEdit shard starts with task(s) {missing}")
+    return found
 
 
 def square_crop(image, size: int | None = None):
@@ -104,6 +148,7 @@ def rows_from_omniedit(
     min_side: int,
     size: int,
     seed: int,
+    shards_per_task: int = 2,
 ) -> list[dict]:
     """Stream OmniEdit until every local task has ``per_task`` rows; write images, return manifest rows.
 
@@ -121,7 +166,16 @@ def rows_from_omniedit(
     counts = dict.fromkeys(LOCAL_TASKS, 0)
     rows: list[dict] = []
     seen = 0
-    for example in load_dataset("TIGER-Lab/OmniEdit-Filtered-1.2M", split="train", streaming=True):
+    shards = task_shards(shards_per_task)
+    print(
+        "shards per task:",
+        {k: [u.rsplit("/", 1)[1] for u in v] for k, v in shards.items()},
+        flush=True,
+    )
+    files = [url for task in LOCAL_TASKS for url in shards[task]]
+    for example in load_dataset(
+        "parquet", data_files={"train": files}, split="train", streaming=True
+    ):
         seen += 1
         if seen % 500 == 0:
             print(f"scanned {seen} rows, kept {counts}", flush=True)
@@ -173,6 +227,9 @@ def rows_from_omniedit(
         counts[task] += 1
         if all(v >= per_task for v in counts.values()):
             break
+    short = {k: v for k, v in counts.items() if v < per_task}
+    if short:
+        print(f"short of {per_task} for {short}; raise --shards-per-task", flush=True)
     return rows
 
 
@@ -204,6 +261,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--size", type=int, default=0, help="resize the square crop; 0 keeps the native side"
     )
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--shards-per-task", type=int, default=2)
     parser.add_argument("--manifest-dir", type=Path, default=Path("manifests/local_edit"))
     args = parser.parse_args(argv)
     root = Path(default_data_root())
@@ -218,6 +276,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         args.min_side,
         args.size,
         args.seed,
+        args.shards_per_task,
     )
     train, held = split_heldout(rows, args.heldout_per_task, args.seed)
     args.manifest_dir.mkdir(parents=True, exist_ok=True)
