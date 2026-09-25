@@ -1,9 +1,11 @@
 # Agentic visual control (`agentic`)
 
-`agentic` trains a Qwen3-VL controller that decides which edit to apply next, or
-to stop, while Qwen Image 2.1 stays a frozen editing tool. It sits beside the
-`vrl` framework and depends on it; `vrl` never imports it. Editor training,
-including declared multi-step tasks, stays in `vrl` (see `sequential_editing.md`).
+`agentic` owns multi-step visual editing above the `vrl` framework: the episode
+records, the controller, editor and judge roles, and two training modes. In
+controller-only mode a Qwen3-VL controller learns which declared edit to apply
+next, or to stop, while Qwen Image 2.1 stays frozen. In editor-only mode
+(edit chains) the schedule is declared in data and Qwen Image 2.1 is trained by
+`vrl`'s one-shot trainer. The package depends on `vrl`; `vrl` never imports it.
 
 ## Pieces
 
@@ -14,6 +16,7 @@ including declared multi-step tasks, stays in `vrl` (see `sequential_editing.md`
 | `agentic/controller.py` | `CategoricalController`: single-token action labels, softmax with temperature, replay tensors on disk |
 | `agentic/trainer.py` | `ControllerTrainer`: return-to-go credit, leave-one-out baseline, GRPO clipped surrogate, checkpoints |
 | `agentic/export.py` | an episode's images as a media manifest for independent rescoring |
+| `agentic/chains.py` | `EditChain`: editor-only mode, one prompt group per declared step, collected through `vrl`'s `OwnedCollection` seam |
 | `agentic/scripts/` | collect one episode, train, compare to baselines, probe replay, run a scripted sequence, export media |
 
 ## Task and episode
@@ -94,6 +97,43 @@ rescore `selected_media.jsonl` independently before claiming improvement.
 `agentic.scripts.visual_sequence` runs a declared edit order through the same
 roles without a learned controller and reports per-requirement preservation; it
 is a baseline for a planner, not evidence of one.
+
+## Editor-only mode: edit chains
+
+An edit chain is one source image and an ordered list of instructions, one row
+per JSONL line:
+
+```json
+{"chain_id": "page-12", "source": "pages/12.png",
+ "steps": ["Change the coat to blue. Keep everything else unchanged.",
+           {"prompt": "Replace the second bubble's text with HELLO.", "target_text": "HELLO"}],
+ "metadata": {"series": "demo"}}
+```
+
+A step is an instruction string or a prompt-manifest row without conditioning
+media; unknown step keys become that step's reward metadata (`requirement`,
+`target_text`, ...). `source` resolves relative to the manifest. `chain_id`
+defaults to `<manifest stem>:<line>`.
+
+```bash
+python -m agentic.scripts.train_edit_chains --config experiment/qwen_image_21/<recipe> \
+  --chains chains.jsonl trainer.output_dir=outputs/chains
+```
+
+The config is an ordinary `vrl` training config; its `data` section still
+declares the sampler, and the chains replace its prompt rows. Step 0 is
+generated from `source`; one sample of the group is drawn uniformly from the
+driver RNG, written under `<output_dir>/edit_chains/<chain_id>/`, and becomes
+the reference image of step 1, and so on. All groups of a call are scored in
+one reward call after generation. Each sample's reward metadata names its
+parent as `reference_images`, plus `prompt_id` (`<chain_id>:<step>`),
+`chain_id`, `chain_step`, `chain_length`, `chain_source` and
+`chain_parent_sample_id`, so rewards judge each step against the image it
+actually edited. The trainer sees one group per step; no credit flows from a
+later step to an earlier one, and a chain can continue from a failed edit.
+
+`vrl` knows none of this: a chain is an `OwnedCollection`, a prompt item with a
+`collect` method that the collector runs and whose groups it takes as-is.
 
 ## Rewards
 

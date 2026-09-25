@@ -58,7 +58,6 @@ from vrl.trainers.checkpointing import (
     validate_rng_state,
 )
 from vrl.trainers.data.artifacts import resolve_prompt_example_references
-from vrl.trainers.data.edit_chains import EditChain
 from vrl.trainers.data.prompt_sampler import PromptBatchSampler
 from vrl.trainers.data.prompts import PromptExample, load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, run_on_primary_rank
@@ -934,10 +933,9 @@ async def run_online_recipe(
             allow_absolute=True,
         )
 
+    # An owned collection (see ``OwnedCollection``) resolved its own paths.
     examples = [
-        example.map_steps(resolve_references)
-        if isinstance(example, EditChain)
-        else resolve_references(example)
+        example if callable(getattr(example, "collect", None)) else resolve_references(example)
         for example in examples
     ]
     if family_entry.task in {"i2v", "v2w"}:

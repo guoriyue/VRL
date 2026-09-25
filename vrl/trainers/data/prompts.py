@@ -194,12 +194,8 @@ def load_prompt_mixture(
     return picked
 
 
-def load_prompt_examples_from_config(data: DataConfig) -> list[Any]:
-    """Load examples the way the parsed ``data`` section declares.
-
-    Prompt manifests yield ``PromptExample`` rows; an edit-chain manifest yields
-    ``EditChain`` rows, which the collector expands into one prompt group per step.
-    """
+def load_prompt_examples_from_config(data: DataConfig) -> list[PromptExample]:
+    """Load examples the way the parsed ``data`` section declares."""
 
     manifest = data.manifest
     if not manifest:
@@ -214,11 +210,6 @@ def load_prompt_examples_from_config(data: DataConfig) -> list[Any]:
 
     if data.loader == "prompt_image_manifest":
         return list(ImageCaptionPromptDataset.from_config(data, path=manifest).examples)
-
-    if data.loader == "edit_chain_manifest":
-        from vrl.trainers.data.edit_chains import load_edit_chains
-
-        return load_edit_chains(manifest)
 
     raise ValueError(f"unknown data.loader={data.loader!r}")
 

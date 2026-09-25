@@ -9,7 +9,6 @@ DataLoaderName = Literal[
     "pickapic_preference",
     "prompt_manifest",
     "prompt_image_manifest",
-    "edit_chain_manifest",
 ]
 
 

@@ -13,7 +13,6 @@ a new schema field flows through without a second vocabulary to update.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, is_dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from vrl.config.schema import generation_request_rollout_fields
@@ -39,10 +38,6 @@ class RolloutCollectorConfig:
     trajectory_storage: TrajectoryStoragePolicy = field(
         default_factory=TrajectoryStoragePolicy,
     )
-    # Where edit-chain collection writes the parent image each later step is
-    # conditioned on: <trainer.output_dir>/edit_chains. Chains cannot be
-    # collected without it; one-shot prompts never touch it.
-    edit_chain_media_dir: Path | None = None
 
     @classmethod
     def from_root(cls, root: RootConfig) -> RolloutCollectorConfig:
@@ -83,14 +78,12 @@ class RolloutCollectorConfig:
         trajectory_storage = (
             rollout.trajectory_storage if rollout is not None else None
         ) or TrajectoryStoragePolicy()
-        output_dir = root.trainer.output_dir if root.trainer is not None else None
         return cls(
             request_sampling=request_sampling,
             samples_per_generation_batch=samples_per_generation_batch,
             denoise=DenoiseRequestOptions.from_sections(rollout, sampling),
             group_shared_noise=bool(getattr(rollout, "group_shared_noise", None)),
             trajectory_storage=trajectory_storage,
-            edit_chain_media_dir=Path(output_dir) / "edit_chains" if output_dir else None,
         )
 
 

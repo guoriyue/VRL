@@ -21,7 +21,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import torch
 
@@ -43,7 +43,6 @@ from vrl.rollouts.collector.requests import (
     GenerationRequestBuilder,
 )
 from vrl.rollouts.stats import RolloutStats
-from vrl.trainers.data.edit_chains import EditChain
 from vrl.utils.profiling import TimeIntervals, profile_range
 
 
@@ -168,6 +167,28 @@ class RolloutGenerationResult:
     prompt_indices: list[int]
     started_at: float
     completed_at: float
+
+
+class OwnedCollection(Protocol):
+    """A prompt item that runs its own generation plan through the collector.
+
+    ``prepare_training_batches`` hands such items the collector and returns the
+    per-group batches they produce, each group's ids local to that item. The
+    item may issue any number of ordinary requests through
+    ``request_builder`` / ``generate_rollout`` / ``evaluate_rollout`` and must
+    finish with ``finish_scored_prompt_groups``. The framework does not know
+    what the plan is; multi-step editing in ``agentic`` is one.
+    """
+
+    async def collect(
+        self,
+        collector: RolloutCollector,
+        *,
+        group_size: int,
+        runtime_debug: bool,
+        policy_version: int | None,
+        stats: RolloutStats,
+    ) -> list[RolloutBatch]: ...
 
 
 class RolloutCollector:
@@ -481,9 +502,9 @@ class RolloutCollector:
             return request, indices
 
         for prompt_idx, item in enumerate(prompts):
-            if isinstance(item, EditChain):
+            if callable(getattr(item, "collect", None)):
                 raise ValueError(
-                    "edit chains are collected step by step through prepare_training_batches"
+                    "an owned collection is collected through prepare_training_batches"
                 )
             if not isinstance(item, (str, bytes)) and hasattr(item, "generation_input"):
                 if pending_prompts:
@@ -539,19 +560,25 @@ class RolloutCollector:
 
         if not prompts:
             return []
-        if any(isinstance(item, EditChain) for item in prompts):
-            from vrl.rollouts.collector.chains import collect_edit_chains
-
-            if not all(isinstance(item, EditChain) for item in prompts):
-                raise ValueError("edit chains and one-shot prompts cannot share a collection call")
-            return await collect_edit_chains(
-                self,
-                prompts,
-                group_size=group_size,
-                runtime_debug=runtime_debug,
-                policy_version=policy_version,
-                stats=stats,
-            )
+        owned = [callable(getattr(item, "collect", None)) for item in prompts]
+        if any(owned):
+            if not all(owned):
+                raise ValueError("owned collections and one-shot prompts cannot share a call")
+            batches: list[RolloutBatch] = []
+            for item in prompts:
+                # Group ids only need to be distinct within this call; downstream
+                # consumers renumber them. Offset each item's local ids.
+                offset = len(batches)
+                for batch in await item.collect(
+                    self,
+                    group_size=group_size,
+                    runtime_debug=runtime_debug,
+                    policy_version=policy_version,
+                    stats=stats,
+                ):
+                    batch.group_ids = batch.group_ids + offset
+                    batches.append(batch)
+            return batches
 
         collection_started = time.perf_counter()
         reward_intervals: list[tuple[float, float]] = []
@@ -757,6 +784,7 @@ class RolloutCollector:
 
 
 __all__ = [
+    "OwnedCollection",
     "PromptCollectionCleanupError",
     "RewardCollectionMode",
     "RolloutCollector",

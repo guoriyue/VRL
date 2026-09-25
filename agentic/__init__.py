@@ -10,10 +10,12 @@ supplied by ``vrl.rewards``; one-shot collection and editor training stay in
 * ``episode``: ``Task``/``Observation``/``Decision`` records, the three role
   protocols, and ``Episode``, which runs one episode and rebuilds training steps.
 * ``roles``: ``LocalEditor`` (frozen family model) and ``RewardJudge``.
+* ``chains``: editor-only mode; a declared edit schedule trained by vrl's one-shot trainer.
 * ``controller``: the categorical Qwen3-VL policy and its replay records.
 * ``trainer``: on-policy controller updates over episode groups.
 * ``export``: an episode's images as a media manifest for offline rescoring.
-* ``scripts``: collect, train, compare, probe, scripted sequences, media export.
+* ``scripts``: collect, train the controller, train the editor on chains, compare,
+  probe, scripted sequences, media export.
 
 Consumers import the concrete modules directly; this facade re-exports nothing.
 """

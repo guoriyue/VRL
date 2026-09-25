@@ -1,7 +1,8 @@
-"""Edit-chain collection conditions each step on a drawn sample of the previous one."""
+"""Edit chains condition each step on a drawn sample of the previous one."""
 
 from __future__ import annotations
 
+import json
 import random
 from collections.abc import Sequence
 from pathlib import Path
@@ -11,22 +12,21 @@ import pytest
 import torch
 from PIL import Image
 
+from agentic.chains import EditChain, load_edit_chains, sample_image
 from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards import RewardOutput, RewardSample
-from vrl.rollouts.collector.chains import sample_image
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.rollouts.stats import RolloutStats
-from vrl.trainers.data.edit_chains import EditChain
 from vrl.trainers.data.prompts import PromptExample
 from vrl.trajectory.builders import build_diffusion_trajectory
 from vrl.utils.media_reference import MediaReference
 
 
 class _Runtime:
-    """Each sample of a request decodes to a flat image whose value names the sample."""
+    """Each sample decodes to a flat image whose value names the sample."""
 
     def __init__(self) -> None:
         self.requests: list[GenerationRequest] = []
@@ -95,14 +95,9 @@ class _RewardRuntime:
         return None
 
 
-def _collector(
-    tmp_path: Path, *, media_dir: bool = True
-) -> tuple[RolloutCollector, _Runtime, _RewardRuntime]:
+def _collector() -> tuple[RolloutCollector, _Runtime, _RewardRuntime]:
     entry = get_model_family_entry("qwen_image_21")
-    config = RolloutCollectorConfig(
-        request_sampling={"seed": 3},
-        edit_chain_media_dir=tmp_path / "edit_chains" if media_dir else None,
-    )
+    config = RolloutCollectorConfig(request_sampling={"seed": 3})
     runtime, reward = _Runtime(), _RewardRuntime()
     collector = RolloutCollector(
         config=config,
@@ -116,12 +111,17 @@ def _collector(
 def _chain(tmp_path: Path, steps: list[str], chain_id: str = "chain") -> EditChain:
     source = tmp_path / f"{chain_id}.png"
     Image.new("RGB", (2, 2), "white").save(source)
-    return EditChain(chain_id, str(source), [PromptExample(prompt=step) for step in steps])
+    return EditChain(
+        chain_id,
+        str(source),
+        [PromptExample(prompt=step) for step in steps],
+        tmp_path / "edit_chains",
+    )
 
 
 @pytest.mark.asyncio
 async def test_each_step_conditions_on_a_drawn_sample_and_scores_against_it(tmp_path) -> None:
-    collector, runtime, reward = _collector(tmp_path)
+    collector, runtime, reward = _collector()
     chain = _chain(tmp_path, ["recolor", "letter", "sharpen"])
     stats = RolloutStats()
     random.seed(0)
@@ -170,43 +170,72 @@ async def test_each_step_conditions_on_a_drawn_sample_and_scores_against_it(tmp_
 
 
 @pytest.mark.asyncio
-async def test_chains_and_one_shot_prompts_do_not_share_a_call(tmp_path) -> None:
-    collector, _, _ = _collector(tmp_path)
-    chain = _chain(tmp_path, ["a"])
-    with pytest.raises(ValueError, match="cannot share"):
-        await collector.prepare_training_batches(
-            prompts=[chain, "plain prompt"],
-            group_size=2,
-            runtime_debug=False,
-            policy_version=None,
-            stats=RolloutStats(),
-        )
-    with pytest.raises(ValueError, match="step by step"):
-        list(
-            collector.build_generation_requests(
-                prompts=[chain], group_size=2, runtime_debug=False, policy_version=None
-            )
-        )
+async def test_two_chains_in_one_call_get_distinct_group_ids(tmp_path) -> None:
+    collector, _, _ = _collector()
+    batches = await collector.prepare_training_batches(
+        prompts=[_chain(tmp_path, ["a", "b"], "one"), _chain(tmp_path, ["c"], "two")],
+        group_size=2,
+        runtime_debug=False,
+        policy_version=None,
+        stats=RolloutStats(),
+    )
+    assert [batch.group_ids.tolist() for batch in batches] == [[0, 0], [1, 1], [2, 2]]
 
 
-@pytest.mark.asyncio
-async def test_chain_collection_requires_a_media_dir(tmp_path) -> None:
-    collector, _, _ = _collector(tmp_path, media_dir=False)
-    with pytest.raises(ValueError, match="edit_chain_media_dir"):
-        await collector.prepare_training_batches(
-            prompts=[_chain(tmp_path, ["a", "b"])],
-            group_size=2,
-            runtime_debug=False,
-            policy_version=None,
-            stats=RolloutStats(),
-        )
+def test_manifest_rows_resolve_source_and_accept_string_or_object_steps(tmp_path) -> None:
+    Image.new("RGB", (4, 4), "white").save(tmp_path / "page.png")
+    path = tmp_path / "chains.jsonl"
+    rows = [
+        {
+            "chain_id": "comic-1",
+            "source": "page.png",
+            "steps": [
+                "Recolor the coat blue.",
+                {"prompt": "Fix the second bubble.", "target_text": "HELLO", "panel": 2},
+            ],
+            "metadata": {"page": "p1"},
+        },
+        {"source": "./page.png", "steps": ["Sharpen."]},
+    ]
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    chains = load_edit_chains(path, media_dir=tmp_path / "media")
+    assert [chain.chain_id for chain in chains] == ["comic-1", "chains:2"]
+    first = chains[0]
+    assert first.source == str(tmp_path / "page.png")
+    assert first.media_dir == tmp_path / "media"
+    assert first.steps[0] == PromptExample(prompt="Recolor the coat blue.")
+    assert first.steps[1].target_text == "HELLO"
+    assert first.steps[1].metadata == {"panel": 2}
+    step = first.step_example(1, "/tmp/parent.png", parent_sample_id="req:0:1")
+    assert step.reference_images == ["/tmp/parent.png"]
+    assert step.reward_metadata()["prompt_id"] == "comic-1:1"
+    assert step.reward_metadata()["chain_source"] == first.source
+
+
+@pytest.mark.parametrize(
+    ("row", "match"),
+    [
+        ({"source": "page.png", "steps": []}, "non-empty list"),
+        ({"source": "missing.png", "steps": ["a"]}, "does not exist"),
+        ({"source": "page.png", "steps": ["a"], "extra": 1}, "unknown edit chain fields"),
+        (
+            {"source": "page.png", "steps": [{"prompt": "a", "reference_image": "x.png"}]},
+            "conditioning",
+        ),
+        ({"source": "page.png", "steps": [{"prompt": "a", "chain_step": 3}]}, "collector-owned"),
+    ],
+)
+def test_invalid_rows_are_rejected(tmp_path, row, match) -> None:
+    Image.new("RGB", (4, 4), "white").save(tmp_path / "page.png")
+    path = tmp_path / "chains.jsonl"
+    path.write_text(json.dumps(row) + "\n")
+    with pytest.raises((ValueError, FileNotFoundError), match=match):
+        load_edit_chains(path, media_dir=tmp_path / "media")
 
 
 def test_sample_image_accepts_batches_frames_and_references(monkeypatch) -> None:
     batch = torch.arange(2 * 3 * 1 * 2 * 2, dtype=torch.float32).reshape(2, 3, 1, 2, 2)
-    assert sample_image(batch, 1).shape == (3, 2, 2)
     assert torch.equal(sample_image(batch, 1), batch[1, :, 0])
-
     reference = MediaReference(object_ref="ref", sample_index=0)
     monkeypatch.setattr(MediaReference, "resolve", lambda self, cache=None: batch[0, :, 0])
     assert torch.equal(sample_image([reference], 0), batch[0, :, 0])
