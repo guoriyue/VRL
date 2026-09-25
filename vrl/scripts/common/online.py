@@ -925,17 +925,13 @@ async def run_online_recipe(
         else provided_examples
     )
     artifact_data_root = data_config.artifact_data_root if data_config is not None else None
-
-    def resolve_references(example: PromptExample) -> PromptExample:
-        return resolve_prompt_example_references(
-            example,
-            data_root=artifact_data_root,
-            allow_absolute=True,
-        )
-
     # An owned collection (see ``OwnedCollection``) resolved its own paths.
     examples = [
-        example if callable(getattr(example, "collect", None)) else resolve_references(example)
+        example
+        if callable(getattr(example, "collect", None))
+        else resolve_prompt_example_references(
+            example, data_root=artifact_data_root, allow_absolute=True
+        )
         for example in examples
     ]
     if family_entry.task in {"i2v", "v2w"}:
