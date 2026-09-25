@@ -26,10 +26,13 @@ One chain per JSONL line:
 
 ## Run
 
-`run_chain(chain, editor, judge, output_dir=...)` edits step by step (each step on
+`EditChain.run(editor, judge, output_dir=...)` edits step by step (each step on
 the previous output), then the judge scores every state (source plus each
-output) in one call. It writes `run.json`: the chain, each step's output
-artifact, `state_scores`, and the final score.
+output) in one call. It returns a `ChainRun` and writes its record to `run.json`:
+the chain, each step's output artifact, `state_scores`, and the final score.
+`ChainRun.export(dir)` writes the states as a scoring manifest for independent
+rescoring (see `rewards_offline_evaluation.md`); `ChainRun.evaluation()` is the
+judge's recorded scores as an `Evaluation`.
 
 ## Train the editor
 
@@ -39,7 +42,7 @@ python -m agentic.scripts.train_edit_chains --config experiment/qwen_image_21/<r
 ```
 
 The config is an ordinary `vrl` training config; the chains replace its prompt
-rows. Each chain runs as one `run_chain` with `GroupEditor` as both editor and
+rows. Each chain runs as one `EditChain.run` with `GroupEditor` as both editor and
 judge: every step generates `n_samples_per_prompt` candidates through the
 rollout collector, one is drawn uniformly (driver RNG, checkpointed with the
 run) as the next state and written under `<output_dir>/edit_chains/<chain_id>/`,

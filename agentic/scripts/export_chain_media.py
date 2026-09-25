@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from agentic.export import export_chain_media
+from agentic.chains import ChainRun
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -14,8 +14,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--run", required=True, type=Path, help="A chain run.json")
     parser.add_argument("--output-dir", required=True, type=Path)
     args = parser.parse_args(argv)
-    result = export_chain_media(json.loads(args.run.read_text()), args.output_dir)
-    print(json.dumps({"export_id": result["export_id"], "sample_order": result["sample_order"]}))
+    result = ChainRun.load(args.run).export(args.output_dir)
+    print(json.dumps({"run_id": result["run_id"], "sample_order": result["sample_order"]}))
 
 
 if __name__ == "__main__":

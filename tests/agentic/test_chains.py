@@ -14,15 +14,7 @@ import pytest
 import torch
 from PIL import Image
 
-from agentic.chains import (
-    Artifact,
-    EditChain,
-    PolicyStamp,
-    Score,
-    load_edit_chains,
-    run_chain,
-    sample_image,
-)
+from agentic.chains import Artifact, EditChain, GroupEditor, PolicyStamp, Score
 from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards import RewardOutput, RewardSample
@@ -46,7 +38,7 @@ def _chain(tmp_path: Path, steps: list[str], chain_id: str = "chain") -> EditCha
     )
 
 
-# ── run_chain with fake roles ────────────────────────────────────────────────
+# ── EditChain.run with fake roles ────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -82,9 +74,8 @@ async def test_each_step_edits_the_previous_output_and_states_are_scored_once(tm
                     scores.append(Score(image.getpixel((0, 0))[0] / 255, {"white": 1.0}))
             return scores
 
-    trace = await run_chain(
-        chain, Editor("editor"), Judge("judge"), output_dir=tmp_path / "run", seed=5
-    )
+    run = await chain.run(Editor("editor"), Judge("judge"), output_dir=tmp_path / "run", seed=5)
+    trace = run.record
     assert trace["status"] == "success" and not active
     assert [(index, parent.sha256, seed) for index, parent, seed in parents] == [
         (0, chain.source.sha256, 5),
@@ -109,7 +100,7 @@ async def test_failed_edit_leaves_an_error_record_and_never_scores(tmp_path):
         revision="fake", activate=AsyncMock(), park=AsyncMock(), score=AsyncMock()
     )
     with pytest.raises(RuntimeError, match="tool failed"):
-        await run_chain(chain, editor, judge, output_dir=tmp_path / "run")
+        await chain.run(editor, judge, output_dir=tmp_path / "run")
     trace = json.loads((tmp_path / "run/run.json").read_text())
     assert trace["status"] == "error" and trace["steps"][0]["status"] == "error"
     assert "final_score" not in trace
@@ -299,7 +290,7 @@ def test_manifest_rows_resolve_paths_and_accept_string_or_object_steps(tmp_path)
         {"source": "./page.png", "steps": ["Sharpen."]},
     ]
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
-    chains = load_edit_chains(path, media_dir=tmp_path / "media")
+    chains = EditChain.load_manifest(path, media_dir=tmp_path / "media")
     assert [chain.chain_id for chain in chains] == ["comic-1", "chains:2"]
     first = chains[0]
     assert first.source == Artifact.from_path(tmp_path / "page.png")
@@ -337,14 +328,14 @@ def test_invalid_rows_are_rejected(tmp_path, row, match) -> None:
     path = tmp_path / "chains.jsonl"
     path.write_text(json.dumps(row) + "\n")
     with pytest.raises((ValueError, FileNotFoundError), match=match):
-        load_edit_chains(path, media_dir=tmp_path / "media")
+        EditChain.load_manifest(path, media_dir=tmp_path / "media")
 
 
 def test_sample_image_accepts_batches_frames_and_references(monkeypatch) -> None:
     batch = torch.arange(2 * 3 * 1 * 2 * 2, dtype=torch.float32).reshape(2, 3, 1, 2, 2)
-    assert torch.equal(sample_image(batch, 1), batch[1, :, 0])
+    assert torch.equal(GroupEditor._sample_image(batch, 1), batch[1, :, 0])
     reference = MediaReference(object_ref="ref", sample_index=0)
     monkeypatch.setattr(MediaReference, "resolve", lambda self, cache=None: batch[0, :, 0])
-    assert torch.equal(sample_image([reference], 0), batch[0, :, 0])
+    assert torch.equal(GroupEditor._sample_image([reference], 0), batch[0, :, 0])
     with pytest.raises(ValueError, match="one image"):
-        sample_image(torch.zeros(2, 6, 2, 2, 1), 0)
+        GroupEditor._sample_image(torch.zeros(2, 6, 2, 2, 1), 0)

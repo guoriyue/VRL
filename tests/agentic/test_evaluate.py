@@ -7,8 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from PIL import Image
 
-from agentic.chains import Artifact, EditChain, PolicyStamp, Score
-from agentic.export import export_chain_media
+from agentic.chains import Artifact, ChainRun, EditChain, PolicyStamp, Score
 from agentic.scripts.evaluate_chains import evaluate_chain
 from agentic.scripts.export_chain_media import main as export_main
 from vrl.rewards.evaluation import load_media_manifest
@@ -95,9 +94,7 @@ async def test_report_names_the_step_that_lost_an_earlier_requirement(tmp_path):
 @pytest.mark.asyncio
 async def test_export_cli_lists_source_then_outputs_with_the_source_as_reference(tmp_path):
     chain, editor, judge, _ = _fixture(tmp_path)
-    from agentic.chains import run_chain
-
-    trace = await run_chain(chain, editor, judge, output_dir=tmp_path / "run")
+    run = await chain.run(editor, judge, output_dir=tmp_path / "run")
     export_main(
         ["--run", str(tmp_path / "run/run.json"), "--output-dir", str(tmp_path / "export")]
     )
@@ -106,6 +103,6 @@ async def test_export_cli_lists_source_then_outputs_with_the_source_as_reference
     assert all(row.assets["reference_image"] == tmp_path / "source.png" for row in rows)
     assert rows[0].metadata == rows[2].metadata
     with pytest.raises(FileExistsError):
-        export_chain_media(trace, tmp_path / "export")
+        run.export(tmp_path / "export")
     with pytest.raises(ValueError, match="successful"):
-        export_chain_media({**trace, "status": "error"}, tmp_path / "failed")
+        ChainRun({**run.record, "status": "error"}).export(tmp_path / "failed")

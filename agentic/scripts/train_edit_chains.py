@@ -14,7 +14,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from agentic.chains import load_edit_chains
+from agentic.chains import EditChain
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
 from vrl.scripts.common.online import run_online_recipe
@@ -30,7 +30,9 @@ def main(argv: list[str] | None = None) -> None:
     root = parse_config(cfg)
     if root.trainer is None or not root.trainer.output_dir:
         raise ValueError("config missing required field: trainer.output_dir")
-    chains = load_edit_chains(args.chains, media_dir=Path(root.trainer.output_dir) / "edit_chains")
+    chains = EditChain.load_manifest(
+        args.chains, media_dir=Path(root.trainer.output_dir) / "edit_chains"
+    )
     asyncio.run(run_online_recipe(cfg, prompt_examples=chains))
 
 

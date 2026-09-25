@@ -17,13 +17,11 @@ from typing import Any
 
 import torch
 
-from agentic.chains import EditChain, Editor, Judge, load_edit_chains, run_chain
-from agentic.export import export_chain_media
+from agentic.chains import EditChain, Editor, Judge
 from agentic.scripts.session import add_session_arguments, open_session
-from vrl.rewards.evaluation import Evaluation
 from vrl.rewards.sequences import EditSequenceSpec, SequenceRequirement
 from vrl.run import OnlineRunConfig
-from vrl.utils.json_files import canonical_json_sha256, write_json
+from vrl.utils.json_files import write_json
 
 
 async def evaluate_chain(
@@ -38,33 +36,19 @@ async def evaluate_chain(
 ) -> dict[str, Any]:
     """Run one chain, export its states, and audit the recorded scores."""
 
-    trace = await run_chain(
-        chain, editor, judge, output_dir=output_dir / "run", seed=seed, timeout_s=timeout_s
+    run = await chain.run(
+        editor, judge, output_dir=output_dir / "run", seed=seed, timeout_s=timeout_s
     )
-    exported = export_chain_media(trace, output_dir / "media")
-    rows = [
-        json.loads(line) for line in (output_dir / "media/media.jsonl").read_text().splitlines()
-    ]
-    records = {}
-    for row, score in zip(rows, trace["state_scores"], strict=True):
-        record: dict[str, Any] = {"input": row, "status": "missing"}
-        if score is not None:
-            record.update(status="success", result={"scores": score["components"]})
-        records[row["sample_id"]] = record
-    observations = Evaluation(
-        canonical_json_sha256(trace, allow_nan=False),
-        {"kind": "recorded-judge", "revision": judge.revision},
-        records,
-    )
+    exported = run.export(output_dir / "media")
+    observations = run.evaluation()
     spec = EditSequenceSpec(
         sequence_id=chain.chain_id, samples=exported["sample_order"], requirements=requirements
     )
     report = {
         "schema": "vrl.edit-chain-evaluation.v1",
         "chain_id": chain.chain_id,
-        "run_id": observations.run_id,
-        "export_id": exported["export_id"],
-        "final_score": trace["final_score"],
+        "run_id": run.run_id,
+        "final_score": run.record["final_score"],
         "sequence_report": spec.report(observations),
     }
     write_json(output_dir / "judge_observations.json", asdict(observations))
@@ -79,7 +63,7 @@ async def run(args: argparse.Namespace) -> None:
         SequenceRequirement.model_validate(item)
         for item in json.loads(Path(args.requirements).read_text())
     ]
-    chains = load_edit_chains(args.chains, media_dir=output / "chains")
+    chains = EditChain.load_manifest(args.chains, media_dir=output / "chains")
     torch.set_num_threads(8)
     OnlineRunConfig(total_epochs=1, seed=args.seed, deterministic=True).initialize_process_rng()
     torch.backends.cuda.matmul.fp32_precision = "ieee"
