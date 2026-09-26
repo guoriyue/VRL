@@ -641,7 +641,8 @@ class ResolvedDistributedResources:
             # may explicitly take a parking lease on this machine's GPU.
             # The runtime still requires successful parking at the handoff.
             external_reward_lease = (
-                role == "reward" and bool(reward_inference) and not local_reward_configured
+                role == "reward"
+                and any(inference.kind == "http" for inference in reward_inference.values())
             )
             if setting is True and not owns_gpu and not external_reward_lease:
                 raise ValueError(f"{key}=true but the {role} role owns no GPU to offload")

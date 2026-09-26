@@ -1004,6 +1004,37 @@ def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> N
     assert BundleLayout.from_resources(resolved).reward_bundle_indices == ()
 
 
+def test_cpu_reward_does_not_cancel_http_shared_gpu_parking() -> None:
+    """A CPU fidelity scorer can accompany a GPU service's explicit lease."""
+    resolved = ResolvedDistributedResources.from_root(
+        parse_config(
+            _cfg(
+                {
+                    "visible_devices": [0],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [0]},
+                    "reward": {"device": "cpu"},
+                    "offload": {"train": True, "rollout": True, "reward": True},
+                },
+                reward_components={"image_sharpness": 4.0, "editreward": 1.0},
+                reward_inference={
+                    "editreward": {
+                        "kind": "http",
+                        "endpoint": "http://localhost:8315",
+                        "expected_model": "editreward-qwen25-7b",
+                    },
+                },
+            )
+        ),
+    )
+    assert resolved.reward_torch_device() == "cpu"
+    assert resolved.reward_devices == ()
+    assert BundleLayout.from_resources(resolved).reward_bundle_indices == ()
+    assert resolved.lifecycle.park_trainer_for_reward
+    assert resolved.lifecycle.park_rollout_for_reward
+    assert resolved.lifecycle.offload_reward
+
+
 def test_reward_auto_placement_prefers_dedicated_spare_gpu() -> None:
     """Checks unset gpu_pool takes the spare GPU on multi-GPU boxes."""
     resolved = ResolvedDistributedResources.from_root(
