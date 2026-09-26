@@ -1,14 +1,12 @@
-"""Evaluate a SANA training run on the registered aesthetic curve protocol.
+"""Evaluate a SANA training run on a configurable aesthetic curve.
 
 The training process owns checkpoints only. This standalone process loads the
 run's resolved config and complete ``checkpoint-N`` directories, evaluates the
-base model and every saved checkpoint on one fixed DrawBench prompt/seed grid,
+base model and selected checkpoints on one configured prompt/seed grid,
 then writes a provenance-bound report for ``sana_aesthetic_curve_verdict``.
 
-Only ``--run-dir`` selects experiment inputs. Config, manifest, checkpoints,
-sampling, seed, and rewards are deliberately not CLI overrides: allowing any of
-them to drift would make the resulting curve incomparable with the registered
-training run.
+The run config supplies model, manifests and rewards. CLI options select the
+paired seed/sample grid and checkpoint interval; the report records those choices.
 """
 
 from __future__ import annotations
@@ -91,12 +89,21 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Evaluation device; auto selects cuda:0 when available, otherwise cpu.",
     )
+    defaults = sana_report.EvaluationSettings()
+    parser.add_argument("--seed", type=int, default=defaults.base_seed)
+    parser.add_argument("--samples-per-prompt", type=int, default=defaults.samples_per_prompt)
+    parser.add_argument("--checkpoint-interval", type=int, default=defaults.checkpoint_interval)
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = build_parser().parse_args(argv)
+    settings = sana_report.EvaluationSettings(
+        base_seed=args.seed,
+        samples_per_prompt=args.samples_per_prompt,
+        checkpoint_interval=args.checkpoint_interval,
+    )
     run_dir = args.run_dir.expanduser().resolve()
     config_path = run_dir / RESOLVED_CONFIG_NAME
     if not config_path.is_file():
@@ -105,8 +112,8 @@ def main(argv: list[str] | None = None) -> None:
     if not training_metrics_path.is_file():
         raise FileNotFoundError(f"training run has no metrics CSV: {training_metrics_path}")
 
-    cfg = sana_report.normalize_run_config(load_config(config_path))
-    root = parse_config(cfg)
+    cfg = load_config(config_path)
+    root = sana_report.validate_run_config(cfg)
     sana_report.validate_training_metrics(training_metrics_path, root)
     training_manifest_path, eval_manifest_path, prompts = sana_report.resolve_protocol_manifests(
         root,
@@ -115,7 +122,7 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError(f"evaluation manifest has no prompts: {eval_manifest_path}")
     training_log = sana_report.require_training_log_provenance(run_dir, root)
 
-    targets = _discover_checkpoint_targets(run_dir, root)
+    targets = _discover_checkpoint_targets(run_dir, root, settings)
     device = resolve_eval_device(args.device)
     sampling = dict(SANA_EVAL_SAMPLING_CONFIG)
     if root.model is None:
@@ -157,6 +164,7 @@ def main(argv: list[str] | None = None) -> None:
         sampling=sampling,
         device=device,
         expected_model_identity=model_identity,
+        settings=settings,
     )
     sample_scores = _score_images(generated, reward_models)
     sample_path = run_dir / sana_report.SAMPLES_RELATIVE_PATH
@@ -178,8 +186,6 @@ def main(argv: list[str] | None = None) -> None:
         "resolved_config": {
             "path": config_path.name,
             "sha256": sha256_file(config_path),
-            "canonical_protocol": sana_report.CANONICAL_CONFIG_NAME,
-            "canonical_protocol_sha256": sana_report.CANONICAL_PROTOCOL_SHA256,
         },
         "model": {
             "family": str(cfg.model.family),
@@ -196,8 +202,8 @@ def main(argv: list[str] | None = None) -> None:
             "sha256": sha256_file(eval_manifest_path),
             "prompt_count": len(prompts),
         },
-        "seed_grid": sana_report.seed_grid_record(),
-        "evaluation_curve": sana_report.evaluation_curve_record(),
+        "seed_grid": settings.seed_grid_record(),
+        "evaluation_curve": {"checkpoint_interval": settings.checkpoint_interval},
         "sampling": sampling,
         "scheduler_protocol": dict(SANA_EVAL_SCHEDULER_CONFIG),
         "execution": {"generation_device": str(device)},
@@ -227,7 +233,12 @@ def main(argv: list[str] | None = None) -> None:
     )
 
 
-def _discover_checkpoint_targets(run_dir: Path, root: RootConfig) -> list[CheckpointTarget]:
+def _discover_checkpoint_targets(
+    run_dir: Path,
+    root: RootConfig,
+    settings: sana_report.EvaluationSettings | None = None,
+) -> list[CheckpointTarget]:
+    settings = settings or sana_report.EvaluationSettings()
     numbered: list[tuple[int, Path]] = []
     for candidate in run_dir.glob("checkpoint-*"):
         match = re.fullmatch(r"checkpoint-(\d+)", candidate.name)
@@ -248,11 +259,9 @@ def _discover_checkpoint_targets(run_dir: Path, root: RootConfig) -> list[Checkp
     if not numbered:
         raise ValueError(f"training run has no complete checkpoint-N directories: {run_dir}")
     numbered.sort()
-    expected = sana_report.checkpoint_curve_epochs(root)
+    expected = sana_report.checkpoint_curve_epochs(root, settings)
     eval_numbered = [
-        (epoch, path)
-        for epoch, path in numbered
-        if epoch % sana_report.EVAL_CHECKPOINT_INTERVAL == 0
+        (epoch, path) for epoch, path in numbered if epoch % settings.checkpoint_interval == 0
     ]
     epochs = [epoch for epoch, _ in eval_numbered]
     if epochs != expected:
@@ -353,11 +362,13 @@ def _generate_images(
     sampling: dict[str, Any],
     device: Any,
     expected_model_identity: dict[str, Any],
+    settings: sana_report.EvaluationSettings | None = None,
 ) -> list[GeneratedImage]:
     from vrl.models.families.registry import get_model_family_entry
     from vrl.run import resolve_model
     from vrl.utils.media import write_png
 
+    settings = settings or sana_report.EvaluationSettings()
     if root.model is None:
         raise ValueError("SANA checkpoint evaluation requires model configuration")
     entry = get_model_family_entry(str(root.model.family))
@@ -421,12 +432,12 @@ def _generate_images(
                 del checkpoint
                 checkpoint_read = True
             for prompt_index, prompt in enumerate(prompts):
-                group_seed = sana_report.group_seed(prompt_index)
+                group_seed = settings.group_seed(prompt_index)
                 logger.info(
                     "Generating checkpoint=%s prompt=%d samples=%d group_seed=%d",
                     target.label,
                     prompt_index,
-                    sana_report.EVAL_SAMPLES_PER_PROMPT,
+                    settings.samples_per_prompt,
                     group_seed,
                 )
                 # A fresh scheduler per prompt group makes each grid cell
@@ -436,7 +447,7 @@ def _generate_images(
                     scheduler=load_official_scheduler(build),
                     prompt=prompt,
                     seed=group_seed,
-                    num_images=sana_report.EVAL_SAMPLES_PER_PROMPT,
+                    num_images=settings.samples_per_prompt,
                     device=device,
                     sampling=sampling,
                 )

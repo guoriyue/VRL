@@ -1,7 +1,7 @@
 """Own the persisted SANA aesthetic-curve report protocol.
 
 The checkpoint evaluator produces images and scores. This module owns the
-frozen experiment identity, report and sample paths, publication helpers, and
+report and sample paths, publication helpers, and
 the fail-closed reader consumed by the curve verdict. Keeping both sides of the
 persisted contract here prevents the producer CLI from becoming an accidental
 schema owner.
@@ -13,13 +13,11 @@ import csv
 import json
 import math
 import statistics
-from collections.abc import Callable
-from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from vrl.config.loading import load_config
 from vrl.config.schema import RootConfig, parse_config
@@ -31,32 +29,40 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file
-from vrl.utils.json_files import canonical_json_sha256, read_jsonl, write_json, write_jsonl
+from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
 
-# Persisted protocol and asset identities. These constants are real schema
-# boundaries, not tunable experiment defaults or duplicated typed structures.
-REPORT_SCHEMA = "vrl.sana_aesthetic_checkpoint_eval/v5"
-REPORT_SCHEMA_VERSION = 5
-REPORT_RELATIVE_PATH = Path("sana_aesthetic_v2_5_fullparam_native_fp16_eval/report.json")
-SAMPLES_RELATIVE_PATH = Path("sana_aesthetic_v2_5_fullparam_native_fp16_eval/samples.jsonl")
-EVAL_BASE_SEED = 20260710
-EVAL_SAMPLES_PER_PROMPT = 2
-# Recovery checkpoints may be denser than the preregistered held-out curve.
-EVAL_CHECKPOINT_INTERVAL = 25
-CANONICAL_CONFIG_NAME = "experiment/sana/online_grpo_aesthetic_fullparam_long"
-# Historical run configs persist the retired path, so it remains protocol data.
-_RETIRED_ENTRYPOINT = "vrl.scripts.diffusion.train:train_diffusion_grpo"
-_LIVE_ENTRYPOINT = "vrl.scripts.train:train_online"
-# V5 migrates the scorer to SigLIP Aesthetic Predictor V2.5. Its scores and
-# checkpoint training contract are intentionally distinct from the retired
-# CLIP-based v4 protocol. Archived reports remain readable at their source revision.
-CANONICAL_PROTOCOL_SHA256 = "64150a8d6e196abfd4654aa95262fde15844e47ffa842e76112e9c26aee9afa6"
-TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"
-EVAL_MANIFEST_SHA256 = "10c70e8af2ae16b0d76eb9da0f53801485ab0a3bae83e605d310faa9b16bfcdd"
-TRAIN_PROMPT_COUNT = 192
-EVAL_PROMPT_COUNT = 64
-AESTHETIC_ASSET_SHA256 = "a6caf256b3dc434273c98dcb12f6bf17c5d4fc647d8df11f038386923dd06220"
-AESTHETIC_ASSET_BYTES = 2_644_834
+# Report format and file names are shared by the producer and reader.
+REPORT_SCHEMA = "vrl.sana_aesthetic_checkpoint_eval/v6"
+REPORT_RELATIVE_PATH = Path("aesthetic_eval/report.json")
+SAMPLES_RELATIVE_PATH = REPORT_RELATIVE_PATH.with_name("samples.jsonl")
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationSettings:
+    """Configurable evaluation grid, persisted with each report."""
+
+    base_seed: int = 0
+    samples_per_prompt: int = 2
+    checkpoint_interval: int = 25
+
+    def __post_init__(self) -> None:
+        for name in ("base_seed", "samples_per_prompt", "checkpoint_interval"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"{name} must be an integer")
+            if value < (0 if name == "base_seed" else 1):
+                raise ValueError(f"invalid evaluation {name}: {value}")
+
+    def group_seed(self, prompt_index: int) -> int:
+        return self.base_seed + prompt_index * self.samples_per_prompt
+
+    def seed_grid_record(self) -> dict[str, Any]:
+        return {
+            "base_seed": self.base_seed,
+            "samples_per_prompt": self.samples_per_prompt,
+            "formula": "base_seed + prompt_index * samples_per_prompt",
+            "sample_stream": "one batched torch.Generator stream per prompt group",
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,67 +89,17 @@ class RewardModelDefinition:
         }
 
 
-def normalize_run_config(cfg: DictConfig) -> DictConfig:
-    """Require the exact preregistered full-parameter long-run config."""
+def validate_run_config(cfg: DictConfig) -> RootConfig:
+    """Validate the run's own config, without comparing it to a preset."""
 
-    actual = OmegaConf.to_container(cfg, resolve=True)
-    expected = OmegaConf.to_container(load_config(CANONICAL_CONFIG_NAME), resolve=True)
-    if not isinstance(actual, dict) or not isinstance(expected, dict):
-        raise TypeError("SANA evaluation configs must resolve to mappings")
-    # The frozen v4 identity predates the parity gate's move out of debug.
-    # Project only that spelling back for hashing: threshold changes and any
-    # additional parity settings must still invalidate the registered protocol.
-    # Runtime validation below keeps the live shape and its mandatory gate.
-    registered_shape = deepcopy(expected)
-    # Keep the registered identity while using the clearer live batch names.
-    registered_actor = _section(registered_shape, "actor")
-    if registered_actor is not None and "training_microbatch_size" in registered_actor:
-        registered_actor["samples_per_replay_batch"] = registered_actor.pop(
-            "training_microbatch_size"
-        )
-    if registered_actor is not None and "prompts_per_collection" in registered_actor:
-        collection_prompts = registered_actor.pop("prompts_per_collection")
-        registered_actor["gradient_accumulation_steps"] = (
-            registered_shape["rollout"]["prompts_per_batch"] // collection_prompts
-            if collection_prompts
-            else 0
-        )
-    registered_trainer = _section(registered_shape, "trainer")
-    parity = _section(registered_shape, "trainer", "replay_parity")
-    if registered_trainer is not None and parity is not None:
-        debug = _section(registered_shape, "trainer", "debug")
-        if debug is not None and "max_abs_logprob_diff" in parity:
-            if "max_abs_logprob_diff" in debug:
-                raise ValueError("ambiguous SANA parity threshold in debug and replay_parity")
-            debug["max_abs_logprob_diff"] = parity.pop("max_abs_logprob_diff")
-            if not parity:
-                registered_trainer.pop("replay_parity")
-    canonical_digest = _semantic_digest(registered_shape)
-    if canonical_digest != CANONICAL_PROTOCOL_SHA256:
-        raise ValueError(
-            "bundled SANA aesthetic preset changed without a protocol schema update: "
-            f"{canonical_digest} != {CANONICAL_PROTOCOL_SHA256}",
-        )
-    normalized_actual, normalized_expected = _erase_meaningless_spelling(
-        deepcopy(actual),
-        deepcopy(expected),
-    )
-    if normalized_actual != normalized_expected:
-        mismatch = _first_config_difference(normalized_actual, normalized_expected)
-        raise ValueError(
-            "resolved config does not match the registered SANA full-parameter protocol"
-            + (f": {mismatch}" if mismatch else ""),
-        )
-    # Once accepted, downstream code reads the fully spelled canonical shape.
-    normalized = OmegaConf.create(expected)
-    OmegaConf.resolve(normalized)
-    assert isinstance(normalized, DictConfig)
-    parse_config(normalized)
-    return normalized
+    root = parse_config(cfg)
+    if root.model is None or root.model.family != "sana":
+        raise ValueError("SANA evaluation requires model.family=sana")
+    return root
 
 
 def resolve_protocol_manifests(root: RootConfig) -> tuple[Path, Path, list[str]]:
-    """Resolve and validate the frozen train/evaluation prompt split."""
+    """Resolve the configured train/evaluation split and reject leakage."""
 
     data = root.data
     training_path = (
@@ -155,24 +111,12 @@ def resolve_protocol_manifests(root: RootConfig) -> tuple[Path, Path, list[str]]
     for label, path in (("training", training_path), ("evaluation", eval_path)):
         if not path.is_file():
             raise FileNotFoundError(f"SANA {label} manifest does not exist: {path}")
-    if sha256_file(training_path) != TRAIN_MANIFEST_SHA256:
-        raise ValueError(
-            f"SANA training manifest does not match the registered asset: {training_path}",
-        )
-    if sha256_file(eval_path) != EVAL_MANIFEST_SHA256:
-        raise ValueError(
-            f"SANA evaluation manifest does not match the registered asset: {eval_path}",
-        )
-
     training_prompts = [example.prompt for example in load_prompt_dataset_index(training_path)]
     eval_prompts = [example.prompt for example in load_prompt_dataset_index(eval_path)]
-    if len(training_prompts) != TRAIN_PROMPT_COUNT:
-        raise ValueError(
-            f"SANA training manifest has {len(training_prompts)} prompts, "
-            f"expected {TRAIN_PROMPT_COUNT}",
-        )
-    if len(eval_prompts) != EVAL_PROMPT_COUNT or len(set(eval_prompts)) != EVAL_PROMPT_COUNT:
-        raise ValueError("SANA evaluation manifest must contain exactly 64 unique prompts")
+    if not training_prompts or not eval_prompts:
+        raise ValueError("SANA training/evaluation manifests must be nonempty")
+    if len(set(eval_prompts)) != len(eval_prompts):
+        raise ValueError("SANA evaluation manifest must contain unique prompts")
     overlap = set(training_prompts) & set(eval_prompts)
     if overlap:
         raise ValueError(
@@ -182,7 +126,7 @@ def resolve_protocol_manifests(root: RootConfig) -> tuple[Path, Path, list[str]]
 
 
 def validate_training_metrics(path: Path, root: RootConfig) -> None:
-    """Fail when the training CSV does not cover every registered update."""
+    """Fail when the training CSV does not cover every configured update."""
 
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -320,14 +264,11 @@ def summarize_scores(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return metrics
 
 
-def group_seed(prompt_index: int) -> int:
-    """Return the registered seed for one prompt group."""
-
-    return EVAL_BASE_SEED + prompt_index * EVAL_SAMPLES_PER_PROMPT
-
-
-def checkpoint_curve_epochs(root: RootConfig) -> list[int]:
-    """Return the preregistered curve epochs after validating save cadence."""
+def checkpoint_curve_epochs(
+    root: RootConfig,
+    settings: EvaluationSettings,
+) -> list[int]:
+    """Return the configured curve epochs after validating save cadence."""
 
     trainer = root.trainer
     save_freq = int((trainer.save_freq if trainer is not None else None) or 0)
@@ -337,49 +278,29 @@ def checkpoint_curve_epochs(root: RootConfig) -> list[int]:
     if (
         total_epochs <= 0
         or total_epochs % save_freq != 0
-        or total_epochs % EVAL_CHECKPOINT_INTERVAL != 0
-        or EVAL_CHECKPOINT_INTERVAL % save_freq != 0
+        or total_epochs % settings.checkpoint_interval != 0
+        or settings.checkpoint_interval % save_freq != 0
     ):
         raise ValueError(
             "SANA aesthetic curve requires total_epochs divisible by both the "
             "checkpoint and evaluation intervals, with save_freq dividing the "
             "evaluation interval",
         )
-    return list(range(EVAL_CHECKPOINT_INTERVAL, total_epochs + 1, EVAL_CHECKPOINT_INTERVAL))
-
-
-def seed_grid_record() -> dict[str, Any]:
-    """Return the persisted identity of the fixed prompt/sample grid."""
-
-    return {
-        "base_seed": EVAL_BASE_SEED,
-        "samples_per_prompt": EVAL_SAMPLES_PER_PROMPT,
-        "formula": "base_seed + prompt_index * samples_per_prompt",
-        "sample_stream": "one batched torch.Generator stream per prompt group",
-    }
-
-
-def evaluation_curve_record() -> dict[str, int]:
-    """Return the persisted checkpoint-selection protocol."""
-
-    return {"checkpoint_interval": EVAL_CHECKPOINT_INTERVAL}
+    return list(
+        range(settings.checkpoint_interval, total_epochs + 1, settings.checkpoint_interval)
+    )
 
 
 def load_report_metrics(run_dir: str | Path) -> list[dict[str, float]]:
-    """Load and fully validate one canonical standalone evaluation report."""
+    """Load and fully validate one provenance-bound standalone evaluation report."""
 
     root = Path(run_dir).expanduser().resolve()
     report_path = root / REPORT_RELATIVE_PATH
     raw = json.loads(report_path.read_text(encoding="utf-8"))
-    if (
-        not isinstance(raw, dict)
-        or raw.get("schema") != REPORT_SCHEMA
-        or raw.get("schema_version") != REPORT_SCHEMA_VERSION
-    ):
+    if not isinstance(raw, dict) or raw.get("schema") != REPORT_SCHEMA:
         raise ValueError(
             f"unsupported SANA evaluation report schema in {report_path}: "
-            f"schema={raw.get('schema') if isinstance(raw, dict) else type(raw).__name__}, "
-            f"version={raw.get('schema_version') if isinstance(raw, dict) else None}",
+            f"schema={raw.get('schema') if isinstance(raw, dict) else type(raw).__name__}",
         )
     provenance = raw.get("provenance")
     if not isinstance(provenance, dict):
@@ -484,252 +405,12 @@ def publish_report(
     path = run_dir / REPORT_RELATIVE_PATH
     payload = {
         "schema": REPORT_SCHEMA,
-        "schema_version": REPORT_SCHEMA_VERSION,
         "provenance": provenance,
         "metrics": metrics,
     }
     write_json(path, payload)
     load_report_metrics(run_dir)
     return path
-
-
-def _section(config: Any, *path: str) -> dict[str, Any] | None:
-    """Return the nested mapping, or None when any hop is absent/not a dict."""
-
-    for key in path:
-        if not isinstance(config, dict):
-            return None
-        config = config.get(key)
-    return config if isinstance(config, dict) else None
-
-
-def _drop_default_key(
-    section: dict[str, Any] | None,
-    key: str,
-    *,
-    default: Any,
-    resolve: Callable[[Any], Any] | None = None,
-) -> None:
-    """Erase a key whose value means the same thing as leaving it unwritten.
-
-    ``resolve`` handles public spellings wider than their meaning. Invalid
-    values stay visible so protocol drift still fails closed.
-    """
-
-    if section is None or key not in section:
-        return
-    value = section[key]
-    if resolve is not None:
-        try:
-            value = resolve(value)
-        except ValueError:
-            return
-    if value == default:
-        section.pop(key)
-
-
-def _erase_meaningless_spelling(
-    actual: dict[str, Any],
-    canonical: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Erase spelling differences that carry no meaning; leave real drift visible.
-
-    Default-valued keys are erased symmetrically. The retired synchronous actor
-    also spelled its single mailbox slot explicitly, and its entrypoint obtained
-    the SANA fp16 precision defaults from the family registry instead of YAML.
-    Only those exact historical shapes are accepted.
-    """
-
-    from dataclasses import fields as dataclass_fields
-
-    from vrl.config.schema import RolloutRuntimeSection
-    from vrl.trajectory.storage import TrajectoryStoragePolicy
-
-    def storage_policy(value: Any) -> Any:
-        """Resolve a storage block without hiding unknown keys."""
-
-        policy_fields = {item.name for item in dataclass_fields(TrajectoryStoragePolicy)}
-        if isinstance(value, dict) and set(value) != policy_fields:
-            raise ValueError(f"unexpected trajectory_storage keys: {sorted(set(value))}")
-        return TrajectoryStoragePolicy.from_config(value)
-
-    # ``rollout.same_latent`` was a user-facing no-op knob until commit
-    # 7056ea69 removed it. A run resolved before that carries its default
-    # ``false``; erase that spelling only (a ``true`` would be a real, if inert,
-    # protocol difference and stays visible).
-    rollout = actual.get("rollout")
-    if isinstance(rollout, dict) and rollout.get("same_latent") is False:
-        rollout.pop("same_latent")
-    trainer = actual.get("trainer")
-    # Historical reports may carry the threshold under debug. This protocol
-    # adapter accepts that old spelling without teaching live training configs
-    # an alias or discarding conflicting/unknown persisted settings.
-    debug = _section(actual, "trainer", "debug")
-    if isinstance(trainer, dict) and debug is not None and "max_abs_logprob_diff" in debug:
-        parity = trainer.setdefault("replay_parity", {})
-        if not isinstance(parity, dict) or "max_abs_logprob_diff" in parity:
-            raise ValueError("ambiguous SANA parity threshold in debug and replay_parity")
-        parity["max_abs_logprob_diff"] = debug.pop("max_abs_logprob_diff")
-    uses_retired_entrypoint = (
-        isinstance(trainer, dict)
-        and trainer.get("entrypoint") == _RETIRED_ENTRYPOINT
-        and _section(canonical, "trainer") is not None
-        and canonical["trainer"].get("entrypoint") == _LIVE_ENTRYPOINT
-    )
-    # 2026-08 batch-vocabulary rename: historical resolved configs persist the
-    # pre-rename keys; translate them so only real behavioral drift is visible.
-    for path, old, new in (
-        (("rollout",), "samples_per_chunk", "samples_per_generation_batch"),
-        (("actor",), "replay_samples_per_chunk", "training_microbatch_size"),
-        (("actor",), "samples_per_replay_batch", "training_microbatch_size"),
-        (("actor",), "microbatch_size", "prompts_per_collection"),
-    ):
-        renamed_section = _section(actual, *path)
-        if isinstance(renamed_section, dict) and old in renamed_section:
-            if new in renamed_section:
-                raise ValueError(
-                    f"ambiguous SANA config at {'.'.join(path)}: both {old!r} and {new!r}"
-                )
-            renamed_section[new] = renamed_section.pop(old)
-    # 2026-09-19 directory rename: the committed manifests moved from datasets/
-    # to manifests/ with unchanged content; historical resolved configs still
-    # spell the old path.
-    data_section = _section(actual, "data")
-    if isinstance(data_section, dict):
-        for key in ("manifest", "eval_manifest", "source_report"):
-            value = data_section.get(key)
-            if isinstance(value, str) and value.startswith("datasets/"):
-                data_section[key] = "manifests/" + value[len("datasets/") :]
-    # Knobs removed in 2026-09: the batch placement strategy (round-robin is the
-    # only placement) and the health monitor's post-resume grace; historical
-    # configs may still carry them.
-    rollout_section = _section(actual, "distributed", "rollout")
-    if isinstance(rollout_section, dict):
-        for removed in (
-            "chunk_placement_strategy",
-            "batch_placement_strategy",
-            "health_check_first_wait_s",
-        ):
-            rollout_section.pop(removed, None)
-
-    # Historical online configs stored collection counts rather than sizes.
-    actor = _section(actual, "actor")
-    if isinstance(actor, dict) and "gradient_accumulation_steps" in actor:
-        count = actor.pop("gradient_accumulation_steps")
-        if count:
-            prompts = actual["rollout"]["prompts_per_batch"]
-            if prompts % count:
-                raise ValueError("historical SANA collection count must divide prompt count")
-            size = prompts // count
-            if actor.get("prompts_per_collection", size) != size:
-                raise ValueError("ambiguous SANA collection size and count")
-            actor["prompts_per_collection"] = size
-        else:
-            actor.setdefault("prompts_per_collection", 0)
-
-    # 2026-08 sharing-grammar simplification: allow_overlap was retired and the
-    # canonical preset chain dropped its default-valued resource spellings
-    # (visible_devices auto probe, one trainer GPU, one one-GPU rollout worker).
-    # Only those exact historical shapes are meaningless spelling — any other
-    # persisted value stays visible as drift.
-    resources_section = _section(actual, "distributed", "resources")
-    if isinstance(resources_section, dict):
-        if resources_section.get("allow_overlap") is True:
-            resources_section.pop("allow_overlap")
-        _drop_default_key(resources_section, "visible_devices", default="auto")
-        _drop_default_key(_section(resources_section, "trainer"), "num_gpus", default=1)
-        rollout_resources = _section(resources_section, "rollout")
-        # Historical spellings: gpus_per_worker was deleted and num_workers was
-        # renamed to num_engines; persisted run configs keep the old keys.
-        _drop_default_key(rollout_resources, "gpus_per_worker", default=1.0)
-        _drop_default_key(rollout_resources, "num_workers", default=1)
-        if resources_section.get("trainer") == {}:
-            resources_section.pop("trainer")
-
-    # Defaults come from their live owners so a changed default cannot silently
-    # keep validating stale runs.
-    default_equivalent: list[tuple[tuple[str, ...], str, Any, Any]] = [
-        (("data", "preprocessing"), "target_text", "none", None),
-        (
-            ("rollout",),
-            "trajectory_storage",
-            TrajectoryStoragePolicy.from_config(None),
-            storage_policy,
-        ),
-        (("reward", "kwargs", "aesthetic"), "device", None, None),
-        *(
-            (("distributed", "rollout"), name, default, None)
-            for name, default in RolloutRuntimeSection().model_dump().items()
-        ),
-    ]
-    for path, key, default, resolve in default_equivalent:
-        for side in (actual, canonical):
-            _drop_default_key(_section(side, *path), key, default=default, resolve=resolve)
-
-    actual_rollout = _section(actual, "distributed", "rollout")
-    if actual_rollout is not None and actual_rollout.get("max_inflight_chunks_per_worker") == 1:
-        actual_rollout.pop("max_inflight_chunks_per_worker")
-
-    precision = _section(actual, "precision")
-    canonical_precision = _section(canonical, "precision")
-    if (
-        uses_retired_entrypoint
-        and precision is not None
-        and canonical_precision is not None
-        and _section(actual, "model") is not None
-        and actual["model"].get("family") == "sana"
-        and _section(canonical, "model") is not None
-        and canonical["model"].get("family") == "sana"
-    ):
-        stages = [
-            (_section(precision, stage), _section(canonical_precision, stage))
-            for stage in ("training", "rollout")
-        ]
-        if all(
-            stage is not None
-            and canonical_stage is not None
-            and stage.get("dtype") == canonical_stage.get("dtype") == "fp16"
-            for stage, canonical_stage in stages
-        ):
-            _drop_default_key(canonical_precision, "float32_precision", default="ieee")
-            for _, canonical_stage in stages:
-                _drop_default_key(canonical_stage, "outer_autocast", default=False)
-
-    if uses_retired_entrypoint:
-        trainer["entrypoint"] = _LIVE_ENTRYPOINT
-
-    # Both sides were edited, so callers must compare the normalized pair.
-    return actual, canonical
-
-
-def _first_config_difference(actual: Any, expected: Any, path: str = "") -> str:
-    if isinstance(actual, dict) and isinstance(expected, dict):
-        actual_keys = set(actual)
-        expected_keys = set(expected)
-        if actual_keys != expected_keys:
-            return (
-                f"{path or '<root>'} keys differ: missing={sorted(expected_keys - actual_keys)}, "
-                f"extra={sorted(actual_keys - expected_keys)}"
-            )
-        for key in sorted(actual):
-            child = f"{path}.{key}" if path else str(key)
-            mismatch = _first_config_difference(actual[key], expected[key], child)
-            if mismatch:
-                return mismatch
-        return ""
-    if isinstance(actual, list) and isinstance(expected, list):
-        if len(actual) != len(expected):
-            return f"{path} length differs: {len(actual)} != {len(expected)}"
-        for index, (actual_item, expected_item) in enumerate(zip(actual, expected, strict=True)):
-            mismatch = _first_config_difference(actual_item, expected_item, f"{path}[{index}]")
-            if mismatch:
-                return mismatch
-        return ""
-    return "" if actual == expected else f"{path}: {actual!r} != {expected!r}"
-
-
-def _semantic_digest(value: Any) -> str:
-    return canonical_json_sha256(value, ensure_ascii=False)
 
 
 def _aesthetic_asset_record() -> dict[str, Any]:
@@ -741,11 +422,6 @@ def _aesthetic_asset_record() -> dict[str, Any]:
     with resources.as_file(asset) as asset_path:
         sha256 = sha256_file(asset_path)
         size = asset_path.stat().st_size
-    if sha256 != AESTHETIC_ASSET_SHA256 or size != AESTHETIC_ASSET_BYTES:
-        raise ValueError(
-            "packaged aesthetic MLP asset does not match the registered protocol: "
-            f"sha256={sha256}, bytes={size}",
-        )
     return {
         "package": "vrl.rewards.assets",
         "name": "aesthetic_predictor_v2_5.pth",
@@ -797,12 +473,7 @@ def _validate_report_provenance(
     config_record = provenance["resolved_config"]
     config_path = run_dir / str(config_record.get("path", ""))
     _require_matching_file(config_path, config_record, label="resolved config")
-    if config_record.get("canonical_protocol") != CANONICAL_CONFIG_NAME:
-        raise ValueError("SANA evaluation report names the wrong canonical config protocol")
-    if config_record.get("canonical_protocol_sha256") != CANONICAL_PROTOCOL_SHA256:
-        raise ValueError("SANA evaluation report names the wrong canonical protocol digest")
-    cfg = normalize_run_config(load_config(config_path))
-    root = parse_config(cfg)
+    root = validate_run_config(load_config(config_path))
     validate_training_metrics(training_metrics_path, root)
     if provenance["training_log"] != require_training_log_provenance(run_dir, root):
         raise ValueError("SANA evaluation training-log provenance changed")
@@ -836,14 +507,15 @@ def _validate_report_provenance(
         raise ValueError("SANA evaluation sampling provenance changed")
     if provenance["scheduler_protocol"] != SANA_EVAL_SCHEDULER_CONFIG:
         raise ValueError("SANA evaluation scheduler protocol changed")
-    expected_seed = seed_grid_record()
-    if provenance["seed_grid"] != expected_seed:
-        raise ValueError(
-            "SANA evaluation report seed protocol changed: "
-            f"{provenance['seed_grid']!r} != {expected_seed!r}",
-        )
-    if provenance["evaluation_curve"] != evaluation_curve_record():
-        raise ValueError("SANA evaluation checkpoint interval changed")
+    settings = EvaluationSettings(
+        base_seed=provenance["seed_grid"].get("base_seed"),
+        samples_per_prompt=provenance["seed_grid"].get("samples_per_prompt"),
+        checkpoint_interval=provenance["evaluation_curve"].get("checkpoint_interval"),
+    )
+    if provenance["seed_grid"] != settings.seed_grid_record():
+        raise ValueError("SANA evaluation seed protocol is invalid")
+    if provenance["evaluation_curve"] != {"checkpoint_interval": settings.checkpoint_interval}:
+        raise ValueError("SANA evaluation checkpoint interval is invalid")
 
     execution = provenance["execution"]
     if not str(execution.get("generation_device", "")):
@@ -859,7 +531,7 @@ def _validate_report_provenance(
         raise ValueError("SANA evaluation reward provenance disagrees with resolved_config.yaml")
 
     checkpoints = provenance["checkpoints"]
-    _validate_checkpoint_records(run_dir, root, checkpoints)
+    _validate_checkpoint_records(run_dir, root, checkpoints, settings)
 
     sample_record = provenance["samples"]
     sample_path = run_dir / str(sample_record.get("path", ""))
@@ -874,7 +546,7 @@ def _validate_report_provenance(
         (record["label"], int(record["epoch"]), prompt_index, sample_index)
         for record in checkpoints
         for prompt_index in range(len(prompts))
-        for sample_index in range(EVAL_SAMPLES_PER_PROMPT)
+        for sample_index in range(settings.samples_per_prompt)
     }
     actual_cells: set[tuple[str, int, int, int]] = set()
     for index, row in enumerate(sample_rows):
@@ -903,7 +575,7 @@ def _validate_report_provenance(
         prompt_index = cell[2]
         if not (0 <= prompt_index < len(prompts)) or str(row["prompt"]) != prompts[prompt_index]:
             raise ValueError(f"evaluation sample row {index} has the wrong prompt identity")
-        if int(row["group_seed"]) != group_seed(prompt_index):
+        if int(row["group_seed"]) != settings.group_seed(prompt_index):
             raise ValueError(f"evaluation sample row {index} has the wrong fixed-grid seed")
         image_path = run_dir / str(row["image_path"])
         _require_matching_file(
@@ -922,6 +594,7 @@ def _validate_checkpoint_records(
     run_dir: Path,
     root: RootConfig,
     checkpoints: Any,
+    settings: EvaluationSettings,
 ) -> None:
     if (
         not isinstance(checkpoints, list)
@@ -939,7 +612,7 @@ def _validate_checkpoint_records(
         raise ValueError(
             "SANA evaluation checkpoint provenance no longer matches the training run",
         )
-    expected_epochs = checkpoint_curve_epochs(root)
+    expected_epochs = checkpoint_curve_epochs(root, settings)
     if [int(record.get("epoch", -1)) for record in checkpoints[1:]] != expected_epochs:
         raise ValueError(
             "SANA evaluation checkpoint provenance no longer matches the training run",

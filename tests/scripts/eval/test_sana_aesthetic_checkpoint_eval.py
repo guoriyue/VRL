@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import OmegaConf
 from PIL import Image
 
 from tests.scripts.eval.fixtures import (
@@ -152,18 +152,8 @@ def _write_run(
 
 
 def _allow_minimal_protocol(monkeypatch) -> None:
-    """Let a minimal synthetic run dir through, so the report machinery can be tested.
+    """Replace remote materialization and log/manifest fixtures for tiny runs."""
 
-    The identity patch on ``normalize_run_config`` is what makes the tiny config in
-    ``_write_run`` acceptable — the real gate only accepts the registered
-    300-epoch protocol. ``_materialize_model_snapshot`` becomes ``parse_config``
-    because ``model.path`` is already the local tiny snapshot (the Hub download
-    is the boundary); the model identity is the real local-directory hash. That means none of these tests says anything about main()
-    calling the gate; the two tests driven from ``_write_protocol_run`` below own
-    that, on a run dir the real gate does accept.
-    """
-
-    monkeypatch.setattr(sana_report, "normalize_run_config", lambda cfg: cfg)
     monkeypatch.setattr(
         checkpoint_eval,
         "_materialize_model_snapshot",
@@ -195,7 +185,8 @@ def _allow_minimal_protocol(monkeypatch) -> None:
 
 
 @_HUB_SNAPSHOTS_AND_REWARD_WEIGHTS_NEED_THE_NETWORK
-def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> None:
+@pytest.mark.parametrize(("seed", "samples"), [(0, 2), (17, 3)])
+def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys, seed, samples) -> None:
     run_dir, pipeline = _write_run(tmp_path, monkeypatch)
     _allow_minimal_protocol(monkeypatch)
 
@@ -218,7 +209,20 @@ def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> N
         ]
 
     monkeypatch.setattr(checkpoint_eval, "_score_images", fake_score)
-    checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
+    checkpoint_eval.main(
+        [
+            "--run-dir",
+            str(run_dir),
+            "--device",
+            "cpu",
+            "--seed",
+            str(seed),
+            "--samples-per-prompt",
+            str(samples),
+            "--checkpoint-interval",
+            "25",
+        ]
+    )
 
     # Real generation: the base grid was painted before checkpoint-25 was
     # restored into the same bundle, one pipeline load for the whole run.
@@ -226,11 +230,11 @@ def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> N
     assert pipeline.loads == 1
     rows = sana_report.load_report_metrics(run_dir)
     assert [row["epoch"] for row in rows] == [-1.0, 25.0]
-    assert all(row["sample_count"] == 2.0 for row in rows)
+    assert all(row["sample_count"] == samples for row in rows)
     payload = json.loads((run_dir / sana_report.REPORT_RELATIVE_PATH).read_text())
     assert payload["schema"] == sana_report.REPORT_SCHEMA
-    assert payload["schema_version"] == sana_report.REPORT_SCHEMA_VERSION
-    assert payload["provenance"]["seed_grid"]["base_seed"] == 20260710
+    assert "schema_version" not in payload
+    assert payload["provenance"]["seed_grid"]["base_seed"] == seed
     assert payload["provenance"]["evaluation_curve"] == {
         "checkpoint_interval": 25,
     }
@@ -261,6 +265,13 @@ def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys) -> N
     with pytest.raises(ValueError, match="training metrics provenance hash changed"):
         sana_report.load_report_metrics(run_dir)
     metrics_path.write_text(metrics_text, encoding="utf-8")
+
+    payload["provenance"]["seed_grid"]["base_seed"] += 1
+    report_path = run_dir / sana_report.REPORT_RELATIVE_PATH
+    report_path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="wrong fixed-grid seed"):
+        sana_report.load_report_metrics(run_dir)
+    payload["provenance"]["seed_grid"]["base_seed"] -= 1
 
     payload["metrics"] = []
     (run_dir / sana_report.REPORT_RELATIVE_PATH).write_text(
@@ -412,209 +423,15 @@ def test_training_metrics_preflight_requires_every_registered_update(
         sana_report.validate_training_metrics(metrics, parse_config(cfg))
 
 
-def _historical_fullparam_config() -> DictConfig:
-    raw = OmegaConf.to_container(
-        load_config(sana_report.CANONICAL_CONFIG_NAME),
-        resolve=True,
-    )
-    assert isinstance(raw, dict)
-
-    raw["data"]["preprocessing"]["target_text"] = "none"
-    raw["distributed"]["rollout"].update(
-        {
-            "chunk_placement_strategy": "round_robin",
-            "health_check_first_wait_s": 0.0,
-            "health_check_interval_s": 30.0,
-            "health_check_timeout_s": 30.0,
-            "max_inflight_chunks_per_worker": 1,
-            "pipelined": False,
-        },
-    )
-    raw["rollout"]["trajectory_storage"] = {
-        "device": "preserve",
-        "dtype": "preserve",
-    }
-    raw["reward"]["kwargs"]["aesthetic"].pop("device")
-    raw["precision"].pop("float32_precision")
-    raw["precision"]["training"].pop("outer_autocast")
-    raw["precision"]["rollout"].pop("outer_autocast")
-    raw["trainer"]["entrypoint"] = "vrl.scripts.diffusion.train:train_diffusion_grpo"
-    return OmegaConf.create(raw)
-
-
-def test_historical_fullparam_shape_normalizes_to_the_live_protocol() -> None:
-    normalized = sana_report.normalize_run_config(
-        _historical_fullparam_config(),
-    )
-    canonical = load_config(sana_report.CANONICAL_CONFIG_NAME)
-
-    assert OmegaConf.to_container(normalized, resolve=True) == OmegaConf.to_container(
-        canonical,
-        resolve=True,
-    )
-
-
-def test_historical_parity_threshold_normalizes_without_changing_frozen_identity() -> None:
-    canonical = load_config(sana_report.CANONICAL_CONFIG_NAME)
-    historical = OmegaConf.to_container(canonical, resolve=True)
-    historical["trainer"]["debug"].update(historical["trainer"].pop("replay_parity"))
-    historical["actor"]["samples_per_replay_batch"] = historical["actor"].pop(
-        "training_microbatch_size"
-    )
-
-    collection_prompts = historical["actor"].pop("prompts_per_collection")
-    historical["actor"]["gradient_accumulation_steps"] = (
-        historical["rollout"]["prompts_per_batch"] // collection_prompts
-    )
-
-    assert sana_report._semantic_digest(historical) == sana_report.CANONICAL_PROTOCOL_SHA256
-    normalized = sana_report.normalize_run_config(OmegaConf.create(historical))
-    assert OmegaConf.to_container(normalized, resolve=True) == OmegaConf.to_container(
-        canonical, resolve=True
-    )
-
-
-def test_parity_threshold_rejects_ambiguous_old_and_live_keys() -> None:
-    changed = load_config(sana_report.CANONICAL_CONFIG_NAME)
-    changed.trainer.debug.max_abs_logprob_diff = 1.0e-4
-
-    with pytest.raises(ValueError, match="ambiguous SANA parity threshold"):
-        sana_report.normalize_run_config(changed)
-
-
-@pytest.mark.parametrize(
-    ("path", "value"),
-    [
-        ("rollout.trajectory_storage.unexpected", True),
-        ("precision.training.dtype", "bf16"),
-    ],
-)
-def test_historical_shape_normalization_rejects_behavioral_drift(
-    path: str,
-    value: object,
-) -> None:
-    changed = _historical_fullparam_config()
-    OmegaConf.update(changed, path, value, merge=False)
-
-    with pytest.raises(
-        ValueError,
-        match="does not match the registered SANA full-parameter protocol",
-    ):
-        sana_report.normalize_run_config(changed)
-
-
-def _write_protocol_run(tmp_path: Path, *, drift: tuple[str, object] | None = None) -> Path:
-    """A run directory the real protocol gate accepts (or, with ``drift``, must reject).
-
-    ``_write_run`` writes a tiny synthetic config that the gate rejects on sight,
-    which is why its callers patch the gate out. This one writes a real historical
-    full-parameter shape, plus the 300-row metrics CSV and the supervisor log that
-    the two checks immediately after the gate demand — so ``main()`` can be driven
-    through the gate for real.
-    """
-
-    run_dir = tmp_path / "protocol-run"
-    run_dir.mkdir()
-    cfg = _historical_fullparam_config()
-    if drift is not None:
-        OmegaConf.update(cfg, drift[0], drift[1], merge=False)
-    OmegaConf.save(cfg, run_dir / "resolved_config.yaml")
-    (run_dir / "metrics.csv").write_text(
-        "epoch,loss\n"
-        + "".join(f"{epoch},1.0\n" for epoch in range(int(cfg.trainer.total_epochs))),
-        encoding="utf-8",
-    )
-    (run_dir / "supervisor.log").write_text("launched\n", encoding="utf-8")
-    return run_dir
-
-
-def test_main_runs_the_protocol_gate_before_touching_the_run(monkeypatch, tmp_path) -> None:
-    """``main()`` must call the gate, not merely be able to.
-
-    Every other ``main()`` test replaces ``_normalize_run_config`` with the identity
-    function, so the wiring between the two was uncovered: deleting the call from
-    ``main()`` left the whole file green. This run's config is the registered
-    protocol with one behavioural field changed, a rejection only the real gate can
-    produce — and nothing may be generated after it.
-    """
-
-    run_dir = _write_protocol_run(tmp_path, drift=("precision.training.dtype", "bf16"))
-    monkeypatch.setattr(
-        checkpoint_eval,
-        "_generate_images",
-        lambda *args, **kwargs: pytest.fail("generation started despite a rejected config"),
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="does not match the registered SANA full-parameter protocol",
-    ):
-        checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
-
-
-def test_live_entrypoint_requires_explicit_precision_protocol() -> None:
-    changed = load_config(sana_report.CANONICAL_CONFIG_NAME)
-    del changed.precision["float32_precision"]
-
-    with pytest.raises(
-        ValueError,
-        match="does not match the registered SANA full-parameter protocol",
-    ):
-        sana_report.normalize_run_config(changed)
-
-
-@pytest.mark.parametrize(
-    ("path", "value"),
-    [
-        ("model.use_lora", True),
-        ("trainer.replay_parity.max_abs_logprob_diff", 1.0e-4),
-    ],
-)
-def test_fullparam_protocol_rejects_scientific_drift(path: str, value: object) -> None:
-    changed = load_config(sana_report.CANONICAL_CONFIG_NAME)
-    OmegaConf.update(changed, path, value, merge=False)
-
-    with pytest.raises(ValueError, match=path.replace(".", r"\.")):
-        sana_report.normalize_run_config(changed)
-
-
-def test_canonical_preset_change_requires_protocol_digest_update(monkeypatch) -> None:
-    path, value = "sampling.num_steps", 11
-    actual = load_config(sana_report.CANONICAL_CONFIG_NAME)
-    real_load_config = sana_report.load_config
-
-    def changed_canonical(name, *args, **kwargs):
-        cfg = real_load_config(name, *args, **kwargs)
-        if str(name) == sana_report.CANONICAL_CONFIG_NAME:
-            cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
-            OmegaConf.update(cfg, path, value, merge=False)
-        return cfg
-
-    monkeypatch.setattr(sana_report, "load_config", changed_canonical)
-    with pytest.raises(ValueError, match="preset changed without a protocol schema update"):
-        sana_report.normalize_run_config(actual)
-
-
-def test_registered_manifest_assets_are_exact_and_disjoint() -> None:
-    cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
-
-    training_path, eval_path, eval_prompts = sana_report.resolve_protocol_manifests(
-        parse_config(cfg)
-    )
-
-    assert sha256_file(training_path) == sana_report.TRAIN_MANIFEST_SHA256
-    assert sha256_file(eval_path) == sana_report.EVAL_MANIFEST_SHA256
-    assert len(eval_prompts) == sana_report.EVAL_PROMPT_COUNT
-
-
-def test_manifest_replacement_and_overlap_are_rejected(monkeypatch, tmp_path) -> None:
-    canonical = load_config(sana_report.CANONICAL_CONFIG_NAME)
+def test_custom_manifest_is_accepted_but_overlap_is_rejected(tmp_path) -> None:
+    canonical = load_config("experiment/sana/online_grpo_aesthetic_fullparam_long")
     replaced = OmegaConf.create(OmegaConf.to_container(canonical, resolve=True))
     changed_eval = tmp_path / "changed_eval.txt"
     changed_eval.write_text("replacement prompt\n", encoding="utf-8")
     replaced.data.eval_manifest = str(changed_eval)
-    with pytest.raises(ValueError, match="does not match the registered asset"):
-        sana_report.resolve_protocol_manifests(parse_config(replaced))
+    _, path, prompts = sana_report.resolve_protocol_manifests(parse_config(replaced))
+    assert path == changed_eval
+    assert prompts == ["replacement prompt"]
 
     training = tmp_path / "training.txt"
     evaluation = tmp_path / "evaluation.txt"
@@ -630,10 +447,6 @@ def test_manifest_replacement_and_overlap_are_rejected(monkeypatch, tmp_path) ->
             },
         },
     )
-    monkeypatch.setattr(sana_report, "TRAIN_MANIFEST_SHA256", sha256_file(training))
-    monkeypatch.setattr(sana_report, "EVAL_MANIFEST_SHA256", sha256_file(evaluation))
-    monkeypatch.setattr(sana_report, "TRAIN_PROMPT_COUNT", 2)
-    monkeypatch.setattr(sana_report, "EVAL_PROMPT_COUNT", 2)
     with pytest.raises(ValueError, match="overlap on 1 prompts"):
         sana_report.resolve_protocol_manifests(parse_config(overlap_cfg))
 
@@ -661,7 +474,7 @@ def test_reward_model_definitions_resolve_device_and_require_explicit_identity(
 
 
 def test_reward_provenance_includes_pinned_revisions_and_asset_hash() -> None:
-    cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
+    cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam_long")
 
     reward_models = sana_report.build_reward_model_definitions(
         parse_config(cfg),
@@ -675,8 +488,8 @@ def test_reward_provenance_includes_pinned_revisions_and_asset_hash() -> None:
     assert records[0]["identity"]["mlp_asset"] == {
         "package": "vrl.rewards.assets",
         "name": "aesthetic_predictor_v2_5.pth",
-        "sha256": sana_report.AESTHETIC_ASSET_SHA256,
-        "bytes": sana_report.AESTHETIC_ASSET_BYTES,
+        "sha256": sha256_file(Path("vrl/rewards/assets/aesthetic_predictor_v2_5.pth")),
+        "bytes": Path("vrl/rewards/assets/aesthetic_predictor_v2_5.pth").stat().st_size,
     }
     assert (
         records[1]["identity"]["processor"]["revision"]
@@ -697,7 +510,7 @@ def test_snapshot_materialization_uses_all_four_pinned_revisions(monkeypatch) ->
         return f"/immutable/{revision}"
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
-    cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
+    cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam_long")
     reward_models = sana_report.build_reward_model_definitions(
         parse_config(cfg),
         generation_device="cuda:0",
@@ -737,7 +550,7 @@ def test_snapshot_materialization_uses_all_four_pinned_revisions(monkeypatch) ->
 
 
 def test_training_log_binds_configured_revisions_without_network_log_scraping(tmp_path) -> None:
-    cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
+    cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam_long")
     with pytest.raises(FileNotFoundError, match=r"no supervisor\.log launch evidence"):
         sana_report.require_training_log_provenance(tmp_path, parse_config(cfg))
 
@@ -769,8 +582,11 @@ def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None
 
         def __call__(self, **kwargs):
             assert torch.is_inference_mode_enabled()
-            assert kwargs["generator"].initial_seed() == sana_report.EVAL_BASE_SEED
-            assert kwargs["num_images_per_prompt"] == sana_report.EVAL_SAMPLES_PER_PROMPT
+            assert kwargs["generator"].initial_seed() == sana_report.EvaluationSettings().base_seed
+            assert (
+                kwargs["num_images_per_prompt"]
+                == sana_report.EvaluationSettings().samples_per_prompt
+            )
             assert kwargs["height"] == kwargs["width"] == 1024
             assert kwargs["num_inference_steps"] == 20
             return SimpleNamespace(
@@ -785,14 +601,18 @@ def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None
         model,
         scheduler=build_official_sana_scheduler(),
         prompt="fox",
-        seed=sana_report.group_seed(0),
-        num_images=sana_report.EVAL_SAMPLES_PER_PROMPT,
+        seed=sana_report.EvaluationSettings().group_seed(0),
+        num_images=sana_report.EvaluationSettings().samples_per_prompt,
         device=torch.device("cpu"),
         sampling=dict(sana_inference.SANA_EVAL_SAMPLING_CONFIG),
     )
 
-    assert len(decoded) == sana_report.EVAL_SAMPLES_PER_PROMPT
-    assert sana_report.group_seed(1) - sana_report.group_seed(0) == 2
+    assert len(decoded) == sana_report.EvaluationSettings().samples_per_prompt
+    assert (
+        sana_report.EvaluationSettings().group_seed(1)
+        - sana_report.EvaluationSettings().group_seed(0)
+        == 2
+    )
 
 
 @pytest.mark.parametrize(
@@ -987,27 +807,34 @@ def test_generate_images_rejects_materialized_source_drift_before_generation(
     assert pipeline.calls == []
 
 
+def test_run_config_keeps_experiment_choices_instead_of_replacing_with_a_preset() -> None:
+    cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam_long")
+    cfg.trainer.total_epochs = 50
+    cfg.trainer.save_freq = 10
+    root = sana_report.validate_run_config(cfg)
+    assert root.trainer.total_epochs == 50
+    assert sana_report.checkpoint_curve_epochs(
+        root,
+        sana_report.EvaluationSettings(checkpoint_interval=10),
+    ) == [10, 20, 30, 40, 50]
+
+
+def test_run_config_rejects_other_model_family() -> None:
+    cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam_long")
+    cfg.model.family = "flux"
+    with pytest.raises(ValueError, match=r"model\.family=sana"):
+        sana_report.validate_run_config(cfg)
+
+
 @pytest.mark.parametrize(
-    "path,old,new",
+    "kwargs",
     [
-        (("rollout",), "samples_per_chunk", "samples_per_generation_batch"),
-        (("actor",), "replay_samples_per_chunk", "training_microbatch_size"),
+        {"samples_per_prompt": 0},
+        {"checkpoint_interval": -1},
+        {"base_seed": -1},
+        {"samples_per_prompt": True},
     ],
 )
-def test_historical_config_rename_rejects_simultaneous_spellings(path, old, new):
-    actual = {}
-    section = actual
-    for key in path:
-        section = section.setdefault(key, {})
-    section.update({old: 1, new: 2})
-    with pytest.raises(ValueError, match="ambiguous SANA config"):
-        sana_report._erase_meaningless_spelling(actual, {})
-    assert section == {old: 1, new: 2}
-
-
-def test_v2_5_protocol_rejects_legacy_clip_reward() -> None:
-    cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
-    cfg.reward.kwargs.aesthetic.model_name = "openai/clip-vit-large-patch14"
-    cfg.reward.kwargs.aesthetic.model_revision = "32bd64288804d66eefd0ccbe215aa642df71cc41"
-    with pytest.raises(ValueError, match=r"reward\.kwargs\.aesthetic\.model_name"):
-        sana_report.normalize_run_config(cfg)
+def test_evaluation_settings_reject_invalid_grid(kwargs) -> None:
+    with pytest.raises(ValueError):
+        sana_report.EvaluationSettings(**kwargs)

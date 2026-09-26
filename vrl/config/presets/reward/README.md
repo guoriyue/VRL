@@ -169,5 +169,10 @@ scores an image directly, and averages up to three frames for video; it does not
 measure temporal coherence. Raw V2.5 scores are not calibrated probabilities and
 are not comparable with the retired CLIP/LAION scores. No legacy scorer remains.
 Do not resume an old aesthetic run as though the reward were unchanged; start a
-new run. The SANA curve protocol is v5 with separate V2.5 output/report paths;
-reproducing a v4 report requires the original code revision.
+new run. SANA evaluation writes `aesthetic_eval/report.json` (schema v6) and
+`samples.jsonl`. Its model, reward and manifests come from the run's resolved
+config, not a hardcoded experiment. `--seed` (default 0), `--samples-per-prompt`
+(default 2) and `--checkpoint-interval` (default 25) select the evaluation grid.
+Reports record actual file hashes, prompt counts and these settings; the reader
+checks them against the files and scored samples. Reproducing older report
+formats requires the original code revision.
