@@ -583,6 +583,114 @@ output are gone: the mix ratio is now declared in the dataset preset itself
 `data.mix_seed`), so no derived manifest is materialized. The surviving 50/50
 preset reproduces those runs' prompt set exactly, prompt for prompt.
 
+### Experiment G — Codex image-QA + NSFW: stopped, invalid, and retired
+
+> Historical record recovered from the September 8 local experiment. The scorer
+> and Anima family were subsequently removed upstream; implementation statements
+> below describe the experiment branch, not the current supported runtime.
+
+The one-shot `online_grpo_codexqa_nsfw` recipe was terminated with `SIGTERM`
+after update 14; the handler saved `checkpoint-14` and wrote a terminated run
+verdict. All checkpoints remain under `outputs/anima_codexqa_nsfw` for forensic
+comparison, but none is a candidate to ship. The experiment preset has been
+deleted so a failed recipe cannot be mistaken for a supported starting point.
+
+An epoch in this runner is one optimizer update, not one pass over the dataset.
+Each update used 16 prompts x 16 samples, so checkpoint-12 represents only 192
+prompts / 3,072 generated images. The collapse was therefore fast.
+
+**The user's visual report is confirmed.** On the matched fixed safety images,
+checkpoint-12 has smeared faces, hair, clothing, and broad color patches where
+base has coherent line work. A model-free Laplacian-variance check gives mean
+sharpness 0.025825 for base, 0.025924 for checkpoint-6, and 0.022072 for
+checkpoint-12: a 14.5% fall from base. The worst-image value falls from
+0.003187 to 0.001473.
+
+The fixed anatomy evaluation had already failed significantly at checkpoint-6:
+
+| metric | base | checkpoint-6 |
+|---|---:|---:|
+| AnimeReward quality | **0.69135** | **0.66385** |
+| pixel diversity | 32.6388 | 30.7565 |
+| paired prompt outcomes | — | 21/24 worse |
+| paired t statistic | — | -3.22 |
+
+Safety did not improve at the decision boundary. Re-scoring the same 24 fixed
+prompts and seeds with the configured `NSFWSafetyRewardModel` produced:
+
+| model | trigger count | mean penalty |
+|---|---:|---:|
+| base | **19/24** | -0.785981 |
+| checkpoint-6 | **19/24** | -0.773327 |
+| checkpoint-12 | **19/24** | -0.731474 |
+
+Penalty severity softened slightly, but trigger count was unchanged while image
+quality failed. This cannot satisfy the sprint objective.
+
+The online metrics also reject a benign interpretation. The policy did not
+increase the Codex proxy while merely looking worse; it drove its own quality
+and total rewards down:
+
+| metric | update 0 | update 11 | update 13 |
+|---|---:|---:|---:|
+| total reward | 0.6110 | 0.3303 | 0.2636 |
+| Codex image-QA | 0.7821 | 0.4963 | 0.3086 |
+| NSFW penalty | -0.3421 | -0.3320 | -0.0901 |
+| KL penalty | 0.000263 | 0.003015 | 0.008266 |
+
+Two independent blockers make the run unusable.
+
+**Blocker 1 — rollout/replay parity failed before every update.** With strict
+on-policy collection and `ppo_epochs=1`, model parameters do not change until
+all replay/backward work finishes. The pre-update ratio must therefore be 1 up
+to a tight numerical tolerance. Instead, update 0 had mean/max absolute ratio
+deviation 0.004744/0.133144 and update 11 had 0.002040/0.026998. About 15% of
+samples crossed `clip_ratio=0.003` before an optimizer step. Both roles were
+labeled bf16, so the old `precision_drift_guard.mode=auto` incorrectly disabled
+itself. Matching dtype labels did not reveal the rollout batch 16 / replay batch
+1 backend-shape mismatch. `auto` now fails closed for every evaluator-backed
+run; `off` is the explicit expert escape hatch.
+
+This means the run is not valid evidence for the efficacy of any reward: its
+importance ratios were already corrupted before learning. A new Anima run must
+first pass rollout/replay parity at the actual batch geometry.
+
+**Blocker 2 — the reward objective admits the observed shortcut.** One
+16-sample GRPO group was split across four independently calibrated four-cell
+Codex calls and then normalized as if all scores shared one scale. A short judge
+response silently padded trailing cells with zeros. The experiment rubric also
+defined the maximum as `flat cel-shaded color blocks`, judged crispness alone,
+and explicitly ignored subject matter. Meanwhile a solid color or coarse block
+image receives no NSFW penalty. Removing a typical base penalty of -0.786 is
+worth +0.393 in the weighted total, so a degraded safe-looking block image can
+beat a coherent image even after losing substantial Codex score. Per-group
+normalization then turns that small ordering difference into an order-one
+advantage.
+
+The Codex scorer now enforces one montage context per prompt group, requires an
+exact score count, rejects non-finite values, and uses a holistic rubric that
+instructs the judge to assign collapse patterns at most 0.05. Its large default
+rubrics moved to `vrl/rewards/assets/codex_image_qa_prompts.py`; the model module
+now contains only judge orchestration and parsing. The protocol now fails closed
+on malformed or cross-context scores, but the rubric itself is not a mechanical
+quality constraint. These changes do **not** make the retired additive
+Codex+NSFW recipe a validated training objective.
+
+The next GPU experiment is gated on both conditions below; neither is another
+weight/KL sweep:
+
+1. A rollout/replay acceptance at the intended batch geometry must pass the
+   first-step parity guard before any optimizer update.
+2. Safety improvement must be constrained by a non-tradeable quality floor,
+   preferably with clean-data diffusion/SFT anchoring or high-fidelity safety
+   preference pairs. Fixed anatomy quality, artifact validity, diversity, and
+   safety trigger rate remain separate stop criteria, never one weighted score.
+
+The thin `CodexImageQAReward` and `NSFWSafetyReward` wrapper structures stay:
+they are registry/runtime adapters with a uniform cross-reward shape. The NSFW
+label constants also remain a deliberate classifier-taxonomy boundary. Folding
+those seams to reduce line count is explicitly outside this cleanup.
+
 ### Run 3 — the decisive negative result
 
 Checkpoint-10 evaluated against base on the identical 24 prompts and seeds:
