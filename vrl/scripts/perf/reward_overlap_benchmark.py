@@ -17,7 +17,7 @@ overridden, so the measurement exercises the production collection path rather
 than a bespoke loop. Per-step phase timings are read from each run's
 ``rollout_stats.jsonl``.
 
-Two preconditions this script checks rather than assumes:
+Two preconditions for a meaningful comparison:
 
 * The collection must contain at least two groups (``rollout.prompts_per_batch``
   >= 2). With one group per collection there is no group N+1 and all three arms
@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any
 
 from vrl.rollouts.collector.core import RewardCollectionMode
-from vrl.utils.json_files import read_jsonl
+from vrl.utils.json_files import read_jsonl, write_json
 
 # Arm id -> the reward_collection_mode value it forces. The A/B/C labels are the
 # benchmark protocol; values come from the production scheduling contract.
@@ -113,9 +113,6 @@ class RunMetrics:
     def steps(self) -> int:
         return len(self.collect_wall)
 
-    def mean_collect_wall(self) -> float:
-        return statistics.fmean(self.collect_wall)
-
     def generation_p95(self) -> float:
         ordered = sorted(self.generation_wall)
         return ordered[max(0, math.ceil(0.95 * len(ordered)) - 1)]
@@ -133,10 +130,9 @@ class RunMetrics:
         """Load one run's per-step collection phases, dropping warmup steps."""
 
         result_path = run_dir / "training_run_result.json"
-        if result_path.exists():
-            result = json.loads(result_path.read_text())
-            if result.get("status") != "success":
-                raise RuntimeError(f"{run_dir} did not succeed: {result}")
+        result = json.loads(result_path.read_text())
+        if result.get("status") != "success":
+            raise RuntimeError(f"{run_dir} did not succeed: {result}")
         stats_path = run_dir / "rollout_stats.jsonl"
         if not stats_path.exists():
             raise FileNotFoundError(f"missing {stats_path}; the run wrote no phase stats")
@@ -223,7 +219,7 @@ def _discard_checkpoints(run_dir: Path) -> None:
 
 
 def summarize_arm(runs: list[RunMetrics]) -> dict[str, Any]:
-    per_run_wall = [run.mean_collect_wall() for run in runs]
+    per_run_wall = [statistics.fmean(run.collect_wall) for run in runs]
     return {
         "runs": len(runs),
         "steps_per_run": [run.steps for run in runs],
@@ -325,6 +321,8 @@ def evaluate_gates(arms: dict[str, dict[str, Any]]) -> dict[str, Any]:
 
 
 def analyze(out_dir: Path, *, warmup_iterations: int) -> dict[str, Any]:
+    # A failed recomputation must not leave a previous passing verdict behind.
+    (out_dir / "acceptance.json").unlink(missing_ok=True)
     arms: dict[str, dict[str, Any]] = {}
     for arm in ARMS:
         run_dirs = sorted(out_dir.glob(f"arm{arm}_run*"))
@@ -337,7 +335,7 @@ def analyze(out_dir: Path, *, warmup_iterations: int) -> dict[str, Any]:
     if missing:
         raise RuntimeError(f"cannot evaluate acceptance without arms {sorted(missing)}")
     report = {"arms": arms, **evaluate_gates(arms)}
-    (out_dir / "acceptance.json").write_text(json.dumps(report, indent=2) + "\n")
+    write_json(out_dir / "acceptance.json", report, allow_nan=False)
     return report
 
 
@@ -361,6 +359,7 @@ def main(argv: list[str] | None = None) -> None:
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "acceptance.json").unlink(missing_ok=True)
     arms = [arm.strip().upper() for arm in args.arms.split(",") if arm.strip()]
     unknown = [arm for arm in arms if arm not in ARMS]
     if unknown:
@@ -381,6 +380,10 @@ def main(argv: list[str] | None = None) -> None:
         for repeat in range(args.start_repeat, args.repeats):
             for arm in arms:
                 if (out_dir / f"arm{arm}_run{repeat}" / "rollout_stats.jsonl").exists():
+                    RunMetrics.from_run_dir(
+                        out_dir / f"arm{arm}_run{repeat}",
+                        warmup_iterations=args.warmup_iterations,
+                    )
                     # A campaign is hours long and has already been interrupted
                     # once here (host disk filled mid-run). Completed repeats are
                     # valid evidence; re-running them only burns GPU time.

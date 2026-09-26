@@ -8,6 +8,7 @@ regression is worse than no benchmark.
 from __future__ import annotations
 
 import json
+import statistics
 from pathlib import Path
 
 import pytest
@@ -293,13 +294,14 @@ def test_warmup_steps_are_dropped_before_averaging(tmp_path: Path) -> None:
     metrics = RunMetrics.from_run_dir(run_dir, warmup_iterations=2)
 
     assert metrics.steps == 2
-    assert metrics.mean_collect_wall() == pytest.approx(100.0)
+    assert statistics.fmean(metrics.collect_wall) == pytest.approx(100.0)
 
 
 def test_steps_without_collection_are_skipped_not_scored_as_zero(tmp_path: Path) -> None:
     """A gradient-accumulation step that collected nothing must not dilute the mean."""
     run_dir = tmp_path / "armA_run0"
     run_dir.mkdir(parents=True)
+    (run_dir / "training_run_result.json").write_text(json.dumps({"status": "success"}))
     rows = [
         {
             "step": 0,
@@ -324,7 +326,7 @@ def test_steps_without_collection_are_skipped_not_scored_as_zero(tmp_path: Path)
     metrics = RunMetrics.from_run_dir(run_dir, warmup_iterations=0)
 
     assert metrics.steps == 2
-    assert metrics.mean_collect_wall() == pytest.approx(100.0)
+    assert statistics.fmean(metrics.collect_wall) == pytest.approx(100.0)
 
 
 def test_analysis_requires_both_the_baseline_and_streaming_arms(tmp_path: Path) -> None:
@@ -390,6 +392,7 @@ def test_zero_variance_arms_still_yield_a_positive_bound(tmp_path: Path) -> None
     ],
 )
 def test_collection_row_requires_measured_phase_fields(tmp_path, missing):
+    (tmp_path / "training_run_result.json").write_text(json.dumps({"status": "success"}))
     row = {
         "step": 7,
         "collect.wall": 10.0,
@@ -425,4 +428,28 @@ def test_run_metrics_preserves_record_with_unicode_annotation(tmp_path):
     path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
     metrics = RunMetrics.from_run_dir(run_dir, warmup_iterations=0)
     assert metrics.steps == 1
-    assert metrics.mean_collect_wall() == 10.0
+    assert statistics.fmean(metrics.collect_wall) == 10.0
+
+
+def test_incomplete_run_cannot_reuse_a_previous_acceptance(tmp_path):
+    _passing_campaign(tmp_path)
+    assert analyze(tmp_path, warmup_iterations=2)["accepted"]
+    (tmp_path / "armC_run0" / "training_run_result.json").unlink()
+
+    with pytest.raises(FileNotFoundError, match=r"training_run_result\.json"):
+        analyze(tmp_path, warmup_iterations=2)
+
+    assert not (tmp_path / "acceptance.json").exists()
+
+
+def test_cli_does_not_skip_an_interrupted_run(tmp_path):
+    from vrl.scripts.perf.reward_overlap_benchmark import main
+
+    _passing_campaign(tmp_path)
+    (tmp_path / "acceptance.json").write_text('{"accepted": true}')
+    (tmp_path / "armA_run0" / "training_run_result.json").unlink()
+
+    with pytest.raises(FileNotFoundError, match=r"training_run_result\.json"):
+        main(["--out", str(tmp_path), "--config", "unused"])
+
+    assert not (tmp_path / "acceptance.json").exists()
