@@ -532,7 +532,6 @@ def test_every_strategy_answers_the_checkpoint_optimizer_export() -> None:
         DDPStrategy,
         FSDPStrategy,
         Strategy,
-        _UnshardedStateStrategy,
     )
 
     assert hasattr(Strategy, "export_checkpoint_optimizer_state")
@@ -541,7 +540,7 @@ def test_every_strategy_answers_the_checkpoint_optimizer_export() -> None:
 
     model = nn.Linear(2, 2)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    unsharded = _UnshardedStateStrategy()
+    unsharded = SingleProcessStrategy()
     assert unsharded.export_checkpoint_optimizer_state(model, optimizer) == (
         unsharded.export_optimizer_state(model, optimizer)
     )

@@ -1,13 +1,8 @@
-"""Checkpoint-owned FSDP state must materialize selected tensors on EVERY rank.
+"""FSDP checkpoint gathers select owned tensors before materialization.
 
-Regression for the two selection traps: gathering full state materializes the
-frozen base, while rank0-only state skips the symmetric collective contract used
-by checkpoint save. The checkpoint gather must instead select owned keys while
-they are still sharded, then materialize exactly those keys on every rank.
-
-This spawns a real gloo 2-rank group, shards a PEFT-LoRA toy transformer with
-FSDP2, and asserts BOTH ranks call ``full_tensor`` only for LoRA tensors, then
-scatter them back on load without changing frozen base state.
+Every rank joins the tensor collectives, while primary-only exports retain full
+CPU tensors only on rank zero. These two-rank Gloo tests verify selection,
+retention, restore, and coordinated checkpoint publication failures.
 """
 
 from __future__ import annotations
@@ -112,6 +107,9 @@ def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
             isinstance(v, torch.Tensor) and v.device.type == "cpu" for v in gathered.values()
         )
         selective = set(gathered) == trainable and full_tensor_calls == len(trainable)
+
+        primary_only = gather_checkpoint_state_dict(model, rank0_only=True)
+        assert (set(primary_only) == trainable) if rank == 0 else primary_only == {}
 
         replacement = {name: torch.full_like(value, 9.0) for name, value in gathered.items()}
         load_checkpoint_state_dict(model, replacement, strict=True)
@@ -415,7 +413,7 @@ def _run_checkpoint_ema_export_rank(
             q.put((rank, failed_together, reported_rollback, wrote_nothing))
             return
 
-        live = strategy.export_checkpoint_state(bundle)["transformer"]
+        live = gather_checkpoint_state_dict(model)
         live_restored = (
             all(torch.equal(value, torch.full_like(value, 3.0)) for value in live.values())
             and ema.temp_stored_parameters is None

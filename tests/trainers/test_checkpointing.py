@@ -463,6 +463,7 @@ def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path
     class _SpyStrategy:
         def __init__(self) -> None:
             self.calls = []
+            self.context = _context()
 
         def load_checkpoint_state(self, bundle, state, *, strict=True):
             self.calls.append((bundle, state, strict))

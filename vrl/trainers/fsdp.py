@@ -235,12 +235,8 @@ def gather_trainable_state_dict(
     In production this is the rollout weight-sync gather and nothing else
     (``FSDPStrategy.export_rollout_state``, which never passes ``rank0_only``):
     every rank pushes its own gathered weights to its colocated rollout. The
-    checkpoint model gather is ``gather_checkpoint_state_dict``, which keeps on
-    every rank. ``rank0_only`` is therefore driven only by the two-rank test
-    today; it is kept because it is the same seam
-    ``gather_full_optimizer_state_dict`` already exposes to checkpoint export,
-    and pointing the checkpoint model gather at it is the open way to stop
-    every FSDP rank retaining a full host copy of the model state.
+    checkpoint model gather uses ``gather_checkpoint_state_dict`` instead,
+    retaining its full CPU result only on the primary rank.
 
     Asking DCP for a full state before filtering materializes the frozen base on
     every rank, which defeats LoRA's memory scaling. Keep the state sharded while
@@ -290,15 +286,16 @@ def gather_trainable_state_dict(
     )
 
 
-def gather_checkpoint_state_dict(module: nn.Module) -> dict[str, Any]:
+def gather_checkpoint_state_dict(module: nn.Module, *, rank0_only: bool = False) -> dict[str, Any]:
     """Gather exactly trainable plus registered checkpoint-owned state.
 
     DCP exposes the sharded state mapping without materializing full tensors.
     Selection happens before ``DTensor.full_tensor()``, so frozen base weights
     never enter an all-gather while registered frozen mutable state is still
-    checkpointed.
+    checkpointed. All ranks join the collectives; rank0_only controls retention.
     """
 
+    import torch.distributed as dist
     from torch.distributed.checkpoint.state_dict import (
         StateDictOptions,
         get_model_state_dict,
@@ -324,7 +321,7 @@ def gather_checkpoint_state_dict(module: nn.Module) -> dict[str, Any]:
     return _gather_named_full_cpu(
         sharded_state,
         owned_names,
-        keep=True,
+        keep=not rank0_only or not dist.is_initialized() or dist.get_rank() == 0,
         what="checkpoint-owned state",
     )
 
@@ -557,16 +554,10 @@ def load_full_optimizer_state_dict(
 
     from torch.distributed.checkpoint.state_dict import (
         StateDictOptions,
-        _init_optim_state,
         set_optimizer_state_dict,
     )
 
-    # A freshly-built optimizer has NO state yet; DCP needs materialized local
-    # state to locate devices/layouts before it can re-shard the checkpoint
-    # onto it. _init_optim_state is DCP's own zero-grad-step initializer (a
-    # no-op when state already exists). It early-returns if gradients are
-    # pending — resume runs before any training step, so none are.
-    _init_optim_state(optimizer)
+    # The public setter initializes fresh optimizer state internally.
     set_optimizer_state_dict(
         model,
         optimizer,

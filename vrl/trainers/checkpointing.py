@@ -514,20 +514,33 @@ class TrainingCheckpoint:
                 )
                 loader(root_bundle, root_state, strict=strict)
         if strict:
-            restored_checkpoint_state = (
-                strategy.export_checkpoint_state(bundle)
-                if callable(getattr(strategy, "export_checkpoint_state", None))
-                else export_checkpoint_state(bundle)
-            )
-            expected_owned_state = _select_owned_checkpoint_state(
-                bundle,
-                resolved_state.state,
-            )
-            _require_equal_tensor_tree(
-                expected_owned_state,
-                restored_checkpoint_state,
-                label="restored model weights",
-            )
+            verification_failure: BaseException | None = None
+            try:
+                restored_checkpoint_state = (
+                    strategy.export_checkpoint_state(bundle)
+                    if callable(getattr(strategy, "export_checkpoint_state", None))
+                    else export_checkpoint_state(bundle)
+                )
+                if strategy is None or strategy.context.is_primary:
+                    expected_owned_state = _select_owned_checkpoint_state(
+                        bundle,
+                        resolved_state.state,
+                    )
+                    _require_equal_tensor_tree(
+                        expected_owned_state,
+                        restored_checkpoint_state,
+                        label="restored model weights",
+                    )
+            except BaseException as error:
+                verification_failure = error
+            if (
+                strategy is not None
+                and not strategy.collectives.succeeded(verification_failure is None)
+                and verification_failure is None
+            ):
+                raise RuntimeError("model checkpoint verification failed on a peer rank")
+            if verification_failure is not None:
+                raise verification_failure
 
     def validate_compatibility(
         self,
