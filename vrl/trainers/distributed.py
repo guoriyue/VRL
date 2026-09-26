@@ -450,12 +450,7 @@ def init_training_process_group(
     if backend == "nccl":
         # Collective creation: every rank reaches this line inside the same
         # init call, so the subgroup handshake cannot mismatch.
-        try:
-            _CPU_COORDINATION_GROUP = dist.new_group(backend="gloo", **timeout_kwargs)
-        except BaseException:
-            # Ownership has not reached the strategy if subgroup creation fails.
-            shutdown_training_process_group()
-            raise
+        _CPU_COORDINATION_GROUP = dist.new_group(backend="gloo", **timeout_kwargs)
     return True
 
 

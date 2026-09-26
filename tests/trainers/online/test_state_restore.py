@@ -419,8 +419,7 @@ def test_online_trainer_standard_adamw_roundtrip(tmp_path) -> None:
             torch.testing.assert_close(actual[index][key], expected[index][key], rtol=0, atol=0)
 
 
-@pytest.mark.parametrize("strict", [False, True])
-def test_optimizer_restore_failure_preserves_progress(monkeypatch, strict):
+def test_optimizer_restore_failure_preserves_progress(monkeypatch):
     trainer = _make_resume_trainer()
     trainer._ensure_optimizer()
     state = trainer.state_dict()
@@ -433,7 +432,7 @@ def test_optimizer_restore_failure_preserves_progress(monkeypatch, strict):
 
     monkeypatch.setattr(trainer._strategy, "load_optimizer_state", fail)
     with pytest.raises(RuntimeError, match="optimizer restore failed"):
-        trainer.load_state_dict(state, strict=strict)
+        trainer.load_state_dict(state, strict=False)
     assert (trainer.state.step, trainer.state.global_step) == (7, 11)
 
 

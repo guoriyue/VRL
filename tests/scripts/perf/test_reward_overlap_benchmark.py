@@ -436,20 +436,38 @@ def test_incomplete_run_cannot_reuse_a_previous_acceptance(tmp_path):
     assert analyze(tmp_path, warmup_iterations=2)["accepted"]
     (tmp_path / "armC_run0" / "training_run_result.json").unlink()
 
-    with pytest.raises(FileNotFoundError, match=r"training_run_result\.json"):
+    with pytest.raises(RuntimeError, match="did not succeed"):
         analyze(tmp_path, warmup_iterations=2)
 
     assert not (tmp_path / "acceptance.json").exists()
 
 
-def test_cli_does_not_skip_an_interrupted_run(tmp_path):
-    from vrl.scripts.perf.reward_overlap_benchmark import main
+def test_cli_reruns_an_interrupted_repeat_and_skips_completed_ones(tmp_path, monkeypatch):
+    import vrl.scripts.perf.reward_overlap_benchmark as bench
 
     _passing_campaign(tmp_path)
-    (tmp_path / "acceptance.json").write_text('{"accepted": true}')
     (tmp_path / "armA_run0" / "training_run_result.json").unlink()
+    launched = []
 
-    with pytest.raises(FileNotFoundError, match=r"training_run_result\.json"):
-        main(["--out", str(tmp_path), "--config", "unused"])
+    def fake_run_arm(*, arm, repeat, out_dir, **_):
+        launched.append((arm, repeat))
+        # A fresh run: the interrupted directory was removed before relaunch.
+        assert not (out_dir / f"arm{arm}_run{repeat}").exists()
+        _write_run(
+            out_dir,
+            arm,
+            repeat,
+            collect_wall=100.0,
+            generation_wall=40.0,
+            reward_wall=60.0,
+            overlap=0.0,
+        )
+        return out_dir / f"arm{arm}_run{repeat}"
 
-    assert not (tmp_path / "acceptance.json").exists()
+    monkeypatch.setattr(bench, "run_arm", fake_run_arm)
+    with pytest.raises(SystemExit) as exit_info:
+        bench.main(["--out", str(tmp_path), "--config", "unused", "--repeats", "5"])
+    assert exit_info.value.code == 0
+
+    assert launched == [("A", 0)]
+    assert (tmp_path / "acceptance.json").exists()

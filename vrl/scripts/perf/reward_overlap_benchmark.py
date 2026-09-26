@@ -129,10 +129,10 @@ class RunMetrics:
     def from_run_dir(cls, run_dir: Path, *, warmup_iterations: int) -> RunMetrics:
         """Load one run's per-step collection phases, dropping warmup steps."""
 
-        result_path = run_dir / "training_run_result.json"
-        result = json.loads(result_path.read_text())
-        if result.get("status") != "success":
-            raise RuntimeError(f"{run_dir} did not succeed: {result}")
+        if not _run_succeeded(run_dir):
+            raise RuntimeError(
+                f"{run_dir} did not succeed: no successful training_run_result.json"
+            )
         stats_path = run_dir / "rollout_stats.jsonl"
         if not stats_path.exists():
             raise FileNotFoundError(f"missing {stats_path}; the run wrote no phase stats")
@@ -216,6 +216,13 @@ def _discard_checkpoints(run_dir: Path) -> None:
         if checkpoint.is_dir():
             shutil.rmtree(checkpoint, ignore_errors=True)
             print(f"  discarded {checkpoint}", flush=True)
+
+
+def _run_succeeded(run_dir: Path) -> bool:
+    """Whether the run recorded a successful training result (the only evidence of completion)."""
+
+    result_path = run_dir / "training_run_result.json"
+    return result_path.exists() and json.loads(result_path.read_text()).get("status") == "success"
 
 
 def summarize_arm(runs: list[RunMetrics]) -> dict[str, Any]:
@@ -359,7 +366,6 @@ def main(argv: list[str] | None = None) -> None:
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "acceptance.json").unlink(missing_ok=True)
     arms = [arm.strip().upper() for arm in args.arms.split(",") if arm.strip()]
     unknown = [arm for arm in arms if arm not in ARMS]
     if unknown:
@@ -379,16 +385,16 @@ def main(argv: list[str] | None = None) -> None:
         # arm happened to run last.
         for repeat in range(args.start_repeat, args.repeats):
             for arm in arms:
-                if (out_dir / f"arm{arm}_run{repeat}" / "rollout_stats.jsonl").exists():
-                    RunMetrics.from_run_dir(
-                        out_dir / f"arm{arm}_run{repeat}",
-                        warmup_iterations=args.warmup_iterations,
-                    )
+                run_dir = out_dir / f"arm{arm}_run{repeat}"
+                if _run_succeeded(run_dir):
                     # A campaign is hours long and has already been interrupted
                     # once here (host disk filled mid-run). Completed repeats are
                     # valid evidence; re-running them only burns GPU time.
                     print(f"[{arm}/{repeat}] already complete, skipping", flush=True)
                     continue
+                if run_dir.exists():
+                    # An interrupted repeat is not evidence; start it over.
+                    shutil.rmtree(run_dir)
                 run_arm(
                     config=args.config,
                     arm=arm,

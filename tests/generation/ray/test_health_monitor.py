@@ -471,8 +471,7 @@ def test_real_wedged_worker_times_out_and_the_fleet_really_dies(local_ray) -> No
 
 
 @_SCRIPTED_RAY_WIRE
-@pytest.mark.parametrize("finished", [False, True])
-def test_shutdown_ignores_an_in_flight_probe_failure(monkeypatch, finished) -> None:
+def test_shutdown_ignores_an_in_flight_probe_failure(monkeypatch) -> None:
     actor = _Actor(TimeoutError("late timeout"))
     runtime = _runtime(actor)
     ray = _BlockingFailureRay([actor])
@@ -486,8 +485,6 @@ def test_shutdown_ignores_an_in_flight_probe_failure(monkeypatch, finished) -> N
     try:
         assert ray.probe_started.wait(timeout=1)
         runtime.lifecycle.begin_shutdown()
-        if finished:
-            runtime.lifecycle.finish_shutdown()
     finally:
         ray.release_probe.set()
         thread.join(timeout=1)

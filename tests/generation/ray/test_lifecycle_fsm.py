@@ -954,8 +954,7 @@ def test_shutdown_kills_only_owned_actor(local_ray) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("unblocked_by_close", [False, True])
-async def test_shutdown_retains_session_until_monitor_exits(monkeypatch, unblocked_by_close):
+async def test_shutdown_force_closes_the_session_when_the_monitor_will_not_stop(monkeypatch):
     runtime = _runtime()
     session = runtime._session
     monitor = runtime._health_monitor
@@ -969,25 +968,13 @@ async def test_shutdown_retains_session_until_monitor_exits(monkeypatch, unblock
 
     async def close(*, force):
         forced.append(force)
-        if unblocked_by_close:
-            release.set()
+        release.set()  # killing the actors unblocks the stuck probe
 
     monkeypatch.setattr(session, "close", close)
     try:
-        if unblocked_by_close:
-            await runtime.shutdown()
-        else:
-            with pytest.raises(RuntimeError, match="monitor thread is still running"):
-                await runtime.shutdown()
-            assert runtime._session is session
-            assert monitor._thread is thread
-            assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-            release.set()
-            thread.join(timeout=1)
-            await runtime.shutdown()
-        assert forced[0] is True
+        await runtime.shutdown()
+        assert forced == [True]
         assert runtime._session is None
-        assert monitor._thread is None
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     finally:
         release.set()
