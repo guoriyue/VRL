@@ -66,6 +66,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.pickscore import PickScoreReward
     from vrl.rewards.functions.robotics_video_reward import RoboticsVideoReward
     from vrl.rewards.functions.target_dino_similarity import TargetDinoSimilarityReward
+    from vrl.rewards.functions.text_regions import TextRegionsReward
     from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
     from vrl.rewards.functions.videocon_physics import VideoConPhysicsReward
     from vrl.rewards.functions.wd_tagger import WDTaggerReward
@@ -79,6 +80,7 @@ def _register_builtins() -> None:
             "geneval_owl": GenEvalOwlReward,
             "nsfw_safety": NSFWSafetyReward,
             "ocr": OCRReward,
+            "text_regions": TextRegionsReward,
             "pickscore": PickScoreReward,
             "wd_tagger": WDTaggerReward,
             # Future Reward suite (SPRINT_future_reward): DINOv2 perceptual anchor + RAFT
