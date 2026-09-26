@@ -399,6 +399,37 @@ def test_shared_parking_rejects_multiple_gpu_reward_components() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_cpu_sibling_keeps_http_parking_runtime_gate(monkeypatch) -> None:
+    """Accept the mixed factory but require a real parking owner at handoff."""
+    reward = MultiReward.from_dict(
+        {"image_sharpness": 4.0, "editreward": 1.0},
+        device="cpu",
+        memory_parking_required=True,
+        inference_configs={
+            "image_sharpness": RewardInferenceConfig(kind="in_process"),
+            "editreward": RewardInferenceConfig(
+                kind="http", endpoint="http://localhost:8315", expected_model="editreward"
+            ),
+        },
+    )
+    runtime = RewardFunctionRuntime(reward)
+    with pytest.raises(RuntimeError, match="no active memory-parking owner"):
+        await runtime.park_memory(required=True)
+
+    events = []
+
+    async def confirmed_park():
+        events.append("http_park")
+        return True
+
+    remote = next(fn for name, _, fn in reward.rewards if name == "editreward")
+    monkeypatch.setattr(remote, "park_memory", confirmed_park)
+    await runtime.park_memory(required=True)
+    assert events == ["http_park"]
+    await runtime.shutdown()
+
+
 @pytest.mark.parametrize(
     ("resolved_device", "component_device"),
     [("cpu", "cuda:0"), ("cuda:0", "cuda:1")],
