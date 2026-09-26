@@ -22,11 +22,14 @@ one, which no consistency measure can then read.
 
 Binary images are written under ``data/external/local_edit`` (or
 ``VRL_DATA_ROOT``); manifests hold paths relative to that root.
+Use ``--retain-reference-edits`` to save aligned reference edits for review.
+These are unverified dataset examples, not gold labels or training targets.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import random
@@ -149,6 +152,8 @@ def rows_from_omniedit(
     size: int,
     seed: int,
     shards_per_task: int = 2,
+    *,
+    retain_reference_edits: bool = False,
 ) -> list[dict]:
     """Stream OmniEdit until every local task has ``per_task`` rows; write images, return manifest rows.
 
@@ -163,6 +168,8 @@ def rows_from_omniedit(
     rng = random.Random(seed)
     (out / "img").mkdir(parents=True, exist_ok=True)
     (out / "hint").mkdir(parents=True, exist_ok=True)
+    if retain_reference_edits:
+        (out / "reference_edits").mkdir(parents=True, exist_ok=True)
     counts = dict.fromkeys(LOCAL_TASKS, 0)
     rows: list[dict] = []
     seen = 0
@@ -212,6 +219,17 @@ def rows_from_omniedit(
                     out / "hint" / f"{stem}.jpg", quality=94
                 )
             rel = out.relative_to(root)
+            provenance = {}
+            if example.get("omni_edit_id"):
+                provenance["upstream_id"] = str(example["omni_edit_id"])
+            if retain_reference_edits:
+                reference_path = out / "reference_edits" / f"{stem}.png"
+                edited.convert("RGB").save(reference_path)
+                provenance.update(
+                    reference_edit=str(reference_path.relative_to(root)),
+                    reference_edit_sha256=hashlib.sha256(reference_path.read_bytes()).hexdigest(),
+                    reference_edit_review_status="unreviewed",
+                )
             rows.append(
                 {
                     "prompt": prompts[0].strip() + (HINT_SUFFIX if hint else ""),
@@ -224,6 +242,7 @@ def rows_from_omniedit(
                             "box": [round(v, 4) for v in box],
                             "hint": hint,
                             "source_image": str(rel / "img" / f"{stem}.jpg"),
+                            **provenance,
                         },
                     },
                 }
@@ -266,6 +285,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--shards-per-task", type=int, default=2)
+    parser.add_argument(
+        "--retain-reference-edits",
+        action="store_true",
+        help="save aligned dataset edits for quality review, not as verified training targets",
+    )
     parser.add_argument("--manifest-dir", type=Path, default=Path("manifests/local_edit"))
     args = parser.parse_args(argv)
     root = Path(default_data_root())
@@ -281,6 +305,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         args.size,
         args.seed,
         args.shards_per_task,
+        retain_reference_edits=args.retain_reference_edits,
     )
     train, held = split_heldout(rows, args.heldout_per_task, args.seed)
     args.manifest_dir.mkdir(parents=True, exist_ok=True)
