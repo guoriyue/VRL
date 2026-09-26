@@ -2173,10 +2173,7 @@ class OnlineTrainer:
         global_step = require_int(
             state.get("global_step", 0), path="trainer_state.global_step", minimum=0
         )
-        self.state.step = step
-        self.state.global_step = global_step
-
-        nonzero_checkpoint = max(self.state.step, self.state.global_step) > 0
+        nonzero_checkpoint = max(step, global_step) > 0
         if (
             nonzero_checkpoint
             and self._requires_fp32_master_weights()
@@ -2191,6 +2188,7 @@ class OnlineTrainer:
             logger.warning("%s; initializing fresh masters from model weights", message)
 
         if "optimizer" in state:
+            optimizer_compatible = True
             saved_manifest = state.get("optimizer_parameter_manifest")
             if saved_manifest is not None:
                 current_manifest = self._optimizer_parameter_manifest()
@@ -2201,7 +2199,8 @@ class OnlineTrainer:
                     )
                     if strict:
                         raise ValueError(message)
-                    logger.warning("%s", message)
+                    logger.warning("%s; skipping optimizer state", message)
+                    optimizer_compatible = False
             optimizer = self._ensure_optimizer()
             optimizer_state = state["optimizer"]
             checkpoint_uses_fp32_master = isinstance(optimizer_state, Mapping) and (
@@ -2219,17 +2218,19 @@ class OnlineTrainer:
                 )
                 if strict:
                     raise ValueError(message)
-                logger.warning("%s; loading only compatible optimizer state", message)
-            try:
-                self._strategy.load_optimizer_state(
-                    self.model,
-                    optimizer,
-                    optimizer_state,
-                )
-            except Exception:
-                if strict:
-                    raise
-                logger.warning("Skipping incompatible optimizer state during non-strict load")
+                logger.warning("%s; skipping optimizer state", message)
+                optimizer_compatible = False
+            if optimizer_compatible:
+                try:
+                    self._strategy.load_optimizer_state(
+                        self.model,
+                        optimizer,
+                        optimizer_state,
+                    )
+                except (ValueError, TypeError, KeyError):
+                    if strict:
+                        raise
+                    logger.warning("Skipping incompatible optimizer state during non-strict load")
 
         if "grad_scaler" in state:
             if self._grad_scaler is None:
@@ -2241,7 +2242,7 @@ class OnlineTrainer:
             else:
                 try:
                     self._grad_scaler.load_state_dict(state["grad_scaler"])
-                except Exception:
+                except (ValueError, TypeError, KeyError):
                     if strict:
                         raise
                     logger.warning("Skipping incompatible GradScaler state during non-strict load")
@@ -2266,7 +2267,7 @@ class OnlineTrainer:
                 assert ema is not None
                 try:
                     ema.load_state_dict(state["ema"])
-                except Exception:
+                except (ValueError, TypeError, KeyError):
                     if strict:
                         raise
                     logger.warning("Skipping incompatible EMA state during non-strict load")
@@ -2276,10 +2277,12 @@ class OnlineTrainer:
         # A resumed trainer must push the restored driver weights before the
         # next Ray rollout. The policy version and worker state are runtime
         # concerns, not persisted as an initialized rollout flag.
+        self.rollout_schedule.reset()
+        self.state.step = step
+        self.state.global_step = global_step
         self._rollout_weights_initialized = False
         self._replay_parity_passed = False
         self._precision_drift_guard_pending = True
-        self.rollout_schedule.reset()
 
     def _precision_metadata(self) -> dict[str, Any]:
         """Describe the configured and observed precision of this trainer."""

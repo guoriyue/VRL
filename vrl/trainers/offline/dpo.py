@@ -458,19 +458,19 @@ class OfflineDPOTrainer:
 
         if not isinstance(state, dict):
             raise TypeError("OfflineDPOTrainer.load_state_dict expects a dict")
-        self.global_step = require_int(
+        global_step = require_int(
             state.get("global_step", 0), path="trainer_state.global_step", minimum=0
         )
-        # Parameter .grad buffers are not checkpointed, so resume must start a
-        # fresh accumulation window instead of deriving the boundary from
-        # global_step.
-        self._gradient_accumulation_micro_step = 0
         if "optimizer" in state:
             try:
                 self._optimizer.load_state_dict(state["optimizer"])
-            except Exception:
+            except (ValueError, TypeError, KeyError):
                 if strict:
                     raise
                 logger.warning("Skipping incompatible optimizer state during non-strict load")
         elif strict:
             raise ValueError("checkpoint missing optimizer state")
+        # Neither accumulated gradients nor a partial accumulation window resume.
+        self._optimizer.zero_grad(set_to_none=True)
+        self.global_step = global_step
+        self._gradient_accumulation_micro_step = 0

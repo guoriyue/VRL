@@ -454,3 +454,14 @@ def test_real_scheduler_noise_uses_sampled_table_position(kind):
 def test_offline_config_rejects_invalid_accumulation_steps(steps):
     with pytest.raises(ValueError, match="gradient_accumulation_steps"):
         OfflineDPOTrainerConfig(gradient_accumulation_steps=steps)
+
+
+def test_resume_clears_uncheckpointed_accumulated_gradients():
+    trainer = _make_trainer(torch.arange(4))
+    state = trainer.state_dict()
+    for parameter in trainer.model.parameters():
+        parameter.grad = torch.ones_like(parameter)
+    trainer._gradient_accumulation_micro_step = 2
+    trainer.load_state_dict(state)
+    assert trainer._gradient_accumulation_micro_step == 0
+    assert all(parameter.grad is None for parameter in trainer.model.parameters())

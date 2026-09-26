@@ -181,3 +181,16 @@ def test_ema_restore_preserves_next_update() -> None:
     assert restored.decay == original.decay
     assert restored.num_updates == original.num_updates
     torch.testing.assert_close(restored.ema_parameters[0], original.ema_parameters[0])
+
+
+def test_restore_owns_storage_and_preserves_live_layout() -> None:
+    parameter = nn.Parameter(torch.zeros(3, 2, dtype=torch.float64).t())
+    ema = EMAWeights([parameter])
+    stride = ema.ema_parameters[0].stride()
+    incoming = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+    ema.load_state_dict({"ema_parameters": [incoming]})
+    incoming.fill_(99)
+    restored = ema.ema_parameters[0]
+    assert restored.dtype == parameter.dtype
+    assert restored.stride() == stride
+    torch.testing.assert_close(restored, torch.arange(6, dtype=torch.float64).reshape(2, 3))

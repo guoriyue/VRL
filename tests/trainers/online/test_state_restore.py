@@ -417,3 +417,47 @@ def test_online_trainer_standard_adamw_roundtrip(tmp_path) -> None:
     for index in expected:
         for key in expected[index]:
             torch.testing.assert_close(actual[index][key], expected[index][key], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_optimizer_restore_failure_preserves_progress(monkeypatch, strict):
+    trainer = _make_resume_trainer()
+    trainer._ensure_optimizer()
+    state = trainer.state_dict()
+    state.update(step=3, global_step=5)
+    trainer.state.step = 7
+    trainer.state.global_step = 11
+
+    def fail(*args):
+        raise RuntimeError("optimizer restore failed")
+
+    monkeypatch.setattr(trainer._strategy, "load_optimizer_state", fail)
+    with pytest.raises(RuntimeError, match="optimizer restore failed"):
+        trainer.load_state_dict(state, strict=strict)
+    assert (trainer.state.step, trainer.state.global_step) == (7, 11)
+
+
+def test_non_strict_manifest_mismatch_does_not_load_optimizer(monkeypatch):
+    trainer = _make_resume_trainer()
+    trainer._ensure_optimizer()
+    state = trainer.state_dict()
+    state["optimizer_parameter_manifest"][0]["name"] = "another_parameter"
+
+    def unexpected_load(*args):
+        pytest.fail("optimizer with mismatched parameter identity must not load")
+
+    monkeypatch.setattr(trainer._strategy, "load_optimizer_state", unexpected_load)
+    trainer.load_state_dict(state, strict=False)
+
+
+def test_non_strict_legacy_optimizer_group_mismatch_is_still_skipped(caplog):
+    trainer = _make_resume_trainer()
+    optimizer = trainer._ensure_optimizer()
+    state = trainer.state_dict()
+    del state["optimizer_parameter_manifest"]
+    state["optimizer"]["param_groups"] = []
+
+    trainer.load_state_dict(state, strict=False)
+
+    assert "Skipping incompatible optimizer state" in caplog.text
+    assert len(optimizer.param_groups) == 1

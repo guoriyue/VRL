@@ -211,7 +211,10 @@ class EMAWeights:
                     current.device_mesh,
                     current.placements,
                 )
-            resharded.append(loaded.to(device=self.device))
+            # Own the restored storage and retain the live dtype and layout.
+            restored = current.detach().clone()
+            restored.copy_(loaded.detach())
+            resharded.append(restored)
         self.decay = decay
         self.ema_parameters = resharded
         self.num_updates = num_updates
