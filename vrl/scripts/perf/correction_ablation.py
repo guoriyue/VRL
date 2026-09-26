@@ -183,7 +183,7 @@ def main() -> None:
                 "trainer.replay_parity.every_update=true",
                 "trainer.precision_drift_guard.mode=warn",
                 "reward.components={aesthetic: 1.0}",
-                "reward.kwargs={aesthetic: {device: null, model_name: openai/clip-vit-large-patch14}}",
+                "reward.kwargs={aesthetic: {device: null, model_name: google/siglip-so400m-patch14-384}}",
             ]
             if args.model_path is not None:
                 overrides += [f"model.path={args.model_path.resolve()}"]

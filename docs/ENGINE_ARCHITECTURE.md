@@ -286,7 +286,7 @@ classDiagram
 | `FileRewardModel` | Structural protocol | Optional `input_artifact_format` declaration (`mp4` or `tensor`) for file-only models. The scoring process creates and cleans temporary input files; media-native models omit this declaration. |
 | `LazyTorchModule` | ABC | Defers module construction to `prepare_for_inference()` so weights land in the runtime's CuMem build frame, never in `__init__`. |
 | `TorchRewardModel` | `LazyTorchModule` | Adds the media-scoring loop (`score_media`). |
-| `AestheticRewardModel`, `PickScoreRewardModel` | `TorchRewardModel` | CLIP-head scorers. |
+| `AestheticRewardModel`, `PickScoreRewardModel` | `TorchRewardModel` | SigLIP aesthetic and CLIP preference scorers. |
 | `MotionDynamicsModel`, `TargetDinoSimilarityModel` | `LazyTorchModule` | RAFT optical flow; DINO similarity. |
 | `KlingVideoRewardModel` (+ `KlingQwen2VLRewardModel(Qwen2VLForConditionalGeneration)`), `RoboticsVideoRewardModel`, `UnifiedRewardVideoModel`, `VideoConPhysicsModel`, `OCRRewardModel`, `NSFWSafetyRewardModel` | plain classes | Satisfy `RewardModel` structurally; built by `model_factory` dotted paths from the launch contract. |
 

@@ -1,8 +1,8 @@
-"""Tests for CLIP-backed in-process reward models.
+"""Tests for SigLIP aesthetic and CLIP preference reward models.
 
-Scoring runs on tiny real CLIP repositories (``tests/rewards/fixtures.py``): the
-production loaders read a genuine ``CLIPModel``/``CLIPProcessor`` from disk, the
-aesthetic head loads the shipped LAION asset, and PickScore's arithmetic is
+Scoring runs on tiny real CLIP/SigLIP repositories (``tests/rewards/fixtures.py``):
+production loaders read genuine encoders and image processors from disk, the
+aesthetic head loads the shipped V2.5 asset, and PickScore's arithmetic is
 checked against an independent oracle. The revision-forwarding tests keep a
 recorder because a local directory has no revision to observe (see their labels).
 """
@@ -17,20 +17,19 @@ import pytest
 import torch
 from PIL import Image
 
-from tests.rewards.fixtures import build_tiny_clip_repo, shipped_aesthetic_projection_dim
+from tests.rewards.fixtures import (
+    build_tiny_clip_repo,
+    build_tiny_siglip_repo,
+    shipped_aesthetic_hidden_size,
+)
 
 pytest.importorskip("transformers")
 
 
 @pytest.fixture(scope="session")
-def aesthetic_clip_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """A tiny CLIP whose projection width matches the shipped aesthetic head."""
-
-    return build_tiny_clip_repo(
-        tmp_path_factory.mktemp("tiny-clip-aesthetic"),
-        projection_dim=shipped_aesthetic_projection_dim(),
-        logit_scale_init_value=0.0,
-    )
+def aesthetic_siglip_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    pytest.importorskip("aesthetic_predictor_v2_5")
+    return build_tiny_siglip_repo(tmp_path_factory.mktemp("tiny-siglip-aesthetic"))
 
 
 @pytest.fixture(scope="session")
@@ -48,105 +47,94 @@ def _solid_image(value: int, size: int = 12) -> Image.Image:
     return Image.fromarray(np.full((size, size, 3), value, dtype=np.uint8))
 
 
-def test_aesthetic_model_loads_the_shipped_head_over_a_real_clip(
-    aesthetic_clip_repo: Path,
-) -> None:
-    """The LAION head really loads and the projected CLIP feature really drives it.
+def test_aesthetic_matches_released_head_and_siglip_oracle(aesthetic_siglip_repo: Path) -> None:
+    from importlib import resources
 
-    A zero-weight head returns 0.0 for every input, so only a genuinely loaded
-    head can make two images score differently. Scores are compared, never
-    pinned: their values depend on the tiny CLIP's random init.
-    """
+    from transformers import SiglipVisionModel
 
     from vrl.rewards.models.aesthetic import AestheticRewardModel
 
     model = AestheticRewardModel(
-        {"device": "cpu", "dtype": "float32", "model_name": str(aesthetic_clip_repo)},
+        {"device": "cpu", "dtype": "float32", "model_name": str(aesthetic_siglip_repo)},
     )
     model.prepare_for_inference()
-
-    head = model._module.mlp.layers[0]
-    assert tuple(head.weight.shape) == (1024, shipped_aesthetic_projection_dim())
+    head = model._module.layers.scoring_head[0]
+    assert tuple(head.weight.shape) == (1024, shipped_aesthetic_hidden_size())
     assert float(head.weight.detach().abs().sum()) > 0.0
+    assert not model._module.training
+    assert next(model._module.parameters()).dtype == torch.float32
 
-    black = model.score_media(media=torch.zeros(3, 12, 12), prompt="")
-    white = model.score_media(media=torch.ones(3, 12, 12), prompt="")
-    assert black["aesthetic"] != white["aesthetic"]
-    # Batched images come back as one score per image (the ``.squeeze(1)`` contract).
-    assert model._module([_solid_image(0), _solid_image(255)]).shape == (2,)
+    images = [_solid_image(0), _solid_image(255)]
+    pixels = model._processor(images=images, return_tensors="pt").pixel_values
+    asset = resources.files("vrl.rewards.assets").joinpath("aesthetic_predictor_v2_5.pth")
+    state = torch.load(asset, map_location="cpu", weights_only=True)
+    encoder = SiglipVisionModel.from_pretrained(aesthetic_siglip_repo).eval()
+    with torch.no_grad():
+        features = encoder(pixel_values=pixels).pooler_output
+        expected = torch.nn.functional.normalize(features, dim=-1)
+        # Independent evaluation of the released head; dropout is off at inference.
+        for index in (0, 2, 4, 6, 8):
+            expected = torch.nn.functional.linear(
+                expected,
+                state[f"scoring_head.{index}.weight"].float(),
+                state[f"scoring_head.{index}.bias"].float(),
+            )
+        actual = model._module(pixels).logits
+    torch.testing.assert_close(actual, expected)
+    assert actual.shape == (2, 1)
+    assert actual[0].item() != actual[1].item()
+    for value, score in zip((0, 255), expected.flatten(), strict=True):
+        result = model.score_media(media=torch.full((3, 12, 12), value / 255), prompt="")
+        assert result["aesthetic"] == pytest.approx(score.item(), abs=1e-5)
 
 
-def test_aesthetic_video_scores_three_evenly_spaced_frames(aesthetic_clip_repo: Path) -> None:
-    """A [C,T,H,W] clip is scored on frames t//4, t//2, 3t//4 and averaged."""
-
+def test_aesthetic_video_scores_three_evenly_spaced_frames(aesthetic_siglip_repo: Path) -> None:
     from vrl.rewards.models.aesthetic import AestheticRewardModel
 
     model = AestheticRewardModel(
-        {"device": "cpu", "dtype": "float32", "model_name": str(aesthetic_clip_repo)},
+        {"device": "cpu", "dtype": "float32", "model_name": str(aesthetic_siglip_repo)},
     )
     video = torch.zeros(3, 8, 12, 12)
-    video[:, 2] = 1.0  # t//4
-    video[:, 4] = 0.5  # t//2
-    video[:, 6] = 0.25  # 3t//4
-
+    video[:, 2] = 1.0
+    video[:, 4] = 0.5
+    video[:, 6] = 0.25
     scored = model.score_media(media=video, prompt="")
-    expected = model._module([_solid_image(255), _solid_image(128), _solid_image(64)]).mean()
-
-    assert scored == {"aesthetic": pytest.approx(float(expected))}
+    expected = [
+        model.score_media(media=video[:, index], prompt="")["aesthetic"] for index in (2, 4, 6)
+    ]
+    assert scored == {"aesthetic": pytest.approx(sum(expected) / 3)}
 
 
 @pytest.mark.real_cover(
     "tests/rewards/inference/test_in_process_runtime.py"
     "::test_real_aesthetic_score_parks_stably_across_two_cycles",
-    why=(
-        "a local directory has no revision: CLIPModel.from_pretrained(<dir>, revision=...) "
-        "silently ignores the argument, so which revision reached the hub loaders can only "
-        "be observed by recording the call; the counterpart loads the real hub checkpoint"
-    ),
+    why="Local directories ignore revisions; record the converter call to verify Hub pinning.",
 )
 @pytest.mark.parametrize("revision", [None, "aesthetic-immutable-revision"])
-def test_aesthetic_model_passes_optional_revision_to_clip_loaders(
+def test_aesthetic_model_passes_revision_and_packaged_head(
     monkeypatch: pytest.MonkeyPatch,
+    aesthetic_siglip_repo: Path,
     revision: str | None,
 ) -> None:
-    """The model and processor resolve the same optional CLIP revision."""
-    import transformers
+    import aesthetic_predictor_v2_5
 
     from vrl.rewards.models.aesthetic import AestheticRewardModel
 
-    calls: list[tuple[str, str, dict[str, str]]] = []
+    calls = []
+    convert = aesthetic_predictor_v2_5.convert_v2_5_from_siglip
 
-    class _FakeClip(torch.nn.Module):
-        pass
+    def record(**kwargs):
+        calls.append(kwargs.copy())
+        return convert(**{**kwargs, "encoder_model_name": str(aesthetic_siglip_repo)})
 
-    class _FakeProcessor:
-        pass
-
-    def load_clip(name: str, **kwargs: str) -> _FakeClip:
-        calls.append(("model", name, kwargs))
-        return _FakeClip()
-
-    def load_processor(name: str, **kwargs: str) -> _FakeProcessor:
-        calls.append(("processor", name, kwargs))
-        return _FakeProcessor()
-
-    monkeypatch.setattr(transformers.CLIPModel, "from_pretrained", staticmethod(load_clip))
-    monkeypatch.setattr(
-        transformers.CLIPProcessor,
-        "from_pretrained",
-        staticmethod(load_processor),
-    )
-    config = {"device": "cpu", "dtype": "float32"}
-    if revision is not None:
-        config["model_revision"] = revision
-
+    monkeypatch.setattr(aesthetic_predictor_v2_5, "convert_v2_5_from_siglip", record)
+    config = {"device": "cpu", "dtype": "float32", "model_revision": revision}
     AestheticRewardModel(config)._load_module()
-
-    expected_kwargs = {"revision": revision} if revision is not None else {}
-    assert calls == [
-        ("model", "openai/clip-vit-large-patch14", expected_kwargs),
-        ("processor", "openai/clip-vit-large-patch14", expected_kwargs),
-    ]
+    assert len(calls) == 1
+    assert calls[0]["encoder_model_name"] == "google/siglip-so400m-patch14-384"
+    assert calls[0].get("revision") == revision
+    assert Path(calls[0]["predictor_name_or_path"]).name == "aesthetic_predictor_v2_5.pth"
+    assert Path(calls[0]["predictor_name_or_path"]).is_file()
 
 
 def test_pickscore_matches_an_independent_cosine_oracle(pickscore_clip_repo: Path) -> None:

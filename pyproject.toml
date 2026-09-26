@@ -72,6 +72,7 @@ cosmos = [
 # bundles its own FFmpeg, so it is the only backend that works from a plain
 # `uv sync --extra reward`.
 reward = [
+    "aesthetic-predictor-v2-5==2024.12.18.1",  # SigLIP scorer (upstream AGPL-3.0)
     "transformers>=5.17.0,<6",
     "peft>=0.11.0",
     "qwen-vl-utils>=0.0.10",
@@ -167,7 +168,7 @@ include = ["vrl*", "agentic*", "reward*"]
 [tool.setuptools.package-data]
 "vrl.config.presets" = ["**/*.yaml", "**/*.yml", "**/*.md"]
 "vrl.config.reward_service" = ["*.yaml"]
-"vrl.rewards.assets" = ["*.pth"]
+"vrl.rewards.assets" = ["*.pth", "*.LICENSE", "*.md"]
 "reward" = ["preference_review.html"]
 
 # ── Ruff ─────────────────────────────────────────────────────────

@@ -583,12 +583,12 @@ def test_sleep_offload_rejects_injected_model() -> None:
 )
 @pytest.mark.asyncio
 async def test_real_aesthetic_score_parks_stably_across_two_cycles() -> None:
-    """A real CLIP forward may retain runtime code, never its 1.64 GiB model pool."""
+    """A real SigLIP forward may retain runtime code, never its model pool."""
     runtime = InProcessRewardScorer(
         {
             "device": "cuda:0",
             "dtype": "float32",
-            "model_name": "openai/clip-vit-large-patch14",
+            "model_name": "google/siglip-so400m-patch14-384",
             "model_factory": "vrl.rewards.models.aesthetic:AestheticRewardModel",
             "sleep_offload": True,
         },

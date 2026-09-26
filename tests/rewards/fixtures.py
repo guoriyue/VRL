@@ -1,4 +1,4 @@
-"""Tiny real (cache-free) CLIP repositories for CPU reward-model tests.
+"""Tiny real (cache-free) CLIP and SigLIP repositories for CPU reward-model tests.
 
 ``build_tiny_clip_repo`` writes a genuine ``CLIPModel`` plus a genuine
 ``CLIPProcessor`` to a directory with transformers' own ``save_pretrained``, so
@@ -17,16 +17,16 @@ from pathlib import Path
 import torch
 
 
-def shipped_aesthetic_projection_dim() -> int:
-    """The CLIP projection width the shipped LAION aesthetic head was trained on.
+def shipped_aesthetic_hidden_size() -> int:
+    """The SigLIP hidden width the shipped V2.5 aesthetic head was trained on.
 
     Read off the packaged asset rather than hard-coded: the head's first
     ``Linear`` input width is the only source of truth for this number.
     """
 
-    asset = resources.files("vrl.rewards.assets").joinpath("sac+logos+ava1-l14-linearMSE.pth")
+    asset = resources.files("vrl.rewards.assets").joinpath("aesthetic_predictor_v2_5.pth")
     state = torch.load(asset, map_location="cpu", weights_only=True)
-    return int(state["layers.0.weight"].shape[1])
+    return int(state["scoring_head.0.weight"].shape[1])
 
 
 def build_tiny_clip_repo(
@@ -95,7 +95,28 @@ def build_tiny_clip_repo(
     return root
 
 
+def build_tiny_siglip_repo(root: Path) -> Path:
+    """Real SigLIP encoder/processor with the released V2.5 head's input width."""
+    from transformers import SiglipImageProcessor, SiglipVisionConfig, SiglipVisionModel
+
+    config = SiglipVisionConfig(
+        hidden_size=shipped_aesthetic_hidden_size(),
+        intermediate_size=16,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        image_size=8,
+        patch_size=4,
+    )
+    with torch.random.fork_rng(devices=[], device_type="cpu"):
+        torch.manual_seed(0)
+        model = SiglipVisionModel(config)
+    model.save_pretrained(root)
+    SiglipImageProcessor(size={"height": 8, "width": 8}).save_pretrained(root)
+    return root
+
+
 __all__ = [
     "build_tiny_clip_repo",
-    "shipped_aesthetic_projection_dim",
+    "build_tiny_siglip_repo",
+    "shipped_aesthetic_hidden_size",
 ]

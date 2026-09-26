@@ -15,6 +15,7 @@ VRL_DATA = [
     "vrl/**/*.md",
     "vrl/**/*.json",
     "vrl/**/*.pth",
+    "vrl/**/*.LICENSE",
 ]
 
 def vrl_library(name, requirements, **kwargs):

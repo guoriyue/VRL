@@ -6,4 +6,4 @@ reward:
     aesthetic:
       # Optional CPU downgrade under the resource-resolved device ceiling.
       device: null
-      model_name: openai/clip-vit-large-patch14
+      model_name: google/siglip-so400m-patch14-384

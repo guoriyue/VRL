@@ -126,7 +126,7 @@ jobs:
           assert module_path.is_relative_to(install_root), module_path
 
           aesthetic_asset = resources.files("vrl.rewards.assets").joinpath(
-              "sac+logos+ava1-l14-linearMSE.pth"
+              "aesthetic_predictor_v2_5.pth"
           )
           assert aesthetic_asset.is_file(), aesthetic_asset
           with aesthetic_asset.open("rb") as handle:

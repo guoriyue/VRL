@@ -16,7 +16,7 @@ trainer:
   # Full-state checkpoints are 13 GB. Five-update publication bounds restart
   # loss while still preserving every preregistered 25-update eval point.
   save_freq: 5
-  output_dir: outputs/sana_aesthetic_fullparam_long
+  output_dir: outputs/sana_aesthetic_v2_5_fullparam_long
 
 reward:
   components:
@@ -24,7 +24,7 @@ reward:
     pickscore: 0.0
   kwargs:
     aesthetic:
-      model_revision: 32bd64288804d66eefd0ccbe215aa642df71cc41
+      model_revision: 9fdffc58afc957d1a03a25b10dba0329ab15c2a3
     pickscore:
       device: cpu
       processor_revision: 1c2b8495b28150b8a4922ee1c8edee224c284c0c

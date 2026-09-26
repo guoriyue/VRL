@@ -1,8 +1,6 @@
 # Aesthetic scorer with an explicit optional Hub revision boundary.
 #
-# Keep the unpinned aesthetic preset unchanged for archived protocol hashes;
-# experiments that require immutable scorer provenance compose this variant and
-# set the revision in their own protocol config.
+# The revision pins the SigLIP encoder; the V2.5 head is packaged with VRL.
 defaults:
   - /reward/aesthetic
   - _self_

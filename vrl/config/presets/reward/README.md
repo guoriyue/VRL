@@ -154,3 +154,20 @@ OCR under continuous scheduling cost 61 s per epoch of launch-bound replay):
 .venv/bin/python -m vrl.rewards.service.server \
   --config vrl/config/reward_service/ocr_paddle.yaml
 ```
+
+## Aesthetic Predictor V2.5
+
+`/reward/aesthetic` now uses `google/siglip-so400m-patch14-384` with the released
+Aesthetic Predictor V2.5 head. Install `uv sync --extra reward`; the upstream
+`aesthetic-predictor-v2-5` package and bundled head are AGPL-3.0 (see the asset
+license and source attribution in `vrl/rewards/assets/`). The encoder downloads
+from Hugging Face on first use. `model_revision` pins both encoder and processor;
+`/reward/aesthetic_revision` exposes it explicitly. The head is bundled and hashed.
+
+The public reward name and score key remain `aesthetic`. It ignores the prompt,
+scores an image directly, and averages up to three frames for video; it does not
+measure temporal coherence. Raw V2.5 scores are not calibrated probabilities and
+are not comparable with the retired CLIP/LAION scores. No legacy scorer remains.
+Do not resume an old aesthetic run as though the reward were unchanged; start a
+new run. The SANA curve protocol is v5 with separate V2.5 output/report paths;
+reproducing a v4 report requires the original code revision.

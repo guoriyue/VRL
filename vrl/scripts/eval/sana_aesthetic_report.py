@@ -35,10 +35,10 @@ from vrl.utils.json_files import canonical_json_sha256, read_jsonl, write_json, 
 
 # Persisted protocol and asset identities. These constants are real schema
 # boundaries, not tunable experiment defaults or duplicated typed structures.
-REPORT_SCHEMA = "vrl.sana_aesthetic_checkpoint_eval/v4"
-REPORT_SCHEMA_VERSION = 4
-REPORT_RELATIVE_PATH = Path("sana_aesthetic_fullparam_native_fp16_eval/report.json")
-SAMPLES_RELATIVE_PATH = Path("sana_aesthetic_fullparam_native_fp16_eval/samples.jsonl")
+REPORT_SCHEMA = "vrl.sana_aesthetic_checkpoint_eval/v5"
+REPORT_SCHEMA_VERSION = 5
+REPORT_RELATIVE_PATH = Path("sana_aesthetic_v2_5_fullparam_native_fp16_eval/report.json")
+SAMPLES_RELATIVE_PATH = Path("sana_aesthetic_v2_5_fullparam_native_fp16_eval/samples.jsonl")
 EVAL_BASE_SEED = 20260710
 EVAL_SAMPLES_PER_PROMPT = 2
 # Recovery checkpoints may be denser than the preregistered held-out curve.
@@ -47,19 +47,16 @@ CANONICAL_CONFIG_NAME = "experiment/sana/online_grpo_aesthetic_fullparam_long"
 # Historical run configs persist the retired path, so it remains protocol data.
 _RETIRED_ENTRYPOINT = "vrl.scripts.diffusion.train:train_diffusion_grpo"
 _LIVE_ENTRYPOINT = "vrl.scripts.train:train_online"
-# Digest of the bundled canonical preset after the 2026-08 sharing-grammar
-# simplification (allow_overlap retired, default-valued resource spellings
-# dropped from the preset chain; sharing derives from device-set intersections).
-# 2026-09-19: the committed manifests moved from datasets/ to manifests/; the
-# prompt files themselves are unchanged (resolve_protocol_manifests still
-# checks their registered content).
-CANONICAL_PROTOCOL_SHA256 = "4618de7df44085f9d544398e405ffd305b03afa763f17fa9b027b36bde0e8f64"
+# V5 migrates the scorer to SigLIP Aesthetic Predictor V2.5. Its scores and
+# checkpoint training contract are intentionally distinct from the retired
+# CLIP-based v4 protocol. Archived reports remain readable at their source revision.
+CANONICAL_PROTOCOL_SHA256 = "64150a8d6e196abfd4654aa95262fde15844e47ffa842e76112e9c26aee9afa6"
 TRAIN_MANIFEST_SHA256 = "86580c8136a4b6d9fc6bbcc6d8e8e172b15fca6b5c6c956cc770255d8011de56"
 EVAL_MANIFEST_SHA256 = "10c70e8af2ae16b0d76eb9da0f53801485ab0a3bae83e605d310faa9b16bfcdd"
 TRAIN_PROMPT_COUNT = 192
 EVAL_PROMPT_COUNT = 64
-AESTHETIC_ASSET_SHA256 = "21dd590f3ccdc646f0d53120778b296013b096a035a2718c9cb0d511bff0f1e0"
-AESTHETIC_ASSET_BYTES = 3_714_759
+AESTHETIC_ASSET_SHA256 = "a6caf256b3dc434273c98dcb12f6bf17c5d4fc647d8df11f038386923dd06220"
+AESTHETIC_ASSET_BYTES = 2_644_834
 
 
 @dataclass(frozen=True, slots=True)
@@ -739,7 +736,7 @@ def _aesthetic_asset_record() -> dict[str, Any]:
     from importlib import resources
 
     asset = resources.files("vrl.rewards.assets").joinpath(
-        "sac+logos+ava1-l14-linearMSE.pth",
+        "aesthetic_predictor_v2_5.pth",
     )
     with resources.as_file(asset) as asset_path:
         sha256 = sha256_file(asset_path)
@@ -751,7 +748,7 @@ def _aesthetic_asset_record() -> dict[str, Any]:
         )
     return {
         "package": "vrl.rewards.assets",
-        "name": "sac+logos+ava1-l14-linearMSE.pth",
+        "name": "aesthetic_predictor_v2_5.pth",
         "sha256": sha256,
         "bytes": size,
     }

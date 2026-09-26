@@ -674,7 +674,7 @@ def test_reward_provenance_includes_pinned_revisions_and_asset_hash() -> None:
     )
     assert records[0]["identity"]["mlp_asset"] == {
         "package": "vrl.rewards.assets",
-        "name": "sac+logos+ava1-l14-linearMSE.pth",
+        "name": "aesthetic_predictor_v2_5.pth",
         "sha256": sana_report.AESTHETIC_ASSET_SHA256,
         "bytes": sana_report.AESTHETIC_ASSET_BYTES,
     }
@@ -713,7 +713,7 @@ def test_snapshot_materialization_uses_all_four_pinned_revisions(monkeypatch) ->
     assert set(calls) == {
         (str(cfg.model.path), str(cfg.model.revision)),
         (
-            "openai/clip-vit-large-patch14",
+            "google/siglip-so400m-patch14-384",
             str(cfg.reward.kwargs.aesthetic.model_revision),
         ),
         (
@@ -1003,3 +1003,11 @@ def test_historical_config_rename_rejects_simultaneous_spellings(path, old, new)
     with pytest.raises(ValueError, match="ambiguous SANA config"):
         sana_report._erase_meaningless_spelling(actual, {})
     assert section == {old: 1, new: 2}
+
+
+def test_v2_5_protocol_rejects_legacy_clip_reward() -> None:
+    cfg = load_config(sana_report.CANONICAL_CONFIG_NAME)
+    cfg.reward.kwargs.aesthetic.model_name = "openai/clip-vit-large-patch14"
+    cfg.reward.kwargs.aesthetic.model_revision = "32bd64288804d66eefd0ccbe215aa642df71cc41"
+    with pytest.raises(ValueError, match=r"reward\.kwargs\.aesthetic\.model_name"):
+        sana_report.normalize_run_config(cfg)
