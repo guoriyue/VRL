@@ -420,8 +420,8 @@ def init_training_process_group(
     context: DistributedTrainingContext,
     *,
     backend: str = "nccl",
-) -> bool:
-    """Create the process group and return whether the caller owns its teardown.
+) -> None:
+    """Create the torch.distributed process group for a ddp/fsdp rank.
 
     No-op for ``single_process`` and when a group already exists. The owning
     ``Strategy.shutdown`` calls the matching ``shutdown_training_process_group``.
@@ -434,7 +434,7 @@ def init_training_process_group(
 
     global _CPU_COORDINATION_GROUP
     if not context.distributed or dist.is_initialized():
-        return False
+        return
     if context.device.type == "cuda":
         # ``context.device`` is the CUDA ordinal inside this rank's masked view.
         torch.cuda.set_device(context.device)
@@ -451,7 +451,6 @@ def init_training_process_group(
         # Collective creation: every rank reaches this line inside the same
         # init call, so the subgroup handshake cannot mismatch.
         _CPU_COORDINATION_GROUP = dist.new_group(backend="gloo", **timeout_kwargs)
-    return True
 
 
 def collective_timeout(context: DistributedTrainingContext) -> timedelta:

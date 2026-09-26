@@ -1011,7 +1011,6 @@ def test_fsdp_shutdown_consumes_parked_state_before_group_cleanup(
     strategy = _fsdp_strategy(_cpu_fsdp_context())
     state = TrainingMemoryState(Model(2, 2), None, None, None, None, torch.device("cpu"))
     strategy.park_training_state(state)
-    strategy._owns_process_group = True
     calls.clear()
     monkeypatch.setattr(
         "vrl.trainers.strategy.shutdown_training_process_group", lambda: calls.append("group")
@@ -1030,7 +1029,6 @@ def test_fsdp_shutdown_cleans_process_group_when_restore_fails(monkeypatch) -> N
     strategy = _fsdp_strategy(_cpu_fsdp_context())
     state = TrainingMemoryState(nn.Linear(2, 2), None, None, None, None, torch.device("cpu"))
     strategy.park_training_state(state)
-    strategy._owns_process_group = True
     calls = []
     failure = RuntimeError("restore failed")
 

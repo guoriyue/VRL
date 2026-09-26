@@ -259,7 +259,6 @@ class _ProcessGroupStrategy:
 
     context: DistributedTrainingContext
     collectives: TrainingCollectives
-    _owns_process_group: bool = False
 
     def gather_rng_states(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         import torch.distributed as dist
@@ -273,9 +272,7 @@ class _ProcessGroupStrategy:
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         del restore_parked
-        if self._owns_process_group:
-            shutdown_training_process_group()
-            self._owns_process_group = False
+        shutdown_training_process_group()
 
 
 class _UnshardedStateStrategy:
@@ -567,8 +564,7 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
         # and the device choice explicit. No-op for single_process and when a group
         # already exists (the CPU gloo test fixture pre-inits one).
         backend = "gloo" if self.context.device.type == "cpu" else "nccl"
-        created = init_training_process_group(self.context, backend=backend)
-        self._owns_process_group = self._owns_process_group or created
+        init_training_process_group(self.context, backend=backend)
         mesh = self._ensure_mesh()
 
         # A rank that built the replay model without weights (``materialize_weights``
@@ -1003,10 +999,9 @@ class ContextParallelStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
             or float32_precision_state()["matmul"] != "ieee"
         ):
             raise ValueError("CP CUDA strategy requires strict deterministic IEEE compute")
-        created = init_training_process_group(
+        init_training_process_group(
             self.context, backend="nccl" if self.context.device.type == "cuda" else "gloo"
         )
-        self._owns_process_group = self._owns_process_group or created
         if (
             dist.get_rank() != self.context.rank
             or dist.get_world_size() != self.context.world_size
@@ -1119,8 +1114,7 @@ class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
         handles = _trainable_module_handles(model)
         self.place_trainable_roots(model)
         backend = "gloo" if self.context.device.type == "cpu" else "nccl"
-        created = init_training_process_group(self.context, backend=backend)
-        self._owns_process_group = self._owns_process_group or created
+        init_training_process_group(self.context, backend=backend)
         device_ids = None
         if self.context.device.type == "cuda":
             if self.context.device.index is None:

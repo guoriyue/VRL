@@ -315,10 +315,3 @@ def test_ddp_adapter_export_uses_gathered_checkpoint_state(
     )
     assert artifact
     assert all(torch.equal(value, torch.full_like(value, 5.0)) for value in artifact.values())
-
-
-def test_shutdown_preserves_borrowed_group(cpu_process_group) -> None:
-    strategy = _ddp_strategy(_cpu_ddp_context())
-    strategy.prepare_model(FakePolicy(ToyTransformer()))
-    strategy.shutdown()
-    assert torch.distributed.is_initialized()
