@@ -60,6 +60,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.image_sharpness import ImageSharpnessReward
     from vrl.rewards.functions.kling_video_reward import KlingVideoReward
     from vrl.rewards.functions.local_edit import LocalEditReward
+    from vrl.rewards.functions.locality_keep import LocalityKeepReward
     from vrl.rewards.functions.motion_dynamics import MotionDynamicsReward
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
     from vrl.rewards.functions.ocr import OCRReward
@@ -80,6 +81,7 @@ def _register_builtins() -> None:
             "geneval_owl": GenEvalOwlReward,
             "nsfw_safety": NSFWSafetyReward,
             "ocr": OCRReward,
+            "locality_keep": LocalityKeepReward,
             "text_regions": TextRegionsReward,
             "pickscore": PickScoreReward,
             "wd_tagger": WDTaggerReward,
