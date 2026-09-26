@@ -430,8 +430,8 @@ multiple comparisons; they are not independent confirmation experiments.
 
 ## Sequential edit preservation
 
-Export a completed edit-chain run (see `edit_chains.md`) instead of assembling
-media paths by hand:
+Export a completed edit-chain run (the sibling `agentic` repository, its
+`docs/edit_chains.md`) instead of assembling media paths by hand:
 
 ```bash
 python -m agentic.scripts.export_chain_media \

@@ -177,7 +177,7 @@ class OwnedCollection(Protocol):
     item may issue any number of ordinary requests through
     ``request_builder`` / ``generate_rollout`` / ``evaluate_rollout`` and must
     finish with ``finish_scored_prompt_groups``. The framework does not know
-    what the plan is; multi-step editing in ``agentic`` is one.
+    what the plan is; multi-step edit chains (the sibling ``agentic`` repo) are one.
     """
 
     async def collect(
