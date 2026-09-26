@@ -681,12 +681,18 @@ class RayGenerationRuntime:
         self.lifecycle.finish_shutdown()
 
     async def _teardown_session(self) -> None:
-        await asyncio.to_thread(self._health_monitor.stop)
+        monitor_stopped = await asyncio.to_thread(self._health_monitor.stop)
         session = self._session
         if session is not None:
+            # Destroying actors can unblock a probe stuck in ray.get.
             await session.close(
-                force=self._force_shutdown or self.lifecycle.failure is not None,
+                force=not monitor_stopped
+                or self._force_shutdown
+                or self.lifecycle.failure is not None,
             )
+        if not monitor_stopped and not await asyncio.to_thread(self._health_monitor.stop):
+            # Keep the session owned so a later shutdown can finish cleanup.
+            raise RuntimeError("rollout health monitor thread is still running")
         self._session = None
         self._session_parked = False
         self._installed_policy_version = None

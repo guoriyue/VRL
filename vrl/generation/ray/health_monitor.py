@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from vrl.ray.dependencies import kill_actors, require_ray
 from vrl.runtime_errors import TerminalRuntimeError
+from vrl.utils.lifecycle import RuntimeLifecycleError
 
 if TYPE_CHECKING:
     from vrl.generation.ray.runtime import RayGenerationRuntime
@@ -79,10 +80,11 @@ class RolloutWorkerHealthMonitor:
         self._thread.start()
         return True
 
-    def stop(self) -> None:
+    def stop(self) -> bool:
+        """Return whether the monitor thread has relinquished its resources."""
         thread = self._thread
         if thread is None:
-            return
+            return True
         with self._transition_lock:
             self._stop.set()
             # Clear the pause gate too, so a paused thread can observe the stop.
@@ -90,8 +92,9 @@ class RolloutWorkerHealthMonitor:
         thread.join(timeout=self._timeout_s + self._interval_s + _STOP_JOIN_GRACE_S)
         if thread.is_alive():
             logger.warning("rollout health monitor thread did not exit; retaining it for join")
-            return
+            return False
         self._thread = None
+        return True
 
     def pause(self) -> None:
         with self._transition_lock:
@@ -166,9 +169,9 @@ class RolloutWorkerHealthMonitor:
             if self._stop.is_set() or self._paused.is_set() or self._resume_epoch != resume_epoch:
                 return
             try:
-                self._runtime.lifecycle.fail(failure)
-            except BaseException:
-                logger.debug("lifecycle.fail rejected the probe failure", exc_info=True)
+                self._runtime.lifecycle.fail(failure, only_if_running=True)
+            except RuntimeLifecycleError:
+                return
             self._paused.set()
         logger.error(
             "rollout worker %s failed its liveness probe after %.0fs; "

@@ -210,11 +210,12 @@ async def test_shutdown_joins_health_monitor_without_blocking_event_loop() -> No
     loop_progressed = threading.Event()
     stop_threads: list[int] = []
 
-    def blocking_stop() -> None:
+    def blocking_stop() -> bool:
         stop_threads.append(threading.get_ident())
         loop.call_soon_threadsafe(loop_progressed.set)
         if not loop_progressed.wait(timeout=0.1):
             raise RuntimeError("event loop could not run while health monitor stopped")
+        return True
 
     runtime._health_monitor.stop = blocking_stop
 
@@ -950,3 +951,44 @@ def test_shutdown_kills_only_owned_actor(local_ray) -> None:
     # The cluster is shared: the bystander survived on purpose, so this test has
     # to retire it itself.
     local_ray.kill(bystander, no_restart=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unblocked_by_close", [False, True])
+async def test_shutdown_retains_session_until_monitor_exits(monkeypatch, unblocked_by_close):
+    runtime = _runtime()
+    session = runtime._session
+    monitor = runtime._health_monitor
+    monitor._interval_s = monitor._timeout_s = 0.001
+    monkeypatch.setattr("vrl.generation.ray.health_monitor._STOP_JOIN_GRACE_S", 0.0)
+    release = threading.Event()
+    thread = threading.Thread(target=release.wait, daemon=True)
+    monitor._thread = thread
+    thread.start()
+    forced = []
+
+    async def close(*, force):
+        forced.append(force)
+        if unblocked_by_close:
+            release.set()
+
+    monkeypatch.setattr(session, "close", close)
+    try:
+        if unblocked_by_close:
+            await runtime.shutdown()
+        else:
+            with pytest.raises(RuntimeError, match="monitor thread is still running"):
+                await runtime.shutdown()
+            assert runtime._session is session
+            assert monitor._thread is thread
+            assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
+            release.set()
+            thread.join(timeout=1)
+            await runtime.shutdown()
+        assert forced[0] is True
+        assert runtime._session is None
+        assert monitor._thread is None
+        assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    finally:
+        release.set()
+        thread.join(timeout=1)

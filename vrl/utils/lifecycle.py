@@ -78,10 +78,13 @@ class RuntimeLifecycle:
             self._require_running_locked(operation)
             yield
 
-    def fail(self, error: BaseException) -> BaseException:
+    def fail(self, error: BaseException, *, only_if_running: bool = False) -> BaseException:
         """Close admission and return the first failure retained as root cause."""
 
         with self._lock:
+            # A late health probe must not take ownership from shutdown.
+            if only_if_running:
+                self._require_running_locked("publish background failure")
             if self._phase is RuntimePhase.TERMINATED:
                 return self._failure or error
             if self._failure is None:

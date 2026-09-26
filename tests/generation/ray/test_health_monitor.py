@@ -468,3 +468,29 @@ def test_real_wedged_worker_times_out_and_the_fleet_really_dies(local_ray) -> No
     assert failure.worker_id == "rollout-1"
     with pytest.raises(local_ray.exceptions.RayActorError):
         local_ray.get(blocked_driver_call)
+
+
+@_SCRIPTED_RAY_WIRE
+@pytest.mark.parametrize("finished", [False, True])
+def test_shutdown_ignores_an_in_flight_probe_failure(monkeypatch, finished) -> None:
+    actor = _Actor(TimeoutError("late timeout"))
+    runtime = _runtime(actor)
+    ray = _BlockingFailureRay([actor])
+    _install_ray(monkeypatch, ray)
+    monitor = _monitor(runtime)
+    thread = threading.Thread(
+        target=monitor._run_probes,
+        kwargs={"resume_epoch": monitor._resume_epoch},
+    )
+    thread.start()
+    try:
+        assert ray.probe_started.wait(timeout=1)
+        runtime.lifecycle.begin_shutdown()
+        if finished:
+            runtime.lifecycle.finish_shutdown()
+    finally:
+        ray.release_probe.set()
+        thread.join(timeout=1)
+    assert not thread.is_alive()
+    assert runtime.lifecycle.failure is None
+    assert ray.killed == []
