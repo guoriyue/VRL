@@ -36,10 +36,10 @@ import random
 from collections.abc import Sequence
 from pathlib import Path
 
+from vrl.rewards.assets.local_edit_prompts import HINT_SUFFIX
 from vrl.utils.artifacts import default_data_root
 
 LOCAL_TASKS = ("attribute_modification", "swap", "removal", "addition")
-HINT_SUFFIX = " Edit only inside the red box, then remove the red box."
 OMNIEDIT = "TIGER-Lab/OmniEdit-Filtered-1.2M"
 OMNIEDIT_SHARD = (
     "https://huggingface.co/datasets/"

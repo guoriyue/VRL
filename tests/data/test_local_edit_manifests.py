@@ -8,9 +8,9 @@ from types import SimpleNamespace
 
 from PIL import Image
 
+from vrl.rewards.assets.local_edit_prompts import HINT_SUFFIX
 from vrl.scripts.data import local_edit
 from vrl.scripts.data.local_edit import (
-    HINT_SUFFIX,
     change_box,
     draw_hint,
     split_heldout,

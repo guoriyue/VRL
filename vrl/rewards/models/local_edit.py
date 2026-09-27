@@ -37,10 +37,10 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from vrl.rewards.assets.local_edit_prompts import HINT_SUFFIX
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import LazyTorchModule
 from vrl.rewards.models.media import artifact_middle_frame_image
-from vrl.scripts.data.local_edit import HINT_SUFFIX
 from vrl.utils.artifacts import default_data_root, resolve_artifact_path
 
 
