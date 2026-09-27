@@ -1,6 +1,10 @@
 # SPRINT：末步训练策略 —— 把「tf<1 不训末步」从 floor 数学的巧合变成决定
 
-状态：**门 1 已过（2026-08-22）；门 2 质量 A/B 已跑（2026-09-18）：无显著差异，过滤安全**。结果见文末。基线 main @ 本文所引
+状态：**DONE（2026-09-26）**：门 1（2026-08-22）与门 2（2026-09-18，无显著差异）都过后，第 3 步已落地——
+`OnlineTrainer._train_replay_indices` 对 flow SDE 评估器（`DenoiseSDELogProbEvaluator`，`sde_type="flow_grpo"`）一律不训末步，
+覆盖 strided / random / stratified；`sde_window` 与其它评估器不受影响，无用户 knob。依据：实测 20/35 步、nl 1.0/0.7 四条链上
+只有末步的 noise scale 低于第 0 步的 1/50（末步 0.009–0.013，倒数第二步 0.032–0.15）。
+测试：`tests/trainers/online/test_terminal_step_exclusion.py`。以下为历史门记录。基线 main @ 本文所引
 测量的提交。
 单卡 5090 + wan 1.3B LoRA 可完整执行（含质量 A/B）。
 

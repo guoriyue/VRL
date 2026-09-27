@@ -1189,11 +1189,25 @@ class OnlineTrainer:
             raise ValueError(
                 f"step replay action axis {action_axis_name!r} must be non-empty",
             )
-        return self._train_timestep_indices(
+        indices = self._train_timestep_indices(
             num_timesteps,
             timestep_fraction,
             selection,
         )
+        from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
+
+        if (
+            isinstance(self.evaluator, DenoiseSDELogProbEvaluator)
+            and self.evaluator.sde_type == "flow_grpo"
+            and num_timesteps > 1
+        ):
+            # The last flow-SDE transition is near-deterministic: its noise scale
+            # is ~1/100 of step 0's, so its per-element log-prob gradient is two
+            # orders above the rest and no ratio clip catches it. Excluding it
+            # changed nothing in the quality A/B
+            # (docs/sprints/done/SPRINT_terminal_step_training_policy.md).
+            indices = [index for index in indices if index != num_timesteps - 1]
+        return indices
 
     def _update_timesteps(
         self,
