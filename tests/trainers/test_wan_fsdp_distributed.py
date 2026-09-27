@@ -321,19 +321,24 @@ def _run_rank(
             lr=1e-2,
         )
 
+        # Every rank joins the gather collectives; only the primary retains the
+        # full state (fix 125b91ef). Non-primary ranks therefore export {} and
+        # can only report what they computed locally.
+        primary = rank == 0
         before = strategy.export_checkpoint_state(_bundle(policy))
         grad_norm = _train_once(policy, strategy, optimizer)
         after = strategy.export_checkpoint_state(_bundle(policy))
         optimizer_state = strategy.export_optimizer_state(policy, optimizer)
 
-        adapter_state = after["transformer"]
-        adapter_only = bool(adapter_state) and all("lora_" in key for key in adapter_state)
-        changed = any(
-            not torch.equal(value, after["transformer"][key])
-            for key, value in before["transformer"].items()
-        )
-
-        if rank == 0:
+        exports_empty_off_primary = not primary and after == {} and before == {}
+        adapter_only = changed = None
+        if primary:
+            adapter_state = after["transformer"]
+            adapter_only = bool(adapter_state) and all("lora_" in key for key in adapter_state)
+            changed = any(
+                not torch.equal(value, after["transformer"][key])
+                for key, value in before["transformer"].items()
+            )
             torch.save(
                 {"checkpoint": after, "optimizer": optimizer_state},
                 checkpoint_path,
@@ -349,18 +354,26 @@ def _run_rank(
         strategy.load_checkpoint_state(_bundle(resumed), checkpoint["checkpoint"], strict=True)
         strategy.load_optimizer_state(resumed, resumed_optimizer, checkpoint["optimizer"])
         restored = strategy.export_checkpoint_state(_bundle(resumed))
-        resume_matches = all(
-            torch.equal(value, restored["transformer"][key])
-            for key, value in after["transformer"].items()
-        )
+        resume_matches = None
+        if primary:
+            resume_matches = all(
+                torch.equal(value, restored["transformer"][key])
+                for key, value in after["transformer"].items()
+            )
 
         resumed_before = restored
         resumed_grad_norm = _train_once(resumed, strategy, resumed_optimizer)
         resumed_after = strategy.export_checkpoint_state(_bundle(resumed))
-        continued = any(
-            not torch.equal(value, resumed_after["transformer"][key])
-            for key, value in resumed_before["transformer"].items()
-        )
+        continued = None
+        if primary:
+            continued = any(
+                not torch.equal(value, resumed_after["transformer"][key])
+                for key, value in resumed_before["transformer"].items()
+            )
+        else:
+            exports_empty_off_primary = (
+                exports_empty_off_primary and restored == {} and resumed_after == {}
+            )
         queue.put(
             (
                 rank,
@@ -370,6 +383,7 @@ def _run_rank(
                 resume_matches,
                 resumed_grad_norm,
                 continued,
+                exports_empty_off_primary,
             ),
         )
     finally:
@@ -408,13 +422,19 @@ def test_wan_i2v_fsdp_step_checkpoint_resume_and_continue(tmp_path: Path) -> Non
             resume_matches,
             resumed_grad_norm,
             continued,
+            exports_empty_off_primary,
         ) = results[rank]
         assert grad_norm > 0, f"rank{rank} produced a zero first-step gradient"
-        assert adapter_only, f"rank{rank} checkpoint materialized frozen Wan weights"
-        assert changed, f"rank{rank} optimizer did not change a LoRA parameter"
-        assert resume_matches, f"rank{rank} did not restore the serialized LoRA state"
         assert resumed_grad_norm > 0, f"rank{rank} produced a zero resumed gradient"
-        assert continued, f"rank{rank} did not update after resume"
+        if rank != 0:
+            # The checkpoint payload is retained on the primary only; the other
+            # rank joined every gather but holds nothing.
+            assert exports_empty_off_primary, "non-primary rank retained checkpoint state"
+            continue
+        assert adapter_only, "checkpoint materialized frozen Wan weights"
+        assert changed, "optimizer did not change a LoRA parameter"
+        assert resume_matches, "did not restore the serialized LoRA state"
+        assert continued, "did not update after resume"
 
 
 def _run_dual_rank(
@@ -441,6 +461,9 @@ def _run_dual_rank(
             lr=1e-2,
         )
 
+        # Checkpoint exports are retained on the primary only (fix 125b91ef);
+        # the rollout export below is every rank's own full gather.
+        primary = rank == 0
         before = strategy.export_checkpoint_state(_bundle(policy))
         high_grad = _train_once(
             policy,
@@ -450,11 +473,11 @@ def _run_dual_rank(
             boundary_ratio=0.5,
         )
         after_high = strategy.export_checkpoint_state(_bundle(policy))
-        high_only = _module_changed(before, after_high, "transformer") and not _module_changed(
-            before,
-            after_high,
-            "transformer_2",
-        )
+        high_only = None
+        if primary:
+            high_only = _module_changed(before, after_high, "transformer") and not (
+                _module_changed(before, after_high, "transformer_2")
+            )
 
         low_grad = _train_once(
             policy,
@@ -464,18 +487,18 @@ def _run_dual_rank(
             boundary_ratio=0.5,
         )
         after_low = strategy.export_checkpoint_state(_bundle(policy))
-        low_only = _module_changed(
-            after_high,
-            after_low,
-            "transformer_2",
-        ) and not _module_changed(after_high, after_low, "transformer")
+        low_only = None
+        if primary:
+            low_only = _module_changed(after_high, after_low, "transformer_2") and not (
+                _module_changed(after_high, after_low, "transformer")
+            )
         rollout_state = strategy.export_rollout_state(_bundle(policy))
         sync_has_both = any(key.startswith("transformer.") for key in rollout_state) and any(
             key.startswith("transformer_2.") for key in rollout_state
         )
         optimizer_state = strategy.export_optimizer_state(policy, optimizer)
 
-        if rank == 0:
+        if primary:
             torch.save(
                 {"checkpoint": after_low, "optimizer": optimizer_state},
                 checkpoint_path,
@@ -500,8 +523,9 @@ def _run_dual_rank(
                 high_only,
                 low_only,
                 sync_has_both,
-                _tensor_tree_equal(after_low, restored),
-                _tensor_tree_equal(optimizer_state, restored_optimizer),
+                _tensor_tree_equal(after_low, restored) if primary else None,
+                _tensor_tree_equal(optimizer_state, restored_optimizer) if primary else None,
+                not primary and after_low == {} and restored == {},
             ),
         )
     finally:
@@ -541,14 +565,19 @@ def test_wan_dual_expert_fsdp_stage_isolation_sync_and_resume(tmp_path: Path) ->
             sync_has_both,
             weights_match,
             optimizer_matches,
+            exports_empty_off_primary,
         ) = results[rank]
         assert high_grad > 0, f"rank{rank} high-noise expert produced zero gradient"
         assert low_grad > 0, f"rank{rank} low-noise expert produced zero gradient"
-        assert high_only, f"rank{rank} high stage changed the wrong expert"
-        assert low_only, f"rank{rank} low stage changed the wrong expert"
+        # Rollout sync is every rank's own gather, so both ranks must see both experts.
         assert sync_has_both, f"rank{rank} rollout sync omitted an expert"
-        assert weights_match, f"rank{rank} did not restore both expert weights"
-        assert optimizer_matches, f"rank{rank} did not restore both expert optimizer slots"
+        if rank != 0:
+            assert exports_empty_off_primary, "non-primary rank retained checkpoint state"
+            continue
+        assert high_only, "high stage changed the wrong expert"
+        assert low_only, "low stage changed the wrong expert"
+        assert weights_match, "did not restore both expert weights"
+        assert optimizer_matches, "did not restore both expert optimizer slots"
 
 
 def _run_cuda_rank(rank: int, world_size: int, port: int, queue: mp.Queue) -> None:
@@ -582,11 +611,14 @@ def _run_cuda_rank(rank: int, world_size: int, port: int, queue: mp.Queue) -> No
         before = strategy.export_checkpoint_state(_bundle(policy))
         grad_norm = _train_once(policy, strategy, optimizer, device=device)
         after = strategy.export_checkpoint_state(_bundle(policy))
-        changed = any(
-            not torch.equal(value, after["transformer"][key])
-            for key, value in before["transformer"].items()
-        )
-        adapter_only = all("lora_" in key for key in after["transformer"])
+        # Checkpoint exports are retained on the primary only (fix 125b91ef).
+        changed = adapter_only = None
+        if rank == 0:
+            changed = any(
+                not torch.equal(value, after["transformer"][key])
+                for key, value in before["transformer"].items()
+            )
+            adapter_only = all("lora_" in key for key in after["transformer"])
         peak_bytes = int(torch.cuda.max_memory_allocated(device))
         queue.put((rank, cuda_sharded, grad_norm, changed, adapter_only, peak_bytes))
     finally:
@@ -782,6 +814,8 @@ def test_wan_i2v_fsdp_four_rank_cuda_step() -> None:
         cuda_sharded, grad_norm, changed, adapter_only, peak_bytes = results[rank]
         assert cuda_sharded, f"rank{rank} did not own CUDA DTensor shards"
         assert grad_norm > 0, f"rank{rank} produced a zero CUDA gradient"
-        assert changed, f"rank{rank} did not update a CUDA LoRA shard"
-        assert adapter_only, f"rank{rank} gathered frozen Wan weights"
         assert peak_bytes > 0, f"rank{rank} reported no CUDA allocation"
+        if rank == 0:
+            # Checkpoint state is retained on the primary only.
+            assert changed, "did not update a CUDA LoRA shard"
+            assert adapter_only, "gathered frozen Wan weights"
