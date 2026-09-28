@@ -29,20 +29,11 @@ logger = logging.getLogger(__name__)
 
 
 class RayGenerationLauncher:
-    """Create Ray generation actors and return a ``RayGenerationRuntime``."""
+    """Create Ray generation actors and return a ``RayGenerationRuntime``.
 
-    def __init__(
-        self,
-        *,
-        init_ray: bool = True,
-        ray_init_kwargs: dict[str, Any] | None = None,
-    ) -> None:
-        self.init_ray = bool(init_ray)
-        # Standalone launcher use must be ownership-safe too. Online recipes
-        # initialize explicitly; callers that intend to attach can override it.
-        self.ray_init_kwargs = (
-            {"address": "local"} if ray_init_kwargs is None else dict(ray_init_kwargs)
-        )
+    Callers connect Ray before launching: the rollout placement group this
+    launcher schedules into already requires a live cluster.
+    """
 
     @staticmethod
     def _find_rendezvous_port() -> int:
@@ -135,8 +126,6 @@ class RayGenerationLauncher:
         gpus_per_engine = config.resources.rollout_gpus_per_engine
         engine_count = len(placement.engine_bundle_groups(gpus_per_engine))
         ray = require_ray()
-        if self.init_ray and not ray.is_initialized():
-            ray.init(**self.ray_init_kwargs)
 
         placement_group = placement.placement_group
         expected_gpu_ids = placement.expected_gpu_ids
@@ -277,15 +266,11 @@ class RayGenerationLauncher:
     ) -> RayGenerationSession:
         """Launch a session without blocking the runtime's lifecycle event loop.
 
-        Ray initialization stays on the caller thread because it owns process
-        signal setup. Once connected, actor startup and policy load can run in
-        a worker thread; the runtime's shielded activation task remains the
-        ownership boundary if the external waiter is cancelled.
+        Actor startup and policy load run in a worker thread; the runtime's
+        shielded activation task remains the ownership boundary if the external
+        waiter is cancelled.
         """
 
-        ray = require_ray()
-        if self.init_ray and not ray.is_initialized():
-            ray.init(**self.ray_init_kwargs)
         return await asyncio.to_thread(
             self._launch_session,
             config,

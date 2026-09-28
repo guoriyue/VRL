@@ -102,7 +102,7 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(local_r
     owner = _cpu_rollout_owner(ray, worker=worker)
     runtime: RayGenerationRuntime | None = None
     try:
-        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).create_runtime(
+        runtime = launcher_mod.RayGenerationLauncher().create_runtime(
             RayGenerationConfig(
                 resources=owner.resources,
                 worker=worker,
@@ -140,7 +140,7 @@ def test_pipelined_runtime_stages_batches_and_merges_on_the_finalizer(local_ray)
     owner = _cpu_rollout_owner(local_ray, worker=worker)
     runtime: RayGenerationRuntime | None = None
     try:
-        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).create_runtime(
+        runtime = launcher_mod.RayGenerationLauncher().create_runtime(
             RayGenerationConfig(
                 resources=owner.resources,
                 worker=worker,
@@ -207,7 +207,7 @@ def test_create_runtime_rejects_missing_rollout_placement() -> None:
         ),
     )
     with pytest.raises(ValueError, match="rollout placement"):
-        launcher_mod.RayGenerationLauncher(init_ray=False).create_runtime(
+        launcher_mod.RayGenerationLauncher().create_runtime(
             RayGenerationConfig(resources=resolved, worker=_worker_config()),
             _launch_inputs(),
             placement=None,
@@ -253,7 +253,7 @@ def test_owner_placement_runtime_does_not_own_placement_group(local_ray) -> None
     owner = _cpu_rollout_owner(local_ray)
     runtime: RayGenerationRuntime | None = None
     try:
-        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).create_runtime(
+        runtime = launcher_mod.RayGenerationLauncher().create_runtime(
             RayGenerationConfig(
                 resources=owner.resources,
                 worker=owner.rollout_worker,
@@ -283,7 +283,7 @@ def test_launcher_uses_resolved_colocation_protocol_signal(local_ray) -> None:
     owner = _cpu_rollout_owner(local_ray)
     runtime: RayGenerationRuntime | None = None
     try:
-        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).create_runtime(
+        runtime = launcher_mod.RayGenerationLauncher().create_runtime(
             RayGenerationConfig(
                 resources=owner.resources,
                 worker=owner.rollout_worker,
@@ -311,7 +311,7 @@ def test_phase_handoff_keeps_actor_and_owner_placement(local_ray) -> None:
             rollout=(0,),
         ),
     )
-    runtime = RayGenerationLauncher(init_ray=False).create_runtime(
+    runtime = RayGenerationLauncher().create_runtime(
         RayGenerationConfig(
             resources=on_demand_resources,
             worker=owner.rollout_worker,

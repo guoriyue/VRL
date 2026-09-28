@@ -428,7 +428,7 @@ def test_launcher_capability_failure_kills_candidate_actor_group(
     )
 
     with pytest.raises(RuntimeError, match="capability query failed") as caught:
-        RayGenerationLauncher(init_ray=False)._launch_session(
+        RayGenerationLauncher()._launch_session(
             config,
             inputs,
             placement=RolePlacement(
@@ -508,7 +508,7 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
         lambda *_args, **_kwargs: False,
     )
     entry = get_model_family_entry("sd3_5")
-    session = RayGenerationLauncher(init_ray=False)._launch_session(
+    session = RayGenerationLauncher()._launch_session(
         config,
         RayGenerationLaunchInputs(
             launch_contract=GenerationRuntimeLaunchContract(
@@ -594,7 +594,7 @@ def test_pipelined_launch_adds_one_finalizer_per_engine(monkeypatch) -> None:
         lambda *_args, **_kwargs: False,
     )
 
-    session = RayGenerationLauncher(init_ray=False)._launch_session(
+    session = RayGenerationLauncher()._launch_session(
         config,
         launch_inputs,
         placement=RolePlacement(
@@ -861,7 +861,7 @@ class _FactorySession:
 
 def test_create_runtime_launches_resident_topology() -> None:
     config, launch_inputs, placement = _runtime_factory_inputs()
-    launcher = RayGenerationLauncher(init_ray=False)
+    launcher = RayGenerationLauncher()
     expected_session = _FactorySession()
 
     with patch.object(
@@ -889,7 +889,7 @@ def test_create_runtime_launches_resident_topology() -> None:
 
 def test_create_runtime_kills_resident_session_when_monitor_start_fails() -> None:
     config, launch_inputs, placement = _runtime_factory_inputs()
-    launcher = RayGenerationLauncher(init_ray=False)
+    launcher = RayGenerationLauncher()
     expected_session = _FactorySession()
 
     with (
@@ -919,7 +919,7 @@ def test_create_runtime_defers_on_demand_topology_launch() -> None:
     config, launch_inputs, placement = _runtime_factory_inputs(
         rollout_mode="on_demand",
     )
-    launcher = RayGenerationLauncher(init_ray=False)
+    launcher = RayGenerationLauncher()
 
     with patch.object(
         RayGenerationLauncher,
@@ -959,10 +959,7 @@ async def test_deferred_activation_reuses_factory_launcher() -> None:
             sleep_offload=True,
         ),
     )
-    launcher = RayGenerationLauncher(
-        init_ray=False,
-        ray_init_kwargs={"address": "auto"},
-    )
+    launcher = RayGenerationLauncher()
     candidate = _FactorySession()
 
     with patch.object(

@@ -884,26 +884,11 @@ async def test_partial_engine_cleanup_retries_only_failed_rank(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_async_launcher_initializes_on_caller_then_loads_off_loop(monkeypatch) -> None:
+async def test_async_launcher_loads_off_loop(monkeypatch) -> None:
     import vrl.generation.ray.launcher as launcher_module
 
     caller_thread = threading.get_ident()
-    init_threads: list[int] = []
     launch_threads: list[int] = []
-
-    class _RayApi:
-        initialized = False
-
-        @classmethod
-        def is_initialized(cls) -> bool:
-            return cls.initialized
-
-        @classmethod
-        def init(cls, **kwargs) -> None:
-            del kwargs
-            init_threads.append(threading.get_ident())
-            cls.initialized = True
-
     launcher = launcher_module.RayGenerationLauncher()
 
     def launch_session(*args, **kwargs):
@@ -911,7 +896,6 @@ async def test_async_launcher_initializes_on_caller_then_loads_off_loop(monkeypa
         launch_threads.append(threading.get_ident())
         return "session"
 
-    monkeypatch.setattr(launcher_module, "require_ray", lambda: _RayApi)
     monkeypatch.setattr(
         launcher_module.RayGenerationLauncher,
         "_launch_session",
@@ -920,7 +904,6 @@ async def test_async_launcher_initializes_on_caller_then_loads_off_loop(monkeypa
     result = await launcher._launch_session_async(None, None, placement=None)
 
     assert result == "session"
-    assert init_threads == [caller_thread]
     assert len(launch_threads) == 1
     assert launch_threads[0] != caller_thread
 
