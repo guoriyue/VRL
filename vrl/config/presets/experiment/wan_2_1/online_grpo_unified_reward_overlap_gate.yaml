@@ -28,12 +28,13 @@
 #   CUDA_VISIBLE_DEVICES=3 .venv/bin/vrl-reward-service \
 #     --config vrl/config/reward_service/unified_reward_overlap_gate.yaml
 #
-# Then run the three-arm campaign:
+# Then run the trainer; with this isolated service the collector streams group
+# N's score beside group N+1's generation (the rollout_stats.jsonl row carries
+# collect.generation_reward_overlap). The A/B/C campaign driver and its forced
+# per-group-serial control arm were removed once the measurement was recorded:
 #
-#   CUDA_VISIBLE_DEVICES=0,1,2 python -m vrl.scripts.perf.reward_overlap_benchmark \
-#     --config experiment/wan_2_1/online_grpo_unified_reward_overlap_gate \
-#     --repeats 5 --iterations 5 --warmup-iterations 1 \
-#     --out outputs/perf/reward_overlap
+#   CUDA_VISIBLE_DEVICES=0,1,2 python -m vrl.scripts.train \
+#     --config experiment/wan_2_1/online_grpo_unified_reward_overlap_gate
 defaults:
   - /recipe/online/wan_2_1_grpo
   - /model/wan_2_1/1_3b

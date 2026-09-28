@@ -7,7 +7,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Protocol
 
-from vrl.rollouts.collector.core import RewardCollectionMode
 from vrl.rollouts.orchestration.continuous import (
     ContinuousRolloutSchedule,
 )
@@ -146,11 +145,7 @@ def build_rollout_schedule(
     )
 
     if mode is RolloutScheduleMode.STRICT_ON_POLICY:
-        reward_mode = config.reward_collection_mode
-        return StrictOnPolicyRolloutSchedule(
-            lifecycle=lifecycle,
-            reward_mode=None if reward_mode is None else RewardCollectionMode(reward_mode),
-        )
+        return StrictOnPolicyRolloutSchedule(lifecycle=lifecycle)
     if mode is RolloutScheduleMode.CONTINUOUS:
         return ContinuousRolloutSchedule.from_config(
             config.continuous,

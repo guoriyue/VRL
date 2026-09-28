@@ -479,11 +479,10 @@ class _SyntheticDiffusionReplayCollector:
         runtime_debug: bool,
         policy_version: int | None,
         stats: Any,
-        reward_mode: Any = None,
     ) -> list[Any]:
         """One synthetic replay batch per call; rewards are baked into the batch."""
 
-        del runtime_debug, stats, reward_mode
+        del runtime_debug, stats
         return [
             _synthetic_diffusion_replay_batch(
                 model=self.model,

@@ -112,7 +112,7 @@ worker（附录 B 的 CPU actor 形状）。
 - **下一个 request 立即开始。** 两处：① `RayGenerationExecutor` 去掉了 driver
   侧的单飞 asyncio 锁，准入交给 dispatcher 的每 engine 一个槽位（deadline 在拿到
   槽位后才起算，语义不变）；② strict 模式的 `prepare_training_batches` 提前一组
-  提交下一次生成（`PER_GROUP_SERIAL` 对照臂除外），使 engine 在上一组的批 staged
+  提交下一次生成，使 engine 在上一组的批 staged
   后立刻接到下一组，与该组的合并、打分重叠。continuous 模式本就并发提交，自动受益。
 - **多 engine。** `pipelined` 不再要求恰好一个 engine：每个 engine 按 round-robin
   拿到自己那份批，一次 RPC 跑完，finalizer 按 plan 顺序合并所有 engine 的 refs。
@@ -132,9 +132,9 @@ finalizer 启动用例、`tests/rollouts/orchestration/test_prompt_collection.py
   `StagedBatchRefs`；注释改为如实描述——request 内部的顺序是"算一批、拷贝、
   `ray.put`、下一批"，staging 与下一批计算**不**重叠，重叠发生在本 request 的
   finalize 与下一个 request 的生成之间。`pipelined` 配置键与 actor 方法名未动。
-- 生成与评分两个决策分开：`CollectionSchedule.resolve` 各自给出 `scoring`
-  （整批 / 逐组串行 / 逐组流式）和 `submit_next_generation_early`；后者只在
-  逐组串行对照臂关闭，不依赖 `pipelined`，也不依赖 reward 隔离。
+- 生成与评分两个决策分开：打分方式（整批 / 逐组流式）只由 collector 的 overlap
+  capability 决定；提前提交下一次生成总是打开，不依赖 `pipelined`，也不依赖 reward 隔离。
+  （2026-09-27 起 `CollectionSchedule` 与逐组串行对照臂已删除。）
 - finalizer 准入：合并调用改经 `RayActorDispatcher`（每个 finalizer 一个槽位、
   FIFO、拿到槽位后才起算 deadline），并有"前一个合并慢、后一个排队"的测试。
   队列上限与 GPU 派发一样未设，没有证据前不加。

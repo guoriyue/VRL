@@ -180,6 +180,5 @@ cleanup settled
 - `vrl/trainers/core/types.py`
 - `vrl/rollouts/orchestration/continuous/types.py`
 - `vrl/rollouts/orchestration/continuous/scheduler.py`
-- `vrl/scripts/perf/reward_overlap_benchmark.py`
 - `vrl/config/presets/experiment/wan_2_1/online_grpo_robotics_physics_4x_l4_continuous.yaml`
 - `vrl/config/reward_service/unified_reward_robotics.yaml`

@@ -143,13 +143,6 @@ class RolloutOrchestrationConfig:
 
     schedule_mode: str = field(default="strict_on_policy")
     continuous: ContinuousRolloutConfig = field(default_factory=ContinuousRolloutConfig)
-    # Acceptance-measurement override for the generation/reward collection arm.
-    # None = derive from the collector's overlap capability (the production
-    # path). Values mirror RewardCollectionMode; this module keeps them as
-    # strings because trainer config deliberately imports nothing from
-    # vrl.rollouts, exactly as schedule_mode does above. The enum conversion and
-    # the capability fail-closed check happen in the rollout layer.
-    reward_collection_mode: str | None = field(default=None)
 
     def __post_init__(self) -> None:
         if self.schedule_mode not in {"strict_on_policy", "continuous"}:
@@ -158,22 +151,6 @@ class RolloutOrchestrationConfig:
             )
         if isinstance(self.continuous, dict):
             self.continuous = ContinuousRolloutConfig(**self.continuous)
-        if self.reward_collection_mode is not None:
-            allowed = {"batched_serial", "per_group_serial", "per_group_streaming"}
-            if self.reward_collection_mode not in allowed:
-                raise ValueError(
-                    "rollout_orchestration.reward_collection_mode must be one of "
-                    f"{sorted(allowed)}",
-                )
-            # Continuous collects one group per call, so no arm can overlap
-            # inside a collection. Accepting the key there would be a knob the
-            # user sets expecting an effect that cannot exist.
-            if self.schedule_mode == "continuous":
-                raise ValueError(
-                    "rollout_orchestration.reward_collection_mode applies to "
-                    "strict_on_policy collection only; continuous collects one group "
-                    "per call and has no in-collection arm to select",
-                )
 
 
 @dataclass(slots=True)

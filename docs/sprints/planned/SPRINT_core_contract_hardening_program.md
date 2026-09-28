@@ -26,7 +26,7 @@ campaign，不提交用户当前脏文件，不 push。
 |---|---|---|
 | 1 | [[SPRINT_generation_models_interface_floor]] | 先让架构 gate 本身可信，后续改动受同一依赖方向约束 |
 | 2 | [[SPRINT_protocol_contracts_fail_closed]] | 让扩展 ABI 在构造/边界处失败，而不是深层执行后静默失败 |
-| 3 | [[SPRINT_reward_overlap_benchmark_evidence_contract]] | acceptance verdict 是是否合入性能特性的证据边界，必须先 fail closed |
+| 3 | [[SPRINT_reward_overlap_benchmark_evidence_contract]] | 作废（2026-09-27 benchmark 脚本已删除） |
 | 4 | [[SPRINT_ray_actor_dispatch_scalability]] | 在保持 Ray await/placement 语义的前提下消除已测得的二次调度成本 |
 | 5 | [[SPRINT_rollout_worker_idle_liveness_correction]] | 修正跨线程、parking、terminal cleanup 的完整 ownership 链 |
 

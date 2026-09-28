@@ -20,7 +20,6 @@ import os
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
 import torch
@@ -65,76 +64,6 @@ class RolloutEvaluation:
     builders: list[TrajectoryRolloutBatchBuilder]
     sample_counts: list[int]
     rewards: RewardOutput
-
-
-class RewardCollectionMode(str, Enum):  # noqa: UP042
-    """How prompt collection interleaves group generation and reward scoring.
-
-    Strict collection picks between ``BATCHED_SERIAL`` and
-    ``PER_GROUP_STREAMING`` from the collector's overlap capability. Continuous
-    collection already dispatches one task per group, so it uses
-    ``BATCHED_SERIAL`` inside each task instead of creating an inner task that
-    cannot add overlap. ``PER_GROUP_SERIAL`` is the acceptance control arm
-    required by ``docs/sprints/done/SPRINT_reward_service.md``: it moves strict
-    scoring to per-group granularity *without* overlap, so the per-group
-    call/transport tax can be measured separately from the overlap gain.
-    """
-
-    BATCHED_SERIAL = "batched_serial"
-    PER_GROUP_SERIAL = "per_group_serial"
-    PER_GROUP_STREAMING = "per_group_streaming"
-
-
-@dataclass(frozen=True, slots=True)
-class CollectionSchedule:
-    """The two independent scheduling decisions of one strict collection.
-
-    ``scoring`` answers "score once for the whole collection, or per group,
-    and if per group, may a score overlap the next generation?". It is the
-    reward-side decision and depends on the collector's overlap capability.
-
-    ``submit_next_generation_early`` answers "is the next group's generation
-    request submitted before the current group's output is awaited?". It is
-    the generation-side decision. The engine admits one request at a time, so
-    an early submission only removes the gap between two requests: the next
-    one starts the moment the current one's batches are staged, while the
-    current one is merged and scored. It does not depend on the per-request
-    (``pipelined``) engine path, nor on reward isolation. Only the
-    per-group-serial acceptance control arm turns it off, because that arm
-    exists to keep every stage strictly sequential.
-    """
-
-    scoring: RewardCollectionMode
-    submit_next_generation_early: bool
-
-    @classmethod
-    def resolve(
-        cls,
-        *,
-        overlap_capable: bool,
-        reward_mode: RewardCollectionMode | None,
-    ) -> CollectionSchedule:
-        # Only the collector's capability may enable per-group scoring: the
-        # acceptance override can restrict a capable collector, but cannot grant
-        # the runtime isolation needed to alternate generation and scoring safely.
-        if reward_mode is None:
-            scoring = (
-                RewardCollectionMode.PER_GROUP_STREAMING
-                if overlap_capable
-                else RewardCollectionMode.BATCHED_SERIAL
-            )
-        elif reward_mode is not RewardCollectionMode.BATCHED_SERIAL and not overlap_capable:
-            raise ValueError(
-                f"reward collection mode {reward_mode.value!r} requires the collector's "
-                "reward/generation overlap capability (async scoring plus verified "
-                "accelerator isolation); it cannot be forced on",
-            )
-        else:
-            scoring = reward_mode
-        return cls(
-            scoring=scoring,
-            submit_next_generation_early=scoring is not RewardCollectionMode.PER_GROUP_SERIAL,
-        )
 
 
 class PromptCollectionCleanupError(RuntimeError):
@@ -537,7 +466,6 @@ class RolloutCollector:
         runtime_debug: bool,
         policy_version: int | None,
         stats: RolloutStats,
-        reward_mode: RewardCollectionMode | None = None,
     ) -> list[RolloutBatch]:
         """Collect every trainer prompt's sample group and return per-group batches.
 
@@ -545,12 +473,9 @@ class RolloutCollector:
         generate every prompt group, then score all groups through one reward call.
         A capable collector may score group N while generating group N+1. The
         streaming path owns at most one scoring task, so reward work has bounded
-        backpressure and deterministic cleanup.
-
-        ``reward_mode`` overrides that derived choice for acceptance measurement
-        only; see :class:`RewardCollectionMode`. A capable collector may be forced
-        onto either control arm, while an incapable collector stays on the batched
-        baseline.
+        backpressure and deterministic cleanup. Either way the next group's
+        generation request is submitted before the current one is awaited, so
+        the engine never idles between two groups.
 
         ``stats`` accumulates this call's collect phase timings
         (``collect.engine_generate`` / ``collect.reward_score`` /
@@ -585,15 +510,9 @@ class RolloutCollector:
 
         generated_groups: list[RolloutGenerationResult] = []
         scored_batches: list[RolloutBatch] = []
-        # The collector combines topology and reward-runtime execution semantics
-        # into two separate decisions: how scoring is scheduled, and whether the
-        # next generation is submitted early. See CollectionSchedule.
-        schedule = CollectionSchedule.resolve(
-            overlap_capable=bool(self.supports_reward_generation_overlap),
-            reward_mode=reward_mode,
-        )
-        mode = schedule.scoring
-        per_group_scoring = mode is not RewardCollectionMode.BATCHED_SERIAL
+        # Only the collector's overlap capability (async scoring plus verified
+        # reward accelerator isolation) may alternate generation and scoring.
+        per_group_scoring = bool(self.supports_reward_generation_overlap)
         score_task: asyncio.Task[list[RolloutBatch]] | None = None
 
         async def score_unscored(groups: list[UnscoredRollout]) -> list[RolloutBatch]:
@@ -627,12 +546,6 @@ class RolloutCollector:
             unscored = group.unscored
             if not per_group_scoring:
                 return
-            if mode is RewardCollectionMode.PER_GROUP_SERIAL:
-                # Control arm: same per-group call granularity as streaming, but the
-                # score completes before the next generation starts. The measured
-                # difference against streaming is overlap alone.
-                accept_single_batch(await score_unscored([unscored]))
-                return
             # Generation of this group ran while the previous scoring task was in
             # flight. Drain it before starting this group's task: at most one reward
             # call can own service/model state at a time.
@@ -642,9 +555,10 @@ class RolloutCollector:
                 name="rollout-reward-score",
             )
 
-        # Generation-side decision (see CollectionSchedule): keep one request
-        # submitted ahead so the engine never idles between two groups.
-        prefetch_generation = schedule.submit_next_generation_early
+        # Keep one request submitted ahead so the engine never idles between two
+        # groups. The engine admits one request at a time, so this only removes
+        # the gap: the next request starts once the current one's batches are
+        # staged, while the current one is merged and scored.
         pending_generation: tuple[asyncio.Task[UnscoredRollout], float] | None = None
 
         def start_generation(
@@ -670,7 +584,7 @@ class RolloutCollector:
                 else:
                     generation, started = pending_generation
                     pending_generation = None
-                if prefetch_generation and index + 1 < len(planned):
+                if index + 1 < len(planned):
                     pending_generation = start_generation(planned[index + 1][0])
                 unscored = await generation
                 generated = RolloutGenerationResult(
@@ -681,8 +595,6 @@ class RolloutCollector:
                 return []
 
             if per_group_scoring:
-                # PER_GROUP_SERIAL already drained inline; only streaming can still
-                # own a task here.
                 await drain_score_task()
                 batches = scored_batches
             else:
@@ -786,7 +698,6 @@ class RolloutCollector:
 __all__ = [
     "OwnedCollection",
     "PromptCollectionCleanupError",
-    "RewardCollectionMode",
     "RolloutCollector",
     "RolloutEvaluation",
     "RolloutGenerationResult",

@@ -96,10 +96,10 @@ reward:
 
 trainer:
   rollout_orchestration:
+    # The service owns a physically disjoint GPU, so the collector scores group N
+    # while the two rollout workers generate group N+1 without introducing
+    # policy staleness.
     schedule_mode: strict_on_policy
-    # The service owns a physically disjoint GPU, so score group N while the two
-    # rollout workers generate group N+1 without introducing policy staleness.
-    reward_collection_mode: per_group_streaming
   output_dir: outputs/wan_robotics_physics_4x_l4/run
   total_epochs: 200
   save_freq: 10

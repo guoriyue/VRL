@@ -899,41 +899,6 @@ def test_dpo_allows_explicit_null_max_train_samples() -> None:
     require_training_config(cfg)
 
 
-def test_reward_collection_mode_accepts_the_three_acceptance_arms() -> None:
-    """Checks the measurement override survives YAML -> typed config."""
-    for arm in (None, "batched_serial", "per_group_serial", "per_group_streaming"):
-        cfg = load_config(
-            "experiment/sd3_5/online_grpo_ocr",
-            overrides=[f"trainer.rollout_orchestration.reward_collection_mode={arm or 'null'}"],
-        )
-        trainer = build_configs(cfg).trainer
-        assert trainer.rollout_orchestration.reward_collection_mode == arm
-
-
-def test_reward_collection_mode_rejects_unknown_arm() -> None:
-    """Checks a typo fails fast instead of silently running the default arm."""
-    from vrl.trainers.core.types import RolloutOrchestrationConfig
-
-    with pytest.raises(ValueError, match=r"reward_collection_mode must be one of"):
-        RolloutOrchestrationConfig(reward_collection_mode="streaming")
-
-
-def test_reward_collection_mode_rejected_under_continuous_scheduling() -> None:
-    """Checks the knob is refused where it could have no effect.
-
-    Continuous collects one group per call, so no arm can overlap inside a
-    collection; accepting the key would be a no-op knob the user sets expecting
-    a measurable difference.
-    """
-    from vrl.trainers.core.types import RolloutOrchestrationConfig
-
-    with pytest.raises(ValueError, match=r"strict_on_policy collection only"):
-        RolloutOrchestrationConfig(
-            schedule_mode="continuous",
-            reward_collection_mode="per_group_streaming",
-        )
-
-
 def test_config_parsing_stays_torch_free() -> None:
     """Resolving any recipe must not load torch.
 

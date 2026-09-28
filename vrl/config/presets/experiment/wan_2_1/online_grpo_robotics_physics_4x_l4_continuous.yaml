@@ -45,9 +45,6 @@ actor:
 trainer:
   output_dir: outputs/wan_robotics_physics_4x_l4/continuous_run
   rollout_orchestration:
-    # This strict-only selector is inherited from the base experiment; nulling it
-    # is required because continuous collection owns one prompt group per call.
-    reward_collection_mode: null
     continuous:
       # Four slots expose the complete finite prompt batch to the producer so
       # generation and isolated reward inference can overlap across groups.

@@ -88,6 +88,11 @@
 > - `vrl/scripts/perf/reward_overlap_benchmark.py` — 3 臂 × N 重复，跑真实训练 run，
 >   计算改善率、置信下界、generation p95 回退、实测/理论 `min(G,R)` 比值，判据有单测覆盖。
 >
+> 2026-09-27：`reward_collection_mode` 配置键、`RewardCollectionMode` / `PER_GROUP_SERIAL`
+> 对照臂与 `reward_overlap_benchmark.py` 已按
+> [过度设计审计](../planned/SPRINT_overengineering_audit.md) 第二档第 7 条删除。collector
+> 只按 `supports_reward_generation_overlap` 选择整批或逐组流式打分，并总是提前提交下一次生成。
+>
 > 顺带修掉三个让整个重型视频 reward 家族无法运行的依赖 bug：`AutoModelForVision2Seq`
 > 在仓库自己 pin 的 transformers 5 里已删（改用 `AutoModelForImageTextToText`，影响
 > videoscore2 + unified_reward_video）；`qwen-vl-utils` 声明了但未安装；**没有任何可用

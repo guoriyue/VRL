@@ -25,7 +25,6 @@ import torch
 
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.collector.core import RewardCollectionMode
 from vrl.rollouts.orchestration.continuous.scored_queue import ScoredRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
@@ -385,7 +384,6 @@ class ContinuousRolloutProducer:
             runtime_debug=prompt_batch.runtime_debug,
             policy_version=prompt_batch.policy_version,
             stats=stats,
-            reward_mode=RewardCollectionMode.BATCHED_SERIAL,
         )
         return batches, stats
 

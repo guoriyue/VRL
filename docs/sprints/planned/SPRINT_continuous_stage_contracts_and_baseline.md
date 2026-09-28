@@ -46,7 +46,7 @@ backpressure reason duration
 ```
 
 `collect.generation_reward_overlap` 只统计一次 `collect_prompt_groups()` 调用内部的 interval。
-continuous producer 每个 slot 只喂一个 prompt，且显式传 `RewardCollectionMode.BATCHED_SERIAL`
+continuous producer 每个 slot 只喂一个 prompt
 （`producer.py` `_collect_group`），单组调用内部没有第二个组可重叠——所以该指标在 continuous
 路径上恒为 0，并发 slot 之间真实发生的 overlap 完全不被表达，不能用它证明四卡流水线。
 

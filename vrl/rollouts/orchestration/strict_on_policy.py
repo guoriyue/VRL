@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rollouts.collector.core import RewardCollectionMode
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import (
     RolloutIteration,
@@ -19,13 +18,8 @@ class StrictOnPolicyRolloutSchedule:
         self,
         *,
         lifecycle: RolloutRuntimeCoordinator,
-        reward_mode: RewardCollectionMode | None = None,
     ) -> None:
         self.lifecycle = lifecycle
-        # None = derive the arm from the collector capability. A forced arm is an
-        # acceptance-measurement control; prompt collection checks that it cannot
-        # grant per-group execution to an incapable collector.
-        self.reward_mode = reward_mode
 
     async def next_iteration(
         self,
@@ -58,7 +52,6 @@ class StrictOnPolicyRolloutSchedule:
                     runtime_debug=runtime_debug,
                     policy_version=policy_version,
                     stats=stats,
-                    reward_mode=self.reward_mode,
                 )
 
         return RolloutIteration(
