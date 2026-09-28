@@ -89,9 +89,8 @@ def main(argv=None):
     p.add_argument(
         "--fp8-recipe",
         default="rowwise",
-        choices=["rowwise", "tensorwise", "blockwise"],
-        help="fp8 quant recipe (only with --precision fp8); blockwise reuses vLLM's "
-        "1x128 triton block GEMM",
+        choices=["rowwise", "tensorwise"],
+        help="fp8 quant recipe (only with --precision fp8)",
     )
     args = p.parse_args(argv)
     if args.steps < 1:

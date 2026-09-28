@@ -2,9 +2,8 @@
 
 The home for low-precision linear kernels and the module-tree swaps that install
 them. Today it holds the fp8-e4m3 dynamic-quantization linear used by the
-rollout DiT — ``rowwise``/``tensorwise`` on torch ``_scaled_mm``, and a
-``blockwise`` recipe that **reuses vLLM's triton block kernel** rather than
-hand-rolling — plus the NVFP4 sibling with two-level 1x16 scaling. int8 and
+rollout DiT — ``rowwise``/``tensorwise`` on torch ``_scaled_mm`` — plus the
+NVFP4 sibling with two-level 1x16 scaling. int8 and
 future schemes land here as siblings. The package ``__init__`` is the public
 facade; consumers import from ``vrl.nn.quantization``, not per-scheme modules.
 """

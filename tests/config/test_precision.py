@@ -319,7 +319,7 @@ def test_nvfp4_rejects_every_recipe():
         PrecisionPolicy.from_section(_section(block))
 
 
-@pytest.mark.parametrize("recipe", ["rowwise", "tensorwise", "blockwise"])
+@pytest.mark.parametrize("recipe", ["rowwise", "tensorwise"])
 def test_fp8_accepts_only_declared_recipes(recipe):
     block = _plain_precision()
     block["rollout"]["quantization"] = {"format": "fp8", "recipe": recipe}

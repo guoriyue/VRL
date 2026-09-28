@@ -49,7 +49,7 @@ class _QuantizationFormatRules:
 
 _QUANTIZATION_FORMAT_RULES = {
     "fp8": _QuantizationFormatRules(
-        allowed_recipes=("rowwise", "tensorwise", "blockwise"),
+        allowed_recipes=("rowwise", "tensorwise"),
         default_recipe="rowwise",
     ),
     # NVFP4 is the complete two-level scaling scheme, not an FP8-style recipe.

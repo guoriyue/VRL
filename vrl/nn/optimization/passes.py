@@ -162,22 +162,6 @@ class QuantizationPass:
         format_name = quantization.format
         self.validate_support(build)
         recipe = quantization.recipe
-        # blockwise delegates to vLLM's triton kernel, whose wrapper dynamo cannot
-        # trace (lru_cache'd deep_gemm check + ctypes pynvml call): measured 45 graph
-        # breaks on SD3.5 and a compiled forward ~10x SLOWER than eager
-        # (SPRINT_rollout_optimization_layer item 2). Refuse the combination instead
-        # of silently shipping the regression.
-        if (
-            format_name == "fp8"
-            and recipe == "blockwise"
-            and getattr(build, "torch_compile", None)
-        ):
-            raise ValueError(
-                "precision.rollout.quantization.recipe='blockwise' is incompatible with "
-                "model.torch_compile (the vLLM block kernel graph-breaks inductor; the "
-                "compiled forward is ~10x slower than eager). Use recipe='rowwise' "
-                "(compile-clean) or disable model.torch_compile.",
-            )
         from vrl.nn.quantization import QUANTIZATION_SCHEMES
 
         scheme = QUANTIZATION_SCHEMES.get(format_name)

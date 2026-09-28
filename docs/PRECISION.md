@@ -111,10 +111,6 @@ FP8 replaces eligible attention projections and MLP Linears. Its recipes are:
 
 - `rowwise` (default)
 - `tensorwise`
-- `blockwise`
-
-`blockwise` is incompatible with `model.torch_compile`; the runtime rejects that
-combination before executing a model.
 
 ### NVFP4
 

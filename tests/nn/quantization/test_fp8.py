@@ -9,7 +9,6 @@ bounded relative error after depth accumulation.
 
 from __future__ import annotations
 
-import builtins
 import copy
 from types import SimpleNamespace
 
@@ -37,18 +36,6 @@ def _fp8_capable() -> bool:
 # probes know whether the card can actually run fp8 `_scaled_mm`. Folding them into
 # the marker would turn a skip into a real failure on, say, an A100.
 requires_fp8 = pytest.mark.skipif(not _fp8_capable(), reason="needs CUDA fp8 _scaled_mm")
-
-
-def _vllm_available() -> bool:
-    import importlib.util
-
-    return importlib.util.find_spec("vllm") is not None
-
-
-requires_vllm_fp8 = pytest.mark.skipif(
-    not (_fp8_capable() and _vllm_available()),
-    reason="needs CUDA fp8 + vLLM block kernel",
-)
 
 
 # --- a realistic DiT block with diffusers-like submodule names ----------------
@@ -192,57 +179,6 @@ def test_swap_excludes_qwen_modulation_and_text_input():
 
 
 # --- numeric: per-GEMM and end-to-end drift (GPU) ----------------------------
-
-
-@pytest.mark.gpu
-@requires_vllm_fp8
-def test_blockwise_recipe_matches_bf16_via_vllm():
-    """blockwise reuses vLLM's triton block kernel (not hand-rolled); 128-aligned."""
-    torch.manual_seed(0)
-    lin = nn.Linear(2048, 2048).cuda().to(torch.bfloat16)
-    fp8 = Fp8Linear(lin, recipe="blockwise").cuda()
-    assert fp8.recipe == "blockwise"
-    x = torch.randn(512, 2048, device="cuda", dtype=torch.bfloat16)
-    ref, got = lin(x), fp8(x)
-    rel = (got.float() - ref.float()).abs().mean() / ref.float().abs().mean()
-    assert rel < 0.06, f"blockwise drift {rel:.4f} too high"
-
-
-@pytest.mark.parametrize(
-    "import_error",
-    [
-        ModuleNotFoundError("No module named 'vllm'", name="vllm"),
-        ModuleNotFoundError("missing kernel module", name="vllm.model_executor"),
-        ModuleNotFoundError("missing kernel dependency", name="kernel_dependency"),
-        ImportError("cannot import name 'w8a8_triton_block_scaled_mm'"),
-    ],
-)
-def test_blockwise_import_distinguishes_absent_vllm_from_broken_install(
-    import_error, monkeypatch
-) -> None:
-    fp8 = Fp8Linear(nn.Linear(128, 128), recipe="blockwise")
-    original_import = builtins.__import__
-
-    def import_kernel(name, *args, **kwargs):
-        if name == "vllm.model_executor.layers.quantization.utils.fp8_utils":
-            raise import_error
-        return original_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", import_kernel)
-    if isinstance(import_error, ModuleNotFoundError) and import_error.name == "vllm":
-        with pytest.raises(RuntimeError, match="vLLM is not installed") as caught:
-            fp8(torch.zeros(1, 128))
-        assert caught.value.__cause__ is import_error
-    else:
-        with pytest.raises(type(import_error)) as caught:
-            fp8(torch.zeros(1, 128))
-        assert caught.value is import_error
-
-
-def test_blockwise_falls_back_to_rowwise_on_unaligned_dims():
-    """A non-128-aligned linear can't use the block kernel → silently uses rowwise."""
-    fp8 = Fp8Linear(nn.Linear(2000, 2048), recipe="blockwise")  # 2000 % 128 != 0
-    assert fp8.recipe == "rowwise"
 
 
 @pytest.mark.gpu
@@ -425,42 +361,6 @@ def test_quantization_pass_disabled_without_scheme_and_counts_swaps():
     assert QuantizationPass().quantize(_SwapModel(["a", "b"]), _rollout_spec("fp8")) == 2
 
 
-def test_quantization_pass_rejects_blockwise_with_compile():
-    """blockwise graph-breaks inductor (compiled ~10x slower than eager) — refuse."""
-    from vrl.nn.optimization import QuantizationPass
-
-    with pytest.raises(ValueError, match=r"blockwise.*torch_compile"):
-        QuantizationPass().quantize(
-            _SwapModel(["a"]),
-            _rollout_spec(
-                "fp8",
-                recipe="blockwise",
-                torch_compile={"enable": True, "mode": "default"},
-            ),
-        )
-    # blockwise without compile, and rowwise with compile, both stay allowed.
-    model = _SwapModel(["a"])
-    QuantizationPass().quantize(
-        model,
-        _rollout_spec(
-            "fp8",
-            recipe="blockwise",
-            torch_compile=None,
-        ),
-    )
-    assert model.recipe_seen == "blockwise"
-    model = _SwapModel(["a"])
-    QuantizationPass().quantize(
-        model,
-        _rollout_spec(
-            "fp8",
-            recipe="rowwise",
-            torch_compile={"enable": True, "mode": "default"},
-        ),
-    )
-    assert model.recipe_seen == "rowwise"
-
-
 def test_quantization_pass_passes_recipe_through():
     """The nested rollout quantization recipe reaches the FP8 swap."""
     from vrl.nn.optimization import QuantizationPass
@@ -468,9 +368,9 @@ def test_quantization_pass_passes_recipe_through():
     model = _SwapModel(["a"])
     QuantizationPass().quantize(
         model,
-        _rollout_spec("fp8", recipe="blockwise"),
+        _rollout_spec("fp8", recipe="tensorwise"),
     )
-    assert model.recipe_seen == "blockwise"
+    assert model.recipe_seen == "tensorwise"
 
     model = _SwapModel(["a"])
     QuantizationPass().quantize(model, _rollout_spec("fp8"))

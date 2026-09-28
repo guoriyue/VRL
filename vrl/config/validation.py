@@ -67,10 +67,7 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
     all decided by config keys, so config load is where they belong: a
     combination that can never run should fail before a GPU is touched.
 
-    Returns one entry per conflict (empty when compatible). The blockwise-fp8
-    conflict is deliberately NOT here: it is caught in ``vrl.models.loader``
-    where the resolved quantization recipe lives, and this function is given
-    only the parsed config.
+    Returns one entry per conflict (empty when compatible).
     """
 
     compile_block = root.model.torch_compile if root.model is not None else None

@@ -21,13 +21,6 @@ step); the activation is quantized per forward.
 - ``rowwise`` (default): per-token activation + per-output-channel weight scales,
   torch ``_scaled_mm`` — dep-free, robust to activation outliers.
 - ``tensorwise``: one scalar scale per tensor, torch ``_scaled_mm`` — cheapest.
-- ``blockwise``: 1x128 activation + 128x128 weight scales,
-  **delegated to vLLM's triton kernel** (``w8a8_triton_block_scaled_mm``) instead
-  of hand-rolling — best accuracy on outliers, and runs on CUDA 12.8 (the torch
-  ``_scaled_mm`` block path needs CUDA>=12.9). Requires vLLM installed.
-  Eager-only: the kernel's wrapper graph-breaks torch.compile (lru_cache'd
-  deep_gemm check + ctypes pynvml call; measured 45 breaks / compiled ~10x
-  slower than eager on SD3.5), so the loader refuses blockwise + torch_compile.
 
 """
 
@@ -39,9 +32,6 @@ from torch import nn
 from vrl.nn.quantization.base import QuantizedLinear
 from vrl.nn.quantization.formats import FP8_E4M3_MAX
 from vrl.nn.quantization.targeting import LinearTargetProfile
-
-# Block size for the ``blockwise`` recipe (standard 128).
-FP8_BLOCK = 128
 
 
 class Fp8Linear(QuantizedLinear):
@@ -63,12 +53,6 @@ class Fp8Linear(QuantizedLinear):
         super().__init__()
         self.in_features = linear.in_features
         self.out_features = linear.out_features
-        # blockwise needs 128-aligned dims (vLLM block kernel); fall back to rowwise
-        # for the rare non-aligned linear so the swap never breaks.
-        if recipe == "blockwise" and (
-            self.in_features % FP8_BLOCK or self.out_features % FP8_BLOCK
-        ):
-            recipe = "rowwise"
         self.recipe = recipe
         # Keep the source-dtype master under its original ``.weight`` key so RL
         # weight-sync (full fine-tune syncs the base weights every step) can load
@@ -99,13 +83,6 @@ class Fp8Linear(QuantizedLinear):
     def _requantize_weight(self) -> None:
         """Re-derive the fp8 weight + scale from the source master after a sync."""
         w = self.weight.data
-        if self.recipe == "blockwise":
-            n, k = w.shape
-            wb = w.reshape(n // FP8_BLOCK, FP8_BLOCK, k // FP8_BLOCK, FP8_BLOCK)
-            scale = (wb.abs().amax(dim=(1, 3)) / FP8_E4M3_MAX).clamp_min(1e-12).float()
-            self.weight_fp8 = (wb / scale[:, None, :, None]).reshape(n, k).to(torch.float8_e4m3fn)
-            self.weight_scale = scale  # [N/128, K/128]
-            return
         scale = self._amax_scale(w, dim=1 if self.recipe == "rowwise" else None)
         self.weight_fp8 = (w / scale).to(torch.float8_e4m3fn)
         self.weight_scale = scale
@@ -113,12 +90,6 @@ class Fp8Linear(QuantizedLinear):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         shape = x.shape
         x_2d = x.reshape(-1, shape[-1])
-        if self.recipe == "blockwise":
-            out = self._blockwise_gemm(x_2d.to(torch.bfloat16))
-            out = out.reshape(*shape[:-1], self.out_features)
-            if out.dtype != x.dtype:
-                out = out.to(x.dtype)
-            return out if self.bias is None else out + self.bias
         if self.recipe == "rowwise":
             x_scale = self._amax_scale(x_2d, dim=1)  # [M, 1] per token
             weight_scale = self.weight_scale.reshape(1, self.out_features)  # [1, N] per channel
@@ -143,36 +114,6 @@ class Fp8Linear(QuantizedLinear):
         if self.bias is not None:
             out = out + self.bias
         return out
-
-    def _blockwise_gemm(self, x_bf16: torch.Tensor) -> torch.Tensor:
-        """1x128 fp8 block GEMM via vLLM's triton kernel (not hand-rolled).
-
-        Reuses vLLM's ``per_token_group_quant_fp8`` (1x128 activation quant) +
-        ``w8a8_triton_block_scaled_mm`` (128x128 weight blocks), so we don't
-        reimplement block-scaled fp8 ourselves and it runs on CUDA 12.8.
-        """
-        try:
-            from vllm.model_executor.layers.quantization.utils.fp8_utils import (
-                per_token_group_quant_fp8,
-                w8a8_triton_block_scaled_mm,
-            )
-        except ModuleNotFoundError as exc:
-            if exc.name != "vllm":
-                raise
-            raise RuntimeError(
-                "fp8 recipe='blockwise' reuses vLLM's block kernel but vLLM is not "
-                "installed. Install the vllm extra, or use recipe='rowwise' (torch, "
-                "dep-free).",
-            ) from exc
-        x_fp8, x_scale = per_token_group_quant_fp8(x_bf16, FP8_BLOCK)
-        return w8a8_triton_block_scaled_mm(
-            x_fp8,
-            self.weight_fp8,
-            x_scale,
-            self.weight_scale,
-            [FP8_BLOCK, FP8_BLOCK],
-            output_dtype=torch.bfloat16,
-        )
 
     def extra_repr(self) -> str:
         return f"in={self.in_features}, out={self.out_features}, recipe={self.recipe}, fp8=e4m3"
