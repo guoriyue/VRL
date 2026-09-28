@@ -53,15 +53,6 @@ def plan_with_engine(
 ) -> DistributedGenerationPlan:
     """Plan batch placement across generation engines: round-robin at plan time."""
 
-    if isinstance(engine_ids, (str, bytes)):
-        raise ValueError("generation placement engine IDs must be a sequence of strings")
-    engine_ids = tuple(engine_ids)
-    if not engine_ids:
-        raise ValueError("generation placement requires at least one engine")
-    if any(not isinstance(engine_id, str) or not engine_id for engine_id in engine_ids):
-        raise ValueError("generation placement engine IDs must be non-empty strings")
-    if len(set(engine_ids)) != len(engine_ids):
-        raise ValueError("generation placement engine IDs must be unique")
     engine_plan = EnginePlan.from_request(request)
     assignments = tuple(
         DeviceAssignment(

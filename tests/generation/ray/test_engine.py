@@ -153,20 +153,6 @@ async def test_any_rank_failure_fails_the_engine_call_and_cancels_siblings() -> 
 
 
 @pytest.mark.asyncio
-async def test_uniform_combine_requires_every_rank_to_agree() -> None:
-    calls: list[tuple[str, tuple, dict]] = []
-    agree = _engine(calls, {"r0": ResolvedRef(7), "r1": ResolvedRef(7)}, method="update_weights")
-    result = await agree.remote_uniform("update_weights")("state", policy_version=7)
-    assert result == 7
-
-    disagree = _engine(
-        calls, {"r0": ResolvedRef(7), "r1": ResolvedRef(6)}, method="update_weights"
-    )
-    with pytest.raises(RuntimeError, match="ranks disagree on update_weights"):
-        await disagree.remote_uniform("update_weights")("state", policy_version=7)
-
-
-@pytest.mark.asyncio
 async def test_sleep_validates_and_aggregates_per_rank_snapshots() -> None:
     def snapshot(rank_id: str) -> WorkerMemoryParkingSnapshot:
         return WorkerMemoryParkingSnapshot(
@@ -196,24 +182,9 @@ async def test_sleep_validates_and_aggregates_per_rank_snapshots() -> None:
         await mismatched.sleep()
 
 
-def test_engine_requires_at_least_one_unique_rank() -> None:
+def test_engine_requires_at_least_one_rank() -> None:
     with pytest.raises(ValueError, match="at least one rank"):
         RayGenerationEngine("engine-0", [])
-    handle = RayActorHandle(worker_id="r0", actor=object())
-    with pytest.raises(ValueError, match="duplicate rank ids"):
-        RayGenerationEngine("engine-0", [handle, handle])
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("results", [[3, 3.0], [1, True], [3.0, 3]])
-async def test_uniform_ack_requires_matching_types(results) -> None:
-    engine = _engine(
-        [],
-        {"r0": ResolvedRef(results[0]), "r1": ResolvedRef(results[1])},
-        method="update_weights",
-    )
-    with pytest.raises(RuntimeError, match="ranks disagree"):
-        await engine.remote_uniform("update_weights")("state")
 
 
 @pytest.mark.asyncio

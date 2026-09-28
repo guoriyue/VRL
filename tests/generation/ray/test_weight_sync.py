@@ -19,7 +19,6 @@ from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
-from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.utils.lifecycle import RuntimePhase
@@ -87,18 +86,6 @@ class _FakeRay:
         return ("state", value)
 
 
-def test_ray_worker_returns_core_install_ack() -> None:
-    class _Core:
-        def update_weights(self, state_ref: Any, policy_version: int) -> int:
-            assert state_ref == {"w": 1}
-            return policy_version
-
-    worker = object.__new__(RayGenerationWorker)
-    worker.core = _Core()
-
-    assert worker.update_weights({"w": 1}, 6) == 6
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("version", [object(), 3.9, "3", True, -1])
 async def test_invalid_policy_version_does_not_terminalize_resident_runtime(version) -> None:
@@ -128,7 +115,7 @@ async def test_invalid_policy_version_does_not_terminalize_resident_runtime(vers
 
 @_OBJECT_STORE_LEDGER
 @pytest.mark.asyncio
-async def test_remote_update_results_are_verified_without_second_ack_rpc(
+async def test_remote_update_puts_the_state_once_for_every_engine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ray = _FakeRay()
@@ -146,55 +133,11 @@ async def test_remote_update_results_are_verified_without_second_ack_rpc(
 
     result = await sync.push_to_rollout_engines({"w": 1}, policy_version=4)
 
-    # The install ACK is validated here and consumed; callers never see it.
     assert result is None
     assert ray.put_calls == [{"w": 1}]
     shared_state = ("state", {"w": 1})
     assert first.update_weights.calls == [(shared_state, 4)]
     assert second.update_weights.calls == [(shared_state, 4)]
-
-
-@_OBJECT_STORE_LEDGER
-@pytest.mark.asyncio
-async def test_remote_update_rejects_partial_wrong_version(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ray = _FakeRay()
-    monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
-    sync = RayGenerationWeightSync(
-        [
-            _engine(
-                "rollout-0",
-                _RemoteWorker(installed_version=5),
-            ),
-            _engine(
-                "rollout-1",
-                _RemoteWorker(installed_version=4),
-            ),
-        ],
-        actor_dispatcher=RayActorDispatcher(("rollout-0", "rollout-1")),
-        worker_rpc_timeout_s=30.0,
-    )
-
-    with pytest.raises(RuntimeError, match=r"rollout-1.*version 4.*expected 5"):
-        await sync.push_to_rollout_engines({"w": 1}, policy_version=5)
-
-
-@pytest.mark.asyncio
-async def test_update_rejects_an_ack_that_is_not_a_policy_version(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A worker that answers with something uncastable is a failure, not a zero."""
-
-    monkeypatch.setattr(weight_sync_module, "require_ray", lambda: _FakeRay())
-    sync = RayGenerationWeightSync(
-        [_engine("rollout-0", _RemoteWorker(installed_version="not-a-version"))],
-        actor_dispatcher=RayActorDispatcher(("rollout-0",)),
-        worker_rpc_timeout_s=30.0,
-    )
-
-    with pytest.raises(RuntimeError, match=r"rollout-0.*invalid policy version acknowledgment"):
-        await sync.push_to_rollout_engines({"w": 1}, policy_version=3)
 
 
 @_OBJECT_STORE_LEDGER
@@ -472,55 +415,6 @@ async def test_completed_weight_sync_wins_cancellation_and_publishes_version(
 
 
 @pytest.mark.asyncio
-async def test_completed_weight_sync_cancellation_still_validates_wrong_ack(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    gate = asyncio.Event()
-    submitted = asyncio.Event()
-
-    class _WrongAckMethod:
-        @staticmethod
-        def remote(_state_ref: Any, policy_version: int) -> GatedRef:
-            del policy_version
-            submitted.set()
-            return GatedRef(gate, 99)
-
-    ray = _FakeRay()
-    monkeypatch.setattr(weight_sync_module, "require_ray", lambda: ray)
-    dispatcher = RayActorDispatcher(("rollout-0",))
-    sync = RayGenerationWeightSync(
-        [
-            _engine(
-                "rollout-0",
-                SimpleNamespace(update_weights=_WrongAckMethod()),
-            ),
-        ],
-        actor_dispatcher=dispatcher,
-        worker_rpc_timeout_s=30.0,
-    )
-    runtime = _runtime(
-        SimpleNamespace(actor_dispatcher=dispatcher),
-        weight_sync=sync,
-    )
-    runtime.current_policy_version = 1
-    update = asyncio.create_task(
-        runtime.update_weights({"w": 2}, policy_version=2),
-    )
-    await submitted.wait()
-
-    gate.set()
-    update.cancel()
-    with pytest.raises(
-        RuntimeError,
-        match=r"rollout-0.*version 99.*expected 2",
-    ):
-        await update
-
-    assert runtime.current_policy_version == 1
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-
-
-@pytest.mark.asyncio
 async def test_cancelling_partially_completed_weight_sync_terminalizes_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -695,38 +589,6 @@ async def test_real_ray_weight_sync_derefs_one_shared_put(local_ray) -> None:
 
 @pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_real_ray_weight_sync_attributes_a_wrong_ack_by_submission_order(
-    local_ray,
-) -> None:
-    """A bad ACK is blamed on the worker that sent it, not the one that answered
-    last.
-
-    Production pairs ACKs back to engines with zip because RayActorDispatcher
-    returns results sorted by job_index. rollout-0 is made to finish LAST here;
-    returning completion order would attribute rollout-1's bad ACK to rollout-0.
-    """
-
-    # rollout-0 stalls half a second, so it is the LAST to complete; rollout-1
-    # acks one version short and completes first.
-    handles = _install_fleet(local_ray, (0, 0.5), (-1, 0.0))
-    try:
-        sync = RayGenerationWeightSync(
-            handles,
-            actor_dispatcher=RayActorDispatcher(
-                tuple(engine.engine_id for engine in handles),
-            ),
-            worker_rpc_timeout_s=30.0,
-        )
-
-        with pytest.raises(RuntimeError, match=r"rollout-1.*version 4.*expected 5"):
-            await sync.push_to_rollout_engines({"w": torch.arange(6)}, policy_version=5)
-    finally:
-        for handle in handles:
-            local_ray.kill(handle.primary.actor, no_restart=True)
-
-
-@pytest.mark.slow_test
-@pytest.mark.asyncio
 async def test_real_ray_weight_sync_deadline_excludes_generation_admission_wait(
     local_ray,
 ) -> None:
@@ -766,18 +628,6 @@ async def test_real_ray_weight_sync_deadline_excludes_generation_admission_wait(
             await asyncio.gather(generation, return_exceptions=True)
         for handle in handles:
             local_ray.kill(handle.primary.actor, no_restart=True)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("installed", [3.9, "3", True, -1, None])
-async def test_weight_sync_rejects_coerced_ack(installed: Any) -> None:
-    sync = RayGenerationWeightSync(
-        [_engine("rollout-0", _RemoteWorker(installed_version=installed))],
-        actor_dispatcher=RayActorDispatcher(("rollout-0",)),
-        worker_rpc_timeout_s=30.0,
-    )
-    with pytest.raises(RuntimeError, match="invalid policy version acknowledgment"):
-        await sync.push_to_rollout_engines({"w": 1}, policy_version=3)
 
 
 @pytest.mark.asyncio

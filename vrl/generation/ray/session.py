@@ -50,24 +50,8 @@ class RayGenerationSession:
             raise ValueError("Ray generation session requires an executor")
         self.executor = executor
         self.weight_sync = weight_sync
-        executor_dispatcher = getattr(executor, "actor_dispatcher", None)
-        weight_sync_dispatcher = getattr(weight_sync, "actor_dispatcher", None)
-        if (
-            executor_dispatcher is not None
-            and weight_sync_dispatcher is not None
-            and executor_dispatcher is not weight_sync_dispatcher
-        ):
-            raise ValueError(
-                "Ray generation and weight sync must share one actor dispatcher",
-            )
         self.engines = list(owned_engines)
         self.rank_handles = [rank for engine in self.engines for rank in engine.ranks]
-        engine_ids = tuple(engine.engine_id for engine in self.engines)
-        if len(set(engine_ids)) != len(engine_ids):
-            raise RuntimeError(f"duplicate generation engine ids: {engine_ids}")
-        rank_ids = tuple(rank.worker_id for rank in self.rank_handles)
-        if len(set(rank_ids)) != len(rank_ids):
-            raise RuntimeError(f"duplicate generation rank ids: {rank_ids}")
         # Finalizers hold no policy: they are killed with the ranks, never released.
         self.finalizer_handles = list(owned_finalizers)
         self.supports_non_draining_weight_sync = bool(

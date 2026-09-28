@@ -52,12 +52,6 @@ class RayGenerationExecutor:
             raise ValueError("RayGenerationExecutor requires at least one engine")
         self.engines = list(engines)
         self.gatherer = gatherer
-        expected_engine_ids = tuple(engine.engine_id for engine in self.engines)
-        if actor_dispatcher.worker_ids != expected_engine_ids:
-            raise ValueError(
-                "RayGenerationExecutor actor dispatcher does not own its engine fleet: "
-                f"{actor_dispatcher.worker_ids} != {expected_engine_ids}",
-            )
         self.actor_dispatcher = actor_dispatcher
         self.generation_stall_timeout_s = require_timeout(
             generation_stall_timeout_s,

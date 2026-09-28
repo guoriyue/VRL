@@ -14,9 +14,8 @@ from vrl.utils.validation import require_int
 class RayGenerationWeightSync:
     """Broadcast ``update_weights`` to every rank of every generation engine.
 
-    The engine call fans out to all its ranks and requires their version
-    echoes to agree (``RayGenerationEngine.remote_uniform``); this layer then
-    validates the agreed echo against the expected version per engine.
+    The engine call fans out to all its ranks and completes when every rank has
+    installed the payload; a rank failure fails the whole sync.
     """
 
     def __init__(
@@ -27,12 +26,6 @@ class RayGenerationWeightSync:
         worker_rpc_timeout_s: float,
     ) -> None:
         self.engines = list(engines)
-        expected_engine_ids = tuple(engine.engine_id for engine in self.engines)
-        if actor_dispatcher.worker_ids != expected_engine_ids:
-            raise ValueError(
-                "RayGenerationWeightSync actor dispatcher does not own its engine fleet: "
-                f"{actor_dispatcher.worker_ids} != {expected_engine_ids}",
-            )
         self.actor_dispatcher = actor_dispatcher
         self.worker_rpc_timeout_s = require_timeout(
             worker_rpc_timeout_s,
@@ -60,47 +53,17 @@ class RayGenerationWeightSync:
             RayActorJob(
                 job_index=job_index,
                 worker_id=engine.engine_id,
-                remote_method=engine.remote_uniform("update_weights"),
+                remote_method=engine.remote("update_weights"),
                 payload=shared_state_ref,
                 keyword_args={"policy_version": policy_version},
             )
             for job_index, engine in enumerate(self.engines)
         ]
-        policy_version_acks = await self.actor_dispatcher.run(
+        await self.actor_dispatcher.run(
             remote_jobs,
             operation="rollout.weight_sync",
             call_timeout_s=self.worker_rpc_timeout_s,
         )
-        for engine, (_job_index, acknowledged_policy_version) in zip(
-            self.engines,
-            policy_version_acks,
-            strict=True,
-        ):
-            self._validate_policy_version_match(
-                engine, acknowledged_policy_version, policy_version
-            )
-
-    @staticmethod
-    def _validate_policy_version_match(
-        engine: RayGenerationEngine,
-        acknowledged_policy_version: Any,
-        expected_policy_version: int,
-    ) -> None:
-        """Validate one untyped engine ACK at the Ray weight-sync boundary."""
-
-        if (
-            isinstance(acknowledged_policy_version, bool)
-            or not isinstance(acknowledged_policy_version, int)
-            or acknowledged_policy_version < 0
-        ):
-            raise RuntimeError(
-                f"engine {engine.engine_id!r} returned invalid policy version acknowledgment {acknowledged_policy_version!r}",
-            )
-        if acknowledged_policy_version != expected_policy_version:
-            raise RuntimeError(
-                f"engine {engine.engine_id!r} acknowledged policy version {acknowledged_policy_version}, "
-                f"expected {expected_policy_version}",
-            )
 
 
 __all__ = [

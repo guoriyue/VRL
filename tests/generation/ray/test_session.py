@@ -104,16 +104,6 @@ async def test_session_owns_execution_and_delegates_weight_sync() -> None:
     assert session.supports_non_draining_weight_sync is True
 
 
-def test_session_rejects_split_actor_admission_owners() -> None:
-    executor = _Executor()
-    executor.actor_dispatcher = object()
-    weight_sync = _WeightSync()
-    weight_sync.actor_dispatcher = object()
-
-    with pytest.raises(ValueError, match="must share one actor dispatcher"):
-        RayGenerationSession(executor, weight_sync, [])
-
-
 @pytest.mark.asyncio
 async def test_session_parks_and_wakes_the_complete_worker_fleet() -> None:
     actors = (_Actor("rollout-0"), _Actor("rollout-1"))
@@ -140,22 +130,6 @@ async def test_session_parking_failure_does_not_translate_or_close_resources() -
 
     assert session.engines[0].primary.actor is actor
     assert actor.release_policy.calls == 0
-
-
-def test_session_rejects_duplicate_engine_ids() -> None:
-    engines = [
-        RayGenerationEngine(
-            "rollout-0",
-            [RayActorHandle(worker_id="rollout-0", actor=_Actor("rollout-0"))],
-        ),
-        RayGenerationEngine(
-            "rollout-0",
-            [RayActorHandle(worker_id="rollout-0", actor=_Actor("rollout-0"))],
-        ),
-    ]
-
-    with pytest.raises(RuntimeError, match="duplicate generation engine ids"):
-        RayGenerationSession(_Executor(), None, engines)
 
 
 @pytest.mark.asyncio

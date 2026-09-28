@@ -83,9 +83,6 @@ class RayGenerationEngine:
         ranks = tuple(ranks)
         if not ranks:
             raise ValueError(f"engine {engine_id!r} requires at least one rank")
-        rank_ids = tuple(rank.worker_id for rank in ranks)
-        if len(set(rank_ids)) != len(rank_ids):
-            raise ValueError(f"engine {engine_id!r} has duplicate rank ids: {rank_ids}")
         self.engine_id = engine_id
         self.ranks = ranks
 
@@ -132,21 +129,6 @@ class RayGenerationEngine:
                 expected_worker_ids=[rank.worker_id for rank in self.ranks],
             ),
         )
-
-    def remote_uniform(self, method_name: str) -> Callable[..., Any]:
-        """Submitter for a call every rank must answer identically — e.g. the
-        ``update_weights`` version echo: ranks that installed different policy
-        versions mean the engine is internally inconsistent and must fail loud."""
-
-        def combine(results: list[Any]) -> Any:
-            first = results[0]
-            if any(type(result) is not type(first) or result != first for result in results[1:]):
-                raise RuntimeError(
-                    f"engine ranks disagree on {method_name} result: {results!r}",
-                )
-            return first
-
-        return self.remote(method_name, combine=combine)
 
     def _submit_rank_calls(self, method_name: str, *args: Any, **kwargs: Any) -> list[Any]:
         """Own rank refs until the complete fan-out can be handed to its waiter."""

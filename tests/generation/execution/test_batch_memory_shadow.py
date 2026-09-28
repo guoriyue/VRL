@@ -57,26 +57,6 @@ def test_reading_normalizes_binding_mapping_and_rejects_partial_data() -> None:
     assert reading.budget_bytes == 29 * GB
 
 
-def _request() -> GenerationRequest:
-    return GenerationRequest(
-        request_id="req-1",
-        family="sd3_5",
-        task="t2i",
-        inputs=["p"],
-        samples_per_prompt=10,
-        sampling={"num_steps": 20},
-        policy_version=1,
-    )
-
-
-@pytest.mark.parametrize("engine_ids", ["w0", b"w0", [1], [b"worker-0"], [["worker-0"]]])
-def test_planner_rejects_invalid_engine_id_types_before_batch_planning(engine_ids) -> None:
-    from vrl.generation.execution.batch_placement import plan_with_engine
-
-    with pytest.raises(ValueError, match="engine IDs"):
-        plan_with_engine(_request(), engine_ids)
-
-
 # -- worker wire contract (readings cross ungated) -----------------------------
 
 
