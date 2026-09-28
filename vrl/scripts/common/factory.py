@@ -197,7 +197,8 @@ def build_reward_function(
     """Build the online reward function from the resolved reward inputs.
 
     Device and parking policy are decided once by ``ResolvedOnlineRun.
-    reward_inputs``; this factory validates the components and constructs.
+    reward_inputs``; ``MultiReward.from_dict`` validates the components and
+    constructs.
     In-process GPU ownership decides parking: a shared reward must completely
     park its model memory after scoring, while a dedicated reward stays resident.
     HTTP components own their deployment externally and receive no local parking
@@ -207,18 +208,6 @@ def build_reward_function(
     config = reward.config
     config.require_online_training()
     from vrl.rewards.functions.registry import MultiReward
-
-    if reward.memory_parking_required and not config.all_external_inference:
-        from vrl.rewards.functions.registry import (
-            validate_reward_memory_parking_components,
-        )
-
-        validate_reward_memory_parking_components(
-            tuple(config.weights),
-            device=reward.device,
-            reward_kwargs=config.kwargs,
-            inference_configs=config.inference_configs,
-        )
 
     return MultiReward.from_dict(
         config.weights,
