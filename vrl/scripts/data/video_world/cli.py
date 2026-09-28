@@ -220,7 +220,8 @@ def _cmd_video_world_targets(args: argparse.Namespace) -> None:
     if not rows:
         raise RuntimeError(
             f"No usable target clips from {args.repo_id!r}. Check it is a public LeRobot "
-            "dataset with meta/tasks.parquet + data/*.parquet + videos/*.mp4, or set "
+            "dataset with meta/episodes/*.parquet + videos/*.mp4 (v3.0) or "
+            "meta/episodes.jsonl (v2.0), or set "
             "--camera to a valid observation.images.<name> key.",
         )
 

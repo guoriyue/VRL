@@ -285,48 +285,13 @@ def _iter_lerobot_v21_target_clips(
     max_target_frames: int,
     dl: Callable[[str], str],
 ) -> Iterator[dict[str, Any]]:
+    """Cut target clips located by LeRobot v3.0 ``meta/episodes/*.parquet`` rows."""
+
+    import pyarrow.parquet as pq
+
     video_tmpl = str(info["video_path"])
     fps = float(info.get("fps") or _video_fps(info, video_key) or 15.0)
     episode_files = _repo_files(repo_id, prefix="meta/episodes/")
-    if episode_files:
-        yield from _iter_v21_target_clips_from_episode_metadata(
-            repo_id,
-            info,
-            video_key=video_key,
-            video_tmpl=video_tmpl,
-            fps=fps,
-            limit=limit,
-            max_target_frames=max_target_frames,
-            episode_files=episode_files,
-            dl=dl,
-        )
-        return
-
-    yield from _iter_v21_target_clips_from_data_rows(
-        repo_id,
-        info,
-        video_key=video_key,
-        fps=fps,
-        limit=limit,
-        max_target_frames=max_target_frames,
-        dl=dl,
-    )
-
-
-def _iter_v21_target_clips_from_episode_metadata(
-    repo_id: str,
-    info: Mapping[str, Any],
-    *,
-    video_key: str,
-    video_tmpl: str,
-    fps: float,
-    limit: int,
-    max_target_frames: int,
-    episode_files: Sequence[str],
-    dl: Callable[[str], str],
-) -> Iterator[dict[str, Any]]:
-    import pyarrow.parquet as pq
-
     selected = []
     video_chunk_col = f"videos/{video_key}/chunk_index"
     video_file_col = f"videos/{video_key}/file_index"
@@ -398,99 +363,6 @@ def _iter_v21_target_clips_from_episode_metadata(
                 "codebase_version": str(info.get("codebase_version", "v2.1")),
             },
         )
-
-
-def _iter_v21_target_clips_from_data_rows(
-    repo_id: str,
-    info: Mapping[str, Any],
-    *,
-    video_key: str,
-    fps: float,
-    limit: int,
-    max_target_frames: int,
-    dl: Callable[[str], str],
-) -> Iterator[dict[str, Any]]:
-    import pyarrow.parquet as pq
-
-    video_tmpl = str(info["video_path"])
-    data_tmpl = str(info["data_path"])
-
-    task_rows = pq.read_table(dl("meta/tasks.parquet")).to_pylist()
-    if not task_rows:
-        return
-    caption_col = next(col for col in task_rows[0] if col != "task_index")
-    captions = {int(r["task_index"]): str(r[caption_col]).strip() for r in task_rows}
-
-    data_path = dl(data_tmpl.format(chunk_index=0, file_index=0))
-    base_cols = ["episode_index", "frame_index", "task_index", "index"]
-    schema_names = set(pq.ParquetFile(data_path).schema_arrow.names)
-    action_cols = _select_action_columns(schema_names)
-    data_rows = pq.read_table(
-        data_path,
-        columns=base_cols + [c for c in action_cols if c not in base_cols],
-    ).to_pylist()
-    if not data_rows:
-        return
-
-    base_index = int(data_rows[0]["index"])
-    selected_order: list[int] = []
-    selected: dict[int, dict[str, Any]] = {}
-    positions: dict[int, int] = {}
-    for row in data_rows:
-        episode = int(row["episode_index"])
-        if episode not in selected:
-            if len(selected_order) >= limit:
-                continue
-            selected_order.append(episode)
-            selected[episode] = {
-                "task_index": int(row["task_index"]),
-                "start_global_index": int(row["index"]),
-                "frames": [],
-                "actions": [],
-            }
-        if episode in selected and int(row["frame_index"]) < max_target_frames:
-            positions[int(row["index"]) - base_index] = episode
-            if action_cols:
-                selected[episode]["actions"].append(_row_action(row, action_cols))
-
-    if not positions:
-        return
-    rel = video_tmpl.format(video_key=video_key, chunk_index=0, file_index=0)
-    url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{rel}"
-    for position, frame in _decode_frames(url, stop_after=max(positions)):
-        episode = positions.get(position)
-        if episode is not None:
-            selected[episode]["frames"].append(frame)
-
-    for episode in selected_order:
-        item = selected[episode]
-        frames = item["frames"]
-        task_index = int(item["task_index"])
-        prompt = captions.get(task_index, "")
-        if prompt and frames:
-            metadata: dict[str, Any] = {
-                "source_repo": repo_id,
-                "source_split": "main",
-                "source_video": rel,
-                "source_frame_index": int(item["start_global_index"]) - base_index,
-                "source_target_frame_count": len(frames),
-                "source_fps": fps,
-                "source_camera": video_key,
-                "decode_method": "pyav_http_target_clip",
-                "codebase_version": str(info.get("codebase_version", "v2.1")),
-            }
-            actions = item.get("actions") or []
-            if actions:
-                aligned = [list(a) for a in actions[: len(frames)]]
-                metadata["target_actions"] = aligned
-                metadata["action_keys"] = action_cols
-                metadata["action_dim"] = len(aligned[0]) if aligned else 0
-            yield {
-                "frames": frames,
-                "prompt": prompt,
-                "episode_id": f"{episode:06d}",
-                "metadata": metadata,
-            }
 
 
 def _iter_lerobot_v20_target_clips(
