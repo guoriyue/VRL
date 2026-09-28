@@ -52,7 +52,7 @@ def _signals(
 
 
 def _input(signals: TrajectorySignalBatch, advantages: torch.Tensor) -> AlgorithmInput:
-    return AlgorithmInput(rewards=None, group_ids=None, advantages=advantages, signals=signals)
+    return AlgorithmInput(advantages=advantages, signals=signals)
 
 
 def _on_policy_signals(n: int):

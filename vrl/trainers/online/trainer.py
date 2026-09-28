@@ -53,7 +53,6 @@ from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
-    from vrl.algorithms.trajectory import AlgorithmAdapter
     from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 
 logger = logging.getLogger(__name__)
@@ -778,8 +777,6 @@ class OnlineTrainer:
         group_batch: RolloutBatch,
         batch_advantages: torch.Tensor,
         timestep_index: int,
-        *,
-        algorithm_adapter: AlgorithmAdapter,
     ) -> tuple[torch.Tensor, TrainStepMetrics]:
         """Run the shared evaluator/algorithm decision for one replay timestep."""
 
@@ -790,11 +787,8 @@ class OnlineTrainer:
             # DiffusionNFT owns its raw transformer boundaries and applies the
             # resolved contract there; its objective reductions remain outside.
             with profile_range("trainer.loss"):
-                return algorithm_adapter.compute_loss(
-                    self.algorithm,
+                return self.algorithm.compute_loss(
                     AlgorithmInput(
-                        rewards=group_batch.rewards,
-                        group_ids=group_batch.group_ids,
                         advantages=batch_advantages,
                         model=self.model,
                         rollout_batch=group_batch,
@@ -808,13 +802,8 @@ class OnlineTrainer:
             need_ref=self._kl_coef > 0,
         )
         with profile_range("trainer.loss"):
-            loss, metrics = algorithm_adapter.compute_loss(
-                self.algorithm,
-                AlgorithmInput(
-                    signals=signals,
-                    advantages=batch_advantages,
-                    group_ids=group_batch.group_ids,
-                ),
+            loss, metrics = self.algorithm.compute_loss(
+                AlgorithmInput(signals=signals, advantages=batch_advantages),
             )
 
         # Parity is a trainer/evaluator fact, not an objective-specific metric.
@@ -1316,7 +1305,6 @@ class OnlineTrainer:
         *,
         total_groups: int,
         train_indices: list[int],
-        algorithm_adapter: AlgorithmAdapter,
         agg: _ReplayMetrics,
         capture_initial_replay: bool,
         defer_replay_tensors: bool,
@@ -1381,7 +1369,6 @@ class OnlineTrainer:
                         group_batch,
                         batch_adv,
                         j,
-                        algorithm_adapter=algorithm_adapter,
                     )
                     # Average across the complete optimizer target batch;
                     # step evaluators retain the per-denoise-step surrogate.
@@ -1467,7 +1454,6 @@ class OnlineTrainer:
         ``total_groups * num_replay_units`` so the accumulated gradient over
         all microbatches equals the legacy full-batch path.
         """
-        from vrl.algorithms.trajectory import AlgorithmAdapter
 
         cfg = self.config
         if cfg.profile:
@@ -1481,7 +1467,6 @@ class OnlineTrainer:
             return
         self._update_had_training_work = True
         uses_evaluator = self.algorithm.uses_evaluator
-        algorithm_adapter = AlgorithmAdapter()
         defer = uses_evaluator and bool(
             getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),
         )
@@ -1495,7 +1480,6 @@ class OnlineTrainer:
             batch.advantages,
             total_groups=int(total_groups),
             train_indices=train_indices,
-            algorithm_adapter=algorithm_adapter,
             agg=self._update_agg_metrics,
             capture_initial_replay=True,
             defer_replay_tensors=defer,
@@ -1585,7 +1569,6 @@ class OnlineTrainer:
         The schedule's post-update weight publication is asynchronous even though
         replay evaluation, backward, and the optimizer step are synchronous.
         """
-        from vrl.algorithms.trajectory import AlgorithmAdapter
 
         cfg = self.config
         optimizer = self._ensure_optimizer()
@@ -1611,7 +1594,6 @@ class OnlineTrainer:
         self.model.train()
         agg_metrics = _ReplayMetrics()
         uses_evaluator = self.algorithm.uses_evaluator
-        algorithm_adapter = AlgorithmAdapter()
 
         # If every batch was filtered out (all dead), skip training this step.
         # Unanimous across ranks (see all_ranks_true): a backward fires
@@ -1676,7 +1658,6 @@ class OnlineTrainer:
                     chunk_advs,
                     total_groups=len(chunk_batches),
                     train_indices=train_indices,
-                    algorithm_adapter=algorithm_adapter,
                     agg=agg_metrics,
                     capture_initial_replay=capture_initial_replay,
                     defer_replay_tensors=defer_replay_tensor_move,
