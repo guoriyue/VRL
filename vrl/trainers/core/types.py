@@ -108,12 +108,6 @@ class ContinuousRolloutConfig:
 
     max_inflight_groups: int = field(default=1)
     max_ready_bytes_mb: int = field(default=8192)
-    # Opt-in until the disjoint-GPU acceptance comparison passes.
-    split_generation_reward: bool = field(default=False)
-    # Reserve capacity before generation; retain it through reward completion.
-    max_unscored_groups: int = field(default=4)
-    max_unscored_bytes_mb: int = field(default=8192)
-    max_generated_group_bytes_mb: int = field(default=2048)
     max_stale_policy_versions: int = field(default=1)
     wait_timeout_s: float = field(default=300.0)
     queue_poll_interval_s: float = field(default=0.05)
@@ -125,24 +119,10 @@ class ContinuousRolloutConfig:
     fail_fast_errors: int = field(default=3)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.split_generation_reward, bool):
-            raise ValueError("continuous.split_generation_reward must be a bool")
         # Validate declared settings before projection. Containers additionally
         # check their own admission invariants when called independently.
         require_int(self.max_inflight_groups, path="continuous.max_inflight_groups", minimum=1)
         require_int(self.max_ready_bytes_mb, path="continuous.max_ready_bytes_mb", minimum=0)
-        require_int(self.max_unscored_groups, path="continuous.max_unscored_groups", minimum=1)
-        require_int(self.max_unscored_bytes_mb, path="continuous.max_unscored_bytes_mb", minimum=1)
-        require_int(
-            self.max_generated_group_bytes_mb,
-            path="continuous.max_generated_group_bytes_mb",
-            minimum=1,
-        )
-        if self.max_generated_group_bytes_mb > self.max_unscored_bytes_mb:
-            raise ValueError(
-                "continuous.max_generated_group_bytes_mb must be positive and fit "
-                "continuous.max_unscored_bytes_mb",
-            )
         require_int(
             self.max_stale_policy_versions,
             path="continuous.max_stale_policy_versions",

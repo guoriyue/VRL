@@ -58,10 +58,6 @@ class ContinuousRolloutSchedule:
         settings = ContinuousRolloutSettings(
             max_inflight_groups=config.max_inflight_groups,
             max_ready_bytes_mb=config.max_ready_bytes_mb,
-            split_generation_reward=config.split_generation_reward,
-            max_unscored_groups=config.max_unscored_groups,
-            max_unscored_bytes_mb=config.max_unscored_bytes_mb,
-            max_generated_group_bytes_mb=config.max_generated_group_bytes_mb,
             max_stale_policy_versions=config.max_stale_policy_versions,
             wait_timeout_s=config.wait_timeout_s,
             queue_poll_interval_s=config.queue_poll_interval_s,

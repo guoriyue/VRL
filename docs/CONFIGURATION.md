@@ -301,10 +301,10 @@ to the archived versions, not current launch entrypoints.
 Its `_ContinuousRolloutController` coordinates producer, queue, consumer,
 and weight synchronization on that loop.
 
-`ContinuousRolloutProducer` tracks each batch in `_PromptBatchProgress`
-and asynchronous tasks in `_running_tasks`. `PendingRewardCapacity`
-reserves group/byte capacity from generation admission through reward completion;
-it stores accounting, not rollout payloads.
+`ContinuousRolloutProducer` tracks the installed prompt batch in
+`_PromptBatchProgress` and asynchronous collect tasks in `_running_tasks`.
+Each task generates and scores one prompt group; the next batch is installed
+only after the trainer consumes the current one.
 
 Completed `ScoredRollout` records enter `ScoredRolloutQueue`.
 `ContinuousRolloutConsumer` retrieves the requested complete batch and returns

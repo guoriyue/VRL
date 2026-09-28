@@ -46,7 +46,7 @@ async def owner_snapshot(owner: ContinuousRolloutThread) -> OwnerSnapshot:
 
     async def _copy() -> OwnerSnapshot:
         producer = runtime.producer
-        active_prompt_batch = None if producer is None else producer._active_batch
+        active_prompt_batch = None if producer is None else producer._batch
         return OwnerSnapshot(
             producer_state=(None if producer is None else replace(producer.state)),
             queue_stats={} if runtime.queue is None else dict(runtime.queue.stats()),

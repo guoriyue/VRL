@@ -140,19 +140,6 @@ class _ContinuousRolloutController:
             assert self.producer is not None
             current_policy_version = self.lifecycle.current_policy_version()
             batch_id = self.producer.current_batch_id
-            prefetch_next_batch_early = self.settings.split_generation_reward
-            prefetched_prompt_batch: _SubmittedPromptBatch | None = None
-            if prefetch_next_batch_early and next_prompts is not None:
-                self.producer.append_prompt_batch(
-                    next_prompts,
-                    group_size=group_size,
-                    runtime_debug=runtime_debug,
-                )
-                assert self.queue is not None
-                self.queue.set_item_limit(len(prompts) + len(next_prompts))
-                prefetched_prompt_batch = _SubmittedPromptBatch(tuple(next_prompts), group_size)
-                self.producer.admit_now()
-
             iteration = await self.consumer.collect_iteration(
                 expected_group_count=len(prompts),
                 prompt_batch_id=batch_id,
@@ -162,13 +149,7 @@ class _ContinuousRolloutController:
                 producer_state=self.producer.state,
             )
             self._submitted_prompt_batch = None
-            prefetch_next_batch_requested = float(next_prompts is not None)
-            if prefetch_next_batch_early:
-                self.producer.consume_prompt_batch(batch_id)
-                self._submitted_prompt_batch = prefetched_prompt_batch
-                assert self.queue is not None
-                self.queue.set_item_limit(1 if next_prompts is None else len(next_prompts))
-            elif next_prompts is not None:
+            if next_prompts is not None:
                 # Debug metadata belongs to generation time. This prefetch runs
                 # during the current training step, even when the trainer consumes
                 # it after state.step (and therefore runtime_debug) changes.
@@ -181,7 +162,7 @@ class _ContinuousRolloutController:
             # Preserve the persisted metrics schema used by existing training logs.
             iteration.stats.observe_gauge(
                 "continuous.lookahead_requested",
-                prefetch_next_batch_requested,
+                float(next_prompts is not None),
             )
             self._attach_producer_metrics(iteration)
             return iteration
@@ -403,9 +384,6 @@ class _ContinuousRolloutController:
         if self.producer is None:
             return
         state = self.producer.state
-        iteration.stats.observe_gauges(
-            {f"continuous.{name}": value for name, value in self.producer.stage_stats().items()}
-        )
         iteration.stats.observe_gauges(
             {
                 "continuous.producer_inflight": float(self.producer.inflight_count),

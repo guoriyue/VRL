@@ -4,6 +4,10 @@
 [Stage contracts and baseline](../planned/SPRINT_continuous_stage_contracts_and_baseline.md)
 完成并给出可复用 identity/timing contract。
 
+**2026-09-27：已实现的 opt-in split 路径（`split_generation_reward`、`PendingRewardCapacity`、
+多批窗口与提前 preview）按 [过度设计审计](../planned/SPRINT_overengineering_audit.md) §2 第 3 条删除**：
+没有任何 preset 打开它，验收 A/B 从未完成。重启本 sprint 时从 `c81ea331` 的实现恢复。
+
 父 program：[Continuous three-stage pipeline](../planned/SPRINT_continuous_three_stage_pipeline_program.md)
 
 ## 0. 结论先行

@@ -23,10 +23,6 @@ class ContinuousRolloutSettings:
     """
 
     max_inflight_groups: int
-    split_generation_reward: bool
-    max_unscored_groups: int
-    max_unscored_bytes_mb: int
-    max_generated_group_bytes_mb: int
     max_ready_bytes_mb: int
     max_stale_policy_versions: int
     wait_timeout_s: float
