@@ -47,41 +47,37 @@ class DistributedGenerationPlan:
     assignments: tuple[DeviceAssignment, ...]
 
 
-class DistributedExecutionPlanner:
+def plan_with_engine(
+    request: GenerationRequest,
+    engine_ids: Sequence[str],
+) -> DistributedGenerationPlan:
     """Plan batch placement across generation engines: round-robin at plan time."""
 
-    def plan_with_engine(
-        self,
-        request: GenerationRequest,
-        engine_ids: Sequence[str],
-    ) -> DistributedGenerationPlan:
-        if isinstance(engine_ids, (str, bytes)):
-            raise ValueError(
-                "DistributedExecutionPlanner engine IDs must be a sequence of strings"
-            )
-        engine_ids = tuple(engine_ids)
-        if not engine_ids:
-            raise ValueError("DistributedExecutionPlanner requires at least one engine")
-        if any(not isinstance(engine_id, str) or not engine_id for engine_id in engine_ids):
-            raise ValueError("DistributedExecutionPlanner engine IDs must be non-empty strings")
-        if len(set(engine_ids)) != len(engine_ids):
-            raise ValueError("DistributedExecutionPlanner engine IDs must be unique")
-        engine_plan = EnginePlan.from_request(request)
-        assignments = tuple(
-            DeviceAssignment(
-                engine_id=engine_ids[idx % len(engine_ids)],
-                envelope=GenerationBatchEnvelope(request=request, batch=batch),
-            )
-            for idx, batch in enumerate(engine_plan.sample_batches)
+    if isinstance(engine_ids, (str, bytes)):
+        raise ValueError("generation placement engine IDs must be a sequence of strings")
+    engine_ids = tuple(engine_ids)
+    if not engine_ids:
+        raise ValueError("generation placement requires at least one engine")
+    if any(not isinstance(engine_id, str) or not engine_id for engine_id in engine_ids):
+        raise ValueError("generation placement engine IDs must be non-empty strings")
+    if len(set(engine_ids)) != len(engine_ids):
+        raise ValueError("generation placement engine IDs must be unique")
+    engine_plan = EnginePlan.from_request(request)
+    assignments = tuple(
+        DeviceAssignment(
+            engine_id=engine_ids[idx % len(engine_ids)],
+            envelope=GenerationBatchEnvelope(request=request, batch=batch),
         )
-        return DistributedGenerationPlan(
-            engine_plan=engine_plan,
-            assignments=assignments,
-        )
+        for idx, batch in enumerate(engine_plan.sample_batches)
+    )
+    return DistributedGenerationPlan(
+        engine_plan=engine_plan,
+        assignments=assignments,
+    )
 
 
 __all__ = [
     "DeviceAssignment",
-    "DistributedExecutionPlanner",
     "DistributedGenerationPlan",
+    "plan_with_engine",
 ]

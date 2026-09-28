@@ -9,7 +9,6 @@ from dataclasses import replace
 from functools import partial
 from typing import Any
 
-from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
 from vrl.generation.execution.rank_group import RankGroupSpec
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.engine import RayGenerationEngine
@@ -231,7 +230,6 @@ class RayGenerationLauncher:
                 finalizer_handles = list(finalizer_group.handles)
 
             executor = RayGenerationExecutor(
-                DistributedExecutionPlanner(),
                 engines,
                 launch_inputs.gatherer,
                 actor_dispatcher=actor_dispatcher,

@@ -21,7 +21,6 @@ from typing import Any
 
 import pytest
 
-from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
 from vrl.generation.execution.types import (
     GenerationBatchEnvelope,
     GenerationBatchResult,
@@ -100,7 +99,6 @@ def _executor(ray: Any) -> tuple[RayGenerationExecutor, list[Any]]:
         for worker_id, actor in zip(("w0", "w1"), actors, strict=True)
     ]
     executor = RayGenerationExecutor(
-        DistributedExecutionPlanner(),
         engines,
         _ListGatherer(),
         actor_dispatcher=RayActorDispatcher(("w0", "w1")),

@@ -34,7 +34,6 @@ from vrl.ray.operation_deadline import (
 
 def _executor(*, timeout_s: float = 1.0) -> RayGenerationExecutor:
     return RayGenerationExecutor(
-        planner=object(),
         engines=[
             RayGenerationEngine(
                 "w0",

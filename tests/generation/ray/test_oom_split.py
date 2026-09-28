@@ -11,11 +11,6 @@ import pytest
 import torch
 
 from tests.generation.ray._helpers import FakeRayActor
-from vrl.generation.execution.batch_placement import (
-    DeviceAssignment,
-    DistributedGenerationPlan,
-)
-from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
     BatchMemoryReading,
@@ -99,32 +94,6 @@ class _CapacityWorker:
         return list(self.executed)
 
 
-@dataclass
-class _StaticPlanner:
-    """Plan one static assignment per provided batch."""
-
-    batches: list[GenerationSampleBatch]
-    strategy: str = "static"
-
-    def plan_with_engine(
-        self,
-        request: GenerationRequest,
-        worker_ids: list[str],
-    ) -> DistributedGenerationPlan:
-        assignments = tuple(
-            DeviceAssignment(
-                engine_id=worker_ids[index % len(worker_ids)],
-                envelope=GenerationBatchEnvelope(
-                    request=request,
-                    batch=batch,
-                ),
-            )
-            for index, batch in enumerate(self.batches)
-        )
-        engine_plan = EnginePlan.from_request(request)
-        return DistributedGenerationPlan(engine_plan=engine_plan, assignments=assignments)
-
-
 class _CoverageGatherer:
     """Assert sample coverage by batch metadata, using the shared coverage validator."""
 
@@ -165,7 +134,6 @@ def _request(
 
 
 def _executor(
-    batches: list[GenerationSampleBatch],
     workers: list[_CapacityWorker],
 ) -> tuple[RayGenerationExecutor, list[RayActorHandle]]:
     engines = [
@@ -181,7 +149,6 @@ def _executor(
         for worker in workers
     ]
     executor = RayGenerationExecutor(
-        planner=_StaticPlanner(batches=batches),
         engines=engines,
         gatherer=_CoverageGatherer(),
         actor_dispatcher=RayActorDispatcher(
@@ -215,7 +182,7 @@ async def test_failed_gather_rejects_misaligned_media_references() -> None:
             )
             return result
 
-    executor, _ = _executor([GenerationSampleBatch(0, 0, 1)], [MalformedMediaWorker("w0", 1)])
+    executor, _ = _executor([MalformedMediaWorker("w0", 1)])
     executor.gatherer = DenoiseBatchGatherer()
     request = replace(_request(1), reward_media_refs=True)
     with pytest.raises(ValueError, match="has 2 rows, expected 1"):
@@ -261,9 +228,6 @@ async def test_nonprimary_oom_retries_whole_engine_and_reports_every_rank() -> N
     ]
     engine = RayGenerationEngine("engine", ranks)
     executor = RayGenerationExecutor(
-        planner=_StaticPlanner(
-            [GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=4)]
-        ),
         engines=[engine],
         gatherer=_CoverageGatherer(),
         actor_dispatcher=RayActorDispatcher(("engine",)),
@@ -285,9 +249,8 @@ async def test_nonprimary_oom_retries_whole_engine_and_reports_every_rank() -> N
 async def test_oom_chunk_splits_until_it_fits() -> None:
     """An 8-sample batch on a 2-sample worker degrades to four 2-sample batches."""
 
-    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=8)
     worker = _CapacityWorker(worker_id="w0", max_samples=2)
-    executor, _ = _executor([batch], [worker])
+    executor, _ = _executor([worker])
 
     output = await executor.execute(_request(8, runtime_debug=True))
 
@@ -310,9 +273,8 @@ async def test_oom_chunk_splits_until_it_fits() -> None:
 async def test_single_sample_oom_still_raises() -> None:
     """A batch that OOMs at one sample is a hard failure, not an infinite loop."""
 
-    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=4)
     worker = _CapacityWorker(worker_id="w0", max_samples=0)
-    executor, _ = _executor([batch], [worker])
+    executor, _ = _executor([worker])
 
     with pytest.raises(RuntimeError, match="out of memory"):
         await executor.execute(_request(4))
@@ -328,7 +290,7 @@ async def test_non_oom_error_is_not_retried() -> None:
         max_samples=2,
         fail_message="ValueError: bad scheduler state",
     )
-    executor, _ = _executor([batch], [worker])
+    executor, _ = _executor([worker])
 
     with pytest.raises(RuntimeError, match="bad scheduler state"):
         await executor.execute(_request(4))
@@ -339,14 +301,10 @@ async def test_non_oom_error_is_not_retried() -> None:
 async def test_healthy_chunks_skip_degradation_path() -> None:
     """No OOM: results and telemetry are exactly the pre-split behavior."""
 
-    batches = [
-        GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=2),
-        GenerationSampleBatch(prompt_index=0, sample_start=2, sample_count=2),
-    ]
     worker = _CapacityWorker(worker_id="w0", max_samples=2)
-    executor, _ = _executor(batches, [worker])
+    executor, _ = _executor([worker])
 
-    output = await executor.execute(_request(4))
+    output = await executor.execute(_request(4, samples_per_generation_batch=2))
 
     assert len(output.output) == 2
     assert output.runtime_debug is None
@@ -360,7 +318,7 @@ async def test_result_request_id_must_match_submitted_envelope() -> None:
         max_samples=2,
         request_id_override="wrong-request",
     )
-    executor, _ = _executor([batch], [worker])
+    executor, _ = _executor([worker])
 
     with pytest.raises(RuntimeError, match="request_id mismatch"):
         await executor.execute(_request(2))
@@ -412,7 +370,6 @@ async def test_stale_slot_routes_to_graceful_discard_not_failure() -> None:
     batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=2)
     worker = _StaleSlotWorker(worker_id="w0")
     executor = RayGenerationExecutor(
-        planner=_StaticPlanner(batches=[batch]),
         engines=[
             RayGenerationEngine(
                 worker.worker_id,
@@ -462,7 +419,7 @@ async def test_slot_evicted_during_oom_retry_discards_request() -> None:
 
     batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=4)
     worker = EvictedAfterOOMWorker(worker_id="w0")
-    executor, _ = _executor([batch], [worker])
+    executor, _ = _executor([worker])
 
     with pytest.raises(StaleSlotDiscard, match="policy_version=7"):
         await executor.execute(_versioned_request(4, version=7))
@@ -557,7 +514,7 @@ class _RoutingFinalizer:
         )
 
 
-def _routing_executor(batches, workers, *, pipelined, finalizer=None):
+def _routing_executor(workers, *, pipelined, finalizer=None):
     engines = [
         RayGenerationEngine(
             w.worker_id,
@@ -585,7 +542,6 @@ def _routing_executor(batches, workers, *, pipelined, finalizer=None):
             ),
         ]
     return RayGenerationExecutor(
-        planner=_StaticPlanner(batches=batches),
         engines=engines,
         gatherer=_CoverageGatherer(),
         actor_dispatcher=RayActorDispatcher(
@@ -603,12 +559,9 @@ async def test_pipelined_routes_single_worker_to_per_request_path() -> None:
     path (execute_request_batches) and its staged references are merged by
     the finalizer, NOT per-batch dispatch and NOT a driver-side gather."""
 
-    batches = [
-        GenerationSampleBatch(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(2)
-    ]
     worker = _RoutingWorker(worker_id="w0")
     finalizer = _RoutingFinalizer()
-    executor = _routing_executor(batches, [worker], pipelined=True, finalizer=finalizer)
+    executor = _routing_executor([worker], pipelined=True, finalizer=finalizer)
 
     output = await executor.execute(_request(4, samples_per_generation_batch=2))
 
@@ -624,12 +577,9 @@ async def test_pipelined_splits_batches_over_engines_and_merges_once() -> None:
     """Every engine runs its round-robin share in one call; the finalizer
     receives the references in plan order regardless of which engine staged them."""
 
-    batches = [
-        GenerationSampleBatch(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(4)
-    ]
     workers = [_RoutingWorker(worker_id=f"w{i}") for i in range(2)]
     finalizer = _RoutingFinalizer()
-    executor = _routing_executor(batches, workers, pipelined=True, finalizer=finalizer)
+    executor = _routing_executor(workers, pipelined=True, finalizer=finalizer)
 
     output = await executor.execute(_request(8, samples_per_generation_batch=2))
 
@@ -654,7 +604,7 @@ async def test_pipelined_oom_on_one_engine_retries_the_request_per_batch() -> No
     ]
     workers = [_RoutingWorker(worker_id="w0"), _RoutingWorker(worker_id="w1", pipeline_oom=True)]
     finalizer = _RoutingFinalizer()
-    executor = _routing_executor(batches, workers, pipelined=True, finalizer=finalizer)
+    executor = _routing_executor(workers, pipelined=True, finalizer=finalizer)
 
     output = await executor.execute(_request(8, samples_per_generation_batch=2))
 
@@ -667,9 +617,6 @@ async def test_pipelined_oom_on_one_engine_retries_the_request_per_batch() -> No
 
 
 def test_pipelined_requires_a_finalizer_at_executor_construction() -> None:
-    batches = [
-        GenerationSampleBatch(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(2)
-    ]
     worker = _RoutingWorker(worker_id="w0")
     engine = RayGenerationEngine(
         "w0",
@@ -677,7 +624,6 @@ def test_pipelined_requires_a_finalizer_at_executor_construction() -> None:
     )
     with pytest.raises(ValueError, match="requires at least one finalizer"):
         RayGenerationExecutor(
-            planner=_StaticPlanner(batches=batches),
             engines=[engine],
             gatherer=_CoverageGatherer(),
             actor_dispatcher=RayActorDispatcher(("w0",)),
@@ -690,9 +636,8 @@ def test_pipelined_requires_a_finalizer_at_executor_construction() -> None:
 async def test_pipelined_uses_per_chunk_path_for_one_chunk() -> None:
     """A one-batch request has nothing to overlap and keeps OOM admission."""
 
-    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=4)
     worker = _RoutingWorker(worker_id="w0", max_samples=2)
-    executor = _routing_executor([batch], [worker], pipelined=True)
+    executor = _routing_executor([worker], pipelined=True)
 
     output = await executor.execute(_request(4))
 
@@ -706,15 +651,12 @@ async def test_pipelined_uses_per_chunk_path_for_one_chunk() -> None:
 
 @pytest.mark.asyncio
 async def test_pipelined_oom_retries_through_per_chunk_split_admission() -> None:
-    batches = [
-        GenerationSampleBatch(prompt_index=0, sample_start=i * 4, sample_count=4) for i in range(2)
-    ]
     worker = _RoutingWorker(
         worker_id="w0",
         max_samples=2,
         pipeline_oom=True,
     )
-    executor = _routing_executor(batches, [worker], pipelined=True)
+    executor = _routing_executor([worker], pipelined=True)
 
     output = await executor.execute(_request(8, samples_per_generation_batch=4))
 
@@ -737,14 +679,11 @@ async def test_pipelined_oom_retries_through_per_chunk_split_admission() -> None
 
 @pytest.mark.asyncio
 async def test_pipelined_result_request_id_must_match_request() -> None:
-    batches = [
-        GenerationSampleBatch(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(2)
-    ]
     worker = _RoutingWorker(
         worker_id="w0",
         pipeline_request_id_override="wrong-request",
     )
-    executor = _routing_executor(batches, [worker], pipelined=True)
+    executor = _routing_executor([worker], pipelined=True)
 
     with pytest.raises(RuntimeError, match="request_id mismatch"):
         await executor.execute(_request(4, samples_per_generation_batch=2))
@@ -755,15 +694,12 @@ async def test_pipelined_result_request_id_must_match_request() -> None:
 
 @pytest.mark.asyncio
 async def test_pipelined_oom_worker_id_must_match_actor() -> None:
-    batches = [
-        GenerationSampleBatch(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(2)
-    ]
     worker = _RoutingWorker(
         worker_id="w0",
         pipeline_oom=True,
         pipeline_worker_id_override="wrong-worker",
     )
-    executor = _routing_executor(batches, [worker], pipelined=True)
+    executor = _routing_executor([worker], pipelined=True)
 
     with pytest.raises(RuntimeError, match="rank mismatch"):
         await executor.execute(_request(4, samples_per_generation_batch=2))
@@ -778,7 +714,7 @@ async def test_default_uses_per_chunk_path() -> None:
 
     batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=4)
     worker = _RoutingWorker(worker_id="w0")
-    executor = _routing_executor([batch], [worker], pipelined=False)
+    executor = _routing_executor([worker], pipelined=False)
 
     await executor.execute(_request(4))
 
@@ -809,7 +745,7 @@ async def test_executor_logs_measured_batch_memory(with_reading, caplog, monkeyp
         return result
 
     monkeypatch.setattr(worker, "execute_batch", execute_with_memory)
-    executor, _ = _executor([batch], [worker])
+    executor, _ = _executor([worker])
     with caplog.at_level("INFO", logger="vrl.generation.ray.executor"):
         await executor.execute(_request(1))
     messages = [
@@ -852,7 +788,6 @@ def test_real_multirank_nonprimary_failure_reaches_driver(local_ray, failure):
         [RayActorHandle(worker_id=f"r{index}", actor=actor) for index, actor in enumerate(actors)],
     )
     executor = RayGenerationExecutor(
-        planner=_StaticPlanner([GenerationSampleBatch(0, 0, 8)]),
         engines=[engine],
         gatherer=_CoverageGatherer(),
         actor_dispatcher=RayActorDispatcher(("engine",)),

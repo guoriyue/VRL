@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
-from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
+from vrl.generation.execution.batch_placement import plan_with_engine
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import (
     GenerationBatchEnvelope,
@@ -54,7 +54,6 @@ class RayGenerationExecutor:
 
     def __init__(
         self,
-        planner: DistributedExecutionPlanner,
         engines: list[RayGenerationEngine],
         gatherer: GenerationBatchGatherer,
         *,
@@ -65,7 +64,6 @@ class RayGenerationExecutor:
     ) -> None:
         if not engines:
             raise ValueError("RayGenerationExecutor requires at least one engine")
-        self.planner = planner
         self.engines = list(engines)
         self.gatherer = gatherer
         expected_engine_ids = tuple(engine.engine_id for engine in self.engines)
@@ -144,7 +142,7 @@ class RayGenerationExecutor:
         _gen_start = time.perf_counter()
         sample_rows = request.sample_rows()
         with profile_range("engine.plan"):
-            generation_plan = self.planner.plan_with_engine(
+            generation_plan = plan_with_engine(
                 request,
                 tuple(engine.engine_id for engine in self.engines),
             )

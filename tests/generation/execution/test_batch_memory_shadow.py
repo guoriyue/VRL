@@ -71,10 +71,10 @@ def _request() -> GenerationRequest:
 
 @pytest.mark.parametrize("engine_ids", ["w0", b"w0", [1], [b"worker-0"], [["worker-0"]]])
 def test_planner_rejects_invalid_engine_id_types_before_batch_planning(engine_ids) -> None:
-    from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
+    from vrl.generation.execution.batch_placement import plan_with_engine
 
     with pytest.raises(ValueError, match="engine IDs"):
-        DistributedExecutionPlanner().plan_with_engine(_request(), engine_ids)
+        plan_with_engine(_request(), engine_ids)
 
 
 # -- worker wire contract (readings cross ungated) -----------------------------
