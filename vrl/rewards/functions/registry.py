@@ -14,7 +14,6 @@ resolved device inside its own memory frame.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -125,8 +124,6 @@ class MultiReward(RewardFunction):
             raise ValueError("reward component names must be non-empty strings")
         if len(set(names)) != len(names):
             raise ValueError("reward component names must be unique")
-        if any(not math.isfinite(weight) for _, weight, _ in rewards):
-            raise ValueError("reward component weights must be finite")
         self.rewards = rewards
         # Composite teardown is retryable: remember children whose shutdown
         # already succeeded so a retry reaches only the ones that actually
@@ -196,8 +193,6 @@ class MultiReward(RewardFunction):
         _register_builtins()
         reward_kwargs = reward_kwargs or {}
         configured_weights = {name: float(weight) for name, weight in score_dict.items()}
-        if any(not math.isfinite(weight) for weight in configured_weights.values()):
-            raise ValueError("reward component weights must be finite")
         reward_classes = {name: get_reward(name) for name in configured_weights}
         resolved_inference_configs: Mapping[str, RewardInferenceConfig] = (
             {name: RewardInferenceConfig(kind="in_process") for name in configured_weights}
@@ -310,11 +305,6 @@ class MultiReward(RewardFunction):
         component_names = {name for name, _, _ in self.rewards}
         for name, weight, fn in self.rewards:
             output = await fn.score_batch(samples)
-            if len(output.scores) != len(samples):
-                raise ValueError(
-                    f"reward component {name!r} returned wrong number of scores: "
-                    f"scores={len(output.scores)}, samples={len(samples)}",
-                )
             components[name] = output.scores
             for axis, values in output.components.items():
                 key = f"{name}/{axis}"

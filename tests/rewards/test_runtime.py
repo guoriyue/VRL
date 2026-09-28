@@ -95,19 +95,17 @@ async def test_function_runtime_returns_the_function_output_directly() -> None:
 
 
 @pytest.mark.asyncio
-async def test_function_runtime_validates_sample_and_score_alignment() -> None:
-    class _ShortReward(RewardFunction):
+async def test_function_runtime_rejects_empty_and_duplicate_samples() -> None:
+    class _ZeroReward(RewardFunction):
         async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
-            return RewardOutput(scores=())
+            return RewardOutput(scores=(0.0,) * len(samples))
 
-    runtime = RewardFunctionRuntime(_ShortReward())
+    runtime = RewardFunctionRuntime(_ZeroReward())
     with pytest.raises(ValueError, match="at least one sample"):
         await runtime.score(())
     sample = _sample()
     with pytest.raises(ValueError, match="sample_id values must be unique"):
         await runtime.score((sample, sample))
-    with pytest.raises(ValueError, match="wrong number of scores"):
-        await runtime.score((sample,))
 
 
 @pytest.mark.asyncio

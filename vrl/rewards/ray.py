@@ -144,7 +144,7 @@ class _RewardActor:
             raise
 
     def score_batch(self, request: RewardInferenceRequest) -> list[RewardInferenceResult]:
-        return request.validate_and_order_results(self._run("score_batch", request))
+        return self._run("score_batch", request)
 
     def activate(self) -> None:
         self._run("activate")
@@ -359,8 +359,7 @@ class RayRewardScorer:
     async def score_batch(self, request: RewardInferenceRequest) -> list[RewardInferenceResult]:
         if not isinstance(request, RewardInferenceRequest):
             raise TypeError("Ray reward score_batch requires RewardInferenceRequest")
-        results = await self._execute("score_batch", request)
-        return request.validate_and_order_results(results)
+        return await self._execute("score_batch", request)
 
     async def shutdown(self) -> None:
         self.lifecycle.begin_shutdown()

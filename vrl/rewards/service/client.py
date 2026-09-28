@@ -159,7 +159,6 @@ class HttpRewardScorer:
                 body,
                 expected_request_id=request.request_id,
             )
-            validated = request.validate_and_order_results(results)
             roundtrip_ms = (time.perf_counter() - roundtrip_started) * 1000.0
             return [
                 replace(
@@ -169,7 +168,7 @@ class HttpRewardScorer:
                         "http_roundtrip_ms": roundtrip_ms,
                     },
                 )
-                for result in validated
+                for result in results
             ]
         except RewardServiceProtocolError as error:
             raise RemoteRewardServiceError(

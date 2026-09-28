@@ -584,8 +584,6 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         raise ValueError("evaluation policy must select reward.components")
     reward = {key: reward.get(key) or {} for key in ("components", "kwargs", "inference")}
     RewardConfig.model_validate(reward)
-    if any(not math.isfinite(float(weight)) for weight in reward["components"].values()):
-        raise ValueError("evaluation reward weights must be finite")
     if "total" in reward["components"]:
         raise ValueError("reward component name 'total' is reserved for the weighted score")
     # Keep destinations out of the semantic policy. Evaluation owns every debug

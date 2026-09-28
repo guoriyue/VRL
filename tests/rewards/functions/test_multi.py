@@ -11,7 +11,6 @@ from vrl.rewards.base import (
     RewardCleanupError,
     RewardFunction,
 )
-from vrl.rewards.functions import registry as reward_registry
 from vrl.rewards.functions.registry import (
     MultiReward,
 )
@@ -789,17 +788,9 @@ def test_every_model_reward_can_run_as_a_ray_actor(tmp_path, name, device, kwarg
     )
 
 
-def test_nonfinite_weights_fail_before_reward_construction(monkeypatch) -> None:
+def test_reward_config_rejects_nonfinite_weights() -> None:
     from vrl.config.schema import RewardConfig
 
-    def unexpected_factory(name):
-        raise AssertionError(f"invalid weights reached reward construction: {name}")
-
-    monkeypatch.setattr(reward_registry, "get_reward", unexpected_factory)
     for weight in (float("nan"), float("inf")):
         with pytest.raises(ValueError, match="finite"):
             RewardConfig(components={"image_sharpness": weight})
-        with pytest.raises(ValueError, match="finite"):
-            MultiReward.from_dict({"image_sharpness": weight})
-    with pytest.raises(ValueError, match="finite"):
-        MultiReward([("invalid", float("nan"), _QueuedBatchReward([]))])

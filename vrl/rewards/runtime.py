@@ -144,11 +144,6 @@ class RewardFunctionRuntime:
                     raise deadline.timeout_error() from cause
                 if not isinstance(output, RewardOutput):
                     raise TypeError("reward function score_batch() must return RewardOutput")
-                if len(output.scores) != len(normalized):
-                    raise ValueError(
-                        "reward function returned wrong number of scores: "
-                        f"scores={len(output.scores)}, samples={len(normalized)}",
-                    )
             except BaseException as error:
                 operation_error = error
 

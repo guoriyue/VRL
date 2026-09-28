@@ -176,11 +176,12 @@ class RewardInferenceRequest:
     ) -> list[RewardInferenceResult]:
         """Validate one finite result per artifact and restore request order.
 
-        Every transport (in-process, Ray, HTTP client, HTTP server) runs scored
-        results through this before handing them back, so a scorer that drops,
-        duplicates, invents, or mistypes a result fails at the boundary it
-        crossed. The request owns the check because the request defines the
-        expected identity set and order.
+        ``InferenceRewardFunction.score_batch`` runs every scorer's results
+        through this once, whatever the transport, so a scorer that drops,
+        duplicates, invents, or mistypes a result fails there. Callers that
+        drive a scorer directly (offline evaluation) call it themselves. The
+        request owns the check because the request defines the expected identity
+        set and order.
         """
 
         expected_ids = [artifact.artifact_id for artifact in self.artifacts]

@@ -510,7 +510,6 @@ class RewardService:
             inference_started = time.perf_counter()
             results = list(await self._owner.score_batch(request))
             service_inference_wall_ms = (time.perf_counter() - inference_started) * 1000.0
-            results = request.validate_and_order_results(results)
             revalidation_started = time.perf_counter()
             _, current_auxiliary = await self._validate_artifact_paths(request)
             if current_auxiliary != auxiliary_sha256:
