@@ -29,7 +29,6 @@ from vrl.models.interfaces.generation_memory import (
     VaeDecodeMemory,
 )
 from vrl.models.interfaces.runtime import ModelBuild
-from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
@@ -442,7 +441,7 @@ def test_all_registry_entries_build_collectors_from_the_same_entry() -> None:
     for entry in FAMILY_REGISTRY.values():
         collector = RolloutCollector.from_family(
             entry,
-            reward_runtime=RewardFunctionRuntime(None),
+            reward_runtime=SimpleNamespace(),
             config=RolloutCollectorConfig(samples_per_generation_batch=1),
         )
         assert collector.request_builder.entry is entry

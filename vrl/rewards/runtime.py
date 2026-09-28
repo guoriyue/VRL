@@ -63,12 +63,12 @@ class RewardFunctionRuntime:
 
     def __init__(
         self,
-        reward_function: RewardFunction | None,
+        reward_function: RewardFunction,
         *,
         score_timeout_s: float = _DEFAULT_SCORE_TIMEOUT_S,
     ) -> None:
-        if reward_function is not None and not isinstance(reward_function, RewardFunction):
-            raise TypeError("reward_function must be a RewardFunction or None")
+        if not isinstance(reward_function, RewardFunction):
+            raise TypeError("reward_function must be a RewardFunction")
         self._reward_function = reward_function
         self._score_timeout_s = require_timeout(score_timeout_s, name="score_timeout_s")
         self._operation_lock = asyncio.Lock()
@@ -81,35 +81,27 @@ class RewardFunctionRuntime:
     def scoring_is_nonblocking(self) -> bool:
         """Whether scoring yields while every configured component executes."""
 
-        reward_function = self._reward_function
-        return bool(reward_function is not None and reward_function.scoring_is_nonblocking)
+        return self._reward_function.scoring_is_nonblocking
 
     @property
     def external_accelerator_isolation_verified(self) -> bool:
         """Whether out-of-plan reward accelerator work is isolated."""
 
-        reward_function = self._reward_function
-        return bool(
-            reward_function is None or reward_function.external_accelerator_isolation_verified
-        )
+        return self._reward_function.external_accelerator_isolation_verified
 
     async def preflight(self) -> None:
         """Validate the wrapped reward function before scoring begins."""
 
         async with self._operation_lock:
             self.lifecycle.require_running("preflight")
-            reward_function = self._reward_function
-            if reward_function is not None:
-                await reward_function.preflight()
+            await self._reward_function.preflight()
 
     async def activate(self) -> None:
         """Pre-warm reward model ownership at a GPU handoff."""
 
         async with self._operation_lock:
             self.lifecycle.require_running("activate")
-            reward_function = self._reward_function
-            if reward_function is not None:
-                await reward_function.activate()
+            await self._reward_function.activate()
 
     async def score(
         self,
@@ -129,31 +121,27 @@ class RewardFunctionRuntime:
             sample_ids = [sample.sample_id for sample in normalized]
             if len(set(sample_ids)) != len(sample_ids):
                 raise ValueError("reward runtime sample_id values must be unique")
-            reward_function = self._reward_function
             output: RewardOutput | None = None
             operation_error: BaseException | None = None
             try:
-                if reward_function is None:
-                    output = RewardOutput(scores=(0.0,) * len(normalized))
-                else:
-                    # The deadline preempts every awaitable transport (HTTP
-                    # service round-trips, overlapped async scoring) and raises
-                    # the shared terminal OperationTimeout. A component that
-                    # blocks the event loop in synchronous model code cannot be
-                    # preempted in-process — like a launched CUDA kernel, its
-                    # bound is process supervision, not this timer.
-                    deadline = OperationDeadline(
-                        "reward.score",
-                        self._score_timeout_s,
-                        context=f"samples={len(normalized)}",
+                # The deadline preempts every awaitable transport (HTTP
+                # service round-trips, overlapped async scoring) and raises
+                # the shared terminal OperationTimeout. A component that
+                # blocks the event loop in synchronous model code cannot be
+                # preempted in-process — like a launched CUDA kernel, its
+                # bound is process supervision, not this timer.
+                deadline = OperationDeadline(
+                    "reward.score",
+                    self._score_timeout_s,
+                    context=f"samples={len(normalized)}",
+                )
+                try:
+                    output = await asyncio.wait_for(
+                        self._reward_function.score_batch(normalized),
+                        timeout=deadline.remaining_s(),
                     )
-                    try:
-                        output = await asyncio.wait_for(
-                            reward_function.score_batch(normalized),
-                            timeout=deadline.remaining_s(),
-                        )
-                    except TimeoutError as cause:
-                        raise deadline.timeout_error() from cause
+                except TimeoutError as cause:
+                    raise deadline.timeout_error() from cause
                 if not isinstance(output, RewardOutput):
                     raise TypeError("reward function score_batch() must return RewardOutput")
                 if len(output.scores) != len(normalized):
@@ -198,15 +186,7 @@ class RewardFunctionRuntime:
         *,
         required: bool,
     ) -> None:
-        reward_function = self._reward_function
-        if reward_function is None:
-            if required:
-                raise RuntimeError(
-                    "shared reward topology requires an active memory-parking owner, "
-                    "but no reward function is configured",
-                )
-            return
-        parked = await reward_function.park_memory()
+        parked = await self._reward_function.park_memory()
         if not isinstance(parked, bool):
             raise TypeError("reward function park_memory() must return bool")
         if required and not parked:
@@ -223,13 +203,11 @@ class RewardFunctionRuntime:
             if self.lifecycle.phase is RuntimePhase.TERMINATED:
                 return
             self.lifecycle.begin_shutdown()
-            reward_function = self._reward_function
-            if reward_function is not None:
-                try:
-                    await reward_function.shutdown()
-                except BaseException as error:
-                    self.lifecycle.fail(error)
-                    raise
+            try:
+                await self._reward_function.shutdown()
+            except BaseException as error:
+                self.lifecycle.fail(error)
+                raise
             self.lifecycle.finish_shutdown()
 
 
