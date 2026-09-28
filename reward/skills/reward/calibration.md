@@ -1,9 +1,8 @@
-# Preference calibration and the deployment receipt
+# Preference calibration
 
-Use this when a training reward should be a *fitted combination* of several
-scored axes, or when a training run must be bound to exactly the scoring that
-was validated offline. It does not decide whether a single judge is good --
-that is the qualification card.
+Use this when a reward should be a *fitted combination* of several scored axes.
+It does not decide whether a single judge is good -- that is the qualification
+card.
 
 ## 1. Collect human preferences blind
 
@@ -32,25 +31,3 @@ Independent scorers join without rescoring: `--component semantic=DIR_A
 --component locality=DIR_B --axes semantic/editreward locality/locality`; the
 holdout uses the same aliases. Fix hyperparameters before reading holdout.
 `apply` scores a new snapshot with the frozen weights, no labels needed.
-
-## 3. Qualify for training (the receipt)
-
-`qualify` re-scores the saved images through training's HTTP adapters, checks
-every mapped raw axis matches within tolerance, and writes a deployment receipt:
-```bash
-python -m reward qualify --component semantic=DIR_A --component locality=DIR_B \
-  --combination reports/frozen-combination.json --reward-config deployment/reward.yaml \
-  --axis-mapping deployment/axis-mapping.json --atol 1e-6 --rtol 0 --output reports/reward-deployment.json
-```
-`deployment/reward.yaml` is a reward section (no `reward:` key) with unit component
-weights and the intended `inference`; the mapping is `{"semantic/editreward":
-"editreward/editreward", ...}`. Then in the training config:
-```yaml
-reward:
-  calibration:
-    deployment_path: outputs/reports/reward-deployment.json
-```
-`RewardDeployment.load` refuses a receipt whose recipe differs from the resolved
-reward config. Limits: HTTP services and single float32 RGB/RGBA images only. The
-receipt binds *what* is scored, not whether it is right: passing it supplies no
-labels and no evidence that optimising the objective improves outputs.

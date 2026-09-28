@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import subprocess
+import sys
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -49,6 +51,26 @@ def test_rewards_layer_does_not_import_generation_rollout_or_training_layers() -
         ),
     )
     assert not violations, _format_violations(violations)
+
+
+def test_importing_rewards_loads_no_generation_rollout_or_training_layer() -> None:
+    """The direct-import scan above cannot see a leak through ``vrl.config``;
+    import every reward module and inspect what actually loaded.
+    """
+    code = (
+        "import importlib, pkgutil, sys, vrl.rewards\n"
+        "for info in pkgutil.walk_packages(vrl.rewards.__path__, 'vrl.rewards.'):\n"
+        "    importlib.import_module(info.name)\n"
+        "print('\\n'.join(sys.modules))\n"
+    )
+    loaded = subprocess.run(
+        [sys.executable, "-c", code], cwd=ROOT, check=True, capture_output=True, text=True
+    ).stdout.split()
+    forbidden = ("vrl.algorithms", "vrl.generation", "vrl.rollouts", "vrl.scripts", "vrl.trainers")
+    leaked = sorted(
+        module for module in loaded if any(_is_module_or_child(module, item) for item in forbidden)
+    )
+    assert not leaked, leaked
 
 
 def test_generation_model_imports_stay_on_public_floor() -> None:

@@ -42,7 +42,6 @@ from vrl.config.base import ConfigBase, _extract_error_message
 from vrl.config.data import DataLoaderName, manifest_sources, resolve_data_loader
 from vrl.config.model_schema import ModelSection
 from vrl.config.precision import PrecisionConfig
-from vrl.config.reward_calibration import RewardCalibrationConfig
 from vrl.config.reward_inference import (
     RewardInferenceConfig,
 )
@@ -79,7 +78,6 @@ class RewardConfig(ConfigBase):
     # Per-component transport/deployment, keyed by the same user-chosen names.
     # A component without an entry executes in-process.
     inference: dict[str, RewardInferenceConfig] = Field(default_factory=dict)
-    calibration: RewardCalibrationConfig | None = None
 
     @field_validator("inference", mode="before")
     @classmethod

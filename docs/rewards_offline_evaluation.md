@@ -1,9 +1,9 @@
 # Score existing media independently
 
 > Scoring (`vrl.scripts.rewards.rescore_media`, the `Evaluation` class) is part of
-> the framework. Analysis, calibration fitting, qualification receipts and review
-> packets live in the separate `reward` package (`python -m reward
-> <command>`), which depends on `vrl` and is never imported by it.
+> the framework. Analysis, calibration fitting and review packets live in the
+> separate `reward` package (`python -m reward <command>`), which depends on `vrl`
+> and is never imported by it.
 
 `vrl.scripts.rewards.rescore_media` scores a JSONL media manifest through the
 existing local or HTTP reward scorer. It does not construct a trainer, generation
@@ -252,61 +252,6 @@ unscored; missing required axes, nonfinite arithmetic, and changed recipes fail.
 This derived JSON report does not overwrite raw scores, install a
 training reward, or measure held-out preference accuracy. Use `evaluate` with
 independent annotations for that final claim.
-
-### Qualify a frozen combination for training
-
-`qualify` re-scores the saved images through training's HTTP adapters, compares
-each selected raw axis, and records a deployment receipt. The source evaluation
-must use the same HTTP endpoint, model name/version and transport configuration.
-For joined evaluations, each mapped axis must come from its corresponding service;
-renaming a different measurement to a calibration axis is rejected.
-
-Provide a reward-section YAML (without a surrounding `reward:` key) with unit
-component weights and the intended `inference`/`kwargs`. Provide a JSON mapping
-from frozen axes to runtime raw axes, for example
-`{"semantic/overall": "editreward/overall", "sharpness": "image_sharpness/image_sharpness"}`.
-These illustrative axes must actually exist in the selected source evaluations.
-
-```bash
-python -m reward qualify \
-  --component semantic=outputs/reward_evaluation/semantic \
-  --component local=outputs/reward_evaluation/local \
-  --combination outputs/reports/frozen-combination.json \
-  --reward-config deployment/reward.yaml \
-  --axis-mapping deployment/axis-mapping.json \
-  --atol 0.000001 --rtol 0 \
-  --output outputs/reports/reward-deployment.json
-```
-
-Choose tolerances deliberately for the actual measurements; the example is not
-a universal precision recommendation. All source rows must succeed. A failed
-comparison emits no receipt.
-The comparison is raw-axis parity, separate from diffusion log-prob replay parity.
-
-Name the receipt in the same training reward section:
-
-```yaml
-reward:
-  # Keep components, kwargs and inference identical to qualification.
-  calibration:
-    deployment_path: outputs/reports/reward-deployment.json
-```
-
-`RewardDeployment.load` checks the receipt against the resolved reward
-configuration before the factory constructs scorer clients. Frozen coefficients replace the usual component
-weighted sum. `calibration/contribution/<axis>` and original axes remain available.
-Editing the artifact after construction cannot alter the loaded objective.
-
-Initial support is deliberately limited to HTTP services and explicit float32
-RGB/RGBA `[C,1,H,W]` tensors in `[0,1]`, matching the chain judge.
-Videos, boxed object-store outputs and other tensor contracts are rejected by
-this qualified mode. Qualification measures one image per request; it does not
-establish arbitrary batch-size invariance or future-input parity. Service version
-labels remain the operator's declaration, not cryptographic proof of model bytes.
-Passing this gate does not supply human labels, validate preference quality, or
-show that optimizing the resulting objective improves visual quality. Ray scorer
-binding and broader input contracts need their own qualification path.
-
 
 ## Training observations
 

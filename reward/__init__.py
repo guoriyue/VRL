@@ -1,10 +1,9 @@
-"""Offline reward development: analyze, calibrate and qualify rewards without training.
+"""Offline reward development: analyze and calibrate rewards without training.
 
 This package sits beside ``vrl`` and depends on it; ``vrl`` never imports it.
 It consumes scoring runs written by ``vrl.scripts.rewards.rescore_media``
-(``vrl.rewards.evaluation.Evaluation``) and produces reports, fitted
-combinations and deployment receipts. Training only reads the results through
-``vrl.rewards.deployment.RewardDeployment``.
+(``vrl.rewards.evaluation.Evaluation``) and produces reports and fitted
+combinations. Training never reads them.
 
 * ``analysis.Analysis``: health, stress, sequence, ranking, paired and repeatability reports.
 * ``calibration.Calibration``: preference fitting, application, holdout evaluation, review packets.

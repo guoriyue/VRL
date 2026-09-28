@@ -11,7 +11,6 @@ from omegaconf import DictConfig
 from vrl.config.precision import (
     PrecisionPolicy,
 )
-from vrl.config.reward_calibration import RewardCalibrationConfig
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.config.schema import RewardConfig, RootConfig
 from vrl.config.validation import require_training_config
@@ -32,7 +31,6 @@ class RewardRuntimeConfig:
     # Per-component inference deployment, resolved once here (compute-once) so GPU
     # placement reads it off this bundle instead of re-walking the raw reward cfg.
     inference_configs: dict[str, RewardInferenceConfig]
-    calibration: RewardCalibrationConfig | None = None
 
     def __post_init__(self) -> None:
         for name, component_kwargs in self.kwargs.items():
@@ -107,7 +105,6 @@ class RewardRuntimeConfig:
             weights=weights,
             kwargs=kwargs,
             inference_configs=inference_configs,
-            calibration=reward.calibration,
         )
 
     @property

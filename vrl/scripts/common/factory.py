@@ -208,13 +208,6 @@ def build_reward_function(
     config.require_online_training()
     from vrl.rewards.functions.registry import MultiReward
 
-    combination, axis_mapping = None, None
-    if config.calibration is not None:
-        from vrl.rewards.deployment import RewardDeployment
-
-        deployment = RewardDeployment.load(config)
-        combination, axis_mapping = deployment.combination, deployment.axis_mapping
-
     if reward.memory_parking_required and not config.all_external_inference:
         from vrl.rewards.functions.registry import (
             validate_reward_memory_parking_components,
@@ -234,9 +227,6 @@ def build_reward_function(
         memory_parking_required=reward.memory_parking_required,
         inference_configs=config.inference_configs,
         ray_placement=ray_placement,
-        combination=combination,
-        axis_mapping=axis_mapping,
-        image_float32_inputs=combination is not None,
     )
 
 

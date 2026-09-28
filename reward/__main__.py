@@ -1,4 +1,4 @@
-"""``python -m reward <command>``: analyze, calibrate and qualify rewards offline.
+"""``python -m reward <command>``: analyze and calibrate rewards offline.
 
 Every command reads scoring runs written by ``vrl.scripts.rewards.rescore_media``
 and writes one JSON report. ``--evaluation DIR`` names one run; ``--component
@@ -9,7 +9,6 @@ whose axes are ``NAME/axis``.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 from pathlib import Path
 
@@ -85,12 +84,6 @@ def main(argv: list[str] | None = None) -> None:
     evaluate.add_argument("--combination", required=True, type=Path)
     apply = command("apply")
     apply.add_argument("--combination", required=True, type=Path)
-    qualify = command("qualify")
-    qualify.add_argument("--combination", required=True, type=Path)
-    qualify.add_argument("--reward-config", required=True, type=Path)
-    qualify.add_argument("--axis-mapping", required=True, type=Path)
-    qualify.add_argument("--atol", required=True, type=float)
-    qualify.add_argument("--rtol", required=True, type=float)
     review_export = command("review-export")
     review_export.add_argument("--pairs", required=True, type=Path)
     review_export.add_argument("--seed", required=True, type=int)
@@ -234,37 +227,12 @@ def main(argv: list[str] | None = None) -> None:
             )
         elif args.command == "apply":
             result = calibration.apply(json.loads(args.combination.read_text()))
-        elif args.command == "review-export":
+        else:
             pairs = [
                 json.loads(line) for line in args.pairs.read_text().splitlines() if line.strip()
             ]
             result = calibration.review_packet(pairs, args.output, seed=args.seed)
             print(json.dumps(result))
-            return
-        else:
-            import yaml
-
-            from vrl.config.builders import RewardRuntimeConfig
-            from vrl.config.schema import RewardConfig
-            from vrl.rewards.deployment import RewardDeployment
-
-            if args.output.exists():
-                raise FileExistsError("use a new output path for qualification")
-            config = RewardRuntimeConfig.from_cfg(
-                RewardConfig.model_validate(yaml.safe_load(args.reward_config.read_text()))
-            )
-            deployment = asyncio.run(
-                RewardDeployment.qualify(
-                    evaluation,
-                    json.loads(args.combination.read_text()),
-                    config,
-                    axis_mapping=json.loads(args.axis_mapping.read_text()),
-                    atol=args.atol,
-                    rtol=args.rtol,
-                )
-            )
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            deployment.write(args.output)
             return
     args.output.parent.mkdir(parents=True, exist_ok=True)
     write_json(args.output, result)
