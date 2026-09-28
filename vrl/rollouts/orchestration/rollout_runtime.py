@@ -47,9 +47,6 @@ class RolloutCollectorControl(Protocol):
     def generation_runtime(self) -> GenerationRuntime | None: ...
 
     @property
-    def requires_generation_offload_before_reward(self) -> bool: ...
-
-    @property
     def requires_driver_model_offload_for_reward(self) -> bool: ...
 
     @property
@@ -267,9 +264,6 @@ class RolloutRuntimeCoordinator:
         # throwaway accumulator keeps the recording sites branch-free.
         self.park_training_state_for_rollout(RolloutStats())
         await self.collector.shutdown()
-
-    def requires_generation_offload_before_reward(self) -> bool:
-        return bool(self.collector.requires_generation_offload_before_reward)
 
 
 __all__ = [

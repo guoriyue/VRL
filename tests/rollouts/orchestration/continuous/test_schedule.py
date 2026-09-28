@@ -470,30 +470,6 @@ async def test_queue_capacity_fits_the_finite_prompt_batch() -> None:
         await schedule.shutdown()
 
 
-def test_rejects_runtime_that_requires_driver_model_offload() -> None:
-    runtime = _Runtime()
-    runtime.requires_driver_model_offload = True
-    with pytest.raises(RuntimeError, match="requires driver model offload"):
-        _build(_continuous_config(), _Collector(runtime), None)
-
-
-def test_rejects_mid_iteration_reward_offload() -> None:
-    runtime = _Runtime()
-    collector = _Collector(runtime)
-    collector.requires_generation_offload_before_reward = True
-    with pytest.raises(RuntimeError, match=r"does not offload.*mid-iteration"):
-        _build(_continuous_config(), collector, _Syncer(runtime))
-
-
-def test_rejects_reward_scoring_on_trainer_gpu() -> None:
-    runtime = _Runtime()
-    collector = _Collector(runtime)
-    collector.requires_driver_model_offload_for_reward = True
-
-    with pytest.raises(RuntimeError, match="trainer GPU while backward overlaps"):
-        _build(_continuous_config(), collector, _Syncer(runtime))
-
-
 def test_rejects_unverified_external_reward_accelerator() -> None:
     runtime = _Runtime()
     collector = _Collector(runtime)

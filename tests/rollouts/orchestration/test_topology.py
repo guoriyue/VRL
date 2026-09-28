@@ -12,12 +12,14 @@ from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 def _resources(
     *,
     colocated: bool,
+    trainer_rollout_handoff: bool = False,
     reward_handoff: bool = False,
     trainer_reward_handoff: bool = False,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         colocated=colocated,
         lifecycle=SimpleNamespace(
+            park_trainer_for_rollout=trainer_rollout_handoff,
             park_rollout_for_reward=reward_handoff,
             park_trainer_for_reward=trainer_reward_handoff,
         ),
@@ -43,6 +45,16 @@ def test_continuous_shared_gpu_is_rejected() -> None:
         validate_rollout_schedule_topology(
             SimpleNamespace(schedule_mode="continuous"),
             _resources(colocated=True),
+        )
+
+
+def test_continuous_trainer_parked_for_generation_is_rejected() -> None:
+    """An explicit trainer offload on disjoint GPUs still cannot overlap backward."""
+
+    with pytest.raises(ValueError, match="without trainer parking for generation"):
+        validate_rollout_schedule_topology(
+            SimpleNamespace(schedule_mode="continuous"),
+            _resources(colocated=False, trainer_rollout_handoff=True),
         )
 
 

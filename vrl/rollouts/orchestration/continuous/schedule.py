@@ -34,11 +34,21 @@ class ContinuousRolloutSchedule:
         lifecycle: RolloutRuntimeCoordinator,
         # No defaults: the typed config remains the single source of defaults.
         # ``settings`` already validated ``max_stale_policy_versions >= 1`` at
-        # construction, so this facade only checks the runtime-topology guards.
+        # construction, and validate_rollout_schedule_topology rejected shared
+        # or parked GPU topologies before launch.
         settings: ContinuousRolloutSettings,
     ) -> None:
         self.lifecycle = lifecycle
-        self._validate_runtime_isolation()
+        if not lifecycle.collector.supports_continuous_reward_execution:
+            # Only known once the reward runtime is connected: an external
+            # service advertises its own accelerator isolation. A single collect
+            # task still overlaps the trainer in continuous mode, so limiting
+            # group concurrency cannot make an unverified placement safe.
+            raise RuntimeError(
+                "continuous rollout requires verified reward accelerator isolation "
+                "from both trainer and rollout GPUs; use a service that advertises "
+                "generation_overlap_safe, or use strict_on_policy scheduling",
+            )
         self._rollout_thread = ContinuousRolloutThread(lifecycle=lifecycle, settings=settings)
 
     @classmethod
@@ -116,35 +126,6 @@ class ContinuousRolloutSchedule:
         """Stop the owner and its collector/runtime exactly once."""
 
         await self._rollout_thread.shutdown()
-
-    def _validate_runtime_isolation(self) -> None:
-        # No config escape hatch exists: shared physical capacity cannot support
-        # rollout kernels and trainer backward concurrently.
-        if self.lifecycle.requires_driver_model_offload():
-            raise RuntimeError(
-                "continuous rollout is disabled when rollout runtime requires "
-                "driver model offload",
-            )
-        if self.lifecycle.requires_driver_model_offload_for_reward():
-            raise RuntimeError(
-                "continuous rollout cannot score rewards on the trainer GPU while "
-                "backward overlaps; use a CPU/dedicated reward or strict_on_policy",
-            )
-        if self.lifecycle.requires_generation_offload_before_reward():
-            raise RuntimeError(
-                "continuous rollout requires reward scoring that does not offload "
-                "the generation runtime mid-iteration; use a dedicated reward GPU "
-                "or strict_on_policy scheduling",
-            )
-        if not self.lifecycle.collector.supports_continuous_reward_execution:
-            # A single collect task still overlaps the trainer in continuous mode.
-            # Limiting group concurrency therefore cannot make an external reward
-            # service safe when its accelerator placement is unknown.
-            raise RuntimeError(
-                "continuous rollout requires verified reward accelerator isolation "
-                "from both trainer and rollout GPUs; use a service that advertises "
-                "generation_overlap_safe, or use strict_on_policy scheduling",
-            )
 
 
 __all__ = ["ContinuousRolloutSchedule"]

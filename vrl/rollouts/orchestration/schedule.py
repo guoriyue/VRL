@@ -162,17 +162,20 @@ def validate_rollout_schedule_topology(
     """Reject a schedule whose phase semantics contradict resolved GPU ownership.
 
     The online entrypoint calls this after resource resolution and before model or
-    Ray construction. Runtime guards remain necessary for direct schedule users,
-    but they are too late to be the primary configuration boundary.
+    Ray construction. It is the only topology check; ``ContinuousRolloutSchedule``
+    checks only the reward isolation a connected runtime advertises.
     """
 
     mode = RolloutScheduleMode(config.schedule_mode)
     if mode is not RolloutScheduleMode.CONTINUOUS:
         return
-    if resources.colocated:
+    # Rollout kernels and trainer backward cannot share physical capacity, and a
+    # trainer parked for generation cannot train while generation overlaps it.
+    if resources.colocated or resources.lifecycle.park_trainer_for_rollout:
         raise ValueError(
-            "continuous rollout requires disjoint trainer and rollout GPUs; "
-            "use strict_on_policy with gpu_pool=trainer for shared-GPU phase handoff",
+            "continuous rollout requires disjoint trainer and rollout GPUs without "
+            "trainer parking for generation; use strict_on_policy with "
+            "gpu_pool=trainer for shared-GPU phase handoff",
         )
     if resources.lifecycle.park_rollout_for_reward:
         raise ValueError(
