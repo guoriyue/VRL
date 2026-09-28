@@ -6,7 +6,6 @@ instead of parametrizing the same assertion into dozens of collected tests.
 
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 import sys
@@ -33,7 +32,6 @@ from vrl.config.validation import require_training_config
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
 from vrl.scripts.common.factory import validate_reward_memory_parking
-from vrl.trainers.data.provenance import DatasetProvenance
 
 
 def _experiment_names() -> list[str]:
@@ -612,167 +610,6 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
         cfg = load_config(f"experiment/{name}")
         algo_cfg = parse_config(cfg).algorithm.hyperparameters
         assert isinstance(algo_cfg, expected_type)
-
-
-def test_cosmos_v2w_source_backed_data_passes_provenance(
-    tmp_path: Path,
-) -> None:
-    """Cosmos V2W production validation accepts a source-backed manifest pair whose metadata
-    carries the full DROID provenance (repo, split, episode, video, frame, decode method,
-    conditioning).
-    """
-    data_root = tmp_path / "external"
-    reference = data_root / "video_world" / "references" / "ref.ppm"
-    reference.parent.mkdir(parents=True, exist_ok=True)
-    reference.write_text("P3\n1 1\n255\n0 0 0\n", encoding="utf-8")
-    metadata = {
-        "source": "droid",
-        "source_repo": "lerobot/droid_100",
-        "source_split": "main",
-        "source_episode": "episode_train",
-        "source_video": "videos/camera/batch-000/file-000.mp4",
-        "source_frame_index": 0,
-        "decode_method": "pyav_http_first_frame",
-        "conditioning": "first_frame",
-    }
-    train = tmp_path / "robot_train.jsonl"
-    eval_manifest = tmp_path / "robot_eval.jsonl"
-    train.write_text(
-        json.dumps(
-            {
-                "prompt": "The robot arm moves toward the cup.",
-                "reference_image": "video_world/references/ref.ppm",
-                "metadata": metadata,
-            },
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    eval_metadata = dict(metadata, source_episode="episode_eval")
-    eval_manifest.write_text(
-        json.dumps(
-            {
-                "prompt": "The robot arm moves away from the cup.",
-                "reference_image": "video_world/references/ref.ppm",
-                "metadata": eval_metadata,
-            },
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    report = tmp_path / "robot_report.json"
-    report.write_text(
-        json.dumps(
-            {
-                "dataset": "video_world_bridge",
-                "source": "droid",
-                "repo_id": "lerobot/droid_100",
-                "source_split": "main",
-                "decode_method": "pyav_http_first_frame",
-                "train_rows": 1,
-                "eval_rows": 1,
-                "train_manifest": train.as_posix(),
-                "eval_manifest": eval_manifest.as_posix(),
-                "reference_dir": reference.parent.as_posix(),
-                "validation_summary": {"row_count": 1},
-            },
-        ),
-        encoding="utf-8",
-    )
-    cfg = load_config(
-        "experiment/cosmos_predict2/online_grpo_v2w_reference",
-        overrides=[
-            f"data.manifest={train.as_posix()}",
-            f"data.eval_manifest={eval_manifest.as_posix()}",
-            f"data.source_report={report.as_posix()}",
-            f"data.artifact_data_root={data_root.as_posix()}",
-        ],
-    )
-
-    require_training_config(cfg)
-    DatasetProvenance.from_config(parse_config(cfg).data)
-
-
-def test_wan_i2v_source_backed_data_passes_provenance(tmp_path: Path) -> None:
-    """Wan I2V production validation accepts source-backed VideoPhy manifests: image, caption,
-    task type, and the CSV / video-URL / decode provenance in metadata.
-    """
-    data_root = tmp_path / "videophy_i2v"
-    train_image = data_root / "images" / "train" / "000.ppm"
-    eval_image = data_root / "images" / "eval" / "000.ppm"
-    train_image.parent.mkdir(parents=True)
-    eval_image.parent.mkdir(parents=True)
-    train_image.write_text("P3\n1 1\n255\n0 0 0\n", encoding="utf-8")
-    eval_image.write_text("P3\n1 1\n255\n0 0 0\n", encoding="utf-8")
-    metadata = {
-        "source": "videophy",
-        "source_repo": "videophysics/videophy_test_public",
-        "source_split": "test",
-        "source_csv_row": 0,
-        "source_video_url": "https://videophysics.example/train.mp4",
-        "source_frame_index": 0,
-        "decode_method": "imageio_ffmpeg_first_frame",
-        "conditioning": "first_frame",
-    }
-    train_manifest = data_root / "manifests" / "train.jsonl"
-    eval_manifest = data_root / "manifests" / "eval.jsonl"
-    train_manifest.parent.mkdir(parents=True)
-    train_manifest.write_text(
-        json.dumps(
-            {
-                "image": "images/train/000.ppm",
-                "caption": "A wheel rolls.",
-                "task_type": "image_to_video",
-                "metadata": metadata,
-            },
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    eval_metadata = dict(metadata, source_video_url="https://videophysics.example/eval.mp4")
-    eval_manifest.write_text(
-        json.dumps(
-            {
-                "image": "images/eval/000.ppm",
-                "caption": "Honey diffuses.",
-                "task_type": "image_to_video",
-                "metadata": eval_metadata,
-            },
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    report = data_root / "report.json"
-    report.write_text(
-        json.dumps(
-            {
-                "dataset": "videophy_i2v",
-                "source_repo": "videophysics/videophy_test_public",
-                "source_csv": "videophy_test_public.csv",
-                "source_split": "test",
-                "decode_method": "imageio_ffmpeg_first_frame",
-                "train_rows": 1,
-                "eval_rows": 1,
-                "train_manifest": train_manifest.as_posix(),
-                "eval_manifest": eval_manifest.as_posix(),
-                "reference_dir": (data_root / "images").as_posix(),
-            },
-        ),
-        encoding="utf-8",
-    )
-
-    cfg = load_config(
-        "experiment/wan_2_1/online_grpo_physics_i2v",
-        overrides=[
-            f"data.manifest={train_manifest.as_posix()}",
-            f"data.eval_manifest={eval_manifest.as_posix()}",
-            f"data.source_report={report.as_posix()}",
-            f"data.artifact_data_root={data_root.as_posix()}",
-        ],
-    )
-
-    require_training_config(cfg)
-    DatasetProvenance.from_config(parse_config(cfg).data)
 
 
 def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> None:

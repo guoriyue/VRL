@@ -45,28 +45,3 @@ def test_launch_gates_do_not_run_inside_parse_config() -> None:
     assert root.model.torch_compile.enable is True
     with pytest.raises(ValueError, match=r"torch_compile\.enable=true cannot combine"):
         validation.require_training_config(cfg)
-
-
-def test_dataset_provenance_requires_existing_paths(tmp_path) -> None:
-    from vrl.trainers.data.provenance import DatasetProvenance
-
-    manifest = tmp_path / "train.jsonl"
-    manifest.write_text("{}\n", encoding="utf-8")
-    root = parse_config(
-        OmegaConf.create(
-            {
-                "data": {
-                    "loader": "prompt_manifest",
-                    "manifest": str(manifest),
-                    "eval_manifest": str(tmp_path / "missing.jsonl"),
-                    "source_report": str(tmp_path / "report.json"),
-                    "task_type": "text_to_video",
-                    "preprocessing": {},
-                    "sampler": {"type": "random_without_replacement"},
-                }
-            }
-        )
-    )
-
-    with pytest.raises(ValueError, match=r"data\.eval_manifest does not exist"):
-        DatasetProvenance.from_config(root.data)

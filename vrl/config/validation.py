@@ -7,7 +7,7 @@ order. A gate is a check that tier 2 cannot afford: it needs the resolved
 precision policy or a runtime module (the compile matrix reads the build-role
 resolver and the checkpointing resolver). Eval and perf tools call
 ``parse_config`` alone, so a gate never taxes them. Checks that read the
-filesystem (dataset provenance, reward backends) belong to
+filesystem (reward backends) belong to
 ``python -m vrl.scripts.rewards.preflight``, which runs the real reward over
 the real rows before training does.
 
