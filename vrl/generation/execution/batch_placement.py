@@ -6,10 +6,8 @@ runs each batch — a question that only exists for the Ray runtime
 (vrl/generation/ray), never for the direct in-process path. Batches are bound
 round-robin at plan time: within one request every batch shares the prompt
 group's shape and step count, so their costs are equal and a static rotation
-already balances the engines. Batch memory sizing (probe fit, occupancy
-snapshots, drift shadow) lives in ``batch_memory.py``; placement consumes
-none of it — the batch width is already resolved by the time a request
-reaches planning.
+already balances the engines. The batch width is a fixed request field, so
+placement never sizes batches itself.
 """
 
 from __future__ import annotations

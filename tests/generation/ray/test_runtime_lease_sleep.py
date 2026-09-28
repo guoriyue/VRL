@@ -13,12 +13,10 @@ import pytest
 from tests.generation.ray._helpers import NeverRef, ResolvedRef
 from tests.generation.ray._helpers import engine as _engine
 from tests.generation.ray._helpers import parking_snapshot as _parking_snapshot
-from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
-from vrl.generation.types import GenerationRequest
-from vrl.ray.actor_pool import RayActorCallError, RayActorDispatcher
+from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.runtime_errors import root_failure_cause
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
@@ -838,76 +836,6 @@ async def test_active_timeout_force_kills_the_session_owner(
     assert runtime.current_policy_version == 1
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert actor.release_calls == 0
-    assert _Ray.killed == [actor]
-
-
-@pytest.mark.asyncio
-async def test_auto_probe_timeout_force_kills_the_session_owner(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import vrl.generation.ray.session as session_module
-    import vrl.ray.operation_deadline as deadline_module
-
-    runtime = _on_demand_runtime()
-    probe_ref = NeverRef()
-
-    class _ProbeActor(_ReleaseActor):
-        def __init__(self) -> None:
-            super().__init__()
-            self.probe_batch_size = SimpleNamespace(
-                remote=lambda *_args, **_kwargs: probe_ref,
-            )
-
-    actor = _ProbeActor()
-    engine = _engine("w0", actor)
-    executor = RayGenerationExecutor(
-        SimpleNamespace(),
-        [engine],
-        SimpleNamespace(),
-        actor_dispatcher=RayActorDispatcher(("w0",)),
-        generation_stall_timeout_s=0.01,
-    )
-    session = RayGenerationSession(
-        executor,
-        None,
-        [engine],
-    )
-    runtime._session = session
-
-    class _Ray:
-        cancelled: ClassVar[list[Any]] = []
-        killed: ClassVar[list[Any]] = []
-
-        @classmethod
-        def cancel(cls, ref: Any, *, force: bool) -> None:
-            assert force is False
-            cls.cancelled.append(ref)
-
-        @classmethod
-        def kill(cls, target: Any, *, no_restart: bool) -> None:
-            assert no_restart is True
-            cls.killed.append(target)
-
-    monkeypatch.setattr(session_module, "require_ray", lambda: _Ray)
-    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
-    request = GenerationRequest(
-        request_id="req-auto-timeout",
-        family="sd3_5",
-        task="text_to_image",
-        inputs=["prompt"],
-        samples_per_prompt=2,
-        samples_per_generation_batch="auto",
-        policy_version=None,
-    )
-
-    with pytest.raises(RayOperationTimeout) as caught:
-        await runtime.generate(request)
-
-    assert caught.value.operation == "rollout.generation.batch_size_probe"
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._session is None
-    assert actor.release_calls == 0
-    assert _Ray.cancelled == [probe_ref]
     assert _Ray.killed == [actor]
 
 

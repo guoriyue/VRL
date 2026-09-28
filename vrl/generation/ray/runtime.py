@@ -78,8 +78,6 @@ class RayGenerationRuntime:
         self._shutdown_task: asyncio.Task[None] | None = None
         self._force_shutdown = False
 
-        self._probed_samples_per_generation_batch: int | None = None
-        self._samples_per_generation_batch_probe_lock = asyncio.Lock()
         self._health_check_timeout_s = float(health_check_timeout_s)
         self._health_monitor = RolloutWorkerHealthMonitor(
             self,
@@ -223,12 +221,6 @@ class RayGenerationRuntime:
                     "generate requires an active rollout runtime; "
                     "the rollout schedule must await activate() first",
                 )
-            if request.samples_per_generation_batch == "auto":
-                resolved = await self._resolve_probed_samples_per_generation_batch(
-                    session,
-                    request,
-                )
-                request = replace(request, samples_per_generation_batch=resolved)
             if request.policy_version is None and self.current_policy_version is not None:
                 request = replace(
                     request,
@@ -255,47 +247,6 @@ class RayGenerationRuntime:
             if failure is error:
                 raise
             raise failure from failure.__cause__
-
-    async def _resolve_probed_samples_per_generation_batch(
-        self,
-        session: RayGenerationSession,
-        request: GenerationRequest,
-    ) -> int:
-        """Run the startup batch-size probe once and cache the fleet verdict."""
-
-        if self._probed_samples_per_generation_batch is not None:
-            return self._probed_samples_per_generation_batch
-        async with self._samples_per_generation_batch_probe_lock:
-            if self._probed_samples_per_generation_batch is not None:
-                return self._probed_samples_per_generation_batch
-            self.lifecycle.require_running("probe generation batch size")
-            local_results = await session.executor.probe_batch_sizes(
-                request,
-                max_samples=request.samples_per_prompt,
-            )
-            if not local_results:
-                raise RuntimeError(
-                    "samples_per_generation_batch: auto found no generation workers to probe",
-                )
-            resolved = min(result.samples_per_generation_batch for result in local_results)
-            for result in local_results:
-                logger.info(
-                    "batch-size probe: n=%d (budget=%.0fMB trials=%s)",
-                    result.samples_per_generation_batch,
-                    result.budget_bytes / 2**20,
-                    [
-                        (
-                            trial.label,
-                            trial.n,
-                            "OOM"
-                            if trial.oom
-                            else f"{trial.peak_bytes / 2**20:.0f}MB/{trial.wall_s:.1f}s",
-                        )
-                        for trial in result.trials
-                    ],
-                )
-            self._probed_samples_per_generation_batch = resolved
-            return resolved
 
     async def update_weights(self, trainable_state: Any, policy_version: int) -> None:
         """Install on active workers or stage the accepted target while inactive."""

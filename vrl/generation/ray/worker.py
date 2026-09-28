@@ -9,7 +9,6 @@ import ray
 
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import (
-    BatchSizeProbeResult,
     GenerationBatchEnvelope,
     GenerationBatchResult,
     RequestBatchOutOfMemory,
@@ -109,18 +108,6 @@ class RayGenerationWorker:
     def _is_primary_rank(self) -> bool:
         rank_group = self.core.rank_group_spec
         return rank_group is None or rank_group.group_rank == 0
-
-    def probe_batch_size(
-        self,
-        request: GenerationRequest,
-        *,
-        max_samples: int,
-    ) -> BatchSizeProbeResult:
-        """Startup batch-size probe; see GenerationWorkerCore.probe_batch_size."""
-        return self.core.probe_batch_size(
-            request,
-            max_samples=max_samples,
-        )
 
     def execute_request_batches(
         self,

@@ -103,7 +103,6 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 | `GenerationRuntime` | `current_policy_version`, `requires_driver_model_offload`, `preflight/activate/generate/offload/shutdown` | The engine's only face toward vrl/rollouts (dual of `RewardRuntime`). isinstance-checked at `rollouts/collector/core.py`. |
 | `GenerationBatchExecutor` | `family`, `task`, `forward_batch`, `gather_batches` | The model-family plugin contract; keeps `if family == ...` out of neutral execution code. |
 | `GenerationBatchGatherer` | `gather_batches` | The model-free slice of the executor: reassembly runs driver-side where no model is loaded, so it ships separately in the launch contract. |
-| `BatchSizeProbeExecutor` | `forward_probe_batch(..., execute_steps=)` | Optional capability (isinstance-probed, like reward's `MemoryParkingScorer`): truncated execution for `samples_per_generation_batch: auto` memory probing. Only diffusion families implement it — their memory peaks in early denoise steps; AR peaks at the last token, so a truncated AR run would measure a lie. |
 | `BatchPayload = Any` | — | Deliberate: the payload's shape is owned by the binding that produced it (diffusion latents vs AR tokens share nothing useful). |
 
 ### 2.2 Driver side (`ray/`)
@@ -126,13 +125,13 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 | Class | Role |
 |---|---|
 | `RayGenerationWorker` (`ray/worker.py`) | The Ray actor shell; delegates to the core. |
-| `GenerationWorkerCore` | Worker-process brain: validates the launch contract, builds the family executor, isinstance-probes `BatchSizeProbeExecutor` for auto batch sizing, runs forward/probe calls. |
+| `GenerationWorkerCore` | Worker-process brain: validates the launch contract, builds the family executor, runs forward calls. |
 | `GenerationWorkerParking` | The generation worker's parking owner (vocabulary in §1 Parking): phase tracking plus `WorkerMemoryParkingSnapshot` evidence the driver validates. Picks the mechanism from residency, not the family: a parking-required rank whose model is resident on CUDA uses `cumem`; under `pipeline_offload_mode` or with a model built off CUDA it uses `move`. Destination is always RAM. |
 | `DistributedExecutionPlanner` → `DistributedGenerationPlan`, `DeviceAssignment` | Splits a request into per-worker batch assignments. |
 | `EnginePlan` (`planner.py`) | The resolved per-request plan: which `sample_batches` run where. |
 | `GenerationSampleBatch`, `SampleAlignedValues`, `BatchResultWithIdentity` (`sample_batches.py`) | The batch coordinate system: a batch is a slice of samples (`prompt_index`, `sample_start`, `sample_count`), not a time segment. `SampleAlignedValues` slices per-sample tensors consistently. |
 | `GenerationBatchEnvelope` / `GenerationBatchResult` (`execution/types.py`) | The wire pair around one dispatched batch. |
-| `BatchSizeProbeTrial` / `BatchSizeProbeResult`, `BatchMemoryReading`, `AffinePeakFit` | Auto-sizing telemetry: probe trials fit an affine peak-memory model to pick the widest safe batch. |
+| `BatchMemoryReading` | Per-batch memory telemetry: the measured denoise/decode peaks the driver logs for each batch. |
 | `StagedBatchRefs`, `StaleSlotDiscard`, `RequestBatchOutOfMemory` | Staged batch references and per-request failure signaling. Batch progress callbacks pass the completed batch count as an integer. |
 
 ### 2.4 Executor ladder (bindings × families)
@@ -310,7 +309,6 @@ prescribes.
 | Consumer-facing protocol | `GenerationRuntime` | `RewardRuntime` |
 | Runtime implementation | `RayGenerationRuntime` | `RewardFunctionRuntime` |
 | Transport/executor seam | `GenerationBatchExecutor` (+ Ray dispatch) | `RewardScorer` (in-process / HTTP) |
-| Optional capability, isinstance-probed | `BatchSizeProbeExecutor` (truncated memory probe) | `MemoryParkingScorer` (verified GPU parking) |
 | Launch boundary | `GenerationRuntimeLaunchContract` | `RewardWorkerLaunchContract` |
 | Result identity guard | gatherer reassembly over batch identities | `RewardInferenceRequest.validate_and_order_results()` |
 | Memory lease vocabulary | `activate` / `offload` (park workers) | `activate` / `park_memory` |

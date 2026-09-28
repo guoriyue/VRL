@@ -147,19 +147,6 @@ def test_run_denoise_steps_writes_preallocated_buffers() -> None:
     )
 
 
-@pytest.mark.parametrize("execute_steps, expected_steps", [(1, 1), (5, 3), (None, 3)])
-def test_denoise_step_counter_reports_execution_with_full_buffer_capacity(
-    execute_steps, expected_steps
-) -> None:
-    config = replace(_config(), execute_steps=execute_steps)
-    result = _Executor().run_denoise_steps(state=_state(batch=2, steps=3), config=config)
-    assert result.engine_counters["diffusion_num_denoise_steps"] == expected_steps
-    assert result.observations.shape[1] == 3
-    assert result.engine_counters["diffusion_observation_bytes"] == (
-        result.observations.numel() * result.observations.element_size()
-    )
-
-
 def test_decode_denoise_result_does_not_serialize_model_precision() -> None:
     """Execution policy stays on the model instead of entering trajectories."""
     executor = _Executor()
@@ -233,34 +220,6 @@ def test_decode_denoise_result_uses_only_model_exported_context() -> None:
     )
 
     assert batch.context == {"model_family": "test"}
-
-
-def test_forward_probe_batch_uses_canonical_flow_with_truncated_steps() -> None:
-    """The probe reuses the production batch flow with an explicit step bound."""
-    executor = _StageTrackingExecutor()
-    request = GenerationRequest(
-        request_id="req-1",
-        family="test",
-        task="t2i",
-        inputs=["prompt"],
-        samples_per_prompt=2,
-        sampling={
-            "num_steps": 2,
-            "guidance_scale": 1.0,
-            "height": 8,
-            "width": 8,
-        },
-    )
-    batch = _chunk()
-
-    result = executor.forward_probe_batch(
-        request,
-        batch,
-        execute_steps=1,
-    )
-
-    assert result.batch is batch
-    assert executor.calls == ["encode", "prepare", "denoise:1", "decode"]
 
 
 @pytest.mark.parametrize("field", ["sample_start", "sample_count"])
@@ -365,62 +324,6 @@ class _Executor(DenoiseBatchExecutorBase):
         super().__init__(_Model())
 
 
-class _StageTrackingExecutor(DenoiseBatchExecutorBase):
-    family = "test"
-    task = "t2i"
-
-    def __init__(self) -> None:
-        super().__init__(_Model())
-        self.calls: list[str] = []
-
-    def encode_prompt_for_batch(
-        self,
-        *,
-        generation_request: GenerationRequest,
-        model_request: Any,
-        params: Any,
-        batch: GenerationSampleBatch,
-    ) -> dict[str, Any]:
-        self.calls.append("encode")
-        return super().encode_prompt_for_batch(
-            generation_request=generation_request,
-            model_request=model_request,
-            params=params,
-            batch=batch,
-        )
-
-    def prepare_denoise_state(
-        self,
-        *,
-        request: Any,
-        encoded: dict[str, Any],
-        config: DenoiseLoopConfig,
-        prepare_kwargs: dict[str, Any] | None = None,
-        initial_latents: torch.Tensor | None = None,
-    ) -> Any:
-        self.calls.append("prepare")
-        return super().prepare_denoise_state(
-            request=request,
-            encoded=encoded,
-            config=config,
-            initial_latents=initial_latents,
-            prepare_kwargs=prepare_kwargs,
-        )
-
-    def run_denoise_steps(
-        self,
-        *,
-        state: Any,
-        config: DenoiseLoopConfig,
-    ) -> Any:
-        self.calls.append(f"denoise:{config.execute_steps}")
-        return super().run_denoise_steps(state=state, config=config)
-
-    def decode_denoise_result(self, **kwargs: Any) -> Any:
-        self.calls.append("decode")
-        return super().decode_denoise_result(**kwargs)
-
-
 def test_decode_denoise_result_packs_video_as_uint8() -> None:
     """Checks decoded video crosses the wire as uint8 (wire diet T1).
 
@@ -522,18 +425,3 @@ def test_preallocation_requires_tensor_timestep_schedule(timesteps: object) -> N
     state.timesteps = timesteps
     with pytest.raises(TypeError, match=r"state\.timesteps must be a torch\.Tensor"):
         DenoiseTrajectoryBuffers.allocate(state=state, config=_config(sample_count=2))
-
-
-@pytest.mark.parametrize("steps", [0, -1, True, 1.5, "1"])
-def test_probe_rejects_invalid_step_limit_before_encoding(steps) -> None:
-    executor = _StageTrackingExecutor()
-    request = GenerationRequest(
-        request_id="invalid-probe",
-        family="test",
-        task="t2i",
-        inputs=["prompt"],
-        samples_per_prompt=2,
-    )
-    with pytest.raises(ValueError, match="execute_steps"):
-        executor.forward_probe_batch(request, _chunk(), execute_steps=steps)
-    assert executor.calls == []

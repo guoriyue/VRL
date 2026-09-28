@@ -7,33 +7,26 @@ import contextlib
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from types import SimpleNamespace
-from typing import Any, ClassVar
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 import torch
 from omegaconf import OmegaConf
 
-from tests.generation.ray._helpers import GatedRef, NeverRef
 from vrl.config.builders import BuiltConfigs
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
-from vrl.generation.execution.types import BatchSizeProbeResult
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RayGenerationConfig
-from vrl.generation.ray.engine import RayGenerationEngine
-from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
 )
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
-from vrl.generation.types import GenerationRequest
 from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.ray.actor_group import RayActorHandle
-from vrl.ray.actor_pool import RayActorDispatcher
-from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import GlobalRayPlacementOwner, RolePlacement
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
@@ -43,7 +36,6 @@ from vrl.run import (
     ResolvedOnlineRun,
 )
 from vrl.trainers.checkpointing import TrainingResumeConfig
-from vrl.utils.lifecycle import RuntimePhase
 
 
 class _CudaPolicy:
@@ -1071,246 +1063,6 @@ def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> N
     assert config.resources.trainer_devices == (0,)
     assert config.resources.rollout_devices == (1,)
     assert config.resources.colocated is False
-
-
-# ------------------------------------- real batch-size probe fan-out (real Ray)
-
-
-def _auto_chunk_request() -> GenerationRequest:
-    return GenerationRequest(
-        request_id="req-probe",
-        family="sd3_5",
-        task="t2i",
-        inputs=["p"],
-        samples_per_prompt=10,
-        sampling={"num_steps": 20},
-        samples_per_generation_batch="auto",
-        policy_version=1,
-    )
-
-
-@pytest.mark.asyncio
-async def test_remote_batch_size_probe_timeout_is_terminal_and_cancels_refs(
-    monkeypatch,
-) -> None:
-    import vrl.ray.operation_deadline as deadline_module
-
-    ref = NeverRef()
-
-    class _RemoteProbe:
-        @staticmethod
-        def remote(_request: Any, *, max_samples: int) -> NeverRef:
-            assert max_samples == 10
-            return ref
-
-    engine = RayGenerationEngine(
-        "w0",
-        [
-            RayActorHandle(
-                worker_id="w0",
-                actor=SimpleNamespace(probe_batch_size=_RemoteProbe()),
-            ),
-        ],
-    )
-    executor = RayGenerationExecutor(
-        SimpleNamespace(),
-        [engine],
-        SimpleNamespace(),
-        actor_dispatcher=RayActorDispatcher(("w0",)),
-        generation_stall_timeout_s=0.01,
-    )
-
-    async def execute(_request: Any) -> None:
-        raise AssertionError("timed-out probe must not enter generation")
-
-    executor.execute = execute
-
-    class _Ray:
-        cancelled: ClassVar[list[tuple[Any, bool]]] = []
-
-        @classmethod
-        def cancel(cls, value: Any, *, force: bool) -> None:
-            cls.cancelled.append((value, force))
-
-    runtime = _runtime(executor)
-    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
-
-    with pytest.raises(
-        RayOperationTimeout,
-        match=r"rollout\.generation\.batch_size_probe",
-    ):
-        await runtime.generate(_auto_chunk_request())
-
-    assert _Ray.cancelled == [(ref, False)]
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-
-
-@pytest.mark.asyncio
-async def test_concurrent_auto_chunk_requests_share_one_probe_before_submission() -> None:
-    gate = asyncio.Event()
-    probe_requests: list[str] = []
-    executed_requests: list[GenerationRequest] = []
-    probe_result = BatchSizeProbeResult(
-        samples_per_generation_batch=3,
-        budget_bytes=1,
-        trials=(),
-    )
-
-    class _RemoteProbe:
-        @staticmethod
-        def remote(request: GenerationRequest, *, max_samples: int) -> GatedRef:
-            assert max_samples == 10
-            probe_requests.append(request.request_id)
-            return GatedRef(gate, probe_result)
-
-    engine = RayGenerationEngine(
-        "w0",
-        [
-            RayActorHandle(
-                worker_id="w0",
-                actor=SimpleNamespace(probe_batch_size=_RemoteProbe()),
-            ),
-        ],
-    )
-    executor = RayGenerationExecutor(
-        SimpleNamespace(),
-        [engine],
-        SimpleNamespace(),
-        actor_dispatcher=RayActorDispatcher(("w0",)),
-        generation_stall_timeout_s=30.0,
-    )
-
-    async def execute(request: GenerationRequest) -> GenerationRequest:
-        executed_requests.append(request)
-        return request
-
-    executor.execute = execute
-    runtime = _runtime(executor)
-    first_request = _auto_chunk_request()
-    second_request = replace(first_request, request_id="req-probe-second")
-
-    first = asyncio.create_task(runtime.generate(first_request))
-    await asyncio.sleep(0)
-    second = asyncio.create_task(runtime.generate(second_request))
-    await asyncio.sleep(0)
-
-    assert probe_requests == ["req-probe"]
-
-    gate.set()
-    assert await first == executed_requests[0]
-    assert await second == executed_requests[1]
-    assert probe_requests == ["req-probe"]
-    assert [request.samples_per_generation_batch for request in executed_requests] == [3, 3]
-
-
-class _Arrivals:
-    """Counts probe arrivals across actor processes so concurrency is observable."""
-
-    def __init__(self) -> None:
-        self._count = 0
-
-    def arrived(self) -> int:
-        self._count += 1
-        return self._count
-
-    def count(self) -> int:
-        return self._count
-
-
-class _ProbeWorker:
-    """Real Ray actor exposing ``probe_batch_size`` as a remote method.
-
-    It blocks until the whole fleet has arrived, so "probed concurrently" becomes
-    a fact the test can fail on rather than a word in a name.
-    """
-
-    def __init__(self, answer: int, arrivals: Any, fleet_size: int) -> None:
-        self._answer = int(answer)
-        self._arrivals = arrivals
-        self._fleet_size = int(fleet_size)
-        self._calls = 0
-
-    def probe_batch_size(self, request: Any, *, max_samples: int) -> BatchSizeProbeResult:
-        import time
-
-        import ray
-
-        # Asserted inside the actor process: the request really survived Ray
-        # serialization with its type and fields intact. Nothing else checks this.
-        assert isinstance(request, GenerationRequest), type(request).__name__
-        assert request.samples_per_generation_batch == "auto"
-        assert request.inputs[0].prompt == "p"
-        assert max_samples == 10
-        self._calls += 1
-
-        ray.get(self._arrivals.arrived.remote())
-        deadline = time.monotonic() + 20.0
-        while ray.get(self._arrivals.count.remote()) < self._fleet_size:
-            if time.monotonic() > deadline:
-                raise TimeoutError("probes were dispatched sequentially, not concurrently")
-            time.sleep(0.01)
-        return BatchSizeProbeResult(
-            samples_per_generation_batch=self._answer,
-            budget_bytes=32 * 1024**3,
-            trials=(),
-        )
-
-    def calls(self) -> int:
-        return self._calls
-
-
-@pytest.mark.slow_test
-def test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet(local_ray) -> None:
-    """The executor-owned batch-size probe path on a live cluster.
-
-    The executor sends N remote probes through its shared actor dispatcher, so
-    generation cannot enter the same synchronous actor mailbox concurrently.
-    The barrier inside ``_ProbeWorker`` makes fleet fan-out checkable: an
-    implementation that waited on each worker inside the submission loop would
-    deadlock instead of passing.
-    """
-
-    arrivals = local_ray.remote(num_cpus=0)(_Arrivals).remote()
-    actor_cls = local_ray.remote(num_cpus=0)(_ProbeWorker)
-    actors = [actor_cls.remote(answer, arrivals, 2) for answer in (6, 4)]
-    executed: list[Any] = []
-
-    engines = [
-        RayGenerationEngine(
-            f"w{index}",
-            [RayActorHandle(worker_id=f"w{index}", actor=actor)],
-        )
-        for index, actor in enumerate(actors)
-    ]
-    executor = RayGenerationExecutor(
-        SimpleNamespace(),
-        engines,
-        SimpleNamespace(),
-        actor_dispatcher=RayActorDispatcher(tuple(engine.engine_id for engine in engines)),
-        generation_stall_timeout_s=30.0,
-    )
-
-    async def execute(request: Any) -> Any:
-        executed.append(request)
-        return SimpleNamespace(request_id=request.request_id)
-
-    executor.execute = execute
-    runtime = _runtime(executor)
-
-    async def go() -> None:
-        await runtime.generate(_auto_chunk_request())
-        await runtime.generate(_auto_chunk_request())
-
-    try:
-        asyncio.run(go())
-
-        # Fleet answer is the min, and it is probed once: the second request is
-        # rewritten from the cached verdict, so no actor sees a second probe.
-        assert [request.samples_per_generation_batch for request in executed] == [4, 4]
-        assert local_ray.get([actor.calls.remote() for actor in actors]) == [1, 1]
-    finally:
-        for actor in (*actors, arrivals):
-            local_ray.kill(actor, no_restart=True)
 
 
 @pytest.mark.parametrize("policy_version", [True, 1.9, "1", -1])

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from vrl.utils.validation import require_int
 
@@ -94,10 +94,9 @@ class GenerationRequest:
     sampling: dict[str, Any] = field(default_factory=dict)
     # Engine-level knobs read by family-neutral code (planner, executor,
     # trajectory builders). They are request fields, not sampling keys:
-    # ``samples_per_generation_batch`` is the planner batch width (``"auto"``
-    # until the Ray runtime's startup probe rewrites it to an int) and
+    # ``samples_per_generation_batch`` is the planner batch width and
     # ``trajectory_storage`` is applied worker-side before tensors cross the wire.
-    samples_per_generation_batch: int | Literal["auto"] | None = None
+    samples_per_generation_batch: int | None = None
     trajectory_storage: TrajectoryStoragePolicy | None = None
     # Rollout-owned denoise knobs (rollout.* / rollout.sde.*), projected once by
     # the collector. ``None`` on hand-built requests means the option defaults.
@@ -120,7 +119,7 @@ class GenerationRequest:
         samples_per_prompt: int,
         *,
         sampling: dict[str, Any] | None = None,
-        samples_per_generation_batch: int | Literal["auto"] | None = None,
+        samples_per_generation_batch: int | None = None,
         trajectory_storage: TrajectoryStoragePolicy | None = None,
         denoise: DenoiseRequestOptions | None = None,
         runtime_debug: bool = False,
@@ -171,9 +170,9 @@ class GenerationRequest:
         if type(self.samples_per_prompt) is not int or self.samples_per_prompt < 1:
             raise ValueError("GenerationRequest.samples_per_prompt must be an integer >= 1")
         width = self.samples_per_generation_batch
-        if width is not None and width != "auto" and (type(width) is not int or width < 1):
+        if width is not None and (type(width) is not int or width < 1):
             raise ValueError(
-                "GenerationRequest.samples_per_generation_batch must be >= 1 or 'auto'",
+                "GenerationRequest.samples_per_generation_batch must be >= 1",
             )
         if not isinstance(self.runtime_debug, bool):
             raise TypeError("GenerationRequest.runtime_debug must be a bool")

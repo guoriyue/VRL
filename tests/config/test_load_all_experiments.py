@@ -672,19 +672,6 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
     assert built.root.rollout.samples_per_generation_batch == 2
 
 
-def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
-    """Generation auto remains generation-owned; replay defaults safely to one."""
-    cfg = load_config(
-        "experiment/sd3_5/online_grpo_ocr",
-        overrides=["rollout.samples_per_generation_batch=auto"],
-    )
-    built = build_configs(cfg)
-
-    assert built.root.rollout is not None
-    assert built.root.rollout.samples_per_generation_batch == "auto"
-    assert built.trainer.batch_plan.training_microbatch_size == 1
-
-
 @pytest.mark.parametrize("value", ["0", "largest"])
 def test_generation_chunk_rejects_non_positive_or_non_integer_values(value: str) -> None:
     cfg = load_config(

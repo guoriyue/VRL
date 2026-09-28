@@ -36,18 +36,7 @@ class EnginePlan:
             batch_size = max_samples_per_batch
         else:
             raw = request.samples_per_generation_batch
-            if raw is None:
-                raw = request.samples_per_prompt
-            if raw == "auto":
-                # Resolved to an int by the Ray runtime's startup probe before
-                # a request reaches planning; seeing it here means the request
-                # bypassed that runtime (e.g. a local/direct executor).
-                raise ValueError(
-                    "rollout.samples_per_generation_batch: auto requires the Ray "
-                    "generation runtime (startup batch-size probe); set an "
-                    "explicit int here",
-                )
-            batch_size = raw
+            batch_size = raw if raw is not None else request.samples_per_prompt
         with profile_range("engine.plan"):
             return cls(
                 sample_batches=GenerationSampleBatch.plan_generation_batches(

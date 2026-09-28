@@ -275,8 +275,8 @@ def test_sana_fp8_rollout_keeps_native_policy_and_bf16_prompt_encoder() -> None:
     assert "quantization" not in model_build["rollout"]
 
 
-def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -> None:
-    """Ray owns generation auto; the fixed executor fallback must not parse it."""
+def test_generation_batch_width_reaches_the_request_not_the_executor() -> None:
+    """The batch width is a request field; executor kwargs never carry it."""
     cfg = load_config(
         "experiment/sd3_5/online_grpo_ocr",
         overrides=[
@@ -287,7 +287,7 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
             "distributed.resources.rollout.num_gpus=0",
             "distributed.resources.rollout.num_engines=1",
             "distributed.resources.reward.device=cpu",
-            "rollout.samples_per_generation_batch=auto",
+            "rollout.samples_per_generation_batch=3",
         ],
     )
 
@@ -298,7 +298,7 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
 
     assert "samples_per_generation_batch" not in inputs.launch_contract.executor_kwargs
     collector = RolloutCollectorConfig.from_root(parse_config(cfg))
-    assert collector.samples_per_generation_batch == "auto"
+    assert collector.samples_per_generation_batch == 3
     assert "samples_per_generation_batch" not in collector.request_sampling
 
 

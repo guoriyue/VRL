@@ -1,7 +1,7 @@
 """Types for distributed generation execution.
 
 The wire vocabulary of the driver <-> Ray-worker boundary: envelopes, batch
-results, parking snapshots, and probe verdicts are the payloads serialized
+results, and parking snapshots are the payloads serialized
 across it, so they live apart from both the driver runtime and the worker
 core that exchange them. ``StaleSlotDiscard`` does not cross the wire: it is
 raised worker-side but caught by the continuous
@@ -21,7 +21,6 @@ from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.protocols import BatchPayload
 from vrl.generation.types import GenerationRequest
 from vrl.utils.cuda_memory import is_cuda_out_of_memory, validate_parking_residual
-from vrl.utils.validation import require_int
 
 
 class StaleSlotDiscard(Exception):
@@ -153,67 +152,6 @@ class BatchMemoryReading:
         if any(raw.get(name) is None for name in names):
             return None
         return cls(**{name: int(raw[name]) for name in names})
-
-
-@dataclass(frozen=True, slots=True)
-class BatchSizeProbeTrial:
-    """One worker-local probe verdict carried back across Ray."""
-
-    n: int
-    oom: bool
-    # display/provenance-only: names which adaptive-probe branch produced the
-    # trial so startup diagnostics remain interpretable.
-    label: str
-    peak_bytes: int | None = None
-    non_torch_bytes: int | None = None
-    wall_s: float | None = None
-
-    def __post_init__(self) -> None:
-        require_int(self.n, path="batch-size probe trial n", minimum=1)
-        if not self.label:
-            raise ValueError("batch-size probe trial label must be non-empty")
-        measurements = (self.peak_bytes, self.non_torch_bytes, self.wall_s)
-        if self.oom:
-            if any(value is not None for value in measurements):
-                raise ValueError("OOM batch-size probe trials cannot carry measurements")
-            return
-        if any(value is None for value in measurements):
-            raise ValueError("successful batch-size probe trials require all measurements")
-        assert self.peak_bytes is not None
-        assert self.non_torch_bytes is not None
-        assert self.wall_s is not None
-        if self.peak_bytes < 0 or self.non_torch_bytes < 0 or self.wall_s < 0:
-            raise ValueError("batch-size probe trial measurements must be >= 0")
-
-    @property
-    def per_sample_s(self) -> float | None:
-        """Derive throughput without duplicating it in the wire payload."""
-
-        return None if self.wall_s is None else self.wall_s / self.n
-
-
-@dataclass(frozen=True, slots=True)
-class BatchSizeProbeResult:
-    """One worker's resolved batch size and its probe provenance."""
-
-    samples_per_generation_batch: int
-    # display/provenance-only: the device budget observed during startup sizing.
-    budget_bytes: int
-    # display/provenance-only: the irreproducible measurements behind the chosen
-    # size, retained for startup diagnostics.
-    trials: tuple[BatchSizeProbeTrial, ...]
-
-    def __post_init__(self) -> None:
-        require_int(
-            self.samples_per_generation_batch,
-            path="probed samples_per_generation_batch",
-            minimum=1,
-        )
-        require_int(self.budget_bytes, path="batch-size probe budget_bytes", minimum=0)
-        trials = tuple(self.trials)
-        if any(not isinstance(trial, BatchSizeProbeTrial) for trial in trials):
-            raise TypeError("batch-size probe trials must contain BatchSizeProbeTrial")
-        object.__setattr__(self, "trials", trials)
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,8 +291,6 @@ class RequestBatchOutOfMemory:
 __all__ = [
     "BatchCompletionCallback",
     "BatchMemoryReading",
-    "BatchSizeProbeResult",
-    "BatchSizeProbeTrial",
     "GenerationBatchEnvelope",
     "GenerationBatchResult",
     "ParkingBackend",

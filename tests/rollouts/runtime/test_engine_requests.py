@@ -92,14 +92,14 @@ def test_engine_request_builder_carries_the_engine_fields_off_the_sampling_dict(
     builder = GenerationRequestBuilder(
         entry=get_model_family_entry("sd3_5"),
         config=RolloutCollectorConfig(
-            samples_per_generation_batch="auto",
+            samples_per_generation_batch=2,
             trajectory_storage=storage,
         ),
     )
 
     request = builder.build(["prompt"], 1).request
 
-    assert request.samples_per_generation_batch == "auto"
+    assert request.samples_per_generation_batch == 2
     assert request.trajectory_storage == storage
     assert set(request.sampling) == {"seed"}
     assert type(request.sampling["seed"]) is int

@@ -16,14 +16,7 @@ from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trainers.data.prompts import PromptExample
 
 
-@pytest.mark.parametrize(
-    ("configured_chunk_size", "expected_chunk_size"),
-    [(8, 8), ("auto", 1)],
-)
-def test_preview_request_uses_real_prompt_overrides_and_one_sample(
-    configured_chunk_size: object,
-    expected_chunk_size: int,
-) -> None:
+def test_preview_request_uses_real_prompt_overrides_and_one_sample() -> None:
     builder = GenerationRequestBuilder(
         entry=SimpleNamespace(
             family="sana",
@@ -34,7 +27,7 @@ def test_preview_request_uses_real_prompt_overrides_and_one_sample(
                 OmegaConf.create(
                     {
                         "model": {"family": "sana"},
-                        "rollout": {"samples_per_generation_batch": configured_chunk_size},
+                        "rollout": {"samples_per_generation_batch": 8},
                         "sampling": {"num_steps": 10, "guidance_scale": 4.5},
                     },
                 )
@@ -52,7 +45,7 @@ def test_preview_request_uses_real_prompt_overrides_and_one_sample(
 
     assert request.prompts == ["a red apple"]
     assert request.samples_per_prompt == 1
-    assert request.samples_per_generation_batch == expected_chunk_size
+    assert request.samples_per_generation_batch == 8
     assert request.sampling == {
         "guidance_scale": 4.5,
         "negative_prompt": "text",

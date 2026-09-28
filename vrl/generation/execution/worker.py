@@ -20,8 +20,6 @@ from vrl.generation.execution.rank_group import (
 from vrl.generation.execution.types import (
     BatchCompletionCallback,
     BatchMemoryReading,
-    BatchSizeProbeResult,
-    BatchSizeProbeTrial,
     GenerationBatchEnvelope,
     GenerationBatchResult,
     RequestBatchOutOfMemory,
@@ -29,7 +27,6 @@ from vrl.generation.execution.types import (
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import (
-    BatchSizeProbeExecutor,
     GenerationBatchExecutor,
     GenerationBatchGatherer,
 )
@@ -42,16 +39,7 @@ from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
 from vrl.utils.validation import require_int
 
-# Batch-size probe tuning (SPRINT_chunk_size_probe). Fixed policy, not knobs:
-# production never varied them; tests steer via monkeypatch.
-_PROBE_MEMORY_MARGIN = 0.05
-_PROBE_KNEE_THRESHOLD = 0.05
-
 logger = init_logger(__name__)
-
-# The batch-size probe truncates each trial to a fixed handful of denoise steps:
-# it only needs the peak-memory shape (affine in samples), not a full sampling.
-_PROBE_EXECUTE_STEPS = 2
 
 
 class GenerationWorkerCore:
@@ -318,193 +306,6 @@ class GenerationWorkerCore:
                 policy_version=result_version,
                 error=str(exc),
             )
-
-    def probe_batch_size(
-        self,
-        request: Any,
-        *,
-        max_samples: int,
-    ) -> BatchSizeProbeResult:
-        """Startup batch-size probe (SPRINT_chunk_size_probe): pick the largest
-        safe ``samples_per_generation_batch`` for this worker by running truncated real
-        batches — vLLM's profile-run shape, adapted to a chunked rollout.
-
-        Runs BEFORE the first real request (caller contract). Trials at n=1 and
-        n=min(4, max) give a two-point affine fit of peak bytes (demand is
-        affine in n); the fitted candidate is then CONFIRMED with one real trial
-        because the allocator layer (segment rounding, fragmentation) is not.
-        The rollout owns its GPU for this phase, so the probe budgets against the
-        device total rather than instantaneous free memory. Trial timing feeds a
-        knee rule: growth that no longer improves ms/sample is refused (no memory
-        risk for a flat throughput return).
-        Probe outputs are discarded; trainable state / policy_version untouched.
-        """
-
-        if self.rank_group_spec is not None:
-            raise ValueError(
-                "automatic batch-size probing requires a single-rank engine; "
-                "set an explicit samples_per_generation_batch because multi-rank "
-                "probe trials do not yet coordinate memory/OOM decisions",
-            )
-        self._memory_parking.require_active(
-            "probe_batch_size",
-            executor=self.executor,
-        )
-
-        import time
-        from dataclasses import replace as dataclass_replace
-
-        import torch
-
-        from vrl.generation.execution.batch_memory import AffinePeakFit
-        from vrl.generation.execution.sample_batches import GenerationSampleBatch
-
-        if not torch.cuda.is_available():
-            raise RuntimeError("batch-size probe requires CUDA")
-        if max_samples < 1:
-            raise ValueError(f"probe max_samples must be >= 1, got {max_samples}")
-        self.load_policy()
-        executor = self.executor
-        model = getattr(executor, "model", None)
-        if not isinstance(executor, BatchSizeProbeExecutor):
-            raise TypeError(
-                f"{type(executor).__name__} does not expose the diffusion "
-                "batch probe capability; samples_per_generation_batch: auto is diffusion-only",
-            )
-
-        _, total_bytes = torch.cuda.mem_get_info()
-        budget_bytes = int(total_bytes)
-
-        def run_trial(n: int, *, timed_label: str) -> BatchSizeProbeTrial:
-            probe_request = dataclass_replace(
-                request,
-                request_id=f"batch-probe-{self.worker_id}-n{n}",
-                inputs=[request.inputs[0]],
-                samples_per_prompt=n,
-                sampling=dict(request.sampling),
-            )
-            batch = GenerationSampleBatch(
-                prompt_index=0,
-                sample_start=0,
-                sample_count=n,
-            )
-            started = time.perf_counter()
-            batch_result = None
-            try:
-                batch_result = executor.forward_probe_batch(
-                    probe_request,
-                    batch,
-                    execute_steps=_PROBE_EXECUTE_STEPS,
-                )
-                # CUDA work is async-launched; without a sync here the wall
-                # time of one trial leaks into the next and the knee rule
-                # compares garbage (observed: n=4 charged 47s, n=16 1.5s).
-                torch.cuda.synchronize()
-            except Exception as exc:  # OOM is an expected trial verdict
-                self._memory_parking.recover_after_execution_error(model, exc)
-                if not is_cuda_out_of_memory(exc):
-                    raise
-                torch.cuda.synchronize()
-                # Synchronization may fail after forward returned its payload.
-                # Release both that result and failed forward locals before cache cleanup.
-                batch_result = None
-                traceback.clear_frames(exc.__traceback__)
-                torch.cuda.empty_cache()
-                return BatchSizeProbeTrial(n=n, oom=True, label=timed_label)
-            wall_s = time.perf_counter() - started
-            memory = batch_result.memory
-            reading = BatchMemoryReading.from_metrics(memory) if memory is not None else None
-            del batch_result
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            if reading is None:
-                raise RuntimeError(
-                    "batch-size probe trial produced no memory reading "
-                    f"(n={n}); cannot size batches without it",
-                )
-            return BatchSizeProbeTrial(
-                n=n,
-                oom=False,
-                label=timed_label,
-                peak_bytes=reading.peak_bytes,
-                non_torch_bytes=reading.non_torch_bytes,
-                wall_s=wall_s,
-            )
-
-        trials: list[BatchSizeProbeTrial] = []
-
-        def bisect_capacity(low_good: int, high_bad: int) -> int:
-            """Find the largest fitting count between known good/bad trials."""
-
-            while high_bad - low_good > 1:
-                mid = (low_good + high_bad) // 2
-                trial = run_trial(mid, timed_label="bisect")
-                trials.append(trial)
-                if trial.oom:
-                    high_bad = mid
-                else:
-                    low_good = mid
-            return low_good
-
-        # Warmup at n=1 (cudnn autotune, lazy init) so trial timings compare
-        # warm-vs-warm; its memory verdict still counts: OOM at n=1 is terminal.
-        for label in ("warmup", "fit-low"):
-            trial = run_trial(1, timed_label=label)
-            if trial.oom:
-                raise RuntimeError(
-                    "batch-size probe: a single sample does not fit on this worker "
-                    f"during {label} (phase budget {budget_bytes / 2**30:.1f} GiB); "
-                    "the recipe shape is too large for this GPU",
-                )
-            trials.append(trial)
-        low = trials[-1]
-        final = 1
-
-        if max_samples > 1:
-            n_high = min(4, max_samples)
-            high = run_trial(n_high, timed_label="fit-high")
-            trials.append(high)
-            if high.oom:
-                # The fit anchor itself OOMed: bisect between the known-good 1
-                # and n_high for the largest fitting n.
-                final = bisect_capacity(1, n_high)
-            else:
-                assert high.non_torch_bytes is not None
-                assert high.peak_bytes is not None
-                assert low.peak_bytes is not None
-                usable_bytes = int(
-                    budget_bytes * (1.0 - _PROBE_MEMORY_MARGIN) - high.non_torch_bytes
-                )
-                fit = AffinePeakFit.from_trials(
-                    1,
-                    low.peak_bytes,
-                    n_high,
-                    high.peak_bytes,
-                )
-                candidate = max(
-                    1,
-                    fit.max_samples_within(usable_bytes, max_samples=max_samples),
-                )
-                final = n_high if candidate >= n_high else candidate
-                if candidate > n_high:
-                    confirm = run_trial(candidate, timed_label="confirm")
-                    trials.append(confirm)
-                    if confirm.oom:
-                        final = bisect_capacity(n_high, candidate)
-                    else:
-                        final = candidate
-                        # Knee rule: growing past n_high must still buy
-                        # throughput, otherwise the extra memory risk is free.
-                        assert confirm.per_sample_s is not None
-                        assert high.per_sample_s is not None
-                        improvement = 1.0 - (confirm.per_sample_s / high.per_sample_s)
-                        if improvement < _PROBE_KNEE_THRESHOLD:
-                            final = n_high
-        return BatchSizeProbeResult(
-            samples_per_generation_batch=int(final),
-            budget_bytes=budget_bytes,
-            trials=tuple(trials),
-        )
 
     def execute_request_batches(
         self,

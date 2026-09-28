@@ -24,7 +24,6 @@ import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
 from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
 from vrl.generation.execution.types import (
-    BatchSizeProbeResult,
     GenerationBatchEnvelope,
     GenerationBatchResult,
 )
@@ -750,67 +749,6 @@ def _executor(actors: list[_FakeActor]) -> RayGenerationExecutor:
         ),
         generation_stall_timeout_s=30.0,
     )
-
-
-@pytest.mark.real_cover(
-    "tests/generation/ray/test_runtime_config.py"
-    "::test_real_ray_probe_fan_out_resolves_auto_once_across_the_fleet",
-    why=(
-        "the gated ref makes probe/batch submission order deterministic; the named "
-        "test sends the real request and keyword arguments through live Ray actors"
-    ),
-)
-@pytest.mark.asyncio
-async def test_batch_size_probe_shares_actor_admission_with_explicit_generation() -> None:
-    gate = asyncio.Event()
-    probe_requests: list[str] = []
-    actor = _FakeActor("w0", 0)
-
-    class _Probe:
-        @staticmethod
-        def remote(
-            request: GenerationRequest,
-            *,
-            max_samples: int,
-        ) -> _GatedRef:
-            assert max_samples == 8
-            probe_requests.append(request.request_id)
-            return _GatedRef(
-                gate,
-                BatchSizeProbeResult(
-                    samples_per_generation_batch=2,
-                    budget_bytes=1,
-                    trials=(),
-                ),
-            )
-
-    actor.probe_batch_size = _Probe()
-    executor = _executor([actor])
-    request = _request(samples=2, sbs=1)
-    probe = asyncio.create_task(
-        executor.probe_batch_sizes(request, max_samples=8),
-    )
-    await asyncio.sleep(0)
-    generation = asyncio.create_task(executor.execute(request))
-    await asyncio.sleep(0)
-
-    assert probe_requests == [request.request_id]
-    assert actor.executed == []
-
-    gate.set()
-    assert await probe == [
-        BatchSizeProbeResult(
-            samples_per_generation_batch=2,
-            budget_bytes=1,
-            trials=(),
-        ),
-    ]
-    output = await generation
-    assert len(output.output) == 2
-    assert actor.executed == [
-        "prompt:0:samples:0:1",
-        "prompt:0:samples:1:2",
-    ]
 
 
 @_CONTROLLED_CLOCK_OVER_A_REAL_WIRE

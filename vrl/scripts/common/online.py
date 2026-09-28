@@ -331,7 +331,7 @@ def _require_supported_distributed_rollout_topology(
 def _log_rollout_memory_plan(
     batch_plan: OnlineBatchPlan,
     *,
-    samples_per_generation_batch: int | str | None,
+    samples_per_generation_batch: int | None,
 ) -> None:
     """Log how many rollout tensors one optimizer update can hold at once."""
 
@@ -340,9 +340,7 @@ def _log_rollout_memory_plan(
     target_samples = prompts_per_batch * samples_per_prompt
     replay_width = batch_plan.training_microbatch_size
 
-    def describe_batch_width(value: Any) -> str:
-        if value == "auto":
-            return "auto(pending)"
+    def describe_batch_width(value: int | None) -> str:
         size = int(value or 0)
         return str(samples_per_prompt if size <= 0 else min(samples_per_prompt, size))
 

@@ -22,12 +22,6 @@ engine — none exists for taste. One request flows as::
 - ``GenerationBatchGatherer``: the model-free slice of the executor, split out because
   reassembly runs driver-side where no model is loaded; it ships across the
   Ray launch contract as a serializable object.
-- ``BatchSizeProbeExecutor``: an optional capability flag ("can you execute a
-  truncated batch so the worker can measure peak memory for automatic
-  samples_per_generation_batch sizing"), probed by isinstance like the reward side's
-  ``MemoryParkingScorer``. Only diffusion families can truncate meaningfully:
-  their memory peaks in the first denoise steps, while AR peaks at the last
-  token, so a truncated AR run would measure a lie.
 - ``BatchPayload``: deliberately ``Any`` — the batch payload's shape is owned by
   the binding that produced it (diffusion latents vs AR token results share no
   useful common structure); the alias documents that ownership in signatures.
@@ -42,7 +36,6 @@ if TYPE_CHECKING:
     from vrl.generation.execution.planner import EnginePlan
     from vrl.generation.execution.sample_batches import GenerationSampleBatch
     from vrl.generation.execution.types import (
-        BatchSizeProbeResult,
         GenerationBatchEnvelope,
         GenerationBatchResult,
         RequestBatchOutOfMemory,
@@ -149,13 +142,6 @@ class GenerationRankActor(Protocol):
 
     def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult: ...
 
-    def probe_batch_size(
-        self,
-        request: GenerationRequest,
-        *,
-        max_samples: int,
-    ) -> BatchSizeProbeResult: ...
-
     def execute_request_batches(
         self,
         request: GenerationRequest,
@@ -186,28 +172,8 @@ class GenerationBatchExecutor(Protocol):
     ) -> GenerationOutput: ...
 
 
-@runtime_checkable
-class BatchSizeProbeExecutor(Protocol):
-    """Optional capability: truncated-batch execution for automatic sizing.
-
-    ``samples_per_generation_batch: auto`` makes the worker trial-run a few denoise steps
-    per candidate width to measure peak memory. Only executors whose memory
-    peaks early under truncation (diffusion) implement this; the worker
-    isinstance-probes it and requires an explicit width otherwise.
-    """
-
-    def forward_probe_batch(
-        self,
-        request: GenerationRequest,
-        batch: GenerationSampleBatch,
-        *,
-        execute_steps: int,
-    ) -> BatchPayload: ...
-
-
 __all__ = [
     "BatchPayload",
-    "BatchSizeProbeExecutor",
     "GenerationBatchExecutor",
     "GenerationBatchGatherer",
     "GenerationRankActor",

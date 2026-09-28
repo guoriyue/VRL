@@ -13,7 +13,7 @@ One layer below, ``RewardScorer`` is the transport seam under
 ``RewardFunction`` — the reward dual of the generation engine's Ray executor
 layer, with Ray actors (ray.py), standalone HTTP (service/client.py), and
 explicit in-process execution (runtime.py). ``RemoteReadyScorer``,
-``MemoryParkingScorer`` (the reward twin of ``BatchSizeProbeExecutor``), and
+``MemoryParkingScorer``, and
 ``ArtifactRetainingError`` are isinstance-probed optional capabilities.
 """
 

@@ -141,8 +141,6 @@ class DenoiseLoopConfig:
     sde_window: tuple[int, int] | None
     denoise_mode: DenoiseMode = "sde"
     teacache: TeaCacheConfig | None = None
-    # Memory probes may execute fewer steps while retaining full buffer allocation.
-    execute_steps: int | None = None
 
     def __post_init__(self) -> None:
         require_int(self.sample_start, path="sample_start", minimum=0)

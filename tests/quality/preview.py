@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -33,11 +32,6 @@ def build_preview_request(
         metadata=example.reward_metadata(),
         request_overrides=overrides,
     ).request
-    # Ray resolves ``auto`` from runtime memory. The direct preview has exactly
-    # one sample, so only that unresolved sentinel needs a local value. Preserve
-    # every explicit numeric batch size from the experiment YAML.
-    if request.samples_per_generation_batch == "auto":
-        request = replace(request, samples_per_generation_batch=1)
     return request
 
 

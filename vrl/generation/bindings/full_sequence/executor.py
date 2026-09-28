@@ -46,7 +46,6 @@ from vrl.utils.cuda_memory import (
 )
 from vrl.utils.media import to_uint8
 from vrl.utils.tensors import expand_tensor_to_batch
-from vrl.utils.validation import require_int
 
 
 @dataclass(slots=True)
@@ -270,27 +269,13 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
 
         return self.apply_wire_storage_policy(
             request,
-            self._forward_batch(request, batch, execute_steps=None),
+            self._forward_batch(request, batch),
         )
-
-    def forward_probe_batch(
-        self,
-        request: GenerationRequest,
-        batch: GenerationSampleBatch,
-        *,
-        execute_steps: int,
-    ) -> DenoiseBatchResult:
-        """Run a truncated canonical batch for startup memory sizing."""
-
-        require_int(execute_steps, path="execute_steps", minimum=1)
-        return self._forward_batch(request, batch, execute_steps=execute_steps)
 
     def _forward_batch(
         self,
         request: GenerationRequest,
         batch: GenerationSampleBatch,
-        *,
-        execute_steps: int | None,
     ) -> DenoiseBatchResult:
         from vrl.utils.profiling import profile_range
 
@@ -319,8 +304,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
             batch=batch,
         )
         config = self.build_denoise_config(params, batch)
-        if execute_steps is not None:
-            config = replace(config, execute_steps=execute_steps)
         initial_latents = self.draw_initial_latents(
             request=params.model_request,
             encoded=encoded,

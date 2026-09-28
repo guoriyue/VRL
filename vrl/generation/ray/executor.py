@@ -20,7 +20,6 @@ from typing import Any
 from vrl.generation.execution.batch_placement import DistributedExecutionPlanner
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import (
-    BatchSizeProbeResult,
     GenerationBatchEnvelope,
     GenerationBatchResult,
     RequestBatchOutOfMemory,
@@ -126,56 +125,6 @@ class RayGenerationExecutor:
             if isinstance(result, RequestBatchOutOfMemory):
                 return result
         return results[0]
-
-    async def probe_batch_sizes(
-        self,
-        request: GenerationRequest,
-        *,
-        max_samples: int,
-    ) -> list[BatchSizeProbeResult]:
-        """Probe every engine through the same actor admission as generation."""
-
-        for engine in self.engines:
-            if len(engine.ranks) != 1:
-                raise ValueError(
-                    "automatic batch-size probing requires single-rank engines; "
-                    f"engine {engine.engine_id!r} has {len(engine.ranks)} ranks. "
-                    "Set an explicit samples_per_generation_batch: multi-rank "
-                    "probe trials do not yet coordinate memory/OOM decisions.",
-                )
-        result_pairs: list[tuple[int, Any]] = []
-        remote_jobs: list[RayActorJob] = []
-        for job_index, engine in enumerate(self.engines):
-            probe = getattr(engine.primary.actor, "probe_batch_size", None)
-            if probe is None:
-                raise RuntimeError(
-                    f"engine {engine.engine_id!r} does not support the "
-                    "batch-size probe required by samples_per_generation_batch: auto",
-                )
-            remote_jobs.append(
-                RayActorJob(
-                    job_index=job_index,
-                    worker_id=engine.engine_id,
-                    remote_method=engine.remote("probe_batch_size"),
-                    payload=request,
-                    keyword_args={"max_samples": max_samples},
-                ),
-            )
-        result_pairs.extend(
-            await self.actor_dispatcher.run(
-                remote_jobs,
-                operation="rollout.generation.batch_size_probe",
-                call_timeout_s=self.generation_stall_timeout_s,
-            ),
-        )
-        results = [result for _, result in sorted(result_pairs, key=lambda pair: pair[0])]
-        for engine, result in zip(self.engines, results, strict=True):
-            if not isinstance(result, BatchSizeProbeResult):
-                raise TypeError(
-                    f"engine {engine.engine_id!r} returned invalid batch-size probe "
-                    f"result {type(result).__name__}",
-                )
-        return results
 
     async def execute(self, request: GenerationRequest) -> GenerationOutput:
         """Execute one request.
@@ -290,7 +239,7 @@ class RayGenerationExecutor:
             batch_outputs.append(result.output)
 
         output = self.gatherer.merge_generation_batches(request, sample_rows, batch_outputs)
-        # Log measured peaks without changing the probe's batch-size decision.
+        # Log each batch's measured memory peaks.
         for result in results:
             reading = result.memory
             if reading is None:

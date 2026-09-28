@@ -358,10 +358,8 @@ class RolloutConfig(ConfigBase):
         json_schema_extra={"runtime_owner": "generation_request"},
     )
     # reader: generation planner (batch_placement.py) + diffusion layout. int =
-    # fixed batch size; "auto" = the Ray runtime's startup batch-size probe
-    # resolves it before the first request (SPRINT_chunk_size_probe; Ray-only,
-    # the planner rejects "auto" on other runtimes); null = samples_per_prompt.
-    samples_per_generation_batch: int | Literal["auto"] | None = Field(
+    # fixed batch size; null = samples_per_prompt.
+    samples_per_generation_batch: int | None = Field(
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
@@ -374,13 +372,13 @@ class RolloutConfig(ConfigBase):
     @field_validator("samples_per_generation_batch", mode="before")
     @classmethod
     def _validate_samples_per_generation_batch(cls, value: Any) -> Any:
-        """Keep fixed generation batches positive; the runtime owns ``auto``."""
+        """Keep fixed generation batches positive."""
 
-        if value is None or value == "auto":
+        if value is None:
             return value
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(
-                "rollout.samples_per_generation_batch must be a positive integer, 'auto', or null",
+                "rollout.samples_per_generation_batch must be a positive integer or null",
             )
         return value
 

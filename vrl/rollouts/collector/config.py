@@ -13,7 +13,7 @@ a new schema field flows through without a second vocabulary to update.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, is_dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from vrl.config.schema import generation_request_rollout_fields
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
@@ -28,7 +28,7 @@ class RolloutCollectorConfig:
     """Collector-local policy plus the fail-closed generation request projection."""
 
     request_sampling: dict[str, Any] = field(default_factory=dict)
-    samples_per_generation_batch: int | Literal["auto"] | None = None
+    samples_per_generation_batch: int | None = None
     denoise: DenoiseRequestOptions | None = None
     trajectory_storage: TrajectoryStoragePolicy = field(
         default_factory=TrajectoryStoragePolicy,

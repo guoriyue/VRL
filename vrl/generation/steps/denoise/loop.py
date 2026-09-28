@@ -172,8 +172,6 @@ def run_denoise_loop(
     )
 
     num_steps_to_run = len(state.timesteps)
-    if config.execute_steps is not None:
-        num_steps_to_run = min(num_steps_to_run, config.execute_steps)
     with torch.no_grad():
         with profile_range("generation.latent_snapshot"):
             buffers.record_initial_latents(state.latents)
