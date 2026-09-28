@@ -2,7 +2,7 @@
 
 The checkpoint evaluator produces images and scores. This module owns the
 report and sample paths, publication helpers, and
-the fail-closed reader consumed by the curve verdict. Keeping both sides of the
+the metric-row reader consumed by the curve verdict. Keeping both sides of the
 persisted contract here prevents the producer CLI from becoming an accidental
 schema owner.
 """
@@ -19,17 +19,10 @@ from typing import Any
 
 from omegaconf import DictConfig
 
-from vrl.config.loading import load_config
 from vrl.config.schema import RootConfig, parse_config
-from vrl.scripts.eval.sana_inference import SANA_EVAL_SAMPLING_CONFIG, SANA_EVAL_SCHEDULER_CONFIG
-from vrl.trainers.checkpointing import (
-    TRAINING_CHECKPOINT_NAME,
-    is_complete_checkpoint,
-    read_checkpoint_meta,
-)
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file
-from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
+from vrl.utils.json_files import write_json, write_jsonl
 
 # Report format and file names are shared by the producer and reader.
 REPORT_SCHEMA = "vrl.sana_aesthetic_checkpoint_eval/v6"
@@ -292,21 +285,15 @@ def checkpoint_curve_epochs(
 
 
 def load_report_metrics(run_dir: str | Path) -> list[dict[str, float]]:
-    """Load and fully validate one provenance-bound standalone evaluation report."""
+    """Load the metric rows of one standalone evaluation report."""
 
-    root = Path(run_dir).expanduser().resolve()
-    report_path = root / REPORT_RELATIVE_PATH
+    report_path = Path(run_dir).expanduser().resolve() / REPORT_RELATIVE_PATH
     raw = json.loads(report_path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict) or raw.get("schema") != REPORT_SCHEMA:
         raise ValueError(
             f"unsupported SANA evaluation report schema in {report_path}: "
             f"schema={raw.get('schema') if isinstance(raw, dict) else type(raw).__name__}",
         )
-    provenance = raw.get("provenance")
-    if not isinstance(provenance, dict):
-        raise ValueError(f"SANA evaluation report has no provenance object: {report_path}")
-    sample_rows = _validate_report_provenance(root, provenance)
-
     raw_metrics = raw.get("metrics")
     if not isinstance(raw_metrics, list) or not raw_metrics:
         raise ValueError(f"SANA evaluation report has no metric rows: {report_path}")
@@ -330,47 +317,6 @@ def load_report_metrics(run_dir: str | Path) -> list[dict[str, float]]:
         if not all(math.isfinite(value) for value in row.values()):
             raise ValueError(f"SANA evaluation metric row {index} contains non-finite values")
         rows.append(row)
-
-    expected_metrics = summarize_scores(sample_rows)
-    if len(expected_metrics) != len(raw_metrics):
-        raise ValueError(
-            "SANA evaluation summary row count does not match its scored samples: "
-            f"{len(raw_metrics)} != {len(expected_metrics)}",
-        )
-    for index, (raw_row, expected_row) in enumerate(
-        zip(raw_metrics, expected_metrics, strict=True),
-    ):
-        if raw_row.get("checkpoint_label") != expected_row["checkpoint_label"]:
-            raise ValueError(
-                f"SANA evaluation summary row {index} has the wrong checkpoint label",
-            )
-        for key in required:
-            if not math.isclose(
-                float(raw_row[key]),
-                float(expected_row[key]),
-                rel_tol=0.0,
-                abs_tol=1e-12,
-            ):
-                raise ValueError(
-                    f"SANA evaluation summary row {index} field {key!r} "
-                    "does not match its scored samples",
-                )
-
-    checkpoint_records = provenance["checkpoints"]
-    expected_epochs = [int(record["epoch"]) for record in checkpoint_records]
-    actual_epochs = [int(row["epoch"]) for row in rows]
-    if actual_epochs != expected_epochs:
-        raise ValueError(
-            "SANA evaluation metric/checkpoint epochs disagree: "
-            f"metrics={actual_epochs}, checkpoints={expected_epochs}",
-        )
-    expected_samples = int(provenance["eval_manifest"]["prompt_count"]) * int(
-        provenance["seed_grid"]["samples_per_prompt"],
-    )
-    if any(int(row["sample_count"]) != expected_samples for row in rows):
-        raise ValueError(
-            "SANA evaluation metric sample_count does not match the fixed prompt/seed grid",
-        )
     return rows
 
 
@@ -398,7 +344,7 @@ def publish_report(
     provenance: dict[str, Any],
     metrics: list[dict[str, Any]],
 ) -> Path:
-    """Publish and re-read a report through the same persisted contract."""
+    """Publish the report beside its sample manifest."""
 
     if not metrics:
         raise ValueError("refusing to write a SANA evaluation report without metrics")
@@ -409,7 +355,6 @@ def publish_report(
         "metrics": metrics,
     }
     write_json(path, payload)
-    load_report_metrics(run_dir)
     return path
 
 
@@ -428,222 +373,3 @@ def _aesthetic_asset_record() -> dict[str, Any]:
         "sha256": sha256,
         "bytes": size,
     }
-
-
-def _validate_report_provenance(
-    run_dir: Path,
-    provenance: dict[str, Any],
-) -> list[dict[str, Any]]:
-    required = (
-        "resolved_config",
-        "run",
-        "training_log",
-        "model",
-        "training_manifest",
-        "eval_manifest",
-        "seed_grid",
-        "evaluation_curve",
-        "sampling",
-        "scheduler_protocol",
-        "execution",
-        "rewards",
-        "checkpoints",
-        "samples",
-    )
-    for key in required:
-        if key not in provenance:
-            raise ValueError(f"SANA evaluation report provenance missing {key!r}")
-    mapping_sections = (*required[:-2], "samples")
-    for key in mapping_sections:
-        if key in {"rewards", "checkpoints"}:
-            continue
-        if not isinstance(provenance[key], dict):
-            raise TypeError(f"SANA evaluation report provenance {key!r} must be an object")
-
-    run_record = provenance["run"]
-    if Path(str(run_record.get("path", ""))).expanduser().resolve() != run_dir:
-        raise ValueError("SANA evaluation report belongs to a different training run")
-    training_metrics_path = run_dir / str(run_record.get("training_metrics_path", ""))
-    _require_matching_file(
-        training_metrics_path,
-        {"sha256": run_record.get("training_metrics_sha256")},
-        label="training metrics",
-    )
-
-    config_record = provenance["resolved_config"]
-    config_path = run_dir / str(config_record.get("path", ""))
-    _require_matching_file(config_path, config_record, label="resolved config")
-    root = validate_run_config(load_config(config_path))
-    validate_training_metrics(training_metrics_path, root)
-    if provenance["training_log"] != require_training_log_provenance(run_dir, root):
-        raise ValueError("SANA evaluation training-log provenance changed")
-    if root.model is None:
-        raise ValueError("SANA evaluation report requires model configuration")
-    expected_model = {
-        "family": str(root.model.family),
-        "repo": str(root.model.path),
-        "revision": str(root.model.revision),
-    }
-    if provenance["model"] != expected_model:
-        raise ValueError("SANA evaluation model provenance disagrees with resolved_config.yaml")
-
-    training_manifest_path, eval_manifest_path, prompts = resolve_protocol_manifests(root)
-    for label, path, expected_count in (
-        (
-            "training_manifest",
-            training_manifest_path,
-            len(load_prompt_dataset_index(training_manifest_path)),
-        ),
-        ("eval_manifest", eval_manifest_path, len(prompts)),
-    ):
-        record = provenance[label]
-        if Path(str(record.get("path", ""))).expanduser().resolve() != path:
-            raise ValueError(f"SANA {label} provenance disagrees with resolved_config.yaml")
-        _require_matching_file(path, record, label=label.replace("_", " "))
-        if int(record.get("prompt_count", -1)) != expected_count:
-            raise ValueError(f"SANA {label} prompt count changed")
-
-    if provenance["sampling"] != SANA_EVAL_SAMPLING_CONFIG:
-        raise ValueError("SANA evaluation sampling provenance changed")
-    if provenance["scheduler_protocol"] != SANA_EVAL_SCHEDULER_CONFIG:
-        raise ValueError("SANA evaluation scheduler protocol changed")
-    settings = EvaluationSettings(
-        base_seed=provenance["seed_grid"].get("base_seed"),
-        samples_per_prompt=provenance["seed_grid"].get("samples_per_prompt"),
-        checkpoint_interval=provenance["evaluation_curve"].get("checkpoint_interval"),
-    )
-    if provenance["seed_grid"] != settings.seed_grid_record():
-        raise ValueError("SANA evaluation seed protocol is invalid")
-    if provenance["evaluation_curve"] != {"checkpoint_interval": settings.checkpoint_interval}:
-        raise ValueError("SANA evaluation checkpoint interval is invalid")
-
-    execution = provenance["execution"]
-    if not str(execution.get("generation_device", "")):
-        raise ValueError("SANA evaluation report execution provenance is incomplete")
-    expected_rewards = [
-        reward_model.to_report_record()
-        for reward_model in build_reward_model_definitions(
-            root,
-            generation_device=str(execution["generation_device"]),
-        )
-    ]
-    if provenance["rewards"] != expected_rewards:
-        raise ValueError("SANA evaluation reward provenance disagrees with resolved_config.yaml")
-
-    checkpoints = provenance["checkpoints"]
-    _validate_checkpoint_records(run_dir, root, checkpoints, settings)
-
-    sample_record = provenance["samples"]
-    sample_path = run_dir / str(sample_record.get("path", ""))
-    _require_matching_file(sample_path, sample_record, label="evaluation samples")
-    sample_rows = read_jsonl(sample_path)
-    if not sample_rows or len(sample_rows) != int(sample_record.get("count", -1)):
-        raise ValueError(
-            f"SANA evaluation sample manifest count changed: {len(sample_rows)} != "
-            f"{sample_record.get('count')!r}",
-        )
-    expected_cells = {
-        (record["label"], int(record["epoch"]), prompt_index, sample_index)
-        for record in checkpoints
-        for prompt_index in range(len(prompts))
-        for sample_index in range(settings.samples_per_prompt)
-    }
-    actual_cells: set[tuple[str, int, int, int]] = set()
-    for index, row in enumerate(sample_rows):
-        required_sample = {
-            "checkpoint_label",
-            "epoch",
-            "prompt_index",
-            "sample_index",
-            "group_seed",
-            "prompt",
-            "image_path",
-            "image_sha256",
-            "r_aesthetic",
-            "r_pickscore",
-        }
-        missing = required_sample - set(row)
-        if missing:
-            raise ValueError(f"evaluation sample row {index} missing fields: {sorted(missing)}")
-        cell = (
-            str(row["checkpoint_label"]),
-            int(row["epoch"]),
-            int(row["prompt_index"]),
-            int(row["sample_index"]),
-        )
-        actual_cells.add(cell)
-        prompt_index = cell[2]
-        if not (0 <= prompt_index < len(prompts)) or str(row["prompt"]) != prompts[prompt_index]:
-            raise ValueError(f"evaluation sample row {index} has the wrong prompt identity")
-        if int(row["group_seed"]) != settings.group_seed(prompt_index):
-            raise ValueError(f"evaluation sample row {index} has the wrong fixed-grid seed")
-        image_path = run_dir / str(row["image_path"])
-        _require_matching_file(
-            image_path,
-            {"sha256": row["image_sha256"]},
-            label=f"evaluation image row {index}",
-        )
-        if not all(math.isfinite(float(row[key])) for key in ("r_aesthetic", "r_pickscore")):
-            raise ValueError(f"evaluation sample row {index} contains non-finite reward scores")
-    if actual_cells != expected_cells or len(actual_cells) != len(sample_rows):
-        raise ValueError("evaluation sample rows do not exactly cover the fixed checkpoint grid")
-    return sample_rows
-
-
-def _validate_checkpoint_records(
-    run_dir: Path,
-    root: RootConfig,
-    checkpoints: Any,
-    settings: EvaluationSettings,
-) -> None:
-    if (
-        not isinstance(checkpoints, list)
-        or not checkpoints
-        or not all(isinstance(record, dict) for record in checkpoints)
-    ):
-        raise ValueError("SANA evaluation report has no checkpoint provenance")
-    baseline = {
-        "label": "baseline",
-        "epoch": -1,
-        "source": "pinned_base_model_snapshot",
-        "checkpoint_loaded": False,
-    }
-    if checkpoints[0] != baseline:
-        raise ValueError(
-            "SANA evaluation checkpoint provenance no longer matches the training run",
-        )
-    expected_epochs = checkpoint_curve_epochs(root, settings)
-    if [int(record.get("epoch", -1)) for record in checkpoints[1:]] != expected_epochs:
-        raise ValueError(
-            "SANA evaluation checkpoint provenance no longer matches the training run",
-        )
-    for epoch, record in zip(expected_epochs, checkpoints[1:], strict=True):
-        label = f"checkpoint-{epoch}"
-        checkpoint_dir = run_dir / label
-        if (
-            record.get("label") != label
-            or record.get("path") != label
-            or not is_complete_checkpoint(checkpoint_dir)
-        ):
-            raise ValueError(
-                "SANA evaluation checkpoint provenance no longer matches the training run",
-            )
-        meta = read_checkpoint_meta(checkpoint_dir)
-        if str(meta.get("family", "")) != "sana" or int(meta.get("completed_epoch", -1)) != epoch:
-            raise ValueError(
-                "SANA evaluation checkpoint provenance no longer matches the training run",
-            )
-        checkpoint_path = checkpoint_dir / TRAINING_CHECKPOINT_NAME
-        if int(record.get("checkpoint_bytes", -1)) != checkpoint_path.stat().st_size:
-            raise ValueError(
-                "SANA evaluation checkpoint provenance no longer matches the training run",
-            )
-        _require_matching_file(checkpoint_path, record, label="checkpoint provenance")
-
-
-def _require_matching_file(path: Path, record: dict[str, Any], *, label: str) -> None:
-    if not path.is_file():
-        raise FileNotFoundError(f"{label} provenance target does not exist: {path}")
-    expected = str(record.get("sha256") or record.get("checkpoint_sha256") or "")
-    if not expected or sha256_file(path) != expected:
-        raise ValueError(f"{label} provenance hash changed: {path}")

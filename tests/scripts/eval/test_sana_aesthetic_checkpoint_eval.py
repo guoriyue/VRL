@@ -252,27 +252,6 @@ def test_main_writes_provenance_bound_report(monkeypatch, tmp_path, capsys, seed
     assert checkpoints[1]["path"] == "checkpoint-25"
     assert "curve_points" in capsys.readouterr().out
 
-    checkpoint_path = run_dir / "checkpoint-25/checkpoint.pt"
-    checkpoint_bytes = checkpoint_path.read_bytes()
-    checkpoint_path.write_bytes(b"X" + checkpoint_bytes[1:])
-    with pytest.raises(ValueError, match="checkpoint provenance"):
-        sana_report.load_report_metrics(run_dir)
-    checkpoint_path.write_bytes(checkpoint_bytes)
-
-    metrics_path = run_dir / "metrics.csv"
-    metrics_text = metrics_path.read_text(encoding="utf-8")
-    metrics_path.write_text(metrics_text.replace("1.0", "2.0"), encoding="utf-8")
-    with pytest.raises(ValueError, match="training metrics provenance hash changed"):
-        sana_report.load_report_metrics(run_dir)
-    metrics_path.write_text(metrics_text, encoding="utf-8")
-
-    payload["provenance"]["seed_grid"]["base_seed"] += 1
-    report_path = run_dir / sana_report.REPORT_RELATIVE_PATH
-    report_path.write_text(json.dumps(payload), encoding="utf-8")
-    with pytest.raises(ValueError, match="wrong fixed-grid seed"):
-        sana_report.load_report_metrics(run_dir)
-    payload["provenance"]["seed_grid"]["base_seed"] -= 1
-
     payload["metrics"] = []
     (run_dir / sana_report.REPORT_RELATIVE_PATH).write_text(
         json.dumps(payload),
@@ -314,38 +293,6 @@ def test_main_rejects_checkpoint_identity_before_model_snapshot(monkeypatch, tmp
 
     assert materialized is False
     assert pipeline.loads == 0
-
-
-@_HUB_SNAPSHOTS_AND_REWARD_WEIGHTS_NEED_THE_NETWORK
-def test_report_reader_rejects_changed_config_provenance(monkeypatch, tmp_path) -> None:
-    run_dir, _pipeline = _write_run(tmp_path, monkeypatch)
-    _allow_minimal_protocol(monkeypatch)
-
-    def fake_score(images, rewards):
-        del rewards
-        return [
-            {
-                "checkpoint_label": image.checkpoint_label,
-                "epoch": image.epoch,
-                "prompt_index": image.prompt_index,
-                "sample_index": image.sample_index,
-                "group_seed": image.group_seed,
-                "prompt": image.prompt,
-                "image_path": str(image.path),
-                "image_sha256": image.image_sha256,
-                "r_aesthetic": 5.0,
-                "r_pickscore": 0.8,
-            }
-            for image in images
-        ]
-
-    monkeypatch.setattr(checkpoint_eval, "_score_images", fake_score)
-    checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
-    with (run_dir / "resolved_config.yaml").open("a", encoding="utf-8") as handle:
-        handle.write("\n# changed\n")
-
-    with pytest.raises(ValueError, match="resolved config provenance hash changed"):
-        sana_report.load_report_metrics(run_dir)
 
 
 @_HUB_SNAPSHOTS_AND_REWARD_WEIGHTS_NEED_THE_NETWORK

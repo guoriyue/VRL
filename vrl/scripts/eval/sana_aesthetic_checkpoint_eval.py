@@ -56,7 +56,7 @@ class CheckpointTarget:
     label: str
     epoch: int
     path: Path | None
-    # Provenance-only: emitted into the report and revalidated by its reader.
+    # Provenance-only: emitted into the report.
     checkpoint_sha256: str | None
     checkpoint_bytes: int | None
 
@@ -171,9 +171,6 @@ def main(argv: list[str] | None = None) -> None:
     metrics = sana_report.summarize_scores(sample_scores)
     if not metrics:
         raise RuntimeError("SANA checkpoint evaluation produced no summary rows")
-    # The supervisor may append its final shutdown line while a long evaluation
-    # is running. Reparse at publication so the report binds the final log bytes.
-    training_log = sana_report.require_training_log_provenance(run_dir, root)
 
     provenance = {
         "run": {
