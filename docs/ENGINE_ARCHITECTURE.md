@@ -116,7 +116,6 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 | `RayGenerationExecutor` | Driver-side dispatch of sample batches to worker actors (through `RayActorDispatcher`), including the per-request path (`pipelined`: each engine runs its share of a request in one call and stages payloads in the object store) and OOM-split handling. |
 | `RayGenerationFinalizer` (`ray/finalizer.py`) | CPU actor, one per engine, that merges a request's staged batch references through the gatherer and boxes reward media, off the GPU rank's critical path. |
 | `RayGenerationWeightSync` | Pushing trainer state into rollout workers (`push_to_rollout_workers(state_ref, policy_version)`), versioned slots for continuous mode. |
-| `RolloutWorkerHealthMonitor` / `RolloutWorkerUnreachable(TerminalRuntimeError)` | Bounded health probes; an unreachable worker is terminal. |
 | `RolloutWorkerConfig`, `RayGenerationConfig` | Typed config for the fleet. |
 | `GenerationRuntimeLaunchContract` (`launch_contract.py`) | The serializable recipe a Ray actor rebuilds its executor from: `family`, `model_build`, `expected_model_identity`, `executor_kwargs`, `policy_version`, profiler and offload flags. `__post_init__` enforces primitives-only/picklable content so a live driver object fails on the driver, not inside actor deserialization. Twin: `RewardWorkerLaunchContract`. |
 

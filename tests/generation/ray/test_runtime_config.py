@@ -468,7 +468,6 @@ def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) ->
     cfg = _launch_cfg()
     cfg.distributed.rollout = {
         "cpus_per_worker": 2.5,
-        "health_check_interval_s": 0.0,
     }
     config = _ray_config(cfg)
     owner = GlobalRayPlacementOwner(config.resources, config.worker)
@@ -885,34 +884,6 @@ def test_create_runtime_launches_resident_topology() -> None:
         placement=placement,
     )
     asyncio.run(runtime.shutdown())
-
-
-def test_create_runtime_kills_resident_session_when_monitor_start_fails() -> None:
-    config, launch_inputs, placement = _runtime_factory_inputs()
-    launcher = RayGenerationLauncher()
-    expected_session = _FactorySession()
-
-    with (
-        patch.object(
-            RayGenerationLauncher,
-            "_launch_session",
-            autospec=True,
-            return_value=expected_session,
-        ),
-        patch(
-            "vrl.generation.ray.health_monitor.RolloutWorkerHealthMonitor.start",
-            side_effect=RuntimeError("thread start failed"),
-        ),
-        pytest.raises(RuntimeError, match="thread start failed"),
-    ):
-        launcher.create_runtime(
-            config,
-            launch_inputs,
-            placement=placement,
-        )
-
-    assert expected_session.force_close_calls == 1
-    assert expected_session.kill_engines_calls == 1
 
 
 def test_create_runtime_defers_on_demand_topology_launch() -> None:

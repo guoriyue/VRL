@@ -9,10 +9,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-from vrl.generation.ray.health_monitor import RolloutWorkerHealthMonitor
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationOutput, GenerationRequest
-from vrl.ray.actor_group import RayActorHandle
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 from vrl.utils.lifecycle import (
     RuntimeLifecycle,
@@ -49,8 +47,6 @@ class RayGenerationRuntime:
         session: RayGenerationSession | None,
         session_factory: _RaySessionFactory | None = None,
         initial_policy_version: int | None = None,
-        health_check_interval_s: float = 0.0,
-        health_check_timeout_s: float = 30.0,
     ) -> None:
         if session is None and session_factory is None:
             raise ValueError(
@@ -76,19 +72,6 @@ class RayGenerationRuntime:
         self._shutdown_lock = asyncio.Lock()
         self._force_shutdown = False
 
-        self._health_monitor = RolloutWorkerHealthMonitor(
-            self,
-            interval_s=health_check_interval_s,
-            timeout_s=health_check_timeout_s,
-        )
-
-    @property
-    def _owned_ranks(self) -> list[RayActorHandle]:
-        """Rank-actor view consumed by the health-monitor framework adapter."""
-
-        session = self._session
-        return [] if session is None else session.rank_handles
-
     @property
     def supports_non_draining_weight_sync(self) -> bool:
         """Whether the currently published session can sync without draining."""
@@ -96,18 +79,8 @@ class RayGenerationRuntime:
         session = self._session
         return bool(session and session.supports_non_draining_weight_sync)
 
-    def start_health_monitoring(self) -> None:
-        """Begin probing owned workers. Idempotent and opt-in.
-
-        Parked workers are probed too: their health endpoint answers without
-        model state, and the trainer's GPU turns are the idle windows in which
-        a dead actor would otherwise go unnoticed until the next activate.
-        """
-
-        self._health_monitor.start()
-
     async def _admit_operation(self, operation: str) -> None:
-        """Reject closed admission and finish cleanup after monitor failures."""
+        """Reject closed admission and retry cleanup a failed shutdown left pending."""
 
         try:
             self.lifecycle.require_running(operation)
@@ -254,8 +227,6 @@ class RayGenerationRuntime:
         self._transition = "offload"
         try:
             await session.sleep_engines()
-            if self.lifecycle.failure is not None:
-                self.lifecycle.require_running("complete worker sleep")
             self._session_parked = True
         except BaseException as error:
             failure = await self._terminalize_after_failure(error, force_shutdown=True)
@@ -350,8 +321,6 @@ class RayGenerationRuntime:
                     await session.wake_engines()
                     self._session_parked = False
                     force_shutdown = False
-                    if self.lifecycle.failure is not None:
-                        self.lifecycle.require_running("complete worker wake")
                     pending = self._pending_install
                     if pending is not None and (
                         pending.policy_version != self._installed_policy_version
@@ -422,15 +391,10 @@ class RayGenerationRuntime:
             raise failure from failure.__cause__
 
     async def _teardown_session(self) -> None:
-        monitor_stopped = await asyncio.to_thread(self._health_monitor.stop)
         session = self._session
         if session is not None:
-            # Destroying the actors unblocks a probe stuck in ray.get; the
-            # daemon monitor thread then exits on its own.
             await session.close(
-                force=not monitor_stopped
-                or self._force_shutdown
-                or self.lifecycle.failure is not None,
+                force=self._force_shutdown or self.lifecycle.failure is not None,
             )
         self._session = None
         self._session_parked = False

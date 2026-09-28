@@ -13,7 +13,6 @@ import pytest
 from tests.generation.ray._helpers import NeverRef, ResolvedRef
 from tests.generation.ray._helpers import engine as _engine
 from tests.generation.ray._helpers import parking_snapshot as _parking_snapshot
-from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.ray.actor_pool import RayActorCallError
@@ -246,7 +245,7 @@ async def test_offload_accepts_complete_worker_parking_evidence() -> None:
     await runtime.offload()
 
     assert runtime._session_parked is True
-    assert [worker.actor.sleep.calls for worker in runtime._owned_ranks] == [1, 1]
+    assert [worker.actor.sleep.calls for worker in runtime._session.rank_handles] == [1, 1]
 
 
 @pytest.mark.asyncio
@@ -254,7 +253,7 @@ async def test_offload_rejects_mismatched_worker_parking_evidence(
     cleanup_ray: _CleanupRay,
 ) -> None:
     runtime = _parking_runtime(_parking_snapshot("another-worker"))
-    actor = runtime._owned_ranks[0].actor
+    actor = runtime._session.rank_handles[0].actor
 
     with pytest.raises(
         RuntimeError,
@@ -273,7 +272,7 @@ async def test_offload_rejects_worker_gpu_residual(
     cleanup_ray: _CleanupRay,
 ) -> None:
     runtime = _parking_runtime(_parking_snapshot(residual_bytes=1))
-    actor = runtime._owned_ranks[0].actor
+    actor = runtime._session.rank_handles[0].actor
 
     with pytest.raises(
         RuntimeError,
@@ -296,7 +295,7 @@ async def test_offload_requires_every_worker_parking_rpc_to_succeed(
         _parking_snapshot("rollout-0"),
         sleep_error,
     )
-    actors = [worker.actor for worker in runtime._owned_ranks]
+    actors = [worker.actor for worker in runtime._session.rank_handles]
 
     with pytest.raises(RuntimeError, match="worker sleep failed") as caught:
         await runtime.offload()
@@ -314,7 +313,7 @@ async def test_worker_sleep_remote_error_force_kills_without_graceful_release(
 ) -> None:
     timeout = TimeoutError("worker sleep timed out")
     runtime = _parking_runtime(timeout)
-    actor = runtime._owned_ranks[0].actor
+    actor = runtime._session.rank_handles[0].actor
 
     with pytest.raises(TimeoutError, match="worker sleep timed out") as caught:
         await runtime.offload()
@@ -332,7 +331,7 @@ async def test_worker_wake_remote_error_force_kills_without_graceful_release(
 ) -> None:
     timeout = TimeoutError("worker wake timed out")
     runtime = _parking_runtime(_parking_snapshot())
-    actor = runtime._owned_ranks[0].actor
+    actor = runtime._session.rank_handles[0].actor
     actor.wake = _RemoteResult(timeout)
     runtime._session_parked = True
 
@@ -364,7 +363,7 @@ async def test_worker_parking_deadline_force_kills_without_graceful_release(
     import vrl.generation.ray.session as session_module
 
     runtime = _parking_runtime(_parking_snapshot())
-    actor = runtime._owned_ranks[0].actor
+    actor = runtime._session.rank_handles[0].actor
     setattr(actor, remote_name, SimpleNamespace(remote=lambda: NeverRef()))
     runtime._session_parked = workers_offloaded
     real_wait_for = asyncio.wait_for
@@ -391,7 +390,7 @@ async def test_offload_rejects_invalid_worker_parking_report_type(
     cleanup_ray: _CleanupRay,
 ) -> None:
     runtime = _parking_runtime({"worker_id": "rollout-0"})
-    actor = runtime._owned_ranks[0].actor
+    actor = runtime._session.rank_handles[0].actor
 
     with pytest.raises(TypeError, match="invalid memory-parking report") as caught:
         await runtime.offload()
@@ -437,64 +436,6 @@ async def test_deferred_activation_publishes_candidate_non_draining_capability(
 
     assert runtime._session is candidate
     assert runtime.supports_non_draining_weight_sync is supports_non_draining_weight_sync
-
-
-@pytest.mark.asyncio
-async def test_parking_transitions_leave_the_health_monitor_alone() -> None:
-    """Sleeping and waking engines change residency, not reachability, so the
-    runtime neither pauses nor resumes probing around them."""
-
-    runtime = _on_demand_runtime()
-    events: list[Any] = []
-
-    class _OrderedSession(_FakeSession):
-        async def sleep_engines(self) -> None:
-            events.append("sleep")
-            await super().sleep_engines()
-
-        async def wake_engines(self) -> None:
-            events.append("wake")
-            await super().wake_engines()
-
-        async def update_weights(self, state_ref: Any, version: int) -> None:
-            events.append(("update", state_ref, version))
-            await super().update_weights(state_ref, version)
-
-    session = _OrderedSession()
-    runtime._session = session
-    runtime._session_parked = True
-    await _stage_pending_install(runtime, "W1", 1)
-    touched: list[str] = []
-    runtime._health_monitor = SimpleNamespace(
-        start=lambda: touched.append("start"),
-        stop=lambda: touched.append("stop") or True,
-    )
-
-    await runtime.activate()
-    assert events == ["wake", ("update", "W1", 1)]
-    await runtime.offload()
-    assert events[-1] == "sleep"
-    assert touched == []
-
-
-@pytest.mark.asyncio
-async def test_deferred_runtime_probes_nothing_until_a_session_exists() -> None:
-    async def launch_session() -> RayGenerationSession:
-        raise AssertionError("the monitor must not launch a session")
-
-    runtime = RayGenerationRuntime(
-        session=None,
-        session_factory=launch_session,
-        health_check_interval_s=0.01,
-    )
-    runtime.start_health_monitoring()
-    try:
-        assert runtime._health_monitor._thread is not None
-        assert runtime._owned_ranks == []
-        await asyncio.sleep(0.05)
-        assert runtime.lifecycle.phase is RuntimePhase.RUNNING
-    finally:
-        await runtime.shutdown()
 
 
 @pytest.mark.asyncio
@@ -694,79 +635,36 @@ async def test_active_update_failure_preserves_installed_version_and_terminates(
 
 
 @pytest.mark.asyncio
-async def test_active_update_health_race_does_not_publish_outer_version() -> None:
+async def test_active_update_sibling_failure_does_not_publish_outer_version() -> None:
     runtime = _on_demand_runtime()
-    health_failure = RolloutWorkerUnreachable(
-        "rollout-1",
-        0.5,
-        TimeoutError("health probe timed out"),
-    )
+    sibling_failure = RayOperationTimeout("rollout.generation.batch", 0.5)
 
     class _HealthRaceSession(_FakeSession):
         async def update_weights(self, state_ref: Any, version: int) -> None:
             await super().update_weights(state_ref, version)
-            runtime.lifecycle.fail(health_failure)
+            runtime.lifecycle.fail(sibling_failure)
 
     inner = _HealthRaceSession()
     _attach_active_session(runtime, inner, 1)
 
-    with pytest.raises(RolloutWorkerUnreachable) as caught:
+    with pytest.raises(RayOperationTimeout) as caught:
         await runtime.update_weights("W2", 2)
 
-    assert caught.value is health_failure
+    assert caught.value is sibling_failure
     assert runtime._pending_install is None
     assert runtime.current_policy_version == 1
     assert runtime._installed_policy_version is None
     assert runtime._session is None
     assert inner.current_policy_version == 2
     assert inner.calls == [("update", "W2", 2), "shutdown"]
-    assert runtime.lifecycle.failure is health_failure
+    assert runtime.lifecycle.failure is sibling_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
 @pytest.mark.asyncio
-async def test_wake_health_race_terminalizes_outer_before_active_publication() -> None:
+async def test_active_sibling_failure_propagates_session_first_failure() -> None:
     runtime = _on_demand_runtime()
-    await _stage_pending_install(runtime, "W2", 2)
-    runtime._installed_policy_version = 1
-    runtime._session_parked = True
-    health_failure = RolloutWorkerUnreachable(
-        "rollout-1",
-        0.5,
-        TimeoutError("health probe timed out"),
-    )
-
-    class _WakeHealthRaceSession(_FakeSession):
-        async def update_weights(self, state_ref: Any, version: int) -> None:
-            await super().update_weights(state_ref, version)
-            runtime.lifecycle.fail(health_failure)
-
-    inner = _WakeHealthRaceSession()
-    inner.current_policy_version = 1
-    runtime._session = inner
-
-    with pytest.raises(RolloutWorkerUnreachable) as caught:
-        await runtime.activate()
-
-    assert caught.value is health_failure
-    assert inner.calls == ["wake", ("update", "W2", 2), "shutdown"]
-    assert runtime.lifecycle.failure is health_failure
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._session is None
-    assert runtime._installed_policy_version is None
-    with pytest.raises(RuntimeLifecycleError, match="terminated") as retry:
-        await runtime.activate()
-    assert retry.value.__cause__ is health_failure
-
-
-@pytest.mark.asyncio
-async def test_active_health_race_propagates_session_first_failure() -> None:
-    runtime = _on_demand_runtime()
-    health_failure = RolloutWorkerUnreachable(
-        "wedged",
-        0.5,
-        TimeoutError("health probe timed out"),
-    )
+    sibling_failure = RayOperationTimeout("rollout.generation.batch", 0.5)
     actor_error = RayActorCallError(
         "rollout.generation.batch",
         worker_id="healthy-killed-with-fleet",
@@ -775,24 +673,24 @@ async def test_active_health_race_propagates_session_first_failure() -> None:
 
     class _Executor:
         async def execute(self, _request: Any) -> None:
-            runtime.lifecycle.fail(health_failure)
+            runtime.lifecycle.fail(sibling_failure)
             raise actor_error
 
     runtime._session = RayGenerationSession(_Executor(), None, [])
     runtime.current_policy_version = None
     request = SimpleNamespace(
-        request_id="health-race",
+        request_id="sibling-failure",
         sampling={},
         samples_per_generation_batch=None,
         policy_version=None,
     )
 
-    with pytest.raises(RolloutWorkerUnreachable) as caught:
+    with pytest.raises(RayOperationTimeout) as caught:
         await runtime.generate(request)
 
-    assert caught.value is health_failure
-    assert root_failure_cause(caught.value) is health_failure
-    assert runtime.lifecycle.failure is health_failure
+    assert caught.value is sibling_failure
+    assert root_failure_cause(caught.value) is sibling_failure
+    assert runtime.lifecycle.failure is sibling_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert runtime._session is None
 
@@ -920,28 +818,24 @@ async def test_update_cleanup_failure_retains_session_for_retry() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("transition", ["offload", "activate"])
-async def test_health_failure_before_lease_transition_preserves_root_and_force_kills(
+async def test_sibling_failure_before_lease_transition_preserves_root_and_force_kills(
     cleanup_ray: _CleanupRay,
     transition: str,
 ) -> None:
-    """A health failure recorded before either lease transition is the error
+    """A failure recorded before either lease transition is the error
     that surfaces, the runtime terminates, and the fleet is force-killed."""
 
-    health_failure = RolloutWorkerUnreachable(
-        "rollout-0",
-        0.5,
-        TimeoutError("health probe timed out"),
-    )
+    sibling_failure = RayOperationTimeout("rollout.generation.batch", 0.5)
     session, actor = _failed_parking_session()
     runtime = _on_demand_runtime()
     runtime._session = session
-    runtime.lifecycle.fail(health_failure)
+    runtime.lifecycle.fail(sibling_failure)
 
-    with pytest.raises(RolloutWorkerUnreachable) as caught:
+    with pytest.raises(RayOperationTimeout) as caught:
         await getattr(runtime, transition)()
 
-    assert caught.value is health_failure
-    assert runtime.lifecycle.failure is health_failure
+    assert caught.value is sibling_failure
+    assert runtime.lifecycle.failure is sibling_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert runtime._session is None
     assert actor.release_policy.calls == 0
@@ -1207,50 +1101,6 @@ async def test_cold_restore_timeout_force_kills_unpublished_candidate(
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert actor.release_calls == 0
     assert _Ray.killed == [actor]
-
-
-@pytest.mark.asyncio
-async def test_cold_candidate_health_failure_terminalizes_outer_before_publication() -> None:
-    runtime = _on_demand_runtime()
-    await _stage_pending_install(runtime, "W2", 2)
-    health_failure = RolloutWorkerUnreachable(
-        "rollout-0",
-        0.5,
-        TimeoutError("health probe timed out"),
-    )
-    launch_calls = 0
-
-    class _ColdHealthRaceCandidate(_FakeSession):
-        async def update_weights(self, state_ref: Any, version: int) -> None:
-            await super().update_weights(state_ref, version)
-            runtime.lifecycle.fail(health_failure)
-
-    candidate = _ColdHealthRaceCandidate()
-    candidate.supports_non_draining_weight_sync = True
-
-    class _Factory:
-        async def launch_session(self):
-            nonlocal launch_calls
-            launch_calls += 1
-            return candidate
-
-    runtime._session_factory = _Factory().launch_session
-
-    with pytest.raises(RolloutWorkerUnreachable) as caught:
-        await runtime.activate()
-
-    assert caught.value is health_failure
-    assert candidate.calls == [("update", "W2", 2), "shutdown"]
-    assert runtime.lifecycle.failure is health_failure
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._pending_install is None
-    assert runtime._session is None
-    assert runtime._installed_policy_version is None
-    assert runtime.supports_non_draining_weight_sync is False
-    with pytest.raises(RuntimeLifecycleError, match="terminated") as retry:
-        await runtime.activate()
-    assert retry.value.__cause__ is health_failure
-    assert launch_calls == 1
 
 
 @pytest.mark.asyncio

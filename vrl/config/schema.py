@@ -664,24 +664,17 @@ class RolloutRuntimeSection(ConfigBase):
 
     Each knob belongs to one layer of the engine/rank split (an engine is one
     replica; a rank is one per-GPU worker actor inside it):
-    rank level: cpus_per_worker, health_check_*, worker_rpc_timeout_s.
+    rank level: cpus_per_worker, worker_rpc_timeout_s.
     engine level: generation_stall_timeout_s, pipelined.
     """
 
     # rank level: CPU grant per rank actor (Ray num_cpus).
     cpus_per_worker: float = 1.0
-    # rank level: background liveness probing of rank actors. interval <= 0
-    # disables it; a rank that stops answering kills the owned actors so active
-    # or subsequent foreground work fails closed. A failed verdict then enters
-    # the supervisor's bounded restart policy.
-    health_check_interval_s: float = 30.0
-    health_check_timeout_s: float = 30.0
     # rank level: opaque control-plane calls expose no useful progress. Bound
     # startup, metadata, capability, and weight acknowledgements independently.
     worker_rpc_timeout_s: float = 600.0
-    # engine level: generation has a separate stall budget — a completed batch
-    # is real progress, and the pipelined path reports the same progress. One
-    # hour covers the observed ~30-minute cold compile plus a 733-second Cosmos
+    # engine level: generation has a separate stall budget per batch; the
+    # pipelined path grants it once per batch of an engine's share. One hour covers the observed ~30-minute cold compile plus a 733-second Cosmos
     # batch with margin; opaque control calls retain their tighter budget above.
     generation_stall_timeout_s: float = 3600.0
     # engine level: opt-in per-request rollout. Each engine runs its share of a
@@ -692,18 +685,7 @@ class RolloutRuntimeSection(ConfigBase):
     pipelined: bool = False
 
     @model_validator(mode="after")
-    def _validate_health_check(self) -> RolloutRuntimeSection:
-        if not math.isfinite(self.health_check_interval_s):
-            raise ValueError(
-                "distributed.rollout.health_check_interval_s must be finite",
-            )
-        if self.health_check_interval_s > 0 and (
-            not math.isfinite(self.health_check_timeout_s) or self.health_check_timeout_s <= 0
-        ):
-            raise ValueError(
-                "distributed.rollout.health_check_timeout_s must be finite and > 0 "
-                "when health checking is enabled",
-            )
+    def _validate_timeouts(self) -> RolloutRuntimeSection:
         if not math.isfinite(self.worker_rpc_timeout_s) or self.worker_rpc_timeout_s <= 0:
             raise ValueError(
                 "distributed.rollout.worker_rpc_timeout_s must be finite and > 0",

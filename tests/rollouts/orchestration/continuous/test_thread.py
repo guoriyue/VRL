@@ -12,9 +12,9 @@ import torch
 
 from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.rollouts.orchestration.continuous._helpers import _wait_until, owner_snapshot
-from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
+from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.thread import ContinuousRolloutThread
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
@@ -449,14 +449,10 @@ async def test_real_runtime_cleanup_failure_does_not_replace_ack_root() -> None:
 
 
 @pytest.mark.asyncio
-async def test_health_failure_after_weight_ack_never_resumes_owner_admission() -> None:
-    """A post-ACK health race is a failed commit, never a published version."""
+async def test_sibling_failure_after_weight_ack_never_resumes_owner_admission() -> None:
+    """A sibling failure after the ACK is a failed commit, never a published version."""
 
-    health_failure = RolloutWorkerUnreachable(
-        "rollout-1",
-        0.5,
-        TimeoutError("health probe timed out"),
-    )
+    sibling_failure = RayOperationTimeout("rollout.generation.batch", 0.5)
     runtime: RayGenerationRuntime
 
     class _HealthRaceSync:
@@ -466,7 +462,7 @@ async def test_health_failure_after_weight_ack_never_resumes_owner_admission() -
             policy_version: int,
         ) -> None:
             del state_ref, policy_version
-            runtime.lifecycle.fail(health_failure)
+            runtime.lifecycle.fail(sibling_failure)
 
     collector = _OwnerCollector()
     runtime = _runtime(_HealthRaceSync())
@@ -498,20 +494,20 @@ async def test_health_failure_after_weight_ack_never_resumes_owner_admission() -
         initial_weights=None,
     )
 
-    with pytest.raises(RolloutWorkerUnreachable) as caught:
+    with pytest.raises(RayOperationTimeout) as caught:
         await owner.commit_weights({"w": 1})
 
     failed = await owner_snapshot(owner)
-    assert caught.value is health_failure
+    assert caught.value is sibling_failure
     assert failed.producer_state is None
-    assert failed.terminal_error == repr(health_failure)
+    assert failed.terminal_error == repr(sibling_failure)
     assert runtime.current_policy_version == 1
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert collector.shutdown_calls == 1
 
     with pytest.raises(RuntimeError, match="owner has failed") as rejected:
         await owner.commit_weights({"w": 2})
-    assert rejected.value.__cause__ is health_failure
+    assert rejected.value.__cause__ is sibling_failure
 
     await owner.shutdown()
 

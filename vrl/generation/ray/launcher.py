@@ -18,7 +18,7 @@ from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
-from vrl.generation.ray.worker import HEALTH_CONCURRENCY_GROUP, RayGenerationWorker
+from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_group import RayActorGroup, RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.dependencies import current_node_ip, require_ray
@@ -174,9 +174,6 @@ class RayGenerationLauncher:
                 placement_group=placement_group,
                 bundle_indices=bundle_indices,
                 startup_method="load_policy",
-                # One dedicated thread so liveness probes never queue behind
-                # generation; the default group keeps its serialization.
-                concurrency_groups={HEALTH_CONCURRENCY_GROUP: 1},
             )
             self._validate_rank_gpu_ids(
                 config,
@@ -298,7 +295,6 @@ class RayGenerationLauncher:
                 "placement group was created before launch.",
             )
         resources = config.resources
-        worker = config.worker
         deferred = resources.lifecycle.rollout_mode == "on_demand"
         if deferred and resources.rollout_devices:
             launch_inputs = replace(
@@ -330,10 +326,7 @@ class RayGenerationLauncher:
                 session=session,
                 session_factory=session_factory,
                 initial_policy_version=launch_inputs.launch_contract.policy_version,
-                health_check_interval_s=worker.health_check_interval_s,
-                health_check_timeout_s=worker.health_check_timeout_s,
             )
-            runtime.start_health_monitoring()
             return runtime
         except BaseException as error:
             if session is not None:

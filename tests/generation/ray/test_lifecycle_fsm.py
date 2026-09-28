@@ -11,7 +11,6 @@ import pytest
 
 import vrl.generation.ray.session as session_module
 from tests.generation.ray._helpers import engine as _engine
-from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.ray.actor_group import RayActorHandle
@@ -47,12 +46,6 @@ def _request() -> SimpleNamespace:
         samples_per_generation_batch=None,
         policy_version=None,
     )
-
-
-def test_resident_runtime_tracks_only_worker_ownership() -> None:
-    runtime = _runtime()
-
-    assert runtime._owned_ranks == []
 
 
 def test_terminal_lifecycle_closes_admission_and_finishes_once() -> None:
@@ -177,30 +170,6 @@ async def test_concurrent_shutdown_callers_share_cleanup() -> None:
 
 
 @pytest.mark.asyncio
-async def test_shutdown_joins_health_monitor_without_blocking_event_loop() -> None:
-    runtime = _runtime()
-    loop = asyncio.get_running_loop()
-    loop_thread = threading.get_ident()
-    loop_progressed = threading.Event()
-    stop_threads: list[int] = []
-
-    def blocking_stop() -> bool:
-        stop_threads.append(threading.get_ident())
-        loop.call_soon_threadsafe(loop_progressed.set)
-        if not loop_progressed.wait(timeout=0.1):
-            raise RuntimeError("event loop could not run while health monitor stopped")
-        return True
-
-    runtime._health_monitor.stop = blocking_stop
-
-    await runtime.shutdown()
-
-    assert loop_progressed.is_set()
-    assert stop_threads and stop_threads[0] != loop_thread
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-
-
-@pytest.mark.asyncio
 async def test_cancelled_shutdown_waiter_does_not_cancel_cleanup() -> None:
     teardown_started = asyncio.Event()
     finish_teardown = asyncio.Event()
@@ -311,7 +280,7 @@ async def test_generation_timeout_force_kills_without_release_rpc(monkeypatch) -
     assert caught.value is timeout
     assert runtime.lifecycle.failure is timeout
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._owned_ranks == []
+    assert runtime._session is None
     assert _Release.calls == 0
     assert _Ray.killed == [actor]
 
@@ -433,9 +402,8 @@ async def test_terminal_executor_error_closes_runtime() -> None:
 
 
 @pytest.mark.asyncio
-async def test_active_health_failure_escapes_as_the_first_failure_identity() -> None:
-    probe_timeout = TimeoutError("health probe timed out")
-    health_failure = RolloutWorkerUnreachable("wedged", 0.5, probe_timeout)
+async def test_active_sibling_failure_escapes_as_the_first_failure_identity() -> None:
+    sibling_failure = RayOperationTimeout("rollout.generation.batch", 0.5)
     actor_error = RayActorCallError(
         "rollout.generation.batch",
         worker_id="healthy-killed-with-fleet",
@@ -446,62 +414,53 @@ async def test_active_health_failure_escapes_as_the_first_failure_identity() -> 
 
     class _Executor:
         async def execute(self, _request) -> None:
-            runtime.lifecycle.fail(health_failure)
+            runtime.lifecycle.fail(sibling_failure)
             raise actor_error
 
     runtime = _runtime(_Executor())
 
-    with pytest.raises(RolloutWorkerUnreachable) as caught:
+    with pytest.raises(RayOperationTimeout) as caught:
         await runtime.generate(_request())
 
-    assert caught.value is health_failure
-    assert caught.value.__cause__ is probe_timeout
-    assert runtime.lifecycle.failure is health_failure
+    assert caught.value is sibling_failure
+    assert runtime.lifecycle.failure is sibling_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     # TrainingRunResultWriter uses this exact selector for its error_class.
-    assert root_failure_cause(caught.value) is health_failure
+    assert root_failure_cause(caught.value) is sibling_failure
 
 
 @pytest.mark.asyncio
-async def test_active_health_failure_wins_over_a_later_ordinary_error() -> None:
-    health_failure = RolloutWorkerUnreachable(
-        "wedged",
-        0.5,
-        TimeoutError("health probe timed out"),
-    )
+async def test_active_sibling_failure_wins_over_a_later_ordinary_error() -> None:
+    sibling_failure = RayOperationTimeout("rollout.generation.batch", 0.5)
     later_error = RuntimeError("batch correlation failed after fleet kill")
     runtime: RayGenerationRuntime
 
     class _Executor:
         async def execute(self, _request) -> None:
-            runtime.lifecycle.fail(health_failure)
+            runtime.lifecycle.fail(sibling_failure)
             raise later_error
 
     runtime = _runtime(_Executor())
 
-    with pytest.raises(RolloutWorkerUnreachable) as caught:
+    with pytest.raises(RayOperationTimeout) as caught:
         await runtime.generate(_request())
 
-    assert caught.value is health_failure
-    assert root_failure_cause(caught.value) is health_failure
-    assert runtime.lifecycle.failure is health_failure
+    assert caught.value is sibling_failure
+    assert root_failure_cause(caught.value) is sibling_failure
+    assert runtime.lifecycle.failure is sibling_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
 @pytest.mark.asyncio
-async def test_active_health_failure_keeps_cancelled_surface_with_first_cause() -> None:
-    health_failure = RolloutWorkerUnreachable(
-        "wedged",
-        0.5,
-        TimeoutError("health probe timed out"),
-    )
+async def test_active_sibling_failure_keeps_cancelled_surface_with_first_cause() -> None:
+    sibling_failure = RayOperationTimeout("rollout.generation.batch", 0.5)
     cancellation = asyncio.CancelledError()
     cancellation.__cause__ = RayOperationCancelled("rollout.generation.batch")
     runtime: RayGenerationRuntime
 
     class _Executor:
         async def execute(self, _request) -> None:
-            runtime.lifecycle.fail(health_failure)
+            runtime.lifecycle.fail(sibling_failure)
             raise cancellation
 
     runtime = _runtime(_Executor())
@@ -510,9 +469,9 @@ async def test_active_health_failure_keeps_cancelled_surface_with_first_cause() 
         await runtime.generate(_request())
 
     assert caught.value is cancellation
-    assert caught.value.__cause__ is health_failure
-    assert root_failure_cause(caught.value) is health_failure
-    assert runtime.lifecycle.failure is health_failure
+    assert caught.value.__cause__ is sibling_failure
+    assert root_failure_cause(caught.value) is sibling_failure
+    assert runtime.lifecycle.failure is sibling_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
@@ -565,12 +524,8 @@ async def test_weight_ack_timeout_keeps_previous_version_and_force_kills(
 
 
 @pytest.mark.asyncio
-async def test_health_failure_after_weight_ack_blocks_version_publication() -> None:
-    health_failure = RolloutWorkerUnreachable(
-        "rollout-1",
-        0.5,
-        TimeoutError("health probe timed out"),
-    )
+async def test_sibling_failure_after_weight_ack_blocks_version_publication() -> None:
+    sibling_failure = RayOperationTimeout("rollout.generation.batch", 0.5)
     runtime: RayGenerationRuntime
 
     class _WeightSync:
@@ -579,21 +534,21 @@ async def test_health_failure_after_weight_ack_blocks_version_publication() -> N
             _state_ref,
             _policy_version,
         ) -> None:
-            # The remote ACK transaction completed, but the independent health
-            # thread closed admission before the driver could publish its version.
-            runtime.lifecycle.fail(health_failure)
+            # The remote ACK transaction completed, but a sibling request's failure
+            # closed admission before the driver could publish its version.
+            runtime.lifecycle.fail(sibling_failure)
 
     runtime = _runtime(SimpleNamespace(), weight_sync=_WeightSync())
     runtime.current_policy_version = 6
 
-    with pytest.raises(RolloutWorkerUnreachable) as caught:
+    with pytest.raises(RayOperationTimeout) as caught:
         await runtime.update_weights(object(), policy_version=7)
 
-    assert caught.value is health_failure
+    assert caught.value is sibling_failure
     assert runtime.current_policy_version == 6
-    assert runtime.lifecycle.failure is health_failure
+    assert runtime.lifecycle.failure is sibling_failure
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert root_failure_cause(caught.value) is health_failure
+    assert root_failure_cause(caught.value) is sibling_failure
 
 
 @pytest.mark.asyncio
@@ -790,11 +745,11 @@ async def test_actor_cleanup_failure_retains_owned_handle_for_retry(monkeypatch)
     with pytest.raises(RuntimeError, match="cleanup incomplete"):
         await runtime.shutdown()
     assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-    assert runtime._owned_ranks == list(worker.ranks)
+    assert runtime._session.rank_handles == list(worker.ranks)
 
     await runtime.shutdown()
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._owned_ranks == []
+    assert runtime._session is None
     assert _RayApi.kill_calls == 2
 
 
@@ -819,11 +774,11 @@ async def test_partial_engine_cleanup_retries_only_failed_rank(monkeypatch) -> N
 
     with pytest.raises(RuntimeError, match="cleanup incomplete"):
         await runtime.shutdown()
-    assert runtime._owned_ranks == [ranks[1]]
+    assert runtime._session.rank_handles == [ranks[1]]
     assert engine.ranks == tuple(ranks)
 
     await runtime.shutdown()
-    assert runtime._owned_ranks == []
+    assert runtime._session is None
     assert calls == [actors[0], actors[1], actors[1]]
 
 
@@ -878,31 +833,3 @@ def test_shutdown_kills_only_owned_actor(local_ray) -> None:
     # The cluster is shared: the bystander survived on purpose, so this test has
     # to retire it itself.
     local_ray.kill(bystander, no_restart=True)
-
-
-@pytest.mark.asyncio
-async def test_shutdown_force_closes_the_session_when_the_monitor_will_not_stop(monkeypatch):
-    runtime = _runtime()
-    session = runtime._session
-    monitor = runtime._health_monitor
-    monitor._interval_s = monitor._timeout_s = 0.001
-    monkeypatch.setattr("vrl.generation.ray.health_monitor._STOP_JOIN_GRACE_S", 0.0)
-    release = threading.Event()
-    thread = threading.Thread(target=release.wait, daemon=True)
-    monitor._thread = thread
-    thread.start()
-    forced = []
-
-    async def close(*, force):
-        forced.append(force)
-        release.set()  # killing the actors unblocks the stuck probe
-
-    monkeypatch.setattr(session, "close", close)
-    try:
-        await runtime.shutdown()
-        assert forced == [True]
-        assert runtime._session is None
-        assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    finally:
-        release.set()
-        thread.join(timeout=1)

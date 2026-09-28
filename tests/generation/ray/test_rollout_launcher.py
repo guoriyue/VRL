@@ -83,8 +83,6 @@ def test_worker_section_defaults_only_for_absent_or_empty_mapping() -> None:
 def _worker_config(**overrides: Any) -> RolloutWorkerConfig:
     values = {
         "cpus_per_worker": 0.5,
-        "health_check_interval_s": 30.0,
-        "health_check_timeout_s": 30.0,
         "worker_rpc_timeout_s": 30.0,
         "generation_stall_timeout_s": 30.0,
         "pipelined": False,

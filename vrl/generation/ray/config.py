@@ -24,8 +24,6 @@ class RolloutWorkerConfig:
     """Frozen runtime projection of the public rollout-worker section."""
 
     cpus_per_worker: float
-    health_check_interval_s: float
-    health_check_timeout_s: float
     worker_rpc_timeout_s: float
     generation_stall_timeout_s: float
     # Opt-in per-request rollout: each engine runs its round-robin share of a
@@ -35,12 +33,6 @@ class RolloutWorkerConfig:
     def __post_init__(self) -> None:
         if not math.isfinite(self.cpus_per_worker) or self.cpus_per_worker <= 0:
             raise ValueError("cpus_per_worker must be finite and > 0")
-        if not math.isfinite(self.health_check_interval_s):
-            raise ValueError("health_check_interval_s must be finite")
-        if self.health_check_interval_s > 0 and (
-            not math.isfinite(self.health_check_timeout_s) or self.health_check_timeout_s <= 0
-        ):
-            raise ValueError("health_check_timeout_s must be finite and > 0 when enabled")
         if not math.isfinite(self.worker_rpc_timeout_s) or self.worker_rpc_timeout_s <= 0:
             raise ValueError("worker_rpc_timeout_s must be finite and > 0")
         if (

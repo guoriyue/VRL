@@ -22,12 +22,6 @@ from vrl.generation.ray.tensor_wire import register_tensor_wire_serializer
 from vrl.generation.types import GenerationRequest
 from vrl.ray.dependencies import current_gpu_ids, current_node_ip
 
-# Ray binds methods to a concurrency group by name across two separate APIs --
-# @ray.method here and ray.remote(concurrency_groups=...) at actor creation --
-# so the health adapter shares this protocol name; the group's thread
-# count belongs to the creation site.
-HEALTH_CONCURRENCY_GROUP = "health"
-
 
 class RayGenerationWorker:
     """Ray actor adapter around ``GenerationWorkerCore``."""
@@ -52,19 +46,6 @@ class RayGenerationWorker:
             launch_inputs.gatherer,
             rank_group=launch_inputs.rank_group,
         )
-
-    @ray.method(concurrency_group=HEALTH_CONCURRENCY_GROUP)
-    def health(self) -> str:
-        """Answer a liveness probe without touching model or GPU state.
-
-        Runs in its own concurrency group so it never queues behind
-        ``execute_batch`` — a queued probe would measure queue depth, not
-        liveness. The group is deliberately not a raw ``max_concurrency``
-        bump: that would also let two batches execute concurrently on one GPU
-        worker.
-        """
-
-        return self.core.worker_id
 
     def load_policy(self) -> None:
         self.core.load_policy()

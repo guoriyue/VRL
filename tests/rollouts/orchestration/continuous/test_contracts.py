@@ -24,7 +24,6 @@ import torch
 
 from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.rollouts.orchestration.continuous._helpers import _wait_until
-from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.core import PromptCollectionCleanupError
@@ -332,16 +331,12 @@ async def test_terminal_generation_error_is_not_retried_or_wrapped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_idle_health_failure_makes_next_collect_fatal_without_slot_retry() -> None:
-    """A monitor failure between requests must poison the next slot immediately."""
+async def test_idle_sibling_failure_makes_next_collect_fatal_without_slot_retry() -> None:
+    """A terminal failure between requests must poison the next slot immediately."""
 
     lifecycle = RuntimeLifecycle()
-    health_failure = RolloutWorkerUnreachable(
-        "rollout-0",
-        1.0,
-        TimeoutError("health probe timed out"),
-    )
-    lifecycle.fail(health_failure)
+    sibling_failure = RayOperationTimeout("rollout.generation.batch", 0.5)
+    lifecycle.fail(sibling_failure)
 
     class _ClosedRuntimeCollector(_GatedCollector):
         def __init__(self) -> None:
@@ -376,7 +371,7 @@ async def test_idle_health_failure_makes_next_collect_fatal_without_slot_retry()
                 producer_state=producer.state,
             )
 
-        assert caught.value.__cause__ is health_failure
+        assert caught.value.__cause__ is sibling_failure
         assert collector.attempts == 1
         assert producer.state.submitted_count == 1
         assert producer.state.error_count == 1
