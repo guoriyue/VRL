@@ -52,9 +52,8 @@ python -m reward agreement --evaluation outputs/.../set --labels labels.jsonl --
 Gate: every contrast the reward is *meant* to rank has AUC >= 0.85 with n >= 20 per side.
 A contrast it fails is a **blind spot**: record it next to the reward and never
 let the training key depend on that dimension. Collect labels blind (judges see source +
-instruction + output only; no scores, no arm names) -- `python -m reward review-export`
-builds a blinded page for pairwise preferences; categorical outcome labels come from a
-judge protocol such as the one in `docs/sprints/planned/SPRINT_qwen21_general_edit_rl.md` S7.
+instruction + output only; no scores, no arm names); categorical outcome labels come
+from a judge protocol such as the one in `docs/sprints/planned/SPRINT_qwen21_general_edit_rl.md` S7.
 
 ## 3. Shortcuts and damage
 

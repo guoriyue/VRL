@@ -1,15 +1,14 @@
 # Score existing media independently
 
 > Scoring (`vrl.scripts.rewards.rescore_media`, the `Evaluation` class) is part of
-> the framework. Analysis, calibration fitting and review packets live in the
-> separate `reward` package (`python -m reward <command>`), which depends on `vrl`
-> and is never imported by it.
+> the framework. Analysis lives in the separate `reward` package (`python -m
+> reward <command>`), which depends on `vrl` and is never imported by it.
 
 `vrl.scripts.rewards.rescore_media` scores a JSONL media manifest through the
 existing local or HTTP reward scorer. It does not construct a trainer, generation
 worker, optimizer, or Ray cluster. It preserves every score axis rather than
-choosing a training reward. Calibration and candidate comparisons consume these
-raw measurements separately.
+choosing a training reward. Candidate comparisons consume these raw measurements
+separately.
 
 ## Local CPU example
 
@@ -137,121 +136,6 @@ equal weight, and retain reversed rankings and tie disagreements for review.
 `--first-direction -1` and `--second-direction -1` support lower-is-better axes.
 Tie tolerances are explicit in each score's units. Agreement is consistency between
 scorers, not correctness or human preference accuracy.
-
-## Frozen preference calibration
-
-A preference JSONL names two scored sample IDs, their shared source group and an
-explicit split:
-
-```json
-{"pair_id":"annotation-1","left":"sample-a","right":"sample-b","source_group":"original-scene-1","split":"calibration","preference":"left","dimension":"overall","tags":["local-edit"]}
-```
-
-Allowed preferences are `left`, `right`, `tie`, and `unsure`. Separate annotations
-may retain different judgments under unique pair IDs. Calibration and holdout may
-not share prompts, source groups, exact media, or auxiliary assets. This deliberately
-conservative asset rule includes masks; split shared assets consistently. Different
-edits/crops of one source must carry the same source group: hashes alone cannot
-identify near-duplicates.
-
-To collect these annotations, declare pairs in `review-pairs.jsonl` using the same
-fields but **omit `preference`**. Choose pairs and source-separated splits before
-looking at holdout results. Export a portable browser review:
-
-```bash
-python -m reward review-export \
-  --evaluation outputs/multiaxis-audit --pairs review-pairs.jsonl \
-  --seed 42 --output outputs/preference-review
-```
-
-Open `outputs/preference-review/index.html`. Original media bytes are copied;
-alpha is preserved and shown over a checkerboard.
-Supported browser media are PNG/JPEG/WebP/GIF and MP4/WebM. Each pair shows the
-prompt, requested dimension and original reference when available. Candidate order
-and A/B assignment are randomized reproducibly. Scores, sample/model names and
-split assignment are absent from the page. This is presentation blinding, not
-access control: the separate `audit.json` is the content-bound identity map.
-Verifier targets and masks are not displayed as candidate evidence.
-
-Choose A, B, tie or cannot judge, then download `review-answers.json`. There are no
-default judgments, and unanswered pairs are omitted. Browser storage is a convenience;
-download answers to keep them independently of the browser. Convert explicit
-answers back to the original sample orientation:
-
-```bash
-python -m reward review-import \
-  --review outputs/preference-review/audit.json --answers review-answers.json \
-  --output preferences.jsonl
-```
-
-Import matches answers to their review packet and rejects unknown choices.
-It never fills unanswered pairs and refuses to overwrite an existing label file.
-The packet is a collection tool, not human evidence until a person actually judges
-it. A single-source demonstration cannot support source-separated calibration.
-Multiple annotators need distinct pair IDs when their labels are combined.
-
-```bash
-python -m reward fit \
-  --evaluation outputs/multiaxis-audit --preferences preferences.jsonl \
-  --axes alignment quality --l2 0.1 --tie-margin 0.1 \
-  --output outputs/reports/frozen-combination.json
-python -m reward evaluate \
-  --evaluation outputs/multiaxis-audit --preferences preferences.jsonl \
-  --combination outputs/reports/frozen-combination.json \
-  --output outputs/reports/preference-holdout.json
-```
-
-The fit standardizes unique calibration samples and learns an L2-regularized linear
-combination with logistic preference loss. Each source group has equal total weight.
-Ties target 0.5; unsure annotations are excluded. The saved artifact freezes axes,
-scales, coefficients, tie margin, recipe digest, and calibration identities. This combines pointwise axes; it does not
-implement a visual pairwise judge or guarantee calibrated probabilities.
-
-Independent scorers can be joined without rerunning models:
-
-```bash
-python -m reward fit \
-  --component semantic=outputs/editreward-audit \
-  --component locality=outputs/masked-edit-audit \
-  --preferences preferences.jsonl \
-  --axes semantic/editreward locality/locality \
-  --output outputs/reports/frozen-combination.json
-```
-
-Use the same component aliases with `evaluate` on source-disjoint holdout runs.
-Every scorer must cover exactly the same sample grid and input records (including
-source/mask hashes); missing/error rows cause rejection, never intersection or zero
-imputation. The joined view namespaces axes and retains original model versions and
-timings. Its identity binds source run IDs and observed results. The frozen recipe
-binds every scorer configuration, while allowing different holdout samples/run IDs.
-The join is an in-memory analysis view, not a new model service or a scoring YAML.
-
-Holdout uses exact three-way agreement, excludes unsure annotations, and bootstraps
-source-group mean accuracy. Per-tag figures are descriptive annotation averages.
-Changing holdout labels cannot alter fitted weights. Choose hyperparameters before
-examining holdout; the tool cannot prevent a human from repeatedly tuning on reports.
-No human labels are fabricated, and none are bundled with this implementation.
-These commands do not change a training reward configuration automatically.
-
-Apply a frozen combination to a new scoring snapshot without labels or model
-inference:
-
-```bash
-python -m reward apply \
-  --evaluation outputs/reward_evaluation/new-candidates \
-  --combination outputs/reports/frozen-combination.json \
-  --output outputs/reports/candidate-combination-scores.json
-```
-
-The same repeated `--component NAME=DIRECTORY` inputs are supported when the fit
-used joined scorers. Recipes must match the fit exactly. Coefficients and scales
-stay frozen, including negative coefficients for measured costs; no new labels
-are inferred. Each successful row reports its combined score, signed standardized
-axis contributions, and original scorer evidence. Failed/missing rows stay
-unscored; missing required axes, nonfinite arithmetic, and changed recipes fail.
-This derived JSON report does not overwrite raw scores, install a
-training reward, or measure held-out preference accuracy. Use `evaluate` with
-independent annotations for that final claim.
 
 ## Training observations
 

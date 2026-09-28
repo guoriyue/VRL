@@ -1,6 +1,6 @@
 ---
 name: reward
-description: The offline reward toolkit (`python -m reward`, `vrl.scripts.rewards.rescore_media`) -- score existing media independently of training, qualify a reward for RL gate by gate, and calibrate a combination of axes on blind preferences. Use when adding or choosing a reward, before launching a GRPO run on a reward that has not passed the gates, when a curve rises but held-out judgments do not, or when you need scores for generated outputs without a trainer.
+description: The offline reward toolkit (`python -m reward`, `vrl.scripts.rewards.rescore_media`) -- score existing media independently of training, and qualify a reward for RL gate by gate. Use when adding or choosing a reward, before launching a GRPO run on a reward that has not passed the gates, when a curve rises but held-out judgments do not, or when you need scores for generated outputs without a trainer.
 ---
 
 # Reward toolkit
@@ -13,9 +13,8 @@ the job and read it before running commands:
 | --- | --- | --- |
 | Scores for existing images/videos, locally or through the service training uses | `scoring.md` | `rescore_media`, `health`, `compare`, `paired`, `repeat` |
 | Decide whether a reward may enter a training key | `qualification.md` | `repeat`, `agreement`, `stress-manifest` / `shortcut-manifest` + `stress`, `spread` |
-| Fit a combination of axes on blind human preferences | `calibration.md` | `review-export` / `review-import`, `fit`, `evaluate`, `apply` |
 
-Ground rules that hold across all three:
+Ground rules that hold across both:
 
 - Evidence about a reward comes from **the policy's own outputs** (generated under
   the training sampler) judged **blind** by people or independent judges -- never

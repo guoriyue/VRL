@@ -1,12 +1,11 @@
-"""Offline reward development: analyze and calibrate rewards without training.
+"""Offline reward development: analyze rewards without training.
 
 This package sits beside ``vrl`` and depends on it; ``vrl`` never imports it.
 It consumes scoring runs written by ``vrl.scripts.rewards.rescore_media``
-(``vrl.rewards.evaluation.Evaluation``) and produces reports and fitted
-combinations. Training never reads them.
+(``vrl.rewards.evaluation.Evaluation``) and produces reports. Training never
+reads them.
 
 * ``analysis.Analysis``: health, stress, sequence, ranking, paired and repeatability reports.
-* ``calibration.Calibration``: preference fitting, application, holdout evaluation, review packets.
 * ``stress.build_stress_manifest``: deterministic perturbations for stress audits.
 * ``shortcuts.build_shortcut_manifest``: task-avoiding candidates (unchanged source,
   shifted or re-cropped frame, another scene) for edit rewards, paired like stress.
@@ -14,5 +13,5 @@ combinations. Training never reads them.
 * ``Analysis.spread``: success band and within-prompt spread under the training sampler.
 * ``python -m reward``: one command-line entry point for all of the above.
 * ``skills/reward/``: the toolkit as a Claude Code skill set -- ``SKILL.md`` routes to
-  ``scoring.md``, ``qualification.md`` and ``calibration.md`` (``.claude/skills/reward`` links here).
+  ``scoring.md`` and ``qualification.md`` (``.claude/skills/reward`` links here).
 """

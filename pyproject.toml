@@ -169,7 +169,6 @@ include = ["vrl*", "reward*"]
 "vrl.config.presets" = ["**/*.yaml", "**/*.yml", "**/*.md"]
 "vrl.config.reward_service" = ["*.yaml"]
 "vrl.rewards.assets" = ["*.pth", "*.LICENSE", "*.md"]
-"reward" = ["preference_review.html"]
 
 # ── Ruff ─────────────────────────────────────────────────────────
 [tool.ruff]

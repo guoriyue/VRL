@@ -616,8 +616,7 @@ class Analysis:
         """Align independent scorers of the same samples into one run with prefixed axes.
 
         Inputs must match exactly across scorers. The joined recipe holds the
-        scorer recipes under their aliases, so a combination fitted on it can
-        score a separate holdout scored by the same scorers.
+        scorer recipes under their aliases.
         """
 
         if not evaluations or any(not name or "/" in name for name in evaluations):

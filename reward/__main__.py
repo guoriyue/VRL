@@ -1,4 +1,4 @@
-"""``python -m reward <command>``: analyze and calibrate rewards offline.
+"""``python -m reward <command>``: analyze rewards offline.
 
 Every command reads scoring runs written by ``vrl.scripts.rewards.rescore_media``
 and writes one JSON report. ``--evaluation DIR`` names one run; ``--component
@@ -13,13 +13,11 @@ import json
 from pathlib import Path
 
 from reward.analysis import Analysis
-from reward.calibration import Calibration, PreferencePair
 from reward.labels import Contrast, OutcomeLabel, agreement
 from reward.shortcuts import build_shortcut_manifest
 from reward.stress import build_stress_manifest
 from vrl.rewards.evaluation import Evaluation
 from vrl.rewards.sequences import EditSequenceSpec
-from vrl.utils.artifacts import atomic_file
 from vrl.utils.json_files import write_json
 
 
@@ -72,23 +70,6 @@ def main(argv: list[str] | None = None) -> None:
     paired.add_argument("--stratify-by", help="Categorical field in sample metadata")
     repeat = command("repeat", source=False)
     repeat.add_argument("evaluations", nargs="+", type=Path)
-    fit = command("fit")
-    fit.add_argument("--preferences", required=True, type=Path)
-    fit.add_argument("--axes", nargs="+", required=True)
-    fit.add_argument("--dimension", default="overall")
-    fit.add_argument("--l2", type=float, default=0.1)
-    fit.add_argument("--tie-margin", type=float, default=0.1)
-    evaluate = command("evaluate")
-    evaluate.add_argument("--preferences", required=True, type=Path)
-    evaluate.add_argument("--combination", required=True, type=Path)
-    apply = command("apply")
-    apply.add_argument("--combination", required=True, type=Path)
-    review_export = command("review-export")
-    review_export.add_argument("--pairs", required=True, type=Path)
-    review_export.add_argument("--seed", required=True, type=int)
-    review_import = command("review-import", source=False)
-    review_import.add_argument("--review", required=True, type=Path)
-    review_import.add_argument("--answers", required=True, type=Path)
     stress_manifest = command("stress-manifest", source=False, output=False)
     stress_manifest.add_argument("--manifest", required=True, type=Path)
     stress_manifest.add_argument("--output-dir", required=True, type=Path)
@@ -122,15 +103,6 @@ def main(argv: list[str] | None = None) -> None:
             )
         )
         return
-    if args.command == "review-import":
-        pairs = PreferencePair.from_review(
-            json.loads(args.review.read_text()), json.loads(args.answers.read_text())
-        )
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        with atomic_file(args.output, overwrite=False) as handle:
-            for pair in pairs:
-                handle.write(pair.model_dump_json() + "\n")
-        return
     if args.command == "paired":
         result = Analysis.paired(
             [Evaluation.load(path) for path in args.baseline],
@@ -143,7 +115,7 @@ def main(argv: list[str] | None = None) -> None:
         result = Analysis.repeatability([Evaluation.load(path) for path in args.evaluations])
     else:
         evaluation = _load(args, parser)
-        analysis, calibration = Analysis(evaluation), Calibration(evaluation)
+        analysis = Analysis(evaluation)
         if args.command == "health":
             result = analysis.health(tie_epsilon=args.tie_epsilon)
         elif args.command == "stress":
@@ -169,7 +141,7 @@ def main(argv: list[str] | None = None) -> None:
                 band=tuple(args.band),
                 tie_epsilon=args.tie_epsilon,
             )
-        elif args.command == "compare":
+        else:
             result = analysis.compare_rankings(
                 Evaluation.load(args.other),
                 first_axis=args.first_axis,
@@ -179,28 +151,6 @@ def main(argv: list[str] | None = None) -> None:
                 first_tie_epsilon=args.first_tie_epsilon,
                 second_tie_epsilon=args.second_tie_epsilon,
             )
-        elif args.command == "fit":
-            result = calibration.fit(
-                PreferencePair.load_jsonl(args.preferences),
-                axes=args.axes,
-                dimension=args.dimension,
-                l2=args.l2,
-                tie_margin=args.tie_margin,
-            )
-        elif args.command == "evaluate":
-            result = calibration.evaluate(
-                PreferencePair.load_jsonl(args.preferences),
-                json.loads(args.combination.read_text()),
-            )
-        elif args.command == "apply":
-            result = calibration.apply(json.loads(args.combination.read_text()))
-        else:
-            pairs = [
-                json.loads(line) for line in args.pairs.read_text().splitlines() if line.strip()
-            ]
-            result = calibration.review_packet(pairs, args.output, seed=args.seed)
-            print(json.dumps(result))
-            return
     args.output.parent.mkdir(parents=True, exist_ok=True)
     write_json(args.output, result)
 

@@ -9,7 +9,6 @@ import pytest
 from PIL import Image
 
 from reward.analysis import Analysis
-from reward.calibration import Calibration, PreferencePair
 from reward.stress import build_stress_manifest
 from vrl.rewards.evaluation import Evaluation, ScoringConfig, load_media_manifest
 from vrl.utils.artifacts import sha256_file
@@ -254,7 +253,7 @@ def test_repeated_scores_distinguish_jitter_missingness_and_source_weights():
     assert report["axes"]["quality"]["observation_status_counts"]["missing_axis"] == 1
 
 
-def test_join_prefixes_axes_and_supports_source_disjoint_holdout():
+def test_join_prefixes_axes_and_requires_identical_sample_grids():
     evaluations = {}
     for name in ("semantic", "locality"):
         records = {}
@@ -282,33 +281,6 @@ def test_join_prefixes_axes_and_supports_source_disjoint_holdout():
     row = joined.records["0-left"]
     assert row["result"]["scores"] == {"semantic/score": 2, "locality/score": 1}
     assert row["source_results"]["semantic"]["reward_model_version"] == "semantic-v1"
-    pairs = [
-        PreferencePair(
-            pair_id=f"pair-{i}",
-            left=f"{i}-left",
-            right=f"{i}-right",
-            source_group=f"source-{i}",
-            split="calibration" if i < 2 else "holdout",
-            preference="left",
-        )
-        for i in range(3)
-    ]
-    calibration, holdout = copy.deepcopy(evaluations), copy.deepcopy(evaluations)
-    for name in evaluations:
-        calibration[name].records = {
-            k: v for k, v in calibration[name].records.items() if not k.startswith("2-")
-        }
-        holdout[name].records = {
-            k: v for k, v in holdout[name].records.items() if k.startswith("2-")
-        }
-    fitted = Calibration(Analysis.join(calibration)).fit(
-        pairs[:2], axes=["semantic/score", "locality/score"]
-    )
-    holdout_report = Calibration(Analysis.join(holdout)).evaluate(pairs[2:], fitted)
-    assert holdout_report["source_balanced_agreement"] == 1
-    holdout["locality"].config = {"revision": "changed-verifier"}
-    with pytest.raises(ValueError, match="recipe differs"):
-        Calibration(Analysis.join(holdout)).evaluate(pairs[2:], fitted)
     damaged = copy.deepcopy(evaluations)
     damaged["locality"].records.pop("0-left")
     with pytest.raises(ValueError, match="sample grids differ"):
