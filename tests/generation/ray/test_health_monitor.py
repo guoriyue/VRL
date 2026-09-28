@@ -22,8 +22,8 @@ from vrl.runtime_errors import (
 from vrl.utils.lifecycle import RuntimeLifecycle, RuntimePhase
 
 # Carried by every test that drives `_FakeRay`. The double is the Ray wire, not
-# the monitor: scripting a probe's answer is how pause/stop/skip behaviour stays
-# in the default lane at zero cost. The wire itself -- a real ray.get deadline
+# the monitor: scripting a probe's answer is how stop/skip/ownership behaviour
+# stays in the default lane at zero cost. The wire itself -- a real ray.get deadline
 # expiring against a really blocked actor, and the RayActorError that killing the
 # fleet raises in the driver -- is pinned by the real-cluster twin named here.
 _SCRIPTED_RAY_WIRE = pytest.mark.real_cover(
@@ -130,7 +130,7 @@ def _drive_probe(monitor: RolloutWorkerHealthMonitor, actors: list[_Actor]) -> N
     """Run one probe pass synchronously instead of racing the monitor thread."""
 
     del actors  # named at call sites to show which fleet is under test
-    monitor._run_probes(resume_epoch=monitor._resume_epoch)
+    monitor._run_probes()
 
 
 def test_interval_zero_disables_the_monitor() -> None:
@@ -217,79 +217,53 @@ def test_probing_stops_after_the_first_unreachable_worker(
     assert trailing.health.calls == 0
 
 
-@_SCRIPTED_RAY_WIRE
-def test_paused_monitor_does_not_probe_parked_workers(
+def test_parked_workers_are_probed_as_soon_as_the_monitor_starts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Offloaded workers are intentionally silent; probing them is a false death."""
+    """Reachability is not residency: the monitor never waits for activation or
+    pauses across parking, since the trainer's GPU turns are the idle windows
+    a dead actor would otherwise hide in."""
 
-    actors = [_Actor(TimeoutError("parked"))]
+    actors = [_Actor("rollout-0")]
     runtime = _runtime(*actors)
     ray = _FakeRay(actors)
     _install_ray(monkeypatch, ray)
     monitor = _monitor(runtime, interval_s=0.01)
-    monitor.pause()
 
     assert monitor.start() is True
     try:
-        time.sleep(0.1)
+        deadline = time.monotonic() + 1.0
+        while actors[0].health.calls == 0 and time.monotonic() < deadline:
+            time.sleep(0.005)
     finally:
         monitor.stop()
 
-    assert actors[0].health.calls == 0
+    assert actors[0].health.calls >= 1
     assert runtime.lifecycle.phase is RuntimePhase.RUNNING
 
 
 @_SCRIPTED_RAY_WIRE
-def test_pause_ignores_an_in_flight_probe_failure(
+def test_a_probe_failure_for_an_actor_the_runtime_released_is_ignored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    actor = _Actor(TimeoutError("late timeout"))
-    runtime = _runtime(actor)
-    ray = _BlockingFailureRay([actor])
+    """A session replaced while its probe was in flight says nothing about the fleet
+    the runtime owns now; only an owned actor's failure terminalizes."""
+
+    stale = _Actor(TimeoutError("late timeout"))
+    runtime = _runtime(stale)
+    ray = _BlockingFailureRay([stale])
     _install_ray(monkeypatch, ray)
     monitor = _monitor(runtime)
-    probe_thread = threading.Thread(
-        target=monitor._run_probes,
-        kwargs={"resume_epoch": monitor._resume_epoch},
-    )
+    probe_thread = threading.Thread(target=monitor._run_probes)
     probe_thread.start()
     assert ray.probe_started.wait(timeout=1)
 
-    monitor.pause()
+    replacement = _Actor("rollout-0")
+    runtime._owned_ranks = [RayActorHandle(worker_id="rollout-0", actor=replacement)]
     ray.release_probe.set()
     probe_thread.join(timeout=1)
 
     assert not probe_thread.is_alive()
-    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
-    assert ray.killed == []
-
-
-@_SCRIPTED_RAY_WIRE
-def test_new_resume_ignores_a_probe_from_the_previous_active_epoch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    actor = _Actor(TimeoutError("stale timeout"))
-    runtime = _runtime(actor)
-    ray = _BlockingFailureRay([actor])
-    _install_ray(monkeypatch, ray)
-    monitor = _monitor(runtime)
-    monitor.resume()
-    probe_epoch = monitor._resume_epoch
-    probe_thread = threading.Thread(
-        target=monitor._run_probes,
-        kwargs={"resume_epoch": probe_epoch},
-    )
-    probe_thread.start()
-    assert ray.probe_started.wait(timeout=1)
-
-    monitor.pause()
-    monitor.resume()
-    ray.release_probe.set()
-    probe_thread.join(timeout=1)
-
-    assert not probe_thread.is_alive()
-    assert monitor._resume_epoch != probe_epoch
     assert runtime.lifecycle.phase is RuntimePhase.RUNNING
     assert ray.killed == []
 
@@ -305,7 +279,6 @@ def test_stop_ignores_an_in_flight_probe_failure(
     monitor = _monitor(runtime)
 
     assert monitor.start() is True
-    monitor.resume()
     assert ray.probe_started.wait(timeout=1)
     stop_thread = threading.Thread(target=monitor.stop)
     stop_thread.start()
@@ -349,7 +322,6 @@ def test_timed_out_stop_retains_thread_until_it_can_be_joined(monkeypatch) -> No
     assert monitor.start() is True
     thread = monitor._thread
     try:
-        monitor.resume()
         assert ray.probe_started.wait(timeout=1)
         monitor.stop()
         assert thread.is_alive()
@@ -382,7 +354,7 @@ def test_a_worker_without_a_health_method_terminalizes_the_runtime(
     _install_ray(monkeypatch, ray)
     monitor = _monitor(runtime)
 
-    monitor._run_probes(resume_epoch=monitor._resume_epoch)
+    monitor._run_probes()
 
     failure = runtime.lifecycle.failure
     assert isinstance(failure, RolloutWorkerUnreachable)
@@ -456,7 +428,7 @@ def test_real_wedged_worker_times_out_and_the_fleet_really_dies(local_ray) -> No
     blocked_driver_call = healthy.generate.remote()
 
     started = time.monotonic()
-    monitor._run_probes(resume_epoch=monitor._resume_epoch)
+    monitor._run_probes()
     elapsed = time.monotonic() - started
 
     # Without this, an actor that raised something else immediately would leave
@@ -477,10 +449,7 @@ def test_shutdown_ignores_an_in_flight_probe_failure(monkeypatch) -> None:
     ray = _BlockingFailureRay([actor])
     _install_ray(monkeypatch, ray)
     monitor = _monitor(runtime)
-    thread = threading.Thread(
-        target=monitor._run_probes,
-        kwargs={"resume_epoch": monitor._resume_epoch},
-    )
+    thread = threading.Thread(target=monitor._run_probes)
     thread.start()
     try:
         assert ray.probe_started.wait(timeout=1)

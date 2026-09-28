@@ -1,7 +1,10 @@
 # SPRINT: Rollout worker idle-liveness correction（planned）
 
-状态：**planned / CPU-only corrective sprint**。这是
-[[SPRINT_rollout_worker_liveness]] 的实现回归修正，不运行 Ray/GPU experiment。
+状态：**DONE（2026-09-26）**。这是 [[SPRINT_rollout_worker_liveness]] 的实现回归修正；上游 `555335aa` 先修了 cleanup ownership，
+本次落地**驻留 ≠ 可达**：`RolloutWorkerHealthMonitor` 删除 pause/resume/epoch 状态，`start()` 即探活（无 session 时 `_owned_ranks`
+为空，自然无事可探），runtime 的 `_offload_once`/`_activate_once` 不再触碰监控；唯一丢弃的是探测期间已被 runtime 释放的
+actor（按 actor 身份核对 `_owned_ranks`）。
+未做：后台失败交接（最后一次前台调用之后才死的 worker 不改写 run verdict：训练已经完成，下一次前台调用本来就会失败），business-RPC deadline、进程内重建 fleet、interval/timeout 默认值。以下为原计划。
 
 ## 根因
 

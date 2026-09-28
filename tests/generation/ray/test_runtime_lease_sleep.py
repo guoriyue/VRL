@@ -451,7 +451,10 @@ def test_driver_model_offload_is_derived_from_actual_gpu_overlap() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_orders_health_monitor_around_session_parking() -> None:
+async def test_parking_transitions_leave_the_health_monitor_alone() -> None:
+    """Sleeping and waking engines change residency, not reachability, so the
+    runtime neither pauses nor resumes probing around them."""
+
     runtime = _on_demand_runtime()
     events: list[Any] = []
 
@@ -472,22 +475,23 @@ async def test_runtime_orders_health_monitor_around_session_parking() -> None:
     runtime._session = session
     runtime._session_parked = True
     await _stage_pending_install(runtime, "W1", 1)
-    runtime._health_monitor.resume = lambda: events.append("resume")
+    touched: list[str] = []
+    runtime._health_monitor = SimpleNamespace(
+        start=lambda: touched.append("start"),
+        stop=lambda: touched.append("stop") or True,
+    )
 
     await runtime.activate()
-
-    assert events == ["wake", ("update", "W1", 1), "resume"]
-    runtime._health_monitor.pause = lambda: events.append("pause")
-
+    assert events == ["wake", ("update", "W1", 1)]
     await runtime.offload()
-
-    assert events[-2:] == ["pause", "sleep"]
+    assert events[-1] == "sleep"
+    assert touched == []
 
 
 @pytest.mark.asyncio
-async def test_deferred_runtime_starts_health_monitoring_paused() -> None:
+async def test_deferred_runtime_probes_nothing_until_a_session_exists() -> None:
     async def launch_session() -> RayGenerationSession:
-        raise AssertionError("paused monitor must not launch a session")
+        raise AssertionError("the monitor must not launch a session")
 
     runtime = RayGenerationRuntime(
         session=None,
@@ -496,8 +500,10 @@ async def test_deferred_runtime_starts_health_monitoring_paused() -> None:
     )
     runtime.start_health_monitoring()
     try:
-        assert runtime._health_monitor._paused.is_set()
-        await asyncio.sleep(0.02)
+        assert runtime._health_monitor._thread is not None
+        assert runtime._owned_ranks == []
+        await asyncio.sleep(0.05)
+        assert runtime.lifecycle.phase is RuntimePhase.RUNNING
     finally:
         await runtime.shutdown()
 

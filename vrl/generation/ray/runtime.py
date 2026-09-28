@@ -106,11 +106,14 @@ class RayGenerationRuntime:
         return bool(session and session.supports_non_draining_weight_sync)
 
     def start_health_monitoring(self) -> None:
-        """Begin probing active workers. Idempotent and opt-in."""
+        """Begin probing owned workers. Idempotent and opt-in.
+
+        Parked workers are probed too: their health endpoint answers without
+        model state, and the trainer's GPU turns are the idle windows in which
+        a dead actor would otherwise go unnoticed until the next activate.
+        """
 
         self._health_monitor.start()
-        if self._session is not None and not self._session_parked:
-            self._health_monitor.resume()
 
     async def preflight(self) -> None:
         """Probe every live worker once before the schedule starts.
@@ -396,7 +399,6 @@ class RayGenerationRuntime:
             session = self._session
             if session is None or self._session_parked:
                 return
-            self._health_monitor.pause()
             await session.sleep_engines()
             if self.lifecycle.failure is not None:
                 self.lifecycle.require_running("complete worker sleep")
@@ -605,7 +607,6 @@ class RayGenerationRuntime:
                         ):
                             self._installed_policy_version = pending.policy_version
                             self._pending_install = None
-                self._health_monitor.resume()
                 return session
 
             factory = self._session_factory
@@ -624,7 +625,6 @@ class RayGenerationRuntime:
                 self._installed_policy_version = active_policy_version
                 self._pending_install = None
                 self._session = candidate
-            self._health_monitor.resume()
             return candidate
         except BaseException as error:
             if candidate is not None and self._session is not candidate:
