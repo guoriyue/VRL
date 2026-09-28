@@ -24,12 +24,9 @@ from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
 )
 from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
-from vrl.config.precision import normalize_role_precision_label
-from vrl.models.dtypes import dtype_to_precision_token
 from vrl.models.parking import TrainingMemoryState
 from vrl.models.precision import (
     apply_float32_precision,
-    float32_precision_state,
     model_precision,
 )
 from vrl.rollouts.admission import AdmissionLedger
@@ -43,17 +40,13 @@ from vrl.rollouts.stats import (
     RolloutStats,
     StatsSink,
 )
-from vrl.trainers.core.types import TrainState
+from vrl.trainers.core.types import CORRECTED_REPLAY_MAX_ABS_LOG_RATIO, TrainState
 from vrl.trainers.diagnostics import (
     append_jsonl_record,
     trainable_state_digest,
 )
 from vrl.trainers.online.config import TrainerConfig
 from vrl.trainers.online.ema import EMAWeights
-from vrl.trainers.online.precision_guard import (
-    enforce_precision_drift,
-    measure_precision_drift,
-)
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer, build_optimizer
 from vrl.trainers.strategy import SingleProcessStrategy, Strategy
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
@@ -580,7 +573,6 @@ class OnlineTrainer:
         # Recheck rollout/replay parity in each process; a checkpoint's previous
         # pass does not cover changes to kernels, compilation, or batch geometry.
         self._replay_parity_passed = False
-        self._precision_drift_guard_pending = True
         self._update_phase_timers: list[PhaseTimer] = []
         self.rollout_schedule = build_rollout_schedule(
             self.config.rollout_orchestration,
@@ -643,7 +635,7 @@ class OnlineTrainer:
                 f"batch and no continuous staleness; got ppo_epochs={int(config.ppo_epochs)}, "
                 f"optimizer_steps_per_batch={optimizer_steps}, "
                 f"max_stale_policy_versions={max_stale}. Use 'off' (bypass) with the "
-                "drift guard + TIS/RS for off-policy replay.",
+                "TIS/RS for off-policy replay.",
             )
 
     def _validate_trust_region_engages(self) -> None:
@@ -1498,13 +1490,6 @@ class OnlineTrainer:
             cfg.timestep_fraction,
             cfg.timestep_selection,
         )
-        training_microbatch_size = cfg.batch_plan.training_microbatch_size
-        first_batch = _TrainingMicrobatch.from_prompt_group(
-            batch.batches[0],
-            batch.advantages[0],
-            training_microbatch_size,
-        )[0]
-        self._check_initial_precision_drift(first_batch.batch, train_indices)
         self._run_replay_pass(
             batch.batches,
             batch.advantages,
@@ -1669,15 +1654,6 @@ class OnlineTrainer:
             cfg.timestep_selection,
         )
 
-        training_microbatch_size = cfg.batch_plan.training_microbatch_size
-
-        first_batch = _TrainingMicrobatch.from_prompt_group(
-            filtered_batches[0],
-            filtered_advs[0],
-            training_microbatch_size,
-        )[0]
-        self._check_initial_precision_drift(first_batch.batch, train_indices)
-
         initial_replay = InitialReplayStats()
         policy_updated = False
         ema_per_microbatch = ema if cfg.ema.step_per_microbatch else None
@@ -1826,56 +1802,6 @@ class OnlineTrainer:
         if not is_dummy:
             agg.add_sft(float(sft_term.detach()), float(loss_weight))
 
-    def _check_initial_precision_drift(
-        self,
-        batch: RolloutBatch,
-        timestep_indices: Sequence[int],
-    ) -> dict[str, Any] | None:
-        """Enforce the same first-trainable-batch guard on both update paths.
-
-        Precision correction deliberately permits non-exact replay, so its
-        bounded drift guard must also run during streaming accumulation. Callers
-        agree across ranks that training work exists before entering this gate.
-        """
-
-        if (
-            not self._precision_drift_guard_pending
-            or not self.algorithm.uses_evaluator
-            or self.evaluator is None
-        ):
-            return None
-        cfg = self.config
-        precision_metadata = self._precision_metadata()
-        guard_batch = batch.to_device(
-            self.device,
-            defer_replay_tensors=bool(
-                getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),
-            ),
-        )
-
-        def evaluate(timestep_idx: int) -> TrajectorySignalBatch:
-            with torch.no_grad():
-                return self._evaluate_signals(guard_batch, timestep_idx)
-
-        record = measure_precision_drift(
-            cfg.precision_drift_guard,
-            training_precision=precision_metadata["training_precision"],
-            rollout_precision=precision_metadata["rollout_precision"],
-            math_precision=precision_metadata["math_precision"],
-            timestep_indices=timestep_indices,
-            evaluate_fn=evaluate,
-            metadata=precision_metadata,
-        )
-        if record is not None:
-            # Measurement already selected the same complete record on every rank.
-            # Fail on every rank; warn and persist evidence only on the writer.
-            if record["mode"] == "fail" or self._strategy.context.is_primary:
-                enforce_precision_drift(record, logger=logger)
-            if self._strategy.context.is_primary:
-                append_jsonl_record(f"{cfg.output_dir}/training_debug.jsonl", record)
-        self._precision_drift_guard_pending = False
-        return record
-
     def _validate_first_update_parity(
         self,
         local: InitialReplayStats,
@@ -1892,9 +1818,12 @@ class OnlineTrainer:
         ``ReplayParityConfig``.
 
         With TIS / RS / recompute enabled the drift is expected and handled
-        inside the loss, so a violation only warns: the ratio the loss sees no
-        longer measures the drift, and a silent skip would hide the one signal
-        that the two backends have actually diverged.
+        inside the loss, so a violation of the recipe threshold only warns: the
+        ratio the loss sees no longer measures the drift, and a silent skip
+        would hide the one signal that the two backends have actually diverged.
+        A non-finite replay or a drift beyond
+        ``CORRECTED_REPLAY_MAX_ABS_LOG_RATIO`` (an importance weight off by more
+        than 10x) still fails: no correction makes that update meaningful.
         """
 
         cfg = self.config
@@ -1923,13 +1852,16 @@ class OnlineTrainer:
         )
         limit = float(cfg.replay_parity.max_abs_logprob_diff)
         passed = resolved.finite and resolved.logprob_abs_diff_max <= limit
+        catastrophic = not resolved.finite or (
+            resolved.logprob_abs_diff_max > CORRECTED_REPLAY_MAX_ABS_LOG_RATIO
+        )
         record = {
             "event": "replay_parity_gate",
             "passed": passed,
             "finite": resolved.finite,
             "max_abs_diff": resolved.logprob_abs_diff_max,
             "max_abs_diff_limit": limit,
-            "enforced": not intentional_correction,
+            "enforced": not intentional_correction or catastrophic,
             "trainer_step": int(self.state.step),
             "global_step": int(self.state.global_step),
         }
@@ -1948,7 +1880,7 @@ class OnlineTrainer:
                 f"max_abs_diff={resolved.logprob_abs_diff_max:.6g}, "
                 f"limit={limit:.6g}."
             )
-            if intentional_correction:
+            if intentional_correction and not catastrophic:
                 logger.warning(
                     "%s precision_correction is enabled so the update proceeds, but the "
                     "rollout and replay backends disagree beyond the recipe's parity "
@@ -2236,49 +2168,6 @@ class OnlineTrainer:
         self.state.global_step = global_step
         self._rollout_weights_initialized = False
         self._replay_parity_passed = False
-        self._precision_drift_guard_pending = True
-
-    def _precision_metadata(self) -> dict[str, Any]:
-        """Describe the configured and observed precision of this trainer."""
-        getter = getattr(self.model, "_transformer_dtype", None)
-        if callable(getter):
-            transformer_dtype = getter()
-        else:
-            transformer = getattr(self.model, "transformer", None)
-            transformer_dtype = getattr(transformer, "dtype", None)
-            if transformer_dtype is None:
-                source = transformer if transformer is not None else self.model
-                parameters = getattr(source, "parameters", None)
-                parameter = next(iter(parameters()), None) if callable(parameters) else None
-                transformer_dtype = parameter.dtype if parameter is not None else None
-
-        training_precision = normalize_role_precision_label(self.config.train_precision)
-        rollout_precision = normalize_role_precision_label(
-            self.config.rollout_precision or training_precision
-        )
-        return {
-            # The three role labels are consumed: resolve_guard_mode compares them
-            # to decide whether the drift guard arms at all.
-            "training_precision": training_precision,
-            "rollout_precision": rollout_precision,
-            # Report the dtype the evaluator actually consumes instead of carrying a
-            # duplicate TrainerConfig projection of the public precision policy.
-            "math_precision": dtype_to_precision_token(
-                getattr(self.evaluator, "math_dtype", None) or torch.float32,
-            ),
-            # display/provenance-only: nothing branches on these two, and that is
-            # the point. They record what the process turned out to be rather than
-            # what it was configured to be -- the global float32 matmul state, and
-            # the dtype the transformer actually materialized in -- so a diagnostic
-            # record can show a configured policy disagreeing with the live model.
-            # Neither is derivable from the config that produced them.
-            "effective_float32_precision": float32_precision_state(),
-            "trainer_transformer_dtype": (
-                str(transformer_dtype).removeprefix("torch.")
-                if transformer_dtype is not None
-                else None
-            ),
-        }
 
     def _optimizer_parameter_manifest(self) -> list[dict[str, Any]]:
         """Stable named identity for positional optimizer checkpoint slots."""

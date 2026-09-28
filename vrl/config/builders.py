@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -18,7 +17,6 @@ from vrl.config.validation import require_training_config
 if TYPE_CHECKING:
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
     from vrl.trainers.checkpointing import TrainingResumeConfig
-    from vrl.trainers.core.types import PrecisionDriftGuardConfig
     from vrl.trainers.online.config import TrainerConfig
 
 
@@ -128,30 +126,20 @@ class BuiltConfigs:
     resume: TrainingResumeConfig
 
 
-def build_precision_split_safety_configs() -> tuple[
-    PrecisionCorrectionConfig,
-    PrecisionDriftGuardConfig,
-]:
-    """Build the production correction and guard policy for a precision split.
+def build_precision_split_safety_configs() -> PrecisionCorrectionConfig:
+    """Build the production correction policy for a precision split.
 
     Hardware validation probes consume this same typed source so a measured gate
-    cannot silently validate thresholds different from live training.
+    cannot silently validate thresholds different from live training. The
+    catastrophic-drift bound the replay-parity gate still enforces under this
+    correction is ``CORRECTED_REPLAY_MAX_ABS_LOG_RATIO``.
     """
 
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
-    from vrl.trainers.core.types import PrecisionDriftGuardConfig
 
-    return (
-        PrecisionCorrectionConfig(
-            tis_mode="truncate",
-            rs_mode="seq_mean_k1",
-        ),
-        PrecisionDriftGuardConfig(
-            mode="fail",
-            max_abs_log_ratio=math.log(10.0),
-            max_ratio_abs_dev=9.0,
-            fail_on_nonfinite=True,
-        ),
+    return PrecisionCorrectionConfig(
+        tis_mode="truncate",
+        rs_mode="seq_mean_k1",
     )
 
 

@@ -306,7 +306,6 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
                 drop_zero_advantage=False,
                 optim=OptimConfig(lr=1e-4),
                 ema=EMAConfig(enable=phase is not None, decay=0.9, update_interval=1),
-                train_precision="bf16" if released_model else "no",
                 output_dir=str(Path(root) / f"rank-{rank}"),
             ),
         )

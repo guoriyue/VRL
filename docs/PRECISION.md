@@ -133,7 +133,9 @@ is rejected; use `format: nvfp4`.
 
 A quantized rollout differs from an unquantized replay even when both base dtypes
 are BF16. VRL therefore treats the full role policy as different and enables its
-rollout/replay precision correction and drift guard.
+rollout/replay precision correction; the replay-parity gate then warns on drift
+beyond `trainer.replay_parity.max_abs_logprob_diff` and fails on a non-finite
+replay or an absolute log-ratio above ln(10).
 
 ## Training quantization
 

@@ -58,25 +58,6 @@ _QUANTIZATION_FORMAT_RULES = {
 _PRECISION_TOKENS = (*_PLAIN_DTYPES, *_QUANTIZATION_FORMAT_RULES)
 
 
-def normalize_role_precision_label(precision: Any) -> str:
-    """One spelling for a precision role, from config text or a torch dtype.
-
-    Retains quantization and autocast suffixes ("bf16+fp8" passes through).
-    "no" is the legacy accelerate spelling of no-autocast, and a
-    ``torch.dtype`` stringifies as "torch.float32"; every producer must reach
-    the drift guard through this so equal roles compare equal.
-    """
-
-    token = str(precision or "").strip().lower().removeprefix("torch.")
-    return {
-        "": "fp32",
-        "no": "fp32",
-        "float32": "fp32",
-        "bfloat16": "bf16",
-        "float16": "fp16",
-    }.get(token, token)
-
-
 def normalize_precision(value: Any, *, default: str = "fp32") -> str:
     """Normalize a known precision token at a config or tool boundary."""
 
@@ -371,5 +352,4 @@ __all__ = [
     "RolloutPrecisionConfig",
     "TrainingPrecisionConfig",
     "normalize_precision",
-    "normalize_role_precision_label",
 ]

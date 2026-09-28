@@ -17,7 +17,7 @@ model:
   # 1.25x train speedup on RTX 5090, from inductor fusing ~2.6-2.9x fewer kernel
   # launches (this load is launch-bound). Peak memory ~unchanged. Compile hits the
   # same self.transformer on both rollout and train (backbone.py:152), so the
-  # logprob parity path stays equivalent -- confirm the trainer.py:603 drift guard
+  # logprob parity path stays equivalent -- confirm the replay-parity gate
   # stays green on the next real run. Benefit narrows at full video-length grids.
   torch_compile:
     enable: true

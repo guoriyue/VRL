@@ -181,7 +181,6 @@ def main() -> None:
                 "rollout.n_samples_per_prompt=4",
                 "rollout.samples_per_generation_batch=4",
                 "trainer.replay_parity.every_update=true",
-                "trainer.precision_drift_guard.mode=warn",
                 "reward.components={aesthetic: 1.0}",
                 "reward.kwargs={aesthetic: {device: null, model_name: google/siglip-so400m-patch14-384}}",
             ]

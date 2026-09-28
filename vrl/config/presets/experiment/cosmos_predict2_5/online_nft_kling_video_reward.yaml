@@ -21,7 +21,7 @@ defaults:
 # SPRINT_compile_defaults_and_parity_audit + SPRINT_compile_rollout_lifecycle.md
 # §4.3/§4.4). mode=default is the only LoRA+grad-ckpt-safe mode
 # (reduce-overhead/CUDA-graph collides). FINAL GATE: confirm the live logprob
-# drift guard <= 0.01 on the real run (lifecycle P3); if it drifts, fall back to
+# replay parity <= 0.01 on the real run (lifecycle P3); if it drifts, fall back to
 # compile-neither (enable:false), NOT rollout-only.
 model:
   torch_compile:

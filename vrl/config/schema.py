@@ -54,7 +54,6 @@ from vrl.trainers.core.types import (
     DebugConfig,
     EMAConfig,
     OptimConfig,
-    PrecisionDriftGuardConfig,
     ReplayParityConfig,
     RolloutOrchestrationConfig,
 )
@@ -523,7 +522,6 @@ class TrainerSection(ConfigBase):
     profile: StrictBool | None = None
     debug: DebugConfig | None = None
     replay_parity: ReplayParityConfig | None = None
-    precision_drift_guard: PrecisionDriftGuardConfig | None = None
     precision_correction: PrecisionCorrectionConfig | None = None
     rollout_orchestration: RolloutOrchestrationConfig | None = None
     torch_profiler: TorchProfilerConfig | None = None
@@ -576,7 +574,7 @@ class FSDPConfig(ConfigBase):
     context_parallel: ContextParallelConfig = Field(default_factory=ContextParallelConfig)
     # actor -> MixedPrecisionPolicy(param=bf16, reduce=fp32); none -> full precision.
     # Named precision_policy (not mixed_precision) to avoid colliding with the
-    # training-forward dtype `train_precision` (fp32/bf16/fp16); this is a
+    # training-forward dtype `precision.training.dtype` (fp32/bf16/fp16); this is a
     # param/reduce policy, not a dtype.
     precision_policy: Literal["actor", "none"] = "actor"
     # True = re-gather params after forward (ZeRO-3, lowest memory).

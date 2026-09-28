@@ -16,7 +16,7 @@ WHAT (two passes per threshold, through the actual code paths):
   Pass 2 (replay, exact): at each recorded input latent run the FULL forward
     (no skip) and score the SAME action's logprob under the exact ``noise_pred``.
   Drift = ``LogprobMismatchStats.compute(fresh=replay, old=rollout)`` — ratio
-    abs-dev (mean/max) + mismatch KL, the exact stats the drift guard / TIS read.
+    abs-dev (mean/max) + mismatch KL, the exact stats the parity gate / TIS read.
 
 A ``threshold=None`` baseline (no skips) must read ~0 drift — it validates the
 two-pass logprob math (rollout == replay when nothing is cached).

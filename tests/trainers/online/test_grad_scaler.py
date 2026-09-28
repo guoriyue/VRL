@@ -316,7 +316,6 @@ def _build_trainer(tmp_path):
             drop_zero_advantage=False,
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(enable=True, update_interval=1),
-            train_precision="no",
             output_dir=str(tmp_path),
         ),
         device="cpu",

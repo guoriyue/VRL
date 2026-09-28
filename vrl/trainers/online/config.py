@@ -11,7 +11,6 @@ from vrl.trainers.core.types import (
     DebugConfig,
     EMAConfig,
     OptimConfig,
-    PrecisionDriftGuardConfig,
     ReplayParityConfig,
     RolloutOrchestrationConfig,
 )
@@ -166,8 +165,8 @@ class TrainerConfig:
 
     Every field is a projection of the public ``actor`` / ``trainer`` section
     of the same name (``vrl.config.schema.ActorSection`` / ``TrainerSection``
-    own the YAML keys and types), except the three bridged fields computed by
-    :meth:`from_root`: ``batch_plan`` and the two precision labels.
+    own the YAML keys and types), except ``batch_plan``, which :meth:`from_root`
+    computes.
     """
 
     # --- required: experiment-semantic decisions ---
@@ -185,12 +184,9 @@ class TrainerConfig:
     ema: EMAConfig = field(default_factory=EMAConfig)
     debug: DebugConfig = field(default_factory=DebugConfig)
     replay_parity: ReplayParityConfig = field(default_factory=ReplayParityConfig)
-    precision_drift_guard: PrecisionDriftGuardConfig = field(
-        default_factory=PrecisionDriftGuardConfig,
-    )
-    # Correction counterpart to the drift guard: truncated importance sampling
-    # knobs, injected into the algorithm so they live at the trainer (precision)
-    # level rather than in any algorithm's hyperparameters.
+    # Rollout/replay drift correction: truncated importance sampling and
+    # rejection knobs, injected into the algorithm so they live at the trainer
+    # (precision) level rather than in any algorithm's hyperparameters.
     precision_correction: PrecisionCorrectionConfig = field(
         default_factory=PrecisionCorrectionConfig,
     )
@@ -215,17 +211,6 @@ class TrainerConfig:
 
     # --- PPO/GRPO loop ---
     ppo_epochs: int = 1
-
-    # --- precision (bridged from the unified precision policy) ---
-    # Replay/training execution signature (for example fp16+no-autocast).
-    # Empty -> fp32 ("no"). Production bridges the resolved public role; legacy
-    # consumers extract its base dtype instead of re-resolving execution policy.
-    train_precision: str = ""
-    # Rollout execution signature (for example bf16 or bf16+fp8). Empty ->
-    # treated as the training precision. The drift guard compares the two to
-    # decide whether to enforce parity without adding rollout-only build fields
-    # to TrainerConfig.
-    rollout_precision: str = ""
 
     # --- profiling ---
     profile: bool = False
@@ -253,7 +238,7 @@ class TrainerConfig:
             "actor": ActorSection.model_fields,
             "trainer": TrainerSection.model_fields,
         }
-        bridged = {"batch_plan", "train_precision", "rollout_precision"}
+        bridged = {"batch_plan"}
 
         hints = get_type_hints(cls)
         payload: dict[str, Any] = {}
@@ -298,24 +283,17 @@ class TrainerConfig:
         # Resolve the public policy once; trainer fields are its runtime projection.
         if precision is None:
             precision = PrecisionPolicy.from_section(root.precision)
-        payload.update(
-            batch_plan=OnlineBatchPlan.from_root(root),
-            train_precision=precision.training.label,
-            rollout_precision=precision.rollout.label,
-        )
+        payload.update(batch_plan=OnlineBatchPlan.from_root(root))
         # On a rollout/train precision split, the correction mechanism is an
         # implementation detail the user should not have to spell out: default to
-        # TIS/RS correction plus a catastrophic-drift guard. Explicit expert
-        # trainer.precision_* blocks are still respected.
+        # TIS/RS correction (the replay-parity gate still fails on catastrophic
+        # drift). An explicit expert trainer.precision_correction is respected.
         if not precision.stages_match:
             from vrl.config.builders import build_precision_split_safety_configs
 
-            correction, guard = build_precision_split_safety_configs()
             explicit = set() if root.trainer is None else root.trainer.model_fields_set
             if "precision_correction" not in explicit:
-                payload["precision_correction"] = correction
-            if "precision_drift_guard" not in explicit:
-                payload["precision_drift_guard"] = guard
+                payload["precision_correction"] = build_precision_split_safety_configs()
 
         return cls(**payload)
 

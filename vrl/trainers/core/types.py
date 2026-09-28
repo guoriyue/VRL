@@ -64,6 +64,12 @@ class DebugConfig:
     first_step: bool = field(default=False)
 
 
+# With precision correction (TIS / RS / recompute) on, the replay-parity gate
+# tolerates drift beyond the recipe threshold but still fails past this bound:
+# an importance weight off by more than 10x, or a non-finite replay.
+CORRECTED_REPLAY_MAX_ABS_LOG_RATIO = math.log(10.0)
+
+
 @dataclass(slots=True)
 class ReplayParityConfig:
     """Unchanged-policy rollout/replay parity threshold.
@@ -89,44 +95,6 @@ class ReplayParityConfig:
             raise ValueError(
                 "trainer.replay_parity.max_abs_logprob_diff must be finite and >= 0",
             )
-
-
-@dataclass(slots=True)
-class PrecisionDriftGuardConfig:
-    """Rollout-vs-replay logprob parity guard (precision/backend drift).
-
-    A correctness guard, not a debug probe: when rollout/replay role precision
-    differs, the collection-time logprob may no longer equal the
-    recomputed replay logprob, so the GRPO importance ratio drifts from 1 at the
-    first step.
-
-    ``mode``: ``"off"``/``"warn"``/``"fail"`` are explicit; ``"auto"`` enables the guard
-    only when rollout!=train precision and resolves to ``"fail"``. Use explicit
-    ``"warn"``/``"fail"`` for same-role acceptance runs, such as
-    SD3.5 FP16 rollout/replay parity checks.
-    """
-
-    mode: str = field(default="auto")  # "auto" | "off" | "warn" | "fail"
-    max_timestep_checks: int = field(default=3)
-    max_abs_log_ratio: float = field(default=1e-3)
-    max_ratio_abs_dev: float = field(default=1e-3)
-    fail_on_nonfinite: bool = field(default=True)
-
-    def __post_init__(self) -> None:
-        if self.mode not in ("auto", "off", "warn", "fail"):
-            raise ValueError("precision_drift_guard.mode must be auto/off/warn/fail")
-        require_int(
-            self.max_timestep_checks,
-            path="precision_drift_guard.max_timestep_checks",
-            minimum=0,
-        )
-        self.max_abs_log_ratio = float(self.max_abs_log_ratio)
-        self.max_ratio_abs_dev = float(self.max_ratio_abs_dev)
-        # Positive infinity remains an unbounded threshold; NaN is not a limit.
-        if not self.max_abs_log_ratio >= 0:
-            raise ValueError("precision_drift_guard.max_abs_log_ratio must be >= 0")
-        if not self.max_ratio_abs_dev >= 0:
-            raise ValueError("precision_drift_guard.max_ratio_abs_dev must be >= 0")
 
 
 @dataclass(slots=True)

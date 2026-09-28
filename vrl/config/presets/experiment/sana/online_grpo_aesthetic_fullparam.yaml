@@ -60,10 +60,3 @@ trainer:
     # allowance for future kernel revisions, still two orders tighter than the
     # algorithm's 1e-4 importance-ratio clip boundary.
     max_abs_logprob_diff: 1.0e-6
-  precision_drift_guard:
-    # Same dtype labels do not reveal backend drift (for example TF32 vs IEEE),
-    # so this launch gate must be explicit rather than the cross-dtype-only auto.
-    mode: fail
-    max_timestep_checks: 3
-    max_abs_log_ratio: 1.0e-6
-    max_ratio_abs_dev: 1.0e-6

@@ -19,7 +19,7 @@ def test_replay_parity_rejects_invalid_limits() -> None:
 
 def test_trainer_config_fields_are_declared_by_exactly_one_public_section() -> None:
     """The projection reads each field from the section that declares its name."""
-    bridged = {"batch_plan", "train_precision", "rollout_precision"}
+    bridged = {"batch_plan"}
     for trainer_field in fields(TrainerConfig):
         if trainer_field.name in bridged:
             continue

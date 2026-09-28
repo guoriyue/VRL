@@ -166,8 +166,6 @@ def test_precision_role_split_is_resolved_once_into_trainer(
 
     assert built.trainer is not None
     assert built.precision.stages_match is stages_match
-    assert built.trainer.train_precision == built.precision.training.label
-    assert built.trainer.rollout_precision == built.precision.rollout.label
     assert built.trainer.precision_correction.tis_mode == correction_mode
 
 

@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 import torch
 
 import vrl.scripts.perf.quantized_rollout_drift_probe as drift_probe
+from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
 from vrl.scripts.perf.quantized_rollout_drift_probe import (
     _policy_grad_norm,
-    _require_precision_guard,
+    _require_corrected_parity_bound,
     _step_logprob,
 )
-from vrl.trainers.online.precision_guard import PrecisionDriftError
 
 
 def test_step_logprob_preserves_the_denoise_axis() -> None:
@@ -61,58 +59,25 @@ def test_duplicate_timesteps_do_not_multiply_the_grpo_gradient() -> None:
     assert two_step_norm == pytest.approx(one_step_norm, rel=1e-6, abs=1e-7)
 
 
-def test_precision_guard_failure_exits_nonzero(monkeypatch, capsys) -> None:
-    """A catastrophic guard failure is a failed probe, not informational output."""
+def test_corrected_parity_bound_passes_a_drift_below_ln10(capsys) -> None:
+    stats = LogprobMismatchStats.compute(torch.full((2,), 2.0), torch.zeros(2))
 
-    def fail_guard(*_args, **_kwargs):
-        raise PrecisionDriftError("ratio exceeded limit")
+    _require_corrected_parity_bound(stats)
 
-    monkeypatch.setattr(drift_probe, "run_precision_drift_guard", fail_guard)
+    assert "PASSED" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("shift", [3.0, float("nan")])
+def test_corrected_parity_bound_failure_exits_nonzero(shift: float, capsys) -> None:
+    """A drift past the trainer's catastrophic bound is a failed probe, not output."""
+
+    stats = LogprobMismatchStats.compute(torch.full((2,), shift), torch.zeros(2))
 
     with pytest.raises(SystemExit) as exc_info:
-        _require_precision_guard(
-            object(),
-            scheme="fp8",
-            replay_logprob=torch.zeros(2),
-            rollout_logprob=torch.zeros(2),
-        )
+        _require_corrected_parity_bound(stats)
 
     assert exc_info.value.code == 1
-    assert "FAILED: ratio exceeded limit" in capsys.readouterr().out
-
-
-def test_precision_guard_preserves_quantization_as_role_execution_label(
-    monkeypatch,
-    capsys,
-) -> None:
-    captured = {}
-
-    def pass_guard(*_args, **kwargs):
-        captured.update(kwargs)
-        return {
-            "violated": False,
-            "worst_stats": {"ratio_abs_dev_max": 0.0},
-        }
-
-    monkeypatch.setattr(drift_probe, "run_precision_drift_guard", pass_guard)
-
-    _require_precision_guard(
-        SimpleNamespace(max_ratio_abs_dev=1.0),
-        scheme="nvfp4",
-        replay_logprob=torch.zeros(2),
-        rollout_logprob=torch.zeros(2),
-    )
-
-    assert captured["training_precision"] == "bf16"
-    assert captured["rollout_precision"] == "bf16+nvfp4"
-    assert set(captured) == {
-        "training_precision",
-        "rollout_precision",
-        "math_precision",
-        "timestep_indices",
-        "evaluate_fn",
-    }
-    assert "PASSED" in capsys.readouterr().out
+    assert "FAILED" in capsys.readouterr().out
 
 
 def test_drift_probe_rejects_legacy_fp4_scheme(monkeypatch, capsys) -> None:

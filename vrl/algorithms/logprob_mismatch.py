@@ -7,10 +7,10 @@ importance ratio drifts from 1. This module is the shared, algorithm-agnostic
 toolkit for that drift:
 
 - :func:`LogprobMismatchStats` MEASURES it (the source of truth for both
-  the per-step training metrics and the precision drift guard).
+  the per-step training metrics and the replay-parity gate).
 - :class:`PrecisionCorrectionConfig` + :func:`apply_truncated_importance_weight`
   CORRECT it via truncated importance sampling (TIS) — the counterpart to the
-  drift guard's gate. The config lives at the trainer level
+  parity gate. The config lives at the trainer level
   (``trainer.precision_correction``), not in any algorithm's hyperparameters,
   because bounding a quantized/backend rollout's drift is a precision concern
   shared across importance-ratio algorithms; the trainer injects it into the
@@ -46,12 +46,12 @@ class LogprobMismatchStats:
     logprob_abs_diff_max: float = 0.0
     # Display/provenance-only: CSV and offline precision probes.
     ratio_abs_dev_mean: float = 0.0
-    # Behavior-consumed by the precision drift guard.
+    # Display/provenance-only: CSV and offline precision probes.
     ratio_abs_dev_max: float = 0.0
     # Display/provenance-only divergence diagnostics.
     mismatch_kl: float = 0.0
     mismatch_k3_kl: float = 0.0
-    # Behavior-consumed by parity and precision drift gates.
+    # Behavior-consumed by the unchanged-policy parity gate.
     finite: bool = True
 
     @classmethod
@@ -130,7 +130,7 @@ class LogprobMismatchStats:
 class PrecisionCorrectionConfig:
     """Rollout->replay drift correction knobs (TIS + RS), all at the trainer level.
 
-    The correction counterpart to ``PrecisionDriftGuardConfig``: the guard
+    The correction counterpart to the replay-parity gate: the gate
     measures/fails on drift; this bounds it in the loss. ``old_log_prob`` IS the
     rollout (behavior) logprob in this codebase, so the surrogate ratio
     ``exp(replay - rollout)`` is exactly the importance weight TIS truncates and
@@ -173,12 +173,13 @@ class PrecisionCorrectionConfig:
     gate keeps measuring the rollout-recorded value so the drift stays visible.
 
     **Combination contract.** Under fp8/bf16 rollout + bypass, drift must be
-    bounded: run the drift guard (``auto``/``fail``, which checks parity before
-    the first step) together with RS (``seq_mean_k1``), so the guard fail-stops
-    on a catastrophic precision split while RS keeps out-of-band trajectories out
-    of the per-step gradient. The guard evaluates reduced ``LogprobMismatchStats``;
-    RS evaluates the per-sample or per-sequence log-ratio inside the loss. Their
-    thresholds and reductions serve different decisions. TIS and RS may be
+    bounded: the replay-parity gate (which checks parity before the first step)
+    fail-stops on a catastrophic precision split
+    (``CORRECTED_REPLAY_MAX_ABS_LOG_RATIO``) while RS (``seq_mean_k1``) keeps
+    out-of-band trajectories out of the per-step gradient. The gate evaluates
+    reduced ``LogprobMismatchStats``; RS evaluates the per-sample or per-sequence
+    log-ratio inside the loss. Their thresholds and reductions serve different
+    decisions. TIS and RS may be
     enabled together.
     """
 

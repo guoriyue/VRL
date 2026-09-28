@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import pytest
@@ -19,7 +18,6 @@ from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.trainers.core.types import PrecisionDriftGuardConfig
 
 # Derive every online recipe from the experiment glob (the single source of
 # truth in test_load_all_experiments) rather than hand-maintaining a subset —
@@ -30,30 +28,10 @@ _RECIPES = [name for name in _experiment_names() if not Path(name).name.startswi
 
 @pytest.mark.parametrize("experiment", _RECIPES)
 def test_bridge_uses_aligned_public_precision(experiment):
-    """Checks bridge derives trainer precision from public precision."""
+    """Every online recipe resolves one precision policy for both roles."""
     cfg = _load_experiment_for_static_validation(experiment)
-    trainer_config = build_configs(cfg).trainer
     policy = PrecisionPolicy.from_section(parse_config(cfg).precision)
-    # The bridge contract is the role-label equality below (train/rollout labels
-    # equal the resolved policy labels); the label -> torch dtype resolution is
-    # covered by the plain-policy cases and resolve_torch_dtype's own tests.
-    assert trainer_config.train_precision == policy.training.label
-    assert trainer_config.rollout_precision == policy.rollout.label
     assert policy.training == policy.rollout
-
-
-def test_precision_block_drives_trainer():
-    """``precision.training.dtype`` is what the trainer's ``train_precision`` resolves to; fp32
-    and bf16 both round-trip through the dtype resolver.
-    """
-    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
-    cfg = _with_precision("sd3_5/online_grpo_ocr", _plain_policy("fp32"))
-    assert resolve_torch_dtype(build_configs(cfg).trainer.train_precision) is torch.float32
-
-    cfg = _with_precision("sd3_5/online_grpo_ocr", _plain_policy("bf16"))
-    trainer_config = build_configs(cfg).trainer
-    assert trainer_config.train_precision == "bf16"
-    assert resolve_torch_dtype(trainer_config.train_precision) is torch.bfloat16
 
 
 def test_fp16_precision_block_drives_trainer_and_rollout():
@@ -62,12 +40,10 @@ def test_fp16_precision_block_drives_trainer_and_rollout():
     cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": _plain_policy("fp16")}))
 
     built = build_configs(cfg)
-    trainer_config = built.trainer
 
-    assert trainer_config.train_precision == "fp16"
-    assert trainer_config.rollout_precision == "fp16"
+    assert built.precision.training.label == "fp16"
+    assert built.precision.rollout.label == "fp16"
     assert built.precision.denoise_math == "fp32"
-    assert resolve_torch_dtype(trainer_config.train_precision) is torch.float16
 
 
 @pytest.mark.parametrize(
@@ -84,22 +60,17 @@ def test_rollout_precision_split_auto_derives_correction_policy(
         _rollout_quantization_policy(format_name),
     )
 
-    trainer_config = build_configs(cfg).trainer
+    built = build_configs(cfg)
+    trainer_config = built.trainer
 
-    assert trainer_config.train_precision == "bf16"
-    assert trainer_config.rollout_precision == expected_label
+    assert built.precision.training.label == "bf16"
+    assert built.precision.rollout.label == expected_label
     # The auto split-precision policy is whatever the builder helper installs;
     # assert the whole struct equals that single source, not a per-field copy of
     # its constants (which would falsely fail on any retune of the policy).
     assert trainer_config.precision_correction == PrecisionCorrectionConfig(
         tis_mode="truncate",
         rs_mode="seq_mean_k1",
-    )
-    assert trainer_config.precision_drift_guard == PrecisionDriftGuardConfig(
-        mode="fail",
-        max_abs_log_ratio=math.log(10.0),
-        max_ratio_abs_dev=9.0,
-        fail_on_nonfinite=True,
     )
 
 
@@ -112,10 +83,9 @@ def test_no_split_means_no_auto_correction_policy() -> None:
 
     trainer_config = build_configs(cfg).trainer
 
-    # No split -> the correction/guard fields keep their dataclass defaults; the
-    # split-only policy (TIS truncate / drift_guard mode="fail") is NOT installed.
+    # No split -> the correction field keeps its dataclass default; the
+    # split-only policy (TIS truncate) is NOT installed.
     assert trainer_config.precision_correction == PrecisionCorrectionConfig()
-    assert trainer_config.precision_drift_guard == PrecisionDriftGuardConfig()
 
 
 def test_outer_autocast_split_is_preserved_in_trainer_role_labels() -> None:
@@ -123,12 +93,11 @@ def test_outer_autocast_split_is_preserved_in_trainer_role_labels() -> None:
     block["rollout"]["outer_autocast"] = False
     cfg = _with_precision("sd3_5/online_grpo_ocr", block)
 
-    trainer_config = build_configs(cfg).trainer
+    built = build_configs(cfg)
 
-    assert trainer_config.train_precision == "bf16"
-    assert trainer_config.rollout_precision == "bf16+no-autocast"
-    assert trainer_config.precision_correction.tis_mode == "truncate"
-    assert trainer_config.precision_drift_guard.mode == "fail"
+    assert built.precision.training.label == "bf16"
+    assert built.precision.rollout.label == "bf16+no-autocast"
+    assert built.trainer.precision_correction.tis_mode == "truncate"
 
 
 def test_explicit_precision_correction_is_respected_on_rollout_split():
@@ -143,7 +112,6 @@ def test_explicit_precision_correction_is_respected_on_rollout_split():
             {
                 "trainer": {
                     "precision_correction": {"tis_mode": "off", "rs_mode": "off"},
-                    "precision_drift_guard": {"mode": "warn", "max_abs_log_ratio": 0.25},
                 },
             },
         ),
@@ -153,8 +121,6 @@ def test_explicit_precision_correction_is_respected_on_rollout_split():
 
     assert trainer_config.precision_correction.tis_mode == "off"
     assert trainer_config.precision_correction.rs_mode == "off"
-    assert trainer_config.precision_drift_guard.mode == "warn"
-    assert trainer_config.precision_drift_guard.max_abs_log_ratio == pytest.approx(0.25)
 
 
 def _with_precision(experiment, block):
@@ -184,7 +150,6 @@ def _rollout_quantization_policy(format_name: str) -> dict:
 def test_math_axis_resolves_to_dtype(math, expected):
     # P2: the `math` axis resolves to the evaluator's log-prob math dtype.
     from vrl.config.precision import PrecisionPolicy
-    from vrl.models.dtypes import resolve_torch_dtype
 
     block = _plain_policy("fp32")
     block["denoise_math"] = {"dtype": math}
@@ -194,29 +159,6 @@ def test_math_axis_resolves_to_dtype(math, expected):
         is expected
     )
     assert build_configs(cfg).precision.denoise_math == math
-
-
-def test_precision_drift_guard_config_is_bridged_from_yaml():
-    """Checks precision drift guard YAML config reaches TrainerConfig."""
-    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
-    cfg = OmegaConf.merge(
-        cfg,
-        OmegaConf.create(
-            {
-                "trainer": {
-                    "precision_drift_guard": {
-                        "mode": "fail",
-                        "max_abs_log_ratio": 0.02,
-                    },
-                },
-            },
-        ),
-    )
-
-    trainer_config = build_configs(cfg).trainer
-
-    assert trainer_config.precision_drift_guard.mode == "fail"
-    assert trainer_config.precision_drift_guard.max_abs_log_ratio == pytest.approx(0.02)
 
 
 def test_replay_parity_config_is_bridged_from_yaml() -> None:

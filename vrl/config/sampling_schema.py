@@ -63,7 +63,7 @@ class DenoiseImageSamplingSection(SamplingSection):
     negative_prompt: str | None = None
     # Rollout-only forward approximation (skips denoise steps on a cached
     # noise_pred). A request-scoped drift source: config validation refuses it
-    # unless a drift guard or importance-sampling correction is armed.
+    # unless an importance-sampling correction is armed.
     teacache: StrictBool | TeaCacheSection | None = None
 
 

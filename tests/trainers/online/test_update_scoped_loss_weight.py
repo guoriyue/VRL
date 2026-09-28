@@ -108,7 +108,6 @@ def _trainer(tmp_path, *, timestep_fraction: float) -> tuple[OnlineTrainer, _Alg
             drop_zero_advantage=False,
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(),
-            train_precision="no",
             output_dir=str(tmp_path),
         ),
         device="cpu",

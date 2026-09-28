@@ -171,7 +171,6 @@ def _build(root, *, device):
             drop_zero_advantage=False,
             optim=OptimConfig(lr=1e-4, weight_decay=0.0),
             ema=EMAConfig(enable=True, decay=0.9, update_interval=1),
-            train_precision="no",
             output_dir=str(root),
         ),
     )

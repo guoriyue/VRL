@@ -239,7 +239,7 @@ def test_sana_family_defaults_to_native_fp16() -> None:
         float32_precision="ieee",
         outer_autocast=False,
     )
-    assert built.trainer.train_precision == built.trainer.rollout_precision
+    assert built.precision.stages_match
     assert built.root.rollout is not None
     assert (
         built.trainer.batch_plan.training_microbatch_size

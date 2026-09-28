@@ -25,7 +25,6 @@ from vrl.trainers.core.types import (
     DebugConfig,
     EMAConfig,
     OptimConfig,
-    PrecisionDriftGuardConfig,
 )
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import OnlineTrainer
@@ -149,7 +148,6 @@ def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(streaming: boo
             optim=OptimConfig(lr=0.0),
             ema=EMAConfig(),
             debug=DebugConfig(),
-            precision_drift_guard=PrecisionDriftGuardConfig(mode="off"),
         ),
         device="cpu",
     )

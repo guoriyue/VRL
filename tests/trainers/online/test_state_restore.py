@@ -382,7 +382,6 @@ def _make_resume_trainer(
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(enable=ema),
             debug=DebugConfig(),
-            train_precision=train_precision,
         ),
         device=device,
     )

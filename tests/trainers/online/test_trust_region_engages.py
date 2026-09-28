@@ -87,7 +87,6 @@ def _build_trainer(
                     max_stale_policy_versions=max_stale_policy_versions,
                 ),
             ),
-            train_precision="no",
             output_dir=str(tmp_path),
         ),
         device="cpu",

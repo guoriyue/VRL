@@ -100,7 +100,6 @@ def _trainer(tmp_path, *, step_per_microbatch: bool) -> OnlineTrainer:
                 update_interval=1,
                 step_per_microbatch=step_per_microbatch,
             ),
-            train_precision="no",
             output_dir=str(tmp_path),
         ),
         device="cpu",

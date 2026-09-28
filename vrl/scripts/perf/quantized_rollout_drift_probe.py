@@ -2,8 +2,8 @@
 
 WHY: SPRINT_fullparam_and_fp8_precision.md P3 asks whether a quantized rollout against
 a bf16 replay produces enough logprob drift to bias GRPO, and whether the
-precision machinery (drift guard + truncated importance sampling) measures and
-bounds it. The hardware gate the sprint assumed (no FP8 silicon) is void on this
+precision machinery (replay-parity gate + truncated importance sampling)
+measures and bounds it. The hardware gate the sprint assumed (no FP8 silicon) is void on this
 box -- an RTX 5090 (Blackwell, sm_120) executes ``torch._scaled_mm`` in fp8 -- so
 this turns the open question into a measured number end to end.
 
@@ -13,9 +13,10 @@ WHAT it does, all on the GPU, through the ACTUAL codebase code paths:
      FP8/NVFP4 ``torch._scaled_mm`` module. The quantized logprob is the
      behavior ``old_log_prob``; the bf16 logprob is the fresh replay ``log_prob``.
   2. Measure the drift with ``LogprobMismatchStats`` (the one shared
-     stats helper used by metrics + guard) -- abs diff, ratio dev, mismatch KL.
-  3. Run the exact catastrophic guard and correction defaults produced by
-     ``build_precision_split_safety_configs`` for a rollout/train precision split.
+     stats helper used by metrics + parity gate) -- abs diff, ratio dev, mismatch KL.
+  3. Apply the replay-parity gate's catastrophic bound under correction
+     (``CORRECTED_REPLAY_MAX_ABS_LOG_RATIO``) and the correction defaults produced
+     by ``build_precision_split_safety_configs`` for a rollout/train precision split.
   4. Feed a batch of independent denoise-step signals into the real
      continuous-GRPO loss and compare the policy-gradient norm with ``tis_mode``
      off vs truncate vs mask. This matches the trainer: it evaluates and
@@ -25,7 +26,7 @@ WHAT it does, all on the GPU, through the ACTUAL codebase code paths:
 
 FAITHFULNESS: both paths use the production ``Fp8Linear`` / ``Fp4Linear``, not a
 cast round-trip, so the measured drift includes the real GEMM and activation
-quantization. The drift -> guard -> TIS chain calls the exact functions training
+quantization. The drift -> gate -> TIS chain uses the exact bounds and functions training
 uses and preserves their per-timestep loss semantics. Only the model is synthetic
 (a single GEMM head stands in for the policy logit projection), so this is a
 kernel/correction-path stress test rather than real-model SDE-logprob accuracy.
@@ -36,7 +37,6 @@ Usage:  python -m vrl.scripts.perf.quantized_rollout_drift_probe --scheme fp8|nv
 from __future__ import annotations
 
 import argparse
-from typing import Any
 
 import torch
 from torch import nn
@@ -55,10 +55,7 @@ from vrl.scripts.perf.common.baseline import (
     BaselineRecord,
     append_baseline,
 )
-from vrl.trainers.online.precision_guard import (
-    PrecisionDriftError,
-    run_precision_drift_guard,
-)
+from vrl.trainers.core.types import CORRECTED_REPLAY_MAX_ABS_LOG_RATIO
 
 
 def _logprob_from_logits(logits: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
@@ -152,36 +149,18 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _require_precision_guard(
-    guard_config: Any,
-    *,
-    scheme: str,
-    replay_logprob: torch.Tensor,
-    rollout_logprob: torch.Tensor,
-) -> None:
-    """Run the production guard and make a failed gate terminate the probe."""
+def _require_corrected_parity_bound(stats: LogprobMismatchStats) -> None:
+    """Apply the replay-parity gate's corrected-mode bound; a violation fails the probe."""
 
-    def evaluate(_timestep: int) -> TrajectorySignalBatch:
-        return _signals(replay_logprob, rollout_logprob)
-
-    print("-- production precision drift guard --")
-    try:
-        guard_record = run_precision_drift_guard(
-            guard_config,
-            training_precision="bf16",
-            rollout_precision=f"bf16+{scheme}",
-            math_precision="fp32",
-            timestep_indices=[0],
-            evaluate_fn=evaluate,
+    print("-- replay-parity gate under precision correction --")
+    limit = CORRECTED_REPLAY_MAX_ABS_LOG_RATIO
+    if not stats.finite or stats.logprob_abs_diff_max > limit:
+        print(
+            f"  FAILED: finite={stats.finite} "
+            f"abs_log_diff_max={stats.logprob_abs_diff_max:.4e} limit={limit:.4f}",
         )
-    except PrecisionDriftError as exc:
-        print(f"  FAILED: {str(exc)[:160]}...")
-        raise SystemExit(1) from exc
-    print(
-        f"  PASSED: violated={guard_record['violated']} "
-        f"ratio_abs_dev_max={guard_record['worst_stats']['ratio_abs_dev_max']:.4e} "
-        f"limit={guard_config.max_ratio_abs_dev:.1f}"
-    )
+        raise SystemExit(1)
+    print(f"  PASSED: abs_log_diff_max={stats.logprob_abs_diff_max:.4e} limit={limit:.4f}")
 
 
 def main() -> None:
@@ -210,7 +189,7 @@ def main() -> None:
     with torch.no_grad():
         head_lin.weight.copy_(weight)
     rollout_head = Fp8Linear(head_lin) if scheme == "fp8" else Fp4Linear(head_lin)
-    correction_cfg, guard_cfg = build_precision_split_safety_configs()
+    correction_cfg = build_precision_split_safety_configs()
 
     # Replay (bf16) and quantized rollout logits for the SAME head.
     logits_replay = (activations @ weight.t()).to(torch.bfloat16)
@@ -234,13 +213,8 @@ def main() -> None:
         f"  mismatch_kl={stats.mismatch_kl:.4e}  k3_kl={stats.mismatch_k3_kl:.4e}  finite={stats.finite}"
     )
 
-    # -- precision drift guard on the real quantized-vs-bf16 split --
-    _require_precision_guard(
-        guard_cfg,
-        scheme=scheme,
-        replay_logprob=replay_logprob,
-        rollout_logprob=rollout_logprob,
-    )
+    # -- replay-parity gate's corrected-mode bound on the real split --
+    _require_corrected_parity_bound(stats)
 
     # -- Production-equivalent correction across independent denoise steps --
     # OnlineTrainer calls the evaluator and GRPO once per timestep, then scales
@@ -350,7 +324,7 @@ def main() -> None:
 
     print("-- verdict --")
     print(f"  {scheme} GEMM runs on this GPU and produces real, measurable logprob drift.")
-    print("  The guard, TIS, and RS paths are wired and measured with the trainer's")
+    print("  The parity bound, TIS, and RS paths are measured with the trainer's")
     print("  per-timestep semantics. The trajectory product above is stress context only.")
     print("  This synthetic head cannot replace a real-model SDE-logprob calibration run.")
 

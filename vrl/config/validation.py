@@ -150,8 +150,9 @@ def validate_guarded_rollout_drift(root: RootConfig, precision: PrecisionPolicy)
     """Refuse a rollout approximation that no drift correction will cover.
 
     Quantization needs no check here: it changes the rollout precision label, so
-    ``stages_match`` goes False and the trainer already installs TIS correction
-    plus a drift guard whose default ``mode="auto"`` resolves to ``"fail"``.
+    ``stages_match`` goes False and the trainer already installs TIS/RS
+    correction, under which the replay-parity gate still fails on catastrophic
+    drift.
 
     A request-scoped approximation is the uncovered case. TeaCache reuses a
     cached ``noise_pred`` on skipped denoise steps, so the collection-time
@@ -173,14 +174,14 @@ def validate_guarded_rollout_drift(root: RootConfig, precision: PrecisionPolicy)
     # The same escape hatch the precision-split path honors: an explicit expert
     # block means the user has chosen the correction policy deliberately.
     explicit = set() if root.trainer is None else root.trainer.model_fields_set
-    if "precision_drift_guard" in explicit or "precision_correction" in explicit:
+    if "precision_correction" in explicit:
         return
     raise ValueError(
         f"sampling enables {', '.join(sources)}, which makes the rollout log-probs "
         "diverge from the trainer's exact replay forward, but rollout and training "
-        "precision are identical so no drift guard or importance-sampling "
-        "correction is armed. Set an explicit trainer.precision_correction / "
-        "trainer.precision_drift_guard for this run, or disable the optimization.",
+        "precision are identical so no importance-sampling correction is armed. "
+        "Set an explicit trainer.precision_correction for this run, or disable "
+        "the optimization.",
     )
 
 

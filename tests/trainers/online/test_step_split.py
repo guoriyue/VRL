@@ -90,7 +90,6 @@ def _build_trainer(tmp_path) -> OnlineTrainer:
             drop_zero_advantage=False,
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(),
-            train_precision="no",
             output_dir=str(tmp_path),
         ),
         device="cpu",
@@ -249,31 +248,24 @@ def test_streaming_all_filtered_update_does_not_advance_policy(tmp_path) -> None
     assert sync_calls == []
     assert metrics.grad_norm == 0.0
     assert torch.equal(trainer.model.weight, initial_weight)
-    assert trainer._precision_drift_guard_pending is True
 
 
 @pytest.mark.parametrize("streaming", [False, True])
-@pytest.mark.parametrize("drift", [0.0005, 0.1])
-def test_corrected_replay_enforces_drift_guard_on_both_update_paths(
+@pytest.mark.parametrize("drift", [0.1, 3.0])
+def test_corrected_replay_fails_parity_only_at_the_catastrophic_bound(
     tmp_path,
     streaming: bool,
     drift: float,
 ) -> None:
-    """Correction bypasses exact parity, not the bounded first-update guard."""
+    """Correction relaxes the recipe parity threshold, not the ln(10) bound."""
     import json
 
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
     from vrl.scripts.common.online import _run_streaming_optimizer_update
-    from vrl.trainers.core.types import PrecisionDriftGuardConfig
-    from vrl.trainers.online.precision_guard import PrecisionDriftError
+    from vrl.trainers.core.types import CORRECTED_REPLAY_MAX_ABS_LOG_RATIO
 
     trainer = _build_trainer(tmp_path)
     trainer.algorithm.precision_correction = PrecisionCorrectionConfig(tis_mode="truncate")
-    trainer.config.precision_drift_guard = PrecisionDriftGuardConfig(
-        mode="fail",
-        max_abs_log_ratio=0.001,
-        max_ratio_abs_dev=0.001,
-    )
 
     class DriftEvaluator(Evaluator):
         def evaluate(self, model, batch, timestep_idx, **kw):
@@ -302,60 +294,24 @@ def test_corrected_replay_enforces_drift_guard_on_both_update_paths(
             )
         return await trainer.step(["p"])
 
-    if drift > trainer.config.precision_drift_guard.max_abs_log_ratio:
-        with pytest.raises(PrecisionDriftError, match="precision drift guard"):
+    assert drift > trainer.config.replay_parity.max_abs_logprob_diff
+    if drift > CORRECTED_REPLAY_MAX_ABS_LOG_RATIO:
+        with pytest.raises(RuntimeError, match="replay parity failed"):
             asyncio.run(run_update())
         assert trainer.state.global_step == 0
         assert torch.equal(trainer.model.weight, initial_weight)
-        assert trainer._precision_drift_guard_pending is True
     else:
         asyncio.run(run_update())
         assert trainer.state.global_step == 1
         assert not torch.equal(trainer.model.weight, initial_weight)
-        assert trainer._precision_drift_guard_pending is False
-        records = [
-            json.loads(line)
-            for line in (tmp_path / "training_debug.jsonl").read_text().splitlines()
-        ]
-        by_event = {record["event"]: record for record in records}
-        assert set(by_event) == {"precision_drift_guard", "replay_parity_gate"}
-        # Under a correction mode the parity gate still measures and records
-        # the drift but does not enforce it; the drift guard owns enforcement.
-        assert by_event["replay_parity_gate"]["enforced"] is False
-
-
-def test_trainer_uses_already_gathered_drift_record_without_more_collectives(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    import json
-
-    import vrl.trainers.online.trainer as trainer_module
-
-    trainer = _build_trainer(tmp_path)
-    batch = _diffusion_rollout_batch(
-        rewards=torch.arange(2, dtype=torch.float32),
-        group_ids=torch.zeros(2, dtype=torch.long),
-        num_steps=2,
-    )
-    record = {
-        "event": "precision_drift_guard",
-        "mode": "warn",
-        "violated": False,
-        "worst_rank": 1,
-        "worst_timestep": 7,
-        "worst_stats": {"finite": True, "logprob_abs_diff_max": 0.0},
-    }
-    monkeypatch.setattr(trainer_module, "measure_precision_drift", lambda *a, **kw: record)
-
-    def unexpected_reduce(*args, **kwargs):
-        raise AssertionError("the guard already gathered and selected the rank record")
-
-    monkeypatch.setattr(trainer._strategy.collectives, "_reduce_values", unexpected_reduce)
-    assert trainer._check_initial_precision_drift(batch, [0, 1]) is record
-    saved = json.loads((tmp_path / "training_debug.jsonl").read_text())
-    assert saved == record
-    assert trainer._precision_drift_guard_pending is False
+    records = [
+        json.loads(line) for line in (tmp_path / "training_debug.jsonl").read_text().splitlines()
+    ]
+    assert [record["event"] for record in records] == ["replay_parity_gate"]
+    assert records[0]["passed"] is False
+    # Beyond the recipe threshold but inside the bound, correction owns the
+    # drift and the gate only records it.
+    assert records[0]["enforced"] is (drift > CORRECTED_REPLAY_MAX_ABS_LOG_RATIO)
 
 
 def test_streaming_scaler_skipped_update_does_not_publish_weights(tmp_path) -> None:

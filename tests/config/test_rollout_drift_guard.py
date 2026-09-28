@@ -45,7 +45,7 @@ def _precision(root) -> object:
 def test_teacache_without_any_correction_is_refused() -> None:
     cfg = _cfg(sampling={"teacache": True})
 
-    with pytest.raises(ValueError, match=r"teacache.*no drift guard"):
+    with pytest.raises(ValueError, match=r"teacache.*no importance-sampling"):
         validate_guarded_rollout_drift(cfg, _precision(cfg))
 
 
@@ -104,23 +104,17 @@ def test_quantized_rollout_needs_no_extra_check() -> None:
     validate_guarded_rollout_drift(cfg, _precision(cfg))
 
 
-@pytest.mark.parametrize(
-    "expert_block",
-    ["precision_drift_guard", "precision_correction"],
-)
-def test_explicit_expert_block_is_honored(expert_block: str) -> None:
+def test_explicit_expert_block_is_honored() -> None:
     """The same escape hatch the precision-split default path respects.
 
-    ``TrainerConfig.from_root`` only fills these in when the user has not,
-    so an explicit block means the correction policy was chosen deliberately.
+    ``TrainerConfig.from_root`` only fills the correction in when the user has
+    not, so an explicit block means the policy was chosen deliberately.
     """
 
-    # Each expert block's own vocabulary (the parsed root rejects a foreign key).
-    explicit = {
-        "precision_drift_guard": {"mode": "warn"},
-        "precision_correction": {"tis_mode": "truncate"},
-    }[expert_block]
-    cfg = _cfg(sampling={"teacache": True}, trainer={expert_block: explicit})
+    cfg = _cfg(
+        sampling={"teacache": True},
+        trainer={"precision_correction": {"tis_mode": "truncate"}},
+    )
 
     validate_guarded_rollout_drift(cfg, _precision(cfg))
 

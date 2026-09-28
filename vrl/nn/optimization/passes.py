@@ -225,8 +225,8 @@ class CompilePass:
     """torch.compile every policy core.
 
     Compilation is a graph-level rewrite of the SAME math, so unlike
-    quantization and TeaCache it is not a drift source: it does not need the
-    drift guard armed.
+    quantization and TeaCache it is not a drift source: it does not need a
+    precision correction armed.
     """
 
     name: str = "compile"
@@ -443,10 +443,9 @@ def apply_rollout_optimizations(
 def unguarded_drift_sources(sampling: Any, precision: Any) -> tuple[str, ...]:
     """Request-scoped drift sources this run's precision policy will not cover.
 
-    The trainer already arms the precision drift guard and TIS correction
-    automatically whenever rollout and training precision differ
-    (``PrecisionPolicy.stages_match`` is False, and the guard's default
-    ``mode="auto"`` resolves to ``"fail"``). Quantization therefore needs no
+    The trainer already arms TIS/RS correction automatically whenever rollout
+    and training precision differ (``PrecisionPolicy.stages_match`` is False),
+    and the replay-parity gate still fails on catastrophic drift under it. Quantization therefore needs no
     extra check here — it moves rollout precision, so it flips exactly that
     switch.
 

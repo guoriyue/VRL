@@ -118,7 +118,6 @@ def _trainer(tmp_path, *, optimizer_steps_per_batch: int) -> tuple[OnlineTrainer
             drop_zero_advantage=False,
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(),
-            train_precision="no",
             output_dir=str(tmp_path),
         ),
         device="cpu",
