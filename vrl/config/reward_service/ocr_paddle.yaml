@@ -21,7 +21,6 @@ model_version: paddleocr@flow_grpo_compat
 artifact_roots:
   - ../../../outputs
 
-max_concurrency: 1
 max_pending_requests: 16
 max_cached_requests: 1024
 generation_overlap_safe: false

@@ -177,7 +177,6 @@ def test_wire_decodes_only_typed_scalars() -> None:
             # bool("false") is True; a stringly flag must be rejected, not
             # silently flipped into a scheduling permission.
             "generation_overlap_safe": "false",
-            "max_concurrency": 1,
             "max_pending_requests": 1,
         },
     }
@@ -506,60 +505,6 @@ async def test_bounded_admission_returns_retryable_backpressure(tmp_path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_service_reports_actual_semaphore_queue_wait(tmp_path) -> None:
-    class _BlockingRuntime(_FakeRuntime):
-        def __init__(self) -> None:
-            super().__init__()
-            self.started = threading.Event()
-            self.release = threading.Event()
-
-        async def score_batch(self, request):
-            self.requests.append(request)
-            self.started.set()
-            await asyncio.to_thread(self.release.wait)
-            return _results(request)
-
-    class _ObservedSemaphore(asyncio.Semaphore):
-        def __init__(self, value: int) -> None:
-            super().__init__(value)
-            self.waiting = asyncio.Event()
-
-        async def acquire(self) -> bool:
-            if self.locked():
-                self.waiting.set()
-            return await super().acquire()
-
-    first_file = tmp_path / "first.mp4"
-    second_file = tmp_path / "second.mp4"
-    first_file.write_bytes(b"x")
-    second_file.write_bytes(b"x")
-    runtime = _BlockingRuntime()
-    async with _running_service(
-        runtime,
-        tmp_path,
-        max_concurrency=1,
-        max_pending_requests=2,
-    ) as (service, client):
-        observed = _ObservedSemaphore(1)
-        service._concurrency = observed
-        first = asyncio.create_task(
-            client.score_batch(_request(str(first_file), request_id="req-first")),
-        )
-        assert await asyncio.to_thread(runtime.started.wait, 2)
-        second = asyncio.create_task(
-            client.score_batch(_request(str(second_file), request_id="req-second")),
-        )
-        await asyncio.wait_for(observed.waiting.wait(), 2)
-        runtime.release.set()
-        first_results, second_results = await asyncio.gather(first, second)
-
-    first_result = first_results[0]
-    second_result = second_results[0]
-    assert first_result.timing_ms["queue_wait_ms"] >= 0
-    assert second_result.timing_ms["queue_wait_ms"] > first_result.timing_ms["queue_wait_ms"]
-
-
-@pytest.mark.asyncio
 async def test_idempotency_joins_inflight_replays_cache_and_rejects_conflict(tmp_path) -> None:
     class _BlockingRuntime(_FakeRuntime):
         def __init__(self) -> None:
@@ -693,7 +638,7 @@ async def test_ambiguous_score_transport_failure_requires_artifact_retention(
     assert caught.value.retain_reward_artifacts is True
 
 
-def test_invalid_concurrency_does_not_start_runtime_owner(tmp_path, monkeypatch) -> None:
+def test_invalid_admission_capacity_does_not_start_runtime_owner(tmp_path, monkeypatch) -> None:
     runtime = _FakeRuntime()
     owner_started = False
 
@@ -707,11 +652,11 @@ def test_invalid_concurrency_does_not_start_runtime_owner(tmp_path, monkeypatch)
         _UnexpectedOwner,
     )
 
-    with pytest.raises(ValueError, match="max_concurrency"):
+    with pytest.raises(ValueError, match="max_pending_requests"):
         RewardService(
             runtime,
             artifact_roots=[tmp_path],
-            max_concurrency=0,
+            max_pending_requests=0,
         )
 
     assert owner_started is False
@@ -890,7 +835,6 @@ def test_obsolete_managed_launch_token_is_rejected_by_config_and_wire() -> None:
         model_name="external-model",
         model_version="v1",
         generation_overlap_safe=False,
-        max_concurrency=1,
         max_pending_requests=8,
     )
     payload = info_to_wire(info)
@@ -1121,20 +1065,17 @@ def test_wire_rejects_non_integer_artifact_size(tmp_path, size_bytes) -> None:
         request_from_wire(payload)
 
 
-@pytest.mark.parametrize("field", ["max_concurrency", "max_pending_requests"])
 @pytest.mark.parametrize("value", [True, 1.5, float("nan")])
-def test_service_info_rejects_noninteger_capacity(field, value) -> None:
+def test_service_info_rejects_noninteger_capacity(value) -> None:
     from vrl.rewards.service.wire import info_from_wire
 
     info = {
         "model_name": "test",
         "model_version": "v1",
         "generation_overlap_safe": False,
-        "max_concurrency": 1,
-        "max_pending_requests": 8,
+        "max_pending_requests": value,
     }
-    info[field] = value
-    with pytest.raises(RewardServiceProtocolError, match=field):
+    with pytest.raises(RewardServiceProtocolError, match="max_pending_requests"):
         info_from_wire({"info": info})
 
 
@@ -1147,7 +1088,6 @@ def test_service_info_rejects_nonstring_identity(field, value) -> None:
         "model_name": "test",
         "model_version": "",
         "generation_overlap_safe": False,
-        "max_concurrency": 1,
         "max_pending_requests": 8,
     }
     info[field] = value
@@ -1241,7 +1181,6 @@ async def test_parking_service_refuses_to_overlap_safe_and_resident_services_ref
             model_name="m",
             model_version="v",
             generation_overlap_safe=True,
-            max_concurrency=1,
             max_pending_requests=1,
             memory_parking=True,
         )

@@ -8,7 +8,6 @@ model_version: KlingTeam/VideoReward@4f266001+DINOv2-vits14+RAFT-small+droid-ble
 artifact_roots:
   - /home/ubuntu/VRL/outputs
 
-max_concurrency: 1
 max_pending_requests: 8
 max_cached_requests: 1024
 generation_overlap_safe: true

@@ -34,11 +34,9 @@ model_version: CodeGoat24/UnifiedReward-2.0-qwen-7b@main
 artifact_roots:
   - /home/ubuntu/VRL/outputs
 
-# One in-flight scoring call: this is a single generative judge on one GPU, so
-# concurrency above 1 would only queue inside the model. The pending cap bounds
-# admission so a producer that outruns scoring gets explicit 429 backpressure
-# instead of unbounded queue growth.
-max_concurrency: 1
+# Scoring runs one call at a time on the service's owner thread. The pending
+# cap bounds admission so a producer that outruns scoring gets explicit 429
+# backpressure instead of unbounded queue growth.
 max_pending_requests: 8
 max_cached_requests: 1024
 

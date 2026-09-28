@@ -45,7 +45,6 @@ class RewardServiceInfo:
     # this service's accelerators are isolated from the training topology, so
     # the collector may overlap reward N with generation N+1.
     generation_overlap_safe: bool
-    max_concurrency: int
     max_pending_requests: int
     # Whether this service takes the shared-GPU phase lease: POST /park yields
     # its model's GPU memory while the trainer/rollout own the card, and
@@ -68,14 +67,9 @@ class RewardServiceInfo:
         if not isinstance(self.generation_overlap_safe, bool):
             # bool("false") is True; a stringly wire value must fail, not flip.
             raise ValueError("reward service generation_overlap_safe must be a boolean")
-        require_int(self.max_concurrency, path="reward service max_concurrency", minimum=1)
         require_int(
             self.max_pending_requests, path="reward service max_pending_requests", minimum=1
         )
-        if self.max_pending_requests < self.max_concurrency:
-            raise ValueError(
-                "reward service max_pending_requests must be >= max_concurrency",
-            )
 
 
 class RewardServiceProtocolError(ValueError):

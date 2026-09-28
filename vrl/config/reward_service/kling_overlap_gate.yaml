@@ -27,11 +27,9 @@ model_version: KlingTeam/VideoReward@main
 artifact_roots:
   - /home/ubuntu/VRL/outputs
 
-# One in-flight scoring call: Kling VideoReward is a single learned judge on one
-# GPU, so concurrency above 1 would only queue inside the model. The pending cap
-# bounds admission so a producer that outruns scoring gets explicit 429
+# Scoring runs one call at a time on the service's owner thread. The pending
+# cap bounds admission so a producer that outruns scoring gets explicit 429
 # backpressure instead of unbounded queue growth.
-max_concurrency: 1
 max_pending_requests: 8
 max_cached_requests: 1024
 

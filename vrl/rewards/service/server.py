@@ -85,7 +85,6 @@ class RewardServiceConfig(ConfigBase):
     model_version: str = ""
     artifact_roots: tuple[str, ...] = ()
     worker_config: dict[str, Any] = Field(default_factory=dict)
-    max_concurrency: StrictInt = 1
     max_pending_requests: StrictInt = 8
     max_cached_requests: StrictInt = 1024
     # Uploads are uncompressed base64 (4/3 the tensor bytes). Video deployments
@@ -155,7 +154,6 @@ class RewardService:
             port=int(cfg.port),
             model_name=str(cfg.model_name or launch.reward_model_name or launch.model_factory),
             model_version=str(cfg.model_version or launch.reward_model_version),
-            max_concurrency=int(cfg.max_concurrency),
             max_pending_requests=int(cfg.max_pending_requests),
             max_cached_requests=int(cfg.max_cached_requests),
             max_request_bytes=int(cfg.max_request_bytes),
@@ -171,7 +169,6 @@ class RewardService:
         port: int = 8300,
         model_name: str = "",
         model_version: str = "",
-        max_concurrency: int = 1,
         max_pending_requests: int = 8,
         max_cached_requests: int = 1024,
         max_request_bytes: int = 16 * 1024 * 1024,
@@ -213,13 +210,11 @@ class RewardService:
             model_name=str(model_name).strip() or type(runtime).__name__,
             model_version=str(model_version).strip(),
             generation_overlap_safe=bool(generation_overlap_safe),
-            max_concurrency=max_concurrency,
             max_pending_requests=max_pending_requests,
             memory_parking=memory_parking,
         )
         self._runtime_device = str(getattr(getattr(runtime, "_launch", None), "device", "") or "")
         self._max_cached_requests = max_cached_requests
-        self._concurrency = asyncio.Semaphore(self._info.max_concurrency)
         self._records: OrderedDict[str, _RequestRecord] = OrderedDict()
         self._active_requests = 0
         self._records_lock = asyncio.Lock()
@@ -512,38 +507,31 @@ class RewardService:
             validation_started = time.perf_counter()
             request, auxiliary_sha256 = await self._validate_artifact_paths(request)
             artifact_validation_ms = (time.perf_counter() - validation_started) * 1000.0
-            queued_at = time.perf_counter()
-            async with self._concurrency:
-                service_queue_wait_ms = (time.perf_counter() - queued_at) * 1000.0
-                inference_started = time.perf_counter()
-                results = list(await self._owner.score_batch(request))
-                service_inference_wall_ms = (time.perf_counter() - inference_started) * 1000.0
-                results = request.validate_and_order_results(results)
-                revalidation_started = time.perf_counter()
-                _, current_auxiliary = await self._validate_artifact_paths(request)
-                if current_auxiliary != auxiliary_sha256:
-                    raise RewardServiceProtocolError(
-                        RewardServiceErrorCode.PATH_NOT_ALLOWED,
-                        "reward auxiliary files changed during scoring",
-                        request_id=request.request_id,
-                    )
-                revalidation_ms = (time.perf_counter() - revalidation_started) * 1000.0
-                results = [
-                    replace(
-                        result,
-                        timing_ms={
-                            **result.timing_ms,
-                            "queue_wait_ms": (
-                                float(result.timing_ms.get("queue_wait_ms", 0.0))
-                                + service_queue_wait_ms
-                            ),
-                            "service_artifact_validation_ms": artifact_validation_ms,
-                            "service_inference_wall_ms": service_inference_wall_ms,
-                            "service_artifact_revalidation_ms": revalidation_ms,
-                        },
-                    )
-                    for result in results
-                ]
+            inference_started = time.perf_counter()
+            results = list(await self._owner.score_batch(request))
+            service_inference_wall_ms = (time.perf_counter() - inference_started) * 1000.0
+            results = request.validate_and_order_results(results)
+            revalidation_started = time.perf_counter()
+            _, current_auxiliary = await self._validate_artifact_paths(request)
+            if current_auxiliary != auxiliary_sha256:
+                raise RewardServiceProtocolError(
+                    RewardServiceErrorCode.PATH_NOT_ALLOWED,
+                    "reward auxiliary files changed during scoring",
+                    request_id=request.request_id,
+                )
+            revalidation_ms = (time.perf_counter() - revalidation_started) * 1000.0
+            results = [
+                replace(
+                    result,
+                    timing_ms={
+                        **result.timing_ms,
+                        "service_artifact_validation_ms": artifact_validation_ms,
+                        "service_inference_wall_ms": service_inference_wall_ms,
+                        "service_artifact_revalidation_ms": revalidation_ms,
+                    },
+                )
+                for result in results
+            ]
             return _Reply(
                 status=200,
                 body=score_response_to_wire(request.request_id, results),

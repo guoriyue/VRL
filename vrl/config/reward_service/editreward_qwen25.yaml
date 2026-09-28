@@ -6,7 +6,6 @@ model_name: editreward-qwen25-7b
 model_version: 51b92ab5246295637c4ab3bd71e54a26f0a5189d
 artifact_roots:
   - ../../../outputs
-max_concurrency: 1
 max_pending_requests: 16
 max_cached_requests: 1024
 # Eight float32 image tensors plus base64 encoding exceed the 16 MiB default.
