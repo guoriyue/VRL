@@ -70,13 +70,14 @@ class OnlineRunConfig:
     deterministic: bool = False
 
     def __post_init__(self) -> None:
-        require_int(self.total_epochs, path="trainer.total_epochs", minimum=0)
-        require_int(self.save_freq, path="trainer.save_freq", minimum=0)
-        require_int(self.seed, path="trainer.seed")
+        # RootConfig types these fields as StrictInt/StrictBool; only the
+        # ranges the schema does not express are checked here.
+        if self.total_epochs < 0:
+            raise ValueError("trainer.total_epochs must be >= 0")
+        if self.save_freq < 0:
+            raise ValueError("trainer.save_freq must be >= 0")
         if not -(2**63) <= self.seed < 2**64:
             raise ValueError("trainer.seed must fit torch's signed/unsigned 64-bit seed range")
-        if type(self.deterministic) is not bool:
-            raise ValueError("trainer.deterministic must be a boolean")
 
     @classmethod
     def from_root(cls, root: RootConfig) -> OnlineRunConfig:

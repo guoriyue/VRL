@@ -24,7 +24,6 @@ from vrl.rollouts.orchestration.continuous.types import (
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.rollouts.stats import RolloutStats
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
-from vrl.utils.deadline import require_timeout
 
 
 class ContinuousRolloutConsumer:
@@ -56,9 +55,8 @@ class ContinuousRolloutConsumer:
     ) -> RolloutIteration:
         """Block until a homogeneous-version iteration is ready, then build it.
 
-        ``prompt_batch_id`` selects the requested prompt batch while a later
-        prefetched batch may already be ready, even at the same policy version.
-        The owner always supplies the batch identity explicitly.
+        ``prompt_batch_id`` names the producer's installed prompt batch; the
+        owner always supplies the batch identity explicitly.
 
         ``producer_state`` lets the wait surface the background producer's
         health: a persistent generation/reward failure ends the wait early with
@@ -66,8 +64,7 @@ class ContinuousRolloutConsumer:
         message (when reached) includes the producer's last error and counters.
         """
 
-        wait_timeout_s = require_timeout(wait_timeout_s, name="wait_timeout_s")
-        poll_interval_s = require_timeout(poll_interval_s, name="poll_interval_s")
+        # Both waits were validated by ContinuousRolloutConfig.
         deadline = time.monotonic() + wait_timeout_s
         wait_start = time.perf_counter()
         ready_groups_at_demand = len(
@@ -194,38 +191,18 @@ class ContinuousRolloutConsumer:
         expected_group_count: int,
         current_policy_version: int | None,
     ) -> list[ScoredRollout] | None:
-        """Pop one complete, distinct-group, homogeneous-version batch."""
+        """Pop the demanded batch once every one of its groups is ready.
 
-        # expected_group_count == len(prompts); the owner already rejected empty prompt
-        # lists at the API boundary, so no re-check here.
+        The producer publishes exactly one item per slot of its installed batch,
+        all stamped with that batch's policy version, so a full count is a
+        complete, distinct-slot, homogeneous-version batch.
+        """
+
         self.validate_ready_versions(current_policy_version=current_policy_version)
 
-        items = self.queue.snapshot()
-        if any(item.batch_id < prompt_batch_id for item in items):
-            raise RuntimeError("continuous ready queue retains an already consumed batch")
-        # The owner selects its installed head, never whichever future batch
-        # happens to finish first. The unselected receipts retain ownership.
-        items = [item for item in items if item.batch_id == prompt_batch_id]
-        versions = {item.rollout_policy_version for item in items}
-        if len(versions) > 1:
-            raise RuntimeError(
-                "continuous ready prompt batch mixes policy versions "
-                f"{sorted(versions, key=lambda version: -1 if version is None else version)}",
-            )
-        group_slots = [item.group_slot for item in items]
-        if len(group_slots) != len(set(group_slots)):
-            raise RuntimeError(
-                "continuous ready prompt batch contains duplicate group slots",
-            )
+        items = [item for item in self.queue.snapshot() if item.batch_id == prompt_batch_id]
         if len(items) < expected_group_count:
             return None
-        if len(items) > expected_group_count:
-            raise RuntimeError(
-                "continuous ready prompt batch exceeds its expected group count "
-                f"(ready={len(items)}, expected={expected_group_count})",
-            )
-        if set(group_slots) != set(range(expected_group_count)):
-            raise RuntimeError("continuous ready prompt batch has invalid group slots")
         items.sort(key=lambda item: item.group_slot)
         self.queue.remove(items)
         return items

@@ -1068,36 +1068,6 @@ def test_item_ages_never_go_negative_under_a_skewed_clock(
 
 
 @pytest.mark.asyncio
-async def test_consumer_rejects_duplicate_group_slots() -> None:
-    queue = ScoredRolloutQueue(max_items=2)
-    queue.put(_item(group_slot=0, version=1))
-    queue.put(_item(group_slot=0, version=1))
-
-    with pytest.raises(RuntimeError, match="duplicate group slots"):
-        await _collect_iteration(
-            _consumer(queue, max_stale=0),
-            prompt_batch_id=0,
-            expected_group_count=2,
-            current_policy_version=1,
-        )
-
-
-@pytest.mark.asyncio
-async def test_consumer_rejects_mixed_policy_versions() -> None:
-    queue = ScoredRolloutQueue(max_items=2)
-    queue.put(_item(group_slot=0, version=1))
-    queue.put(_item(group_slot=1, version=2))
-
-    with pytest.raises(RuntimeError, match="mixes policy versions"):
-        await _collect_iteration(
-            _consumer(queue, max_stale=1),
-            prompt_batch_id=0,
-            expected_group_count=2,
-            current_policy_version=2,
-        )
-
-
-@pytest.mark.asyncio
 async def test_consumer_rejects_future_policy_version() -> None:
     queue = ScoredRolloutQueue(max_items=1)
     queue.put(_item(group_slot=0, version=2))
@@ -1230,37 +1200,6 @@ async def test_consumer_waits_for_named_head_even_when_prefetch_is_ready(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("slots", [[-1, 0], [0, 2]])
-async def test_consumer_rejects_wrong_slots_without_removing_receipts(slots) -> None:
-    queue = ScoredRolloutQueue(max_items=2)
-    for slot in slots:
-        queue.put(_item(group_slot=slot, version=1, batch_id=0))
-    with pytest.raises(RuntimeError, match="invalid group slots"):
-        await _collect_iteration(
-            _consumer(queue, max_stale=1),
-            expected_group_count=2,
-            current_policy_version=1,
-            prompt_batch_id=0,
-        )
-    assert queue.size() == 2
-
-
-@pytest.mark.asyncio
-async def test_consumer_rejects_leftover_prior_batch_at_named_demand() -> None:
-    queue = ScoredRolloutQueue(max_items=2)
-    queue.put(_item(group_slot=0, version=1, batch_id=0))
-    queue.put(_item(group_slot=0, version=1, batch_id=1))
-    with pytest.raises(RuntimeError, match="already consumed batch"):
-        await _collect_iteration(
-            _consumer(queue, max_stale=1),
-            expected_group_count=1,
-            current_policy_version=1,
-            prompt_batch_id=1,
-        )
-    assert queue.size() == 2
-
-
-@pytest.mark.asyncio
 async def test_consumer_polling_respects_remaining_wait_budget():
     consumer = _consumer(ScoredRolloutQueue(max_items=8), max_stale=1)
     # The outer guard prevents a regression from sleeping for the ten-second
@@ -1275,19 +1214,4 @@ async def test_consumer_polling_respects_remaining_wait_budget():
                 poll_interval_s=10.0,
             ),
             timeout=1.0,
-        )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["wait_timeout_s", "poll_interval_s"])
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), 0.0, -1.0])
-async def test_consumer_rejects_invalid_wait_settings(field, value):
-    consumer = _consumer(ScoredRolloutQueue(max_items=8), max_stale=1)
-    settings = {"wait_timeout_s": 1.0, "poll_interval_s": 0.001, field: value}
-    with pytest.raises(ValueError, match=field):
-        await consumer.collect_iteration(
-            prompt_batch_id=0,
-            expected_group_count=1,
-            current_policy_version=1,
-            **settings,
         )
