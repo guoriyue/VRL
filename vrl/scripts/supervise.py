@@ -43,7 +43,6 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from vrl.trainers.metrics_io import OnlineMetricRow
 from vrl.utils.json_files import write_json
 
 if TYPE_CHECKING:
@@ -170,12 +169,6 @@ class ContinuousHealthPolicy:
     max_stale_policy_versions: int
     max_stale_logprob_diff: float = 0.05
 
-    def __post_init__(self) -> None:
-        if self.max_stale_policy_versions < 0:
-            raise ValueError("max_stale_policy_versions must be >= 0")
-        if not math.isfinite(self.max_stale_logprob_diff) or self.max_stale_logprob_diff < 0:
-            raise ValueError("max_stale_logprob_diff must be finite and >= 0")
-
 
 @dataclass(frozen=True, slots=True)
 class HealthGateConfig:
@@ -206,29 +199,8 @@ class HealthGateConfig:
     max_grad_norm: float = math.inf
 
     def __post_init__(self) -> None:
-        required_columns = set(_REQUIRED_HEALTH_METRICS)
-        if self.continuous is not None:
-            required_columns.update(_CONTINUOUS_HEALTH_METRICS)
-        missing_columns = sorted(required_columns - set(OnlineMetricRow.csv_columns()))
-        if missing_columns:
-            raise AssertionError(
-                "health metrics are absent from the online CSV protocol: "
-                + ", ".join(missing_columns),
-            )
-        if self.poll_seconds <= 0:
-            raise ValueError("poll_seconds must be > 0")
-        if self.failure_limit < 1:
-            raise ValueError("failure_limit must be >= 1")
-        for name in (
-            "max_pre_update_logprob_diff",
-            "min_reward_std",
-            "min_grad_norm",
-        ):
-            if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
-                raise ValueError(f"{name} must be finite and >= 0")
-        # Validated apart from the loop above: inf is this field's "disabled".
-        if math.isnan(self.max_grad_norm) or self.max_grad_norm <= 0:
-            raise ValueError("max_grad_norm must be > 0")
+        # Per-field bounds live on the argparse options; this is the one
+        # cross-field rule the parser cannot express.
         if self.max_grad_norm <= self.min_grad_norm:
             raise ValueError(
                 f"max_grad_norm must be > min_grad_norm "
@@ -541,16 +513,6 @@ class RunSupervisor:
     _group_cleanup_lock: Any = field(default_factory=threading.RLock, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.expected_world_size < 1:
-            raise ValueError("expected_world_size must be >= 1")
-        if self.max_attempts < 0:
-            raise ValueError("max_attempts must be >= 0")
-        if self.same_cause_limit < 1:
-            raise ValueError("same_cause_limit must be >= 1")
-        for name in ("term_grace_seconds", "backoff_seconds"):
-            value = float(getattr(self, name))
-            if not math.isfinite(value) or value < 0:
-                raise ValueError(f"{name} must be finite and >= 0")
         if self.health is not None:
             self._health_gate = MetricsHealthGate(self.health, self.output_dir)
 

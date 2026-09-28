@@ -589,21 +589,6 @@ def test_supervisor_cli_rejects_invalid_retry_bounds(option: str, value: str) ->
         build_parser().parse_args(["--config", "unit", option, value])
 
 
-@pytest.mark.parametrize(
-    ("kwargs", "message"),
-    [
-        ({"same_cause_limit": 0}, "same_cause_limit"),
-        ({"backoff_seconds": float("nan")}, "backoff_seconds"),
-    ],
-)
-def test_supervisor_runtime_rejects_invalid_retry_config(
-    kwargs: dict[str, float | int],
-    message: str,
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        RunSupervisor(command=[], output_dir=Path("unused"), **kwargs)
-
-
 def _health_args(*extra: str):
     return build_parser().parse_args(["--config", "unit", "--health-metrics", *extra])
 
@@ -720,11 +705,6 @@ def test_health_config_rejects_stale_override_for_strict_schedule() -> None:
         )
 
 
-def test_continuous_health_policy_rejects_invalid_thresholds() -> None:
-    with pytest.raises(ValueError):
-        ContinuousHealthPolicy(max_stale_policy_versions=1, max_stale_logprob_diff=float("nan"))
-
-
 def test_health_gate_reads_a_complete_online_metric_row(tmp_path) -> None:
     out = tmp_path / "run"
     out.mkdir()
@@ -793,19 +773,9 @@ def test_health_gate_default_never_trips_on_a_large_grad_norm(tmp_path) -> None:
     assert not (out / HEALTH_RESULT_NAME).exists()
 
 
-@pytest.mark.parametrize(
-    ("kwargs", "message"),
-    [
-        ({"max_grad_norm": float("nan")}, "must be > 0"),
-        ({"max_grad_norm": 0.5, "min_grad_norm": 0.5}, "must be > min_grad_norm"),
-    ],
-)
-def test_health_config_rejects_a_max_grad_norm_at_or_below_the_minimum(
-    kwargs: dict[str, float],
-    message: str,
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        HealthGateConfig(**kwargs)
+def test_health_config_rejects_a_max_grad_norm_at_or_below_the_minimum() -> None:
+    with pytest.raises(ValueError, match="must be > min_grad_norm"):
+        HealthGateConfig(max_grad_norm=0.5, min_grad_norm=0.5)
 
 
 def test_metrics_health_gate_cli_thresholds_are_configurable() -> None:
