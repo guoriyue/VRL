@@ -11,7 +11,6 @@ from vrl.trajectory.types import (
     TrajectorySegment,
     TrajectoryTensor,
 )
-from vrl.trajectory.views import RewardInputSpec
 
 # The core role triple a trainable segment must have exactly one of each.
 # Single ordered source of truth: the uniqueness check (below) and the
@@ -26,7 +25,7 @@ class TrajectoryValidationError(ValueError):
 
 @dataclass(slots=True)
 class TrajectoryValidator:
-    """Validate one trajectory batch and its derived training/reward views."""
+    """Validate one trajectory batch and its derived training views."""
 
     batch: TrajectoryBatch
     tensor_refs: dict[str, TrajectoryTensor] = field(
@@ -86,45 +85,22 @@ class TrajectoryValidator:
                 "TrajectoryBatch.primary_segment must be None when no trainable segments exist",
             )
 
-        for view_key, view in batch.reward_views.items():
-            if not isinstance(view, RewardInputSpec):
-                self._fail(f"reward_views[{view_key!r}] must be a RewardInputSpec")
-            if view_key != view.name:
-                self._fail(f"RewardInputSpec key {view_key!r} does not match name={view.name!r}")
-            self.validate_reward_view(view)
-
         self._reject_runtime_state(batch.context, "TrajectoryBatch.context")
         return batch
-
-    def validate_reward_view(self, view: RewardInputSpec) -> RewardInputSpec:
-        """Validate that a reward view only references known trajectory tensors."""
-
-        refs = self._ensure_tensor_refs()
-        for ref in view.tensor_refs:
-            if ref not in refs:
-                self._fail(f"RewardInputSpec {view.name!r} references unknown tensor {ref!r}")
-        self._reject_runtime_state(view.metadata, f"RewardInputSpec {view.name!r}.metadata")
-        return view
 
     def _validate_segment(
         self,
         segment_key: str,
         segment: TrajectorySegment,
     ) -> None:
-        batch = self.batch
         if segment_key != segment.name:
             self._fail(
                 f"Segment key {segment_key!r} does not match "
                 f"TrajectorySegment.name={segment.name!r}",
             )
-        if segment.reward_view is not None and segment.reward_view not in batch.reward_views:
-            self._fail(
-                f"TrajectorySegment {segment.name!r} references unknown reward_view "
-                f"{segment.reward_view!r}",
-            )
         # Generation-only segments may describe media delivered outside the
-        # trajectory (including reward files). Trainable replay still needs tensors.
-        if not segment.tensors and (segment.trainable or segment.reward_view is None):
+        # trajectory (GenerationOutput.output). Trainable replay still needs tensors.
+        if not segment.tensors and segment.trainable:
             self._fail(f"TrajectorySegment {segment.name!r} must contain tensors")
 
         roles: dict[str, TrajectoryTensor] = {}
@@ -240,15 +216,6 @@ class TrajectoryValidator:
                         f"tensor {segment_name}.{tensor.name} axis {axis_name!r} has "
                         f"shape {actual}, expected {expected}",
                     )
-
-    def _ensure_tensor_refs(self) -> dict[str, TrajectoryTensor]:
-        if not self.tensor_refs:
-            self.tensor_refs.update(
-                (tensor_ref(segment.name, tensor.name), tensor)
-                for segment in self.batch.segments.values()
-                for tensor in segment.tensors.values()
-            )
-        return self.tensor_refs
 
     def _reject_runtime_state(
         self,

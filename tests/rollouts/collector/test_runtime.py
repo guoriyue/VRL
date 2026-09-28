@@ -31,7 +31,6 @@ from vrl.trajectory.builders import (
     build_diffusion_trajectory,
 )
 from vrl.trajectory.storage import TrajectoryStoragePolicy
-from vrl.trajectory.views import RewardInputSpec
 
 
 class _RequestBuilder:
@@ -593,10 +592,7 @@ def _reward_sample_builder(
     )
 
 
-@pytest.mark.parametrize("value_range", ["unit", "tanh"])
-def test_reward_samples_forward_boxed_media_without_resolving(monkeypatch, value_range) -> None:
-    from dataclasses import replace
-
+def test_reward_samples_forward_boxed_media_without_resolving(monkeypatch) -> None:
     from vrl.utils.media_reference import MediaReference
 
     def unexpected_resolve(*args, **kwargs):
@@ -605,19 +601,10 @@ def test_reward_samples_forward_boxed_media_without_resolving(monkeypatch, value
     monkeypatch.setattr(MediaReference, "resolve", unexpected_resolve)
     refs = [MediaReference("boxed-ref", i, nbytes=48) for i in range(2)]
     builder = _reward_sample_builder("request-0", ["p0", "p1"], outputs=refs)
-    builder.trajectory.reward_views = {
-        "image": RewardInputSpec(
-            name="image",
-            value_range=value_range,
-            metadata={"output_ref": "GenerationOutput.output"},
-        ),
-    }
 
     samples = builder.reward_samples()
 
-    assert [sample.output for sample in samples] == [
-        replace(ref, value_range=value_range) for ref in refs
-    ]
+    assert [sample.output for sample in samples] == refs
 
 
 def test_reward_samples_reject_reference_count_mismatch() -> None:
@@ -808,33 +795,6 @@ def test_prepare_training_batches_folds_reward_timing_into_stats() -> None:
     assert stats.as_metrics_dict()["reward.artifact_validation_s"] == 0.002
 
 
-def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
-    """Two reward views that both point at ``GenerationOutput.output`` cannot be disambiguated;
-    the builder refuses instead of picking one.
-    """
-    import asyncio
-
-    request = GenerationRequest(
-        request_id="unit-request",
-        family="unit",
-        task="collect",
-        inputs=["p0"],
-        samples_per_prompt=1,
-    )
-    output = asyncio.run(_Runtime().generate(request))
-    assert output.trajectory is not None
-    output.trajectory.reward_views["alternate"] = RewardInputSpec(
-        name="alternate",
-        metadata={"output_ref": "GenerationOutput.output"},
-    )
-
-    with pytest.raises(RuntimeError, match="multiple reward views"):
-        TrajectoryRolloutBatchBuilder(
-            output,
-            RolloutBatchBuildContext(metadata={}),
-        ).reward_outputs()
-
-
 def test_reward_output_is_independent_of_trajectory_storage_dtype() -> None:
     """Trainer replay compression must not change the artifact being scored."""
     import asyncio
@@ -865,37 +825,6 @@ def test_reward_output_is_independent_of_trajectory_storage_dtype() -> None:
     assert replay_log_probs.dtype == torch.float16
     assert output.output is canonical
     assert torch.equal(builder.reward_outputs(), canonical)
-
-
-@pytest.mark.parametrize(
-    "metadata",
-    [{}, {"output_ref": "TrajectoryBatch.output"}],
-)
-def test_reward_output_rejects_missing_or_unsupported_output_ref(
-    metadata: dict[str, str],
-) -> None:
-    import asyncio
-
-    request = GenerationRequest(
-        request_id="unit-request",
-        family="unit",
-        task="collect",
-        inputs=["p0"],
-        samples_per_prompt=1,
-    )
-    output = asyncio.run(_Runtime().generate(request))
-    assert output.trajectory is not None
-    output.trajectory.reward_views["image"] = RewardInputSpec(
-        name="image",
-        value_range="tanh",
-        metadata=metadata,
-    )
-
-    with pytest.raises(RuntimeError, match="no supported output_ref"):
-        TrajectoryRolloutBatchBuilder(
-            output,
-            RolloutBatchBuildContext(metadata={}),
-        ).reward_outputs()
 
 
 def test_collector_forwards_reference_metadata_to_request() -> None:

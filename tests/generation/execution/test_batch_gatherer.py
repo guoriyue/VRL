@@ -119,7 +119,6 @@ def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
 
     assert output.trajectory is not None
     assert output.trajectory.context == context
-    assert output.trajectory.segments["denoise"].reward_view == "video"
 
 
 def test_diffusion_chunk_gatherer_strictly_merges_replay_values() -> None:

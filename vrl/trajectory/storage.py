@@ -124,8 +124,6 @@ def trajectory_tensor_bytes(value: object) -> int:
             total += count_bytes(value.context)
             for segment in value.segments.values():
                 total += count_bytes(segment.metadata)
-            for view in value.reward_views.values():
-                total += count_bytes(view.metadata)
             return total
 
         if isinstance(value, Tensor):

@@ -21,7 +21,6 @@ from vrl.trajectory.validation import (
     tensor_ref,
     validate_shape_prefix,
 )
-from vrl.trajectory.views import RewardInputSpec
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +103,6 @@ def build_diffusion_trajectory(
         *(tensor_ref("denoise", name) for name in replay_tensor_names),
     )
 
-    reward_modality = task_modality(request.task)
     trajectory = TrajectoryBatch(
         request_id=request.request_id,
         family=request.family,
@@ -121,7 +119,6 @@ def build_diffusion_trajectory(
                 trainable=True,
                 distribution="flow_matching",
                 tensors=tensors,
-                reward_view=reward_modality,
                 replay_inputs={
                     "logprob": ReplayInput(
                         name="logprob",
@@ -131,13 +128,6 @@ def build_diffusion_trajectory(
             )
         },
         primary_segment="denoise",
-        reward_views={
-            reward_modality: RewardInputSpec(
-                name=reward_modality,
-                value_range="unit",
-                metadata={"output_ref": "GenerationOutput.output"},
-            )
-        },
         context=_serializable_context(context),
     )
     return TrajectoryValidator(trajectory).validate_batch()
@@ -237,7 +227,6 @@ def build_chunk_autoregressive_denoise_trajectory(
         tensors[name] = tensor
         replay_tensor_names.append(name)
 
-    reward_modality = task_modality(request.task)
     replay_tensor_refs = (
         tensor_ref("denoise", "observations"),
         tensor_ref("denoise", "actions"),
@@ -270,7 +259,6 @@ def build_chunk_autoregressive_denoise_trajectory(
                 trainable=True,
                 distribution="gaussian",
                 tensors=tensors,
-                reward_view=reward_modality,
                 replay_inputs={
                     "logprob": ReplayInput(
                         name="logprob",
@@ -280,13 +268,6 @@ def build_chunk_autoregressive_denoise_trajectory(
             )
         },
         primary_segment="denoise",
-        reward_views={
-            reward_modality: RewardInputSpec(
-                name=reward_modality,
-                value_range="unit",
-                metadata={"output_ref": "GenerationOutput.output"},
-            )
-        },
         context=_serializable_context(context),
     )
     return TrajectoryValidator(trajectory).validate_batch()
@@ -339,17 +320,9 @@ def build_chunk_autoregressive_generation_trajectory(
                 # Decoded media belongs to GenerationOutput, not replay state.
                 # Keeping another reference here defeats file-only transport.
                 tensors={},
-                reward_view=reward_modality,
             )
         },
         primary_segment=None,
-        reward_views={
-            reward_modality: RewardInputSpec(
-                name=reward_modality,
-                value_range="unit",
-                metadata={"output_ref": "GenerationOutput.output"},
-            )
-        },
         context=_serializable_context(context),
     )
     return TrajectoryValidator(trajectory).validate_batch()

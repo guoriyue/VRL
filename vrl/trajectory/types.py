@@ -9,13 +9,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import Any, Literal, get_args
 
 from vrl.generation.types import GenerationSampleRow
 from vrl.utils.validation import require_int
-
-if TYPE_CHECKING:
-    from vrl.trajectory.views import RewardInputSpec
 
 AxisKind = Literal[
     "sample",
@@ -41,20 +38,6 @@ DistributionKind = Literal[
     "deterministic",
     "custom",
 ]
-
-
-def validate_string_tuple(name: str, values: tuple[str, ...]) -> None:
-    """Raise ValueError if any element of ``values`` is not a non-empty string.
-
-    Guards the ``tensor_refs`` tuples that name tensors inside a segment — here
-    for ``ReplayInput`` and in ``vrl.trajectory.views`` for ``RewardInputSpec``. An
-    empty or non-string ref would only fail much later, at resolve time, with no
-    pointer back to the record that declared it.
-    """
-
-    for value in values:
-        if not isinstance(value, str) or not value:
-            raise ValueError(f"{name} must contain non-empty strings")
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +85,11 @@ class ReplayInput:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("ReplayInput.name must be non-empty")
-        validate_string_tuple("ReplayInput.tensor_refs", self.tensor_refs)
+        # An empty or non-string ref would only fail much later, at resolve
+        # time, with no pointer back to the record that declared it.
+        for value in self.tensor_refs:
+            if not isinstance(value, str) or not value:
+                raise ValueError("ReplayInput.tensor_refs must contain non-empty strings")
 
 
 @dataclass(slots=True)
@@ -114,7 +101,6 @@ class TrajectorySegment:
     trainable: bool
     distribution: DistributionKind
     tensors: dict[str, TrajectoryTensor]
-    reward_view: str | None = None
     replay_inputs: dict[str, ReplayInput] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -125,8 +111,6 @@ class TrajectorySegment:
             raise ValueError(f"unknown TrajectorySegment.modality {self.modality!r}")
         if self.distribution not in get_args(DistributionKind):
             raise ValueError(f"unknown TrajectorySegment.distribution {self.distribution!r}")
-        if self.reward_view is not None and not self.reward_view:
-            raise ValueError("TrajectorySegment.reward_view must be non-empty when set")
 
     def role_tensor(self, role: str) -> TrajectoryTensor:
         matches = [tensor for tensor in self.tensors.values() if tensor.role == role]
@@ -143,7 +127,7 @@ class TrajectoryBatch:
 
     request_id: str
     # display/provenance-only: the request identity this record was built from.
-    # Behavior keys off ``request_id`` (batch joins) and the segments/views; the
+    # Behavior keys off ``request_id`` (batch joins) and the segments; the
     # family/task tokens are carried so a serialized record names its origin.
     family: str
     task: str
@@ -151,7 +135,6 @@ class TrajectoryBatch:
     axes: dict[str, TrajectoryAxis]
     segments: dict[str, TrajectorySegment]
     primary_segment: str | None = None
-    reward_views: dict[str, RewardInputSpec] = field(default_factory=dict)
     # Batch-shared replay metadata; sample-aligned values belong in segment tensors.
     context: dict[str, Any] = field(default_factory=dict)
 
@@ -223,7 +206,6 @@ class TrajectoryBatch:
             sample_rows=sample_rows,
             axes=axes,
             segments=segments,
-            reward_views=dict(self.reward_views),
             context=context,
         )
         return TrajectoryValidator(out).validate_batch()

@@ -7,7 +7,7 @@ media. Ray imports only at resolution in the process that consumes the sample.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,7 +17,6 @@ class MediaReference:
     # Ray is optional at config import time; this is a ray.ObjectRef at runtime.
     object_ref: Any
     sample_index: int
-    value_range: Literal["unit", "tanh"] = "unit"
     # Per-sample payload bytes: bounded queues account for remote media without
     # fetching it. The producer fills this from the decoded sample tensor.
     nbytes: int = 0
@@ -37,6 +36,4 @@ class MediaReference:
         media = batch[self.sample_index]
         if isinstance(media, torch.Tensor) and media.dtype == torch.uint8:
             return media.float() / 255.0
-        if self.value_range == "tanh":
-            return ((media + 1.0) * 0.5).clamp(0.0, 1.0)
         return media

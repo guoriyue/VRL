@@ -1,7 +1,7 @@
 """Build trainer rollout batches from trajectory-backed generation outputs.
 
 Owns the trajectory-format knowledge the collector itself must not carry:
-which segment is trainable, which reward view scores, and how a denoise
+which segment is trainable, which media reward scores, and how a denoise
 trajectory packs into the engine-neutral ``RolloutBatch``. One builder per ``GenerationOutput`` produces both the ``RewardSample`` inputs for
 ``RewardRuntime.score`` and, once scores return, the trainer batch — keeping
 ``collector.core`` purely about phase ordering and GPU handoffs.
@@ -9,7 +9,7 @@ trajectory packs into the engine-neutral ``RolloutBatch``. One builder per ``Gen
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
@@ -19,7 +19,6 @@ from vrl.rewards import RewardSample
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.storage import TrajectoryStoragePolicy
 from vrl.trajectory.types import TrajectorySegment
-from vrl.utils.media_reference import MediaReference
 
 
 @dataclass(slots=True)
@@ -69,56 +68,19 @@ class TrajectoryRolloutBatchBuilder:
         return tuple(samples)
 
     def reward_outputs(self) -> Any:
-        """Return the selected artifact normalized to [0, 1] per the reward view's range."""
+        """Return the generated media (``GenerationOutput.output``) in [0, 1].
 
-        reward_views = self.trajectory.reward_views
-        if not reward_views:
-            raise RuntimeError(
-                f"TrajectoryBatch {self.trajectory.request_id!r} has no reward views",
-            )
-        if len(reward_views) != 1:
-            raise RuntimeError(
-                f"TrajectoryBatch {self.trajectory.request_id!r} has multiple reward "
-                "views; every generated trajectory must declare exactly one scoring view",
-            )
-        view = next(iter(reward_views.values()))
+        Boxed ``MediaReference`` lists pass through unresolved; the reward
+        consumer fetches and normalizes them.
+        """
 
-        if view.tensor_refs:
-            if len(view.tensor_refs) != 1:
-                raise RuntimeError(
-                    f"RewardInputSpec {view.name!r} must expose exactly one tensor_ref "
-                    "for collector reward scoring",
-                )
-            ref = view.tensor_refs[0]
-            segment_name, tensor_name = ref.split(".", 1)
-            try:
-                reward_output = self.trajectory.segments[segment_name].tensors[tensor_name].value
-            except KeyError as exc:
-                raise RuntimeError(
-                    f"RewardInputSpec references unknown trajectory tensor {ref!r}",
-                ) from exc
-        elif view.metadata.get("output_ref") == "GenerationOutput.output":
-            reward_output = self.output.output
-        else:
-            raise RuntimeError(
-                f"RewardInputSpec {view.name!r} has no tensor_refs and no supported output_ref",
-            )
-
-        if (
-            isinstance(reward_output, list)
-            and reward_output
-            and all(isinstance(value, MediaReference) for value in reward_output)
-        ):
-            # Preserve range metadata without resolving bytes on the driver.
-            return [replace(value, value_range=view.value_range) for value in reward_output]
+        reward_output = self.output.output
         if isinstance(reward_output, torch.Tensor) and reward_output.dtype == torch.uint8:
             # Worker-side wire packing (see decode_denoise_result): decoded
             # video crosses the wire as uint8. k/255 reconstruction round-trips
             # bit-exactly through every downstream to_uint8 quantization, so
             # reward scores are unchanged.
             return reward_output.float() / 255.0
-        if view.value_range == "tanh":
-            reward_output = ((reward_output + 1.0) * 0.5).clamp(0.0, 1.0)
         return reward_output
 
     def build(self, rewards_raw: torch.Tensor) -> RolloutBatch:

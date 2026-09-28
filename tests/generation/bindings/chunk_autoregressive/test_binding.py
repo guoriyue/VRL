@@ -122,7 +122,6 @@ def test_generation_only_result_has_no_fabricated_policy_facts() -> None:
     assert segment.trainable is False
     assert trajectory.primary_segment is None
     assert segment.tensors == {}
-    assert trajectory.reward_views["video"].metadata["output_ref"] == "GenerationOutput.output"
     assert trajectory.context == {"model_family": "causvid"}
 
     builder = TrajectoryRolloutBatchBuilder(
