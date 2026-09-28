@@ -12,7 +12,6 @@ combinations. Training never reads them.
   shifted or re-cropped frame, another scene) for edit rewards, paired like stress.
 * ``labels.agreement``: per-contrast AUC of one axis against blind categorical labels.
 * ``Analysis.spread``: success band and within-prompt spread under the training sampler.
-* ``card.build_card``: the reward card -- every qualification gate's verdict in one place.
 * ``python -m reward``: one command-line entry point for all of the above.
 * ``skills/reward/``: the toolkit as a Claude Code skill set -- ``SKILL.md`` routes to
   ``scoring.md``, ``qualification.md`` and ``calibration.md`` (``.claude/skills/reward`` links here).

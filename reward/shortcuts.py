@@ -5,8 +5,8 @@ this module builds the opposite probe for image-editing rewards, the cheap
 ways a policy can *avoid* the task: hand the source back unchanged, shift or
 re-crop the whole frame, or return an unrelated picture. Each is written as a
 ``reward_stress`` transform beside its baseline (the real candidate), so the
-existing ``Analysis.stress`` report pairs them, and the reward card asks one
-question per shortcut: how often did it score at or above the genuine output.
+existing ``Analysis.stress`` report pairs them and answers one question per
+shortcut: how often did it score at or above the genuine output.
 
 Task-specific shortcuts (an object copied instead of moved, text garbled) are
 outside this generic set; add them as further transforms with the same

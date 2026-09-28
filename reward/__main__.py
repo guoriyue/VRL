@@ -14,7 +14,6 @@ from pathlib import Path
 
 from reward.analysis import Analysis
 from reward.calibration import Calibration, PreferencePair
-from reward.card import build_card, write_card
 from reward.labels import Contrast, OutcomeLabel, agreement
 from reward.shortcuts import build_shortcut_manifest
 from reward.stress import build_stress_manifest
@@ -111,19 +110,6 @@ def main(argv: list[str] | None = None) -> None:
     spread.add_argument("--threshold", required=True, type=float)
     spread.add_argument("--band", nargs=2, type=float, default=(0.2, 0.6), metavar=("LOW", "HIGH"))
     spread.add_argument("--tie-epsilon", type=float, default=0.0)
-    card = command("card", source=False)
-    card.add_argument("--name", required=True)
-    card.add_argument("--kind", required=True, choices=("verifiable", "learned"))
-    card.add_argument("--axis", required=True)
-    card.add_argument("--repeat", type=Path)
-    card.add_argument("--agreement", type=Path)
-    card.add_argument("--stress", type=Path)
-    card.add_argument("--spread", type=Path)
-    card.add_argument("--post-training", type=Path)
-    card.add_argument("--repeat-tolerance", type=float, default=1e-6)
-    card.add_argument("--shortcut-tolerance", type=float, default=0.1)
-    card.add_argument("--min-mixed-share", type=float, default=0.3)
-    card.add_argument("--blind-spot", action="append", default=[])
     args = parser.parse_args(argv)
 
     if args.command == "stress-manifest":
@@ -134,25 +120,6 @@ def main(argv: list[str] | None = None) -> None:
             build_shortcut_manifest(
                 args.manifest, args.output_dir, shortcuts=args.shortcuts, seed=args.seed
             )
-        )
-        return
-    if args.command == "card":
-        write_card(
-            build_card(
-                name=args.name,
-                kind=args.kind,
-                axis=args.axis,
-                repeat=args.repeat,
-                agreement=args.agreement,
-                stress=args.stress,
-                spread=args.spread,
-                post_training=args.post_training,
-                repeat_tolerance=args.repeat_tolerance,
-                shortcut_tolerance=args.shortcut_tolerance,
-                min_mixed_share=args.min_mixed_share,
-                blind_spots=args.blind_spot,
-            ),
-            args.output,
         )
         return
     if args.command == "review-import":

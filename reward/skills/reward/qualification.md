@@ -3,7 +3,7 @@
 A reward is usable for GRPO only when it is **repeatable**, **agrees with independent
 labels on the dimension it will optimise**, **cannot be scored by a shortcut**, and
 **varies within a prompt group under the training sampler**. A fifth check runs after
-training. Each gate is one `python -m reward` command; the card collects the verdicts.
+training. Each gate is one `python -m reward` command.
 Design and rationale: `docs/sprints/planned/SPRINT_reward_qualification.md`.
 
 Two kinds of reward take different evidence for gate 2:
@@ -29,8 +29,8 @@ Score the same manifest twice (two output dirs), then:
 ```bash
 python -m reward repeat outputs/.../set_run1 outputs/.../set_run2 --output reports/<reward>/repeat.json
 ```
-Gate: `axes.<axis>.max_score_range` <= tolerance (card default 1e-6; a sampled VLM judge
-needs a declared, larger tolerance and its variance goes on the card).
+Gate: `axes.<axis>.max_score_range` <= tolerance (1e-6 for a deterministic scorer; a
+sampled VLM judge needs a declared, larger tolerance and its variance is reported with it).
 
 ## 2. Agreement with labels (per contrast, never one overall number)
 
@@ -50,7 +50,7 @@ Contrasts JSON names each question as positive vs negative label selectors:
 python -m reward agreement --evaluation outputs/.../set --labels labels.jsonl --contrasts contrasts.json --axis <axis> --gate 0.85 --output reports/<reward>/agreement.json
 ```
 Gate: every contrast the reward is *meant* to rank has AUC >= 0.85 with n >= 20 per side.
-A contrast it fails is a **blind spot**: write it on the card (`--blind-spot`) and never
+A contrast it fails is a **blind spot**: record it next to the reward and never
 let the training key depend on that dimension. Collect labels blind (judges see source +
 instruction + output only; no scores, no arm names) -- `python -m reward review-export`
 builds a blinded page for pairwise preferences; categorical outcome labels come from a
@@ -79,24 +79,16 @@ python -m reward spread --evaluation outputs/.../insampler --axis <axis> --thres
 Gate: success rate inside the band and >= 30% of prompts with mixed outcomes. A high-AUC
 judge whose scores barely differ within a group gives the policy nothing to climb.
 
-## 5. Card, and the post-training check
+## 5. The post-training check
 
-```bash
-python -m reward card --name <reward> --kind learned --axis <axis> \
-  --repeat reports/<reward>/repeat.json --agreement reports/<reward>/agreement.json \
-  --stress reports/<reward>/shortcuts.json --spread reports/<reward>/spread.json \
-  --blind-spot "collateral: clean-done vs collateral-done AUC 0.65" \
-  --output docs/rewards/cards/<reward>.json      # writes <reward>.md beside it
-```
-`ready_for_training_key` is true only when gates 1-4 all passed. After training, every
+A reward enters a training key only when gates 1-4 all passed. After training, every
 20 updates: held-out base vs checkpoint at the deliverable setting, blind labels with the
 same contrasts, reward delta with bootstrap CI. Reward up with labels flat or worse =
-the reward is being gamed: stop, add the exploit to gate 3, re-run the card. Record the
-result as `--post-training <json>` on the card.
+the reward is being gamed: stop, add the exploit to gate 3, re-run the gates.
 
 ## Rules of thumb
 
 - Labels come from people or blind judges, never from the reward under test or its siblings.
-- One card per reward *and task*: EditReward's card for local edits says nothing about text edits.
-- A composite (sum/product of axes) needs its own card; it is not qualified because its parts are.
-- Keep the failing gate's number on the card; a reward may still be logged as an observation.
+- Qualify per reward *and task*: EditReward's gates for local edits say nothing about text edits.
+- A composite (sum/product of axes) needs its own gates; it is not qualified because its parts are.
+- Keep the failing gate's number with the reward; a reward may still be logged as an observation.

@@ -466,11 +466,10 @@ ranking comparison separately to assess whether measured variation changes the
 ordering of actual candidates. Retain the number of repetitions and failures when
 interpreting small or apparently zero variation.
 
-## Qualification gates and the reward card
+## Qualification gates
 
 `python -m reward` also carries the four pre-training gates a reward must pass
-before it becomes a training key, and the card that records them
-(the `reward` skill set, `reward/skills/reward/qualification.md`, linked from `.claude/skills/reward`, walks through the commands;
+before it becomes a training key (the `reward` skill set, `reward/skills/reward/qualification.md`, linked from `.claude/skills/reward`, walks through the commands;
 `docs/sprints/planned/SPRINT_reward_qualification.md` has the rationale):
 
 | Gate | Command | Passes when |
@@ -487,7 +486,5 @@ blind spots are reported side by side rather than as one overall number.
 `shortcut-manifest` builds the task-avoiding candidates an edit policy could
 return (unchanged source, shifted or re-cropped frame, another scene) with the
 same `reward_stress` metadata as `stress-manifest`, so one `stress` report
-covers damage and shortcuts alike. `card` folds the reports into
-`docs/rewards/cards/<reward>.json` and a Markdown twin; `ready_for_training_key`
-is true only when every gate ran and passed. None of this supplies labels: the
+covers damage and shortcuts alike. None of this supplies labels: the
 labels must come from people or blind judges independent of the reward.

@@ -1,8 +1,8 @@
 # Preference calibration
 
 Use this when a reward should be a *fitted combination* of several scored axes.
-It does not decide whether a single judge is good -- that is the qualification
-card.
+It does not decide whether a single judge is good -- that is what the
+qualification gates decide.
 
 ## 1. Collect human preferences blind
 
