@@ -36,7 +36,7 @@ import random
 from collections.abc import Sequence
 from pathlib import Path
 
-from vrl.rewards.assets.local_edit_prompts import HINT_SUFFIX
+from vrl.rewards.models.local_edit import HINT_SUFFIX
 from vrl.utils.artifacts import default_data_root
 
 LOCAL_TASKS = ("attribute_modification", "swap", "removal", "addition")

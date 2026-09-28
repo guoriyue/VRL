@@ -37,11 +37,14 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from vrl.rewards.assets.local_edit_prompts import HINT_SUFFIX
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import LazyTorchModule
 from vrl.rewards.models.media import artifact_middle_frame_image
 from vrl.utils.artifacts import default_data_root, resolve_artifact_path
+
+# Appended by the local-edit manifest builder when the reference image carries a
+# drawn red box; stripped again here so the execution judge sees the plain instruction.
+HINT_SUFFIX = " Edit only inside the red box, then remove the red box."
 
 
 class LocalEditRewardModel(LazyTorchModule):

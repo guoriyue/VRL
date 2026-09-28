@@ -62,8 +62,8 @@ def test_a_change_outside_the_box_a_shifted_frame_and_a_redraw_lose_keep() -> No
 
 
 def test_a_phase_is_one_execution_request_against_the_clean_source(tmp_path) -> None:
-    from vrl.rewards.assets.local_edit_prompts import HINT_SUFFIX
     from vrl.rewards.inference import RewardInferenceArtifact
+    from vrl.rewards.models.local_edit import HINT_SUFFIX
 
     source = _scene(None)
     source.save(tmp_path / "src.jpg")
