@@ -6,10 +6,10 @@ vrl/rewards/functions subclass one of the bases here. The class ladder encodes
 capabilities the registry and runtime probe, not taxonomy:
 ``InferenceRewardFunction`` owns the materialize / score / validate /
 release-or-retain seam so every transport (including injected fakes) passes
-the same result-identity guard; ``CumemRewardFunction`` declares that all
-model CUDA state is built in the tagged pool, enabling verified memory
-parking; ``ModelRewardFunction`` resolves a model factory and scoring transport
-while forwarding media in memory by default. Explicit archives are separate
+the same result-identity guard; ``ModelRewardFunction`` resolves a model
+factory and scoring transport while forwarding media in memory by default.
+Every registered reward is a ``ModelRewardFunction``; its scorer owns memory
+parking. Explicit archives are separate
 experiment outputs; file-only models receive scorer-local temporary files.
 """
 
@@ -443,11 +443,7 @@ class InferenceRewardFunction(RewardFunction):
                 handle.write(json.dumps(asdict(result), sort_keys=True) + "\n")
 
 
-class CumemRewardFunction(InferenceRewardFunction):
-    """Reward whose model allocations are built in the tagged CuMem pool."""
-
-
-class ModelRewardFunction(CumemRewardFunction):
+class ModelRewardFunction(InferenceRewardFunction):
     """Model-backed reward with shared factory and inference-transport wiring.
 
     Subclasses declare the model factory, score defaults, and debug identity;
@@ -658,7 +654,6 @@ def _result_timing_summary(
 
 
 __all__ = [
-    "CumemRewardFunction",
     "InferenceRewardFunction",
     "ModelRewardFunction",
     "RewardCleanupError",

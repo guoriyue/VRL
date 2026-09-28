@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.base import (
-    CumemRewardFunction,
     ModelRewardFunction,
     RewardCleanupError,
     RewardFunction,
@@ -34,10 +33,10 @@ if TYPE_CHECKING:
 
 # Registry of reward function factories.
 # Each factory takes (device,) and returns a RewardFunction instance.
-_REWARD_REGISTRY: dict[str, type[RewardFunction]] = {}
+_REWARD_REGISTRY: dict[str, type[ModelRewardFunction]] = {}
 
 
-def get_reward(name: str) -> type[RewardFunction]:
+def get_reward(name: str) -> type[ModelRewardFunction]:
     """Look up a registered reward function class by name.
 
     The builtins register lazily (importing every reward module is the cost),
@@ -245,13 +244,6 @@ class MultiReward(RewardFunction):
                     "Drop the key; shared-GPU parking is derived from distributed "
                     "resource topology.",
                 )
-            if inference.kind in {"http", "ray"} and not issubclass(
-                reward_cls, ModelRewardFunction
-            ):
-                raise ValueError(
-                    f"reward {name!r} has no remote model-factory contract and cannot use "
-                    f"{inference.kind} inference",
-                )
             if inference.kind == "ray":
                 # Placement is launcher-owned; component device overrides may
                 # downgrade to CPU but cannot independently select a GPU.
@@ -296,10 +288,6 @@ class MultiReward(RewardFunction):
                 # on every preset remembering an independent parking knob. For a
                 # Ray actor the knob travels in its worker_config and its
                 # scorer owns the park/wake lifecycle.
-                if not issubclass(reward_cls, CumemRewardFunction):
-                    raise ValueError(
-                        f"reward {name!r} has no complete memory-parking contract",
-                    )
                 extra["sleep_offload"] = True
             elif memory_parking_required is not None:
                 # A dedicated reward owns its GPU and remains resident even if
@@ -405,13 +393,4 @@ def validate_reward_memory_parking_components(
             f"component per process, got {gpu_components}. vLLM CuMemAllocator.sleep "
             "is process-wide: tags select which pages are backed up, not which pages "
             "are unmapped. Keep CPU reward siblings or use a dedicated/remote reward.",
-        )
-    unsupported = [
-        name for name in gpu_components if not issubclass(get_reward(name), CumemRewardFunction)
-    ]
-    if unsupported:
-        raise ValueError(
-            "shared reward GPU requires complete topology-driven memory parking, "
-            f"but these reward components do not provide it: {unsupported}. "
-            "Use a dedicated reward GPU or a reward with complete parking support.",
         )

@@ -366,32 +366,6 @@ def _shared_reward_cfg(component: str) -> object:
     )
 
 
-def test_shared_reward_capability_fails_before_component_construction(monkeypatch) -> None:
-    """An unsupported trainer-shared reward fails before its model constructor."""
-    from vrl.rewards.base import RewardFunction
-    from vrl.rewards.functions import registry as reward_registry
-
-    class _PlainReward(RewardFunction):
-        """A plugin reward with no memory-parking capability."""
-
-        def __init__(self, *args, **kwargs):
-            del args, kwargs
-            raise AssertionError("component construction must not run")
-
-    reward_registry._register_builtins()
-    monkeypatch.setitem(reward_registry._REWARD_REGISTRY, "plain", _PlainReward)
-    cfg = _shared_reward_cfg("plain")
-
-    with pytest.raises(ValueError, match="plain"):
-        build_reward_function(
-            resolve_reward_inputs(
-                _built_reward({"plain": 1.0}, {"plain": {}}),
-                ResolvedDistributedResources.from_root(parse_config(cfg)),
-                trainer_device="cuda:0",
-            ),
-        )
-
-
 def test_reward_config_rejects_yaml_lifecycle_override() -> None:
     """Resource topology is the only public reward lifecycle source."""
 

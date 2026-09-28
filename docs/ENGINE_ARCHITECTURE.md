@@ -216,22 +216,18 @@ classDiagram
         artifact_store: RewardArtifactStore
         score_batch() orchestration
     }
-    class CumemRewardFunction {
-        memory_parking_residual_bytes_limit = CUDA limit
-    }
     class ModelRewardFunction {
         __init__ resolves model factory + scorer
     }
     RewardFunction <|-- InferenceRewardFunction
-    InferenceRewardFunction <|-- CumemRewardFunction
-    CumemRewardFunction <|-- ModelRewardFunction
+    InferenceRewardFunction <|-- ModelRewardFunction
     RewardFunction <|-- MultiReward
-    InferenceRewardFunction <|-- NSFWSafetyReward
-    InferenceRewardFunction <|-- OCRReward
-    InferenceRewardFunction <|-- MotionDynamicsReward
-    InferenceRewardFunction <|-- TargetDinoSimilarityReward
-    CumemRewardFunction <|-- AestheticReward
-    CumemRewardFunction <|-- PickScoreReward
+    ModelRewardFunction <|-- NSFWSafetyReward
+    ModelRewardFunction <|-- OCRReward
+    ModelRewardFunction <|-- MotionDynamicsReward
+    ModelRewardFunction <|-- TargetDinoSimilarityReward
+    ModelRewardFunction <|-- AestheticReward
+    ModelRewardFunction <|-- PickScoreReward
     ModelRewardFunction <|-- KlingVideoReward
     ModelRewardFunction <|-- RoboticsVideoReward
     ModelRewardFunction <|-- VideoConPhysicsReward
@@ -250,9 +246,6 @@ classDiagram
   release-or-retain orchestration around one injected `RewardScorer` and one
   `RewardArtifactStore` (in-memory by default). Every transport, including
   test fakes, passes the same result-identity guard.
-- **`CumemRewardFunction`** — declares that all model CUDA state is built in
-  the tagged pool, enabling verified memory parking
-  (`memory_parking_residual_bytes_limit`).
 - **`ModelRewardFunction`** — real constructor that builds the
   scorer from `model_factory` + `worker_config`, unless a ready scorer is
   injected. Registry preflight admits remote inference through this model-factory

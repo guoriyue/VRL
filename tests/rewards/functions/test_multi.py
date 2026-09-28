@@ -549,32 +549,6 @@ def test_in_process_ocr_reward_keeps_media_in_memory() -> None:
     assert reward.scoring_is_nonblocking is False
 
 
-class _PlainReward(RewardFunction):
-    """A plugin reward outside the model-factory contract (no remote transport)."""
-
-
-@pytest.fixture
-def plain_reward(monkeypatch):
-    reward_registry._register_builtins()
-    monkeypatch.setitem(reward_registry._REWARD_REGISTRY, "plain", _PlainReward)
-    return "plain"
-
-
-def test_http_reward_rejects_inmemory_artifact_component(plain_reward) -> None:
-    with pytest.raises(ValueError, match="no remote model-factory contract"):
-        MultiReward.from_dict(
-            {plain_reward: 1.0},
-            device="cpu",
-            inference_configs={
-                plain_reward: RewardInferenceConfig(
-                    kind="http",
-                    endpoint="http://reward:8300",
-                    expected_model="aesthetic-v1",
-                ),
-            },
-        )
-
-
 def test_reward_config_rejects_runtime_injection_keys() -> None:
     with pytest.raises(ValueError, match="runtime injection keys"):
         MultiReward.from_dict(
@@ -740,15 +714,6 @@ def test_ray_ocr_reward_gets_an_actor_scorer_with_its_knobs(tmp_path) -> None:
     assert scorer._launch.model_factory == "vrl.rewards.models.ocr:OCRRewardModel"
     assert scorer._launch.component_config["debug_dir"] == str(tmp_path / "ocr_debug")
     assert scorer._launch.device == "cpu"
-
-
-def test_ray_kind_rejects_rewards_without_a_worker_factory(plain_reward) -> None:
-    with pytest.raises(ValueError, match="no remote model-factory contract"):
-        MultiReward.from_dict(
-            {plain_reward: 1.0},
-            device="cpu",
-            inference_configs={plain_reward: RewardInferenceConfig(kind="ray")},
-        )
 
 
 def test_ray_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:
