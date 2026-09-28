@@ -1,6 +1,14 @@
 # SPRINT：全仓过度设计审计（投机功能 / 防御性代码 / 单实现接缝）
 
-状态：**planned（2026-09-27 审计完成，未改代码）**。审计对象为 `main` @ `15bf62b2`（与 origin `5038f500` 只差 local-edit
+状态：**第一、二档与 §5 已执行（2026-09-28，52 个提交，每项一个）**；第三档按计划未动。
+净删约 7.8k 生产行（vrl −8.7k/+0.9k，reward −0.9k）与约 10k 测试行；全量 CPU 套件与 48 个真实 Ray 用例通过。
+刻意保留：`online.py` 里 reward parking 的早期校验（在模型加载与 Ray 启动之前失败，且逐 preset 的配置测试依赖它）；
+写入时的 `validation_summary`（唯一能带出 train/eval episode 重叠警告的字段）；`draw_initial_latents` 钩子
+（`qwen_image_21_edit_probe --compare-reference` 在用）。行为变化：训练与 rollout 共用 GPU 且 `offload.rollout=false`
+现在在资源解析阶段就被拒绝（以前在运行时拒绝）；Wan 不再在 pipeline 加载时复查本地目录的 `boundary_ratio`；健康监控已删，
+worker 故障由前台 RPC/stall 截止与 `RayActorError` 负责；被取消的 activate 直接让 runtime 进入终态；NFT / V-GRPO 与改前逐位一致
+（tiny Wan DiT，8 组 × 4 步，loss、梯度与参数 `torch.equal`）。
+原审计状态：planned（2026-09-27 审计完成，未改代码）。审计对象为 `main` @ `15bf62b2`（与 origin `5038f500` 只差 local-edit
 常量的位置）。六条并行只读审计道覆盖 `vrl/` 全部子包、`reward/` 与对应测试，另一条专门评估 reward 栈外移。每条 finding
 都读过函数体与调用点；标 ✅ 的是主线复核过的（grep / 运行时实测）。
 
