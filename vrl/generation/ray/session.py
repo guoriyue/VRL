@@ -10,7 +10,7 @@ from typing import Any
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
-from vrl.generation.ray.weight_sync import GenerationWeightSync
+from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.dependencies import kill_actors, kill_failures_error, require_ray
 from vrl.utils.deadline import OperationDeadline
@@ -40,7 +40,7 @@ class RayGenerationSession:
     def __init__(
         self,
         executor: RayGenerationExecutor,
-        weight_sync: GenerationWeightSync | None,
+        weight_sync: RayGenerationWeightSync,
         owned_engines: list[RayGenerationEngine],
         *,
         supports_non_draining_weight_sync: bool = False,
@@ -77,10 +77,7 @@ class RayGenerationSession:
         self._force_close = False
 
     async def update_weights(self, trainable_state: Any, policy_version: int) -> None:
-        weight_sync = self.weight_sync
-        if weight_sync is None:
-            raise RuntimeError("RayGenerationSession has no GenerationWeightSync")
-        await weight_sync.push_to_rollout_engines(
+        await self.weight_sync.push_to_rollout_engines(
             trainable_state,
             policy_version,
         )

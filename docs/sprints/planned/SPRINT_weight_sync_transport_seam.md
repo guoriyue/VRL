@@ -14,7 +14,7 @@
 
 - `vrl/trainers/weight_sync.py::RayRuntimeWeightSyncer` 获取 immutable CPU snapshot、
   分配单调版本并串行提交。成本分为 state_to_cpu 与 push。
-- `vrl/generation/ray/weight_sync.py::GenerationWeightSync` 是已有传输接口；
+- `vrl/generation/ray/weight_sync.py::RayGenerationWeightSync` 是已有传输 owner；
   Ray 实现只做一次 ray.put，所有 worker 共享 ObjectRef，验证每 rank 安装版本。
 - `vrl/generation/execution/worker.py::update_weights` 安装实际状态。
 - `vrl/rollouts/orchestration/continuous/owner.py` 保留 pause/drain-or-slot、
@@ -63,7 +63,7 @@ Miles 论文 §4 的借鉴是准备与传输分开，以及内容验证。
 
 ## 应改／应留／非目标
 
-改变已测瓶颈所在的 snapshot/transport 生命周期。保留 GenerationWeightSync、
+改变已测瓶颈所在的 snapshot/transport 生命周期。保留 RayGenerationWeightSync、
 薄 Ray actor adapter、trainable-state owner 和现有版本事务，因为它们是真实边界。
 协议名/schema key/file name 常量有用；不添加按算法名的传输名单。
 

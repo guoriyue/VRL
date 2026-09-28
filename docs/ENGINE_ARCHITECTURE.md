@@ -114,7 +114,7 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 | `RayGenerationLauncher` / `RayGenerationLaunchInputs` | Building the fleet: placement, actor construction from the launch contract. |
 | `RayGenerationExecutor` | Driver-side dispatch of sample batches to worker actors (through `RayActorDispatcher`), including the per-request path (`pipelined`: each engine runs its share of a request in one call and stages payloads in the object store) and OOM-split handling. |
 | `RayGenerationFinalizer` (`ray/finalizer.py`) | CPU actor, one per engine, that merges a request's staged batch references through the gatherer and boxes reward media, off the GPU rank's critical path. |
-| `GenerationWeightSync` (protocol) / `RayGenerationWeightSync` | Pushing trainer state into rollout workers (`push_to_rollout_workers(state_ref, policy_version)`), versioned slots for continuous mode. |
+| `RayGenerationWeightSync` | Pushing trainer state into rollout workers (`push_to_rollout_workers(state_ref, policy_version)`), versioned slots for continuous mode. |
 | `RolloutWorkerHealthMonitor` / `RolloutWorkerUnreachable(TerminalRuntimeError)` | Bounded health probes; an unreachable worker is terminal. |
 | `RequestBatchProgress` / `PipelinedProgressError(TerminalRuntimeError)` | Cross-actor progress accounting for pipelined requests. |
 | `RolloutWorkerConfig`, `RayGenerationConfig` | Typed config for the fleet. |

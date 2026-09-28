@@ -2,27 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any
 
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.dependencies import require_ray
 from vrl.utils.deadline import require_timeout
 from vrl.utils.validation import require_int
-
-
-class GenerationWeightSync(Protocol):
-    """Push a trainable-state payload with a known policy version.
-
-    The sender supplies the payload itself; transport references belong to the
-    implementation. None retains the worker's existing bootstrap semantics.
-    """
-
-    async def push_to_rollout_engines(
-        self,
-        trainable_state: Any,
-        policy_version: int,
-    ) -> None: ...
 
 
 class RayGenerationWeightSync:
@@ -118,6 +104,5 @@ class RayGenerationWeightSync:
 
 
 __all__ = [
-    "GenerationWeightSync",
     "RayGenerationWeightSync",
 ]

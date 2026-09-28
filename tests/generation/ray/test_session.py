@@ -104,14 +104,6 @@ async def test_session_owns_execution_and_delegates_weight_sync() -> None:
     assert session.supports_non_draining_weight_sync is True
 
 
-@pytest.mark.asyncio
-async def test_session_rejects_weight_update_without_sync_owner() -> None:
-    session = _session()
-
-    with pytest.raises(RuntimeError, match="has no GenerationWeightSync"):
-        await session.update_weights({}, 1)
-
-
 def test_session_rejects_split_actor_admission_owners() -> None:
     executor = _Executor()
     executor.actor_dispatcher = object()
