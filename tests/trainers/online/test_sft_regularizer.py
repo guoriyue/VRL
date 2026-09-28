@@ -157,16 +157,6 @@ def test_sft_term_rejects_geometry_mismatch_before_device_copy(tmp_path, monkeyp
         trainer._sft_regularizer_loss(batch)
 
 
-def test_ctor_rejects_weight_without_latents(tmp_path) -> None:
-    with pytest.raises(ValueError, match="sft_weight > 0 but no sft_latents"):
-        _trainer(tmp_path, sft_weight=0.5, sft_latents=None)
-
-
-def test_ctor_allows_zero_weight_without_latents(tmp_path) -> None:
-    trainer = _trainer(tmp_path, sft_weight=0.0, sft_latents=None)
-    assert trainer._sft_weight == 0.0
-
-
 def test_sft_backward_uses_group_scale_not_timestep_scale(tmp_path) -> None:
     trainer = _trainer(
         tmp_path,

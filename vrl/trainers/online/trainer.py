@@ -514,14 +514,9 @@ class OnlineTrainer:
                 "the reference replay",
             )
         # Clean fine-tuning latents ({target artifact -> [C,T,H,W]}) for the GRPO
-        # diffusion-loss regularizer; the recipe loads data.sft_latents and the
-        # config layer already rejected sft_weight>0 without it.
+        # diffusion-loss regularizer; the recipe loads data.sft_latents, which
+        # vrl/config/rules.py requires whenever sft_weight > 0.
         self._sft_latents = dict(sft_latents) if sft_latents else None
-        if self._sft_weight > 0 and self._sft_latents is None:
-            raise ValueError(
-                "algorithm.sft_weight > 0 but no sft_latents were provided to "
-                "OnlineTrainer (wire data.sft_latents)",
-            )
         self.device = torch.device(device) if isinstance(device, str) else device
         self.state = TrainState()
         # How a step runs on the hardware (backward / clip / state export). The
@@ -1910,7 +1905,6 @@ class OnlineTrainer:
         from vrl.trainers.data.sft_latents import CleanTargetRef
         from vrl.trajectory.reader import TrajectoryReader
 
-        assert self._sft_latents is not None  # ctor validated
         reward_metadata = group_batch.context.get("reward_metadata", {})
         target_key = CleanTargetRef.from_source(reward_metadata).key
         if target_key not in self._sft_latents:

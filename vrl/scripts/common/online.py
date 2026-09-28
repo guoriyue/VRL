@@ -458,8 +458,8 @@ def _log_global_std_streaming_scope(
 def _load_sft_latents_from_config(built: BuiltConfigs, family: str) -> dict[str, Any] | None:
     """Load the clean-latents shard when the diffusion-loss regularizer is on.
 
-    The schema cross-check already rejected sft_weight>0 without
-    data.sft_latents, so this only turns a configured path into tensors (and
+    ``vrl/config/rules.py`` already rejected sft_weight>0 without
+    data.sft_latents, so this only turns the configured path into tensors (and
     fails loud on a family-mismatched or malformed shard).
     """
 
@@ -469,15 +469,11 @@ def _load_sft_latents_from_config(built: BuiltConfigs, family: str) -> dict[str,
     weight = float(getattr(built.algorithm, "sft_weight", 0.0) or 0.0)
     if weight <= 0:
         return None
-    data = built.root.data
-    path = data.sft_latents if data is not None else None
-    if not path:
-        raise ValueError("algorithm.sft_weight > 0 requires data.sft_latents")
     from vrl.trainers.data.sft_latents import load_sft_latents
 
     model = built.root.model
     return load_sft_latents(
-        str(path),
+        str(built.root.data.sft_latents),
         family=family,
         model_path=str(model.path or ""),
         model_revision=str(model.revision or ""),
