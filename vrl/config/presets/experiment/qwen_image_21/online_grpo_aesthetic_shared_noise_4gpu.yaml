@@ -1,0 +1,92 @@
+# Four-GPU preference/aesthetic LoRA GRPO with the policy in control of the
+# group contrast (debug note docs/research/qwen21_aesthetic/DEBUG_20260927.md):
+#
+# - every sample of a prompt group starts from the same initial latent
+#   (rollout.group_shared_noise), so the group advantage compares only what
+#   the trained SDE steps did. With distinct latents the two trained steps
+#   explained ~0.8% of the within-group reward variance and nothing was learned;
+# - the two stochastic steps sit at the start of the 40-step schedule (window
+#   [0, 6], noise 0.7), where they still change light, detail and styling:
+#   within-group SigLIP std 0.214 vs 0.033 for the old [4, 36] / noise 0.2 window;
+# - advantages are normalized per group (global_std: false), so between-prompt
+#   score offsets do not shrink the signal under the KL term.
+#
+# The reward is a swappable default (/reward=pickscore, /reward=hpsv3, ...);
+# the key actually trained is the one its qualification card allows. Native
+# (deterministic) held-out evaluation decides improvement, never the training
+# reward.
+defaults:
+- /recipe/online/flow_matching_grpo
+- /model/qwen_image_21/base
+- /sampling/image/512
+- /sampling/denoise/10_step_no_cfg
+- /dataset/pickscore_sfw
+- /reward/aesthetic_revision
+- _self_
+model:
+  use_lora: true
+  local_files_only: true
+  memory:
+    cpu_resident: []
+precision:
+  float32_precision: ieee
+  training:
+    dtype: bf16
+    outer_autocast: true
+sampling:
+  height: 1024
+  width: 1024
+  reference_resolution: 1024
+  num_steps: 40
+  output_mode: rgb
+algorithm:
+  kl_coef: 0.04
+  global_std: false
+actor:
+  optim:
+    lr: 0.0001
+  gradient_checkpointing: full
+  training_microbatch_size: 2
+  prompts_per_collection: 0
+  ppo_epochs: 2
+  timestep_selection: sde_window
+  timestep_fraction: 1.0
+  ema:
+    enable: false
+rollout:
+  prompts_per_batch: 4
+  n_samples_per_prompt: 8
+  samples_per_generation_batch: 2
+  group_shared_noise: true
+  noise_level: 0.7
+  denoise_mode: sde
+  sde:
+    type: flow_grpo
+    window_size: 2
+    window_range: [0, 6]
+  trajectory_storage:
+    dtype: float32
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 4
+    fsdp:
+      mesh:
+      - dp_shard
+      precision_policy: none
+      reshard_after_forward: true
+  resources:
+    rollout:
+      gpu_pool: trainer
+    trainer_parking_directory: /mnt/nvme/outputs/qwen21_aesthetic_shared_noise/parking
+  rollout:
+    worker_rpc_timeout_s: 1800
+trainer:
+  total_epochs: 60
+  save_freq: 10
+  output_dir: /mnt/nvme/outputs/qwen21_aesthetic_shared_noise/run
+  debug:
+    first_step: true
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-05
