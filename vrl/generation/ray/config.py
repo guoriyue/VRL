@@ -1,16 +1,13 @@
-"""Ray generation config and driver-side validation."""
+"""Ray generation config."""
 
 from __future__ import annotations
 
-import inspect
 import math
-from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
-    from vrl.models.interfaces.runtime import RuntimeBundle
 
 from vrl.ray.resources import (
     ResolvedDistributedResources,
@@ -88,133 +85,6 @@ class RayGenerationConfig:
             worker=RolloutWorkerConfig.from_public_section(rollout_runtime),
             torch_profiler=torch_profiler,
         )
-
-    def validate_driver_state(
-        self,
-        *,
-        driver_bundle: RuntimeBundle,
-    ) -> RayGenerationConfig:
-        """Validate driver CUDA ownership before Ray rollout actors are launched."""
-
-        # A model's primary device does not describe every training root.
-        # Include both before checking the actual driver/rollout overlap.
-        devices: set[int] = set()
-        model_device = self._get_device(driver_bundle.model)
-        if model_device is not None:
-            index = self._cuda_device_index(model_device)
-            if index is not None:
-                devices.add(index)
-        for device in self._iter_model_devices(driver_bundle.trainable_modules):
-            index = self._cuda_device_index(device)
-            if index is not None:
-                devices.add(index)
-        self._validate_driver_cuda_ownership(devices)
-        return self
-
-    def _validate_driver_cuda_ownership(self, driver_cuda_devices: set[int]) -> None:
-        if not driver_cuda_devices:
-            return
-
-        resources = self.resources
-        if resources.cross_node:
-            # Cross-node: the driver's head-local cuda ordinal and a remote rollout
-            # GPU live in different ordinal spaces, so a set-intersection overlap
-            # check is meaningless. Node-level isolation is enforced by the launcher
-            # preflight (head --num-gpus=0) and require_actor_gpu_ids node check.
-            return
-        overlap = driver_cuda_devices & set(resources.rollout_devices)
-        if not overlap:
-            return
-
-        overlap_list = sorted(overlap)
-        rollout_devices = list(resources.rollout_devices)
-        if not resources.colocated:
-            raise ValueError(
-                f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
-                f"{rollout_devices}, but the resolved plan expected disjoint "
-                "trainer/rollout GPUs. Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto "
-                "split for throughput, or set "
-                "distributed.resources.rollout.gpu_pool=trainer for time-shared colocation.",
-            )
-
-        # Keep a runtime-boundary backstop in addition to resource resolution: an
-        # overlapping driver/rollout GPU is safe only when phases hand it over.
-        if resources.lifecycle.rollout_mode != "on_demand":
-            raise ValueError(
-                f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
-                f"{rollout_devices}, but the resolved rollout lifecycle is not on_demand. "
-                "Shared trainer/rollout GPUs must hand ownership over between phases.",
-            )
-
-    @staticmethod
-    def _get_device(obj: Any) -> Any | None:
-        """Read an optional device without hiding errors from a declared property."""
-        if obj is None:
-            return None
-        try:
-            return obj.device
-        except AttributeError:
-            # A property may itself raise AttributeError. Only an absent declaration
-            # permits discovery through the trainable modules instead.
-            if inspect.getattr_static(obj, "device", None) is not None:
-                raise
-            return None
-
-    @classmethod
-    def _iter_model_devices(cls, obj: Any, seen: set[int] | None = None) -> Iterable[Any]:
-        """Yield declared model or parameter devices from nested training roots.
-
-        Track visited objects to avoid revisiting shared modules or cycles.
-        Device deduplication belongs to the caller.
-        """
-        if obj is None or isinstance(obj, (str, bytes)):
-            return
-        if seen is None:
-            seen = set()
-        obj_id = id(obj)
-        if obj_id in seen:
-            return
-        seen.add(obj_id)
-
-        if isinstance(obj, Mapping):
-            for value in obj.values():
-                yield from cls._iter_model_devices(value, seen)
-            return
-
-        device = cls._get_device(obj)
-        if device is not None:
-            yield device
-            return
-
-        parameters = getattr(obj, "parameters", None)
-        if callable(parameters):
-            for parameter in parameters():
-                device = getattr(parameter, "device", None)
-                if device is not None:
-                    yield device
-            return
-
-        if isinstance(obj, Iterable):
-            for value in obj:
-                yield from cls._iter_model_devices(value, seen)
-
-    @staticmethod
-    def _cuda_device_index(device: Any) -> int | None:
-        """Resolve a runtime CUDA device with PyTorch's own device parser."""
-
-        text = str(device).lower()
-        if not text.startswith("cuda"):
-            return None
-        # Driver validation is a runtime boundary; config parsing stays torch-free.
-        import torch
-
-        try:
-            cuda_device = torch.device(text)
-        except (RuntimeError, ValueError) as error:
-            raise ValueError(
-                f"invalid CUDA device {device!r}; expected 'cuda' or 'cuda:<index>'"
-            ) from error
-        return cuda_device.index if cuda_device.index is not None else torch.cuda.current_device()
 
 
 __all__ = [

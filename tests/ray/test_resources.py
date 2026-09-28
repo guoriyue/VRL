@@ -1462,24 +1462,20 @@ def test_resident_reward_does_not_disable_neighbour_parking() -> None:
     assert plan.park_rollout_for_train and plan.park_trainer_for_rollout
 
 
-def test_resident_rollout_keeps_automatic_trainer_parking() -> None:
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [0]},
-                    "offload": {"rollout": False},
-                },
-            )
-        ),
-    )
-
-    plan = resolved.lifecycle
-    assert resolved.colocated
-    assert plan.rollout_mode == "resident"
-    assert plan.offload_train and plan.park_trainer_for_rollout
+def test_resident_rollout_on_a_trainer_gpu_is_rejected() -> None:
+    with pytest.raises(ValueError, match=r"offload\.rollout=false but rollout shares trainer"):
+        ResolvedDistributedResources.from_root(
+            parse_config(
+                _cfg(
+                    {
+                        "visible_devices": [0],
+                        "trainer": {"devices": [0]},
+                        "rollout": {"devices": [0]},
+                        "offload": {"rollout": False},
+                    },
+                )
+            ),
+        )
 
 
 def test_offload_true_on_a_gpu_less_role_is_rejected() -> None:

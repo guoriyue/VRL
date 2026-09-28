@@ -961,7 +961,6 @@ async def run_online_recipe(
             lifecycle=resources.lifecycle,
         )
         generation_launcher = RayGenerationLauncher()
-        generation_config.validate_driver_state(driver_bundle=bundle)
         generation_launch_inputs = resolved.ray_launch_inputs(resolved_model)
         _host_memory.log("before_rollout_backend_build")
         generation_runtime = generation_launcher.create_runtime(

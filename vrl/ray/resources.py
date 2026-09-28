@@ -624,6 +624,16 @@ class ResolvedDistributedResources:
             )
             if setting is True and not owns_gpu and not external_reward_lease:
                 raise ValueError(f"{key}=true but the {role} role owns no GPU to offload")
+        # A trainer GPU that rollout also uses is safe only when rollout hands it
+        # back between phases. Cross-node ordinals live in different spaces, so
+        # their overlap means nothing here.
+        shared_trainer_rollout = sorted(set(trainer_devices) & set(rollout_devices))
+        if config.offload.rollout is False and shared_trainer_rollout and not config.cross_node:
+            raise ValueError(
+                "distributed.resources.offload.rollout=false but rollout shares trainer "
+                f"GPU(s) {shared_trainer_rollout}; a shared trainer/rollout GPU must hand "
+                "ownership over between phases, so leave offload.rollout at auto or true",
+            )
         lifecycle = replace(
             lifecycle,
             train_offload=config.offload.train,

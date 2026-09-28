@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Iterator
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -36,23 +36,6 @@ from vrl.run import (
     ResolvedOnlineRun,
 )
 from vrl.trainers.checkpointing import TrainingResumeConfig
-
-
-class _CudaPolicy:
-    device = "cuda:0"
-
-
-class _CpuPolicy:
-    device = "cpu"
-
-
-@dataclass
-class _Bundle:
-    """Driver-bundle stand-in for the CUDA-ownership checks these tests cover."""
-
-    model: Any
-    trainable_modules: dict[str, Any]
-
 
 _TEST_MODEL_IDENTITY = {"schema": "test"}
 _TEST_RPC_TIMEOUT_S = 30.0
@@ -956,83 +939,6 @@ async def test_deferred_activation_reuses_factory_launcher() -> None:
     candidate.close.assert_awaited_once_with(force=False)
 
 
-def test_ray_backend_rejects_unapproved_driver_cuda_overlap() -> None:
-    """The runtime backstop reports the concrete conflicting devices and policy."""
-    config = _ray_config(
-        _resource_cfg(
-            trainer_devices=[1],
-            rollout_devices=[0],
-        ),
-    )
-    # The resolved trainer owns GPU 1, but the actual driver model reports GPU
-    # 0. The launch boundary must reject that real topology mismatch.
-
-    with pytest.raises(
-        ValueError,
-        match=(
-            r"Trainer device cuda:0 overlaps rollout devices \[0\], "
-            r"but the resolved plan expected disjoint"
-        ),
-    ):
-        config.validate_driver_state(
-            driver_bundle=_Bundle(model=_CudaPolicy(), trainable_modules={}),
-        )
-
-
-@pytest.mark.gpu
-def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -> None:
-    """When the policy exposes no device, the driver's CUDA device is read off its trainable
-    modules, so an overlap with the rollout GPUs is still caught.
-    """
-    bundle = _Bundle(
-        model=object(),
-        trainable_modules={"transformer": torch.nn.Linear(1, 1).to("cuda:0")},
-    )
-
-    config = _ray_config(
-        _resource_cfg(
-            trainer_devices=[1],
-            rollout_devices=[0],
-        ),
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=r"Trainer device cuda:0 overlaps rollout devices \[0\]",
-    ):
-        config.validate_driver_state(driver_bundle=bundle)
-
-
-def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
-    """A colocated single-GPU topology derives on-demand rollout activation, so a driver CUDA
-    policy overlapping the rollout GPU is allowed.
-    """
-    config = _ray_config(
-        _resource_cfg(
-            trainer_devices=[0],
-            rollout_devices=[0],
-        ),
-    ).validate_driver_state(
-        driver_bundle=_Bundle(model=_CudaPolicy(), trainable_modules={}),
-    )
-
-    assert config.resources.colocated is True
-    assert config.resources.lifecycle.rollout_mode == "on_demand"
-
-
-def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> None:
-    """Disjoint trainer and rollout devices are accepted as-is and reported as not colocated."""
-    config = _ray_config(
-        _resource_cfg(trainer_devices=[0], rollout_devices=[1]),
-    ).validate_driver_state(
-        driver_bundle=_Bundle(model=_CudaPolicy(), trainable_modules={}),
-    )
-
-    assert config.resources.trainer_devices == (0,)
-    assert config.resources.rollout_devices == (1,)
-    assert config.resources.colocated is False
-
-
 @pytest.mark.parametrize("policy_version", [True, 1.9, "1", -1])
 def test_launch_contract_rejects_invalid_policy_version(policy_version) -> None:
     with pytest.raises(ValueError, match="policy_version must be"):
@@ -1054,62 +960,3 @@ def test_launch_contract_preserves_policy_version(policy_version) -> None:
     )
     assert contract.policy_version == policy_version
     assert type(contract.policy_version) is type(policy_version)
-
-
-@pytest.mark.parametrize("error_type", [RuntimeError, AttributeError])
-def test_driver_ownership_preserves_device_property_failure(error_type) -> None:
-    failure = error_type("policy device lookup failed")
-
-    class BrokenPolicy:
-        @property
-        def device(self):
-            raise failure
-
-    config = _ray_config(_resource_cfg(trainer_devices=[1], rollout_devices=[0]))
-    with pytest.raises(error_type, match="policy device lookup failed") as caught:
-        config.validate_driver_state(
-            driver_bundle=_Bundle(model=BrokenPolicy(), trainable_modules={})
-        )
-    assert caught.value is failure
-
-
-@pytest.mark.parametrize("device", ["cuda:broken", "cuda:-1", "cuda:1.5", "cuda:", "cudafoo"])
-def test_driver_ownership_rejects_malformed_cuda_device(device) -> None:
-    config = _ray_config(_resource_cfg(trainer_devices=[0], rollout_devices=[1]))
-    with pytest.raises(ValueError, match="invalid CUDA device"):
-        config.validate_driver_state(
-            driver_bundle=_Bundle(model=SimpleNamespace(device=device), trainable_modules={})
-        )
-
-
-@pytest.mark.parametrize("policy_device", [None, "cpu", "cuda:1"])
-def test_driver_ownership_checks_trainable_modules_regardless_of_policy_device(
-    policy_device,
-) -> None:
-    config = _ray_config(_resource_cfg(trainer_devices=[1], rollout_devices=[0]))
-    with pytest.raises(ValueError, match="Trainer device cuda:0 overlaps"):
-        config.validate_driver_state(
-            driver_bundle=_Bundle(
-                model=object() if policy_device is None else SimpleNamespace(device=policy_device),
-                trainable_modules={"transformer": SimpleNamespace(device="cuda:0")},
-            )
-        )
-
-
-@pytest.mark.parametrize("device", ["cuda", torch.device("cuda")])
-def test_driver_ownership_resolves_unindexed_cuda_to_current_device(monkeypatch, device):
-    monkeypatch.setattr(torch.cuda, "current_device", lambda: 1)
-    config = _ray_config(_resource_cfg(trainer_devices=[0], rollout_devices=[1]))
-    with pytest.raises(ValueError, match="Trainer device cuda:1 overlaps"):
-        config.validate_driver_state(
-            driver_bundle=_Bundle(model=SimpleNamespace(device=device), trainable_modules={})
-        )
-
-
-def test_explicit_driver_device_does_not_query_current_cuda_device(monkeypatch):
-    def unexpected_query():
-        pytest.fail("explicit device must not query current CUDA device")
-
-    monkeypatch.setattr(torch.cuda, "current_device", unexpected_query)
-    config = _ray_config(_resource_cfg(trainer_devices=[0], rollout_devices=[1]))
-    config.validate_driver_state(driver_bundle=_Bundle(model=_CudaPolicy(), trainable_modules={}))
