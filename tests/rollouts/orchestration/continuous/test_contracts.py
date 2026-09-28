@@ -116,7 +116,6 @@ def _settings(
 
     return ContinuousRolloutSettings(
         max_inflight_groups=max_inflight,
-        max_ready_bytes_mb=0,
         max_stale_policy_versions=1,
         wait_timeout_s=5.0,
         queue_poll_interval_s=poll_interval_s,
@@ -544,26 +543,6 @@ async def test_prompt_batch_rejects_replacing_unconsumed_ready_work() -> None:
 
 
 @pytest.mark.asyncio
-async def test_finite_prompt_batch_fails_before_mutation_at_queue_byte_limit() -> None:
-    collector = _FiniteCollector()
-    queue = ScoredRolloutQueue(max_items=2, max_bytes=1)
-    producer = _producer(
-        collector,
-        queue,
-        max_stale=1,
-        poll_interval_s=60.0,
-    )
-
-    await producer.start()
-    try:
-        with pytest.raises(ValueError, match="exceeds its byte limit"):
-            await producer.drain_prompt_batch(wait_timeout_s=5.0)
-        assert queue.size() == 0
-    finally:
-        await producer.stop()
-
-
-@pytest.mark.asyncio
 async def test_finite_prompt_batch_fails_after_one_slot_exhausts_retry_budget() -> None:
     class _AlwaysFailCollector(_FiniteCollector):
         async def generate_rollout(self, request) -> _Unscored:
@@ -925,7 +904,6 @@ def test_out_of_range_knobs_are_rejected_at_the_config_boundary() -> None:
 
     for kwargs, message in (
         ({"max_inflight_groups": 0}, "max_inflight_groups"),
-        ({"max_ready_bytes_mb": -1}, "max_ready_bytes_mb"),
         ({"wait_timeout_s": 0.0}, "wait_timeout_s"),
         ({"queue_poll_interval_s": 0.0}, "queue_poll_interval_s"),
         ({"fail_fast_errors": -1}, "fail_fast_errors"),

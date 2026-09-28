@@ -29,7 +29,6 @@ from vrl.utils.validation import require_int
 
 logger = logging.getLogger(__name__)
 
-_MB = 1024 * 1024
 _OWNER_START_TIMEOUT_S = 10.0
 _OWNER_STOP_TIMEOUT_S = 30.0
 
@@ -73,7 +72,6 @@ class _ContinuousRolloutController:
         self.lifecycle = lifecycle
         # The validated carrier travels whole; only derived values are unpacked.
         self.settings = settings
-        self.max_ready_bytes = settings.max_ready_bytes_mb * _MB
         self.staleness = StalenessPolicy(
             max_stale_policy_versions=settings.max_stale_policy_versions,
         )
@@ -340,10 +338,7 @@ class _ContinuousRolloutController:
         if initial_weights is not None:
             await self.lifecycle.push_prepared_weights(initial_weights, stats)
 
-        self.queue = ScoredRolloutQueue(
-            max_items=len(prompts),
-            max_bytes=self.max_ready_bytes,
-        )
+        self.queue = ScoredRolloutQueue(max_items=len(prompts))
         self.consumer = ContinuousRolloutConsumer(
             queue=self.queue,
             staleness=self.staleness,

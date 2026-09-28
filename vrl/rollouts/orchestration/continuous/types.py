@@ -23,7 +23,6 @@ class ContinuousRolloutSettings:
     """
 
     max_inflight_groups: int
-    max_ready_bytes_mb: int
     max_stale_policy_versions: int
     wait_timeout_s: float
     queue_poll_interval_s: float
@@ -38,12 +37,12 @@ class ScoredRollout:
     the prompt's slot index in the batch's stable prompt list (not the prompt
     string) so that a prompt batch with duplicate strings still yields
     ``len(prompts)`` distinct groups per iteration.
-    Receipt fields are fixed at completion so queue identity and charged bytes
-    stay stable. The referenced batch and stats remain mutable payload objects.
+    Receipt fields are fixed at completion so queue identity stays stable. The
+    referenced batch and stats remain mutable payload objects.
     """
 
     # Producer-assigned monotonic identity, unique per owner lifetime. The
-    # consumer selects the demanded head by this key even if the prefetched batch is ready.
+    # consumer selects the demanded batch by this key.
     batch_id: int
     group_slot: int
     rollout_policy_version: int | None
@@ -53,7 +52,6 @@ class ScoredRollout:
     # requires the same monotonic clock domain; this is not a portable timestamp
     # for a consumer on another machine.
     completed_at: float = field(default_factory=time.monotonic)
-    nbytes: int = 0
     # Per-item typed stats (collect.engine_generate / reward_score / batch_build
     # timings + reward-inference timings) owned by the producing collect call.
     # The consumer merges them into the iteration's stats; per-item ownership

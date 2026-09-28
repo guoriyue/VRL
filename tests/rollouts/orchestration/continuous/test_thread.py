@@ -174,7 +174,6 @@ def _rollout_thread(
         lifecycle=lifecycle,
         settings=ContinuousRolloutSettings(
             max_inflight_groups=max_inflight_groups,
-            max_ready_bytes_mb=8,
             max_stale_policy_versions=1,
             wait_timeout_s=5.0,
             queue_poll_interval_s=0.001,

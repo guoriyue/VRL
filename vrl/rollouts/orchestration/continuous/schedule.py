@@ -67,7 +67,6 @@ class ContinuousRolloutSchedule:
         # User settings were validated by ContinuousRolloutConfig.
         settings = ContinuousRolloutSettings(
             max_inflight_groups=config.max_inflight_groups,
-            max_ready_bytes_mb=config.max_ready_bytes_mb,
             max_stale_policy_versions=config.max_stale_policy_versions,
             wait_timeout_s=config.wait_timeout_s,
             queue_poll_interval_s=config.queue_poll_interval_s,

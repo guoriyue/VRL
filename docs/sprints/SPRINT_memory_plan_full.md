@@ -262,7 +262,7 @@ foundation
 | SGLang | 准入前查 allocator：`available_size() >= num_tokens` 不满足先 evict 再查，仍不满足 retract 请求稍后重跑 | `sglang.md:363-374` | L2；我们 OOM 后才反应（split），无事前准入 |
 | SGLang-Omni | 字节计价批量收集：encoder 批按 `request_cost_fn` 字节成本 + `max_batch_cost`（10GiB × activation 倍率）；每 stage 显式显存契约（fraction 总和校验） | `sglang-omni.md:304-316,348` | L2（最对症）；VAE decode 微批 / denoise chunk 都该按字节切 |
 | slime | 带标签的暂停/恢复：`torch_memory_saver.pause()/resume()` 按 tag（WEIGHTS vs KV_CACHE）分级释放，权重留显存、激活让位 | `slime.md:75` | L3；当前rollout lease已采用actor保活的sleep/wake形状 |
-| cosmos-rl | 有界暂存队列 + 事件驱动释放：recv 临时张量入队、超界即 sync+free；buffer 内存被训练进度反向约束（`samples_on_the_fly`） | `cosmos-rl.md:281-283` | L1/L3. Continuous uses a finite-batch queue: `max_ready_bytes_mb` is a fail-fast guard requiring the full batch to fit, not steady-state backpressure over releasable capacity. `ContinuousRolloutQueue.put` rejects item/byte overflow before mutation and never evicts an older item required to complete the batch; only the producer inflight limit controls concurrency. |
+| cosmos-rl | 有界暂存队列 + 事件驱动释放：recv 临时张量入队、超界即 sync+free；buffer 内存被训练进度反向约束（`samples_on_the_fly`） | `cosmos-rl.md:281-283` | L1/L3. Continuous uses a finite-batch queue sized to the installed batch (the `max_ready_bytes_mb` byte guard was removed 2026-09-27). `ScoredRolloutQueue.put` rejects item overflow before mutation and never evicts an older item required to complete the batch; only the producer inflight limit controls concurrency. |
 
 不学：paged KV / radix cache 本体——那是"跨请求共享前缀 + 逐 token 增长"的 LLM
 serving 形状；diffusion rollout 的 latents 按 chunk 整存整取、无前缀共享，分页买不到

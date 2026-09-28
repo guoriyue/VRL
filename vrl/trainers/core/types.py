@@ -107,7 +107,6 @@ class ContinuousRolloutConfig:
     """
 
     max_inflight_groups: int = field(default=1)
-    max_ready_bytes_mb: int = field(default=8192)
     max_stale_policy_versions: int = field(default=1)
     wait_timeout_s: float = field(default=300.0)
     queue_poll_interval_s: float = field(default=0.05)
@@ -122,7 +121,6 @@ class ContinuousRolloutConfig:
         # Validate declared settings before projection. Containers additionally
         # check their own admission invariants when called independently.
         require_int(self.max_inflight_groups, path="continuous.max_inflight_groups", minimum=1)
-        require_int(self.max_ready_bytes_mb, path="continuous.max_ready_bytes_mb", minimum=0)
         require_int(
             self.max_stale_policy_versions,
             path="continuous.max_stale_policy_versions",

@@ -7,14 +7,11 @@ from dataclasses import FrozenInstanceError
 import pytest
 import torch
 
-from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.scored_queue import ScoredRolloutQueue
 from vrl.rollouts.orchestration.continuous.types import (
     ScoredRollout,
 )
-from vrl.trajectory.builders import build_diffusion_trajectory
-from vrl.trajectory.storage import trajectory_tensor_bytes
 
 
 def _item(
@@ -22,7 +19,6 @@ def _item(
     version: int | None,
     *,
     samples: int = 2,
-    nbytes: int = 0,
     batch_id: int = 0,
 ) -> ScoredRollout:
     batch = RolloutBatch(
@@ -34,21 +30,18 @@ def _item(
         group_slot=group_slot,
         rollout_policy_version=version,
         batch=batch,
-        nbytes=nbytes,
     )
 
 
-@pytest.mark.parametrize(
-    "field, replacement", [("nbytes", 100), ("batch_id", 5), ("rollout_policy_version", 9)]
-)
+@pytest.mark.parametrize("field, replacement", [("batch_id", 5), ("rollout_policy_version", 9)])
 def test_ready_receipt_fields_cannot_change_after_admission(field, replacement) -> None:
     queue = ScoredRolloutQueue(max_items=1)
-    item = _item(group_slot=0, version=1, nbytes=4)
+    item = _item(group_slot=0, version=1)
     queue.put(item)
     with pytest.raises(FrozenInstanceError):
         setattr(item, field, replacement)
     queue.remove([item])
-    assert queue.stats()["ready_bytes"] == 0
+    assert queue.size() == 0
 
 
 def test_item_limit_can_grow_but_cannot_discard_resident_items() -> None:
@@ -65,16 +58,15 @@ def test_item_limit_can_grow_but_cannot_discard_resident_items() -> None:
 
 
 def test_snapshot_and_remove_are_pure_container_ops() -> None:
-    """snapshot() reads FIFO order; remove() drops by identity and fixes bytes."""
+    """snapshot() reads FIFO order; remove() drops by identity."""
     queue = ScoredRolloutQueue(max_items=8)
-    queue.put(_item(group_slot=0, version=1, nbytes=4))
-    queue.put(_item(group_slot=1, version=1, nbytes=6))
+    queue.put(_item(group_slot=0, version=1))
+    queue.put(_item(group_slot=1, version=1))
     snap = queue.snapshot()
     assert [item.group_slot for item in snap] == [0, 1]
 
     queue.remove([snap[0]])
-    assert queue.size() == 1
-    assert queue.stats()["ready_bytes"] == 6.0
+    assert [item.group_slot for item in queue.snapshot()] == [1]
 
 
 def test_item_count_overflow_fails_before_mutation() -> None:
@@ -89,96 +81,10 @@ def test_item_count_overflow_fails_before_mutation() -> None:
     assert [item.group_slot for item in queue.snapshot()] == [0, 1]
 
 
-def test_byte_overflow_fails_before_mutation() -> None:
-    queue = ScoredRolloutQueue(max_items=100, max_bytes=10)
-    queue.put(_item(group_slot=0, version=1, nbytes=6))
-
-    with pytest.raises(ValueError, match="byte limit"):
-        queue.put(_item(group_slot=1, version=1, nbytes=6))
-
-    assert queue.stats()["ready_bytes"] == 6.0
-    assert [item.group_slot for item in queue.snapshot()] == [0]
-
-
-def test_batch_byte_estimate_counts_nested_extras_tensors() -> None:
-    """extras payloads count even when nested (the production shape is
-    extras["reward_components"] = {name: tensor})."""
-
-    batch = _item(group_slot=0, version=1).batch
-    batch.extras["component"] = torch.zeros(3, dtype=torch.float64)
-    batch.extras["reward_components"] = {"aesthetic": torch.zeros(2)}
-
-    expected = sum(
-        tensor.element_size() * tensor.nelement()
-        for tensor in (
-            batch.rewards,
-            batch.group_ids,
-            batch.extras["component"],
-            batch.extras["reward_components"]["aesthetic"],
-        )
-    )
-
-    assert batch.estimated_payload_bytes() == expected
-
-
-def test_batch_byte_estimate_counts_trajectory_without_flat_aliases_twice() -> None:
-    request = GenerationRequest(
-        request_id="req",
-        family="sd3_5",
-        task="t2i",
-        inputs=["p"],
-        samples_per_prompt=1,
-    )
-    trajectory = build_diffusion_trajectory(
-        request=request,
-        sample_rows=[
-            GenerationSampleRow(
-                prompt_index=0,
-                sample_index=0,
-                prompt="p",
-                sample_id="s0",
-            )
-        ],
-        observations=torch.zeros(1, 2, 4),
-        actions=torch.ones(1, 2, 4),
-        old_log_prob=torch.zeros(1, 2),
-        timesteps=torch.zeros(1, 2),
-        replay_tensors={"prompt_ids": torch.tensor([[3, 4, 5]], dtype=torch.long)},
-        context={},
-    )
-    rewards = torch.zeros(1)
-    group_ids = torch.zeros(1, dtype=torch.long)
-    component = torch.zeros(3, dtype=torch.float64)
-    batch = RolloutBatch(
-        rewards=rewards,
-        group_ids=group_ids,
-        extras={"component": component},
-        trajectory=trajectory,
-    )
-
-    expected = trajectory_tensor_bytes(trajectory) + sum(
-        tensor.numel() * tensor.element_size() for tensor in (rewards, group_ids, component)
-    )
-
-    assert batch.estimated_payload_bytes() == expected
-
-
 def test_stats_shape() -> None:
-    """``stats()`` reports ready items and ready bytes under exactly those keys (the metrics
-    contract), bytes summed from the items' ``nbytes``.
-    """
+    """``stats()`` reports ready items and the oldest item age under exactly those keys."""
     queue = ScoredRolloutQueue(max_items=8)
-    queue.put(_item(group_slot=0, version=1, nbytes=4))
+    queue.put(_item(group_slot=0, version=1))
     stats = queue.stats()
+    assert stats.keys() == {"ready_items", "oldest_item_age_s"}
     assert stats["ready_items"] == 1.0
-    assert stats["ready_bytes"] == 4.0
-
-
-@pytest.mark.parametrize("nbytes", [-1])
-def test_invalid_item_size_leaves_queue_unchanged(nbytes) -> None:
-    queue = ScoredRolloutQueue(max_items=2, max_bytes=8)
-    queue.put(_item(0, 1, nbytes=4))
-    with pytest.raises(ValueError, match="nbytes"):
-        queue.put(_item(1, 1, nbytes=nbytes))
-    assert queue.size() == 1
-    assert queue.stats()["ready_bytes"] == 4

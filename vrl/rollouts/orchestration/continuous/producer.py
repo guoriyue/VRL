@@ -503,7 +503,6 @@ class ContinuousRolloutProducer:
             rollout_policy_version=prompt_batch.policy_version,
             batch=stored,
             completed_at=time.monotonic(),
-            nbytes=stored.estimated_payload_bytes(),
             stats=stats,
         )
         self.queue.put(item)
