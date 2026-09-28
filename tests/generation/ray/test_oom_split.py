@@ -445,6 +445,7 @@ class _RoutingWorker:
     pipeline_oom: bool = False
     pipeline_request_id_override: str | None = None
     pipeline_worker_id_override: str | None = None
+    pipeline_stale: bool = False
     request_batches: list[list[str]] = field(default_factory=list)
 
     def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
@@ -464,19 +465,15 @@ class _RoutingWorker:
             output={"batch_key": envelope.batch.batch_key, "samples": envelope.batch.sample_count},
         )
 
-    def pipelined_progress(self, request_id: str) -> None:
-        """No batch has completed yet; the real worker answers the same way."""
-
-        del request_id
-        return None
-
     def execute_request_batches(
         self,
         request,
         engine_plan,
-    ) -> StagedBatchRefs | RequestBatchOutOfMemory:
+    ) -> StagedBatchRefs | RequestBatchOutOfMemory | StaleSlotDiscard:
         self.request_calls.append(request.request_id)
         self.request_batches.append([batch.batch_key for batch in engine_plan.sample_batches])
+        if self.pipeline_stale:
+            return StaleSlotDiscard(f"trainable-state slot evicted for {request.request_id}")
         request_id = self.pipeline_request_id_override or request.request_id
         if self.pipeline_oom:
             return RequestBatchOutOfMemory(
@@ -525,7 +522,6 @@ def _routing_executor(workers, *, pipelined, finalizer=None):
                         w,
                         "execute_batch",
                         "execute_request_batches",
-                        "pipelined_progress",
                     ),
                 ),
             ],
@@ -630,6 +626,20 @@ def test_pipelined_requires_a_finalizer_at_executor_construction() -> None:
             generation_stall_timeout_s=30.0,
             pipelined=True,
         )
+
+
+@pytest.mark.asyncio
+async def test_pipelined_stale_slot_is_a_graceful_discard_that_frees_the_engine() -> None:
+    worker = _RoutingWorker(worker_id="w0", pipeline_stale=True)
+    executor = _routing_executor([worker], pipelined=True)
+
+    with pytest.raises(StaleSlotDiscard, match="slot evicted"):
+        await executor.execute(_request(4, samples_per_generation_batch=2))
+
+    worker.pipeline_stale = False
+    output = await executor.execute(_request(4, samples_per_generation_batch=2))
+    assert output.output[0]["pipelined"] is True
+    assert worker.request_calls == ["req-oom", "req-oom"]
 
 
 @pytest.mark.asyncio

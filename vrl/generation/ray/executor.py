@@ -1,8 +1,7 @@
 """Ray-backed generation executor that gathers batch results.
 
 The per-request slice of the Ray adapter: split one ``EnginePlan`` across the
-engine fleet, await the batch RPCs (with stall deadlines and pipelined
-progress probing), and reassemble outputs through the model-free gatherer,
+engine fleet, await the batch RPCs under stall deadlines, and reassemble outputs through the model-free gatherer,
 driver-side for per-batch dispatch or on a finalizer actor for the per-request
 path. It deliberately owns no lifecycle — admission, terminal failure, and
 shutdown belong to ``RayGenerationRuntime``, while the live actors and this
@@ -11,7 +10,6 @@ executor are held together by ``RayGenerationSession``.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import replace
@@ -28,25 +26,13 @@ from vrl.generation.execution.types import (
 )
 from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
 from vrl.generation.ray.engine import RayGenerationEngine
-from vrl.generation.ray.pipeline_protocol import (
-    PipelinedProgressError,
-    RequestBatchProgress,
-)
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
-from vrl.ray.operation_deadline import (
-    RayCallDeadline,
-    cancel_ray_refs,
-)
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
 from vrl.utils.deadline import require_timeout
 
 logger = logging.getLogger(__name__)
-
-# Bounds progress-probe traffic on the shared health concurrency group. This is
-# a wire cadence, not a user-facing generation SLA.
-_PIPELINED_PROGRESS_POLL_INTERVAL_S = 1.0
 
 
 class RayGenerationExecutor:
@@ -108,15 +94,20 @@ class RayGenerationExecutor:
     @staticmethod
     def _select_request_rank_result(
         results: list[Any],
-    ) -> StagedBatchRefs | RequestBatchOutOfMemory:
-        """Return an OOM reported by any rank; otherwise keep the primary's refs."""
+    ) -> StagedBatchRefs | RequestBatchOutOfMemory | StaleSlotDiscard:
+        """Return a stale discard, then an OOM, reported by any rank; else the primary's refs."""
 
         if not all(
-            isinstance(result, (StagedBatchRefs, RequestBatchOutOfMemory)) for result in results
+            isinstance(result, (StagedBatchRefs, RequestBatchOutOfMemory, StaleSlotDiscard))
+            for result in results
         ):
             raise TypeError(
-                "pipelined engine ranks must return StagedBatchRefs or RequestBatchOutOfMemory"
+                "pipelined engine ranks must return StagedBatchRefs, "
+                "RequestBatchOutOfMemory, or StaleSlotDiscard"
             )
+        for result in results:
+            if isinstance(result, StaleSlotDiscard):
+                return result
         if any(result.request_id != results[0].request_id for result in results[1:]):
             raise RuntimeError("pipelined engine ranks returned different request identities")
         for result in results:
@@ -336,12 +327,27 @@ class RayGenerationExecutor:
         """
 
         engine_batches = self._engine_batch_subsets(engine_plan)
-        engine_results = await self._gather_cancel_on_error(
+        pairs = await self.actor_dispatcher.run(
             [
-                self._execute_engine_pipelined(request, engine, batches)
-                for engine, batches in engine_batches
+                RayActorJob(
+                    job_index=job_index,
+                    worker_id=engine.engine_id,
+                    remote_method=engine.remote(
+                        "execute_request_batches",
+                        combine=self._select_request_rank_result,
+                    ),
+                    payload=request,
+                    keyword_args={"engine_plan": EnginePlan(sample_batches=batches)},
+                )
+                for job_index, (engine, batches) in enumerate(engine_batches)
             ],
+            operation="rollout.generation.pipelined",
+            # One call produces every batch of an engine's share, so its stall
+            # budget covers each of those batches.
+            call_timeout_s=self.generation_stall_timeout_s
+            * max(len(batches) for _, batches in engine_batches),
         )
+        engine_results = [result for _, result in pairs]
         for result in engine_results:
             if isinstance(result, StaleSlotDiscard):
                 raise result
@@ -386,68 +392,6 @@ class RayGenerationExecutor:
             if batches:
                 subsets.append((engine, batches))
         return subsets
-
-    async def _execute_engine_pipelined(
-        self,
-        request: GenerationRequest,
-        engine: RayGenerationEngine,
-        batches: tuple[Any, ...],
-    ) -> StagedBatchRefs | RequestBatchOutOfMemory | StaleSlotDiscard:
-        primary = engine.primary
-        # Progress is a rank-0 read on the health concurrency group.
-        progress = getattr(primary.actor, "pipelined_progress", None)
-        progress_remote = getattr(progress, "remote", None)
-        if not callable(progress_remote):
-            raise PipelinedProgressError(
-                "pipelined Ray generation requires rank progress reporting",
-            )
-        engine_plan = EnginePlan(sample_batches=batches)
-
-        async def await_pipelined_result(
-            result_ref: Any,
-            initial_deadline: RayCallDeadline,
-        ) -> Any:
-            try:
-                return await self._await_pipelined_result(
-                    result_ref=result_ref,
-                    progress_remote=progress_remote,
-                    request_id=request.request_id,
-                    total_batches=len(batches),
-                    initial_deadline=initial_deadline,
-                )
-            except StaleSlotDiscard as error:
-                # A stale version is a known, graceful business outcome. Let
-                # the fleet dispatcher release the actor slot before the
-                # public executor re-raises the typed discard.
-                return error
-
-        return await self.actor_dispatcher.run_one(
-            RayActorJob(
-                job_index=0,
-                worker_id=engine.engine_id,
-                remote_method=engine.remote(
-                    "execute_request_batches", combine=self._select_request_rank_result
-                ),
-                payload=request,
-                keyword_args={"engine_plan": engine_plan},
-            ),
-            operation="rollout.generation.pipelined",
-            call_timeout_s=self.generation_stall_timeout_s,
-            await_result=await_pipelined_result,
-        )
-
-    @staticmethod
-    async def _gather_cancel_on_error(coroutines: list[Any]) -> list[Any]:
-        """Await all engine calls; a failure cancels the siblings before raising."""
-
-        tasks = [asyncio.ensure_future(coroutine) for coroutine in coroutines]
-        try:
-            return list(await asyncio.gather(*tasks))
-        except BaseException:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            raise
 
     async def _finalize_request(
         self,
@@ -498,112 +442,6 @@ class RayGenerationExecutor:
                 f"{output.request_id!r} != {request.request_id!r}",
             )
         return output
-
-    async def _await_pipelined_result(
-        self,
-        *,
-        result_ref: Any,
-        progress_remote: Any,
-        request_id: str,
-        total_batches: int,
-        initial_deadline: RayCallDeadline,
-    ) -> Any:
-        """Reset one stall deadline only when the worker completes a new batch."""
-
-        deadline = initial_deadline
-        # Reserve at least half of even a very short stall budget for the first
-        # progress RPC. The one-second constant remains the steady-state traffic
-        # ceiling; this derived cadence is fixed for the request, so polling does
-        # not accelerate into a busy loop as a deadline approaches.
-        progress_poll_interval_s = min(
-            _PIPELINED_PROGRESS_POLL_INTERVAL_S,
-            initial_deadline.timeout_s / 2,
-        )
-        result_task = asyncio.ensure_future(result_ref)
-        progress_task: asyncio.Future[Any] | None = None
-        progress_ref: Any | None = None
-        completed_batches = 0
-        try:
-            while True:
-                remaining_s = deadline.remaining_s()
-                done, _ = await asyncio.wait(
-                    {result_task},
-                    timeout=min(progress_poll_interval_s, remaining_s),
-                )
-                if done:
-                    return result_task.result()
-                if deadline.remaining_s() <= 0:
-                    raise deadline.timeout_error()
-
-                progress_ref = progress_remote(request_id)
-                progress_task = asyncio.ensure_future(progress_ref)
-                done, _ = await asyncio.wait(
-                    {result_task, progress_task},
-                    timeout=deadline.remaining_s(),
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if not done:
-                    raise deadline.timeout_error()
-                if result_task in done:
-                    result = result_task.result()
-                    if not progress_task.done():
-                        failures = cancel_ray_refs(
-                            None,
-                            [progress_ref],
-                            root_error=None,
-                        )
-                        if failures:
-                            logger.warning(
-                                "pipelined progress cancellation failed after "
-                                "result completion: %r",
-                                failures[0],
-                            )
-                    return result
-
-                snapshot = progress_task.result()
-                progress_task = None
-                progress_ref = None
-                if snapshot is None:
-                    continue
-                if not isinstance(snapshot, RequestBatchProgress):
-                    raise PipelinedProgressError(
-                        f"pipelined rank returned invalid progress {type(snapshot).__name__}",
-                    )
-                if snapshot.request_id != request_id:
-                    raise PipelinedProgressError(
-                        "pipelined progress request_id mismatch: "
-                        f"{snapshot.request_id!r} != {request_id!r}",
-                    )
-                if snapshot.total_batches != total_batches:
-                    raise PipelinedProgressError(
-                        "pipelined progress total_batches mismatch: "
-                        f"{snapshot.total_batches} != {total_batches}",
-                    )
-                if snapshot.completed_batches < completed_batches:
-                    raise PipelinedProgressError(
-                        "pipelined progress regressed: "
-                        f"{snapshot.completed_batches} < {completed_batches}",
-                    )
-                if snapshot.completed_batches > completed_batches:
-                    completed_batches = snapshot.completed_batches
-                    deadline = replace(initial_deadline)
-        except asyncio.CancelledError as cancellation:
-            if progress_ref is not None:
-                cancel_ray_refs(None, [progress_ref], root_error=cancellation)
-            raise
-        except BaseException as error:
-            if progress_ref is not None:
-                cancel_ray_refs(None, [progress_ref], root_error=error)
-            raise
-        finally:
-            if progress_task is not None and not progress_task.done():
-                progress_task.cancel()
-            if not result_task.done():
-                result_task.cancel()
-            await asyncio.gather(
-                *(task for task in (result_task, progress_task) if task is not None),
-                return_exceptions=True,
-            )
 
     async def _degrade_oom_chunks(
         self,

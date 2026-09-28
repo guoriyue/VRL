@@ -19,7 +19,6 @@ from vrl.generation.execution.types import (
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.types import GenerationRequest
 
-_NOOP_CB = lambda *args, **kwargs: None  # noqa: E731 — sites that do not assert on it
 _PLAN = SimpleNamespace(sample_batches=("b0", "b1"))
 
 
@@ -46,20 +45,17 @@ class _Executor:
         request,
         batches,
         *,
-        completion_callback=None,
         stage_batch_result=None,
     ):
         self.calls.append((request, batches, stage_batch_result))
         if self.error is not None:
             raise self.error
         results = []
-        for index, batch in enumerate(batches):
+        for batch in batches:
             result = ("produced", batch)
             if stage_batch_result is not None:
                 result = stage_batch_result(result)
             results.append(result)
-            if completion_callback is not None:
-                completion_callback(index + 1)
         return results
 
 
@@ -91,17 +87,14 @@ def test_slot_mode_with_live_slot_activates_and_runs() -> None:
     ex = _Executor(model)
     core = _core(executor=ex, uses_slots=True, policy_version=9)
 
-    out = GenerationWorkerCore.execute_request_batches(
-        core, _request(7), _PLAN, completion_callback=_NOOP_CB
-    )
+    out = GenerationWorkerCore.execute_request_batches(core, _request(7), _PLAN)
 
     assert out == [("produced", "b0"), ("produced", "b1")]
     assert model.activated == [7]  # served from the REQUEST's version slot, not 9
     assert len(ex.calls) == 1
 
 
-def test_worker_core_forwards_completion_callback_and_stage_hook() -> None:
-    completions: list[int] = []
+def test_worker_core_forwards_the_stage_hook() -> None:
     staged: list[tuple[str, str]] = []
 
     def stage(result):
@@ -118,13 +111,11 @@ def test_worker_core_forwards_completion_callback_and_stage_hook() -> None:
         core,
         _request(5),
         _PLAN,
-        completion_callback=completions.append,
         stage_batch_result=stage,
     )
 
     assert output == ["ref:b0", "ref:b1"]
     assert staged == [("produced", "b0"), ("produced", "b1")]
-    assert completions == [1, 2]
 
 
 def test_slot_mode_with_evicted_slot_raises_stale_discard_and_does_not_run() -> None:
@@ -133,9 +124,7 @@ def test_slot_mode_with_evicted_slot_raises_stale_discard_and_does_not_run() -> 
     core = _core(executor=ex, uses_slots=True, policy_version=9)
 
     with pytest.raises(StaleSlotDiscard):
-        GenerationWorkerCore.execute_request_batches(
-            core, _request(7), _PLAN, completion_callback=_NOOP_CB
-        )
+        GenerationWorkerCore.execute_request_batches(core, _request(7), _PLAN)
     assert ex.calls == []  # never ran => never trained off-policy
 
 
@@ -144,9 +133,7 @@ def test_non_slot_version_mismatch_raises_and_does_not_run() -> None:
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
     with pytest.raises(RuntimeError, match="policy_version mismatch"):
-        GenerationWorkerCore.execute_request_batches(
-            core, _request(6), _PLAN, completion_callback=_NOOP_CB
-        )
+        GenerationWorkerCore.execute_request_batches(core, _request(6), _PLAN)
     assert ex.calls == []
 
 
@@ -154,9 +141,7 @@ def test_non_slot_matching_version_runs() -> None:
     ex = _Executor(_Model(set()))
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
-    out = GenerationWorkerCore.execute_request_batches(
-        core, _request(5), _PLAN, completion_callback=_NOOP_CB
-    )
+    out = GenerationWorkerCore.execute_request_batches(core, _request(5), _PLAN)
     assert out == [("produced", "b0"), ("produced", "b1")]
     assert len(ex.calls) == 1
 
@@ -165,9 +150,7 @@ def test_no_expected_version_runs_unconditionally() -> None:
     ex = _Executor(_Model(set()))
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
-    out = GenerationWorkerCore.execute_request_batches(
-        core, _request(None), _PLAN, completion_callback=_NOOP_CB
-    )
+    out = GenerationWorkerCore.execute_request_batches(core, _request(None), _PLAN)
     assert out == [("produced", "b0"), ("produced", "b1")]
 
 
@@ -187,7 +170,6 @@ def test_cuda_oom_clears_worker_state_and_returns_typed_retry(monkeypatch) -> No
         core,
         _request(5),
         _PLAN,
-        completion_callback=_NOOP_CB,
     )
 
     assert result == RequestBatchOutOfMemory(
@@ -212,7 +194,6 @@ def test_non_oom_pipeline_error_propagates_without_cleanup(monkeypatch) -> None:
             core,
             _request(5),
             _PLAN,
-            completion_callback=_NOOP_CB,
         )
 
     assert cleanup_calls == []

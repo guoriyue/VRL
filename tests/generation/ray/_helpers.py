@@ -23,14 +23,19 @@ def engine(worker_id: str, actor: Any) -> RayGenerationEngine:
 
 
 class ResolvedRef:
-    """Awaitable that resolves to a value or raises it (a fake ObjectRef)."""
+    """Awaitable that resolves to a value or raises it (a fake ObjectRef).
 
-    def __init__(self, value: Any) -> None:
+    An exception value is raised unless ``returned`` says the actor method
+    returned it; real Ray hands a returned exception instance back as a value.
+    """
+
+    def __init__(self, value: Any, *, returned: bool = False) -> None:
         self.value = value
+        self.returned = returned
 
     def __await__(self):
         async def resolve() -> Any:
-            if isinstance(self.value, BaseException):
+            if isinstance(self.value, BaseException) and not self.returned:
                 raise self.value
             return self.value
 
@@ -78,7 +83,7 @@ class _FakeRemoteMethod:
         # A real ObjectRef surfaces the worker's exception on await, not on
         # submit, so a raising double must behave the same way here.
         try:
-            return ResolvedRef(self._call(*args, **kwargs))
+            return ResolvedRef(self._call(*args, **kwargs), returned=True)
         except BaseException as error:  # re-raised when the ref is awaited
             return ResolvedRef(error)
 

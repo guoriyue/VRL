@@ -10,7 +10,6 @@ from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
     execute_generation_batches,
 )
-from vrl.generation.execution.types import BatchCompletionCallback
 from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
 from vrl.generation.types import (
     GenerationOutput,
@@ -66,7 +65,6 @@ class BatchExecutorBase:
         request: GenerationRequest,
         batches: Sequence[GenerationSampleBatch],
         *,
-        completion_callback: BatchCompletionCallback | None = None,
         stage_batch_result: Callable[[BatchPayload], Any] | None = None,
     ) -> list[Any]:
         """Produce a request's batches in order on this worker, one RPC for all.
@@ -90,23 +88,19 @@ class BatchExecutorBase:
         device first, so the order within one request is strictly compute, copy,
         stage, next batch. What staging buys is that the rank's return value is
         small and the merge runs elsewhere, so THIS request's finalize overlaps
-        the NEXT request's generation. ``completion_callback`` receives one completion
-        per batch, after that batch's result is staged. Results stay in batch
-        order.
+        the NEXT request's generation. Results stay in batch order.
         """
 
         from vrl.trajectory.device import copy_tensor_tree_to_pinned_cpu
 
         results: list[Any] = []
-        for idx, batch in enumerate(batches):
+        for batch in batches:
             result = self.forward_batch(request, batch)
             if result is not None:
                 result = copy_tensor_tree_to_pinned_cpu(result)
                 if stage_batch_result is not None:
                     result = stage_batch_result(result)
             results.append(result)
-            if completion_callback is not None:
-                completion_callback(idx + 1)
         return results
 
     def merge_generation_batches(

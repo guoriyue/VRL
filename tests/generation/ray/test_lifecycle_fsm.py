@@ -12,13 +12,12 @@ import pytest
 import vrl.generation.ray.session as session_module
 from tests.generation.ray._helpers import engine as _engine
 from vrl.generation.ray.health_monitor import RolloutWorkerUnreachable
-from vrl.generation.ray.pipeline_protocol import PipelinedProgressError
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
-from vrl.runtime_errors import root_failure_cause
+from vrl.runtime_errors import TerminalRuntimeError, root_failure_cause
 from vrl.utils.lifecycle import (
     RuntimeLifecycle,
     RuntimeLifecycleError,
@@ -415,8 +414,8 @@ async def test_timeout_preserves_root_when_force_cleanup_also_fails() -> None:
 
 
 @pytest.mark.asyncio
-async def test_terminal_progress_protocol_error_closes_runtime() -> None:
-    error = PipelinedProgressError("progress request_id mismatch")
+async def test_terminal_executor_error_closes_runtime() -> None:
+    error = TerminalRuntimeError("rank protocol violated")
 
     class _Executor:
         async def execute(self, _request) -> None:
@@ -424,7 +423,7 @@ async def test_terminal_progress_protocol_error_closes_runtime() -> None:
 
     runtime = _runtime(_Executor())
 
-    with pytest.raises(PipelinedProgressError) as caught:
+    with pytest.raises(TerminalRuntimeError) as caught:
         await runtime.generate(_request())
 
     assert caught.value is error

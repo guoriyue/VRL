@@ -117,7 +117,6 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 | `RayGenerationFinalizer` (`ray/finalizer.py`) | CPU actor, one per engine, that merges a request's staged batch references through the gatherer and boxes reward media, off the GPU rank's critical path. |
 | `RayGenerationWeightSync` | Pushing trainer state into rollout workers (`push_to_rollout_workers(state_ref, policy_version)`), versioned slots for continuous mode. |
 | `RolloutWorkerHealthMonitor` / `RolloutWorkerUnreachable(TerminalRuntimeError)` | Bounded health probes; an unreachable worker is terminal. |
-| `RequestBatchProgress` / `PipelinedProgressError(TerminalRuntimeError)` | Cross-actor progress accounting for pipelined requests. |
 | `RolloutWorkerConfig`, `RayGenerationConfig` | Typed config for the fleet. |
 | `GenerationRuntimeLaunchContract` (`launch_contract.py`) | The serializable recipe a Ray actor rebuilds its executor from: `family`, `model_build`, `expected_model_identity`, `executor_kwargs`, `policy_version`, profiler and offload flags. `__post_init__` enforces primitives-only/picklable content so a live driver object fails on the driver, not inside actor deserialization. Twin: `RewardWorkerLaunchContract`. |
 
@@ -133,7 +132,7 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 | `GenerationSampleBatch`, `SampleAlignedValues`, `BatchResultWithIdentity` (`sample_batches.py`) | The batch coordinate system: a batch is a slice of samples (`prompt_index`, `sample_start`, `sample_count`), not a time segment. `SampleAlignedValues` slices per-sample tensors consistently. |
 | `GenerationBatchEnvelope` / `GenerationBatchResult` (`execution/types.py`) | The wire pair around one dispatched batch. |
 | `BatchMemoryReading` | Per-batch memory telemetry: the measured denoise/decode peaks the driver logs for each batch. |
-| `StagedBatchRefs`, `StaleSlotDiscard`, `RequestBatchOutOfMemory` | Staged batch references and per-request failure signaling. Batch progress callbacks pass the completed batch count as an integer. |
+| `StagedBatchRefs`, `StaleSlotDiscard`, `RequestBatchOutOfMemory` | Staged batch references and per-request failure signaling. |
 
 ### 2.4 Executor ladder (bindings × families)
 

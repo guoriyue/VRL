@@ -27,8 +27,6 @@ from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.types import GenerationRequest
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 
-_NOOP_CB = lambda *args, **kwargs: None  # noqa: E731
-
 
 @pytest.fixture(autouse=True)
 def _isolate_cuda_parking_probes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -104,7 +102,7 @@ _PLAN = SimpleNamespace(sample_batches=("b0",))
 
 class _PipelinedExecutor(_Executor):
     def execute_request_batches(
-        self, request: Any, batches: Any, *, completion_callback: Any, stage_batch_result: Any
+        self, request: Any, batches: Any, *, stage_batch_result: Any
     ) -> Any:
         return [(request, batches)]
 
@@ -329,10 +327,10 @@ def test_parked_worker_rejects_execution_until_wake() -> None:
 
     core.sleep()
     with pytest.raises(RuntimeError, match=r"parked.*refusing execute_request_batches"):
-        core.execute_request_batches(request, _PLAN, completion_callback=_NOOP_CB)
+        core.execute_request_batches(request, _PLAN)
 
     core.wake()
-    assert core.execute_request_batches(request, _PLAN, completion_callback=_NOOP_CB) == [
+    assert core.execute_request_batches(request, _PLAN) == [
         (request, _PLAN.sample_batches),
     ]
 
@@ -611,7 +609,6 @@ def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
             _request: Any,
             _batches: Any,
             *,
-            completion_callback: Any,
             stage_batch_result: Any,
         ) -> Any:
             raise RuntimeError("CUDA out of memory")
@@ -629,7 +626,7 @@ def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
         policy_version=1,
     )
 
-    result = core.execute_request_batches(request, _PLAN, completion_callback=_NOOP_CB)
+    result = core.execute_request_batches(request, _PLAN)
 
     assert isinstance(result, RequestBatchOutOfMemory)
     assert model.reset_calls == 1
@@ -798,7 +795,7 @@ def test_generation_execution_does_not_reenter_one_shot_cumem_scope(
     core.load_policy()
     request = GenerationRequest("r", "sd3_5", "t2i", ["p"], 1, policy_version=1)
 
-    result = core.execute_request_batches(request, _PLAN, completion_callback=_NOOP_CB)
+    result = core.execute_request_batches(request, _PLAN)
 
     assert result == [(request, _PLAN.sample_batches)]
     assert fake.pool_tags == ["vrl:generation:rollout-0:weights"]

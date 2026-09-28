@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from typing import Any
 
 import ray
@@ -13,11 +12,11 @@ from vrl.generation.execution.types import (
     GenerationBatchResult,
     RequestBatchOutOfMemory,
     StagedBatchRefs,
+    StaleSlotDiscard,
     WorkerMemoryParkingSnapshot,
 )
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.generation.ray.pipeline_protocol import RequestBatchProgress
 from vrl.generation.ray.reward_media import reference_reward_media
 from vrl.generation.ray.tensor_wire import register_tensor_wire_serializer
 from vrl.generation.types import GenerationRequest
@@ -25,7 +24,7 @@ from vrl.ray.dependencies import current_gpu_ids, current_node_ip
 
 # Ray binds methods to a concurrency group by name across two separate APIs --
 # @ray.method here and ray.remote(concurrency_groups=...) at actor creation --
-# so health/progress adapters share this protocol name; the group's thread
+# so the health adapter shares this protocol name; the group's thread
 # count belongs to the creation site.
 HEALTH_CONCURRENCY_GROUP = "health"
 
@@ -53,8 +52,6 @@ class RayGenerationWorker:
             launch_inputs.gatherer,
             rank_group=launch_inputs.rank_group,
         )
-        self._pipelined_progress_lock = threading.Lock()
-        self._pipelined_progress: RequestBatchProgress | None = None
 
     @ray.method(concurrency_group=HEALTH_CONCURRENCY_GROUP)
     def health(self) -> str:
@@ -113,68 +110,30 @@ class RayGenerationWorker:
         self,
         request: GenerationRequest,
         engine_plan: EnginePlan,
-    ) -> StagedBatchRefs | RequestBatchOutOfMemory:
+    ) -> StagedBatchRefs | RequestBatchOutOfMemory | StaleSlotDiscard:
         """Run all of the plan's batches on this rank in one call.
 
         Each batch payload is staged into the object store right after its host
         copy, so the returned value carries only references and this rank is
         free for the next request the moment its last batch is staged. A
-        non-primary rank of a multi-rank engine stages nothing. See
+        non-primary rank of a multi-rank engine stages nothing. A stale policy
+        slot comes back as a ``StaleSlotDiscard`` value, not a raised error, so
+        the driver releases the actor slot and counts a graceful discard. See
         GenerationWorkerCore.execute_request_batches for version safety and the
         typed OOM retry.
         """
 
         request_id = str(request.request_id)
         total_batches = len(engine_plan.sample_batches)
-        with self._pipelined_progress_lock:
-            if self._pipelined_progress is not None:
-                raise RuntimeError(
-                    "pipelined worker received overlapping requests "
-                    f"{self._pipelined_progress.request_id!r} and {request_id!r}",
-                )
-            self._pipelined_progress = RequestBatchProgress(
-                request_id=request_id,
-                completed_batches=0,
-                total_batches=total_batches,
-            )
-
-        def record_completion(completed_batches: int) -> None:
-            with self._pipelined_progress_lock:
-                current = self._pipelined_progress
-                if current is None or current.request_id != request_id:
-                    raise RuntimeError(
-                        f"pipelined progress lost active request {request_id!r}",
-                    )
-                expected = current.completed_batches + 1
-                if completed_batches != expected:
-                    raise RuntimeError(
-                        "batch completion notifications must register one batch at a time "
-                        f"(request_id={request_id!r}, previous="
-                        f"{expected - 1}, actual={completed_batches})",
-                    )
-                if completed_batches > total_batches:
-                    raise RuntimeError(
-                        "batch completion exceeds request batch count "
-                        f"(request_id={request_id!r}, total={total_batches}, "
-                        f"actual={completed_batches})",
-                    )
-                self._pipelined_progress = RequestBatchProgress(
-                    request_id=request_id,
-                    completed_batches=completed_batches,
-                    total_batches=total_batches,
-                )
-
         primary = self._is_primary_rank
         try:
             staged = self.core.execute_request_batches(
                 request,
                 engine_plan,
-                completion_callback=record_completion,
                 stage_batch_result=ray.put if primary else _discard_payload,
             )
-        finally:
-            with self._pipelined_progress_lock:
-                self._pipelined_progress = None
+        except StaleSlotDiscard as discard:
+            return discard
         if isinstance(staged, RequestBatchOutOfMemory):
             return staged
         if len(staged) != total_batches:
@@ -197,19 +156,6 @@ class RayGenerationWorker:
             batch_refs=tuple(staged),
             policy_version=request.policy_version,
         )
-
-    @ray.method(concurrency_group=HEALTH_CONCURRENCY_GROUP)
-    def pipelined_progress(
-        self,
-        request_id: str,
-    ) -> RequestBatchProgress | None:
-        """Report strict batch progress without joining the busy default group."""
-
-        with self._pipelined_progress_lock:
-            progress = self._pipelined_progress
-            if progress is None or progress.request_id != request_id:
-                return None
-            return progress
 
 
 def _discard_payload(payload: Any) -> None:

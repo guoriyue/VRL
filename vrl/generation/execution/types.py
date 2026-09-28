@@ -13,9 +13,9 @@ import.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
-from typing import Any, Literal, TypeAlias, get_args
+from typing import Any, Literal, get_args
 
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.protocols import BatchPayload
@@ -36,12 +36,6 @@ class StaleSlotDiscard(Exception):
 
 
 ParkingBackend = Literal["cpu_only", "cpu_offload", "cumem"]
-
-
-# The callback receives the cumulative number of completed generation batches.
-# Keep the exported alias as its historical runtime value; a ``type`` statement
-# would replace it with a TypeAliasType and needlessly change public introspection.
-BatchCompletionCallback: TypeAlias = Callable[[int], None]  # noqa: UP040
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,7 +283,6 @@ class RequestBatchOutOfMemory:
 
 
 __all__ = [
-    "BatchCompletionCallback",
     "BatchMemoryReading",
     "GenerationBatchEnvelope",
     "GenerationBatchResult",

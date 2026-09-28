@@ -90,13 +90,3 @@ def test_pipelined_moves_real_slots_batch_result_to_cpu() -> None:
     assert all(result.latents.device.type == "cpu" for result in results)
     assert all(result.video.device.type == "cpu" for result in results)
     assert [result.context["batch"] for result in results] == [0, 1]
-
-
-def test_real_cuda_completion_counts_follow_copied_batches() -> None:
-    completions: list[int] = []
-
-    _executor(_produce).execute_request_batches(
-        "req", [0, 1], completion_callback=completions.append
-    )
-
-    assert completions == [1, 2]

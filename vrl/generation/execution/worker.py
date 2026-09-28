@@ -18,7 +18,6 @@ from vrl.generation.execution.rank_group import (
     init_rank_process_group,
 )
 from vrl.generation.execution.types import (
-    BatchCompletionCallback,
     BatchMemoryReading,
     GenerationBatchEnvelope,
     GenerationBatchResult,
@@ -312,7 +311,6 @@ class GenerationWorkerCore:
         request: GenerationRequest,
         engine_plan: EnginePlan,
         *,
-        completion_callback: BatchCompletionCallback,
         stage_batch_result: Callable[[Any], Any] | None = None,
     ) -> list[Any] | RequestBatchOutOfMemory:
         """Run ALL of a request's batches on THIS worker in one call.
@@ -368,7 +366,6 @@ class GenerationWorkerCore:
             return forward_batches(
                 request,
                 engine_plan.sample_batches,
-                completion_callback=completion_callback,
                 stage_batch_result=stage_batch_result,
             )
         except RuntimeError as error:

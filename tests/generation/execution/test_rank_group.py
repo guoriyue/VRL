@@ -75,7 +75,6 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
                 output = core.execute_request_batches(
                     GenerationRequest("r", "sd3_5", "t2i", ["p"], 1),
                     EnginePlan(sample_batches=()),
-                    completion_callback=None,
                 )
                 peer_outputs = [torch.empty_like(output) for _ in range(world)]
                 dist.all_gather(peer_outputs, output)

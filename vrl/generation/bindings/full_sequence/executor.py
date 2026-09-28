@@ -23,7 +23,6 @@ from vrl.generation.bindings.full_sequence.layout import (
 from vrl.generation.execution.executor_base import BatchExecutorBase
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.generation.execution.types import BatchCompletionCallback
 from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
 from vrl.generation.steps.denoise.loop import (
@@ -239,8 +238,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         request: GenerationRequest,
         sample_rows: list[GenerationSampleRow],
         plan: EnginePlan,
-        *,
-        completion_callback: BatchCompletionCallback | None = None,
     ) -> GenerationOutput:
         """Local execution and merge with a CPU handoff after each generation batch.
 
@@ -253,11 +250,7 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         results for a separate finalizer; they do not use this local merge path.
         """
 
-        batches = self.execute_request_batches(
-            request,
-            plan.sample_batches,
-            completion_callback=completion_callback,
-        )
+        batches = self.execute_request_batches(request, plan.sample_batches)
         return self.merge_generation_batches(request, sample_rows, batches)
 
     def forward_batch(
