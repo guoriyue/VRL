@@ -16,7 +16,6 @@ import torch
 
 from vrl.generation import GenerationOutput
 from vrl.rewards import RewardSample
-from vrl.rewards.types import REWARD_GROUP_ID_METADATA_KEY
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.storage import TrajectoryStoragePolicy
 from vrl.trajectory.types import TrajectorySegment
@@ -58,21 +57,13 @@ class TrajectoryRolloutBatchBuilder:
                 f"sample_rows={len(self.output.sample_rows)}, outputs={batch_size}",
             )
         samples: list[RewardSample] = []
-        if REWARD_GROUP_ID_METADATA_KEY in self.context.metadata:
-            raise ValueError(
-                f"reward metadata key {REWARD_GROUP_ID_METADATA_KEY!r} is collector-owned",
-            )
         for index, row in enumerate(self.output.sample_rows):
-            metadata = dict(self.context.metadata)
-            metadata[REWARD_GROUP_ID_METADATA_KEY] = (
-                f"{self.output.request_id}:prompt:{row.prompt_index}"
-            )
             samples.append(
                 RewardSample(
                     prompt=row.prompt,
                     output=reward_outputs[index],
                     sample_id=row.sample_id,
-                    metadata=metadata,
+                    metadata=dict(self.context.metadata),
                 ),
             )
         return tuple(samples)

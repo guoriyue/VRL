@@ -39,7 +39,7 @@ import torch
 from vrl.config.loading import load_config
 from vrl.generation.types import GenerationInput
 from vrl.models.families.semantics import task_modality
-from vrl.rewards.types import REWARD_GROUP_ID_METADATA_KEY, RewardOutput, RewardSample
+from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.run import ResolvedReward, _model_family
 from vrl.scripts.eval._device import resolve_eval_device
 
@@ -247,13 +247,11 @@ def _sample_for(
         metadata=example.reward_metadata() if hasattr(example, "reward_metadata") else None,
         request_overrides=dict(getattr(example, "request_overrides", None) or {}),
     )
-    metadata = dict(collector_request.metadata)
-    metadata[REWARD_GROUP_ID_METADATA_KEY] = f"{collector_request.request.request_id}:prompt:0"
     return RewardSample(
         prompt=generation_input.prompt,
         output=_synthetic_media(sampling, task, seed + index),
         sample_id=f"preflight-{index}",
-        metadata=metadata,
+        metadata=dict(collector_request.metadata),
     )
 
 

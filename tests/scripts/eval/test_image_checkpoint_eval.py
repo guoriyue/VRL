@@ -10,7 +10,7 @@ import pytest
 from omegaconf import OmegaConf
 from PIL import Image
 
-from vrl.rewards.types import REWARD_GROUP_ID_METADATA_KEY, RewardOutput
+from vrl.rewards.types import RewardOutput
 from vrl.scripts.eval import image_checkpoint_eval as checkpoint_eval
 from vrl.trainers.data.prompts import PromptExample
 
@@ -316,7 +316,6 @@ def test_reward_batches_are_blinded_consistently_across_seeds(generation, monkey
         assert [row["r_fake"] for row in scored_sample] == pytest.approx([0, 0.1, 0.2])
         assert [row["r_total"] for row in scored_sample] == pytest.approx([0, 0.2, 0.4])
         assert all(sample.metadata["target_text"] == "OPEN" for sample in batch)
-        assert len({sample.metadata[REWARD_GROUP_ID_METADATA_KEY] for sample in batch}) == 1
         assert all(
             "checkpoint" not in sample.sample_id and "base" not in sample.sample_id
             for sample in batch

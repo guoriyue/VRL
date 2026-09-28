@@ -663,7 +663,7 @@ async def score_images(
     from vrl.config.reward_inference import RewardInferenceConfig
     from vrl.config.schema import RewardConfig
     from vrl.rewards.functions.registry import MultiReward
-    from vrl.rewards.types import REWARD_GROUP_ID_METADATA_KEY, RewardSample
+    from vrl.rewards.types import RewardSample
     from vrl.scripts.eval.image_statistics import (
         brightness,
         edge_energy,
@@ -712,10 +712,7 @@ async def score_images(
                             prompt=prompt.example.prompt,
                             output=torch.from_numpy(array.copy()).permute(2, 0, 1),
                             sample_id=f"p{prompt_index}-s{sample_index}-cell{cell}",
-                            metadata={
-                                **row["reward_metadata"],
-                                REWARD_GROUP_ID_METADATA_KEY: f"p{prompt_index}-s{sample_index}",
-                            },
+                            metadata=dict(row["reward_metadata"]),
                         )
                     )
                     batch_rows.append(

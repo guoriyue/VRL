@@ -655,10 +655,6 @@ def test_reward_samples_preserve_prompt_identity_and_metadata() -> None:
         "request-0:sample:1",
     ]
     assert all(sample.metadata["target_text"] == "caption" for sample in samples)
-    assert [sample.metadata["reward_group_id"] for sample in samples] == [
-        "request-0:prompt:0",
-        "request-0:prompt:1",
-    ]
 
 
 def test_collector_uses_one_reward_call_and_splits_scores_per_group() -> None:
@@ -705,11 +701,6 @@ def test_collector_uses_one_reward_call_and_splits_scores_per_group() -> None:
         "group-1",
     ]
     assert len(set(call["sample_ids"])) == 5
-    reward_group_ids = [metadata["reward_group_id"] for metadata in call["metadata"]]
-    assert len(set(reward_group_ids[:2])) == 1
-    assert len(set(reward_group_ids[2:])) == 1
-    assert reward_group_ids[0] != reward_group_ids[2]
-    assert all(group_id.endswith(":prompt:0") for group_id in reward_group_ids)
     assert first.rewards.tolist() == [0.0, 1.0]
     assert second.rewards.tolist() == [2.0, 3.0, 4.0]
 
