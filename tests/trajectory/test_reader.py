@@ -6,6 +6,7 @@ import torch
 from vrl.generation.types import GenerationRequest
 from vrl.trajectory.builders import build_diffusion_trajectory
 from vrl.trajectory.reader import TrajectoryReader
+from vrl.trajectory.validation import TrajectoryValidator
 
 
 @pytest.fixture
@@ -75,8 +76,8 @@ def test_replay_slices_nested_sequences(reader, container) -> None:
     observations = reader.tensor("denoise", "observations")
     values = observations.value.tolist()
     observations.value = container(container(row) for row in values)
-    # Revalidate the same representation accepted at the public boundary.
-    reader = TrajectoryReader(reader.trajectory)
+    # The validator accepts this representation at the construction boundary.
+    TrajectoryValidator(reader.trajectory).validate_batch()
 
     selected = reader.replay_tensor_dict("denoise", axis="denoise", axis_index=1)
 
@@ -115,12 +116,12 @@ def test_replay_preserves_tensor_index_failure_without_sequence_retry(reader) ->
 def test_replay_validates_declared_axes_of_sequence_payloads(reader, container, values, message):
     reader.tensor("denoise", "observations").value = container(values)
     with pytest.raises(ValueError, match=message):
-        TrajectoryReader(reader.trajectory)
+        TrajectoryValidator(reader.trajectory).validate_batch()
 
 
 def test_replay_allows_ragged_dimensions_without_declared_axes(reader):
     # Only sample is declared for prompt embeddings; inner lengths need not match.
     payload = ([1, 2], [3, 4, 5])
     reader.tensor("denoise", "prompt_embeds").value = payload
-    checked = TrajectoryReader(reader.trajectory)
-    assert checked.replay_tensor_dict("denoise")["prompt_embeds"] is payload
+    TrajectoryValidator(reader.trajectory).validate_batch()
+    assert reader.replay_tensor_dict("denoise")["prompt_embeds"] is payload

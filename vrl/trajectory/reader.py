@@ -11,10 +11,7 @@ from vrl.trajectory.types import (
     TrajectoryBatch,
     TrajectoryTensor,
 )
-from vrl.trajectory.validation import (
-    TrajectoryValidator,
-    tensor_ref,
-)
+from vrl.trajectory.validation import tensor_ref
 from vrl.utils.validation import require_int
 
 
@@ -37,12 +34,13 @@ class ForwardProcessReplay:
 
 @dataclass(frozen=True, slots=True)
 class TrajectoryReader:
-    """Read named tensors, roles, and replay slices from one trajectory."""
+    """Read named tensors, roles, and replay slices from one trajectory.
+
+    Every ``TrajectoryBatch`` is validated where it is built (the trajectory
+    builders and ``TrajectoryBatch._rebuild``); the reader trusts that contract.
+    """
 
     trajectory: TrajectoryBatch
-
-    def __post_init__(self) -> None:
-        TrajectoryValidator(self.trajectory).validate_batch()
 
     @classmethod
     def from_batch(cls, batch: Any) -> TrajectoryReader:
@@ -156,15 +154,6 @@ class TrajectoryReader:
         for ref in replay.tensor_refs:
             canonical_ref = ref if "." in ref else tensor_ref(name, ref)
             segment_ref, tensor_name = canonical_ref.split(".", 1)
-            if not segment_ref or not tensor_name:
-                raise TrajectoryReaderError(
-                    f"tensor ref {canonical_ref!r} must be 'segment.name'",
-                )
-            if segment_ref != name:
-                raise TrajectoryReaderError(
-                    f"replay input {name}.{replay_input_name} crosses segment boundary "
-                    f"with tensor ref {ref!r}",
-                )
             tensor = self.tensor(segment_ref, tensor_name)
             value = tensor.value
             if axis is not None and axis_index is not None and axis in tensor.axes:
