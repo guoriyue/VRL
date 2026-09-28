@@ -958,9 +958,8 @@ async def test_run_online_recipe_shutdown_errors_do_not_hide_training_error(
     with pytest.raises(RuntimeError, match="train boom"):
         await online.run_online_recipe(run.cfg)
 
-    # Both releases are attempted on the error path and again in the final
-    # cleanup; neither failure replaces the training error.
-    assert state["shutdown_order"] == ["schedule", "schedule", "owner", "owner"]
+    # Both releases are attempted once; neither failure replaces the training error.
+    assert state["shutdown_order"] == ["schedule", "owner"]
 
 
 @pytest.mark.slow_test
@@ -978,7 +977,7 @@ async def test_run_online_recipe_shutdown_errors_after_success_run_all_cleanups(
     with pytest.raises(RuntimeError, match="rollout_schedule shutdown failed"):
         await online.run_online_recipe(run.cfg)
 
-    assert state["shutdown_order"] == ["schedule", "schedule", "owner"]
+    assert state["shutdown_order"] == ["schedule", "owner"]
 
 
 @pytest.mark.asyncio
@@ -1014,31 +1013,6 @@ async def test_terminal_schedule_is_the_only_collector_shutdown_owner() -> None:
     await lifecycle.shutdown(run_error=None)
 
     assert calls == ["schedule", "collector", "strategy:True"]
-
-
-@pytest.mark.asyncio
-async def test_terminal_placement_and_ray_cleanup_retry_once() -> None:
-    class _FlakyCleanup:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def shutdown(self) -> None:
-            self.calls += 1
-            if self.calls == 1:
-                raise RuntimeError("transient cleanup failure")
-
-    placement = _FlakyCleanup()
-    ray_session = _FlakyCleanup()
-
-    lifecycle = online._OnlineRecipeLifecycle(
-        placement_owner=placement,
-        strategy=None,
-        ray_session=ray_session,
-    )
-    await lifecycle.shutdown(run_error=None)
-
-    assert placement.calls == 2
-    assert ray_session.calls == 2
 
 
 @pytest.mark.asyncio

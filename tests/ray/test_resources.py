@@ -503,8 +503,6 @@ def test_reward_torch_device_translates_narrowed_rank_plan_ordinals(monkeypatch)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
     assert resolved.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
-    # The inverse translation returns the plan-space id Ray placement reports.
-    assert resolved.plan_device_ordinal(0) == 2
 
 
 @pytest.mark.parametrize("devices", [(3,), (3, 1), (2, 0, 3)])
@@ -525,7 +523,6 @@ def test_auto_resources_preserve_cuda_mask_ids_and_order(monkeypatch, devices) -
     assert resolved.trainer_devices == (devices[0],)
     assert resolved.trainer_torch_device == "cuda:0"
     for local, physical in enumerate(devices):
-        assert resolved.plan_device_ordinal(local) == physical
         assert resolved._local_torch_ordinal(physical) == local
     owner = GlobalRayPlacementOwner(resolved, SimpleNamespace(cpus_per_worker=1))
     probed = {i: gpu for i, gpu in enumerate(reversed(owner.layout.bundle_gpu_ids))}

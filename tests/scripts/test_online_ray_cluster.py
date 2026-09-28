@@ -34,15 +34,6 @@ def test_local_gpu_ids_cannot_expand_inherited_mask(isolated_ray, monkeypatch):
     assert not isolated_ray.is_initialized()
 
 
-@pytest.mark.parametrize("ids", [(3, 3), (-1,), (True,), ("3",)])
-def test_local_gpu_ids_reject_invalid_reservations(isolated_ray, ids):
-    original = os.environ.get("CUDA_VISIBLE_DEVICES")
-    with pytest.raises(ValueError, match="distinct nonnegative integers"):
-        online._RayClusterSession.connect(isolated_ray, cross_node=False, local_gpu_ids=ids)
-    assert not isolated_ray.is_initialized()
-    assert os.environ.get("CUDA_VISIBLE_DEVICES") == original
-
-
 @pytest.mark.parametrize("original", [None, "3,1"])
 def test_local_gpu_mask_restored_when_ray_init_fails(isolated_ray, monkeypatch, original):
     if original is None:

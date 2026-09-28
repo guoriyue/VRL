@@ -151,19 +151,9 @@ class _RayClusterSession:
         narrow_cuda_mask = ownership == "owned_local" and local_gpu_ids is not None
         if ownership == "owned_local":
             if local_num_cpus is not None:
-                if (
-                    isinstance(local_num_cpus, bool)
-                    or not isinstance(local_num_cpus, int)
-                    or local_num_cpus <= 0
-                ):
-                    raise ValueError("local Ray num_cpus must be a positive integer")
                 init_kwargs["num_cpus"] = local_num_cpus
             init_kwargs["include_dashboard"] = False
             if local_gpu_ids is not None:
-                if any(type(gpu) is not int or gpu < 0 for gpu in local_gpu_ids) or len(
-                    set(local_gpu_ids)
-                ) != len(local_gpu_ids):
-                    raise ValueError("local Ray GPU IDs must be distinct nonnegative integers")
                 if original_cuda_mask is not None:
                     allowed = {token.strip() for token in original_cuda_mask.split(",")}
                     if any(str(gpu) not in allowed for gpu in local_gpu_ids):
@@ -291,7 +281,7 @@ class _OnlineRecipeLifecycle:
         *,
         call_kwargs: Mapping[str, Any] | None = None,
     ) -> bool:
-        """Run one terminal cleanup, retrying one transient failure."""
+        """Run one terminal cleanup, recording its failure."""
 
         if target is None:
             return True
@@ -301,18 +291,14 @@ class _OnlineRecipeLifecycle:
                 (name, TypeError(f"{name} does not expose callable shutdown()")),
             )
             return False
-        last_error: Exception | None = None
-        for _attempt in range(2):
-            try:
-                result = shutdown(**dict(call_kwargs or {}))
-                if inspect.isawaitable(result):
-                    await result
-                return True
-            except Exception as exc:
-                last_error = exc
-        assert last_error is not None
-        self._shutdown_errors.append((name, last_error))
-        return False
+        try:
+            result = shutdown(**dict(call_kwargs or {}))
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            self._shutdown_errors.append((name, exc))
+            return False
+        return True
 
 
 def _require_supported_distributed_rollout_topology(
@@ -340,42 +326,6 @@ def _require_supported_distributed_rollout_topology(
         "rollout GPUs. Multi-rank DDP/FSDP needs rank-owned rollout placement or "
         "rank-0 collection/broadcast before this topology can run.",
     )
-
-
-def _validate_reward_placement(
-    placement: Any,
-    *,
-    resources: ResolvedDistributedResources,
-    reward_device: str,
-) -> None:
-    """Link the reward GPU reservation to the device the runtime executes on.
-
-    The placement group reserves the reward bundle and ``reward_torch_device``
-    independently derives the execution device from the same resolution; this
-    check fails fast if the two derivations ever drift apart.
-    """
-
-    if not resources.reward_devices:
-        return
-    if placement is None:
-        raise RuntimeError(
-            "reward GPUs are resolved "
-            f"({list(resources.reward_devices)}) but the run placement group "
-            "reserved no reward bundle; the reservation and execution device "
-            "have diverged",
-        )
-    if reward_device.startswith("cuda") and not resources.cross_node:
-        # reward_device is a process-local torch ordinal while the placement
-        # bundle reports Ray physical ids; on a rank-local torchrun launch the
-        # two spaces differ (CUDA mask narrows torch to one logical device),
-        # so translate back to plan space before comparing.
-        ordinal = resources.plan_device_ordinal(int(reward_device.split(":", 1)[1]))
-        if placement.expected_gpu_ids and ordinal not in placement.expected_gpu_ids:
-            raise RuntimeError(
-                f"in-process reward executes on {reward_device} (plan GPU {ordinal}) "
-                f"but the placement group reserved GPUs "
-                f"{list(placement.expected_gpu_ids)} for the reward role",
-            )
 
 
 def _log_rollout_memory_plan(
@@ -986,11 +936,6 @@ async def run_online_recipe(
         if resources.cross_node:
             cross_node_preflight(ray, resources)
         placement_owner.create()
-        _validate_reward_placement(
-            placement_owner.reward_placement,
-            resources=resources,
-            reward_device=reward_inputs.device,
-        )
         collector_config = resolved.collector
         from vrl.scripts.common.factory import resolve_reward_actor_placement
 

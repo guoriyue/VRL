@@ -425,27 +425,6 @@ class ResolvedDistributedResources:
             return str(trainer_device)
         return self.trainer_torch_device
 
-    def plan_device_ordinal(self, torch_ordinal: int) -> int:
-        """Translate a process-local torch ordinal back into plan space.
-
-        Inverse of ``_local_torch_ordinal``, for callers that must compare an
-        execution device against Ray-side state (placement bundles report
-        physical ids from ``ray.get_gpu_ids()`` regardless of the process's
-        CUDA mask). Passthrough whenever the process view and the plan already
-        share one space.
-        """
-
-        import torch
-
-        visible = [int(device) for device in self.visible_devices]
-        if (
-            torch.cuda.is_available()
-            and torch.cuda.device_count() == len(visible)
-            and 0 <= torch_ordinal < len(visible)
-        ):
-            return visible[torch_ordinal]
-        return torch_ordinal
-
     def _local_torch_ordinal(self, plan_ordinal: int) -> int:
         """Translate a plan-space CUDA ordinal into this process's torch ordinal.
 
@@ -640,9 +619,8 @@ class ResolvedDistributedResources:
             # An operator-owned HTTP service has no local reservation, but
             # may explicitly take a parking lease on this machine's GPU.
             # The runtime still requires successful parking at the handoff.
-            external_reward_lease = (
-                role == "reward"
-                and any(inference.kind == "http" for inference in reward_inference.values())
+            external_reward_lease = role == "reward" and any(
+                inference.kind == "http" for inference in reward_inference.values()
             )
             if setting is True and not owns_gpu and not external_reward_lease:
                 raise ValueError(f"{key}=true but the {role} role owns no GPU to offload")
