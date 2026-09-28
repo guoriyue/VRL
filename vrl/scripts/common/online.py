@@ -969,9 +969,6 @@ async def run_online_recipe(
             generation_launch_inputs,
             placement=placement_owner.rollout_placement,
         )
-        # The generation twin of reward_runtime.preflight() above: a launched
-        # fleet must answer one bounded health probe before the schedule starts.
-        await generation_runtime.preflight()
         collector.set_generation_runtime(generation_runtime)
         _host_memory.log("after_rollout_backend_build")
 

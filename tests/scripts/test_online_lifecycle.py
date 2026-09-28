@@ -104,10 +104,6 @@ class _FakeRuntime:
     def __init__(self, state: dict[str, Any]) -> None:
         self._state = state
 
-    async def preflight(self) -> None:
-        self._state.setdefault("runtime_preflights", 0)
-        self._state["runtime_preflights"] += 1
-
     async def shutdown(self) -> None:
         self._state["runtime_shutdowns"] += 1
         self._state["shutdown_order"].append("runtime")

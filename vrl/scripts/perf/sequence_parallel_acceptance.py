@@ -230,7 +230,6 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
             launch_inputs,
             placement=placement_owner.rollout_placement,
         )
-        await runtime.preflight()
         if resources.lifecycle.rollout_mode == "on_demand":
             await runtime.activate()
         report["launch_s"] = time.perf_counter() - launch_started

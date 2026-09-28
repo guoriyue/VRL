@@ -13,7 +13,6 @@ from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_group import RayActorHandle
 from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
-from vrl.utils.deadline import OperationDeadline
 from vrl.utils.lifecycle import (
     RuntimeLifecycle,
     RuntimeLifecycleError,
@@ -76,7 +75,6 @@ class RayGenerationRuntime:
         self._shutdown_task: asyncio.Task[None] | None = None
         self._force_shutdown = False
 
-        self._health_check_timeout_s = float(health_check_timeout_s)
         self._health_monitor = RolloutWorkerHealthMonitor(
             self,
             interval_s=health_check_interval_s,
@@ -106,45 +104,6 @@ class RayGenerationRuntime:
         """
 
         self._health_monitor.start()
-
-    async def preflight(self) -> None:
-        """Probe every live worker once before the schedule starts.
-
-        The generation twin of ``RewardRuntime.preflight``. Deferred or parked
-        sessions skip — their launch/activate validates the fleet. A probe
-        failure closes admission exactly like a monitor detection.
-        """
-
-        await self._admit_operation("preflight")
-        session = self._session
-        if session is None or self._session_parked:
-            return
-        ranks = session.rank_handles
-        deadline = OperationDeadline(
-            "generation.preflight",
-            self._health_check_timeout_s,
-            context=f"workers={len(ranks)}",
-        )
-        try:
-            refs = []
-            for rank in ranks:
-                refs.append(rank.actor.health.remote())
-            if not refs:
-                return
-            await asyncio.wait_for(
-                asyncio.gather(*refs),
-                timeout=deadline.remaining_s(),
-            )
-        except TimeoutError as cause:
-            if deadline.remaining_s() > 0:
-                self.lifecycle.fail(cause)
-                raise
-            failure = deadline.timeout_error()
-            self.lifecycle.fail(failure)
-            raise failure from cause
-        except BaseException as error:
-            self.lifecycle.fail(error)
-            raise
 
     async def _admit_operation(self, operation: str) -> None:
         """Reject closed admission and finish cleanup after monitor failures."""

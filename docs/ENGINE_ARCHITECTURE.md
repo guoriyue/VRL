@@ -4,7 +4,8 @@ The core engine is **two inference engines with one shape**: generation
 (vrl/generation) produces samples, reward (vrl/rewards) scores them, and
 vrl/rollouts orchestrates the loop without importing either implementation.
 Both engines expose the same lifecycle to their consumer —
-`preflight → activate → work → offload/park → shutdown` — and both are
+`activate → work → offload/park → shutdown`, with reward adding a
+`preflight` before launch — and both are
 consumed only through runtime-checkable protocols, so orchestration code
 never sees Ray, torch, or HTTP.
 
@@ -100,7 +101,7 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 
 | Protocol | Members | Why it exists |
 |---|---|---|
-| `GenerationRuntime` | `current_policy_version`, `preflight/activate/generate/offload/shutdown` | The engine's only face toward vrl/rollouts (dual of `RewardRuntime`). isinstance-checked at `rollouts/collector/core.py`. |
+| `GenerationRuntime` | `current_policy_version`, `activate/generate/offload/shutdown` | The engine's only face toward vrl/rollouts (dual of `RewardRuntime`). isinstance-checked at `rollouts/collector/core.py`. |
 | `GenerationBatchExecutor` | `family`, `task`, `forward_batch`, `gather_batches` | The model-family plugin contract; keeps `if family == ...` out of neutral execution code. |
 | `GenerationBatchGatherer` | `gather_batches` | The model-free slice of the executor: reassembly runs driver-side where no model is loaded, so it ships separately in the launch contract. |
 | `BatchPayload = Any` | — | Deliberate: the payload's shape is owned by the binding that produced it (diffusion latents vs AR tokens share nothing useful). |
@@ -312,7 +313,7 @@ prescribes.
 | Launch boundary | `GenerationRuntimeLaunchContract` | `RewardWorkerLaunchContract` |
 | Result identity guard | gatherer reassembly over batch identities | `RewardInferenceRequest.validate_and_order_results()` |
 | Memory lease vocabulary | `activate` / `offload` (park workers) | `activate` / `park_memory` |
-| Lifecycle | `preflight → activate → generate → offload → shutdown` | `preflight → activate → score → park_memory → shutdown` |
+| Lifecycle | `activate → generate → offload → shutdown` | `preflight → activate → score → park_memory → shutdown` |
 | Shared machinery | `RuntimeLifecycle` FSM, `OperationDeadline`, `CumemPool`, `RayLifecyclePlan` | same |
 
 The intentional asymmetry: generation always crosses a Ray process boundary

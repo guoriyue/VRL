@@ -81,9 +81,6 @@ class _Runtime:
         self.shutdown_failures = shutdown_failures
         self.shutdown_calls = 0
 
-    async def preflight(self) -> None:
-        return None
-
     async def activate(self) -> None:
         return None
 

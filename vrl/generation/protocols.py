@@ -69,15 +69,6 @@ class GenerationRuntime(Protocol):
 
     current_policy_version: int | None
 
-    async def preflight(self) -> None:
-        """Fail fast on an unhealthy engine before the schedule starts.
-
-        The generation twin of ``RewardRuntime.preflight``: a live fleet must
-        answer one bounded health probe per worker; deferred sessions have
-        nothing to probe yet (their launch validates itself).
-        """
-        ...
-
     async def activate(self) -> None:
         """Make generation ready and complete any policy install staged while inactive."""
         ...
