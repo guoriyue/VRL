@@ -251,21 +251,15 @@ class HPSv3Model:
     def _frames(self, artifact: RewardInferenceArtifact) -> torch.Tensor:
         """The video as ``[T,H,W,3]`` unit-range floats, from media or a file."""
 
-        from vrl.utils.media import (
-            frames_thwc_to_float,
-            read_video_frames,
-            sample_frames,
-            video_tensor_to_uint8_frames,
-        )
+        from vrl.utils.media import read_video_frames
 
         if artifact.media is not None or artifact.path.endswith(".pt"):
             media = artifact.as_media()
             if not isinstance(media, torch.Tensor):
                 raise TypeError(
-                    f"HPSv3 expects a video tensor artifact, got {type(media).__name__}"
+                    f"HPSv3 expects an image or video tensor artifact, got {type(media).__name__}"
                 )
-            frames = frames_thwc_to_float(torch.from_numpy(video_tensor_to_uint8_frames(media)))
-            return sample_frames(frames, self.num_frames)
+            return _tensor_frames(media, self.num_frames)
         return read_video_frames(artifact.as_path(), self.num_frames)
 
     def _score_frames(self, frames: torch.Tensor, prompt: str) -> dict[str, float]:
@@ -319,6 +313,21 @@ class HPSv3Model:
             return_tensors="pt",
         )
         return batch.to(self.device)
+
+
+def _tensor_frames(media: torch.Tensor, num_frames: int | None) -> torch.Tensor:
+    """``[T,H,W,3]`` unit-range frames from a ``[C,H,W]`` image or a ``[C,T,H,W]`` video tensor.
+
+    HPSv3 is an image preference model; a still image is scored as a
+    one-frame video, so text-to-image rollouts use the same path as video.
+    """
+
+    from vrl.utils.media import frames_thwc_to_float, sample_frames, video_tensor_to_uint8_frames
+
+    if media.ndim == 3:
+        media = media.unsqueeze(1)
+    frames = frames_thwc_to_float(torch.from_numpy(video_tensor_to_uint8_frames(media)))
+    return sample_frames(frames, num_frames)
 
 
 def _jpeg_roundtrip(image: Any) -> Any:

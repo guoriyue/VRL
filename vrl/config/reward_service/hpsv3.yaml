@@ -1,0 +1,29 @@
+# Operator-owned HPSv3 preference judge (Qwen2-VL-7B + ranknet head, ~17 GB)
+# on a dedicated GPU, for FSDP runs whose ranks each own one colocated
+# trainer/rollout card and cannot also hold the judge. Pair with
+# /reward/hpsv3_http_siglip_aesthetic; launch from the repo root first:
+#
+#   CUDA_VISIBLE_DEVICES=3 python -m vrl.rewards.service.server \
+#     --config vrl/config/reward_service/hpsv3.yaml
+host: 127.0.0.1
+port: 8317
+model_name: hpsv3-mizzenai
+model_version: MizzenAI/HPSv3@main
+artifact_roots:
+  - ../../../outputs
+  - /mnt/nvme/outputs
+max_concurrency: 1
+max_pending_requests: 256
+max_cached_requests: 8192
+# A batch of float32 1024 px image tensors plus base64 is ~270 MB (16 images).
+max_request_bytes: 1073741824
+# The judge owns its GPU; nothing to park while rollouts generate.
+generation_overlap_safe: true
+worker_config:
+  model_factory: vrl.rewards.models.hpsv3:HPSv3Model
+  device: cuda:0
+  reward_model_name: MizzenAI/HPSv3@main
+  dtype: bfloat16
+  frames_per_forward: 8
+  top_frame_fraction: 0.3
+  local_files_only: true

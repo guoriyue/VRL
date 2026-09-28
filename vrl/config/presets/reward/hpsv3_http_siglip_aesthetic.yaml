@@ -1,0 +1,21 @@
+# The qualified HPSv3 + SigLIP V2.5 composite (docs/rewards/cards/hpsv3_siglip_qwen21_t2i.md)
+# with HPSv3 scored by the operator-run service on its own GPU
+# (vrl/config/reward_service/hpsv3.yaml; start it first) and SigLIP in the
+# trainer process (~1.6 GB). Weights as in hpsv3_siglip_aesthetic: 1.0 : 2.75,
+# about one within-group standard deviation each.
+reward:
+  components:
+    hpsv3: 1.0
+    aesthetic: 2.75
+  kwargs:
+    hpsv3:
+      score_key: top_frame_mean
+    aesthetic:
+      device: null
+      model_name: google/siglip-so400m-patch14-384
+      model_revision: 9fdffc58afc957d1a03a25b10dba0329ab15c2a3
+  inference:
+    hpsv3:
+      kind: http
+      endpoint: http://127.0.0.1:8317
+      expected_model: hpsv3-mizzenai
