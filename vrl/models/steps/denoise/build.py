@@ -123,28 +123,17 @@ def assemble_replay_bundle(
 def build_family_runtime_bundle(
     build: ModelBuild,
     *,
-    entry=None,
+    entry,
 ) -> RuntimeBundle:
     """Build rollout through a family's declarative diffusion recipe.
 
-    ``entry`` is supplied by the canonical registry in production. Direct
-    evaluation tools may omit it; their serialized ``ModelBuild.family`` then
-    selects the same canonical entry rather than recreating registry data.
+    Called only by ``ModelFamilyEntry.build_rollout``, which has already matched
+    ``build.family`` to ``entry``.
     """
 
-    from vrl.models.families.registry import DenoiseFamilyBuild, get_model_family_entry
     from vrl.utils.config import import_from_path
 
-    if entry is None:
-        entry = get_model_family_entry(build.family)
-    family_build = entry.family_build
-    if not isinstance(family_build, DenoiseFamilyBuild):
-        raise ValueError(f"model family {entry.family!r} has no diffusion build descriptor")
-    if build.family != entry.family:
-        raise ValueError(
-            f"rollout build family {build.family!r} does not match entry {entry.family!r}",
-        )
-    model_cls = import_from_path(family_build.model_cls)
+    model_cls = import_from_path(entry.family_build.model_cls)
     logger.info("Building %s runtime bundle (registry descriptor)", entry.family)
     return build_denoise_runtime_bundle(build, model_cls=model_cls)
 
@@ -157,26 +146,17 @@ def build_family_replay_runtime_bundle(
 ) -> RuntimeBundle:
     """Build replay through a family's declarative diffusion recipe.
 
+    Called only by ``ModelFamilyEntry.build_replay``, which has already matched
+    ``build.family`` and dispatched custom or unavailable replay elsewhere, so
+    the descriptor here always carries ``replay_cls`` and a transformer class.
     ``materialize_weights=False`` loads the transformer as a meta-parameter
     skeleton for the training strategy to fill from its primary rank.
     """
 
-    from vrl.models.families.registry import DenoiseFamilyBuild
     from vrl.utils.config import import_from_path
 
     build.require_replay()
     family_build = entry.family_build
-    if not isinstance(family_build, DenoiseFamilyBuild):
-        raise ValueError(f"model family {entry.family!r} has no diffusion build descriptor")
-    if build.family != entry.family:
-        raise ValueError(
-            f"replay build family {build.family!r} does not match entry {entry.family!r}",
-        )
-    if family_build.replay_cls is None or family_build.transformer_classname is None:
-        raise ValueError(
-            f"model family {entry.family!r} has no generic replay recipe; "
-            "invoke its registered replay_runtime_builder instead",
-        )
     replay_cls = import_from_path(family_build.replay_cls)
     logger.info(
         "Building %s replay runtime bundle (registry descriptor) from %s",
