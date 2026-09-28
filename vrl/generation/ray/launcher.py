@@ -266,9 +266,9 @@ class RayGenerationLauncher:
     ) -> RayGenerationSession:
         """Launch a session without blocking the runtime's lifecycle event loop.
 
-        Actor startup and policy load run in a worker thread; the runtime's
-        shielded activation task remains the ownership boundary if the external
-        waiter is cancelled.
+        Actor startup and policy load run in a worker thread that cancellation
+        cannot stop; a cancelled activation waits for the thread's fleet and
+        closes it.
         """
 
         return await asyncio.to_thread(

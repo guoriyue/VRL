@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Literal
 
 from vrl.generation.ray.health_monitor import RolloutWorkerHealthMonitor
 from vrl.generation.ray.session import RayGenerationSession
@@ -70,9 +71,9 @@ class RayGenerationRuntime:
         self._pending_install: _PendingPolicyInstall | None = None
         self._session_parked = False
 
-        self._activation_task: asyncio.Task[RayGenerationSession] | None = None
-        self._offload_task: asyncio.Task[None] | None = None
-        self._shutdown_task: asyncio.Task[None] | None = None
+        # Set while activate/offload is awaited, so an overlapping call fails fast.
+        self._transition: Literal["activate", "offload"] | None = None
+        self._shutdown_lock = asyncio.Lock()
         self._force_shutdown = False
 
         self._health_monitor = RolloutWorkerHealthMonitor(
@@ -128,41 +129,34 @@ class RayGenerationRuntime:
         await self._admit_operation("activate")
         if self._session_factory is None:
             return
-        offload = self._offload_task
-        if offload is not None and offload.done():
-            self._offload_finished(offload)
-            offload = None
-        if offload is not None:
-            try:
-                await asyncio.shield(offload)
-            except BaseException as error:
-                await self._finish_control_wait_failure(error)
-                raise
-            await self._admit_operation("activate")
-        task = self._activation_task
-        if task is not None and task.done():
-            self._activation_finished(task)
-            task = None
-        if task is None:
-            task = asyncio.create_task(self._activate_once())
-            self._activation_task = task
-            task.add_done_callback(self._activation_finished)
+        self._reject_transition_overlap("activate")
+        self._transition = "activate"
         try:
-            await asyncio.shield(task)
-        except BaseException as error:
-            await self._finish_control_wait_failure(error)
-            raise
+            await self._activate_once()
+        finally:
+            self._transition = None
+
+    def _reject_transition_overlap(self, operation: str) -> None:
+        """Reject an operation issued while activate/offload is still awaited.
+
+        The rollout schedule sequences these transitions; an overlap is a
+        schedule bug, reported before it can touch the fleet.
+        """
+
+        if self._transition is not None:
+            raise RuntimeError(
+                f"{operation} cannot overlap rollout {self._transition}; "
+                "the rollout schedule must await each GPU handoff in turn",
+            )
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         await self._admit_operation("generate")
-        activation = self._activation_task
-        if activation is not None and not activation.done():
+        if self._transition == "activate":
             raise RuntimeError(
                 "generate requires rollout activation to complete; "
                 "the rollout schedule must await activate() before collection",
             )
-        offload = self._offload_task
-        if offload is not None and not offload.done():
+        if self._transition == "offload":
             raise RuntimeError(
                 "generate requires rollout offload to be idle; "
                 "the rollout schedule must drain before the GPU handoff",
@@ -205,18 +199,7 @@ class RayGenerationRuntime:
         """Install on active workers or stage the accepted target while inactive."""
 
         await self._admit_operation("update_weights")
-        activation = self._activation_task
-        if activation is not None and not activation.done():
-            raise RuntimeError(
-                "update_weights requires rollout activation to be idle; "
-                "the rollout schedule must pause/drain before syncing",
-            )
-        offload = self._offload_task
-        if offload is not None and not offload.done():
-            raise RuntimeError(
-                "update_weights requires rollout offload to be idle; "
-                "the rollout schedule must await the GPU handoff before syncing",
-            )
+        self._reject_transition_overlap("update_weights")
 
         require_int(policy_version, path="policy_version", minimum=0)
         policy = _PendingPolicyInstall(
@@ -257,8 +240,6 @@ class RayGenerationRuntime:
 
         if self._session_factory is None:
             return
-        if self._session is None and self._activation_task is None:
-            return
         if self.lifecycle.phase is RuntimePhase.TERMINATED:
             return
         if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
@@ -266,57 +247,18 @@ class RayGenerationRuntime:
                 await self._admit_operation("offload")
             await self.shutdown()
             return
-        activation = self._activation_task
-        if activation is not None and not activation.done():
-            try:
-                await asyncio.shield(activation)
-            except BaseException as error:
-                await self._finish_control_wait_failure(error)
-                raise
-            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-                if self.lifecycle.failure is not None:
-                    await self._admit_operation("offload")
-                await self.shutdown()
-                return
-        task = self._offload_task
-        if task is not None and task.done():
-            self._offload_finished(task)
-            task = None
-        if task is None:
-            task = asyncio.create_task(self._offload_once())
-            self._offload_task = task
-            task.add_done_callback(self._offload_finished)
+        self._reject_transition_overlap("offload")
+        session = self._session
+        if session is None or self._session_parked:
+            return
+        self._transition = "offload"
         try:
-            await asyncio.shield(task)
-        except BaseException as error:
-            await self._finish_control_wait_failure(error)
-            raise
-        if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-            if self.lifecycle.failure is not None:
-                await self._admit_operation("offload")
-            await self.shutdown()
-
-    async def _offload_once(self) -> None:
-        try:
-            if self.lifecycle.phase is not RuntimePhase.RUNNING:
-                return
-            session = self._session
-            if session is None or self._session_parked:
-                return
             await session.sleep_engines()
             if self.lifecycle.failure is not None:
                 self.lifecycle.require_running("complete worker sleep")
             self._session_parked = True
         except BaseException as error:
-            shutdown_task = self._shutdown_task
-            if shutdown_task is not None and not shutdown_task.done():
-                failure = self._publish_failure(error, force_shutdown=True)
-            else:
-                failure = await self._terminalize_after_failure(
-                    error,
-                    join_control_tasks=False,
-                    force_shutdown=True,
-                )
+            failure = await self._terminalize_after_failure(error, force_shutdown=True)
             if isinstance(error, asyncio.CancelledError):
                 if failure is not error:
                     error.__cause__ = failure
@@ -324,29 +266,36 @@ class RayGenerationRuntime:
             if failure is error:
                 raise
             raise failure from failure.__cause__
+        finally:
+            self._transition = None
 
     async def shutdown(self) -> None:
-        """Close admission and release the one owned actor session."""
+        """Close admission and release the one owned actor session.
 
-        if self.lifecycle.phase is RuntimePhase.TERMINATED:
-            return
-        task = self._shutdown_task
-        if task is not None and task.done():
-            self._shutdown_finished(task)
-            task = None
-        if task is None:
+        Concurrent terminal failures (several in-flight requests losing the same
+        fleet) each call this; the lock lets the first release the fleet and the
+        rest observe the terminated phase.
+        """
+
+        async with self._shutdown_lock:
+            if self.lifecycle.phase is RuntimePhase.TERMINATED:
+                return
             self.lifecycle.begin_shutdown()
             self._pending_install = None
-            task = asyncio.create_task(self._shutdown_once())
-            self._shutdown_task = task
-            task.add_done_callback(self._shutdown_finished)
-        await asyncio.shield(task)
+            try:
+                await self._teardown_session()
+            except BaseException as error:
+                root_failure = self.lifecycle.failure
+                self.lifecycle.fail(error)
+                if root_failure is not None and root_failure is not error:
+                    raise error from root_failure
+                raise
+            self.lifecycle.finish_shutdown()
 
     async def _terminalize_after_failure(
         self,
         error: BaseException,
         *,
-        join_control_tasks: bool = True,
         force_shutdown: bool = False,
     ) -> BaseException:
         """Close admission and return the stable first failure after cleanup."""
@@ -357,11 +306,7 @@ class RayGenerationRuntime:
         )
         self._pending_install = None
         try:
-            if join_control_tasks:
-                await self.shutdown()
-            else:
-                await self._teardown_session()
-                self.lifecycle.finish_shutdown()
+            await self.shutdown()
         except BaseException as cleanup_error:
             logger.error(
                 "generation terminal cleanup failed after operation error %r",
@@ -392,99 +337,9 @@ class RayGenerationRuntime:
             session = self._session
             if session is not None:
                 session.force_close()
-            current = asyncio.current_task()
-            activation = self._activation_task
-            if (
-                activation is not None
-                and activation is not current
-                and not activation.done()
-                and self._session is not None
-            ):
-                activation.cancel()
-            offload = self._offload_task
-            if offload is not None and offload is not current and not offload.done():
-                offload.cancel()
         return failure
 
-    async def _finish_control_wait_failure(self, error: BaseException) -> None:
-        """Join shared cleanup and restore roots hidden by ``asyncio.shield``."""
-
-        if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
-            try:
-                await self.shutdown()
-            except asyncio.CancelledError as cleanup_error:
-                root_failure = self.lifecycle.failure
-                current = asyncio.current_task()
-                if current is not None and current.cancelling():
-                    if root_failure is not None:
-                        cleanup_error.__cause__ = root_failure
-                    raise
-                if root_failure is None:
-                    raise
-                logger.error(
-                    "generation cleanup retry was cancelled after control error %r",
-                    error,
-                    exc_info=(
-                        type(cleanup_error),
-                        cleanup_error,
-                        cleanup_error.__traceback__,
-                    ),
-                )
-                root_failure.add_note(
-                    "generation terminal cleanup retry was also cancelled",
-                )
-            except BaseException as cleanup_error:
-                root_failure = self.lifecycle.failure
-                current = asyncio.current_task()
-                if (
-                    isinstance(error, asyncio.CancelledError)
-                    and current is not None
-                    and current.cancelling()
-                ):
-                    error.__cause__ = root_failure or cleanup_error
-                    if root_failure is None or root_failure is cleanup_error:
-                        return
-                if root_failure is None or root_failure is cleanup_error:
-                    raise
-                logger.error(
-                    "generation cleanup retry failed after control error %r",
-                    error,
-                    exc_info=(
-                        type(cleanup_error),
-                        cleanup_error,
-                        cleanup_error.__traceback__,
-                    ),
-                )
-                root_failure.add_note(
-                    f"generation terminal cleanup retry also failed: {cleanup_error!r}",
-                )
-        if isinstance(error, asyncio.CancelledError):
-            failure = self.lifecycle.failure
-            if failure is not None:
-                error.__cause__ = failure
-
-    def _activation_finished(
-        self,
-        task: asyncio.Task[RayGenerationSession],
-    ) -> None:
-        if self._activation_task is task:
-            self._activation_task = None
-        if not task.cancelled():
-            task.exception()
-
-    def _offload_finished(self, task: asyncio.Task[None]) -> None:
-        if self._offload_task is task:
-            self._offload_task = None
-        if not task.cancelled():
-            task.exception()
-
-    def _shutdown_finished(self, task: asyncio.Task[None]) -> None:
-        if self._shutdown_task is task:
-            self._shutdown_task = None
-        if not task.cancelled():
-            task.exception()
-
-    async def _activate_once(self) -> RayGenerationSession:
+    async def _activate_once(self) -> None:
         candidate: RayGenerationSession | None = None
         force_shutdown = False
         try:
@@ -511,12 +366,21 @@ class RayGenerationRuntime:
                         ):
                             self._installed_policy_version = pending.policy_version
                             self._pending_install = None
-                return session
+                return
 
             factory = self._session_factory
             if factory is None:
                 raise RuntimeError("deferred Ray generation has no session factory")
-            candidate = await factory()
+            # The launch runs actor startup in a worker thread that cancellation
+            # cannot stop. A cancelled waiter therefore collects the fleet the
+            # thread still produces, so the cleanup below can close it.
+            launch = asyncio.ensure_future(factory())
+            try:
+                candidate = await asyncio.shield(launch)
+            except asyncio.CancelledError:
+                with contextlib.suppress(BaseException):
+                    candidate = await launch
+                raise
             pending = self._pending_install
             active_policy_version = self.current_policy_version
             if pending is not None:
@@ -529,7 +393,6 @@ class RayGenerationRuntime:
                 self._installed_policy_version = active_policy_version
                 self._pending_install = None
                 self._session = candidate
-            return candidate
         except BaseException as error:
             if candidate is not None and self._session is not candidate:
                 try:
@@ -547,42 +410,16 @@ class RayGenerationRuntime:
                 and error.__cause__ is None
             ):
                 raise
-            shutdown_task = self._shutdown_task
-            if shutdown_task is not None and not shutdown_task.done():
-                failure = self._publish_failure(error)
-            else:
-                failure = await self._terminalize_after_failure(
-                    error,
-                    join_control_tasks=False,
-                    force_shutdown=force_shutdown,
-                )
+            failure = await self._terminalize_after_failure(
+                error,
+                force_shutdown=force_shutdown,
+            )
             if isinstance(error, asyncio.CancelledError):
                 error.__cause__ = failure
                 raise
             if failure is error:
                 raise
             raise failure from failure.__cause__
-
-    async def _shutdown_once(self) -> None:
-        current = asyncio.current_task()
-        pending = [
-            task
-            for task in (self._activation_task, self._offload_task)
-            if task is not None and task is not current
-        ]
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
-        if self.lifecycle.phase is RuntimePhase.TERMINATED:
-            return
-        try:
-            await self._teardown_session()
-        except BaseException as error:
-            root_failure = self.lifecycle.failure
-            self.lifecycle.fail(error)
-            if root_failure is not None and root_failure is not error:
-                raise error from root_failure
-            raise
-        self.lifecycle.finish_shutdown()
 
     async def _teardown_session(self) -> None:
         monitor_stopped = await asyncio.to_thread(self._health_monitor.stop)

@@ -949,47 +949,6 @@ async def test_health_failure_before_lease_transition_preserves_root_and_force_k
 
 
 @pytest.mark.asyncio
-async def test_offload_is_single_flight_and_idempotent() -> None:
-    runtime = _on_demand_runtime()
-    session = _BlockingSleepSession()
-    runtime._session = session
-
-    first = asyncio.create_task(runtime.offload())
-    await asyncio.wait_for(session.sleep_started.wait(), timeout=1)
-    second = asyncio.create_task(runtime.offload())
-    await asyncio.sleep(0)
-    assert not first.done()
-    assert not second.done()
-
-    session.finish_sleep.set()
-    await asyncio.wait_for(asyncio.gather(first, second), timeout=1)
-    await runtime.offload()
-    assert session.calls == ["sleep"]
-    assert runtime._session_parked is True
-
-
-@pytest.mark.asyncio
-async def test_activation_waits_for_in_flight_offload_before_waking() -> None:
-    runtime = _on_demand_runtime()
-    session = _BlockingSleepSession()
-    runtime._session = session
-
-    offload = asyncio.create_task(runtime.offload())
-    await asyncio.wait_for(session.sleep_started.wait(), timeout=1)
-    activation = asyncio.create_task(runtime.activate())
-    await asyncio.sleep(0)
-
-    assert not activation.done()
-    assert session.calls == []
-
-    session.finish_sleep.set()
-    await asyncio.wait_for(asyncio.gather(offload, activation), timeout=1)
-
-    assert session.calls == ["sleep", "wake"]
-    assert runtime._session_parked is False
-
-
-@pytest.mark.asyncio
 async def test_generate_rejects_in_flight_offload() -> None:
     runtime = _on_demand_runtime()
     session = _BlockingSleepSession()
@@ -1042,94 +1001,11 @@ async def test_weight_update_rejects_in_flight_offload() -> None:
     offload = asyncio.create_task(runtime.offload())
     await asyncio.wait_for(session.sleep_started.wait(), timeout=1)
 
-    with pytest.raises(RuntimeError, match="offload to be idle"):
+    with pytest.raises(RuntimeError, match="overlap rollout offload"):
         await runtime.update_weights("W2", 2)
 
     session.finish_sleep.set()
     await asyncio.wait_for(offload, timeout=1)
-
-
-@pytest.mark.asyncio
-async def test_terminal_failure_cancels_offload_with_stable_root() -> None:
-    runtime = _on_demand_runtime()
-    inner = _BlockingSleepSession()
-    runtime._session = inner
-    timeout = RayOperationTimeout("rollout.generation.sleep", 0.5)
-
-    offload = asyncio.create_task(runtime.offload())
-    await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
-    terminalize = asyncio.create_task(runtime._terminalize_after_failure(timeout))
-
-    with pytest.raises(asyncio.CancelledError) as caught:
-        await offload
-    assert await asyncio.wait_for(terminalize, timeout=1) is timeout
-
-    assert caught.value.__cause__ is timeout
-    assert root_failure_cause(caught.value) is timeout
-    assert inner.calls == ["shutdown"]
-    assert runtime.lifecycle.failure is timeout
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-
-
-@pytest.mark.asyncio
-async def test_waiter_cancellation_does_not_cancel_offload_or_forge_root() -> None:
-    runtime = _on_demand_runtime()
-    inner = _BlockingSleepSession()
-    runtime._session = inner
-
-    waiter = asyncio.create_task(runtime.offload())
-    await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
-    waiter.cancel()
-    with pytest.raises(asyncio.CancelledError) as caught:
-        await waiter
-
-    assert caught.value.__cause__ is None
-    assert runtime.lifecycle.failure is None
-    assert runtime._offload_task is not None
-    assert not runtime._offload_task.done()
-
-    inner.finish_sleep.set()
-    await asyncio.wait_for(runtime.offload(), timeout=1)
-    assert inner.calls == ["sleep"]
-    assert runtime._session_parked is True
-    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
-
-
-@pytest.mark.asyncio
-async def test_offload_task_cleans_up_failure_after_waiter_cancellation() -> None:
-    runtime = _on_demand_runtime()
-    offload_error = RuntimeError("late sleep failure")
-
-    class _LateFailingSession(_FakeSession):
-        def __init__(self) -> None:
-            super().__init__()
-            self.sleep_started = asyncio.Event()
-            self.finish_sleep = asyncio.Event()
-
-        async def sleep_engines(self) -> None:
-            self.sleep_started.set()
-            await self.finish_sleep.wait()
-            raise offload_error
-
-    inner = _LateFailingSession()
-    runtime._session = inner
-    waiter = asyncio.create_task(runtime.offload())
-    await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
-    control_task = runtime._offload_task
-    assert control_task is not None
-
-    waiter.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await waiter
-    inner.finish_sleep.set()
-    with pytest.raises(RuntimeError, match="late sleep failure") as caught:
-        await asyncio.wait_for(control_task, timeout=1)
-
-    assert caught.value is offload_error
-    assert inner.calls == ["shutdown"]
-    assert runtime._session is None
-    assert runtime.lifecycle.failure is offload_error
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
 @pytest.mark.asyncio
@@ -1179,151 +1055,9 @@ async def test_offload_cleanup_failure_retries_without_replacing_root() -> None:
     assert caught.value is offload_error
     assert any("worker cleanup failed" in note for note in getattr(offload_error, "__notes__", ()))
     assert runtime.lifecycle.failure is offload_error
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._session is None
-    assert inner.shutdown_calls == 2
-
-    await runtime.shutdown()
-    assert inner.shutdown_calls == 2
-
-
-@pytest.mark.asyncio
-async def test_repeated_offload_cleanup_failure_preserves_root_for_later_retry() -> None:
-    runtime = _on_demand_runtime()
-    offload_error = RuntimeError("sleep failed")
-    cleanup_error = RuntimeError("worker cleanup keeps failing")
-
-    class _FailingSession(_FakeSession):
-        shutdown_calls = 0
-
-        async def sleep_engines(self) -> None:
-            raise offload_error
-
-        async def shutdown(self) -> None:
-            self.shutdown_calls += 1
-            if self.shutdown_calls <= 2:
-                raise cleanup_error
-            self.calls.append("shutdown")
-
-    inner = _FailingSession()
-    runtime._session = inner
-
-    with pytest.raises(RuntimeError, match="sleep failed") as caught:
-        await runtime.offload()
-
-    assert caught.value is offload_error
-    assert runtime.lifecycle.failure is offload_error
     assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
     assert runtime._session is inner
-    assert inner.shutdown_calls == 2
-    notes = getattr(offload_error, "__notes__", ())
-    assert any("cleanup also failed" in note for note in notes)
-    assert any("cleanup retry also failed" in note for note in notes)
-
-    await runtime.shutdown()
-    assert inner.shutdown_calls == 3
-    assert runtime._session is None
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-
-
-@pytest.mark.asyncio
-async def test_waiter_cancellation_during_cleanup_retry_preserves_root_cause() -> None:
-    runtime = _on_demand_runtime()
-    offload_error = RuntimeError("sleep failed")
-    cleanup_error = RuntimeError("first cleanup failed")
-
-    class _BlockingRetrySession(_FakeSession):
-        shutdown_calls = 0
-
-        def __init__(self) -> None:
-            super().__init__()
-            self.retry_started = asyncio.Event()
-            self.finish_retry = asyncio.Event()
-
-        async def sleep_engines(self) -> None:
-            raise offload_error
-
-        async def shutdown(self) -> None:
-            self.shutdown_calls += 1
-            if self.shutdown_calls == 1:
-                raise cleanup_error
-            self.retry_started.set()
-            await self.finish_retry.wait()
-            self.calls.append("shutdown")
-
-    inner = _BlockingRetrySession()
-    runtime._session = inner
-    waiter = asyncio.create_task(runtime.offload())
-    await asyncio.wait_for(inner.retry_started.wait(), timeout=1)
-
-    waiter.cancel()
-    with pytest.raises(asyncio.CancelledError) as caught:
-        await waiter
-
-    assert caught.value.__cause__ is offload_error
-    assert root_failure_cause(caught.value) is offload_error
-    assert runtime.lifecycle.failure is offload_error
-    assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-    assert runtime._session is inner
-
-    inner.finish_retry.set()
-    await asyncio.wait_for(runtime.shutdown(), timeout=1)
-    assert inner.shutdown_calls == 2
-    assert runtime._session is None
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-
-
-@pytest.mark.asyncio
-async def test_waiter_cancellation_uses_root_published_during_graceful_shutdown() -> None:
-    runtime = _on_demand_runtime()
-    offload_error = RuntimeError("late offload failure")
-    cleanup_error = RuntimeError("graceful cleanup failed")
-
-    class _LateFailingSession(_FakeSession):
-        shutdown_calls = 0
-
-        def __init__(self) -> None:
-            super().__init__()
-            self.sleep_started = asyncio.Event()
-            self.finish_sleep = asyncio.Event()
-
-        async def sleep_engines(self) -> None:
-            self.sleep_started.set()
-            await self.finish_sleep.wait()
-            raise offload_error
-
-        async def shutdown(self) -> None:
-            self.shutdown_calls += 1
-            if self.shutdown_calls == 1:
-                raise cleanup_error
-            self.calls.append("shutdown")
-
-    inner = _LateFailingSession()
-    runtime._session = inner
-    waiter = asyncio.create_task(runtime.offload())
-    await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
-    graceful_shutdown = asyncio.create_task(runtime.shutdown())
-    await asyncio.sleep(0)
-    assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-    assert runtime.lifecycle.failure is None
-
-    waiter.cancel()
-    await asyncio.sleep(0)
-    assert not waiter.done()
-    assert runtime.lifecycle.failure is None
-    inner.finish_sleep.set()
-
-    with pytest.raises(asyncio.CancelledError) as caught:
-        await waiter
-    with pytest.raises(RuntimeError, match="graceful cleanup failed") as cleanup:
-        await graceful_shutdown
-
-    assert cleanup.value is cleanup_error
-    assert caught.value.__cause__ is offload_error
-    assert root_failure_cause(caught.value) is offload_error
-    assert runtime.lifecycle.failure is offload_error
-    assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-    assert runtime._session is inner
+    assert inner.shutdown_calls == 1
 
     await runtime.shutdown()
     assert inner.shutdown_calls == 2
@@ -1332,38 +1066,7 @@ async def test_waiter_cancellation_uses_root_published_during_graceful_shutdown(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_cold_activation_launches_and_restores_once() -> None:
-    runtime = _on_demand_runtime()
-    await _stage_pending_install(runtime, "W", 3)
-    candidate = _BlockingRestoreSession()
-    launch_calls = 0
-
-    class _Factory:
-        async def launch_session(self):
-            nonlocal launch_calls
-            launch_calls += 1
-            return candidate
-
-    runtime._session_factory = _Factory().launch_session
-    first = asyncio.create_task(runtime.activate())
-    await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
-    second = asyncio.create_task(runtime.activate())
-    await asyncio.sleep(0)
-
-    assert launch_calls == 1
-    assert runtime._session is None
-    assert not first.done()
-    assert not second.done()
-
-    candidate.finish_restore.set()
-    await asyncio.wait_for(asyncio.gather(first, second), timeout=1)
-    assert runtime._session is candidate
-    assert runtime._installed_policy_version == 3
-    assert candidate.calls == [("update", "W", 3)]
-
-
-@pytest.mark.asyncio
-async def test_cancelled_waiter_does_not_publish_candidate_capability() -> None:
+async def test_cancelled_restore_closes_the_unpublished_candidate() -> None:
     runtime = _on_demand_runtime()
     await _stage_pending_install(runtime, "W", 3)
     candidate = _BlockingRestoreSession()
@@ -1373,78 +1076,52 @@ async def test_cancelled_waiter_does_not_publish_candidate_capability() -> None:
         return candidate
 
     runtime._session_factory = launch_session
-    cancelled_waiter = asyncio.create_task(runtime.activate())
+    activation = asyncio.create_task(runtime.activate())
     await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
 
-    cancelled_waiter.cancel()
+    activation.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await cancelled_waiter
+        await activation
 
+    assert candidate.calls == ["shutdown"]
+    assert candidate.force_close_calls == 1
     assert runtime._session is None
     assert runtime.supports_non_draining_weight_sync is False
-
-    surviving_waiter = asyncio.create_task(runtime.activate())
-    candidate.finish_restore.set()
-    await asyncio.wait_for(surviving_waiter, timeout=1)
-
-    assert runtime._session is candidate
-    assert runtime.supports_non_draining_weight_sync is True
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
 @pytest.mark.asyncio
-async def test_concurrent_activation_wakes_and_restores_once() -> None:
+async def test_cancelled_launch_closes_the_fleet_its_thread_still_produces() -> None:
+    """Actor startup runs in a thread cancellation cannot stop; its fleet is closed."""
+
     runtime = _on_demand_runtime()
-    inner = _BlockingRestoreSession()
-    runtime._session = inner
-    runtime._session_parked = True
-    await _stage_pending_install(runtime, "W", 3)
+    candidate = _FakeSession()
+    launch_started = asyncio.Event()
+    finish_launch = asyncio.Event()
 
-    first = asyncio.create_task(runtime.activate())
-    await asyncio.wait_for(inner.restore_started.wait(), timeout=1)
-    assert runtime._session_parked is False
-    assert runtime._activation_task is not None
-    second = asyncio.create_task(runtime.activate())
+    async def launch_session() -> _FakeSession:
+        launch_started.set()
+        await finish_launch.wait()
+        return candidate
+
+    runtime._session_factory = launch_session
+    activation = asyncio.create_task(runtime.activate())
+    await asyncio.wait_for(launch_started.wait(), timeout=1)
+
+    activation.cancel()
     await asyncio.sleep(0)
-    assert not first.done()
-    assert not second.done()
+    assert not activation.done()
+    finish_launch.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(activation, timeout=1)
 
-    inner.finish_restore.set()
-    await asyncio.wait_for(asyncio.gather(first, second), timeout=1)
-    assert inner.calls == ["wake", ("update", "W", 3)]
+    assert candidate.calls == ["shutdown"]
+    assert runtime._session is None
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
 @pytest.mark.asyncio
-async def test_activation_waiter_cancellation_does_not_cancel_parked_wake() -> None:
-    runtime = _on_demand_runtime()
-    session = _BlockingWakeSession()
-    _attach_active_session(runtime, session, 0)
-    runtime._session_parked = True
-    await _stage_pending_install(runtime, "W1", 1)
-
-    first_waiter = asyncio.create_task(runtime.activate())
-    await asyncio.wait_for(session.wake_started.wait(), timeout=1)
-    first_waiter.cancel()
-    with pytest.raises(asyncio.CancelledError) as cancelled:
-        await first_waiter
-
-    assert cancelled.value.__cause__ is None
-    assert runtime.lifecycle.phase is RuntimePhase.RUNNING
-    assert runtime.lifecycle.failure is None
-    assert session.force_close_calls == 0
-    second_waiter = asyncio.create_task(runtime.activate())
-    await asyncio.sleep(0)
-    assert not second_waiter.done()
-
-    session.finish_wake.set()
-    await asyncio.wait_for(second_waiter, timeout=1)
-
-    assert session.calls == ["wake", ("update", "W1", 1)]
-    assert runtime._installed_policy_version == 1
-    assert runtime._pending_install is None
-
-
-@pytest.mark.asyncio
-async def test_update_rejects_activation_overlap_while_offload_joins_it() -> None:
+async def test_update_rejects_in_flight_activation() -> None:
     runtime = _on_demand_runtime()
     await _stage_pending_install(runtime, "W1", 1)
     candidate = _BlockingRestoreSession()
@@ -1457,130 +1134,13 @@ async def test_update_rejects_activation_overlap_while_offload_joins_it() -> Non
     activation = asyncio.create_task(runtime.activate())
     await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
 
-    with pytest.raises(RuntimeError, match="activation to be idle"):
+    with pytest.raises(RuntimeError, match="overlap rollout activate"):
         await runtime.update_weights("W2", 2)
-    offload = asyncio.create_task(runtime.offload())
-    await asyncio.sleep(0)
-    assert not offload.done()
     _assert_pending_install(runtime, "W1", 1)
 
     candidate.finish_restore.set()
-    await asyncio.wait_for(asyncio.gather(activation, offload), timeout=1)
-    assert candidate.calls == [("update", "W1", 1), "sleep"]
-    assert runtime._session_parked is True
-
-
-@pytest.mark.asyncio
-async def test_shutdown_joins_activation_after_waiter_cancellation() -> None:
-    runtime = _on_demand_runtime()
-    await _stage_pending_install(runtime, "W", 4)
-    candidate = _BlockingRestoreSession()
-
-    class _Factory:
-        async def launch_session(self):
-            return candidate
-
-    runtime._session_factory = _Factory().launch_session
-    waiter = asyncio.create_task(runtime.activate())
-    await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
-    waiter.cancel()
-    with pytest.raises(asyncio.CancelledError) as cancelled:
-        await waiter
-    assert cancelled.value.__cause__ is None
-
-    shutdown = asyncio.create_task(runtime.shutdown())
-    await asyncio.sleep(0)
-    assert not shutdown.done()
-    assert "shutdown" not in candidate.calls
-
-    candidate.finish_restore.set()
-    await asyncio.wait_for(shutdown, timeout=1)
-    assert candidate.calls == [("update", "W", 4), "shutdown"]
-    assert runtime._session is None
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-
-
-@pytest.mark.asyncio
-async def test_late_shutdown_joins_activation_owned_terminal_cleanup() -> None:
-    runtime = _on_demand_runtime()
-    await _stage_pending_install(runtime, "W2", 2)
-    runtime._installed_policy_version = 1
-    runtime._session_parked = True
-    health_failure = RolloutWorkerUnreachable(
-        "rollout-1",
-        0.5,
-        TimeoutError("health probe timed out"),
-    )
-    finish_calls = 0
-    finish_outer_shutdown = runtime.lifecycle.finish_shutdown
-
-    def count_finish_shutdown() -> None:
-        nonlocal finish_calls
-        finish_calls += 1
-        finish_outer_shutdown()
-
-    runtime.lifecycle.finish_shutdown = count_finish_shutdown
-
-    class _BlockingShutdownSession(_FakeSession):
-        def __init__(self) -> None:
-            super().__init__()
-            self.shutdown_started = asyncio.Event()
-            self.finish_shutdown = asyncio.Event()
-
-        async def update_weights(self, state_ref: Any, version: int) -> None:
-            await super().update_weights(state_ref, version)
-            runtime.lifecycle.fail(health_failure)
-
-        async def shutdown(self) -> None:
-            self.calls.append("shutdown")
-            self.shutdown_started.set()
-            await self.finish_shutdown.wait()
-
-    inner = _BlockingShutdownSession()
-    inner.current_policy_version = 1
-    runtime._session = inner
-
-    activation = asyncio.create_task(runtime.activate())
-    await asyncio.wait_for(inner.shutdown_started.wait(), timeout=1)
-    shutdown_waiters = [
-        asyncio.create_task(runtime.shutdown()),
-        asyncio.create_task(runtime.shutdown()),
-    ]
-    await asyncio.sleep(0)
-    assert all(not waiter.done() for waiter in shutdown_waiters)
-
-    inner.finish_shutdown.set()
-    with pytest.raises(RolloutWorkerUnreachable) as caught:
-        await activation
-    await asyncio.wait_for(asyncio.gather(*shutdown_waiters), timeout=1)
-
-    assert caught.value is health_failure
-    assert inner.calls == ["wake", ("update", "W2", 2), "shutdown"]
-    assert finish_calls == 1
-    assert runtime.lifecycle.failure is health_failure
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._session is None
-    assert not any(
-        "cleanup also failed" in note for note in getattr(health_failure, "__notes__", ())
-    )
-
-
-@pytest.mark.asyncio
-async def test_shutdown_joins_offload_before_teardown() -> None:
-    runtime = _on_demand_runtime()
-    inner = _BlockingSleepSession()
-    runtime._session = inner
-
-    offload = asyncio.create_task(runtime.offload())
-    await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
-    shutdown = asyncio.create_task(runtime.shutdown())
-    await asyncio.sleep(0)
-    assert "shutdown" not in inner.calls
-
-    inner.finish_sleep.set()
-    await asyncio.wait_for(asyncio.gather(offload, shutdown), timeout=1)
-    assert inner.calls == ["sleep", "shutdown"]
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    await asyncio.wait_for(activation, timeout=1)
+    assert candidate.calls == [("update", "W1", 1)]
 
 
 @pytest.mark.asyncio

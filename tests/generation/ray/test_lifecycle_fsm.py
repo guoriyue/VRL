@@ -56,14 +56,6 @@ def test_resident_runtime_tracks_only_worker_ownership() -> None:
     assert runtime._owned_ranks == []
 
 
-async def _wait_for_shutdown_idle(runtime: RayGenerationRuntime) -> None:
-    async def _poll() -> None:
-        while runtime._shutdown_task is not None:
-            await asyncio.sleep(0)
-
-    await asyncio.wait_for(_poll(), timeout=1)
-
-
 def test_terminal_lifecycle_closes_admission_and_finishes_once() -> None:
     lifecycle = RuntimeLifecycle()
     assert lifecycle.phase is RuntimePhase.RUNNING
@@ -230,36 +222,6 @@ async def test_cancelled_shutdown_waiter_does_not_cancel_cleanup() -> None:
     assert not surviving_waiter.done()
     finish_teardown.set()
     await asyncio.wait_for(surviving_waiter, timeout=1)
-    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-
-
-@pytest.mark.asyncio
-async def test_cleanup_failure_after_waiter_cancellation_can_be_retried() -> None:
-    teardown_started = asyncio.Event()
-    fail_first_teardown = asyncio.Event()
-    cleanup_calls = 0
-    runtime = _runtime()
-
-    async def teardown() -> None:
-        nonlocal cleanup_calls
-        cleanup_calls += 1
-        if cleanup_calls == 1:
-            teardown_started.set()
-            await fail_first_teardown.wait()
-            raise RuntimeError("first cleanup failed")
-
-    runtime._teardown_session = teardown
-    cancelled_waiter = asyncio.create_task(runtime.shutdown())
-    await asyncio.wait_for(teardown_started.wait(), timeout=1)
-    cancelled_waiter.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await cancelled_waiter
-
-    fail_first_teardown.set()
-    await _wait_for_shutdown_idle(runtime)
-    assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
-    await runtime.shutdown()
-    assert cleanup_calls == 2
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
 
