@@ -1094,10 +1094,7 @@ async def run_online_recipe(
         output_dir = Path(trainer_config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        run_trace: TrainingRunTrace | None = None
-
         def prepare_launch_files() -> None:
-            nonlocal run_trace
             save_resolved_config(cfg, output_dir, resumed=resumed)
             run_trace = TrainingRunTrace.capture(
                 cfg,
@@ -1221,16 +1218,6 @@ async def run_online_recipe(
         run.save_checkpoint(
             output_dir / "checkpoint-final",
             epoch=run_config.total_epochs,
-        )
-
-        def seal_completed_loop() -> None:
-            if run_trace is None:
-                raise RuntimeError("training launch evidence was not published")
-            seal_path = run_trace.seal_artifacts()
-            logger.info("Training artifact evidence: %s", seal_path)
-
-        run_on_primary_rank(
-            training_context, seal_completed_loop, description="training artifact evidence"
         )
         if is_primary:
             logger.info("Training complete. Final checkpoint: %s", output_dir / "checkpoint-final")

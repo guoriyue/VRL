@@ -201,6 +201,14 @@ checks remain. Historical progress below describes earlier implementations;
 there is no current requirement to match complete run configurations or metric
 values exactly across runs.
 
+## 2026-09-27：结束封存与评测关联已删除
+
+按 `SPRINT_overengineering_audit.md` 第一档第 6 条，`TrainingRunTrace.seal_artifacts` /
+`verify_artifacts` / `verify_completion` / `verify_evaluation`、`image_checkpoint_eval --verify-training-evidence`、
+`EvaluationArchive.verify_report` 与 `evaluation_complete.json` 以及 `GeneratorRuntimeIdentity` 均已删除：
+唯一读者是从未被使用过的 verification 模式。启动记录 `run_evidence/<launch_id>.json` 与
+`generation_manifest.json` 保留。
+
 ## 2026-09-09: Seed trainer initialization and expose strict numerical settings
 
 The online entrypoint now applies its existing run-owned seed policy before model

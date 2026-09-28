@@ -5,12 +5,9 @@ This does not replace native pipeline protocols such as frozen SANA evaluation.
 
 from __future__ import annotations
 
-import importlib.metadata
 import math
-import platform
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
-from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
@@ -18,9 +15,7 @@ import torch
 
 from vrl.generation.types import DenoiseRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
-from vrl.models.source_integrity import runtime_source_tree_sha256
 from vrl.utils.media import to_pil_image
-from vrl.utils.validation import require_mapping_keys
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -124,75 +119,6 @@ class ImageSampling:
         """One flat mapping of every effective sampling value, family keys included."""
 
         return {**{name: getattr(self, name) for name in self._named_fields()}, **self.family}
-
-
-@dataclass(frozen=True, slots=True)
-class GeneratorRuntimeIdentity:
-    """Bind paired archives to the generator code and core package versions.
-
-    ``capture()`` is the only producer; archives re-read it with
-    ``from_mapping`` and compare whole values, so a runtime drift between
-    preflight and generation, or between two paired archives, fails closed.
-    """
-
-    python: str
-    packages: dict[str, str | None]
-    # Digest over every vrl/**/*.py file. Broader than what produces pixels
-    # (reward and evaluator code count too), so paired evaluation compares only
-    # ``python`` + ``packages`` and leaves this to causal audits.
-    vrl_python_tree_sha256: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.python, str) or not self.python:
-            raise ValueError("generator runtime python must be a non-empty string")
-        if not isinstance(self.packages, Mapping) or not self.packages:
-            raise ValueError("generator runtime packages must be a non-empty mapping")
-        digest = self.vrl_python_tree_sha256
-        if (
-            not isinstance(digest, str)
-            or len(digest) != 64
-            or any(character not in "0123456789abcdef" for character in digest)
-        ):
-            raise ValueError(
-                "generator runtime requires a lowercase hexadecimal vrl_python_tree_sha256",
-            )
-        object.__setattr__(self, "packages", dict(self.packages))
-
-    @classmethod
-    def capture(cls) -> GeneratorRuntimeIdentity:
-        package_root = Path(__file__).resolve().parents[2]
-        digest = runtime_source_tree_sha256(package_root, include_globs=("**/*.py",))
-
-        versions: dict[str, str | None] = {}
-        for package in ("torch", "diffusers", "transformers", "peft", "safetensors"):
-            try:
-                versions[package] = importlib.metadata.version(package)
-            except importlib.metadata.PackageNotFoundError:
-                versions[package] = None
-        return cls(
-            python=platform.python_version(),
-            packages=versions,
-            vrl_python_tree_sha256=digest,
-        )
-
-    @classmethod
-    def from_mapping(
-        cls,
-        value: Mapping[str, Any] | Any,
-        *,
-        what: str = "generator runtime",
-    ) -> GeneratorRuntimeIdentity:
-        """Parse one fail-closed persisted runtime record."""
-
-        try:
-            return cls(
-                **require_mapping_keys(value, (field.name for field in fields(cls)), what=what)
-            )
-        except ValueError as error:
-            raise ValueError(f"{what}: {error}") from error
-
-    def to_record(self) -> dict[str, Any]:
-        return {field.name: getattr(self, field.name) for field in fields(self)}
 
 
 def seed_for(
@@ -326,7 +252,6 @@ def video_to_cthw(video: torch.Tensor) -> torch.Tensor:
 
 
 __all__ = [
-    "GeneratorRuntimeIdentity",
     "ImageSampling",
     "generate_images",
     "generate_one_video",

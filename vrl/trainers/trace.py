@@ -9,29 +9,22 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
-import json
 import os
 import platform
 import subprocess
 import uuid
-from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import torch
 from omegaconf import OmegaConf
 
-from vrl.models.checkpoint_identity import LocalCheckpointContent
 from vrl.models.precision import float32_precision_state
 from vrl.utils.json_files import canonical_json_sha256, write_json
 
-if TYPE_CHECKING:
-    from vrl.scripts.eval.image_checkpoint_eval import EvaluationArchive
-
 # These are file/protocol and environment boundaries, not algorithm vocabulary.
 RUN_EVIDENCE_SCHEMA = "vrl.run-evidence/v1"
-RUN_ARTIFACTS_SCHEMA = "vrl.run-artifacts/v1"
 _RUNTIME_ENVIRONMENT_KEYS = (
     "RANK",
     "LOCAL_RANK",
@@ -46,27 +39,10 @@ _RUNTIME_ENVIRONMENT_KEYS = (
 
 
 class TrainingRunTrace:
-    """Own one launch's evidence paths and its artifact/verification lifecycle.
-
-    Verification rereads records from disk so an existing object cannot hide
-    modified evidence. Loading accepts either a launch record or its artifact receipt.
-    """
+    """Own one launch's evidence record path."""
 
     def __init__(self, launch_path: Path) -> None:
         self.launch_path = launch_path
-        self.output_dir = launch_path.parent.parent
-        self.artifacts_path = launch_path.with_suffix(".artifacts.json")
-
-    @classmethod
-    def load(cls, path: str | Path) -> TrainingRunTrace:
-        path = Path(path)
-        if path.name.endswith(".artifacts.json"):
-            path = path.with_name(path.name.removesuffix(".artifacts.json") + ".json")
-        if path.parent.name != "run_evidence" or path.suffix != ".json":
-            raise ValueError("launch evidence must be run_evidence/<launch_id>.json")
-        trace = cls(path)
-        trace._read_launch()
-        return trace
 
     @classmethod
     def capture(
@@ -106,179 +82,7 @@ class TrainingRunTrace:
         directory.mkdir(parents=True, exist_ok=True)
         destination = directory / f"{record['launch_id']}.json"
         write_json(destination, record, overwrite=False)
-        return cls.load(destination)
-
-    def _read_launch(self) -> dict[str, Any]:
-        path = self.launch_path
-        record = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(record, dict) or record.get("schema") != RUN_EVIDENCE_SCHEMA:
-            raise ValueError(f"unsupported launch evidence: {path}")
-        if record.get("launch_id") != path.stem:
-            raise ValueError(f"launch identifier does not match evidence filename: {path}")
-        if canonical_json_sha256(record["config"], allow_nan=False) != record.get("config_sha256"):
-            raise ValueError(f"launch config digest mismatch: {path}")
-        return record
-
-    def seal_artifacts(self) -> Path:
-        """Bind final online-loop artifacts to this launch, before runtime cleanup.
-
-        Hash complete checkpoint contents without deserializing tensors. This is an
-        observation of bytes on disk, not a success result or recipe quality grade.
-        Resuming in the same output directory can invalidate the old observation;
-        archive the directory before resume to preserve independently verifiable runs.
-        """
-
-        launch_path = self.launch_path
-        launch = self._read_launch()
-        output_dir = self.output_dir
-        paths = {
-            "launch": launch_path,
-            "metrics": output_dir / "metrics.csv",
-            "final_checkpoint": output_dir / "checkpoint-final",
-        }
-        full_precision = output_dir / "metrics.full_precision.csv"
-        if full_precision.exists():
-            paths["full_precision_metrics"] = full_precision
-        artifacts = {
-            role: {
-                "path": path.relative_to(output_dir).as_posix(),
-                "content": asdict(LocalCheckpointContent.from_path(path)),
-            }
-            for role, path in paths.items()
-        }
-        # Reject malformed/empty artifacts; a directory standing in for metrics or
-        # an empty checkpoint must not acquire a completion-looking receipt.
-        for role in ("metrics", "full_precision_metrics"):
-            if role in artifacts and artifacts[role]["content"]["kind"] != "file":
-                raise ValueError(f"{role} artifact must be a file")
-        checkpoint = artifacts["final_checkpoint"]["content"]
-        if checkpoint["kind"] != "tree" or checkpoint["files"] == 0:
-            raise ValueError("final checkpoint artifact must be a nonempty directory")
-        record = {
-            "schema": RUN_ARTIFACTS_SCHEMA,
-            "launch_id": launch["launch_id"],
-            "captured_at": datetime.now(UTC).isoformat(),
-            "phase": "after-training-loop-before-cleanup",
-            "artifacts": artifacts,
-        }
-        destination = self.artifacts_path
-        write_json(destination, record, overwrite=False)
-        return destination
-
-    def verify_artifacts(self) -> dict[str, Any]:
-        """Fail on missing/replaced artifacts; never load checkpoint pickle payloads.
-
-        The receipt itself needs an external trusted hash/archive for authenticity.
-        Matching self-contained hashes establishes consistency, not authorship.
-        """
-
-        seal_path = self.artifacts_path
-        record = json.loads(seal_path.read_text(encoding="utf-8"))
-        if not isinstance(record, dict) or record.get("schema") != RUN_ARTIFACTS_SCHEMA:
-            raise ValueError(f"unsupported artifact evidence: {seal_path}")
-        launch_path = self.launch_path
-        launch = self._read_launch()
-        if record.get("launch_id") != launch["launch_id"]:
-            raise ValueError("artifact receipt belongs to a different launch")
-        expected = {
-            "launch": f"run_evidence/{launch_path.name}",
-            "metrics": "metrics.csv",
-            "final_checkpoint": "checkpoint-final",
-        }
-        artifacts = record.get("artifacts")
-        if isinstance(artifacts, dict) and "full_precision_metrics" in artifacts:
-            expected["full_precision_metrics"] = "metrics.full_precision.csv"
-        if not isinstance(artifacts, dict) or set(artifacts) != set(expected):
-            raise ValueError("artifact receipt must bind launch, metrics, and final checkpoint")
-        for role, relative in expected.items():
-            artifact = artifacts[role]
-            if not isinstance(artifact, dict) or artifact.get("path") != relative:
-                raise ValueError(f"unexpected {role} artifact path")
-            observed = asdict(LocalCheckpointContent.from_path(self.output_dir / relative))
-            if observed != artifact.get("content"):
-                raise ValueError(f"{role} artifact content mismatch")
-        return record
-
-    def verify_completion(self, result_path: str | Path) -> dict[str, Any]:
-        """Check artifact integrity and the supplied successful process outcome.
-
-        There is no cross-process attempt identity: this does not establish that
-        the supplied result and artifacts came from the same execution.
-        """
-
-        self.verify_artifacts()
-        launch = self._read_launch()
-        result = json.loads(Path(result_path).read_text(encoding="utf-8"))
-        if not isinstance(result, dict) or result.get("schema_version") != 1:
-            raise ValueError("unsupported run result")
-        if result.get("status") != "success":
-            raise ValueError("run attempt did not complete successfully")
-        if (
-            type(result.get("supervisor_exit_code")) is not int
-            or result["supervisor_exit_code"] != 0
-        ):
-            raise ValueError("supervisor did not observe a successful process exit")
-        world_size = int(launch["runtime"].get("environment", {}).get("WORLD_SIZE", "1"))
-        if world_size > 1:
-            ranks = result.get("rank_results")
-            if result.get("world_size") != world_size or not isinstance(ranks, list):
-                raise ValueError("distributed completion requires an aggregate result")
-            if len(ranks) != world_size:
-                raise ValueError("distributed completion is missing rank results")
-            seen = set()
-            for rank in ranks:
-                if (
-                    not isinstance(rank, dict)
-                    or type(rank.get("rank")) is not int
-                    or rank["rank"] not in range(world_size)
-                    or rank["rank"] in seen
-                    or rank.get("world_size") != world_size
-                    or rank.get("status") != "success"
-                ):
-                    raise ValueError("distributed completion contains an invalid rank result")
-                seen.add(rank["rank"])
-        elif "rank" in result or "rank_results" in result or result.get("world_size", 1) != 1:
-            raise ValueError("single-process launch has a distributed result")
-        return result
-
-    def verify_evaluation(
-        self,
-        result_path: str | Path,
-        archive: EvaluationArchive,
-    ) -> dict[str, Any]:
-        """Associate a completed image evaluation with the exact final trained state.
-
-        The caller supplies the expected EvaluationPlan through its archive. Never
-        reconstruct the intended protocol from the report being checked. Checkpoint
-        labels and paths are presentation: content and model identity establish the
-        association. This does not certify held-out data independence or learning.
-        """
-
-        from vrl.trainers.checkpointing import TRAINING_CHECKPOINT_NAME
-        from vrl.utils.artifacts import sha256_file
-
-        self.verify_completion(result_path)
-        launch = self._read_launch()
-        report = archive.verify_report()
-        protocol = report["protocol"]
-        if protocol["model_identity"] != launch["model_identity"]:
-            raise ValueError("evaluation model identity differs from the training launch")
-        final_checkpoint = self.output_dir / "checkpoint-final" / TRAINING_CHECKPOINT_NAME
-        digest = sha256_file(final_checkpoint)
-        labels = [
-            target["label"]
-            for target in protocol["targets"]
-            if target["path"] and target["checkpoint_sha256"] == digest
-        ]
-        if not labels:
-            raise ValueError("evaluation does not contain the final training checkpoint content")
-        return {
-            "launch_id": launch["launch_id"],
-            "checkpoint_sha256": digest,
-            "checkpoint_labels": labels,
-            "evaluation_protocol_sha256": canonical_json_sha256(protocol, allow_nan=False),
-            "evaluation_content": asdict(LocalCheckpointContent.from_path(archive.directory)),
-        }
+        return cls(destination)
 
     @staticmethod
     def _git_snapshot(repository: Path) -> dict[str, Any]:

@@ -365,15 +365,12 @@ def _install_ray_side_fakes(
         "if_supported",
         classmethod(lambda cls, *args, **kwargs: object()),
     )
-    # The recorder trainer has no optimizer state to save and sealing hashes the
-    # written checkpoint-final, so both stay recorders keyed on the ledger.
+    # The recorder trainer has no optimizer state to save, so checkpointing
+    # stays a recorder keyed on the ledger.
     monkeypatch.setattr(
         online.OnlineRecipeRun,
         "save_checkpoint",
         lambda self, path, *args, **kwargs: state["checkpoint_paths"].append(path.name),
-    )
-    monkeypatch.setattr(
-        online.TrainingRunTrace, "seal_artifacts", lambda self: self.artifacts_path
     )
     return reward
 
@@ -1087,42 +1084,6 @@ async def test_launch_evidence_failure_stops_before_training_and_cleans_up(
     assert state["trainer_steps"] == 0
     # The schedule already exists when evidence is captured, so the pipeline
     # is released through it, never the collector.
-    assert state["shutdown_order"] == ["schedule", "owner"]
-
-
-@pytest.mark.asyncio
-async def test_artifact_sealing_runs_after_final_checkpoint_before_cleanup(monkeypatch, tmp_path):
-    run = _RealRun(monkeypatch, tmp_path)
-    state = _state()
-    _install_ray_side_fakes(monkeypatch, tmp_path, state)
-    sealed = []
-
-    def seal(run_evidence):
-        assert state["checkpoint_paths"][-1] == "checkpoint-final"
-        # Nothing has been released yet when the artifacts are sealed.
-        assert state["shutdown_order"] == []
-        sealed.append(run_evidence.launch_path)
-        return run_evidence.artifacts_path
-
-    monkeypatch.setattr(online.TrainingRunTrace, "seal_artifacts", seal)
-    await online.run_online_recipe(run.cfg)
-    (evidence_path,) = sorted((run.output_dir / "run_evidence").glob("*.json"))
-    assert sealed == [evidence_path]
-    assert state["shutdown_order"] == ["schedule", "owner"]
-
-
-@pytest.mark.asyncio
-async def test_artifact_sealing_failure_still_cleans_up(monkeypatch, tmp_path):
-    run = _RealRun(monkeypatch, tmp_path)
-    state = _state()
-    _install_ray_side_fakes(monkeypatch, tmp_path, state)
-
-    def fail_seal(path):
-        raise OSError("artifact disk read failed")
-
-    monkeypatch.setattr(online.TrainingRunTrace, "seal_artifacts", fail_seal)
-    with pytest.raises(OSError, match="artifact disk read failed"):
-        await online.run_online_recipe(run.cfg)
     assert state["shutdown_order"] == ["schedule", "owner"]
 
 

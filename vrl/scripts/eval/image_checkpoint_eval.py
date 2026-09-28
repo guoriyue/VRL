@@ -21,14 +21,13 @@ import random
 import tempfile
 from collections import defaultdict
 from collections.abc import Iterator, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from omegaconf import OmegaConf
 
 from vrl.scripts.eval.denoise_generation import (
-    GeneratorRuntimeIdentity,
     ImageSampling,
     generate_images,
     seed_for,
@@ -100,15 +99,11 @@ class EvaluationPlan:
     config_sha256: str
     manifest_sha256: str
     training_reward_components: tuple[str, ...]
-    runtime_identity: GeneratorRuntimeIdentity = field(
-        default_factory=GeneratorRuntimeIdentity.capture,
-    )
 
     def record(self) -> dict[str, Any]:
         return {
             "schema": "vrl.image-checkpoint-evaluation/v1",
             "model_identity": self.resolved_model.identity,
-            "generator_runtime": self.runtime_identity.to_record(),
             "config_sha256": self.config_sha256,
             "manifest_sha256": self.manifest_sha256,
             "targets": [
@@ -209,11 +204,7 @@ class EvaluationPlan:
     def generate(self, output_dir: Path) -> list[dict[str, Any]]:
         import torch
 
-        from vrl.trainers.checkpointing import (
-            TRAINING_CHECKPOINT_NAME,
-            TrainingCheckpoint,
-            restore_model_checkpoint,
-        )
+        from vrl.trainers.checkpointing import TrainingCheckpoint, restore_model_checkpoint
         from vrl.utils.cuda_memory import release_cuda_memory
 
         if (
@@ -222,8 +213,6 @@ class EvaluationPlan:
             or any(target.path is None for target in self.targets[1:])
         ):
             raise ValueError("generate the base arm before restoring any checkpoint")
-        if GeneratorRuntimeIdentity.capture() != self.runtime_identity:
-            raise ValueError("generator runtime changed after preflight")
         bundle = self.resolved_model.materialize(context="image checkpoint evaluation")
         model = bundle.model.eval()
         rows = list(self.cells())
@@ -231,11 +220,6 @@ class EvaluationPlan:
             # Full-parameter restores overwrite the base; always generate it first.
             for target in self.targets:
                 if target.path is not None:
-                    if (
-                        sha256_file(target.path / TRAINING_CHECKPOINT_NAME)
-                        != target.checkpoint_sha256
-                    ):
-                        raise ValueError(f"checkpoint changed after preflight: {target.path}")
                     checkpoint = TrainingCheckpoint.load(target.path)
                     if checkpoint.next_epoch != target.epoch:
                         raise ValueError(
@@ -358,36 +342,8 @@ class EvaluationArchive:
         return self.validate_images(payload.get("images"))
 
     def reject_completed(self) -> None:
-        report = self.directory / "report"
-        if not report.exists():
-            return
-        self.verify_report()
-        raise FileExistsError("refusing to overwrite a completed evaluation report")
-
-    def verify_report(self) -> dict[str, Any]:
-        """Verify completed scores and their original generated image grid."""
-
-        self.load_generation()
-        report = self.directory / "report"
-        marker = json.loads((report / "evaluation_complete.json").read_text(encoding="utf-8"))
-        hashes = {
-            path.relative_to(report).as_posix(): sha256_file(path)
-            for path in report.rglob("*")
-            if path.is_file() and path != report / "evaluation_complete.json"
-        }
-        required = {
-            "scores.jsonl",
-            "scores.csv",
-            "summary.json",
-            "curve.csv",
-            "curve.png",
-            "provenance.json",
-        }
-        if not required <= hashes.keys():
-            raise ValueError("completed report is missing required artifacts")
-        if marker != {"protocol": self.plan.record(), "artifacts": hashes}:
-            raise ValueError("completed report failed integrity check")
-        return marker
+        if (self.directory / "report").exists():
+            raise FileExistsError("refusing to overwrite a completed evaluation report")
 
     def publish_report(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         from vrl.scripts.eval.score_report import write_curve_report, write_scores
@@ -417,15 +373,6 @@ class EvaluationArchive:
                     ),
                     "interpretation": "Held-out reward gains are not independent human-quality proof; review the blinded images.",
                 },
-            )
-            hashes = {
-                path.relative_to(staging).as_posix(): sha256_file(path)
-                for path in staging.rglob("*")
-                if path.is_file()
-            }
-            write_json(
-                staging / "evaluation_complete.json",
-                {"protocol": self.plan.record(), "artifacts": hashes},
             )
             os.replace(staging, self.directory / "report")
         return summary
@@ -832,14 +779,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tie-epsilon", type=float, default=0.0)
     parser.add_argument("--bootstrap-resamples", type=int, default=2000)
     parser.add_argument("--output-dir", type=Path)
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--dry-run", action="store_true")
-    mode.add_argument(
-        "--verify-training-evidence",
-        type=Path,
-        metavar="ARTIFACT_RECEIPT",
-        help="Verify an existing report against a supervised training receipt; do not generate or score.",
-    )
+    parser.add_argument("--dry-run", action="store_true")
     return parser
 
 
@@ -854,15 +794,6 @@ def main(argv: list[str] | None = None) -> None:
         (args.output_dir or args.run_dir / "checkpoint_evaluation").expanduser().absolute()
     )
     archive = EvaluationArchive(output_dir, plan)
-    if args.verify_training_evidence is not None:
-        from vrl.trainers.trace import TrainingRunTrace
-
-        receipt = args.verify_training_evidence
-        association = TrainingRunTrace.load(receipt).verify_evaluation(
-            receipt.parent.parent / "training_run_result.json", archive
-        )
-        print(json.dumps(association, indent=2, sort_keys=True))
-        return
     if output_dir.exists():
         rows = archive.load_generation()
         archive.reject_completed()
