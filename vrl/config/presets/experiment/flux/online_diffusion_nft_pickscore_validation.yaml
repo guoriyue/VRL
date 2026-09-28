@@ -2,19 +2,15 @@
 #
 # DiffusionNFT is likelihood-free forward-process RL: no log-prob, no ratio. It
 # softly splits samples into positive/negative sets by optimality and regresses
-# reward-weighted flow-matching MSE, using a frozen previous-policy adapter
-# (SPRINT_diffusion_nft_validation). NFT reaches the model through the shared
-# denoise replay forward (replay_forward_with_latents) plus the previous-policy
-# adapter + sync; FLUX's adapter mirror is exercised by
-# tests/models/families/flux/test_previous_adapter_mirror.py. This is Phase B:
+# reward-weighted flow-matching MSE against theta_old, the detached current
+# prediction (SPRINT_diffusion_nft_validation). NFT reaches the model through the
+# shared denoise replay forward (replay_forward_with_latents). This is Phase B:
 # the learning validation.
 #
 # NFT-specific correctness judgements (highest signal first):
-#   1. lr=0 advantage-flip invariant (debug.first_step) — separates "weak signal"
-#      from "garbage signal" (previous adapter not synced / scheduler drift),
-#   2. negative-branch ablation collapse — drop the negative branch and reward
+#   1. negative-branch ablation collapse — drop the negative branch and reward
 #      should fail to rise (the paper's cleanest self-check), and
-#   3. fixed-eval reward rises in the right direction.
+#   2. fixed-eval reward rises in the right direction.
 #
 # Reward = pickscore, NOT the sprint's first-choice geneval (geneval is not
 # runnable here — see online_flow_dppo_pickscore_validation.yaml header).
@@ -45,7 +41,6 @@ algorithm:                     # cosmos-RL DiffusionNFT parity knobs (base/algor
   nft_beta: 1.0
   advantage_scale: 5.0
   kl_coef: 1.0
-  weight_copy_decay: 0.0
   global_std: false
 
 rollout:

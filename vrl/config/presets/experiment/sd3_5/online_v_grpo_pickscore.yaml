@@ -30,8 +30,6 @@ actor:
 
 algorithm:
   adv_soft_clip: 3.0
-  clip_ratio: null
-  kl_coef: 0.0
 
 rollout:
   n_samples_per_prompt: 16

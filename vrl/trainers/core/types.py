@@ -60,8 +60,7 @@ class EMAConfig:
 class DebugConfig:
     """Diagnostic toggles consumed by the trainer."""
 
-    # On step 0: request generation runtime diagnostics with the rollout, and run
-    # the algorithm's own first-step invariant when it has no log-prob gate.
+    # On step 0: request generation runtime diagnostics with the rollout.
     first_step: bool = field(default=False)
 
 

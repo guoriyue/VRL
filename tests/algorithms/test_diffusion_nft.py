@@ -1,15 +1,15 @@
 """Loss-correctness tests for DiffusionNFT (algorithms/diffusion_nft.py).
 
 DiffusionNFT runs the ``uses_evaluator=False`` trainer branch — a completely
-separate code path from every GRPO test, involving a previous-policy forward
-and a reference forward. A sign error here would train in reverse with nothing
-catching it.
+separate code path from every GRPO test, involving a reference forward and the
+trainable forward (theta_old is its detached prediction). A sign error here
+would train in reverse with nothing catching it.
 
 These tests use real collaborators, not stand-ins: a tiny real ``WanTransformer3DModel``,
 either behind a real PEFT LoRA adapter or trained fully (the objective must not
 tell the two apart), and a real ``TrajectoryBatch`` built by the production
-``build_diffusion_trajectory``. So the three NFT branches differ because their
-weights genuinely differ, and the
+``build_diffusion_trajectory``. So the reference and trainable branches differ
+because their weights genuinely differ, and the
 gradient that drives training flows through real attention parameters. The math
 is not re-derived anywhere — the tests take one real optimizer step and assert
 its *direction*: a good sample must pull the forward prediction toward the
@@ -85,9 +85,9 @@ def test_diffusion_nft_advantages_match_grpo_contract(global_std: bool) -> None:
 class _NFTModel(DenoiseModelBase):
     """Holds a real Wan DiT behind the production policy boundary.
 
-    ``transformer`` is a genuine ``WanTransformer3DModel``; ``previous_policy`` /
-    ``reference_policy`` / ``sync_previous_policy`` are the inherited
-    ``DenoiseModelBase`` implementations, so this double adds nothing to them.
+    ``transformer`` is a genuine ``WanTransformer3DModel``; ``reference_policy``
+    is the inherited ``DenoiseModelBase`` implementation, so this double adds
+    nothing to it.
 
     The objectives reach the transformer only through the shared replay
     contract (``replay_forward_with_latents`` -> ``restore_eval_state`` ->
@@ -312,7 +312,7 @@ def test_nft_returns_only_objective_owned_step_metrics() -> None:
 def test_positive_advantage_trains_toward_reconstruction(trainable: str) -> None:
     # A good sample (high positive advantage) must pull the forward prediction
     # TOWARD the velocity that reconstructs the clean latent. The full-parameter
-    # case also proves backward survives the two in-place policy swaps.
+    # case also proves backward survives the in-place reference-policy swap.
     before, after, grad = _step_distances(advantage=5.0, trainable=trainable)
     assert grad.abs().sum() > 0  # non-degenerate gradient through real params
     assert after < before
@@ -332,54 +332,6 @@ def test_non_positive_loss_constants_are_rejected_at_construction(field: str) ->
     # config refuses them before any batch is replayed.
     with pytest.raises(ValueError, match=f"{field} must be > 0"):
         DiffusionNFTConfig(**{field: 0.0})
-
-
-@pytest.mark.parametrize("trainable", ["lora", "full"])
-def test_after_optimizer_step_syncs_the_previous_policy(trainable: str) -> None:
-    """The previous policy is the trainable weights as of the last sync; with
-    ``weight_copy_decay=0`` a sync makes it an exact copy."""
-    model = _build_model(trainable)
-    model.sync_previous_policy()
-    parameter = next(p for p in model.parameters() if p.requires_grad)
-    synced = parameter.detach().clone()
-    with torch.no_grad():
-        parameter.add_(1.0)
-
-    with model.previous_policy():
-        assert torch.equal(parameter, synced)
-    assert torch.equal(parameter, synced + 1.0)
-
-    DiffusionNFT(DiffusionNFTConfig(weight_copy_decay=0.0)).after_optimizer_step(
-        model,
-        global_step=7,
-    )
-    with model.previous_policy():
-        assert torch.equal(parameter, synced + 1.0)
-
-
-@pytest.mark.parametrize("trainable", ["lora", "full"])
-def test_first_step_invariant_check_passes_when_previous_synced(trainable: str) -> None:
-    """Advantage-flip invariant holds with previous freshly synced (lr=0 gate)."""
-
-    model = _build_model(trainable)
-    model.sync_previous_policy()
-    batch = _build_batch(
-        x0=torch.randn(_LATENT_SHAPE),
-        noise=torch.randn(_LATENT_SHAPE),
-        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
-        timestep=500.0,
-    )
-
-    record = DiffusionNFT(DiffusionNFTConfig()).first_step_invariant_check(
-        model=model,
-        batch=batch,
-        advantages=torch.tensor([2.0]),
-        timestep_index=0,
-    )
-
-    assert record["passed"] is True
-    assert record["abs_diff"] <= record["threshold"]
-    assert record["loss"] == pytest.approx(record["flipped_loss"], abs=1e-6)
 
 
 def test_edm_scale_timestep_grid_fails_loudly() -> None:
@@ -404,38 +356,3 @@ def test_edm_scale_timestep_grid_fails_loudly() -> None:
             0,
             torch.tensor([1.0]),
         )
-
-
-def test_lr_zero_reward_channel_is_inert() -> None:
-    """Checks the NFT analog of the GRPO ratio==1 invariant.
-
-    With the previous policy synced to the trainable one (the lr=0 /
-    just-synced state), forward == previous, so positive and negative
-    branch losses coincide and the advantage mix cannot move the policy
-    loss: flipping the advantage sign must leave the loss bit-identical.
-    """
-    torch.manual_seed(4321)
-    x0 = torch.randn(_LATENT_SHAPE)
-    noise = torch.randn(_LATENT_SHAPE)
-    prompt_embeds = torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM)
-    model = _build_model()
-    # Sync previous <- default exactly (decay=0), as after_optimizer_step does.
-    nft = DiffusionNFT(DiffusionNFTConfig(weight_copy_decay=0.0, kl_coef=0.0))
-    nft.after_optimizer_step(model, global_step=0)
-    batch = _build_batch(x0=x0, noise=noise, prompt_embeds=prompt_embeds, timestep=500.0)
-
-    loss_pos, metrics_pos = nft.compute_batch_timestep_loss(
-        model,
-        batch,
-        0,
-        torch.tensor([5.0]),
-    )
-    loss_neg, metrics_neg = nft.compute_batch_timestep_loss(
-        model,
-        batch,
-        0,
-        torch.tensor([-5.0]),
-    )
-
-    assert metrics_pos.policy_loss == metrics_neg.policy_loss
-    assert float(loss_pos) == float(loss_neg)

@@ -17,9 +17,11 @@ class AlgorithmConfigContract:
 
     needs_sde_rollout: bool
     sft_source: Literal["unsupported", "latents", "preference_winner"]
-    # Objective requirements on the model's other policies (``previous_policy``:
-    # last step's weights, refreshed after every optimizer step;
-    # ``reference_policy``: the pre-training weights). Never a family default.
+    # Objective requirements on the model. ``requires_previous_policy``: the
+    # objective scores the trainable policy against theta_old (the detached
+    # current prediction) through the full-sequence replay forward;
+    # ``requires_reference_policy``: the pre-training weights. Never a family
+    # default.
     requires_previous_policy: bool = False
     requires_reference_policy: bool = False
     consumed_sections: tuple[tuple[str, frozenset[str] | None], ...] | None = None

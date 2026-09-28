@@ -1505,7 +1505,6 @@ class OnlineTrainer:
             training_microbatch_size,
         )[0]
         self._check_initial_precision_drift(first_batch.batch, train_indices)
-        self._check_first_step_invariant(first_batch, defer_replay_tensors=defer)
         self._run_replay_pass(
             batch.batches,
             batch.advantages,
@@ -1532,7 +1531,7 @@ class OnlineTrainer:
         trained_prompt_num: int,
         reward_components: dict[str, float],
     ) -> TrainStepMetrics:
-        """Clip + optimizer.step + EMA/NFT (once) and build the one update's metrics.
+        """Clip + optimizer.step + EMA/algorithm hook (once) and build the one update's metrics.
 
         ``stats`` is the caller-aggregated typed accumulator across the update's
         microbatches. The streaming recipe owns aggregation so each microbatch's
@@ -1594,62 +1593,6 @@ class OnlineTrainer:
             initial_replay=initial_replay,
         )
         return metrics
-
-    def _check_first_step_invariant(
-        self, microbatch: _TrainingMicrobatch, *, defer_replay_tensors: bool
-    ) -> None:
-        """Run an algorithm's own lr=0 invariant on the first trainable batch.
-
-        Log-prob algorithms are covered by the replay parity gate before the
-        optimizer step. Algorithms without likelihoods (NFT, V-GRPO) expose
-        ``first_step_invariant_check`` instead; its record goes to
-        ``training_debug.jsonl`` and a violation warns, since the gate cannot
-        see it.
-        """
-        from vrl.utils.profiling import profile_range
-
-        cfg = self.config
-        invariant_check = getattr(self.algorithm, "first_step_invariant_check", None)
-        if (
-            not cfg.debug.first_step
-            or self.state.step != 0
-            or self.algorithm.uses_evaluator
-            or not callable(invariant_check)
-        ):
-            return
-        replay_batch = microbatch.batch.to_device(
-            self.device, defer_replay_tensors=defer_replay_tensors
-        )
-        with torch.no_grad(), profile_range("trainer.replay"):
-            invariant = invariant_check(
-                model=self.model,
-                batch=replay_batch,
-                advantages=microbatch.advantages.to(self.device),
-                timestep_index=0,
-            )
-        algorithm_name = type(self.algorithm).__name__
-        if not invariant.get("passed", True):
-            logger.warning(
-                "first-step %s advantage-flip invariant violated: abs_diff %.3e > %.1e. "
-                "The collection-time training signal is untrustworthy; "
-                "suspect replay-side conditioning/scheduler-domain drift.",
-                algorithm_name,
-                invariant["abs_diff"],
-                invariant["threshold"],
-            )
-        if self._strategy.context.is_primary:
-            append_jsonl_record(
-                f"{cfg.output_dir}/training_debug.jsonl",
-                {
-                    "event": "first_step_invariant",
-                    "algorithm": algorithm_name,
-                    **invariant,
-                    "trainer_step": int(self.state.step),
-                    "global_step": int(self.state.global_step),
-                    "device": str(self.device),
-                    "precision_policy": self._precision_metadata(),
-                },
-            )
 
     async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
         """Train on a collected batch — the compute half of one step.
@@ -1734,9 +1677,6 @@ class OnlineTrainer:
             training_microbatch_size,
         )[0]
         self._check_initial_precision_drift(first_batch.batch, train_indices)
-        self._check_first_step_invariant(
-            first_batch, defer_replay_tensors=defer_replay_tensor_move
-        )
 
         initial_replay = InitialReplayStats()
         policy_updated = False

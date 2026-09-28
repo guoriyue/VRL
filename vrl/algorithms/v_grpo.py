@@ -26,24 +26,19 @@ What this module implements, and how it maps onto the trainer:
   while pairs still change from update to update.
 - **Adaptive loss weighting.** Both losses are the x-prediction MSE normalized
   by its own detached mean absolute error (``normalized_mse``, Eq. 14).
-- **Behaviour policy = the model's previous policy**, refreshed after
-  every optimizer step (``after_optimizer_step``) like DiffusionNFT. With
-  ``ppo_epochs: 1`` that is exactly the paper's ``theta_old``; with more
-  gradient steps per rollout it is the previous *step's* policy.
-- **Per-pair ratio.** The paper's ratio uses the mean over all ``N_MC`` pairs
-  inside one ``exp``; here each pair carries its own ratio and clip, because the
-  trainer backpropagates one index at a time. For a fully on-policy update
-  (``rho == 1``) the two are identical; with clipping active the per-pair form
-  clips more conservatively.
-- **Gradient step control.** Optional ratio clipping ``clip_ratio`` (epsilon),
-  optional simple KL to the behaviour policy
-  ``||x_theta(z_t) - x_theta_old(z_t)||^2`` (``kl_coef``, Eq. 16) and optional
-  advantage soft clipping ``eta * tanh(A / eta)`` (``adv_soft_clip``, Eq. 17).
+- **Behaviour policy = the detached current prediction.** ``theta_old`` is
+  the policy as of the current optimizer step; with ``ppo_epochs: 1`` that is
+  exactly the paper's ``theta_old``. So ``rho = exp(sg(L) - L)`` is 1 in value
+  and its gradient is ``-grad L``: the objective is REINFORCE with a group
+  baseline on the surrogate, the paper's fully on-policy Stage-1 recipe. The
+  paper's multi-epoch controls (ratio clipping, Eq. 16's KL to ``theta_old``)
+  are identically inert at ``rho == 1`` and are not implemented.
+- **Advantage soft clipping** ``eta * tanh(A / eta)`` (``adv_soft_clip``,
+  Eq. 17) is the one gradient-step control.
 
 The model surface is the shared denoise replay contract, the same one
 DiffusionNFT consumes: ``replay_forward_with_latents`` (the family's conditional
-forward at a trajectory step on a caller-noised clean latent) and
-``previous_policy`` / ``sync_previous_policy``. Any family with a
+forward at a trajectory step on a caller-noised clean latent). Any family with a
 full-sequence replay recipe runs either objective.
 """
 
@@ -56,7 +51,7 @@ from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.config_contract import AlgorithmConfigContract
 from vrl.algorithms.previous_policy import PreviousPolicyObjective
 from vrl.algorithms.trajectory import AlgorithmInput
-from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
+from vrl.algorithms.types import TrainStepMetrics
 from vrl.models.precision import model_autocast
 
 _SEED_UPDATE = 1_000_003
@@ -68,10 +63,8 @@ _SEED_INDEX = 104_729
 class VGRPOConfig:
     """Hyper-parameters for the V-GRPO objective.
 
-    ``clip_ratio`` / ``kl_coef`` / ``adv_soft_clip`` are the paper's three
-    gradient-step controls; each is off when ``None`` / ``0``. The paper's
-    SD 3.5 M Stage-1 recipe (fully on-policy) uses only ``adv_soft_clip=3``;
-    its multi-epoch stages add ``clip_ratio`` or ``kl_coef=0.3``.
+    ``adv_soft_clip`` is off when ``None``. The paper's SD 3.5 M Stage-1 recipe
+    (fully on-policy) uses ``adv_soft_clip=3``.
     """
 
     config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
@@ -83,34 +76,21 @@ class VGRPOConfig:
     eps: float = 1e-8
     adv_clip_max: float = 5.0
     global_std: bool = False
-    clip_ratio: float | None = None
-    kl_coef: float = 0.0
     adv_soft_clip: float | None = 3.0
-    weight_copy_decay: float = 0.0
 
     def __post_init__(self) -> None:
-        if self.clip_ratio is not None and not 0.0 < float(self.clip_ratio) < 1.0:
-            raise ValueError(
-                f"VGRPOConfig.clip_ratio must be in (0, 1) or null, got {self.clip_ratio}"
-            )
-        if float(self.kl_coef) < 0.0:
-            raise ValueError(f"VGRPOConfig.kl_coef must be >= 0, got {self.kl_coef}")
         if self.adv_soft_clip is not None and float(self.adv_soft_clip) <= 0.0:
             raise ValueError(
                 f"VGRPOConfig.adv_soft_clip must be > 0 or null, got {self.adv_soft_clip}"
-            )
-        if not 0.0 <= float(self.weight_copy_decay) <= 1.0:
-            raise ValueError(
-                f"VGRPOConfig.weight_copy_decay must be in [0, 1], got {self.weight_copy_decay}"
             )
 
 
 class VGRPO(PreviousPolicyObjective):
     """Variational GRPO objective on the forward-process replay branch.
 
-    The ratio is a real trust region only when a second gradient step runs on
-    the same rollouts; at ppo_epochs=1 it is identically 1 and the objective
-    is REINFORCE with a group baseline, which is the paper's Stage-1 recipe.
+    ``theta_old`` is the detached current prediction, so the ratio is
+    identically 1 and the objective is REINFORCE with a group baseline, which
+    is the paper's Stage-1 recipe.
     """
 
     def __init__(self, config: VGRPOConfig | None = None) -> None:
@@ -170,62 +150,25 @@ class VGRPO(PreviousPolicyObjective):
         )
         xt = (1 - t_expanded) * x0.float() + t_expanded * noise
         xt_input = xt.to(x0.dtype)
-        with (
-            model.previous_policy(),
-            torch.no_grad(),
-            model_autocast(model, x0.device),
-        ):
-            old_prediction = model.replay_forward_with_latents(
-                batch, timestep_index, xt_input, classifier_free_guidance=False
-            )["noise_pred"].detach()
         with model_autocast(model, x0.device):
             prediction = model.replay_forward_with_latents(
                 batch, timestep_index, xt_input, classifier_free_guidance=False
             )["noise_pred"]
 
         # x-prediction reparameterization of the rectified-flow velocity.
-        x0_float = x0.float()
         x_pred = xt - t_expanded * prediction.float()
-        x_old = xt - t_expanded * old_prediction.float()
-        surrogate = self.normalized_mse(x_pred, x0_float)  # [B], adaptive weighting
-        with torch.no_grad():
-            surrogate_old = self.normalized_mse(x_old, x0_float)
-        log_ratio = surrogate_old - surrogate
-        ratio = torch.exp(log_ratio)
+        surrogate = self.normalized_mse(x_pred, x0.float())  # [B], adaptive weighting
+        # theta_old is the detached current policy: the ratio is 1 in value and
+        # carries the surrogate's gradient.
+        ratio = torch.exp(surrogate.detach() - surrogate)
 
         adv = advantages.to(device=x0.device, dtype=ratio.dtype)
         if cfg.adv_soft_clip is not None:
             eta = float(cfg.adv_soft_clip)
             adv = eta * torch.tanh(adv / eta)
-        unclipped = ratio * adv
-        if cfg.clip_ratio is not None:
-            eps = float(cfg.clip_ratio)
-            clipped = torch.clamp(ratio, 1.0 - eps, 1.0 + eps) * adv
-            objective = torch.minimum(unclipped, clipped)
-            clip_fraction = float(((ratio - 1.0).abs() > eps).float().mean().item())
-            active_clip_fraction = float((clipped < unclipped).float().mean().item())
-        else:
-            objective = unclipped
-            clip_fraction = 0.0
-            active_clip_fraction = 0.0
-        policy_loss = -objective.mean()
-
-        kl_loss = ((x_pred - x_old) ** 2).mean()
-        kl_term = float(cfg.kl_coef) * kl_loss
-        loss = policy_loss + kl_term
-        kl_value = float(kl_loss.detach().item())
-        return loss, TrainStepMetrics(
-            loss=float(loss.detach().item()),
-            policy_loss=float(policy_loss.detach().item()),
-            kl_penalty=kl_value,
-            weighted_kl_loss=float(kl_term.detach().item()),
-            update=PolicyUpdateStats(
-                clip_fraction=clip_fraction,
-                active_clip_fraction=active_clip_fraction,
-                # k2 estimator of KL(theta_old || theta) on the surrogate.
-                approx_kl=float((0.5 * log_ratio.detach() ** 2).mean().item()),
-            ),
-        )
+        loss = -(ratio * adv).mean()
+        loss_value = float(loss.detach().item())
+        return loss, TrainStepMetrics(loss=loss_value, policy_loss=loss_value)
 
     def _group_shared_noise(
         self,
@@ -265,34 +208,10 @@ class VGRPO(PreviousPolicyObjective):
 
     # -- lifecycle ------------------------------------------------------------
 
-    def first_step_invariant_check(
-        self,
-        *,
-        model: Any,
-        batch: Any,
-        advantages: Any,
-        timestep_index: int = 0,
-        threshold: float = 1.0e-6,
-    ) -> dict[str, Any]:
-        """lr=0 invariant: with previous == default the ratio is 1, so the objective
-        is linear in the advantage and ``loss(A) + loss(-A) == 2 * kl_term == 0``."""
-
-        loss, flipped_loss = self._flipped_advantage_losses(
-            model, batch, advantages, timestep_index
-        )
-        abs_diff = abs(loss + flipped_loss)
-        return {
-            "loss": loss,
-            "flipped_loss": flipped_loss,
-            "abs_diff": abs_diff,
-            "threshold": threshold,
-            "passed": abs_diff <= threshold,
-        }
-
     def after_optimizer_step(self, model: Any, global_step: int) -> None:
-        super().after_optimizer_step(model, global_step)
         # Advance the group-noise counter so the shared noise changes across
         # updates while staying fixed within one.
+        del model
         self._update_counter = int(global_step) + 1
 
 

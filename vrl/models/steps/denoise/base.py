@@ -324,41 +324,15 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
         return temporarily_disable_lora(self._require_transformer())
 
     # -- policies other than the trainable one ---------------------------
-    # Previous policies snapshot the trainable weights. The KL reference uses
-    # the base model with LoRA disabled, or a snapshot for full fine-tuning.
-    # Objectives use the same policy interface in either case.
+    # The KL reference uses the base model with LoRA disabled, or a snapshot
+    # for full fine-tuning. Objectives use the same policy interface in either
+    # case.
 
     def _trainable_parameters(self) -> list[torch.nn.Parameter]:
         return [parameter for parameter in self.parameters() if parameter.requires_grad]
 
     def _has_adapter(self) -> bool:
         return any(has_lora_adapter(module) for module in self.trainable_modules.values())
-
-    def sync_previous_policy(self, *, decay: float = 0.0) -> None:
-        """Refresh the previous policy from the live one (``decay`` blends, 0 copies).
-
-        The first call takes the snapshot, so a policy whose objective never
-        syncs before its first loss step sees ``previous == current`` there.
-        """
-
-        snapshot = self._modules.get("_previous_policy")
-        if snapshot is None:
-            self.add_module(
-                "_previous_policy", TrainableWeightsSnapshot(self._trainable_parameters())
-            )
-            return
-        snapshot.update(decay)
-
-    def previous_policy(self) -> contextlib.AbstractContextManager[None]:
-        """Run the forward with the previous policy's weights.
-
-        Swaps the trainable weights in place: run it before the trainable
-        forward of the same loss, never between that forward and its backward.
-        """
-
-        if self._modules.get("_previous_policy") is None:
-            self.sync_previous_policy()
-        return self._modules["_previous_policy"].active()
 
     def attach_reference_policy(self) -> None:
         """Pin the current trainable weights as the KL reference.
@@ -378,8 +352,9 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
     def reference_policy(self) -> contextlib.AbstractContextManager[None]:
         """Use the LoRA-disabled base model or the saved full-fine-tuning reference.
 
-        The full-fine-tuning case swaps the trainable weights in place (see
-        ``previous_policy``): run it before the trainable forward.
+        The full-fine-tuning case swaps the trainable weights in place: run it
+        before the trainable forward of the same loss, never between that
+        forward and its backward.
         """
 
         snapshot = self._modules.get("_reference_policy")

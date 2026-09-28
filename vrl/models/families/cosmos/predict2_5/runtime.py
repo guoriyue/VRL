@@ -3,7 +3,7 @@
 Registry-descriptor family: no builder functions live here — the generic
 functions in ``vrl.models.steps.denoise.build`` construct the bundles from the
 ``DenoiseFamilyBuild`` recipe on this family's registry entry (UniPC replay
-scheduler). The algorithm contract determines whether a previous policy is needed.
+scheduler).
 """
 
 from __future__ import annotations

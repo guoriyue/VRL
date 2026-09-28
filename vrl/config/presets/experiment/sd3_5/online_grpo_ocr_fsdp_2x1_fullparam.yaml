@@ -4,11 +4,8 @@
 # (model.use_lora=false), not a LoRA adapter. A ~2.5B SD3.5-medium full-param +
 # AdamW needs params+grads+optimizer ≈ 20 GB; sharded across 2 ranks (ZeRO-3) that
 # is ~10 GB/rank, which fits a 44 GB L40S alongside the colocated rollout — where a
-# single card would not hold the full optimizer state. GRPO is used (not NFT)
-# because GRPO is adapter-free: the old-policy ratio comes from rollout-time
-# logprobs, so there is no PEFT "previous"/"reference" adapter to switch — which is
-# exactly what makes full-param viable here (NFT's previous-policy snapshot is an
-# adapter and has no full-param path yet).
+# single card would not hold the full optimizer state. GRPO is used here: the
+# old-policy ratio comes from rollout-time logprobs.
 #
 # STATUS: canonical full-parameter FSDP acceptance shape. Collective-safe
 # DTensor/optimizer/gradient parking is implemented and covered by CPU Gloo

@@ -1,7 +1,7 @@
-"""The previous / reference policies under FSDP2: snapshots of sharded parameters.
+"""The full-fine-tune reference policy under FSDP2: a snapshot of sharded parameters.
 
-``TrainableWeightsSnapshot`` clones each rank's shard, swaps it in place for a forward and
-blends it with a fused lerp, so it must work on the DTensors ``fully_shard``
+``TrainableWeightsSnapshot`` clones each rank's shard and swaps it in place for a
+forward, so it must work on the DTensors ``fully_shard``
 leaves behind — across ranks, not just on one. Two gloo ranks shard a toy
 transformer on CPU on every run; the same body runs on one nccl rank when a
 CUDA device is present (a single card cannot host a two-rank nccl group).
@@ -89,15 +89,6 @@ def _run_snapshot_round_trip(
                     for p, before in zip(trainable, start, strict=True)
                 )
             live_kept = torch.equal(model(inputs), moved_output)
-            snapshot.update(0.5)
-            with snapshot.active():
-                blended = all(
-                    torch.allclose(p.detach().full_tensor(), before + 0.125)
-                    for p, before in zip(trainable, start, strict=True)
-                )
-            snapshot.update(0.0)
-            with snapshot.active():
-                copied = torch.equal(model(inputs), moved_output)
         queue.put(
             (
                 rank,
@@ -105,8 +96,6 @@ def _run_snapshot_round_trip(
                 swapped_back,
                 shards_restored,
                 live_kept,
-                blended,
-                copied,
                 not snapshot.state_dict(),
             )
         )
@@ -114,15 +103,15 @@ def _run_snapshot_round_trip(
         dist.destroy_process_group()
 
 
-def test_two_rank_snapshot_swaps_blends_and_copies_shards() -> None:
+def test_two_rank_snapshot_swaps_shards() -> None:
     queue = mp.get_context("spawn").Queue()
     mp.spawn(_run_snapshot_round_trip, args=(2, free_port(), queue, False), nprocs=2, join=True)
     results = {queue.get(timeout=10) for _ in range(2)}
-    assert results == {(rank, True, True, True, True, True, True, True) for rank in (0, 1)}
+    assert results == {(rank, True, True, True, True, True) for rank in (0, 1)}
 
 
 @pytest.mark.gpu
-def test_cuda_rank_snapshot_swaps_blends_and_copies_shards() -> None:
+def test_cuda_rank_snapshot_swaps_shards() -> None:
     queue = mp.get_context("spawn").Queue()
     mp.spawn(_run_snapshot_round_trip, args=(1, free_port(), queue, True), nprocs=1, join=True)
-    assert queue.get(timeout=10) == (0, True, True, True, True, True, True, True)
+    assert queue.get(timeout=10) == (0, True, True, True, True, True)

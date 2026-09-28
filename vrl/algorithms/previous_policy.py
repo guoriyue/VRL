@@ -1,19 +1,19 @@
 """Shared parent of the previous-policy objectives (DiffusionNFT, V-GRPO).
 
-Both objectives train against a frozen copy of the previous step's policy,
-refresh that copy after every optimizer step, and evaluate the
-denoiser at an interpolated ``x_t`` on flow time ``t`` in ``[0, 1]``. Their
-lr=0 first-step invariants differ (NFT's loss is symmetric under flipping the
-advantages, V-GRPO's antisymmetric) but both need the same seeded double
-evaluation.
+Both objectives score the trainable policy against the behaviour policy
+``theta_old`` and evaluate the denoiser at an interpolated ``x_t`` on flow time
+``t`` in ``[0, 1]``. ``theta_old`` is the policy as of the current optimizer
+step, which each objective reads as the detached current prediction: one
+trainable forward, no weight snapshot. With one optimizer step per rollout
+(``ppo_epochs: 1``, every shipped preset) that is exactly the policy that
+generated the rollout; with more steps per rollout nothing holds the update
+to a trust region across them.
 
 The model surface they consume is the shared denoise replay contract, nothing
 objective-specific: ``replay_forward_with_latents`` evaluates the family's own
-conditional forward at a trajectory step on caller-supplied latents, and the
-previous policy is switched in through ``previous_policy``. Whether that policy
-is a LoRA adapter or the whole transformer is the model's business. Which families
-qualify is a registry fact (a full-sequence replay recipe), not a per-family
-flag.
+conditional forward at a trajectory step on caller-supplied latents. Which
+families qualify is a registry fact (a full-sequence replay recipe), not a
+per-family flag.
 """
 
 from __future__ import annotations
@@ -22,31 +22,20 @@ from typing import Any
 
 
 class PreviousPolicyObjective:
-    """Replay-branch objective whose behaviour policy is the previous step's weights."""
+    """Replay-branch objective whose behaviour policy is the current step's weights."""
 
     # These objectives train the forward process from the rollout's clean
     # latents (TrajectoryReader.forward_process_replay) — no reverse-SDE
     # trajectory, no log-probs, no evaluator.
     uses_evaluator = False
     requires_active_trust_region = False
-    # The behaviour policy is the previous policy refreshed every optimizer
-    # step, not the policy that generated a stale rollout: training on rollouts
-    # from a superseded policy would score them against the wrong theta_old
-    # (and NFT, being likelihood-free, has no importance ratio to absorb the
-    # lag at all). So the continuous-rollout staleness window must be 0;
+    # The behaviour policy is the current policy, not the policy that
+    # generated a stale rollout: training on rollouts from a superseded policy
+    # would score them against the wrong theta_old (and NFT, being
+    # likelihood-free, has no importance ratio to absorb the lag at all). So
+    # the continuous-rollout staleness window must be 0;
     # build_rollout_schedule fails fast on an unsound max_stale>0 config.
     tolerates_off_policy_staleness = False
-
-    config: Any  # carries ``weight_copy_decay``
-
-    def compute_batch_timestep_loss(
-        self,
-        model: Any,
-        batch: Any,
-        timestep_index: int,
-        advantages: Any,
-    ) -> tuple[Any, Any]:
-        raise NotImplementedError
 
     # -- x0 regression --------------------------------------------------
 
@@ -89,43 +78,6 @@ class PreviousPolicyObjective:
                 "heuristic. EDM-scale timestep grids are not supported by this normalization.",
             )
         return t
-
-    # -- lr=0 first-step invariant -------------------------------------
-
-    def _flipped_advantage_losses(
-        self,
-        model: Any,
-        batch: Any,
-        advantages: Any,
-        timestep_index: int,
-    ) -> tuple[float, float]:
-        """``(loss(A), loss(-A))`` under one seeded RNG.
-
-        With the previous policy freshly synced the objective is exactly
-        invariant (NFT) or antisymmetric (V-GRPO) under flipping the
-        advantages; ratio-style parity cannot see this, so each objective's
-        ``first_step_invariant_check`` scores this pair. The RNG is forked and
-        seeded so both evaluations draw the same noise when the trajectory
-        carries none.
-        """
-
-        import torch
-
-        def _loss(adv: Any) -> float:
-            with torch.random.fork_rng():
-                torch.manual_seed(0)
-                loss, _ = self.compute_batch_timestep_loss(model, batch, timestep_index, adv)
-            return float(loss.detach().float().item())
-
-        return _loss(advantages), _loss(-advantages)
-
-    # -- previous-policy refresh ---------------------------------------
-
-    def after_optimizer_step(self, model: Any, global_step: int) -> None:
-        """Refresh the previous policy (EMA with ``weight_copy_decay``)."""
-
-        del global_step
-        model.sync_previous_policy(decay=float(self.config.weight_copy_decay))
 
 
 __all__ = ["PreviousPolicyObjective"]

@@ -30,7 +30,6 @@ class DiffusionNFTConfig:
     nft_beta: float = 1.0
     kl_coef: float = 1.0
     advantage_scale: float = 5.0
-    weight_copy_decay: float = 0.0
 
     def __post_init__(self) -> None:
         if float(self.nft_beta) <= 0:
@@ -49,7 +48,7 @@ class DiffusionNFT(PreviousPolicyObjective):
     video-level rewards. This algorithm is diffusion-specific and owns its
     model-forward objective assembly. Likelihood-free: it computes no
     importance-sampling ratio, and its positive/negative decomposition is taken
-    against the previous policy the parent refreshes every step.
+    against ``theta_old``, the detached current prediction.
     """
 
     def __init__(self, config: DiffusionNFTConfig | None = None) -> None:
@@ -68,29 +67,6 @@ class DiffusionNFT(PreviousPolicyObjective):
             adv_clip_max=cfg.adv_clip_max,
             global_std=cfg.global_std,
         )
-
-    def first_step_invariant_check(
-        self,
-        *,
-        model: Any,
-        batch: Any,
-        advantages: Any,
-        timestep_index: int = 0,
-        threshold: float = 1.0e-6,
-    ) -> dict[str, Any]:
-        """lr=0 invariant: flipping the advantages must not change the loss."""
-
-        loss, flipped_loss = self._flipped_advantage_losses(
-            model, batch, advantages, timestep_index
-        )
-        abs_diff = abs(loss - flipped_loss)
-        return {
-            "loss": loss,
-            "flipped_loss": flipped_loss,
-            "abs_diff": abs_diff,
-            "threshold": threshold,
-            "passed": abs_diff <= threshold,
-        }
 
     def compute_loss(
         self,
@@ -131,19 +107,12 @@ class DiffusionNFT(PreviousPolicyObjective):
         xt = (1 - t_expanded) * x0.float() + t_expanded * noise
         xt_input = xt.to(x0.dtype)
 
-        # Three evaluations of the family's own conditional forward at this
-        # trajectory step: the frozen behaviour policy, the pre-training
-        # reference for the KL term, and — last — the trainable policy. The two
-        # frozen policies swap weights in place, so they run before the live
-        # forward whose graph backward will read.
-        with (
-            model.previous_policy(),
-            torch.no_grad(),
-            model_autocast(model, x0.device),
-        ):
-            previous_prediction = model.replay_forward_with_latents(
-                batch, timestep_index, xt_input, classifier_free_guidance=False
-            )["noise_pred"].detach()
+        # Two evaluations of the family's own conditional forward at this
+        # trajectory step: the pre-training reference for the KL term, then the
+        # trainable policy. The frozen reference may swap weights in place, so
+        # it runs before the live forward whose graph backward will read.
+        # theta_old is the policy as of this optimizer step: the detached live
+        # prediction, not a third forward.
         with (
             model.reference_policy(),
             torch.no_grad(),
@@ -156,6 +125,7 @@ class DiffusionNFT(PreviousPolicyObjective):
             forward_prediction = model.replay_forward_with_latents(
                 batch, timestep_index, xt_input, classifier_free_guidance=False
             )["noise_pred"]
+        previous_prediction = forward_prediction.detach()
 
         # Advantages are already clamped to ±adv_clip_max upstream in
         # compute_advantages_from_tensors (group_relative_advantages). The final

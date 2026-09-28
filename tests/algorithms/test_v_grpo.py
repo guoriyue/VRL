@@ -2,10 +2,9 @@
 
 Same harness as the DiffusionNFT tests: a tiny real ``WanTransformer3DModel``
 (behind a PEFT adapter or trained fully) and a real ``TrajectoryBatch`` from the
-production builder, so the two forwards the objective runs differ because their
-weights genuinely differ. The math is not re-derived: the
-sign tests take one real optimizer step and assert its direction, and the
-lr=0 invariant is checked on the objective's own output.
+production builder. The math is not re-derived: the sign tests take one real
+optimizer step and assert its direction, and the unit-ratio loss value is
+checked on the objective's own output.
 """
 
 from __future__ import annotations
@@ -42,12 +41,6 @@ def _batch(*, timestep: float | tuple[float, ...] = 500.0, seed: int = 1234):
     )
 
 
-def _synced_model(trainable: str = "lora"):
-    model = _build_model(trainable)
-    model.sync_previous_policy()
-    return model
-
-
 # ------------------------------------------------------------ advantages
 
 
@@ -77,17 +70,17 @@ def _step_distances(
     """One real SGD step; distance of the default forward to the reconstruction
     velocity ``noise - x0`` at the objective's own ``x_t`` before vs after.
 
-    With ``previous`` synced the ratio is 1, so the gradient is ``-A * grad L``:
+    The ratio is 1, so the gradient is ``-A * grad L``:
     a positive advantage must pull the x-prediction toward ``x0``, i.e. the
     velocity toward ``eps - x0`` for the eps the objective drew. The step is
     kept small: a large ascent step overshoots the curved loss and lands
     closer again, which would read as a sign error.
     """
 
-    cfg = config or VGRPOConfig(adv_soft_clip=None, kl_coef=0.0)
+    cfg = config or VGRPOConfig(adv_soft_clip=None)
     objective = VGRPO(cfg)
     x0, prompt_embeds, batch = _batch()
-    model = _synced_model(trainable)
+    model = _build_model(trainable)
     noise = objective._group_shared_noise(x0, group_ids=batch.group_ids, timestep_index=0)
     t = 0.5
     xt = (1 - t) * x0 + t * noise
@@ -128,10 +121,10 @@ def test_soft_clip_bounds_the_advantage_by_eta() -> None:
     """``eta * tanh(A / eta)``: a huge advantage moves the weights less than an
     unclipped one, but in the same direction."""
     _, after_clipped, grad_clipped = _step_distances(
-        advantage=50.0, config=VGRPOConfig(adv_soft_clip=1.0, kl_coef=0.0)
+        advantage=50.0, config=VGRPOConfig(adv_soft_clip=1.0)
     )
     before, _after_raw, grad_raw = _step_distances(
-        advantage=50.0, config=VGRPOConfig(adv_soft_clip=None, kl_coef=0.0)
+        advantage=50.0, config=VGRPOConfig(adv_soft_clip=None)
     )
     assert after_clipped < before
     assert grad_clipped.norm() < grad_raw.norm()
@@ -140,55 +133,22 @@ def test_soft_clip_bounds_the_advantage_by_eta() -> None:
     torch.testing.assert_close(grad_clipped, grad_unit, rtol=1e-4, atol=1e-6)
 
 
-# ------------------------------------------------------------ ratio / clip / KL
+# ------------------------------------------------------------ unit ratio
 
 
-def test_synced_behaviour_policy_gives_unit_ratio_and_zero_kl() -> None:
-    """With ``previous == default`` the surrogate difference is exactly 0: the
-    loss is ``-mean(A_soft)`` and the KL term vanishes."""
+def test_unit_ratio_loss_is_the_negated_soft_clipped_advantage() -> None:
+    """theta_old is the detached current prediction, so the ratio is exactly 1
+    and the loss value is ``-mean(A_soft)``."""
     _, _, batch = _batch()
-    model = _synced_model()
     adv = torch.tensor([1.7])
 
-    loss, metrics = VGRPO(VGRPOConfig(adv_soft_clip=3.0, kl_coef=0.3)).compute_batch_timestep_loss(
-        model, batch, 0, adv
+    loss, metrics = VGRPO(VGRPOConfig(adv_soft_clip=3.0)).compute_batch_timestep_loss(
+        _build_model(), batch, 0, adv
     )
 
     expected = -float(3.0 * torch.tanh(adv / 3.0))
     assert float(loss) == pytest.approx(expected, abs=1e-6)
-    assert metrics.kl_penalty == 0.0
-    assert metrics.weighted_kl_loss == 0.0
-    assert metrics.update.approx_kl == 0.0
-    assert metrics.update.clip_fraction == 0.0
-
-
-def test_ratio_clipping_activates_once_the_policies_diverge() -> None:
-    """A perturbed ``default`` moves the ratio off 1; with a tight epsilon the
-    clipped surrogate is selected and reported, and the KL term is the x-pred
-    MSE between the two policies' predictions."""
-    _, _, batch = _batch()
-    model = _synced_model()
-    with torch.no_grad():
-        for name, param in model.transformer.named_parameters():
-            if ".default." in name and "lora_B" in name:
-                param.add_(torch.randn_like(param) * 0.5)
-    adv = torch.tensor([2.0])
-
-    loose = VGRPO(VGRPOConfig(adv_soft_clip=None, clip_ratio=None, kl_coef=0.0))
-    tight = VGRPO(VGRPOConfig(adv_soft_clip=None, clip_ratio=1e-6, kl_coef=1.0))
-    loose_loss, loose_metrics = loose.compute_batch_timestep_loss(model, batch, 0, adv)
-    tight_loss, tight_metrics = tight.compute_batch_timestep_loss(model, batch, 0, adv)
-
-    assert loose_metrics.update.approx_kl > 0.0
-    assert tight_metrics.update.clip_fraction == 1.0
-    assert tight_metrics.kl_penalty > 0.0
-    assert tight_metrics.weighted_kl_loss == pytest.approx(tight_metrics.kl_penalty)
-    # min(rho A, clip(rho) A) with A > 0 never exceeds the unclipped surrogate.
-    assert tight_metrics.policy_loss >= loose_metrics.policy_loss - 1e-6
-    assert float(tight_loss) == pytest.approx(
-        tight_metrics.policy_loss + tight_metrics.weighted_kl_loss, abs=1e-6
-    )
-    assert float(loose_loss) == pytest.approx(loose_metrics.policy_loss, abs=1e-6)
+    assert metrics.policy_loss == metrics.loss
 
 
 # ------------------------------------------------------------ group-shared noise
@@ -218,37 +178,12 @@ def test_noise_is_shared_within_a_group_and_fresh_across_groups_and_updates() ->
     assert not torch.equal(next_update[0], same_group[0])
 
 
-@pytest.mark.parametrize("trainable", ["lora", "full"])
-def test_after_optimizer_step_syncs_previous_and_advances_the_noise_counter(
-    trainable: str,
-) -> None:
-    model = _build_model(trainable)
-    model.sync_previous_policy()
-    parameter = next(p for p in model.parameters() if p.requires_grad)
-    synced = parameter.detach().clone()
-    with torch.no_grad():
-        parameter.add_(1.0)
-    objective = VGRPO(VGRPOConfig(weight_copy_decay=0.0))
+def test_after_optimizer_step_advances_the_noise_counter() -> None:
+    objective = VGRPO()
 
-    objective.after_optimizer_step(model, global_step=7)
+    objective.after_optimizer_step(None, global_step=7)
 
-    with model.previous_policy():
-        assert torch.equal(parameter, synced + 1.0)
     assert objective._update_counter == 8
-
-
-# ------------------------------------------------------------ lr=0 invariant
-
-
-def test_first_step_invariant_holds_when_previous_is_synced() -> None:
-    """Advantage antisymmetry: ``loss(A) == -loss(-A)`` at ratio 1 with no KL."""
-    _, _, batch = _batch()
-    record = VGRPO(VGRPOConfig(adv_soft_clip=3.0)).first_step_invariant_check(
-        model=_synced_model(), batch=batch, advantages=torch.tensor([2.0]), timestep_index=0
-    )
-
-    assert record["passed"] is True
-    assert record["loss"] == pytest.approx(-record["flipped_loss"], abs=1e-6)
 
 
 # ------------------------------------------------------------ guards
@@ -257,22 +192,12 @@ def test_first_step_invariant_holds_when_previous_is_synced() -> None:
 def test_edm_scale_timestep_grid_fails_loudly() -> None:
     _, _, batch = _batch(timestep=80000.0)
     with pytest.raises(RuntimeError, match=r"normalize into \[0, 1\]"):
-        VGRPO().compute_batch_timestep_loss(_synced_model(), batch, 0, torch.ones(_BATCH))
+        VGRPO().compute_batch_timestep_loss(_build_model(), batch, 0, torch.ones(_BATCH))
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"clip_ratio": 0.0},
-        {"clip_ratio": 1.5},
-        {"kl_coef": -0.1},
-        {"adv_soft_clip": 0.0},
-        {"weight_copy_decay": 2.0},
-    ],
-)
-def test_config_rejects_out_of_range_controls(kwargs: dict[str, float]) -> None:
-    with pytest.raises(ValueError):
-        VGRPOConfig(**kwargs)
+def test_config_rejects_a_non_positive_soft_clip() -> None:
+    with pytest.raises(ValueError, match="adv_soft_clip must be > 0"):
+        VGRPOConfig(adv_soft_clip=0.0)
 
 
 # ------------------------------------------------------------ stratified selection

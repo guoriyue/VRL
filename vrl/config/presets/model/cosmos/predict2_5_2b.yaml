@@ -1,8 +1,6 @@
 # Cosmos Predict2.5 2B PredictBase for DiffusionNFT RL.
 #
-# VRL's current DiffusionNFT objective needs two PEFT adapters: trainable
-# `default` and frozen `previous`. Full-parameter post-training would need a
-# separate previous-policy state path and multi-GPU capacity; keep this local
+# Full-parameter post-training would need multi-GPU capacity; keep this local
 # recipe on the LoRA path used by the upstream Cosmos-RL NFT config.
 model:
   family: cosmos-predict2.5

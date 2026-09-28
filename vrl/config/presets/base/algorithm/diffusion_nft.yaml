@@ -9,4 +9,3 @@ algorithm:
   nft_beta: 1.0
   kl_coef: 1.0
   advantage_scale: 5.0
-  weight_copy_decay: 0.0

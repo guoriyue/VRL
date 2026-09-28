@@ -31,7 +31,7 @@ model:
 actor:
   optim:
     # Paper §4.2.2 trains full-param at 3e-5 (2B). This recipe is LoRA (full-param
-    # post-training needs a separate previous-policy path + multi-GPU), and LoRA
+    # post-training needs multi-GPU capacity), and LoRA
     # adapters need a higher LR to move the policy — 1e-4 measured on the
     # 2026-06-13 single-GPU cosmos+Kling run (3e-5 gave grad_norm ~0.05-0.12 and
     # flat reward). Dial back toward 3e-5 if approx_kl / logprob_abs_diff drift.
@@ -74,9 +74,7 @@ trainer:
   # 8 checkpoints across the run (e32,e64,...,e256) for a fixed-prompt reward
   # curve via vrl/scripts/eval/cosmos_predict25_kling_eval.py.
   save_freq: 32
-  # First-step NFT lr=0 invariant: flipping advantages must not change the loss.
-  # Cheap (one step-0 check) and it separates "weak signal" from "garbage signal"
-  # (e.g. previous adapter not synced / scheduler drift) before a long run.
+  # Step-0 generation runtime diagnostics, recorded with the first rollout.
   debug:
     first_step: true
   # Evaluate saved checkpoints separately with the held-out manifest and fixed seeds.

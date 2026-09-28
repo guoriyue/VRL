@@ -89,11 +89,13 @@ if relaunched. An explicit non-default adapter-upcast policy changes identity.
 
 The algorithm contract, not a model recipe, owns the previous-policy and
 reference-policy requirements (`requires_previous_policy`,
-`requires_reference_policy`; GRPO's reference follows `kl_coef > 0`). The
-model serves both from `DenoiseModelBase.previous_policy()` /
-`reference_policy()` as snapshots of whatever is trainable, so a LoRA adapter
-and a full fine-tune run the same objective code: NFT and V-GRPO admit
-`model.use_lora=false`. The objectives evaluate the re-noised clean latent
+`requires_reference_policy`; GRPO's reference follows `kl_coef > 0`). NFT and
+V-GRPO read the previous policy `theta_old` as the detached current prediction
+(one trainable forward per replay step, no weight snapshot). The model serves
+the reference from `DenoiseModelBase.reference_policy()`: the base model with
+LoRA disabled, or a snapshot of the trainable weights for a full fine-tune, so a
+LoRA adapter and a full fine-tune run the same objective code: NFT and V-GRPO
+admit `model.use_lora=false`. The objectives evaluate the re-noised clean latent
 through the shared `replay_forward_with_latents` (the same family forward the
 SDE replay uses, with classifier-free guidance forced off), so no family
 declares an objective-specific forward hook or capability flag: any
@@ -102,12 +104,9 @@ grid that does not normalize into `[0, 1]` (Cosmos Predict2's EDM grid) fails
 at the first loss. Only SD3.5, Flux, and Predict2.5 have been exercised on
 this path with LoRA; the full-parameter path is covered by CPU tests only.
 
-The previous policy is a snapshot taken at the first sync and refreshed after
-every optimizer step; it is never checkpointed (a resumed run starts it from
-the restored weights). The reference is the pre-training policy: under an
-adapter the base weights (nothing copied), otherwise a snapshot the trainer
-takes after sharding and before any checkpoint restore. Neither snapshot is
-part of checkpoint identity.
+The reference is the pre-training policy: under an adapter the base weights
+(nothing copied), otherwise a snapshot the trainer takes after sharding and
+before any checkpoint restore. The snapshot is not part of checkpoint identity.
 
 ## Validation tiers
 

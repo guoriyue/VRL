@@ -5,8 +5,8 @@ latent and hand it to the shared ``replay_forward_with_latents`` with
 classifier-free guidance forced off. So the things SD3.5 must get right are
 that this call reaches the real (tiny) ``SD3Transformer2DModel`` exactly as the
 conditional ``forward_step`` branch does even when the rollout ran CFG, that
-``latents_clean`` is exported, and that the frozen ``previous`` adapter attaches
-and syncs through the shared ``DenoiseModelBase`` on a real PEFT transformer.
+``latents_clean`` is exported, and that the shared ``DenoiseModelBase`` serves
+the KL reference policy on a real PEFT transformer and a full fine-tune.
 """
 
 from __future__ import annotations
@@ -180,30 +180,6 @@ def _replay_model(trainable: str) -> SD3_5ReplayModel:
     else:
         base.requires_grad_(True)
     return SD3_5ReplayModel(transformer=base, scheduler=None, device="cpu")
-
-
-@pytest.mark.parametrize("trainable", ["lora", "full"])
-def test_previous_policy_is_a_snapshot_of_the_trainable_weights(trainable: str) -> None:
-    """``DenoiseModelBase`` owns the previous policy for both trainable shapes:
-    a snapshot taken at the first sync, swapped in for the forward, refreshed
-    on sync; the live weights are untouched outside the context."""
-    model = _replay_model(trainable)
-    parameter = next(p for p in model.parameters() if p.requires_grad)
-    model.sync_previous_policy()
-    synced = parameter.detach().clone()
-    with torch.no_grad():
-        parameter.add_(1.0)
-
-    with model.previous_policy():
-        assert torch.equal(parameter, synced)
-    assert torch.equal(parameter, synced + 1.0)
-
-    model.sync_previous_policy(decay=0.5)
-    with model.previous_policy():
-        assert torch.allclose(parameter, synced + 0.5)
-    assert torch.equal(parameter, synced + 1.0)
-    if trainable == "lora":
-        assert model.transformer.active_adapter == "default"
 
 
 def test_reference_policy_is_the_base_under_an_adapter_and_a_snapshot_otherwise() -> None:
