@@ -38,6 +38,7 @@ import torch
 
 from vrl.generation.types import DenoiseRequest
 from vrl.models.families.wan_2_1.config import (
+    WanTransformerName,
     normalize_wan_boundary_ratio,
     normalize_wan_trainable_transformers,
     wan_topology_from_build,
@@ -157,7 +158,7 @@ class WanT2VDiffusersModel(
         *,
         pipeline: Any,
         device: Any = None,
-        trainable_transformers: Any = None,
+        trainable_transformers: tuple[WanTransformerName, ...] | None = None,
         expert_lifecycle_profiling: bool = False,
     ) -> None:
         super().__init__(pipeline=pipeline, device=device)
@@ -178,7 +179,7 @@ class WanT2VDiffusersModel(
         self,
         *,
         boundary_ratio: float | None,
-        trainable_transformers: Any,
+        trainable_transformers: tuple[WanTransformerName, ...] | None,
         expert_lifecycle_profiling: bool,
     ) -> None:
         """The Wan-owned state every constructor must establish.
@@ -187,12 +188,16 @@ class WanT2VDiffusersModel(
         module roots, but the expert topology and profiling
         state are the same object graph; one initializer keeps a field added
         here from being missed by the other constructor.
+
+        ``trainable_transformers`` is the canonical tuple from
+        ``wan_topology_from_build``; None selects the topology default.
         """
 
         self._boundary_ratio = boundary_ratio
-        self._trainable_transformer_names = normalize_wan_trainable_transformers(
-            trainable_transformers,
-            dual_stage=boundary_ratio is not None,
+        self._trainable_transformer_names = (
+            normalize_wan_trainable_transformers(None, dual_stage=boundary_ratio is not None)
+            if trainable_transformers is None
+            else tuple(trainable_transformers)
         )
         self._expert_lifecycle_profiling = bool(expert_lifecycle_profiling)
         self._last_expert_name: str | None = None
@@ -212,7 +217,7 @@ class WanT2VDiffusersModel(
     @classmethod
     def from_build(cls, build: ModelBuild) -> WanT2VDiffusersModel:
         """Load the diffusers WanPipeline + freeze non-trainable modules."""
-        boundary_ratio, trainable_transformers = wan_topology_from_build(build)
+        _, trainable_transformers = wan_topology_from_build(build)
         from diffusers import WanPipeline
 
         eager_module_dtypes = {
@@ -224,14 +229,9 @@ class WanT2VDiffusersModel(
             torch_dtype={"default": build.parameter_dtype, **eager_module_dtypes},
             **build.pretrained_kwargs,
         )
-        _validate_wan_pipeline(
-            pipeline,
-            task="Wan T2V",
-            expected_boundary_ratio=boundary_ratio,
-        )
         pipeline.vae.requires_grad_(False)
         pipeline.text_encoder.requires_grad_(False)
-        offload_mode = _resolve_wan_offload_mode(build)
+        offload_mode = build.require_rollout().pipeline_offload_mode
         _stage_eager_wan_modules(
             pipeline,
             build,
@@ -281,7 +281,7 @@ class WanT2VDiffusersModel(
     def apply_generation_offload(self, build: ModelBuild) -> None:
         """Install pipeline offload hooks after LoRA has changed the module tree."""
 
-        mode = PipelineOffloadMode(_resolve_wan_offload_mode(build))
+        mode = build.rollout.pipeline_offload_mode
         state = self._pipeline_offload
         if state is _PipelineOffloadFailure.BROKEN:
             raise RuntimeError("Wan pipeline CPU offload is not reusable")
@@ -855,7 +855,7 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
         device: Any = None,
         transformer_2: Any = None,
         boundary_ratio: float | None = None,
-        trainable_transformers: Any = None,
+        trainable_transformers: tuple[WanTransformerName, ...] | None = None,
     ) -> None:
         DenoiseModelBase.__init__(self)
         self.transformer = transformer
@@ -970,7 +970,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
     @classmethod
     def from_build(cls, build: ModelBuild) -> WanI2VDiffusersModel:
         """Load WanImageToVideoPipeline + freeze generation-only modules."""
-        boundary_ratio, trainable_transformers = wan_topology_from_build(build)
+        _, trainable_transformers = wan_topology_from_build(build)
         from diffusers import WanImageToVideoPipeline
 
         eager_module_dtypes = {
@@ -983,11 +983,6 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             torch_dtype={"default": build.parameter_dtype, **eager_module_dtypes},
             **build.pretrained_kwargs,
         )
-        _validate_wan_pipeline(
-            pipeline,
-            task="Wan I2V",
-            expected_boundary_ratio=boundary_ratio,
-        )
         pipeline.set_progress_bar_config(disable=True)
 
         for module_name in ("vae", "text_encoder", "image_encoder"):
@@ -995,7 +990,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             if module is not None:
                 module.requires_grad_(False)
 
-        offload_mode = _resolve_wan_offload_mode(build)
+        offload_mode = build.require_rollout().pipeline_offload_mode
         _stage_eager_wan_modules(
             pipeline,
             build,
@@ -1245,47 +1240,6 @@ def _transformer_config(transformer: Any) -> Any:
     if config is not None:
         return config
     return getattr(transformer, "config", None)
-
-
-def _validate_wan_pipeline(
-    pipeline: Any,
-    *,
-    task: str,
-    expected_boundary_ratio: float | None,
-) -> None:
-    if bool(_config_value(pipeline.config, "expand_timesteps", False)):
-        raise NotImplementedError(
-            f"{task} RL does not yet support expand_timesteps pipelines.",
-        )
-    loaded_boundary_ratio = normalize_wan_boundary_ratio(
-        _config_value(pipeline.config, "boundary_ratio"),
-        field_name="pipeline boundary_ratio",
-    )
-    if loaded_boundary_ratio != expected_boundary_ratio:
-        raise ValueError(
-            f"{task} pipeline boundary_ratio disagrees with the canonical ModelBuild: "
-            f"pipeline={loaded_boundary_ratio!r}, build={expected_boundary_ratio!r}",
-        )
-    if loaded_boundary_ratio is not None and getattr(pipeline, "transformer_2", None) is None:
-        raise ValueError(f"{task} dual-stage pipeline is missing transformer_2")
-
-
-def _resolve_wan_offload_mode(build: ModelBuild) -> str:
-    """Return normalized rollout residency without affecting replay builds."""
-
-    extra = build.model_config or {}
-    legacy = sorted(
-        key
-        for key in ("enable_model_cpu_offload", "enable_sequential_cpu_offload")
-        if key in extra
-    )
-    if legacy:
-        raise ValueError(
-            f"removed Wan model config key(s): {', '.join('model.' + key for key in legacy)}; "
-            "use model.offload_mode='none', 'model', or 'sequential'",
-        )
-    rollout = getattr(build, "rollout", None)
-    return str(getattr(rollout, "pipeline_offload_mode", "none"))
 
 
 def _stage_eager_wan_modules(

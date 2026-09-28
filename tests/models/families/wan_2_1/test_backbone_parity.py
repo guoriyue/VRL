@@ -196,7 +196,7 @@ def test_wan_dual_expert_slot_install_rejects_partial_state_before_mutation() ->
         transformer_2=low,
         scheduler=None,
         boundary_ratio=0.5,
-        trainable_transformers="both",
+        trainable_transformers=("transformer", "transformer_2"),
     )
     high.requires_grad_(True)
     low.requires_grad_(True)

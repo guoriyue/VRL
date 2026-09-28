@@ -90,7 +90,7 @@ def _i2v_build(
         family="wan_2_1_i2v",
         precision=RolePrecision("bf16", "tf32"),
         model_config=_canonical_model_config(**model_config),
-        rollout=rollout,
+        rollout=rollout if rollout is not None else _rollout_build_options("none"),
     )
 
 
@@ -326,7 +326,7 @@ def test_wan_replay_loads_trainable_state_without_pipeline(family, dual) -> None
         scheduler=object(),
         device=torch.device("cpu"),
         boundary_ratio=0.875 if dual else None,
-        trainable_transformers="both" if dual else "transformer",
+        trainable_transformers=("transformer", "transformer_2") if dual else ("transformer",),
     )
     payload = {}
     for root, module in model.trainable_modules.items():
@@ -645,18 +645,6 @@ def test_wan_i2v_from_build_honors_local_files_only(monkeypatch) -> None:
     assert calls[0]["local_files_only"] is True
 
 
-def test_wan_i2v_from_build_rejects_legacy_offload_keys(monkeypatch) -> None:
-    """Legacy offload bools fail loud instead of becoming no-op runtime keys."""
-    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
-
-    _patch_from_pretrained(monkeypatch)
-
-    build = _i2v_build(enable_model_cpu_offload=True)
-
-    with pytest.raises(ValueError, match=r"model\.enable_model_cpu_offload"):
-        WanI2VDiffusersModel.from_build(build)
-
-
 def test_wan_i2v_from_build_accepts_dual_stage_pipeline(monkeypatch) -> None:
     """Wan 2.2 A14B dual-stage pipelines train the low-noise transformer by default."""
     from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
@@ -675,24 +663,6 @@ def test_wan_i2v_from_build_accepts_dual_stage_pipeline(monkeypatch) -> None:
     assert model.boundary_ratio == 0.5
     assert model.transformer_2 is pipeline.transformer_2
     assert model.trainable_modules == {"transformer_2": pipeline.transformer_2}
-
-
-def test_wan_i2v_from_build_rejects_expand_timesteps_pipeline(monkeypatch) -> None:
-    """Wan 2.2 5B expand-timesteps pipelines still need a separate runner contract."""
-    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
-
-    pipeline, _ = _patch_from_pretrained(monkeypatch)
-    pipeline.config = SimpleNamespace(boundary_ratio=0.5, expand_timesteps=True)
-    pipeline.transformer_2 = RecordingModule()
-
-    build = _i2v_build(
-        model_name_or_path="Wan-AI/Wan2.2-I2V-5B-Diffusers",
-        boundary_ratio=0.5,
-        trainable_transformers=["transformer_2"],
-    )
-
-    with pytest.raises(NotImplementedError, match="expand_timesteps"):
-        WanI2VDiffusersModel.from_build(build)
 
 
 def test_wan_model_build_normalization_is_shared_by_replay_and_rollout(
@@ -802,6 +772,32 @@ def test_wan_single_stage_rejects_low_noise_transformer_selection() -> None:
         )
 
 
+def test_wan_build_normalization_rejects_expand_timesteps_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Wan 2.2 5B expand-timesteps pipelines still need a separate runner contract."""
+    from diffusers import DiffusionPipeline
+
+    from vrl.models.families.wan_2_1.config import normalize_wan_model_build
+
+    monkeypatch.setattr(
+        DiffusionPipeline,
+        "load_config",
+        staticmethod(lambda *_args, **_kwargs: {"boundary_ratio": 0.5, "expand_timesteps": True}),
+    )
+    build = SimpleNamespace(
+        family="wan_2_1_i2v",
+        model_name_or_path=str(tmp_path),
+        revision=None,
+        revision_kwargs={},
+        model_config={},
+    )
+
+    with pytest.raises(NotImplementedError, match="expand_timesteps"):
+        normalize_wan_model_build(build)
+
+
 def test_wan_build_normalization_rejects_unpinned_remote_before_config_load(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -830,27 +826,6 @@ def test_wan_build_normalization_rejects_unpinned_remote_before_config_load(
     with pytest.raises(ValueError, match=r"40-character commit"):
         normalize_wan_model_build(build)
     assert calls == []
-
-
-def test_wan_rollout_rejects_source_change_after_build_normalization(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel
-
-    pipeline, _ = _patch_from_pretrained(monkeypatch)
-    pipeline.config = SimpleNamespace(boundary_ratio=0.5, expand_timesteps=False)
-    pipeline.transformer_2 = RecordingModule()
-    build = _i2v_build(
-        model_name_or_path="Wan-AI/Wan2.2-I2V-A14B-Diffusers",
-        boundary_ratio=0.9,
-        trainable_transformers=["transformer_2"],
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=r"pipeline boundary_ratio disagrees.*pipeline=0\.5.*build=0\.9",
-    ):
-        WanI2VDiffusersModel.from_build(build)
 
 
 def test_wan_t2v_loads_vae_in_fp32_before_offload_staging(monkeypatch) -> None:

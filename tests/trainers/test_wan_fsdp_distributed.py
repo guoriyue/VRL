@@ -184,7 +184,7 @@ def _build_dual_policy(seed: int = 0) -> WanI2VReplayModel:
         scheduler=None,
         device=torch.device("cpu"),
         boundary_ratio=0.5,
-        trainable_transformers="both",
+        trainable_transformers=("transformer", "transformer_2"),
     )
     build = ModelBuild(
         model_name_or_path="tiny-wan2.2-i2v",
