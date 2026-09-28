@@ -2027,12 +2027,7 @@ class OnlineTrainer:
             )
         return d
 
-    def load_state_dict(
-        self,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
+    def load_state_dict(self, state: dict[str, Any]) -> None:
         if not isinstance(state, dict):
             raise TypeError("OnlineTrainer.load_state_dict expects a dict")
 
@@ -2046,28 +2041,20 @@ class OnlineTrainer:
             and self._requires_fp32_master_weights()
             and "optimizer" not in state
         ):
-            message = (
+            raise ValueError(
                 "nonzero low-precision checkpoint is missing optimizer state; "
                 "FP32 master residuals cannot be reconstructed from rounded model weights"
             )
-            if strict:
-                raise ValueError(message)
-            logger.warning("%s; initializing fresh masters from model weights", message)
 
         if "optimizer" in state:
-            optimizer_compatible = True
             saved_manifest = state.get("optimizer_parameter_manifest")
             if saved_manifest is not None:
                 current_manifest = self._optimizer_parameter_manifest()
                 if saved_manifest != current_manifest:
-                    message = (
+                    raise ValueError(
                         "checkpoint optimizer parameter identity mismatch: "
                         f"checkpoint={saved_manifest!r}, runtime={current_manifest!r}"
                     )
-                    if strict:
-                        raise ValueError(message)
-                    logger.warning("%s; skipping optimizer state", message)
-                    optimizer_compatible = False
             optimizer = self._ensure_optimizer()
             optimizer_state = state["optimizer"]
             checkpoint_uses_fp32_master = isinstance(optimizer_state, Mapping) and (
@@ -2078,67 +2065,36 @@ class OnlineTrainer:
                 FP32MasterWeightOptimizer,
             )
             if checkpoint_uses_fp32_master != trainer_uses_fp32_master:
-                message = (
+                raise ValueError(
                     "checkpoint FP32 master-weight state does not match the current "
                     f"optimizer policy (checkpoint={checkpoint_uses_fp32_master}, "
                     f"current={trainer_uses_fp32_master})"
                 )
-                if strict:
-                    raise ValueError(message)
-                logger.warning("%s; skipping optimizer state", message)
-                optimizer_compatible = False
-            if optimizer_compatible:
-                try:
-                    self._strategy.load_optimizer_state(
-                        self.model,
-                        optimizer,
-                        optimizer_state,
-                    )
-                except (ValueError, TypeError, KeyError):
-                    if strict:
-                        raise
-                    logger.warning("Skipping incompatible optimizer state during non-strict load")
+            self._strategy.load_optimizer_state(
+                self.model,
+                optimizer,
+                optimizer_state,
+            )
 
         if "grad_scaler" in state:
             if self._grad_scaler is None:
-                if strict:
-                    raise ValueError(
-                        "checkpoint contains GradScaler state but trainer fp16 scaling is disabled",
-                    )
-                logger.warning("Skipping GradScaler state because fp16 scaling is disabled")
-            else:
-                try:
-                    self._grad_scaler.load_state_dict(state["grad_scaler"])
-                except (ValueError, TypeError, KeyError):
-                    if strict:
-                        raise
-                    logger.warning("Skipping incompatible GradScaler state during non-strict load")
-        elif self._grad_scaler is not None and nonzero_checkpoint:
-            if strict:
                 raise ValueError(
-                    "nonzero fp16 checkpoint is missing GradScaler state; strict resume "
-                    "cannot reconstruct its loss-scale history",
+                    "checkpoint contains GradScaler state but trainer fp16 scaling is disabled",
                 )
-            logger.warning(
-                "Resuming a nonzero fp16 checkpoint without GradScaler state; "
-                "using a fresh dynamic loss scale",
+            self._grad_scaler.load_state_dict(state["grad_scaler"])
+        elif self._grad_scaler is not None and nonzero_checkpoint:
+            raise ValueError(
+                "nonzero fp16 checkpoint is missing GradScaler state; resume "
+                "cannot reconstruct its loss-scale history",
             )
 
         if "ema" in state:
             if not self.config.ema.enable:
-                if strict:
-                    raise ValueError("checkpoint contains EMA state but trainer.ema.enable=false")
-                logger.warning("Skipping EMA state because trainer.ema.enable=false")
-            else:
-                ema = self._ensure_ema()
-                assert ema is not None
-                try:
-                    ema.load_state_dict(state["ema"])
-                except (ValueError, TypeError, KeyError):
-                    if strict:
-                        raise
-                    logger.warning("Skipping incompatible EMA state during non-strict load")
-        elif strict and self.config.ema.enable:
+                raise ValueError("checkpoint contains EMA state but trainer.ema.enable=false")
+            ema = self._ensure_ema()
+            assert ema is not None
+            ema.load_state_dict(state["ema"])
+        elif self.config.ema.enable:
             raise ValueError("checkpoint missing EMA state but trainer.ema.enable=true")
 
         # A resumed trainer must push the restored driver weights before the

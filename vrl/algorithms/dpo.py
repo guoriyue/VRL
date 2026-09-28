@@ -64,7 +64,6 @@ class DiffusionDPOConfig:
                         "max_train_steps",
                         "output_dir",
                         "resume_from",
-                        "resume_strict",
                     }
                 ),
             ),

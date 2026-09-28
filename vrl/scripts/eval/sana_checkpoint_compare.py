@@ -148,7 +148,6 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         read_checkpoint_meta(expected_checkpoint_file.parent),
         family="sana",
         expected_model_identity=model_identity,
-        strict=True,
     )
     bundle = entry.build_rollout(build)
     # The registered mismatch wording below predates run.materialize and is
@@ -188,7 +187,6 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         bundle=bundle,
         family="sana",
         expected_model_identity=model_identity,
-        strict=True,
     )
     del checkpoint
     gc.collect()

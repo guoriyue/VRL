@@ -93,23 +93,11 @@ class Strategy(Protocol):
         """Rollout-facing flat trainable state (unwrapped, policy-facing keys)."""
         ...
 
-    def load_checkpoint_state(
-        self,
-        bundle: Any,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
+    def load_checkpoint_state(self, bundle: Any, state: dict[str, Any]) -> None:
         """Load checkpoint-owned state back into the bundle."""
         ...
 
-    def load_full_checkpoint_state(
-        self,
-        bundle: Any,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
+    def load_full_checkpoint_state(self, bundle: Any, state: dict[str, Any]) -> None:
         """Load a schema-v1 full-state root through the strategy boundary."""
         ...
 
@@ -338,27 +326,15 @@ class _UnshardedStateStrategy:
 
         return export_checkpoint_state(bundle)
 
-    def load_checkpoint_state(
-        self,
-        bundle: Any,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
+    def load_checkpoint_state(self, bundle: Any, state: dict[str, Any]) -> None:
         from vrl.trainers.checkpointing import load_checkpoint_state
 
-        load_checkpoint_state(bundle, state, strict=strict)
+        load_checkpoint_state(bundle, state)
 
-    def load_full_checkpoint_state(
-        self,
-        bundle: Any,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
+    def load_full_checkpoint_state(self, bundle: Any, state: dict[str, Any]) -> None:
         from vrl.trainers.checkpointing import load_full_checkpoint_state
 
-        load_full_checkpoint_state(bundle, state, strict=strict)
+        load_full_checkpoint_state(bundle, state)
 
     def export_optimizer_state(
         self,
@@ -812,34 +788,21 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
             raise ValueError("trainable module state is empty")
         return state
 
-    def load_checkpoint_state(
-        self,
-        bundle: Any,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
+    def load_checkpoint_state(self, bundle: Any, state: dict[str, Any]) -> None:
         from vrl.trainers.fsdp import load_checkpoint_state_dict
 
-        self._load_module_states(bundle, state, strict=strict, load_one=load_checkpoint_state_dict)
+        self._load_module_states(bundle, state, load_one=load_checkpoint_state_dict)
 
-    def load_full_checkpoint_state(
-        self,
-        bundle: Any,
-        state: dict[str, Any],
-        *,
-        strict: bool = True,
-    ) -> None:
+    def load_full_checkpoint_state(self, bundle: Any, state: dict[str, Any]) -> None:
         from vrl.trainers.fsdp import load_full_state_dict
 
-        self._load_module_states(bundle, state, strict=strict, load_one=load_full_state_dict)
+        self._load_module_states(bundle, state, load_one=load_full_state_dict)
 
     def _load_module_states(
         self,
         bundle: Any,
         state: dict[str, Any],
         *,
-        strict: bool,
         load_one: Callable[..., None],
     ) -> None:
         """Check the module roots, then scatter each module's state with ``load_one``."""
@@ -849,13 +812,12 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
         modules = require_trainable_modules(bundle)
         missing = sorted(set(modules) - set(state))
         extra = sorted(set(state) - set(modules))
-        if strict and (missing or extra):
+        if missing or extra:
             raise ValueError(
                 f"checkpoint module roots mismatch: missing={missing}, unexpected={extra}",
             )
         for name, module in modules.items():
-            if name in state:
-                load_one(unwrap_compile_and_ddp(module), state[name], strict=strict)
+            load_one(unwrap_compile_and_ddp(module), state[name])
 
     def export_optimizer_state(
         self,

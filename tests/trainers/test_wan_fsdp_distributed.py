@@ -106,7 +106,7 @@ def _run_wan_master_resume(rank, port, checkpointing):
         stream.seek(0)
         loaded = torch.load(stream, map_location="cpu", weights_only=False)
         restored, restored_optimizer = build()
-        strategy.load_checkpoint_state(_bundle(restored), loaded["model"], strict=True)
+        strategy.load_checkpoint_state(_bundle(restored), loaded["model"])
         strategy.load_optimizer_state(restored, restored_optimizer, loaded["optimizer"])
         _assert_state_equal(strategy.export_checkpoint_state(_bundle(restored)), saved["model"])
         _assert_state_equal(
@@ -351,7 +351,7 @@ def _run_rank(
             [parameter for parameter in resumed.parameters() if parameter.requires_grad],
             lr=1e-2,
         )
-        strategy.load_checkpoint_state(_bundle(resumed), checkpoint["checkpoint"], strict=True)
+        strategy.load_checkpoint_state(_bundle(resumed), checkpoint["checkpoint"])
         strategy.load_optimizer_state(resumed, resumed_optimizer, checkpoint["optimizer"])
         restored = strategy.export_checkpoint_state(_bundle(resumed))
         resume_matches = None
@@ -511,7 +511,7 @@ def _run_dual_rank(
             [parameter for parameter in resumed.parameters() if parameter.requires_grad],
             lr=1e-2,
         )
-        strategy.load_checkpoint_state(_bundle(resumed), checkpoint["checkpoint"], strict=True)
+        strategy.load_checkpoint_state(_bundle(resumed), checkpoint["checkpoint"])
         strategy.load_optimizer_state(resumed, resumed_optimizer, checkpoint["optimizer"])
         restored = strategy.export_checkpoint_state(_bundle(resumed))
         restored_optimizer = strategy.export_optimizer_state(resumed, resumed_optimizer)

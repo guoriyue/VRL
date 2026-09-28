@@ -36,9 +36,6 @@ _LEGACY_CHECKPOINT_SCHEMA_VERSION = 1
 TRAINING_CHECKPOINT_NAME = "checkpoint.pt"
 LORA_WEIGHTS_NAME = "lora_weights"
 CHECKPOINT_META_NAME = "checkpoint_meta.json"
-# Strict restore is the checkpoint protocol default, independent of any
-# particular trainer implementation.
-DEFAULT_CHECKPOINT_STRICT = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,60 +182,37 @@ class TrainingCheckpoint:
         saved_identity: dict[str, Any] | None,
         family: str,
         expected_model_identity: dict[str, Any] | None,
-        strict: bool,
     ) -> None:
         """Apply one family/identity policy to payloads and metadata sidecars."""
 
-        if strict:
-            TrainingCheckpoint._validate_family(family, field="runtime family")
+        TrainingCheckpoint._validate_family(family, field="runtime family")
         if schema_version == CHECKPOINT_SCHEMA_VERSION:
             TrainingCheckpoint._validate_family(
                 checkpoint_family,
                 field=f"schema-v2 {source} family",
             )
-        if strict and checkpoint_family and checkpoint_family != family:
+        if checkpoint_family and checkpoint_family != family:
             raise ValueError(
                 f"{source} family mismatch: checkpoint={checkpoint_family!r}, runtime={family!r}",
             )
-        if strict:
-            if schema_version == CHECKPOINT_SCHEMA_VERSION:
-                if expected_model_identity is None:
-                    raise ValueError(
-                        f"strict schema-v2 {source} validation requires runtime model identity",
-                    )
-                if saved_identity is None:
-                    raise ValueError(
-                        f"schema-v2 {source} is missing required model identity",
-                    )
-            if (
-                saved_identity is not None
-                and expected_model_identity is not None
-                and saved_identity != expected_model_identity
-            ):
+        if schema_version == CHECKPOINT_SCHEMA_VERSION:
+            if expected_model_identity is None:
                 raise ValueError(
-                    f"{source} model identity mismatch: "
-                    f"checkpoint={saved_identity!r}, runtime={expected_model_identity!r}",
-                )
-        else:
-            if checkpoint_family and checkpoint_family != family:
-                logger.warning(
-                    "Non-strict %s validation ignores family mismatch: checkpoint=%r, runtime=%r",
-                    source,
-                    checkpoint_family,
-                    family,
+                    f"schema-v2 {source} validation requires runtime model identity",
                 )
             if saved_identity is None:
-                logger.warning("Non-strict %s validation has no saved model identity", source)
-            elif expected_model_identity is None:
-                logger.warning("Non-strict %s validation has no runtime model identity", source)
-            elif saved_identity != expected_model_identity:
-                logger.warning(
-                    "Non-strict %s validation ignores model identity mismatch: "
-                    "checkpoint=%r, runtime=%r",
-                    source,
-                    saved_identity,
-                    expected_model_identity,
+                raise ValueError(
+                    f"schema-v2 {source} is missing required model identity",
                 )
+        if (
+            saved_identity is not None
+            and expected_model_identity is not None
+            and saved_identity != expected_model_identity
+        ):
+            raise ValueError(
+                f"{source} model identity mismatch: "
+                f"checkpoint={saved_identity!r}, runtime={expected_model_identity!r}",
+            )
 
     @staticmethod
     def _validate_meta_matches_payload(
@@ -435,7 +409,6 @@ class TrainingCheckpoint:
         bundle: Any,
         family: str,
         expected_model_identity: dict[str, Any] | None = None,
-        strict: bool = DEFAULT_CHECKPOINT_STRICT,
     ) -> None:
         """Restore model checkpoint-owned modules and trainer state."""
 
@@ -444,11 +417,10 @@ class TrainingCheckpoint:
             bundle=bundle,
             family=family,
             expected_model_identity=expected_model_identity,
-            strict=strict,
             strategy=strategy,
         )
-        trainer.load_state_dict(self.trainer_state, strict=strict)
-        if strict and "optimizer" in self.trainer_state:
+        trainer.load_state_dict(self.trainer_state)
+        if "optimizer" in self.trainer_state:
             restored_trainer = trainer.state_dict()
             _require_equal_tensor_tree(
                 self.trainer_state["optimizer"],
@@ -462,7 +434,6 @@ class TrainingCheckpoint:
         bundle: Any,
         family: str,
         expected_model_identity: dict[str, Any] | None = None,
-        strict: bool = DEFAULT_CHECKPOINT_STRICT,
         strategy: Any | None = None,
     ) -> None:
         """Restore and verify checkpoint-owned model state without trainer state.
@@ -475,12 +446,10 @@ class TrainingCheckpoint:
         self.validate_compatibility(
             family=family,
             expected_model_identity=expected_model_identity,
-            strict=strict,
         )
         resolved_state = self._state_for_restore(
             bundle=bundle,
             expected_model_identity=expected_model_identity,
-            strict=strict,
         )
         strategy_loader = getattr(strategy, "load_checkpoint_state", None)
         full_state_loader = getattr(strategy, "load_full_checkpoint_state", None)
@@ -493,7 +462,7 @@ class TrainingCheckpoint:
                 root_name: dict(root_state)
                 for root_name, root_state in resolved_state.state.items()
             }
-            strategy_loader(bundle, state_for_load, strict=strict)
+            strategy_loader(bundle, state_for_load)
         else:
             modules = require_trainable_modules(bundle)
             # A schema-v1 checkpoint may mix old full-state roots with selective
@@ -512,32 +481,30 @@ class TrainingCheckpoint:
                     if root_name in resolved_state.full_state_roots
                     else strategy_loader
                 )
-                loader(root_bundle, root_state, strict=strict)
-        if strict:
-            # The export is a collective under FSDP (every rank joins the gather);
-            # only the primary retains the full state, so only it compares.
-            restored_checkpoint_state = (
-                strategy.export_checkpoint_state(bundle)
-                if callable(getattr(strategy, "export_checkpoint_state", None))
-                else export_checkpoint_state(bundle)
+                loader(root_bundle, root_state)
+        # The export is a collective under FSDP (every rank joins the gather);
+        # only the primary retains the full state, so only it compares.
+        restored_checkpoint_state = (
+            strategy.export_checkpoint_state(bundle)
+            if callable(getattr(strategy, "export_checkpoint_state", None))
+            else export_checkpoint_state(bundle)
+        )
+        if strategy is None or strategy.context.is_primary:
+            expected_owned_state = _select_owned_checkpoint_state(
+                bundle,
+                resolved_state.state,
             )
-            if strategy is None or strategy.context.is_primary:
-                expected_owned_state = _select_owned_checkpoint_state(
-                    bundle,
-                    resolved_state.state,
-                )
-                _require_equal_tensor_tree(
-                    expected_owned_state,
-                    restored_checkpoint_state,
-                    label="restored model weights",
-                )
+            _require_equal_tensor_tree(
+                expected_owned_state,
+                restored_checkpoint_state,
+                label="restored model weights",
+            )
 
     def validate_compatibility(
         self,
         *,
         family: str,
         expected_model_identity: dict[str, Any] | None = None,
-        strict: bool = DEFAULT_CHECKPOINT_STRICT,
     ) -> None:
         """Validate family and immutable model identity before runtime construction."""
 
@@ -548,7 +515,6 @@ class TrainingCheckpoint:
             saved_identity=self.model_identity,
             family=family,
             expected_model_identity=expected_model_identity,
-            strict=strict,
         )
 
     def _state_for_restore(
@@ -556,7 +522,6 @@ class TrainingCheckpoint:
         *,
         bundle: Any,
         expected_model_identity: dict[str, Any] | None,
-        strict: bool,
     ) -> _CheckpointStateForRestore:
         """Validate v1 full/selective state and v2 exact owned state before mutation."""
 
@@ -564,37 +529,21 @@ class TrainingCheckpoint:
         saved_roots = self.checkpoint_state
         missing_roots = sorted(set(modules) - set(saved_roots))
         extra_roots = sorted(set(saved_roots) - set(modules))
-        if strict and (missing_roots or extra_roots):
+        if missing_roots or extra_roots:
             raise ValueError(
                 f"checkpoint module roots mismatch: missing={missing_roots}, unexpected={extra_roots}",
-            )
-        if not strict and (missing_roots or extra_roots):
-            logger.warning(
-                "Non-strict checkpoint restore ignores module root mismatch: "
-                "missing=%s, unexpected=%s",
-                missing_roots,
-                extra_roots,
             )
 
         normalized: dict[str, dict[str, Any]] = {}
         full_state_roots: set[str] = set()
         for root_name, wrapped in modules.items():
-            if root_name not in saved_roots:
-                continue
             raw_saved = saved_roots[root_name]
             if not isinstance(raw_saved, dict):
-                if strict:
-                    raise TypeError(f"checkpoint module {root_name!r} state must be a dict")
-                logger.warning(
-                    "Non-strict checkpoint restore skips non-dict module state %r",
-                    root_name,
-                )
-                continue
+                raise TypeError(f"checkpoint module {root_name!r} state must be a dict")
             saved = _normalize_v1_compile_prefix(
                 raw_saved,
                 root_name=root_name,
                 schema_version=self.schema_version,
-                strict=strict,
             )
             module = unwrap_compile_and_ddp(wrapped)
             runtime_state = module.state_dict()
@@ -611,25 +560,16 @@ class TrainingCheckpoint:
             else:
                 format_label = "schema-v1 selective"
                 permitted_names = owned_names
-                if strict and (self.model_identity is None or expected_model_identity is None):
+                if self.model_identity is None or expected_model_identity is None:
                     raise ValueError(
-                        "strict restore rejects schema-v1 selective state without "
-                        "verified model identity",
+                        "restore rejects schema-v1 selective state without verified model identity",
                     )
             missing = sorted(owned_names - saved_names)
             unexpected = sorted(saved_names - permitted_names)
-            if strict and (missing or unexpected):
+            if missing or unexpected:
                 raise ValueError(
                     f"{format_label} checkpoint keys mismatch for {root_name!r}: "
                     f"missing={missing}, unexpected={unexpected}",
-                )
-            if not strict and (missing or unexpected):
-                logger.warning(
-                    "Non-strict checkpoint restore uses matching owned keys for %r: "
-                    "missing=%s, unexpected=%s",
-                    root_name,
-                    missing,
-                    unexpected,
                 )
             if root_name in full_state_roots:
                 # Full schema-v1 state is the old checkpoint's source of truth,
@@ -659,19 +599,14 @@ class TrainingResumeConfig:
     """Resolved checkpoint input shared by online and offline trainers."""
 
     checkpoint_path: str | None = None
-    strict: bool = DEFAULT_CHECKPOINT_STRICT
 
     @classmethod
     def from_root(cls, root: RootConfig) -> TrainingResumeConfig:
-        """Build the resume policy from the root's public checkpoint inputs."""
+        """Build the resume input from the root's public checkpoint inputs."""
 
         trainer = root.trainer
         resume_from = str((trainer.resume_from if trainer is not None else None) or "").strip()
-        strict = trainer.resume_strict if trainer is not None else None
-        return cls(
-            checkpoint_path=resume_from or None,
-            strict=DEFAULT_CHECKPOINT_STRICT if strict is None else strict,
-        )
+        return cls(checkpoint_path=resume_from or None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1196,7 +1131,7 @@ def prepare_model_config_for_training_resume(
 
     Full resume restores ``RuntimeBundle.trainable_modules`` from
     ``checkpoint.pt``. Loading an unrelated ``model.lora.path`` before that can
-    silently alter adapter structure, so strict mode rejects the combination.
+    silently alter adapter structure, so the combination is rejected.
     Runs on the resolved policy rather than a loaded checkpoint so the config
     build normalizes the model tree before any checkpoint I/O happens. Both
     sources are cleared — the parsed ``root`` every runtime consumer reads and
@@ -1209,7 +1144,7 @@ def prepare_model_config_for_training_resume(
     lora = root.model.lora if root.model is not None else None
     if lora is None or lora.path is None:
         return False
-    if str(lora.path).strip() and resume.strict:
+    if str(lora.path).strip():
         raise ValueError(
             "trainer.resume_from cannot be combined with model.lora.path; "
             "checkpoint.pt is the resume source of truth",
@@ -1228,7 +1163,6 @@ def restore_training_checkpoint(
     bundle: Any,
     family: str,
     expected_model_identity: dict[str, Any] | None = None,
-    strict: bool = DEFAULT_CHECKPOINT_STRICT,
 ) -> None:
     """Restore model and trainer state when a resume checkpoint was selected."""
 
@@ -1238,7 +1172,6 @@ def restore_training_checkpoint(
             bundle=bundle,
             family=family,
             expected_model_identity=expected_model_identity,
-            strict=strict,
         )
 
 
@@ -1248,7 +1181,6 @@ def restore_model_checkpoint(
     bundle: Any,
     family: str,
     expected_model_identity: dict[str, Any] | None = None,
-    strict: bool = DEFAULT_CHECKPOINT_STRICT,
     strategy: Any | None = None,
 ) -> None:
     """Restore selected model weights for evaluation or training resume."""
@@ -1258,7 +1190,6 @@ def restore_model_checkpoint(
             bundle=bundle,
             family=family,
             expected_model_identity=expected_model_identity,
-            strict=strict,
             strategy=strategy,
         )
 
@@ -1268,7 +1199,6 @@ def validate_checkpoint_compatibility(
     *,
     family: str,
     expected_model_identity: dict[str, Any] | None = None,
-    strict: bool = DEFAULT_CHECKPOINT_STRICT,
 ) -> None:
     """Check a selected resume checkpoint before building the runtime."""
 
@@ -1276,7 +1206,6 @@ def validate_checkpoint_compatibility(
         checkpoint.validate_compatibility(
             family=family,
             expected_model_identity=expected_model_identity,
-            strict=strict,
         )
 
 
@@ -1285,7 +1214,6 @@ def validate_checkpoint_meta_compatibility(
     *,
     family: str,
     expected_model_identity: dict[str, Any] | None = None,
-    strict: bool = DEFAULT_CHECKPOINT_STRICT,
 ) -> None:
     """Validate the cheap checkpoint sidecar before model construction.
 
@@ -1312,7 +1240,6 @@ def validate_checkpoint_meta_compatibility(
         saved_identity=raw_identity,
         family=family,
         expected_model_identity=expected_model_identity,
-        strict=strict,
     )
 
 
@@ -1350,7 +1277,6 @@ def _normalize_v1_compile_prefix(
     *,
     root_name: str,
     schema_version: int,
-    strict: bool,
 ) -> dict[str, Any]:
     """Migrate the one wrapper prefix emitted by schema-v1 compiled exports."""
 
@@ -1361,17 +1287,9 @@ def _normalize_v1_compile_prefix(
     if not any(prefixed):
         return state
     if not all(prefixed):
-        if strict:
-            raise ValueError(
-                f"schema-v1 checkpoint module {root_name!r} mixes compiled and "
-                "uncompiled state keys",
-            )
-        logger.warning(
-            "Non-strict checkpoint restore cannot normalize mixed schema-v1 "
-            "compile prefixes for %r",
-            root_name,
+        raise ValueError(
+            f"schema-v1 checkpoint module {root_name!r} mixes compiled and uncompiled state keys",
         )
-        return state
     normalized = {str(name).removeprefix(prefix): value for name, value in state.items()}
     if len(normalized) != len(state):
         raise ValueError(
@@ -1442,21 +1360,17 @@ def export_checkpoint_state(bundle: Any) -> dict[str, dict[str, Any]]:
 def load_checkpoint_state(
     bundle: Any,
     state: dict[str, Any],
-    *,
-    strict: bool = DEFAULT_CHECKPOINT_STRICT,
 ) -> None:
     """Load exact checkpoint-owned state into a runtime bundle."""
 
     modules = require_trainable_modules(bundle)
     missing = sorted(set(modules) - set(state))
     extra = sorted(set(state) - set(modules))
-    if strict and (missing or extra):
+    if missing or extra:
         raise ValueError(
             f"checkpoint module roots mismatch: missing={missing}, unexpected={extra}",
         )
     for name, wrapped in modules.items():
-        if name not in state:
-            continue
         module = unwrap_compile_and_ddp(wrapped)
         module_state = state[name]
         if not isinstance(module_state, dict):
@@ -1464,7 +1378,7 @@ def load_checkpoint_state(
         owned_names = checkpoint_owned_state_names(module)
         missing_keys = sorted(owned_names - set(module_state))
         extra_keys = sorted(set(module_state) - owned_names)
-        if strict and (missing_keys or extra_keys):
+        if missing_keys or extra_keys:
             raise ValueError(
                 f"checkpoint owned keys mismatch for {name!r}: "
                 f"missing={missing_keys}, unexpected={extra_keys}",
@@ -1478,23 +1392,19 @@ def load_checkpoint_state(
 def load_full_checkpoint_state(
     bundle: Any,
     state: dict[str, Any],
-    *,
-    strict: bool = DEFAULT_CHECKPOINT_STRICT,
 ) -> None:
     """Load schema-v1 full module state, including frozen parameters and buffers."""
 
     modules = require_trainable_modules(bundle)
     missing = sorted(set(modules) - set(state))
     extra = sorted(set(state) - set(modules))
-    if strict and (missing or extra):
+    if missing or extra:
         raise ValueError(
             f"checkpoint module roots mismatch: missing={missing}, unexpected={extra}",
         )
 
     validated: dict[str, tuple[Any, dict[str, Any]]] = {}
     for name, wrapped in modules.items():
-        if name not in state:
-            continue
         module = unwrap_compile_and_ddp(wrapped)
         module_state = state[name]
         if not isinstance(module_state, dict):
@@ -1502,7 +1412,7 @@ def load_full_checkpoint_state(
         known_names = frozenset(module.state_dict())
         missing_keys = sorted(known_names - set(module_state))
         extra_keys = sorted(set(module_state) - known_names)
-        if strict and (missing_keys or extra_keys):
+        if missing_keys or extra_keys:
             raise ValueError(
                 f"full checkpoint keys mismatch for {name!r}: "
                 f"missing={missing_keys}, unexpected={extra_keys}",
@@ -1513,7 +1423,7 @@ def load_full_checkpoint_state(
     # checks tensor shapes across roots before calling this loader.
     for name in sorted(validated):
         module, module_state = validated[name]
-        module.load_state_dict(module_state, strict=strict)
+        module.load_state_dict(module_state, strict=True)
 
 
 def _select_owned_checkpoint_state(
@@ -1561,15 +1471,13 @@ def validate_rng_state(
     *,
     rank: int = 0,
     world_size: int = 1,
-    strict: bool = True,
     generator_names: Sequence[str] = (),
 ) -> dict[str, Any] | None:
     """Check topology and requested stream names without changing any RNG state.
 
-    Legacy single-process trees remain readable. Multi-rank strict resume
-    requires every rank's tree and the same topology; non-strict legacy resume
-    warns because the missing streams cannot be reconstructed. Requested named
-    generators must also be present for strict resume.
+    Legacy single-process trees remain readable. Multi-rank resume requires
+    every rank's tree and the same topology, and every requested named
+    generator must be present.
     """
 
     if type(rank) is not int or type(world_size) is not int or not 0 <= rank < world_size:
@@ -1587,22 +1495,18 @@ def validate_rng_state(
             raise ValueError("checkpoint per-rank RNG states disagree with training world_size")
         state = states[rank]
     elif world_size > 1:
-        message = (
+        raise ValueError(
             "legacy checkpoint has no per-rank RNG states; multi-rank resume is not equivalent"
         )
-        if strict:
-            raise ValueError(message)
-        logger.warning(message)
     # Reject missing data-sampler streams before mutating any process RNG.
     named = state.get("generators", {}) if state else {}
     missing = sorted(
         name for name in generator_names if not isinstance(named, dict) or name not in named
     )
     if missing:
-        message = "checkpoint RNG state missing requested generators: " + ", ".join(missing)
-        if strict:
-            raise ValueError(message)
-        logger.warning("%s; retaining current streams, resume is not equivalent", message)
+        raise ValueError(
+            "checkpoint RNG state missing requested generators: " + ", ".join(missing)
+        )
     return state
 
 
@@ -1611,7 +1515,6 @@ def restore_rng_state(
     *,
     rank: int = 0,
     world_size: int = 1,
-    strict: bool = True,
     **generators: torch.Generator,
 ) -> None:
     """Restore this rank's process and requested named RNG streams after validation."""
@@ -1620,7 +1523,6 @@ def restore_rng_state(
         state,
         rank=rank,
         world_size=world_size,
-        strict=strict,
         generator_names=tuple(generators),
     )
     if not state:
@@ -1811,7 +1713,6 @@ def find_latest_complete_checkpoint(output_dir: str | Path) -> Path | None:
 __all__ = [
     "CHECKPOINT_META_NAME",
     "CHECKPOINT_SCHEMA_VERSION",
-    "DEFAULT_CHECKPOINT_STRICT",
     "LORA_WEIGHTS_NAME",
     "RESOLVED_CONFIG_NAME",
     "TRAINING_CHECKPOINT_NAME",

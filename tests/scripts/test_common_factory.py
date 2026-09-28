@@ -290,7 +290,6 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     from vrl.rewards.ray import RayRewardPlacement
 
     assert built.resume.checkpoint_path is None
-    assert built.resume.strict is True
     assert cfg.model.use_lora is False
     reward = build_reward_function(
         resolve_reward_inputs(

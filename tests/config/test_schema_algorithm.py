@@ -154,7 +154,6 @@ def test_diffusion_dpo_accepts_its_resume_and_optimizer_surface() -> None:
                 "max_train_steps": 20,
                 "output_dir": "outputs/dpo",
                 "resume_from": "",
-                "resume_strict": True,
             },
         },
     )

@@ -29,7 +29,6 @@ from vrl.trainers.checkpointing import (
     TrainingResumeConfig,
     export_checkpoint_state,
     load_checkpoint_state,
-    prepare_model_config_for_training_resume,
     restore_model_checkpoint,
     restore_training_checkpoint,
     save_training_checkpoint,
@@ -120,20 +119,6 @@ class _RngGatherStub:
 
 
 @pytest.mark.parametrize(
-    ("value", "expected"),
-    [(None, True), (True, True), (False, False)],
-)
-def test_resume_strict_uses_checkpoint_policy(
-    value: bool | None,
-    expected: bool,
-) -> None:
-    trainer = {} if value is None else {"resume_strict": value}
-    cfg = OmegaConf.create({"trainer": trainer})
-
-    assert TrainingResumeConfig.from_root(parse_config(cfg)).strict is expected
-
-
-@pytest.mark.parametrize(
     ("resume_from", "expected_path"),
     [("", None), (" /tmp/checkpoint-7 ", "/tmp/checkpoint-7")],
 )
@@ -142,33 +127,12 @@ def test_resume_config_resolves_fresh_and_checkpoint_paths(
     expected_path: str | None,
 ) -> None:
     cfg = OmegaConf.create(
-        {"trainer": {"resume_from": resume_from, "resume_strict": False}},
+        {"trainer": {"resume_from": resume_from}},
     )
 
     resolved = TrainingResumeConfig.from_root(parse_config(cfg))
 
     assert resolved.checkpoint_path == expected_path
-    assert resolved.strict is False
-
-
-def test_nonstrict_resume_clears_the_warm_start_adapter_path() -> None:
-    cfg = OmegaConf.create(
-        {
-            "model": {"family": "sd3_5", "lora": {"path": "/tmp/warm-start"}},
-            "trainer": {"resume_from": "/tmp/checkpoint-4", "resume_strict": False},
-        },
-    )
-    root = parse_config(cfg)
-
-    assert prepare_model_config_for_training_resume(
-        cfg,
-        root,
-        TrainingResumeConfig.from_root(root),
-    )
-
-    assert cfg.model.lora.path == ""
-    assert root.model is not None and root.model.lora is not None
-    assert root.model.lora.path == ""
 
 
 def test_training_checkpoint_round_trips_trainer_and_owned_state(tmp_path) -> None:
@@ -199,7 +163,6 @@ def test_training_checkpoint_round_trips_trainer_and_owned_state(tmp_path) -> No
         bundle=restored,
         family="unit",
         expected_model_identity=UNIT_IDENTITY,
-        strict=True,
     )
 
     assert (tmp_path / "checkpoint-2" / TRAINING_CHECKPOINT_NAME).exists()
@@ -231,7 +194,6 @@ def test_restore_model_checkpoint_restores_without_trainer_state(tmp_path) -> No
         bundle=restored,
         family="unit",
         expected_model_identity=UNIT_IDENTITY,
-        strict=True,
     )
 
     assert restored.module.weight.item() == pytest.approx(4.0)
@@ -258,7 +220,6 @@ def test_restore_model_checkpoint_rejects_identity_before_loading(tmp_path) -> N
             bundle=restored,
             family="unit",
             expected_model_identity={"schema": "wrong/v1"},
-            strict=True,
         )
 
     assert torch.equal(restored.module.weight, before)
@@ -286,7 +247,6 @@ def test_restore_training_checkpoint_rejects_family_mismatch(tmp_path) -> None:
             bundle=_Bundle(),
             family="wan_2_1",
             expected_model_identity=UNIT_IDENTITY,
-            strict=True,
         )
 
 
@@ -315,7 +275,6 @@ def test_restore_training_checkpoint_strictly_checks_model_identity(tmp_path) ->
         bundle=_Bundle(),
         family="wan_2_1_i2v",
         expected_model_identity=identity,
-        strict=True,
     )
     wrong = {**identity, "boundary_ratio": 0.8}
     with pytest.raises(ValueError, match="model identity mismatch"):
@@ -325,7 +284,6 @@ def test_restore_training_checkpoint_strictly_checks_model_identity(tmp_path) ->
             bundle=_Bundle(),
             family="wan_2_1_i2v",
             expected_model_identity=wrong,
-            strict=True,
         )
 
 
@@ -346,7 +304,6 @@ def test_checkpoint_compatibility_preflight_accepts_matching_identity(tmp_path) 
         checkpoint,
         family="sana",
         expected_model_identity=identity,
-        strict=True,
     )
 
 
@@ -359,7 +316,6 @@ def test_checkpoint_meta_preflight_accepts_matching_identity() -> None:
         },
         family="sana",
         expected_model_identity=UNIT_IDENTITY,
-        strict=True,
     )
 
 
@@ -373,7 +329,6 @@ def test_checkpoint_meta_preflight_rejects_identity_mismatch() -> None:
             },
             family="sana",
             expected_model_identity={"schema": "wrong/v1"},
-            strict=True,
         )
 
 
@@ -394,7 +349,6 @@ def test_checkpoint_meta_preflight_rejects_missing_protocol_fields(meta) -> None
             meta,
             family="sana",
             expected_model_identity=UNIT_IDENTITY,
-            strict=True,
         )
 
 
@@ -433,28 +387,7 @@ def test_checkpoint_compatibility_preflight_rejects_strict_mismatch(
             checkpoint,
             family=family,
             expected_model_identity=identity,
-            strict=True,
         )
-
-
-def test_checkpoint_compatibility_preflight_allows_non_strict_mismatch(tmp_path) -> None:
-    checkpoint = TrainingCheckpoint(
-        checkpoint_dir=tmp_path,
-        checkpoint_path=tmp_path / TRAINING_CHECKPOINT_NAME,
-        payload={
-            "family": "sana",
-            "schema_version": CHECKPOINT_SCHEMA_VERSION,
-            "model": {"identity": {"schema": "saved"}, "owned_state": {}},
-        },
-        meta={},
-    )
-
-    validate_checkpoint_compatibility(
-        checkpoint,
-        family="flux",
-        expected_model_identity={"schema": "other"},
-        strict=False,
-    )
 
 
 def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path) -> None:
@@ -465,9 +398,9 @@ def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path
             self.calls = []
             self.context = _context()
 
-        def load_checkpoint_state(self, bundle, state, *, strict=True):
-            self.calls.append((bundle, state, strict))
-            load_checkpoint_state(bundle, state, strict=strict)
+        def load_checkpoint_state(self, bundle, state):
+            self.calls.append((bundle, state))
+            load_checkpoint_state(bundle, state)
 
         def export_checkpoint_state(self, bundle):
             return export_checkpoint_state(bundle)
@@ -495,10 +428,9 @@ def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path
         bundle=restored,
         family="unit",
         expected_model_identity=UNIT_IDENTITY,
-        strict=True,
     )
 
-    assert trainer._strategy.calls == [(restored, checkpoint.checkpoint_state, True)]
+    assert trainer._strategy.calls == [(restored, checkpoint.checkpoint_state)]
 
 
 def test_save_training_checkpoint_routes_export_through_strategy(tmp_path) -> None:
@@ -1132,7 +1064,7 @@ def test_save_training_checkpoint_requires_canonical_family(tmp_path, family) ->
 
 def test_load_checkpoint_state_strict_rejects_key_mismatch() -> None:
     with pytest.raises(ValueError, match="missing"):
-        load_checkpoint_state(_Bundle(), {}, strict=True)
+        load_checkpoint_state(_Bundle(), {})
 
 
 @pytest.mark.parametrize("name", ["checkpoint-final", "checkpoint-42"])

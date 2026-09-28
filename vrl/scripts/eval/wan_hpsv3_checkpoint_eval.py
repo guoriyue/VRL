@@ -180,7 +180,6 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
             target.meta,
             family=entry.family,
             expected_model_identity=identity,
-            strict=True,
         )
 
     examples = load_prompt_dataset_index(args.prompts)[: args.limit]
@@ -213,7 +212,6 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
                 bundle=bundle,
                 family=entry.family,
                 expected_model_identity=identity,
-                strict=True,
             )
             videos += _generate_arm(model, target.label, examples, sampling, args)
     finally:

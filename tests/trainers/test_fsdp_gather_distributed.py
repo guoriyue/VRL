@@ -112,7 +112,7 @@ def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
         assert (set(primary_only) == trainable) if rank == 0 else primary_only == {}
 
         replacement = {name: torch.full_like(value, 9.0) for name, value in gathered.items()}
-        load_checkpoint_state_dict(model, replacement, strict=True)
+        load_checkpoint_state_dict(model, replacement)
         restored = gather_checkpoint_state_dict(model)
         trainable_restored = all(
             torch.equal(value, torch.full_like(value, 9.0)) for value in restored.values()

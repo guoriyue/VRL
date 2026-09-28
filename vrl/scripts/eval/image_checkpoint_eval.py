@@ -246,7 +246,6 @@ class EvaluationPlan:
                         bundle=bundle,
                         family=self.resolved_model.entry.family,
                         expected_model_identity=self.resolved_model.identity,
-                        strict=True,
                     )
                     del checkpoint
                     gc.collect()
@@ -566,7 +565,6 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
             target.meta,
             family=entry.family,
             expected_model_identity=resolved.identity,
-            strict=True,
         )
 
     # Only reward/data are projected from this independent policy. Its model,

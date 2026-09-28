@@ -39,7 +39,6 @@ def test_checkpoint_compatibility_rejects_schema_v2_without_saved_family(tmp_pat
             checkpoint,
             family="unit",
             expected_model_identity=UNIT_IDENTITY,
-            strict=True,
         )
 
 
@@ -133,7 +132,6 @@ def test_strict_schema_v2_restore_requires_exact_owned_keys(tmp_path) -> None:
         bundle=bundle,
         family="unit",
         expected_model_identity=UNIT_IDENTITY,
-        strict=True,
     )
 
     assert bundle.module.weight.item() == pytest.approx(7.0)
@@ -179,7 +177,6 @@ def test_schema_v2_wrong_shape_rejects_all_roots_before_mutation(tmp_path) -> No
             bundle=bundle,
             family="unit",
             expected_model_identity=UNIT_IDENTITY,
-            strict=True,
         )
 
     assert all(
@@ -216,7 +213,6 @@ def test_schema_v2_non_tensor_owned_value_rejects_before_mutation(tmp_path) -> N
             bundle=bundle,
             family="unit",
             expected_model_identity=UNIT_IDENTITY,
-            strict=True,
         )
 
     assert all(
@@ -264,7 +260,6 @@ def test_strict_schema_v2_restore_rejects_missing_extra_keys_and_roots(
             bundle=_OwnedBundle(),
             family="unit",
             expected_model_identity=UNIT_IDENTITY,
-            strict=True,
         )
 
 
@@ -281,7 +276,6 @@ def test_strict_schema_v1_full_state_restores_without_identity(tmp_path) -> None
         trainer=_Trainer(),
         bundle=restored,
         family="unit",
-        strict=True,
     )
 
     assert restored.module.weight.item() == pytest.approx(7.0)
@@ -326,7 +320,6 @@ def test_strict_schema_v1_full_wrong_shape_rejects_all_roots_before_mutation(
             trainer=_Trainer(),
             bundle=restored,
             family="unit",
-            strict=True,
         )
 
     assert all(
@@ -360,7 +353,6 @@ def test_strict_schema_v1_malformed_full_state_rejects_before_mutation(
             trainer=_Trainer(),
             bundle=restored,
             family="unit",
-            strict=True,
         )
 
     assert all(
@@ -380,7 +372,6 @@ def test_strict_schema_v1_compiled_full_state_normalizes_legacy_prefix(tmp_path)
         trainer=_Trainer(),
         bundle=restored,
         family="unit",
-        strict=True,
     )
 
     assert torch.equal(restored.module.weight, source.module.weight)
@@ -401,7 +392,6 @@ def test_strict_schema_v1_rejects_mixed_compile_prefixes(tmp_path) -> None:
             trainer=_Trainer(),
             bundle=_OwnedBundle(),
             family="unit",
-            strict=True,
         )
 
 
@@ -430,7 +420,6 @@ def test_strict_schema_v2_never_normalizes_compile_prefix(tmp_path) -> None:
             bundle=_OwnedBundle(),
             family="unit",
             expected_model_identity=UNIT_IDENTITY,
-            strict=True,
         )
 
 
@@ -446,7 +435,6 @@ def test_strict_schema_v1_selective_state_requires_verified_identity(tmp_path) -
             trainer=_Trainer(),
             bundle=_OwnedBundle(),
             family="unit",
-            strict=True,
         )
 
 
@@ -463,38 +451,4 @@ def test_strict_schema_v1_selective_state_rejects_missing_registered_state(tmp_p
             bundle=_OwnedBundle(),
             family="unit",
             expected_model_identity=UNIT_IDENTITY,
-            strict=True,
         )
-
-
-def test_non_strict_restore_warns_and_loads_matching_owned_state(tmp_path, caplog) -> None:
-    payload = {
-        "schema_version": CHECKPOINT_SCHEMA_VERSION,
-        "family": "other",
-        "trainer": {"step": 2, "global_step": 5},
-        "model": {
-            "identity": {"schema": "other"},
-            "owned_state": {
-                "module": {
-                    "weight": torch.tensor([7.0]),
-                    "unknown": torch.tensor([9.0]),
-                },
-            },
-        },
-        "progress": {},
-        "rng": {},
-    }
-    bundle = _OwnedBundle()
-
-    restore_training_checkpoint(
-        _training_checkpoint(tmp_path, payload),
-        trainer=_Trainer(),
-        bundle=bundle,
-        family="unit",
-        expected_model_identity=UNIT_IDENTITY,
-        strict=False,
-    )
-
-    assert bundle.module.weight.item() == pytest.approx(7.0)
-    assert bundle.module.previous.item() == pytest.approx(3.0)
-    assert "Non-strict checkpoint restore" in caplog.text

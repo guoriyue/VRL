@@ -905,7 +905,6 @@ async def run_online_recipe(
         resume_checkpoint,
         family=family_entry.family,
         expected_model_identity=model_identity,
-        strict=resume_config.strict,
     )
     if resume_checkpoint is not None:
         # Every process checks every rank before model/Ray construction so a
@@ -915,7 +914,6 @@ async def run_online_recipe(
                 resume_checkpoint.rng_state,
                 rank=rank,
                 world_size=training_context.world_size,
-                strict=resume_config.strict,
                 generator_names=("prompt_generator",),
             )
 
@@ -1084,7 +1082,6 @@ async def run_online_recipe(
                 bundle=bundle,
                 family=family_entry.family,
                 expected_model_identity=model_identity,
-                strict=resume_config.strict,
             )
             logger.info(
                 "Resuming from %s, start_epoch=%d",
@@ -1137,7 +1134,6 @@ async def run_online_recipe(
                 resume_checkpoint.rng_state,
                 rank=training_context.rank,
                 world_size=training_context.world_size,
-                strict=resume_config.strict,
                 prompt_generator=rng,
             )
             # A full-param checkpoint is ~20 GB. Each torchrun rank loads its own

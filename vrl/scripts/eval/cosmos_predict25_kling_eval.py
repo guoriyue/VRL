@@ -165,7 +165,6 @@ def main(argv: list[str] | None = None) -> None:
             read_checkpoint_meta(checkpoint_dir),
             family=entry.family,
             expected_model_identity=model_identity,
-            strict=True,
         )
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -278,7 +277,6 @@ def _generate_all(
                 bundle=bundle,
                 family=entry.family,
                 expected_model_identity=expected_model_identity,
-                strict=True,
             )
             model = bundle.model.eval()
             try:

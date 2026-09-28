@@ -381,8 +381,6 @@ def _gather_named_full_cpu(
 def load_checkpoint_state_dict(
     module: nn.Module,
     state: Mapping[str, Any],
-    *,
-    strict: bool = True,
 ) -> None:
     """Load exact checkpoint-owned full tensors into local DTensor shards."""
 
@@ -406,19 +404,16 @@ def load_checkpoint_state_dict(
         )
     missing = sorted(owned_names - set(state))
     unexpected = sorted(set(state) - owned_names)
-    if strict and (missing or unexpected):
+    if missing or unexpected:
         raise ValueError(
             f"checkpoint owned-state keys mismatch: missing={missing}, unexpected={unexpected}",
         )
 
-    compatible = {
-        name: value for name, value in state.items() if name in owned_names and name in local_state
-    }
-    if not compatible:
+    if not state:
         return
     # DCP's own strict=False is intentional: strictness above applies to exact
     # owned state, while absent immutable base keys are valid in schema v2.
-    load_full_state_dict(module, compatible, strict=False)
+    load_full_state_dict(module, dict(state), strict=False)
 
 
 def load_full_state_dict(

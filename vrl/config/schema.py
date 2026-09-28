@@ -518,7 +518,6 @@ class TrainerSection(ConfigBase):
     seed: StrictInt | None = None
     deterministic: StrictBool | None = None
     resume_from: str | None = None
-    resume_strict: StrictBool | None = None
     profile: StrictBool | None = None
     debug: DebugConfig | None = None
     replay_parity: ReplayParityConfig | None = None

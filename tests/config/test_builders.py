@@ -11,10 +11,9 @@ from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 
 
-def test_build_rejects_strict_resume_with_a_warm_start_adapter() -> None:
+def test_build_rejects_resume_with_a_warm_start_adapter() -> None:
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     OmegaConf.update(cfg, "trainer.resume_from", "/tmp/checkpoint-4")
-    OmegaConf.update(cfg, "trainer.resume_strict", True)
     OmegaConf.update(cfg, "model.lora.path", "/tmp/warm-start-adapter")
 
     with pytest.raises(
@@ -22,22 +21,6 @@ def test_build_rejects_strict_resume_with_a_warm_start_adapter() -> None:
         match=r"trainer\.resume_from cannot be combined with model\.lora\.path",
     ):
         build_configs(cfg)
-
-
-def test_build_clears_nonstrict_resume_adapter_in_raw_and_typed_sources() -> None:
-    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
-    OmegaConf.update(cfg, "trainer.resume_from", "/tmp/checkpoint-4")
-    OmegaConf.update(cfg, "trainer.resume_strict", False)
-    OmegaConf.update(cfg, "model.lora.path", "/tmp/warm-start-adapter")
-
-    built = build_configs(cfg)
-
-    assert built.resume.checkpoint_path == "/tmp/checkpoint-4"
-    assert built.resume.strict is False
-    assert cfg.model.lora.path == ""
-    assert built.root.model is not None
-    assert built.root.model.lora is not None
-    assert built.root.model.lora.path == ""
 
 
 def test_build_preserves_warm_start_adapter_without_full_resume() -> None:
@@ -129,7 +112,6 @@ def test_offline_dpo_uses_the_same_build_result_without_online_state() -> None:
     assert built.trainer is None
     assert built.reward is None
     assert built.resume.checkpoint_path is None
-    assert built.resume.strict is True
 
 
 def test_online_build_rejects_missing_or_all_zero_reward() -> None:

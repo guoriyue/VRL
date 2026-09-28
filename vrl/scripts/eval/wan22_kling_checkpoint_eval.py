@@ -230,7 +230,6 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
             target.meta,
             family=entry.family,
             expected_model_identity=identity,
-            strict=True,
         )
 
     examples = load_prompt_dataset_index(args.prompts)[: args.limit]

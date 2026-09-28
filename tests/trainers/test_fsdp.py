@@ -485,7 +485,6 @@ def test_fsdp_checkpoint_includes_registered_frozen_state_but_rollout_does_not(
     strategy.load_checkpoint_state(
         Bundle(restored),
         {"transformer": checkpoint},
-        strict=True,
     )
     restored_state = gather_full_state_dict(restored)
     assert all(torch.equal(restored_state[name], checkpoint[name]) for name in registered)
@@ -545,7 +544,7 @@ def test_fsdp_checkpoint_loader_rejects_unselected_legacy_full_state(cpu_process
     dst_module.head.requires_grad_(False)
     dst = _shard(dst_module)
     with pytest.raises(ValueError, match="unexpected="):
-        strategy.load_checkpoint_state(Bundle(dst), legacy, strict=True)
+        strategy.load_checkpoint_state(Bundle(dst), legacy)
 
 
 def test_fsdp_restore_protocol_normalizes_schema_v1_full_state(
@@ -570,7 +569,7 @@ def test_fsdp_restore_protocol_normalizes_schema_v1_full_state(
     dst = _shard(dst_module)
     trainer = SimpleNamespace(
         _strategy=strategy,
-        load_state_dict=lambda state, *, strict: None,
+        load_state_dict=lambda state: None,
         state_dict=lambda: {},
     )
     checkpoint = TrainingCheckpoint(
@@ -592,7 +591,6 @@ def test_fsdp_restore_protocol_normalizes_schema_v1_full_state(
         trainer=trainer,
         bundle=Bundle(dst),
         family="toy",
-        strict=True,
     )
 
     restored = gather_full_state_dict(dst)
@@ -645,7 +643,6 @@ def test_fsdp_restore_preflights_global_shape_before_mutation(
             bundle=Bundle(destination),
             family="toy",
             expected_model_identity=identity,
-            strict=True,
             strategy=strategy,
         )
 
@@ -664,11 +661,11 @@ def test_fsdp_load_checkpoint_state_strictly_validates_owned_keys(cpu_process_gr
     missing = {"transformer": dict(state)}
     missing["transformer"].pop(next(iter(state)))
     with pytest.raises(ValueError, match="missing="):
-        strategy.load_checkpoint_state(Bundle(sharded), missing, strict=True)
+        strategy.load_checkpoint_state(Bundle(sharded), missing)
 
     unexpected = {"transformer": {**state, "unknown.weight": torch.ones(1)}}
     with pytest.raises(ValueError, match="unexpected="):
-        strategy.load_checkpoint_state(Bundle(sharded), unexpected, strict=True)
+        strategy.load_checkpoint_state(Bundle(sharded), unexpected)
 
 
 def test_fsdp_prepare_model_wraps_diffusion_handle(cpu_process_group) -> None:

@@ -25,13 +25,12 @@ PRECISION = RolePrecision(
 
 
 @pytest.mark.parametrize("value", [1.9, "2", True, -1])
-@pytest.mark.parametrize("strict", [False, True])
-def test_restore_rejects_invalid_progress_before_resetting_accumulation(value, strict):
+def test_restore_rejects_invalid_progress_before_resetting_accumulation(value):
     trainer = _make_trainer(torch.arange(4))
     trainer.global_step = 7
     trainer._gradient_accumulation_micro_step = 2
     with pytest.raises(ValueError, match=r"trainer_state\.global_step"):
-        trainer.load_state_dict({"global_step": value}, strict=strict)
+        trainer.load_state_dict({"global_step": value})
     assert trainer.global_step == 7
     assert trainer._gradient_accumulation_micro_step == 2
 
@@ -110,7 +109,7 @@ def test_offline_dpo_state_dict_restores_optimizer_and_global_step() -> None:
     state = source.state_dict()
 
     restored = _make_trainer(torch.arange(20))
-    restored.load_state_dict(state, strict=True)
+    restored.load_state_dict(state)
 
     assert restored.global_step == 7
     assert _adam_exp_avg_values(restored._optimizer) == pytest.approx(

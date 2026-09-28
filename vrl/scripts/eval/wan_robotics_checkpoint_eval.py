@@ -205,7 +205,7 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
             checkpoint = TrainingCheckpoint.load(target.path)
             _validate_loaded_checkpoint(checkpoint, target)
             checkpoint_state = checkpoint.checkpoint_state
-            load_checkpoint_state(bundle, checkpoint_state, strict=True)
+            load_checkpoint_state(bundle, checkpoint_state)
             del checkpoint_state, checkpoint
             gc.collect()
         model = bundle.model.eval()

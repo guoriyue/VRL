@@ -15,7 +15,6 @@ before VAE encoding (see ``vrl/scripts/families/wan_2_1/train_dpo.py``).
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -35,9 +34,6 @@ from vrl.utils.validation import require_int
 if TYPE_CHECKING:
     from vrl.algorithms.dpo import DiffusionDPOConfig
     from vrl.config.schema import RootConfig
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -453,7 +449,7 @@ class OfflineDPOTrainer:
             "optimizer": self._optimizer.state_dict(),
         }
 
-    def load_state_dict(self, state: dict[str, Any], *, strict: bool = True) -> None:
+    def load_state_dict(self, state: dict[str, Any]) -> None:
         """Restore resumable trainer state."""
 
         if not isinstance(state, dict):
@@ -461,15 +457,9 @@ class OfflineDPOTrainer:
         global_step = require_int(
             state.get("global_step", 0), path="trainer_state.global_step", minimum=0
         )
-        if "optimizer" in state:
-            try:
-                self._optimizer.load_state_dict(state["optimizer"])
-            except (ValueError, TypeError, KeyError):
-                if strict:
-                    raise
-                logger.warning("Skipping incompatible optimizer state during non-strict load")
-        elif strict:
+        if "optimizer" not in state:
             raise ValueError("checkpoint missing optimizer state")
+        self._optimizer.load_state_dict(state["optimizer"])
         # Neither accumulated gradients nor a partial accumulation window resume.
         self._optimizer.zero_grad(set_to_none=True)
         self.global_step = global_step

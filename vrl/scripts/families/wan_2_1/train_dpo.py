@@ -198,7 +198,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         resume_checkpoint,
         family=family,
         expected_model_identity=model_identity,
-        strict=resume_config.strict,
     )
     bundle = resolved_model.materialize(context="Wan DPO bundle construction")
     wan_model = bundle.model
@@ -266,7 +265,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             bundle=bundle,
             family="wan_2_1",
             expected_model_identity=model_identity,
-            strict=resume_config.strict,
         )
         logger.info(
             "Resuming from %s, start_step=%d",

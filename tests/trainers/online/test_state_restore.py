@@ -17,22 +17,20 @@ from vrl.config.precision import RolePrecision
 
 @pytest.mark.parametrize("field", ["step", "global_step"])
 @pytest.mark.parametrize("value", [1.9, "2", True, -1])
-@pytest.mark.parametrize("strict", [False, True])
-def test_invalid_progress_does_not_modify_trainer(field, value, strict):
+def test_invalid_progress_does_not_modify_trainer(field, value):
     trainer = _make_resume_trainer()
     trainer.state.step = 7
     trainer.state.global_step = 11
     state = {"step": 3, "global_step": 5, field: value}
     with pytest.raises(ValueError, match=rf"trainer_state\.{field}"):
-        trainer.load_state_dict(state, strict=strict)
+        trainer.load_state_dict(state)
     assert (trainer.state.step, trainer.state.global_step) == (7, 11)
 
 
 class TestOnlineTrainerResumeState:
     """Groups tests for online trainer resume state."""
 
-    @pytest.mark.parametrize("strict", [False, True])
-    def test_incompatible_ema_shape_preserves_existing_shadows(self, strict, caplog):
+    def test_incompatible_ema_shape_preserves_existing_shadows(self):
         import torch
 
         trainer = _make_resume_trainer(ema=True)
@@ -45,12 +43,8 @@ class TestOnlineTrainerResumeState:
             "num_updates": 10,
             "ema_parameters": [torch.ones(2, 2)],
         }
-        if strict:
-            with pytest.raises(ValueError, match="EMA parameter shape mismatch"):
-                trainer.load_state_dict(state, strict=True)
-        else:
-            trainer.load_state_dict(state, strict=False)
-            assert "Skipping incompatible EMA state" in caplog.text
+        with pytest.raises(ValueError, match="EMA parameter shape mismatch"):
+            trainer.load_state_dict(state)
         assert ema.ema_parameters is shadows
         torch.testing.assert_close(shadows[0], original)
         assert ema.num_updates == 0
@@ -66,7 +60,7 @@ class TestOnlineTrainerResumeState:
         state = source.state_dict()
         state.update({"total_reward": 99.0, "total_loss": 101.0})
         restored = _make_resume_trainer()
-        restored.load_state_dict(state, strict=True)
+        restored.load_state_dict(state)
 
         assert restored.state.step == 3
         assert restored.state.global_step == 5
@@ -81,7 +75,7 @@ class TestOnlineTrainerResumeState:
         }
 
         with pytest.raises(ValueError, match="master-weight state does not match"):
-            _make_resume_trainer().load_state_dict(state, strict=True)
+            _make_resume_trainer().load_state_dict(state)
 
     def test_load_state_dict_initializes_and_restores_ema_state(self) -> None:
         """``load_state_dict`` creates the EMA on demand when EMA is enabled and restores its
@@ -96,7 +90,7 @@ class TestOnlineTrainerResumeState:
         state = source.state_dict()
 
         restored = _make_resume_trainer(ema=True)
-        restored.load_state_dict(state, strict=True)
+        restored.load_state_dict(state)
 
         assert restored._ema is not None
         assert torch.equal(
@@ -110,7 +104,7 @@ class TestOnlineTrainerResumeState:
 
         state = source.state_dict()
         restored = _make_resume_trainer(ema=True)
-        restored.load_state_dict(state, strict=True)
+        restored.load_state_dict(state)
 
         assert "ema" in state
         assert state["ema"]["num_updates"] == 0
@@ -123,7 +117,7 @@ class TestOnlineTrainerResumeState:
 
         restored = _make_resume_trainer(ema=False)
         with pytest.raises(ValueError, match="EMA state"):
-            restored.load_state_dict(state, strict=True)
+            restored.load_state_dict(state)
 
     def test_load_state_dict_resets_rollout_weight_initialization(self) -> None:
         """Loading a checkpoint resets the rollout-weights-initialized and replay-parity flags, so
@@ -133,20 +127,19 @@ class TestOnlineTrainerResumeState:
         trainer._rollout_weights_initialized = True
         trainer._replay_parity_passed = True
 
-        trainer.load_state_dict({"step": 9, "global_step": 9}, strict=True)
+        trainer.load_state_dict({"step": 9, "global_step": 9})
 
         assert trainer._rollout_weights_initialized is False
         assert trainer._replay_parity_passed is False
 
-    @pytest.mark.parametrize("strict", [True, False])
-    def test_resume_rechecks_parity_at_nonzero_training_step(self, strict: bool) -> None:
+    def test_resume_rechecks_parity_at_nonzero_training_step(self) -> None:
         from vrl.algorithms.types import InitialReplayStats
 
         trainer = _make_resume_trainer()
         trainer._replay_parity_passed = True
         assert "_replay_parity_passed" not in trainer.state_dict()
 
-        trainer.load_state_dict({"step": 4, "global_step": 4}, strict=strict)
+        trainer.load_state_dict({"step": 4, "global_step": 4})
 
         with pytest.raises(RuntimeError, match="replay parity failed"):
             trainer._validate_first_update_parity(
@@ -162,13 +155,11 @@ class TestOnlineTrainerResumeState:
         trainer.model.half()
 
         with pytest.raises(ValueError, match=r"missing optimizer state.*master residuals"):
-            trainer.load_state_dict({"step": 1, "global_step": 1}, strict=True)
-
-        trainer.load_state_dict({"step": 1, "global_step": 1}, strict=False)
+            trainer.load_state_dict({"step": 1, "global_step": 1})
 
         zero_step = _make_resume_trainer()
         zero_step.model.half()
-        zero_step.load_state_dict({"step": 0, "global_step": 0}, strict=True)
+        zero_step.load_state_dict({"step": 0, "global_step": 0})
 
     def test_low_precision_master_gate_runs_before_distributed_prepare(self) -> None:
         from types import SimpleNamespace
@@ -218,7 +209,7 @@ class TestOnlineTrainerResumeState:
         assert "grad_scaler" in state
 
         restored = _make_resume_trainer(device="cuda", train_precision="fp16")
-        restored.load_state_dict(state, strict=True)
+        restored.load_state_dict(state)
 
         assert restored._grad_scaler is not None
         assert restored._grad_scaler.state_dict()["scale"] == state["grad_scaler"]["scale"]
@@ -228,9 +219,7 @@ class TestOnlineTrainerResumeState:
         trainer = _make_resume_trainer(device="cuda", train_precision="fp16")
 
         with pytest.raises(ValueError, match="missing GradScaler state"):
-            trainer.load_state_dict({"step": 1, "global_step": 1}, strict=True)
-
-        trainer.load_state_dict({"step": 1, "global_step": 1}, strict=False)
+            trainer.load_state_dict({"step": 1, "global_step": 1})
 
     def test_resume_pushes_restored_driver_weights_before_next_collect(self) -> None:
         """After a resume the restored driver weights are pushed to the rollout before the first
@@ -250,7 +239,7 @@ class TestOnlineTrainerResumeState:
         saved_weight = torch.full_like(trainer.model.weight, 3.0)
         # Model restoration is separate from trainer counters in checkpoint resume.
         trainer.model.load_state_dict({"weight": saved_weight})
-        trainer.load_state_dict({"step": 4, "global_step": 4}, strict=True)
+        trainer.load_state_dict({"step": 4, "global_step": 4})
 
         asyncio.run(trainer.step(["prompt-a"]))
 
@@ -403,7 +392,7 @@ def test_online_trainer_standard_adamw_roundtrip(tmp_path) -> None:
     saved = torch.load(checkpoint, weights_only=True)
     restored = _make_resume_trainer()
     restored.model.load_state_dict(saved["model"])
-    restored.load_state_dict(saved["trainer"], strict=True)
+    restored.load_state_dict(saved["trainer"])
     assert restored.state.step == 3
     assert restored.state.global_step == 5
     assert restored._optimizer is not None
@@ -431,31 +420,5 @@ def test_optimizer_restore_failure_preserves_progress(monkeypatch):
 
     monkeypatch.setattr(trainer._strategy, "load_optimizer_state", fail)
     with pytest.raises(RuntimeError, match="optimizer restore failed"):
-        trainer.load_state_dict(state, strict=False)
+        trainer.load_state_dict(state)
     assert (trainer.state.step, trainer.state.global_step) == (7, 11)
-
-
-def test_non_strict_manifest_mismatch_does_not_load_optimizer(monkeypatch):
-    trainer = _make_resume_trainer()
-    trainer._ensure_optimizer()
-    state = trainer.state_dict()
-    state["optimizer_parameter_manifest"][0]["name"] = "another_parameter"
-
-    def unexpected_load(*args):
-        pytest.fail("optimizer with mismatched parameter identity must not load")
-
-    monkeypatch.setattr(trainer._strategy, "load_optimizer_state", unexpected_load)
-    trainer.load_state_dict(state, strict=False)
-
-
-def test_non_strict_legacy_optimizer_group_mismatch_is_still_skipped(caplog):
-    trainer = _make_resume_trainer()
-    optimizer = trainer._ensure_optimizer()
-    state = trainer.state_dict()
-    del state["optimizer_parameter_manifest"]
-    state["optimizer"]["param_groups"] = []
-
-    trainer.load_state_dict(state, strict=False)
-
-    assert "Skipping incompatible optimizer state" in caplog.text
-    assert len(optimizer.param_groups) == 1

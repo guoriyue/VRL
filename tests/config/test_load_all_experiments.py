@@ -828,7 +828,6 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
     trainer = built.trainer
 
     assert built.resume.checkpoint_path == "/tmp/checkpoint-10"
-    assert built.resume.strict is True
     assert trainer.torch_profiler.enabled is True
     assert trainer.torch_profiler.activities == ("cpu",)
     assert trainer.drop_zero_advantage is False

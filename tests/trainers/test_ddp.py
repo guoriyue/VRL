@@ -263,7 +263,6 @@ def test_ddp_restore_protocol_loads_schema_v1_full_frozen_state(
         checkpoint,
         bundle=Bundle(restored),
         family="toy",
-        strict=True,
         strategy=_ddp_strategy(_cpu_ddp_context()),
     )
 

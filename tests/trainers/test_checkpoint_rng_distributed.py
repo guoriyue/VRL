@@ -179,22 +179,6 @@ def test_strict_four_rank_restore_checks_selected_rank_generator(rank):
         )
 
 
-def test_nonstrict_missing_generator_warns_and_preserves_missing_stream(caplog):
-    prompt_generator = torch.Generator().manual_seed(99)
-    before = prompt_generator.get_state().clone()
-    other = torch.Generator().manual_seed(44)
-    saved_other = torch.Generator().manual_seed(22).get_state()
-    restore_rng_state(
-        {"generators": {"other": saved_other}},
-        strict=False,
-        prompt_generator=prompt_generator,
-        other=other,
-    )
-    assert torch.equal(prompt_generator.get_state(), before)
-    assert torch.equal(other.get_state(), saved_other)
-    assert "missing requested generators: prompt_generator" in caplog.text
-
-
 def test_rng_preflight_does_not_apply_valid_saved_state():
     saved = capture_rng_state(prompt_generator=torch.Generator().manual_seed(12))
     saved["torch"] = torch.Generator().manual_seed(987).get_state()
@@ -202,16 +186,6 @@ def test_rng_preflight_does_not_apply_valid_saved_state():
     selected = validate_rng_state(saved, generator_names=("prompt_generator",))
     assert selected is saved
     assert torch.equal(torch.get_rng_state(), before)
-
-
-def test_nonstrict_legacy_rng_restore_warns(monkeypatch):
-    from vrl.trainers import checkpointing
-
-    messages = []
-    monkeypatch.setattr(checkpointing.logger, "warning", messages.append)
-    restore_rng_state({}, rank=1, world_size=2, strict=False)
-    assert len(messages) == 1
-    assert "not equivalent" in messages[0]
 
 
 @pytest.mark.parametrize(
@@ -223,10 +197,10 @@ def test_nonstrict_legacy_rng_restore_warns(monkeypatch):
         {"world_size": True, "by_rank": [{"generators": {}}, {"generators": {}}]},
     ],
 )
-def test_invalid_rank_rng_rejected_even_nonstrict(state):
+def test_invalid_rank_rng_is_rejected(state):
     before = torch.get_rng_state()
     with pytest.raises(ValueError, match="world_size"):
-        restore_rng_state(state, rank=0, world_size=2, strict=False)
+        restore_rng_state(state, rank=0, world_size=2)
     assert torch.equal(before, torch.get_rng_state())
 
 

@@ -145,7 +145,6 @@ def main(argv: list[str] | None = None) -> None:
                 read_checkpoint_meta(target.path),
                 family="sana",
                 expected_model_identity=model_identity,
-                strict=True,
             )
     build_root = _materialize_model_snapshot(cfg)
     build_precision = PrecisionPolicy.from_section(build_root.precision)
@@ -427,7 +426,6 @@ def _generate_images(
                     bundle=bundle,
                     family="sana",
                     expected_model_identity=expected_model_identity,
-                    strict=True,
                 )
                 del checkpoint
                 checkpoint_read = True

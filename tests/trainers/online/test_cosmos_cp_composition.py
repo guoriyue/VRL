@@ -335,9 +335,8 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
                 bundle=bundle,
                 family="cosmos-predict2.5",
                 expected_model_identity=identity,
-                strict=True,
             )
-            restore_rng_state(checkpoint.rng_state, rank=rank, world_size=2, strict=True)
+            restore_rng_state(checkpoint.rng_state, rank=rank, world_size=2)
             assert trainer.state.step == 1
             assert trainer._ema.has_updates
         updates = 1 if phase == "resume" else 2

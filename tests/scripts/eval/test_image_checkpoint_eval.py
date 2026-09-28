@@ -260,7 +260,6 @@ def test_base_disables_adapter_before_checkpoint_restores(tmp_path, plan, monkey
         return [Image.new("RGB", (8, 8))]
 
     def restore(checkpoint, **kwargs):
-        assert kwargs["strict"] is True
         assert kwargs["expected_model_identity"] == plan.resolved_model.identity
         events.append(("restore", checkpoint.next_epoch))
 

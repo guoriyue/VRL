@@ -219,9 +219,8 @@ def _verify_update_and_resume(tmp_path, *, device):
         bundle=resumed_bundle,
         family="vdn_h3",
         expected_model_identity=identity,
-        strict=True,
     )
-    restore_rng_state(checkpoint.rng_state, rank=0, world_size=1, strict=True)
+    restore_rng_state(checkpoint.rng_state, rank=0, world_size=1)
     resumed = asyncio.run(restored.step(["a wooden block"]))
     assert resumed.grad_norm == second.grad_norm
     assert resumed.initial_replay.logprob_abs_diff_max < 1e-6

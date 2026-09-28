@@ -418,16 +418,15 @@ async def test_checkpoint_identity_preflight_runs_before_prompt_or_model_build(
     run = _RealRun(monkeypatch, tmp_path, overrides=(f"trainer.resume_from={checkpoint}",))
     state = _state()
     _install_ray_side_fakes(monkeypatch, tmp_path, state)
-    validated: list[tuple[Path, str, bool]] = []
+    validated: list[tuple[Path, str]] = []
     real_validate = online.validate_checkpoint_compatibility
 
-    def spy_validate(checkpoint, *, family, expected_model_identity, strict):
-        validated.append((checkpoint.checkpoint_dir, family, strict))
+    def spy_validate(checkpoint, *, family, expected_model_identity):
+        validated.append((checkpoint.checkpoint_dir, family))
         real_validate(
             checkpoint,
             family=family,
             expected_model_identity=expected_model_identity,
-            strict=strict,
         )
 
     monkeypatch.setattr(online, "validate_checkpoint_compatibility", spy_validate)
@@ -436,7 +435,7 @@ async def test_checkpoint_identity_preflight_runs_before_prompt_or_model_build(
         pass
 
     def _stop_at_prompt(_cfg: Any) -> list[Any]:
-        assert validated == [(checkpoint, "sana", True)]
+        assert validated == [(checkpoint, "sana")]
         raise _ReachedPromptBoundary
 
     monkeypatch.setattr(online, "load_prompt_examples_from_config", _stop_at_prompt)

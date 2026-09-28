@@ -139,8 +139,7 @@ class _Trainer:
     def state_dict(self):
         return {"step": 2, "global_step": 5}
 
-    def load_state_dict(self, state, *, strict=True):
-        del strict
+    def load_state_dict(self, state):
         self.loaded = dict(state)
 
 
