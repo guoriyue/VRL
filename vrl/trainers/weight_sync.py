@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -17,24 +16,7 @@ from vrl.utils.validation import require_int
 TrainableStateGetter = Callable[[], dict[str, Any]]
 
 
-class WeightSyncer(ABC):
-    """Pushes updated weights from the trainer to inference workers."""
-
-    @abstractmethod
-    async def push(self, state_dict: dict[str, Any]) -> None:
-        """Send updated weights to inference workers."""
-
-    @property
-    def current_policy_version(self) -> int | None:
-        """Policy version of the last pushed weights.
-
-        ``None`` means this syncer does not track a version. Orchestration asks
-        through this property instead of reaching into syncer internals.
-        """
-        return None
-
-
-class RayRuntimeWeightSyncer(WeightSyncer):
+class RayRuntimeWeightSyncer:
     """Bridge ``OnlineTrainer`` weight pushes to a Ray rollout runtime."""
 
     @classmethod
@@ -60,9 +42,6 @@ class RayRuntimeWeightSyncer(WeightSyncer):
         *,
         initial_policy_version: int | None = None,
     ) -> None:
-        update_weights = getattr(runtime, "update_weights", None)
-        if not callable(update_weights):
-            raise TypeError("runtime must expose async update_weights(state, version)")
         self.runtime = runtime
         # This adapter allocates versions; the coordinator only reads the
         # version published by the runtime after accepting the push.
@@ -75,6 +54,8 @@ class RayRuntimeWeightSyncer(WeightSyncer):
         self._push_lock = asyncio.Lock()
 
     async def push(self, state_dict: dict[str, Any]) -> None:
+        """Send updated weights to the runtime under the next policy version."""
+
         # Split the two costs: the device->host copy is trainer-side GPU work,
         # the update_weights await is transport plus worker-side load. They
         # overlap differently once rollout and training stop sharing one GPU, so
@@ -93,9 +74,8 @@ class RayRuntimeWeightSyncer(WeightSyncer):
 
     @property
     def current_policy_version(self) -> int | None:
-        # The syncer owns its runtime, so reading the runtime's version here is
-        # a legal internal access (callers used to probe syncer.runtime from
-        # outside).
+        """The runtime's published version; ``None`` until it tracks one."""
+
         return self.runtime.current_policy_version
 
 

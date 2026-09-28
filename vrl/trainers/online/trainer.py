@@ -49,7 +49,7 @@ from vrl.trainers.online.config import TrainerConfig
 from vrl.trainers.online.ema import EMAWeights
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer, build_optimizer
 from vrl.trainers.strategy import SingleProcessStrategy, Strategy
-from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
+from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, TrainableStateGetter
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
@@ -477,7 +477,7 @@ class OnlineTrainer:
         model: nn.Module,
         config: TrainerConfig,
         ref_model: nn.Module | None = None,
-        weight_syncer: WeightSyncer | None = None,
+        weight_syncer: RayRuntimeWeightSyncer | None = None,
         sync_state_getter: TrainableStateGetter | None = None,
         device: torch.device | str = "cuda",
         strategy: Strategy | None = None,

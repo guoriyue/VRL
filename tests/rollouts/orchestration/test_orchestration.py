@@ -469,9 +469,10 @@ async def test_strict_schedule_defaults_to_capability_derived_arm() -> None:
 async def test_coordinator_does_not_invent_versions_for_unversioned_pushes():
     from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
     from vrl.rollouts.stats import RolloutStats
-    from vrl.trainers.weight_sync import WeightSyncer
 
-    class UnversionedSyncer(WeightSyncer):
+    class UnversionedSyncer:
+        current_policy_version = None
+
         async def push(self, state_dict):
             pass
 
