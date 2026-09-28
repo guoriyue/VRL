@@ -2,7 +2,6 @@
 
 Accepts existing source/reference images or a prompt manifest; writes RGB/RGBA PNGs
 and a JSON report. Optional official-pipeline comparison shares VRL's initial latent.
-Block offload allows this probe to coexist with a resident training process.
 """
 
 from __future__ import annotations
@@ -55,7 +54,6 @@ def main() -> None:
     parser.add_argument("--seed-mode", choices=("shared", "independent"), default="shared")
     parser.add_argument("--denoise-mode", choices=("native", "sde"), default="native")
     parser.add_argument("--noise-level", type=float, default=0.7)
-    parser.add_argument("--block-offload", action="store_true")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--compare-reference", action="store_true")
     parser.add_argument("--check-lora-backward", action="store_true")
@@ -155,9 +153,6 @@ def main() -> None:
         for_rollout=True,
     )
     build = resolved.build
-    if args.block_offload:
-        build = replace(build, rollout=replace(build.rollout, pipeline_offload_mode="block"))
-        resolved = replace(resolved, build=build)
     validate_checkpoint_compatibility(
         checkpoint, family=entry.family, expected_model_identity=resolved.identity
     )

@@ -43,10 +43,7 @@ from vrl.models.families.wan_2_1.config import (
     wan_topology_from_build,
 )
 from vrl.models.interfaces.runtime import ModelBuild, PipelineOffloadMode
-from vrl.models.peft_adapter import (
-    peel_peft,
-    temporarily_disable_lora,
-)
+from vrl.models.peft_adapter import temporarily_disable_lora
 from vrl.models.steps.denoise import (
     DenoiseModelBase,
     DiffusersPipelineModelBase,
@@ -385,7 +382,7 @@ class WanT2VDiffusersModel(
         self._pipeline_offload = _PipelineOffloadFailure.BROKEN
 
         try:
-            self._disable_pipeline_offload(state, operation=operation)
+            self._disable_pipeline_offload(operation=operation)
         except BaseException as remove_error:
             raise RuntimeError(
                 f"Wan pipeline CPU offload hook removal failed during {operation}; "
@@ -433,102 +430,14 @@ class WanT2VDiffusersModel(
             return
         if mode is PipelineOffloadMode.MODEL:
             self.pipeline.enable_model_cpu_offload(gpu_id=gpu_id)
-            return
-        if mode is PipelineOffloadMode.BLOCK:
-            self._enable_block_offload()
 
-    def _enable_block_offload(self) -> None:
-        """Stream each transformer one block at a time with the next block prefetched.
-
-        Sequential offload moves every leaf's weights on the compute stream right
-        before that leaf runs, so a 14B expert pays its full host->device copy per
-        denoise step with the GPU idle. Block offload keeps one block resident and
-        issues block ``i + 1``'s copy on a side stream while block ``i`` computes;
-        the copy is hidden as long as a block's compute outlasts its transfer. Host
-        copies stay pageable (the same footprint as sequential offload); each block
-        is pinned only for the duration of its own transfer.
-        """
-
-        from diffusers.hooks import apply_group_offloading
-
-        device = torch.device(self.device)
-        for name, component in self._offload_components():
-            # Only policy experts stream: tiled VAE execution is data-dependent.
-            # Copy streams exist only on CUDA; elsewhere the block-level path
-            # degrades to a synchronous per-block move.
-            streamed = name in self.policy_cores and device.type == "cuda"
-            apply_group_offloading(
-                component,
-                onload_device=device,
-                offload_device=torch.device("cpu"),
-                offload_type="block_level",
-                num_blocks_per_group=1,
-                use_stream=streamed,
-                # Without record_stream every block's release would synchronize the
-                # compute stream, serializing the host against each block's kernels.
-                record_stream=streamed,
-                low_cpu_mem_usage=True,
-            )
-
-    def _offload_components(self) -> list[tuple[str, torch.nn.Module]]:
-        """Pipeline modules by component name, behind any LoRA or compile wrapper.
-
-        Block-level offload groups the direct children of the module it is applied
-        to, so it must see the transformer's ``blocks`` list: neither the
-        ``PeftModel`` whose only child is the whole adapted model, nor the
-        ``OptimizedModule`` ``torch.compile`` wraps it in (which would degrade
-        per-block streaming into one whole-model group). The wrappers nest in
-        either order, so peel until nothing changes.
-        """
-
-        from vrl.models.weight_utils import unwrap_compile_and_ddp
-
-        def peel(module: torch.nn.Module) -> torch.nn.Module:
-            while True:
-                inner = peel_peft(unwrap_compile_and_ddp(module))
-                if inner is module:
-                    return module
-                module = inner
-
-        return [
-            (name, peel(component))
-            for name, component in self.pipeline.components.items()
-            if isinstance(component, torch.nn.Module)
-        ]
-
-    def _disable_pipeline_offload(
-        self,
-        mode: PipelineOffloadMode,
-        *,
-        operation: str,
-    ) -> None:
+    def _disable_pipeline_offload(self, *, operation: str) -> None:
         """Strip the residency hooks ``_enable_pipeline_offload`` installed.
 
         The model's own transformer roots may be PEFT wrapped; their Accelerate
         hooks are detached child-first before the pipeline's own cleanup runs.
         """
 
-        if mode is PipelineOffloadMode.BLOCK:
-            from diffusers.hooks.group_offloading import (
-                _GROUP_OFFLOADING,
-                _LAYER_EXECUTION_TRACKER,
-                _LAZY_PREFETCH_GROUP_OFFLOADING,
-            )
-            from diffusers.hooks.hooks import HookRegistry
-
-            # The pipeline's own remove_all_hooks() only strips Accelerate hooks;
-            # block offload registers under the model hook registry instead. A
-            # partially traced prefetch chain must go too, or the reinstalled
-            # groups would inherit a stale execution order.
-            for _name, component in self._offload_components():
-                registry = HookRegistry.check_if_exists_or_initialize(component)
-                for hook_name in (
-                    _GROUP_OFFLOADING,
-                    _LAYER_EXECUTION_TRACKER,
-                    _LAZY_PREFETCH_GROUP_OFFLOADING,
-                ):
-                    registry.remove_hook(hook_name, recurse=True)
-            return
         remove_hooks = getattr(self.pipeline, "remove_all_hooks", None)
         if not callable(remove_hooks):
             raise RuntimeError(
@@ -1373,7 +1282,7 @@ def _resolve_wan_offload_mode(build: ModelBuild) -> str:
     if legacy:
         raise ValueError(
             f"removed Wan model config key(s): {', '.join('model.' + key for key in legacy)}; "
-            "use model.offload_mode='none', 'model', 'sequential', or 'block'",
+            "use model.offload_mode='none', 'model', or 'sequential'",
         )
     rollout = getattr(build, "rollout", None)
     return str(getattr(rollout, "pipeline_offload_mode", "none"))

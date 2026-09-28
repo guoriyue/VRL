@@ -64,8 +64,8 @@ python -m vrl.scripts.generation.qwen_image_21_edit_probe \
   --steps 20 --compare-reference --check-lora-backward
 ```
 
-Set `HF_HUB_OFFLINE=1` to require locally cached weights. `--block-offload` reduces transformer
-residency on CUDA; `--device cpu` runs without GPU memory. It saves three VRL
+Set `HF_HUB_OFFLINE=1` to require locally cached weights. `--device cpu` runs
+without GPU memory. It saves three VRL
 outputs, optional official outputs, and `report.json` with transparency and
 replay checks. Official comparison uses identical initial latent values and
 disables KV caching on both paths. Small precision differences may remain.
