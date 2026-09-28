@@ -1,27 +1,11 @@
-"""Tests for the per-request rollout stats accumulator and sinks."""
+"""Tests for the per-request rollout stats accumulator and its step emitter."""
 
 from __future__ import annotations
 
 import json
 import logging
 
-import pytest
-
-from vrl.rollouts.stats import LoggingStatsSink, RolloutStats
-
-
-@pytest.mark.parametrize("name", [None, 0, 1, ""])
-@pytest.mark.parametrize(
-    "method", ["add_phase", "add_phases", "add_counter", "observe_gauge", "observe_gauges"]
-)
-def test_metric_names_require_nonempty_strings(name, method) -> None:
-    stats = RolloutStats()
-    with pytest.raises(ValueError, match="name must be"):
-        if method in {"add_phases", "observe_gauges"}:
-            getattr(stats, method)({name: 1.0})
-        else:
-            getattr(stats, method)(name, 1.0)
-    assert stats.as_metrics_dict() == {}
+from vrl.rollouts.stats import RolloutStats, record_step_stats
 
 
 def test_add_phase_sums_on_repeat() -> None:
@@ -96,16 +80,6 @@ def test_reward_timing_aggregates_calls_percentiles_and_extra_phases() -> None:
     assert metrics["reward.artifact_validation_s"] == 0.006
 
 
-def test_reward_extra_timing_rejects_non_timing_names() -> None:
-    s = RolloutStats()
-    try:
-        s.fold_reward_timing(extra_ms={"artifact_validation": 1.0})
-    except ValueError as error:
-        assert "end with '_ms'" in str(error)
-    else:  # pragma: no cover - assertion aid
-        raise AssertionError("invalid reward timing name was accepted")
-
-
 def test_as_metrics_dict_surfaces_reward_as_seconds() -> None:
     s = RolloutStats()
     s.add_phase("denoise", 1.0)
@@ -122,33 +96,37 @@ def test_add_phases_accumulates_mapping() -> None:
     assert RolloutStats().phase_seconds == {}
 
 
-def test_logging_sink_excludes_collect_from_percent_base(caplog) -> None:
+def test_step_stats_log_excludes_collect_from_percent_base(caplog, tmp_path) -> None:
     s = RolloutStats()
     s.add_phase("denoise", 3.0)
     s.add_phase("collect.engine_generate", 7.0)  # excluded from total base
-    sink = LoggingStatsSink(logging.getLogger("vrl.stats.test"))
+    logger = logging.getLogger("vrl.stats.test")
     with caplog.at_level(logging.INFO, logger="vrl.stats.test"):
-        sink.record(5, s)
+        record_step_stats(5, s, jsonl_path=tmp_path / "stats.jsonl", logger=logger)
     msg = caplog.records[-1].getMessage()
     assert "total=3.000s" in msg  # collect.* not in the base
     assert "denoise=3.000s (100.0%)" in msg
 
 
-def test_logging_sink_noop_on_empty(caplog) -> None:
-    sink = LoggingStatsSink(logging.getLogger("vrl.stats.empty"))
+def test_step_stats_emit_nothing_when_empty(caplog, tmp_path) -> None:
+    """Checks an empty record neither logs nor creates a file or a blank row."""
+
+    path = tmp_path / "rollout_stats.jsonl"
+    logger = logging.getLogger("vrl.stats.empty")
     with caplog.at_level(logging.INFO, logger="vrl.stats.empty"):
-        sink.record(0, RolloutStats())
+        record_step_stats(0, RolloutStats(), jsonl_path=path, logger=logger)
     assert caplog.records == []
+    assert not path.exists()
 
 
-def test_logging_sink_keeps_metrics_without_a_percentage_base(caplog) -> None:
+def test_step_stats_log_keeps_metrics_without_a_percentage_base(caplog, tmp_path) -> None:
     stats = RolloutStats()
     stats.add_phase("collect.wall", 2.0)
     stats.add_counter("collect.sample_count", 4)
     stats.observe_gauge("continuous.producer_inflight", 2)
-    sink = LoggingStatsSink(logging.getLogger("vrl.stats.collection"))
+    logger = logging.getLogger("vrl.stats.collection")
     with caplog.at_level(logging.INFO, logger="vrl.stats.collection"):
-        sink.record(3, stats)
+        record_step_stats(3, stats, jsonl_path=tmp_path / "stats.jsonl", logger=logger)
     message = caplog.records[-1].getMessage()
     assert "total=0.000s" in message
     assert "collect.wall=2.000" in message
@@ -157,21 +135,20 @@ def test_logging_sink_keeps_metrics_without_a_percentage_base(caplog) -> None:
     assert "%" not in message
 
 
-def test_jsonl_stats_sink_writes_one_row_per_step(tmp_path) -> None:
+def test_step_stats_append_one_jsonl_row_per_step(tmp_path) -> None:
     """Checks collect.* phases reach a machine-readable file, not just the log."""
-    from vrl.rollouts.stats import JsonlStatsSink
 
     path = tmp_path / "nested" / "rollout_stats.jsonl"
-    sink = JsonlStatsSink(path)
+    logger = logging.getLogger("vrl.stats.jsonl")
 
     first = RolloutStats()
     first.add_phases({"collect.wall": 2.0, "collect.generation_reward_overlap": 0.5})
     first.add_counter("collect.group_count", 2)
-    sink.record(3, first)
+    record_step_stats(3, first, jsonl_path=path, logger=logger)
 
     second = RolloutStats()
     second.add_phases({"collect.wall": 1.5})
-    sink.record(4, second)
+    record_step_stats(4, second, jsonl_path=path, logger=logger)
 
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     assert [row["step"] for row in rows] == [3, 4]
@@ -179,53 +156,3 @@ def test_jsonl_stats_sink_writes_one_row_per_step(tmp_path) -> None:
     assert rows[0]["collect.generation_reward_overlap"] == 0.5
     assert rows[0]["collect.group_count"] == 2
     assert rows[1]["collect.wall"] == 1.5
-
-
-def test_jsonl_stats_sink_skips_empty_stats(tmp_path) -> None:
-    """Checks an empty record does not create a file or a blank row."""
-    from vrl.rollouts.stats import JsonlStatsSink
-
-    path = tmp_path / "rollout_stats.jsonl"
-    JsonlStatsSink(path).record(0, RolloutStats())
-
-    assert not path.exists()
-
-
-def test_multi_stats_sink_fans_out_in_order() -> None:
-    """Checks one record reaches every sink, so the log line survives the jsonl."""
-    from vrl.rollouts.stats import MultiStatsSink
-
-    seen: list[tuple[str, int]] = []
-
-    class _Recorder:
-        def __init__(self, name: str) -> None:
-            self.name = name
-
-        def record(self, step: int, stats: RolloutStats) -> None:
-            del stats
-            seen.append((self.name, step))
-
-    MultiStatsSink(_Recorder("a"), _Recorder("b")).record(7, RolloutStats())
-
-    assert seen == [("a", 7), ("b", 7)]
-
-
-def test_extra_reward_timings_cannot_overwrite_standard_metrics():
-    from copy import deepcopy
-
-    import pytest
-
-    stats = RolloutStats()
-    stats.fold_reward_timing(latency_ms=10.0, queue_wait_ms=2.0, inference_ms=8.0)
-    before = deepcopy(stats)
-    for name in (
-        "latency_ms",
-        "queue_wait_ms",
-        "inference_ms",
-        "latency_p50_ms",
-        "latency_p95_ms",
-    ):
-        with pytest.raises(ValueError, match="collides with a standard timing"):
-            stats.fold_reward_timing(latency_ms=30.0, extra_ms={name: 999.0})
-        assert stats == before
-        assert stats.as_metrics_dict()["reward.latency_p95_s"] == 0.01

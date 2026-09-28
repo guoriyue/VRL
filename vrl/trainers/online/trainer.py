@@ -33,13 +33,7 @@ from vrl.rollouts.admission import AdmissionLedger
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.orchestration import build_rollout_schedule
-from vrl.rollouts.stats import (
-    JsonlStatsSink,
-    LoggingStatsSink,
-    MultiStatsSink,
-    RolloutStats,
-    StatsSink,
-)
+from vrl.rollouts.stats import RolloutStats, record_step_stats
 from vrl.trainers.core.types import CORRECTED_REPLAY_MAX_ABS_LOG_RATIO, TrainState
 from vrl.trainers.diagnostics import (
     append_jsonl_record,
@@ -548,14 +542,8 @@ class OnlineTrainer:
         # weights on the sharded layout and an adapter costs nothing.
         if self.ref_model is self.model:
             self.model.attach_reference_policy()
-        # Sinks for the per-step phase timings (recording decoupled from
-        # emitting). The log line stays the human-facing view; the jsonl file is
-        # the complete machine-readable view. metrics.csv exposes only the
-        # stable continuous-health subset, not arbitrary collect.* phases.
-        self._stats_sink: StatsSink = MultiStatsSink(
-            LoggingStatsSink(logger),
-            JsonlStatsSink(f"{self.config.output_dir}/rollout_stats.jsonl"),
-        )
+        # Per-step phase timings under profile: one log line plus one JSONL row.
+        self._rollout_stats_path = f"{self.config.output_dir}/rollout_stats.jsonl"
         self._grad_scaler = self._create_grad_scaler(
             self.device,
             self.model,
@@ -1539,7 +1527,9 @@ class OnlineTrainer:
         stats.add_phases(optimizer_timer.times)
         stats.merge(sync_stats)
         if self.config.profile:
-            self._stats_sink.record(metric_step, stats)
+            record_step_stats(
+                metric_step, stats, jsonl_path=self._rollout_stats_path, logger=logger
+            )
             for timer in (*self._update_phase_timers, optimizer_timer):
                 self._write_phase_events(timer, step=metric_step)
             self._update_phase_timers.clear()
@@ -1695,7 +1685,9 @@ class OnlineTrainer:
             step_stats.merge(await self.rollout_schedule.after_train_step())
         phase_times = step_stats.as_metrics_dict()
         if cfg.profile and phase_times:
-            self._stats_sink.record(metric_step, step_stats)
+            record_step_stats(
+                metric_step, step_stats, jsonl_path=self._rollout_stats_path, logger=logger
+            )
             self._write_phase_events(timer, step=metric_step)
 
         metrics = agg_metrics.build(

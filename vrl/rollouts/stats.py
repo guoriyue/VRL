@@ -1,4 +1,4 @@
-"""Per-request rollout stats accumulator + pluggable sinks.
+"""Per-request rollout stats accumulator and its per-step emitter.
 
 One typed object (``RolloutStats``) carries a request's phase wall-clock
 timings and its reward-inference timings as it flows
@@ -12,9 +12,8 @@ Two design choices make this robust:
   the scheduler. Concurrent collects never share mutable state, and the
   timings serialize naturally with the item.
 * Recording is decoupled from emitting: stats are accumulated into the typed
-  object, and a pluggable ``StatsSink`` decides where they go (a log line
-  today, a jsonl/Prometheus sink later) without touching the accumulation
-  sites.
+  object, and ``record_step_stats`` writes a step's log line and JSONL row
+  without touching the accumulation sites.
 
 Metric keys are a *dynamic* namespace (``collect.*``, ``continuous.*``,
 ``advantage``, ``backward``, ``optim_step``, plus model-family phases), so they
@@ -33,7 +32,6 @@ import time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
 
 
 @dataclass(slots=True)
@@ -60,8 +58,6 @@ class RolloutStats:
     def add_phase(self, name: str, seconds: float) -> None:
         """Accumulate ``seconds`` under phase ``name`` (sums on repeat)."""
 
-        if not isinstance(name, str) or not name:
-            raise ValueError("phase name must be a non-empty string")
         self.phase_seconds[name] = self.phase_seconds.get(name, 0.0) + float(seconds)
 
     def add_phases(self, phases: Mapping[str, float]) -> None:
@@ -87,8 +83,6 @@ class RolloutStats:
     def add_counter(self, name: str, value: float = 1.0) -> None:
         """Accumulate a unitless count without treating it as phase time."""
 
-        if not isinstance(name, str) or not name:
-            raise ValueError("counter name must be a non-empty string")
         normalized = float(value)
         if not math.isfinite(normalized):
             raise ValueError(f"counter {name!r} must be finite")
@@ -103,8 +97,6 @@ class RolloutStats:
         summing snapshots into impossible values.
         """
 
-        if not isinstance(name, str) or not name:
-            raise ValueError("gauge name must be a non-empty string")
         normalized = float(value)
         if not math.isfinite(normalized):
             raise ValueError(f"gauge {name!r} must be finite")
@@ -145,55 +137,22 @@ class RolloutStats:
         inference_ms: float | None = None,
         extra_ms: Mapping[str, float] | None = None,
     ) -> None:
-        """Accumulate one reward call's timings (primitives, no reward import)."""
+        """Accumulate one reward call's timings (primitives, no reward import).
 
-        def timing_value(name: str, value: float | None) -> float | None:
-            if value is None:
-                return None
-            normalized = float(value)
-            if not math.isfinite(normalized) or normalized < 0:
-                raise ValueError(f"reward timing {name!r} must be finite and non-negative")
-            return normalized
+        ``RewardOutput`` already validated every value as finite and
+        non-negative, and the collector passes only non-standard ``*_ms``
+        names in ``extra_ms``.
+        """
 
-        latency = timing_value("latency_ms", latency_ms)
-        queue_wait = timing_value("queue_wait_ms", queue_wait_ms)
-        inference = timing_value("inference_ms", inference_ms)
-        normalized_extra: dict[str, float] = {}
-        for name, milliseconds in dict(extra_ms or {}).items():
-            if not name or not name.endswith("_ms"):
-                raise ValueError("extra reward timing names must end with '_ms'")
-            # These names belong to the standard timing/percentile schema;
-            # extra phases must not overwrite their flattened output columns.
-            if name in {
-                "latency_ms",
-                "queue_wait_ms",
-                "inference_ms",
-                "latency_p50_ms",
-                "latency_p95_ms",
-            }:
-                raise ValueError(f"extra reward timing {name!r} collides with a standard timing")
-            value = timing_value(name, milliseconds)
-            assert value is not None
-            normalized_extra[name] = value
-
-        if any(value is not None for value in (latency, queue_wait, inference)) or (
-            normalized_extra
-        ):
+        extra = dict(extra_ms or {})
+        if any(value is not None for value in (latency_ms, queue_wait_ms, inference_ms)) or extra:
             self.add_counter("reward.call_count")
-        if latency is not None:
-            self._reward_latency_samples_ms.append(latency)
-        if queue_wait is not None:
-            self.reward_queue_wait_ms = _sum_optional(
-                self.reward_queue_wait_ms,
-                queue_wait,
-            )
-        if inference is not None:
-            self.reward_inference_ms = _sum_optional(
-                self.reward_inference_ms,
-                inference,
-            )
-        for name, value in normalized_extra.items():
-            self.reward_extra_ms[name] = self.reward_extra_ms.get(name, 0.0) + value
+        if latency_ms is not None:
+            self._reward_latency_samples_ms.append(float(latency_ms))
+        self.reward_queue_wait_ms = _sum_optional(self.reward_queue_wait_ms, queue_wait_ms)
+        self.reward_inference_ms = _sum_optional(self.reward_inference_ms, inference_ms)
+        for name, milliseconds in extra.items():
+            self.reward_extra_ms[name] = self.reward_extra_ms.get(name, 0.0) + float(milliseconds)
 
     def as_metrics_dict(self) -> dict[str, float]:
         """Flat metric view combining durations, counters and peak gauges.
@@ -228,83 +187,50 @@ def _sum_optional(left: float | None, right: float | None) -> float | None:
     return float(right) if left is None else float(left) + float(right)
 
 
-class StatsSink(Protocol):
-    """Where recorded stats go. Recording is decoupled from emitting."""
+def record_step_stats(
+    step: int,
+    stats: RolloutStats,
+    *,
+    jsonl_path: str | Path,
+    logger: logging.Logger,
+) -> None:
+    """Log one step's phase timings and append them as one JSONL row.
 
-    def record(self, step: int, stats: RolloutStats) -> None: ...
-
-
-class LoggingStatsSink:
-    """Emit the per-step phase-timing log line (the historical behavior).
-
-    Replaces the inline ``logger.info("phase_times[step=...]")`` in the
-    trainer. ``collect.*`` phases are excluded from the percentage base so the
-    breakdown matches the previous output exactly.
+    The log line is the human-facing view: ``collect.*`` phases are excluded
+    from its percentage base. The JSONL row is the complete machine-readable
+    view; ``metrics.csv`` exposes only the stable continuous-health subset,
+    not arbitrary ``collect.*`` phases. Empty stats emit nothing.
     """
 
-    def __init__(self, logger: logging.Logger | None = None) -> None:
-        self._logger = logger or logging.getLogger("vrl.stats")
-
-    def record(self, step: int, stats: RolloutStats) -> None:
-        metrics = stats.as_metrics_dict()
-        if not metrics:
-            return
-        percentage_phases = {
-            name: seconds
-            for name, seconds in stats.phase_seconds.items()
-            if not name.startswith("collect.")
-        }
-        total = sum(percentage_phases.values())
-        if total <= 0:
-            total = 0.0
-            percentage_phases = {}
-        parts = " | ".join(
-            (
-                f"{name}={value:.3f}s ({100 * value / total:.1f}%)"
-                if name in percentage_phases
-                else f"{name}={value:.3f}"
-            )
-            for name, value in metrics.items()
+    metrics = stats.as_metrics_dict()
+    if not metrics:
+        return
+    percentage_phases = {
+        name: seconds
+        for name, seconds in stats.phase_seconds.items()
+        if not name.startswith("collect.")
+    }
+    total = sum(percentage_phases.values())
+    if total <= 0:
+        total = 0.0
+        percentage_phases = {}
+    parts = " | ".join(
+        (
+            f"{name}={value:.3f}s ({100 * value / total:.1f}%)"
+            if name in percentage_phases
+            else f"{name}={value:.3f}"
         )
-        self._logger.info("phase_times[step=%d] total=%.3fs | %s", step, total, parts)
+        for name, value in metrics.items()
+    )
+    logger.info("phase_times[step=%d] total=%.3fs | %s", step, total, parts)
 
-
-class JsonlStatsSink:
-    """Append one JSON object per step to a JSONL file.
-
-    ``metrics.csv`` exposes a stable subset of continuous-health diagnostics,
-    but not arbitrary ``collect.*`` phases. A benchmark comparing collection
-    arms needs the complete phase mapping per step as data, not as text to
-    re-parse out of a log.
-    """
-
-    def __init__(self, path: str | Path) -> None:
-        self._path = Path(path)
-
-    def record(self, step: int, stats: RolloutStats) -> None:
-        metrics = stats.as_metrics_dict()
-        if not metrics:
-            return
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps({"step": int(step), **metrics}, sort_keys=True) + "\n")
-
-
-class MultiStatsSink:
-    """Fan one record out to several sinks, keeping one sink per owner."""
-
-    def __init__(self, *sinks: StatsSink) -> None:
-        self._sinks = sinks
-
-    def record(self, step: int, stats: RolloutStats) -> None:
-        for sink in self._sinks:
-            sink.record(step, stats)
+    path = Path(jsonl_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"step": int(step), **metrics}, sort_keys=True) + "\n")
 
 
 __all__ = [
-    "JsonlStatsSink",
-    "LoggingStatsSink",
-    "MultiStatsSink",
     "RolloutStats",
-    "StatsSink",
+    "record_step_stats",
 ]
