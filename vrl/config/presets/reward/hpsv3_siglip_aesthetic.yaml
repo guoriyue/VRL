@@ -1,0 +1,31 @@
+# HPSv3 preference + SigLIP V2.5 aesthetic, weighted so each contributes about
+# one within-group standard deviation (qualification sampler, 64 prompts x 8:
+# median group std HPSv3 0.55, SigLIP 0.20 -> 1.0 : 2.75). Qualified together
+# (docs/rewards/cards/hpsv3_siglip_qwen21_t2i.md): blind preference of the
+# composite's pick over a random group member 66.4% [55.5, 76.6]. HPSv3 alone
+# rewards mild pixel noise (+1.0 group std at sigma 10); SigLIP penalizes it
+# (-2.0), so the composite leans against grain, while HPSv3 penalizes the blur
+# SigLIP tolerates. HPSv3 (Qwen2-VL-7B, ~17 GB) needs a GPU.
+distributed:
+  resources:
+    reward:
+      device: gpu
+
+reward:
+  components:
+    hpsv3: 1.0
+    aesthetic: 2.75
+  kwargs:
+    hpsv3:
+      reward_name: hpsv3
+      score_key: top_frame_mean
+      worker_config:
+        reward_model_name: MizzenAI/HPSv3@main
+        dtype: bfloat16
+        frames_per_forward: 8
+        top_frame_fraction: 0.3
+        local_files_only: true
+    aesthetic:
+      device: null
+      model_name: google/siglip-so400m-patch14-384
+      model_revision: 9fdffc58afc957d1a03a25b10dba0329ab15c2a3
