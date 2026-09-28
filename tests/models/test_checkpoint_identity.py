@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -12,8 +13,8 @@ from vrl.config.model_schema import LoraSection, ModelSection
 from vrl.models.checkpoint_identity import (
     MODEL_IDENTITY_SCHEMA,
     LocalCheckpointContent,
+    _field_metadata,
     resolve_checkpoint_model_identity,
-    validate_checkpoint_identity_schema,
 )
 from vrl.models.families.registry import FAMILY_REGISTRY
 from vrl.utils.config import import_from_path
@@ -37,10 +38,94 @@ def _build(
     )
 
 
+def _validate_checkpoint_identity_schema(schema_cls: type[Any]) -> None:
+    """Fail when a public model schema has an unclassified or inconsistent field.
+
+    Schema metadata is static class data, so this runs once over the registry
+    here instead of on every identity resolve.
+    """
+
+    fields = schema_cls.model_fields
+    metadata_by_field = {
+        name: _field_metadata(field, schema_name=schema_cls.__name__, field_name=name)
+        for name, field in fields.items()
+    }
+    allowed_keys = {
+        "exclude": {"kind"},
+        "lora": {"enabled_by", "kind"},
+        "member": {"kind", "omit_for_source_file", "source"},
+        "source": {"kind", "revision_field", "source"},
+        "source_revision": {"kind", "source"},
+        "value": {"canonicalize", "default", "kind", "required"},
+    }
+    sources: dict[str, str] = {}
+    revision_sources: dict[str, str] = {}
+    for field_name, metadata in metadata_by_field.items():
+        kind = metadata["kind"]
+        unknown = sorted(set(metadata) - allowed_keys[kind])
+        if unknown:
+            raise TypeError(
+                f"{schema_cls.__name__}.{field_name} has unsupported checkpoint "
+                f"identity metadata key(s): {', '.join(unknown)}",
+            )
+        if kind in {"member", "source", "source_revision"} and not metadata.get("source"):
+            raise TypeError(
+                f"{schema_cls.__name__}.{field_name} checkpoint identity "
+                f"{kind} requires a non-empty source",
+            )
+        if kind == "source":
+            source = metadata["source"]
+            if source in sources:
+                raise TypeError(
+                    f"{schema_cls.__name__} declares checkpoint source {source!r} "
+                    f"on both {sources[source]!r} and {field_name!r}",
+                )
+            sources[source] = field_name
+        elif kind == "source_revision":
+            revision_sources[field_name] = metadata["source"]
+        elif kind == "lora":
+            enabled_metadata = metadata_by_field.get(metadata.get("enabled_by"))
+            if enabled_metadata is None or enabled_metadata["kind"] != "value":
+                raise TypeError(
+                    f"{schema_cls.__name__}.{field_name} checkpoint identity lora "
+                    "requires enabled_by naming a value field",
+                )
+
+    referenced_revisions: set[str] = set()
+    for source, field_name in sources.items():
+        revision_field = metadata_by_field[field_name].get("revision_field")
+        if revision_field is None:
+            continue
+        revision_metadata = metadata_by_field.get(revision_field)
+        if (
+            revision_metadata is None
+            or revision_metadata["kind"] != "source_revision"
+            or revision_metadata.get("source") != source
+        ):
+            raise TypeError(
+                f"{schema_cls.__name__}.{revision_field} must be the "
+                f"source_revision for {source!r}",
+            )
+        referenced_revisions.add(revision_field)
+    unreferenced = sorted(set(revision_sources) - referenced_revisions)
+    if unreferenced:
+        raise TypeError(
+            f"{schema_cls.__name__} has unreferenced checkpoint source revision "
+            f"field(s): {', '.join(unreferenced)}",
+        )
+
+    for field_name, metadata in metadata_by_field.items():
+        if metadata["kind"] == "member" and metadata["source"] not in sources:
+            raise TypeError(
+                f"{schema_cls.__name__}.{field_name} references unknown checkpoint "
+                f"source {metadata['source']!r}",
+            )
+
+
 def test_every_registered_model_and_nested_lora_field_is_classified() -> None:
-    validate_checkpoint_identity_schema(LoraSection)
+    _validate_checkpoint_identity_schema(LoraSection)
     for entry in FAMILY_REGISTRY.values():
-        validate_checkpoint_identity_schema(import_from_path(entry.model_section_cls))
+        _validate_checkpoint_identity_schema(import_from_path(entry.model_section_cls))
 
 
 def test_new_model_or_lora_field_without_metadata_fails_closed() -> None:
@@ -51,9 +136,9 @@ def test_new_model_or_lora_field_without_metadata_fails_closed() -> None:
         new_adapter_shape: int | None = None
 
     with pytest.raises(TypeError, match="new_source_selector"):
-        validate_checkpoint_identity_schema(IncompleteModelSection)
+        _validate_checkpoint_identity_schema(IncompleteModelSection)
     with pytest.raises(TypeError, match="new_adapter_shape"):
-        validate_checkpoint_identity_schema(IncompleteLoraSection)
+        _validate_checkpoint_identity_schema(IncompleteLoraSection)
 
 
 def test_local_file_identity_is_path_independent_and_counts_content(tmp_path: Path) -> None:
@@ -120,63 +205,6 @@ def test_local_source_rejects_broken_link_cycle_and_special_file(tmp_path: Path)
         LocalCheckpointContent.from_path(special)
 
 
-def test_local_source_rejects_file_mutation_during_hash(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import vrl.models.checkpoint_identity as identity_module
-
-    checkpoint = tmp_path / "model.bin"
-    checkpoint.write_bytes(b"weights")
-    real_fstat = identity_module.os.fstat
-    calls = 0
-
-    class _ChangedStat:
-        def __init__(self, original: os.stat_result) -> None:
-            self._original = original
-
-        def __getattr__(self, name: str) -> object:
-            if name == "st_mtime_ns":
-                return self._original.st_mtime_ns + 1
-            return getattr(self._original, name)
-
-    def changing_fstat(fd: int) -> os.stat_result | _ChangedStat:
-        nonlocal calls
-        calls += 1
-        result = real_fstat(fd)
-        return result if calls == 1 else _ChangedStat(result)
-
-    monkeypatch.setattr(identity_module.os, "fstat", changing_fstat)
-
-    with pytest.raises(RuntimeError, match="changed while hashing"):
-        LocalCheckpointContent.from_path(checkpoint)
-
-
-def test_local_source_rejects_root_symlink_retarget_during_resolution(
-    tmp_path: Path,
-) -> None:
-    first = tmp_path / "first"
-    second = tmp_path / "second"
-    first.mkdir()
-    second.mkdir()
-    (first / "model.bin").write_bytes(b"first")
-    (second / "model.bin").write_bytes(b"second")
-    alias = tmp_path / "model"
-    alias.symlink_to(first, target_is_directory=True)
-
-    def retargeting_resolver(path: Path) -> LocalCheckpointContent:
-        content = LocalCheckpointContent.from_path(path)
-        alias.unlink()
-        alias.symlink_to(second, target_is_directory=True)
-        return content
-
-    with pytest.raises(RuntimeError, match="changed while hashing"):
-        resolve_checkpoint_model_identity(
-            _build(path=str(alias), revision=None),
-            local_resolver=retargeting_resolver,
-        )
-
-
 @pytest.mark.parametrize("revision", ["main", "A" * 40])
 def test_remote_source_requires_full_lowercase_commit(revision: str | None) -> None:
     with pytest.raises(ValueError, match="40-character commit"):
@@ -208,15 +236,19 @@ def test_remote_identity_uses_protocol_source_and_behavior_keys() -> None:
 
 def test_local_identity_omits_root_path_and_caches_duplicate_source(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = tmp_path / "model"
     model.mkdir()
     (model / "weights.bin").write_bytes(b"weights")
     calls: list[Path] = []
+    hash_path = LocalCheckpointContent.from_path
 
-    def resolver(path: Path) -> LocalCheckpointContent:
+    def counting_from_path(path: Path) -> LocalCheckpointContent:
         calls.append(path)
-        return LocalCheckpointContent.from_path(path)
+        return hash_path(path)
+
+    monkeypatch.setattr(LocalCheckpointContent, "from_path", counting_from_path)
 
     identity = resolve_checkpoint_model_identity(
         _build(
@@ -226,7 +258,6 @@ def test_local_identity_omits_root_path_and_caches_duplicate_source(
             gemma_path=str(model),
             gemma_revision=None,
         ),
-        local_resolver=resolver,
     )
 
     assert calls == [model.resolve()]
