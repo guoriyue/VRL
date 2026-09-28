@@ -16,12 +16,11 @@ Opt-in test lanes live here:
 - ``rollout_preview``: test-owned few-shot preview; it skips unless an exact
   experiment config and fresh output directory are supplied on the command line.
 
-``--real-cover-report`` prints the ``real_cover`` register: every test that
-labels a double it cannot make real in-process, the real counterpart it names,
-and any lane markers on that counterpart. Lane markers are report-only metadata:
-an empty lane is valid for a counterpart in the default suite, while an opt-in
-counterpart can still skip on a matching host. The mandatory ``why=`` carries
-the realness argument, so the register never infers coverage from a marker.
+``real_cover`` labels are checked at collection: each needs a non-empty
+``why=`` and must name something that exists -- a counterpart test node
+(``path``, ``path::test`` or ``path::Class::test``), or, for a ``None`` target,
+an on-disk ``tracked_in=`` document. ``--real-cover-report`` prints the register:
+every labelled test, the counterpart it names, and its reason.
 """
 
 from __future__ import annotations
@@ -29,13 +28,15 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import re
 import sys
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests import ci_envs, real_cover
+from tests import ci_envs
 
 # The vendored submodule source roots. Bazel puts these on the import path
 # through `imports` in third_party/BUILD.bazel (which replaced the editable
@@ -95,7 +96,7 @@ def pytest_addoption(parser):
         "--real-cover-report",
         action="store_true",
         default=False,
-        help="print the real_cover register: labelled double -> counterpart + lane metadata",
+        help="print the real_cover register: labelled double -> counterpart / gap",
     )
     preview = parser.getgroup("rollout preview")
     preview.addoption(
@@ -132,14 +133,40 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "optional" in item.keywords:
                 item.add_marker(skip_optional)
+    # A real_cover label is a promise about another file, so it must argue its
+    # case (why=) and name something that still exists.
+    register = [(item.nodeid, mark) for item in items for mark in item.iter_markers("real_cover")]
+    sources: dict[str, str | None] = {}
+    problems = set()
+    for nodeid, mark in register:
+        target = mark.args[0] if mark.args else None
+        if not str(mark.kwargs.get("why") or "").strip():
+            problems.add(f"{nodeid}: real_cover needs a non-empty why=")
+        if target is None:
+            tracked = str(mark.kwargs.get("tracked_in") or "").strip()
+            if not tracked or not Path(_REPO_ROOT, tracked).exists():
+                problems.add(
+                    f"{nodeid}: a None target needs an on-disk tracked_in=, got {tracked!r}"
+                )
+            continue
+        path, *names = str(target).split("::")
+        if path not in sources:
+            file = Path(_REPO_ROOT, path)
+            sources[path] = file.read_text(encoding="utf-8") if file.is_file() else None
+        text = sources[path]
+        if text is None or not all(
+            re.search(rf"^\s*(?:async\s+def|def|class)\s+{re.escape(name)}\b", text, re.M)
+            for name in names
+        ):
+            problems.add(f"{nodeid}: real_cover target does not exist: {target}")
+    if problems:
+        raise pytest.UsageError("invalid real_cover labels:\n" + "\n".join(sorted(problems)))
     if config.getoption("--real-cover-report"):
-        config.stash[_REAL_COVER_REGISTER] = [
-            (item.nodeid, mark) for item in items for mark in item.iter_markers(real_cover.MARKER)
-        ]
+        config.stash[_REAL_COVER_REGISTER] = register
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    """Print the real_cover register with each target's lane metadata."""
+    """Print the real_cover register."""
 
     del exitstatus
     register = config.stash.get(_REAL_COVER_REGISTER, None)
@@ -152,9 +179,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     write(f"real_cover register  ({len(register)} labelled tests: double -> counterpart / gap)")
     for nodeid, mark in sorted(register):
         target = mark.args[0] if mark.args else None
-        lane = real_cover.resolve_target(target).lane_label if target else "-"
         write(f"  {nodeid}")
-        write(f"      -> {target or 'NO REAL COUNTERPART'}   [lane: {lane}]")
+        write(f"      -> {target or 'NO REAL COUNTERPART'}")
         if mark.kwargs.get("why"):
             write(f"      why: {mark.kwargs['why']}")
         if mark.kwargs.get("tracked_in"):

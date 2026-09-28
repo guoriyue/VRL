@@ -13,7 +13,7 @@ Miles 论文 v1 与当前 main 的差异必须保留，不能混成同一份复�
 
 论文 §6–8 把证明对象限定为具体 recipe、拓扑和环境。VRL 的
 `tests/e2e/test_real_checkpoint_rl.py` 已验证真实 checkpoint 的有限步更新、
-loss/grad 有限性和 logprob parity；`tests/architecture/test_real_cover_labels.py`
+loss/grad 有限性和 logprob parity；`real_cover` 标签（`tests/conftest.py` 收集期校验）
 已有 fake/real 对应关系。它们不能单独证明完整学习曲线或夜间稳定复现。
 
 当前必须读取的生产消费者是 `vrl/scripts/train.py`、
