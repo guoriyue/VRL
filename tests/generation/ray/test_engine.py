@@ -15,9 +15,7 @@ import pytest
 from tests.generation.ray._helpers import ResolvedRef
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import GenerationBatchResult, WorkerMemoryParkingSnapshot
-from vrl.generation.protocols import GenerationRankActor
 from vrl.generation.ray.engine import EngineCallRef, RayGenerationEngine
-from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_group import RayActorHandle
 
 
@@ -204,17 +202,6 @@ def test_engine_requires_at_least_one_unique_rank() -> None:
     handle = RayActorHandle(worker_id="r0", actor=object())
     with pytest.raises(ValueError, match="duplicate rank ids"):
         RayGenerationEngine("engine-0", [handle, handle])
-
-
-def test_rank_actor_satisfies_the_rank_protocol() -> None:
-    """The engine's method-name strings cannot drift from the actor surface."""
-
-    missing = [
-        name
-        for name in dir(GenerationRankActor)
-        if not name.startswith("_") and not hasattr(RayGenerationWorker, name)
-    ]
-    assert missing == []
 
 
 @pytest.mark.asyncio

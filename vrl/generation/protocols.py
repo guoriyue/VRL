@@ -33,16 +33,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from vrl.generation.execution.planner import EnginePlan
     from vrl.generation.execution.sample_batches import GenerationSampleBatch
-    from vrl.generation.execution.types import (
-        GenerationBatchEnvelope,
-        GenerationBatchResult,
-        RequestBatchOutOfMemory,
-        StagedBatchRefs,
-        WorkerMemoryParkingSnapshot,
-    )
-    from vrl.generation.ray.pipeline_protocol import RequestBatchProgress
     from vrl.generation.types import (
         GenerationOutput,
         GenerationRequest,
@@ -113,45 +104,6 @@ class GenerationRuntime(Protocol):
 
 
 @runtime_checkable
-class GenerationRankActor(Protocol):
-    """Core RPC contract of one generation rank actor (the per-GPU worker).
-
-    The driver-side engine (``vrl/generation/ray/engine.py``) fans every call
-    out to its ranks and aggregates; this protocol is the cross-process
-    boundary those calls travel over. ``RayGenerationWorker`` satisfies it
-    structurally — pinned by a conformance test for the methods listed here.
-    Bucketed weight transfer and acceptance readback have additional actor
-    endpoints outside this core protocol.
-    """
-
-    def health(self) -> str: ...
-
-    def load_policy(self) -> None: ...
-
-    def release_policy(self) -> None: ...
-
-    def sleep(self) -> WorkerMemoryParkingSnapshot: ...
-
-    def wake(self) -> None: ...
-
-    def update_weights(self, trainable_state: Any, policy_version: int) -> int: ...
-
-    def supports_versioned_trainable_state(self) -> bool: ...
-
-    def worker_metadata(self) -> dict[str, Any]: ...
-
-    def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult: ...
-
-    def execute_request_batches(
-        self,
-        request: GenerationRequest,
-        engine_plan: EnginePlan,
-    ) -> StagedBatchRefs | RequestBatchOutOfMemory: ...
-
-    def pipelined_progress(self, request_id: str) -> RequestBatchProgress | None: ...
-
-
-@runtime_checkable
 class GenerationBatchExecutor(Protocol):
     """Family-specific distributed batch executor."""
 
@@ -176,6 +128,5 @@ __all__ = [
     "BatchPayload",
     "GenerationBatchExecutor",
     "GenerationBatchGatherer",
-    "GenerationRankActor",
     "GenerationRuntime",
 ]
