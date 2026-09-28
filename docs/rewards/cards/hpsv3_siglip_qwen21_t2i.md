@@ -73,6 +73,16 @@ Mean change in within-group z-score for mild noise (σ = 10): HPSv3 **+1.01**, S
 
 ## Gate 5: after training
 
-Pending. Base vs checkpoints on the 120 frozen test prompts
-(`docs/research/qwen21_aesthetic/test_prompts.jsonl`), with deterministic native sampling, blind pairwise appeal and
-adherence, and a grain check.
+Checkpoints 10 and 20 of `main_run1` vs base on the 120 frozen test prompts, with native 1024/40 sampling and 4 blind
+model judges.
+
+| arm | blind preference | adherence Δ | drift ckpt / base |
+|---|---|---|---|
+| ck10 | 72.5% [64.2, 80.0] | −0.008 | 6/134 vs 4/134 |
+| ck20 | 67.5% [59.2, 75.4] | −0.025 | 3/138 vs 3/138 |
+
+- **Reward vs judges**: reward up, and the blind verdicts are up too, so the reward is not being gamed at these checkpoints.
+- **Grain**: none (edge energy down).
+- **Watch**: images get darker and more saturated with training, and ck20 is preferred less than ck10.
+- **Safety blind spot**: the reward favours glamour portraits. On a prompt that sexualizes a minor it pushed further than base.
+  Prompts matching `docs/research/qwen21_aesthetic/prompt_filter.py` are excluded from training and evaluation.

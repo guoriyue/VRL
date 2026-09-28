@@ -89,7 +89,53 @@ This is reward overoptimization after 40 aggressive steps on 12 prompts. The mai
 
 ## 4. Main run
 
-`main_run1` (started 2026-09-28 03:05).
+`main_run1` (started 2026-09-28 02:45).
 
 - **Launcher**: `/mnt/nvme/work/launch_aes_main.sh` with LR=1e-4, OPT_STEPS=4, prompts_per_batch=2, save every 5 rounds.
 - **Output**: `/mnt/nvme/outputs/qwen21_aesthetic_shared_noise/main_run1`.
+
+### Held-out verdict at checkpoints 10 and 20 (2026-09-28 06:30)
+
+- **Prompts**: the 120 frozen test prompts (`test_prompts.jsonl`), never used in training or selection.
+- **Sampling**: deterministic native 1024 px / 40 steps, one seed per prompt shared by base and checkpoint.
+- **Judges**: blind side-by-side, 4 independent model judges. They rated appeal, prompt adherence (0–3, style included) and
+  inappropriate drift. Exact agreement on 32 overlapping pairs was 26/32.
+
+| arm | reward Δ HPSv3 / SigLIP [95% CI] | blind preference for checkpoint | W/L/T | adherence Δ [95% CI] | drift ckpt / base |
+|---|---|---|---|---|---|
+| ck10 | +0.83 [+0.63, +1.03] / +0.18 [+0.12, +0.24] | **72.5% [64.2, 80.0]** | 87/33/0 | −0.008 [−0.092, +0.075] | 6/134 vs 4/134 |
+| ck20 | +1.19 [+0.99, +1.41] / +0.37 [+0.30, +0.44] | **67.5% [59.2, 75.4]** | 78/36/6 | −0.025 [−0.129, +0.079] | 3/138 vs 3/138 |
+
+Excluding the 5 test prompts the safety filter removes:
+
+- **ck10**: 73.9% [65.2, 81.7], adherence −0.017.
+- **ck20**: 68.3% [59.6, 76.5], adherence −0.043 [−0.148, +0.061].
+- **Drift**: equal to base in both.
+
+Other signals:
+
+- **Brightness**: −0.016 (ck10) and −0.082 (ck20).
+- **Saturation**: up.
+- **Edge energy**: down, so no grain.
+
+**Result**: both checkpoints are preferred blind over base on unseen prompts, and prompt adherence is non-inferior (−0.15
+margin). ck10 is the best so far. ck20's preference is lower and its adherence lower bound sits at the margin, which may be
+the start of over-optimization toward one darker cinematic look. The labels are model judgments, not human preference.
+
+### Safety
+
+The "SFW" PickScore prompt set contains prompts that sexualize minors ("skinny bare teen girl") and nudity prompts
+("naturist").
+
+- On "skinny bare teen girl", ck10 and ck20 were flagged for bare shoulders and a low neckline where base was modestly dressed.
+- An abstract prompt ("5th dimension") became a young-woman glamour portrait.
+
+The preference reward favors attractive portraits, so RL amplifies this.
+
+Response:
+
+- **Filter**: `prompt_filter.py` drops prompts matching minor terms with nudity or sexual terms, and nudity/sexualized-body
+  prompts generally. It removes 121 of 15,486 training prompts (`manifests/pickscore_sfw/train_safe.txt`) and 5 of 120 test
+  prompts.
+- **Training**: resumed from checkpoint 20 on the filtered set.
+- **Future evaluations**: exclude the filtered prompts and keep the drift label.
