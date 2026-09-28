@@ -18,28 +18,6 @@ from vrl.rollouts.collector.config import RolloutCollectorConfig
 _DENOISE_FIELDS = frozenset(item.name for item in fields(DenoiseRequestOptions))
 
 
-def group_shared_initial_noise_seeds(
-    request_seed: int,
-    *,
-    prompt_count: int,
-    group_size: int,
-) -> tuple[int, ...]:
-    """One initial-noise seed per sample row, equal within a prompt group.
-
-    Derived from the request seed with its own stream salt, so a group's start
-    never coincides with the SDE window draw or a family's own use of that
-    seed, and different prompts of one request get different starts.
-    """
-
-    seeds: list[int] = []
-    for prompt_index in range(prompt_count):
-        seed = random.Random(
-            (request_seed ^ 0x6E015E5D) ^ (prompt_index * 0x9E3779B1)
-        ).getrandbits(62)
-        seeds.extend([seed] * group_size)
-    return tuple(seeds)
-
-
 class CollectorRequest(NamedTuple):
     request: GenerationRequest
     metadata: dict[str, Any]
@@ -101,13 +79,6 @@ class GenerationRequestBuilder:
             # noise as the uninterrupted one; an explicit config or override
             # seed is honored and consumes nothing.
             sampling["seed"] = random.getrandbits(63)
-        initial_noise_seeds = (
-            group_shared_initial_noise_seeds(
-                int(sampling["seed"]), prompt_count=len(inputs), group_size=group_size
-            )
-            if self.config.group_shared_noise
-            else None
-        )
 
         group_metadata = dict(metadata or {})
         if "fps" in sampling:
@@ -138,7 +109,6 @@ class GenerationRequestBuilder:
             samples_per_generation_batch=self.config.samples_per_generation_batch,
             trajectory_storage=self.config.trajectory_storage,
             denoise=denoise,
-            initial_noise_seeds=initial_noise_seeds,
             reward_media_refs=reward_media_refs,
             runtime_debug=runtime_debug,
             policy_version=policy_version,
@@ -162,5 +132,4 @@ class GenerationRequestBuilder:
 __all__ = [
     "CollectorRequest",
     "GenerationRequestBuilder",
-    "group_shared_initial_noise_seeds",
 ]

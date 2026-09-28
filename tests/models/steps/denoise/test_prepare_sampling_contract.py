@@ -1,9 +1,10 @@
 """Every registered family honors ``initial_latents`` explicitly.
 
-The executor passes the group's shared start as a keyword on every call. A
-family whose ``prepare_sampling`` only absorbed it through ``**kwargs`` would
-draw its own noise and silently break group-shared noise, so the parameter must
-be declared by name. Stubs that refuse rollout sampling altogether are exempt.
+The executor passes injected starting latents (``draw_initial_latents``) as a
+keyword on every call. A family whose ``prepare_sampling`` only absorbed it
+through ``**kwargs`` would draw its own noise and silently ignore the injected
+start, so the parameter must be declared by name. Stubs that refuse rollout
+sampling altogether are exempt.
 """
 
 from __future__ import annotations

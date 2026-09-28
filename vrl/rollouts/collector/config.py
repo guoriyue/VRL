@@ -30,11 +30,6 @@ class RolloutCollectorConfig:
     request_sampling: dict[str, Any] = field(default_factory=dict)
     samples_per_generation_batch: int | Literal["auto"] | None = None
     denoise: DenoiseRequestOptions | None = None
-    # rollout.group_shared_noise: every sample of a prompt group starts the
-    # denoise from one latent (DanceGRPO on video). A rollout allocation rule,
-    # so it becomes per-sample initial-noise seeds on the request; the
-    # execution layer never sees a group.
-    group_shared_noise: bool = False
     trajectory_storage: TrajectoryStoragePolicy = field(
         default_factory=TrajectoryStoragePolicy,
     )
@@ -48,12 +43,11 @@ class RolloutCollectorConfig:
 
         request_sampling: dict[str, Any] = {}
         # The planner batch width and the denoise options are GenerationRequest
-        # fields, and group_shared_noise is this collector's allocation rule
-        # (per-sample seeds); only the remaining rollout scalars flatten.
+        # fields; only the remaining rollout scalars flatten.
         rollout_fields = (
             generation_request_rollout_fields()
             - _DENOISE_OPTION_FIELDS
-            - {"samples_per_generation_batch", "group_shared_noise"}
+            - {"samples_per_generation_batch"}
         )
         for name, section, allowed in (
             ("rollout", rollout, rollout_fields),
@@ -82,7 +76,6 @@ class RolloutCollectorConfig:
             request_sampling=request_sampling,
             samples_per_generation_batch=samples_per_generation_batch,
             denoise=DenoiseRequestOptions.from_sections(rollout, sampling),
-            group_shared_noise=bool(getattr(rollout, "group_shared_noise", None)),
             trajectory_storage=trajectory_storage,
         )
 

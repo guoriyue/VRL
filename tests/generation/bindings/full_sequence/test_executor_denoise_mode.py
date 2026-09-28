@@ -58,99 +58,6 @@ def test_initial_noise_uses_batch_offset_without_mutating_request(seed: int | No
         assert not torch.equal(states[0].latents, states[1].latents)
 
 
-def test_initial_latents_are_drawn_once_per_distinct_seed_and_assembled_per_row() -> None:
-    """Each distinct seed in the batch's ``initial_noise_seeds`` is drawn ONCE
-    through the family with one row of conditioning; rows are assembled from
-    their seeds and handed to the batch's own preparation as ``initial_latents``,
-    whose seed stays the per-batch one. Rows that share a seed share the start;
-    a batch of a different prompt, or an OOM-split child, gets its rows' seeds."""
-    request = DenoiseRequest(
-        width=128, height=128, frame_count=1, num_steps=1, guidance_scale=1.0, seed=5
-    )
-
-    class PreparingModel:
-        def __init__(self) -> None:
-            self.calls: list[tuple[int | None, int, bool]] = []
-
-        def prepare_sampling(self, batch_request, encoded, *, initial_latents=None):
-            rows = encoded["prompt_embeds"].shape[0]
-            self.calls.append((batch_request.seed, rows, initial_latents is not None))
-            if initial_latents is not None:
-                latents = initial_latents.clone()
-            else:
-                generator = torch.Generator().manual_seed(batch_request.seed)
-                latents = torch.randn(rows, 8, generator=generator)
-            return _State(latents, torch.tensor([1.0]), _Scheduler())
-
-    model = PreparingModel()
-    executor = _Executor(model)
-    single = {"prompt_embeds": torch.zeros(1, 3)}
-
-    def prepare(start: int, seeds: tuple[int, ...]) -> torch.Tensor:
-        count = len(seeds)
-        config = DenoiseLoopConfig(
-            sample_start=start,
-            sample_count=count,
-            seed=5,
-            sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo"),
-            sde_window=None,
-            initial_noise_seeds=seeds,
-        )
-        initial = executor.draw_initial_latents(request=request, encoded=single, config=config)
-        assert initial is not None and initial.shape == (count, 8)
-        return executor.prepare_denoise_state(
-            request=request,
-            encoded={"prompt_embeds": torch.zeros(count, 3)},
-            config=config,
-            initial_latents=initial,
-        ).latents
-
-    whole = prepare(0, (21, 21, 21, 21))
-    assert all(torch.equal(row, whole[0]) for row in whole)
-    # An OOM-split child carries its own rows' seeds and starts identically.
-    child = prepare(2, (21, 21))
-    assert torch.equal(child, whole[2:])
-    # Mixed seeds: two draws, rows follow their seeds.
-    mixed = prepare(0, (21, 22, 21))
-    assert torch.equal(mixed[0], whole[0]) and torch.equal(mixed[2], whole[0])
-    assert not torch.equal(mixed[1], whole[0])
-    # Draws: one row with the row's seed, no initial latent; batch preparations:
-    # the batch's rows, the per-batch seed (request seed + offset), the latent.
-    assert model.calls[0] == (21, 1, False)
-    assert model.calls[1] == (5, 4, True)
-    assert model.calls[2] == (21, 1, False)
-    assert model.calls[3] == (5 + 2, 2, True)
-    assert model.calls[4:7] == [(21, 1, False), (22, 1, False), (5, 3, True)]
-
-    # Without seeds nothing is drawn and the batch prepares on its own.
-    config = DenoiseLoopConfig(
-        sample_start=0,
-        sample_count=2,
-        seed=5,
-        sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo"),
-        sde_window=None,
-    )
-    assert executor.draw_initial_latents(request=request, encoded=single, config=config) is None
-
-
-def test_batch_initial_noise_seeds_slice_the_request_rows_prompt_major() -> None:
-    from vrl.generation.execution.sample_batches import GenerationSampleBatch
-    from vrl.generation.types import GenerationRequest
-
-    request = GenerationRequest(
-        "r", "sd3_5", "t2i", ["p0", "p1"], 3, initial_noise_seeds=(1, 1, 1, 2, 2, 2)
-    )
-    seeds = DenoiseBatchExecutorBase.batch_initial_noise_seeds
-
-    assert seeds(request, GenerationSampleBatch(0, 0, 3)) == (1, 1, 1)
-    assert seeds(request, GenerationSampleBatch(1, 0, 2)) == (2, 2)
-    assert seeds(request, GenerationSampleBatch(1, 2, 1)) == (2,)
-    assert (
-        seeds(GenerationRequest("r", "sd3_5", "t2i", ["p0"], 2), GenerationSampleBatch(0, 0, 2))
-        is None
-    )
-
-
 def test_diffusion_executor_base_satisfies_probe_protocol() -> None:
     """The probe's ``samples_per_generation_batch: auto`` diffusion-only gate keys off this."""
     assert issubclass(DenoiseBatchExecutorBase, BatchSizeProbeExecutor)
@@ -231,3 +138,35 @@ class _Scheduler:
     def index_for_timestep(self, timestep: torch.Tensor) -> int:
         del timestep
         return 0
+
+
+def test_injected_initial_latents_reach_the_family_preparation() -> None:
+    """``draw_initial_latents`` draws nothing by default; latents a caller injects
+    (``qwen_image_21_edit_probe --compare-reference``) reach ``prepare_sampling``."""
+    request = DenoiseRequest(
+        width=128, height=128, frame_count=1, num_steps=1, guidance_scale=1.0, seed=5
+    )
+    received: list[torch.Tensor | None] = []
+
+    class PreparingModel:
+        def prepare_sampling(self, batch_request, encoded, *, initial_latents=None):
+            del batch_request, encoded
+            received.append(initial_latents)
+            return _State(torch.zeros(2, 8), torch.tensor([1.0]), _Scheduler())
+
+    executor = _Executor(PreparingModel())
+    config = DenoiseLoopConfig(
+        sample_start=0,
+        sample_count=2,
+        seed=5,
+        sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo"),
+        sde_window=None,
+    )
+    encoded = {"prompt_embeds": torch.zeros(2, 3)}
+    assert executor.draw_initial_latents(request=request, encoded=encoded, config=config) is None
+
+    injected = torch.ones(2, 8)
+    executor.prepare_denoise_state(
+        request=request, encoded=encoded, config=config, initial_latents=injected
+    )
+    assert received == [injected]

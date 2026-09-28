@@ -82,7 +82,6 @@ def test_edit_executor_encodes_rgba_references_once_per_batch_and_preserves_outp
         task="t2i",
         inputs=[GenerationInput(prompt="edit", reference_images=[str(source), str(leaf)])],
         samples_per_prompt=2,
-        initial_noise_seeds=[42, 42],
         sampling={
             "height": 64,
             "width": 96,
@@ -97,7 +96,7 @@ def test_edit_executor_encodes_rgba_references_once_per_batch_and_preserves_outp
         output = executor.forward_plan(
             request, request.sample_rows(), EnginePlan.from_request(request)
         )
-    # Both samples share initial noise, while each reference is VAE-encoded only once.
+    # Each reference is VAE-encoded only once for the two-sample batch.
     assert len(encoded_images) == 2
     assert encoded_images[0].shape == (1, 4, 1, 64, 64)
     assert encoded_images[1].shape == (1, 4, 1, 32, 128)

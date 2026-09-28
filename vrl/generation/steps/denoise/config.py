@@ -141,11 +141,6 @@ class DenoiseLoopConfig:
     sde_window: tuple[int, int] | None
     denoise_mode: DenoiseMode = "sde"
     teacache: TeaCacheConfig | None = None
-    # This batch's slice of ``GenerationRequest.initial_noise_seeds``: one seed
-    # per row naming the row's initial latent. The executor draws each distinct
-    # seed once through the family and assembles the rows; ``None`` leaves the
-    # family to its own draw.
-    initial_noise_seeds: tuple[int, ...] | None = None
     # Memory probes may execute fewer steps while retaining full buffer allocation.
     execute_steps: int | None = None
 
@@ -155,14 +150,6 @@ class DenoiseLoopConfig:
         if self.denoise_mode not in get_args(DenoiseMode):
             raise ValueError(
                 f"denoise_mode must be one of {get_args(DenoiseMode)}; got {self.denoise_mode!r}"
-            )
-        if (
-            self.initial_noise_seeds is not None
-            and len(self.initial_noise_seeds) != self.sample_count
-        ):
-            raise ValueError(
-                f"initial_noise_seeds must carry {self.sample_count} seeds for this batch, "
-                f"got {len(self.initial_noise_seeds)}",
             )
 
 

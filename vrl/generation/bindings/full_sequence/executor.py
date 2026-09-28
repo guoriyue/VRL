@@ -219,8 +219,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         self,
         params: DenoiseSamplingParams,
         batch: GenerationSampleBatch,
-        *,
-        initial_noise_seeds: tuple[int, ...] | None = None,
     ) -> DenoiseLoopConfig:
         """Build the SDE denoise config for one sample batch."""
 
@@ -235,7 +233,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
             sde_window=params.sde_window,
             denoise_mode=params.denoise_mode,
             teacache=params.teacache,
-            initial_noise_seeds=initial_noise_seeds,
         )
 
     def forward_plan_pipelined(
@@ -321,11 +318,7 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
             generation_request=request,
             batch=batch,
         )
-        config = self.build_denoise_config(
-            params,
-            batch,
-            initial_noise_seeds=self.batch_initial_noise_seeds(request, batch),
-        )
+        config = self.build_denoise_config(params, batch)
         if execute_steps is not None:
             config = replace(config, execute_steps=execute_steps)
         initial_latents = self.draw_initial_latents(
@@ -383,19 +376,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         batch_result.replay_tensors = policy.apply_to_value(batch_result.replay_tensors)
         return batch_result
 
-    @staticmethod
-    def batch_initial_noise_seeds(
-        request: GenerationRequest,
-        batch: GenerationSampleBatch,
-    ) -> tuple[int, ...] | None:
-        """This batch's rows of the request's per-sample initial-noise seeds."""
-
-        seeds = request.initial_noise_seeds
-        if seeds is None:
-            return None
-        start = batch.prompt_index * request.samples_per_prompt + batch.sample_start
-        return tuple(seeds[start : start + batch.sample_count])
-
     def draw_initial_latents(
         self,
         *,
@@ -404,33 +384,15 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         config: DenoiseLoopConfig,
         prepare_kwargs: dict[str, Any] | None = None,
     ) -> torch.Tensor | None:
-        """The batch's starting latents from its per-row seeds, or ``None``.
+        """Starting latents to inject into this batch, or ``None``.
 
-        Each distinct seed is drawn ONCE through the family's own
-        ``prepare_sampling`` with one row of conditioning, so the latent's
-        shape, dtype, and state form (packed, conditioned, ...) are the
-        family's and the draw never depends on the batch width; rows that
-        share a seed share the tensor. The executor does not know why rows
-        share a seed; the rollout layer planned that. Families whose
-        preparation encodes a reference (I2V, V2W) pay that encode once per
-        distinct seed per batch while seeds are given.
+        ``None`` leaves the family to its own draw from ``request.seed``. The
+        documented ``qwen_image_21_edit_probe --compare-reference`` mode
+        overrides this hook so two denoise loops start from identical latents.
         """
 
-        seeds = config.initial_noise_seeds
-        if seeds is None:
-            return None
-        from vrl.utils.profiling import profile_range
-
-        drawn: dict[int, torch.Tensor] = {}
-        with profile_range("generation.prepare_sampling"):
-            for seed in dict.fromkeys(seeds):
-                state = self.model.prepare_sampling(
-                    replace(request, seed=seed),
-                    encoded,
-                    **(prepare_kwargs or {}),
-                )
-                drawn[seed] = state.latents[:1]
-        return torch.cat([drawn[seed] for seed in seeds], dim=0)
+        del request, encoded, config, prepare_kwargs
+        return None
 
     def prepare_denoise_state(
         self,
