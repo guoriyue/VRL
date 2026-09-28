@@ -9,7 +9,7 @@ downloads into. No generic artifact-manifest framework lives here.
     python -m vrl.scripts.data.setup <command>
 
 Commands: pickapic, anime-safety-prompts, videophy-i2v, video-world-bridge, video-world-targets,
-jrdb-targets, derive-text-video-targets, for-experiment, init-dirs.
+derive-text-video-targets, for-experiment, init-dirs.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from vrl.scripts.data import (
     bootstrap,
     danbooru,
     derive_text_video_targets,
-    jrdb,
     pickapic,
     video_world,
     videophy_i2v,
@@ -88,7 +87,6 @@ def build_parser() -> argparse.ArgumentParser:
     danbooru.register(subparsers)
     videophy_i2v.register(subparsers)
     video_world.register(subparsers)
-    jrdb.register(subparsers)
     derive_text_video_targets.register(subparsers)
     bootstrap.register(subparsers)
     _register_init_dirs(subparsers)
