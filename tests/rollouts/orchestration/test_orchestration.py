@@ -34,7 +34,6 @@ def _batch(prompts: list[str], group_size: int):
 class _Runtime:
     def __init__(self) -> None:
         self.current_policy_version = 0
-        self.requires_driver_model_offload = False
 
 
 class _Syncer:
@@ -59,6 +58,7 @@ class _Collector(PromptCollectionFake):
     def __init__(self, runtime: _Runtime) -> None:
         self.generation_runtime = runtime
         self.requires_generation_offload_before_reward = False
+        self.requires_driver_model_offload = False
         self.requires_driver_model_offload_for_reward = False
         self.supports_reward_generation_overlap = False
         self.supports_continuous_reward_execution = False
@@ -206,13 +206,13 @@ def _parking_schedule(
 
     events: list[str] = []
     runtime = _Runtime()
-    runtime.requires_driver_model_offload = not reward_uses_trainer
     collector = _FailingPhaseCollector(
         runtime,
         events,
         fail_collect=fail_collect,
         fail_offload=fail_offload,
     )
+    collector.requires_driver_model_offload = not reward_uses_trainer
     collector.requires_driver_model_offload_for_reward = reward_uses_trainer
     strategy = _ParkingStrategy(events, fail_restore=fail_restore)
 
@@ -462,8 +462,6 @@ def test_coordinator_does_not_hide_runtime_provider_errors():
     )
     with pytest.raises(RuntimeError, match="provider failed"):
         lifecycle.current_policy_version()
-    with pytest.raises(RuntimeError, match="provider failed"):
-        lifecycle.requires_driver_model_offload()
 
 
 @pytest.mark.parametrize("source", ["runtime", "syncer"])

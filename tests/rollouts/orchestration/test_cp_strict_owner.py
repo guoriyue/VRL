@@ -37,7 +37,7 @@ def _worker(rank, rendezvous, spool):
         else:
             assert calls == []
         if owner is not None and groups.dp_rank == 0:
-            collector.generation_runtime.requires_driver_model_offload = True
+            collector.requires_driver_model_offload = True
         with pytest.raises(RuntimeError, match="disjoint"):
             asyncio.run(schedule.next_iteration([], group_size=2))
 

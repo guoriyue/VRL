@@ -61,18 +61,13 @@ class GenerationRuntime(Protocol):
     """Generation runtime consumed by rollout collectors.
 
     The runtime is a transport boundary: schedules explicitly activate it before
-    generation and offload it at a shared-GPU handoff. Whether to offload before
-    reward scoring is no longer the runtime's decision — that is derived once
-    from GPU topology into the
+    generation and offload it at a shared-GPU handoff. Whether the trainer parks
+    for generation, or generation offloads before reward scoring, is not the
+    runtime's decision — both are derived once from GPU topology into the
     ``RayLifecyclePlan`` and read by the collector (see vrl/ray/resources.py).
     """
 
     current_policy_version: int | None
-
-    @property
-    def requires_driver_model_offload(self) -> bool:
-        """Whether shared ownership requires parking trainer state for generation."""
-        ...
 
     async def preflight(self) -> None:
         """Fail fast on an unhealthy engine before the schedule starts.

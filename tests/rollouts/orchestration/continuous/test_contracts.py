@@ -57,6 +57,7 @@ class _GatedCollector(PromptCollectionFake):
     """Collector whose generation/reward phases block on explicit gates."""
 
     requires_generation_offload_before_reward = False
+    requires_driver_model_offload = False
     requires_driver_model_offload_for_reward = False
     supports_reward_generation_overlap = False
 
@@ -159,6 +160,7 @@ class _FiniteCollector(PromptCollectionFake):
     """Records prompt-batch inputs and optionally fails one attempt per prompt."""
 
     requires_generation_offload_before_reward = False
+    requires_driver_model_offload = False
     requires_driver_model_offload_for_reward = False
     supports_reward_generation_overlap = False
 

@@ -47,6 +47,9 @@ class RolloutCollectorControl(Protocol):
     def generation_runtime(self) -> GenerationRuntime | None: ...
 
     @property
+    def requires_driver_model_offload(self) -> bool: ...
+
+    @property
     def requires_driver_model_offload_for_reward(self) -> bool: ...
 
     @property
@@ -160,10 +163,9 @@ class RolloutRuntimeCoordinator:
         return None
 
     def requires_driver_model_offload(self) -> bool:
-        runtime = self.collector.generation_runtime
-        if runtime is None:
-            return False
-        return bool(runtime.requires_driver_model_offload)
+        """Whether generation borrows trainer-owned GPU capacity."""
+
+        return bool(self.collector.requires_driver_model_offload)
 
     def requires_driver_model_offload_for_reward(self) -> bool:
         """Whether reward scoring borrows trainer-owned GPU capacity."""

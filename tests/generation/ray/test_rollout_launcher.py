@@ -291,8 +291,6 @@ def test_launcher_uses_resolved_colocation_protocol_signal(local_ray) -> None:
             _launch_inputs(),
             placement=owner.rollout_placement,
         )
-
-        assert runtime.requires_driver_model_offload is False
     finally:
         if runtime is not None:
             asyncio.run(runtime.shutdown())

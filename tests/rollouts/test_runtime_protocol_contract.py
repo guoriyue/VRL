@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
@@ -19,7 +17,6 @@ from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 def _runtime(
     *,
     deferred: bool = False,
-    colocated: bool = False,
 ) -> RayGenerationRuntime:
     session = RayGenerationSession(
         executor=object(),
@@ -35,38 +32,14 @@ def _runtime(
         return RayGenerationRuntime(
             session=None,
             session_factory=create_session,
-            colocated=colocated,
         )
-    return RayGenerationRuntime(
-        session=session,
-        colocated=colocated,
-    )
+    return RayGenerationRuntime(session=session)
 
 
 # Note: the release-before-reward decision is no longer a runtime method; it is
 # derived from GPU topology into the RayLifecyclePlan and read by the collector.
 # See tests/ray/test_resources.py (plan derivation) and
 # tests/rollouts/collector/test_runtime.py (collector consumption).
-
-
-# --------------------------------------------------------------------------
-# requires_driver_model_offload
-# --------------------------------------------------------------------------
-def test_persistent_runtime_does_not_require_driver_offload() -> None:
-    runtime = _runtime()
-    assert runtime.requires_driver_model_offload is False
-
-
-@pytest.mark.parametrize(
-    ("colocated", "expected"),
-    [
-        (True, True),
-        (False, False),
-    ],
-)
-def test_deferred_runtime_driver_offload_requirement(colocated, expected) -> None:
-    runtime = _runtime(deferred=True, colocated=colocated)
-    assert runtime.requires_driver_model_offload is expected
 
 
 def test_concrete_runtimes_satisfy_generation_runtime_structurally() -> None:

@@ -41,9 +41,7 @@ class _Collector(CollectorControlFake):
     def __init__(self, model):
         self.model = model
         self.executor = VDNH3BatchExecutor(model)
-        self.generation_runtime = SimpleNamespace(
-            current_policy_version=0, requires_driver_model_offload=False
-        )
+        self.generation_runtime = SimpleNamespace(current_policy_version=0)
         self.versions = []
 
     async def evaluate_rollout(self, batches):

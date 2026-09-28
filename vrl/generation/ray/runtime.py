@@ -49,7 +49,6 @@ class RayGenerationRuntime:
         session: RayGenerationSession | None,
         session_factory: _RaySessionFactory | None = None,
         initial_policy_version: int | None = None,
-        colocated: bool = False,
         health_check_interval_s: float = 0.0,
         health_check_timeout_s: float = 30.0,
     ) -> None:
@@ -63,7 +62,6 @@ class RayGenerationRuntime:
             )
         self._session = session
         self._session_factory = session_factory
-        self._colocated = bool(colocated)
 
         self.lifecycle = RuntimeLifecycle(owner="rollout runtime")
         # Accepted targets stamp new requests immediately; installed tracks the
@@ -91,10 +89,6 @@ class RayGenerationRuntime:
 
         session = self._session
         return [] if session is None else session.rank_handles
-
-    @property
-    def requires_driver_model_offload(self) -> bool:
-        return self._colocated
 
     @property
     def supports_non_draining_weight_sync(self) -> bool:

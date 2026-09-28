@@ -54,9 +54,7 @@ class _Collector(CollectorControlFake):
         self.released = released
         self.calls = 0
         self.versions = []
-        self.generation_runtime = SimpleNamespace(
-            current_policy_version=0, requires_driver_model_offload=False
-        )
+        self.generation_runtime = SimpleNamespace(current_policy_version=0)
 
     async def evaluate_rollout(self, batches):
         return list(batches)

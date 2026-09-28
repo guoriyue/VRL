@@ -136,7 +136,7 @@ def _timeout_session(
     return session, actor
 
 
-def _on_demand_runtime(*, colocated: bool = True) -> RayGenerationRuntime:
+def _on_demand_runtime() -> RayGenerationRuntime:
     async def unexpected_session() -> RayGenerationSession:
         raise AssertionError("test did not configure a cold session")
 
@@ -144,7 +144,6 @@ def _on_demand_runtime(*, colocated: bool = True) -> RayGenerationRuntime:
         session=None,
         session_factory=unexpected_session,
         initial_policy_version=0,
-        colocated=colocated,
     )
     return runtime
 
@@ -438,14 +437,6 @@ async def test_deferred_activation_publishes_candidate_non_draining_capability(
 
     assert runtime._session is candidate
     assert runtime.supports_non_draining_weight_sync is supports_non_draining_weight_sync
-
-
-def test_driver_model_offload_is_derived_from_actual_gpu_overlap() -> None:
-    shared_gpu = _on_demand_runtime(colocated=True)
-    separate_gpu = _on_demand_runtime(colocated=False)
-
-    assert shared_gpu.requires_driver_model_offload is True
-    assert separate_gpu.requires_driver_model_offload is False
 
 
 @pytest.mark.asyncio

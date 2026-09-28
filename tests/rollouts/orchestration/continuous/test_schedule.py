@@ -43,7 +43,6 @@ def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
 class _Runtime:
     def __init__(self) -> None:
         self.current_policy_version = 0
-        self.requires_driver_model_offload = False
         # Default False keeps every existing test on the draining barrier; the
         # non-draining tests flip it True to exercise the slot-backed path.
         self.supports_non_draining_weight_sync = False
@@ -83,6 +82,7 @@ class _Collector(PromptCollectionFake):
     def __init__(self, runtime: _Runtime) -> None:
         self.generation_runtime = runtime
         self.requires_generation_offload_before_reward = False
+        self.requires_driver_model_offload = False
         self.requires_driver_model_offload_for_reward = False
         self.supports_reward_generation_overlap = False
         self.supports_continuous_reward_execution = True

@@ -418,10 +418,6 @@ class _DirectExecutorGenerationRuntime:
         self.park_model = park_model
         self.current_policy_version = 0
 
-    @property
-    def requires_driver_model_offload(self) -> bool:
-        return False
-
     async def activate(self) -> None:
         self.model.to(self.device)
         self._move_frozen(self.device)
@@ -451,6 +447,7 @@ class _SyntheticDiffusionReplayCollector:
     """Collector that exercises replay training without full generation assets."""
 
     requires_generation_offload_before_reward = False
+    requires_driver_model_offload = False
     requires_driver_model_offload_for_reward = False
     # Synthetic replay has no reward runtime to overlap with or place beside
     # continuous work; both capabilities are honestly absent.
@@ -508,7 +505,6 @@ class _SyntheticDiffusionReplayCollector:
 
 class _StaticPolicyRuntime:
     current_policy_version = 0
-    requires_driver_model_offload = False
 
 
 @pytest.mark.e2e

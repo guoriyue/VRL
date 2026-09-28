@@ -91,6 +91,7 @@ class _DeferredCollector(PromptCollectionFake):
         self.events: list[str] = []
         self._prompt_names: dict[int, tuple[str, ...]] = {}
         self.requires_generation_offload_before_reward = rollout_reward_handoff
+        self.requires_driver_model_offload = False
         self.requires_driver_model_offload_for_reward = trainer_reward_handoff
         self.supports_reward_generation_overlap = supports_overlap
 
@@ -219,6 +220,7 @@ class _PhasedCollector(PromptCollectionFake):
     """Collector fake exposing per-call phase timings like RolloutCollector."""
 
     requires_generation_offload_before_reward = True
+    requires_driver_model_offload = False
     requires_driver_model_offload_for_reward = False
     supports_reward_generation_overlap = False
 

@@ -7,7 +7,6 @@ from tests.rollouts.collector._helpers import PromptCollectionFake
 
 class _RuntimeControl:
     current_policy_version = None
-    requires_driver_model_offload = False
 
 
 class CollectorControlFake(PromptCollectionFake):
@@ -15,6 +14,7 @@ class CollectorControlFake(PromptCollectionFake):
 
     generation_runtime = _RuntimeControl()
     requires_generation_offload_before_reward = False
+    requires_driver_model_offload = False
     requires_driver_model_offload_for_reward = False
     supports_reward_generation_overlap = False
     supports_continuous_reward_execution = True

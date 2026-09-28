@@ -35,9 +35,9 @@ class _FakeDriverModel:
 
 
 def _coordinator(model: _FakeDriverModel) -> RolloutRuntimeCoordinator:
-    # A runtime that advertises colocation-driven driver offload; cuda-typed
+    # A collector whose topology parks the trainer for generation; cuda-typed
     # device so should_offload_driver_model_for_rollout() is True on a CPU box.
-    runtime = SimpleNamespace(requires_driver_model_offload=True, current_policy_version=None)
+    runtime = SimpleNamespace(current_policy_version=None)
     strategy = SingleProcessStrategy()
     state = TrainingMemoryState(
         model=model,  # type: ignore[arg-type]
@@ -52,6 +52,7 @@ def _coordinator(model: _FakeDriverModel) -> RolloutRuntimeCoordinator:
         def __init__(self, runtime: Any) -> None:
             self.generation_runtime = runtime
             self.requires_generation_offload_before_reward = False
+            self.requires_driver_model_offload = True
             self.requires_driver_model_offload_for_reward = False
             self.supports_reward_generation_overlap = False
             self.supports_continuous_reward_execution = False

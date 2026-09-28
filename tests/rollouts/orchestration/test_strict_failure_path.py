@@ -64,10 +64,8 @@ class _Collector(PromptCollectionFake):
         self.fail_rollout_offload = False
         # requires_driver_model_offload drives whether the coordinator parks
         # the trainer at phase entry (the shared-GPU topology fact).
-        self.generation_runtime = SimpleNamespace(
-            requires_driver_model_offload=trainer_shares_gpu,
-            current_policy_version=0,
-        )
+        self.requires_driver_model_offload = trainer_shares_gpu
+        self.generation_runtime = SimpleNamespace(current_policy_version=0)
 
     async def activate_generation_runtime(self) -> None:
         self.calls.append("activate_rollout")

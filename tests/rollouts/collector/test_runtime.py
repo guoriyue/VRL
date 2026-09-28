@@ -78,7 +78,6 @@ class _Runtime:
         self.events: list[str] = []
         self.fail_offload = fail_offload
         self.current_policy_version = 0
-        self.requires_driver_model_offload = False
         self.shutdown_failures = shutdown_failures
         self.shutdown_calls = 0
 
@@ -348,6 +347,7 @@ def test_collector_offloads_runtime_memory_before_reward_scoring() -> None:
         "offload",
         "reward_park",
     ]
+    assert collector.requires_driver_model_offload is True
     assert collector.requires_driver_model_offload_for_reward is True
 
 
@@ -369,6 +369,7 @@ def test_collector_does_not_offload_runtime_before_independent_reward() -> None:
     asyncio.run(collect_scored(collector, ["p0"], group_size=1))
 
     assert runtime.events == ["generate", "score"]
+    assert collector.requires_driver_model_offload is False
     assert collector.requires_driver_model_offload_for_reward is False
 
 

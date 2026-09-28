@@ -369,6 +369,15 @@ class RolloutCollector:
         return lifecycle.park_rollout_for_reward
 
     @property
+    def requires_driver_model_offload(self) -> bool:
+        """Whether generation borrows the trainer's in-process GPU."""
+
+        lifecycle = self._lifecycle
+        if lifecycle is None:
+            return False
+        return lifecycle.park_trainer_for_rollout
+
+    @property
     def requires_driver_model_offload_for_reward(self) -> bool:
         """Whether reward scoring borrows the trainer's in-process GPU."""
 
