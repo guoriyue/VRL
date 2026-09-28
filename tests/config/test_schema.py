@@ -15,29 +15,6 @@ from vrl.config.schema import (
 )
 
 
-@pytest.mark.parametrize("family", ["cosmos-predict2", "cosmos-predict2.5"])
-def test_cosmos_video_accepts_frame_shared_adaln(family: str) -> None:
-    cfg = parse_config(
-        minimal_grpo_cfg(model={"family": family, "frame_shared_adaln": True, "use_lora": True}),
-    )
-    assert cfg.model.model_dump()["frame_shared_adaln"] is True
-
-
-def test_frame_shared_adaln_rejects_models_without_frame_conditioning() -> None:
-    cfg = minimal_grpo_cfg(model={"family": "sd3_5", "frame_shared_adaln": True})
-    with pytest.raises(ValueError, match=r"unknown model\.frame_shared_adaln"):
-        parse_config(cfg)
-
-
-def test_fused_lora_branch_requires_enabled_adapters() -> None:
-    cfg = minimal_grpo_cfg(model={"family": "sd3_5", "fused_lora_branch": True})
-    with pytest.raises(ValueError, match=r"model\.fused_lora_branch requires model\.use_lora"):
-        parse_config(cfg)
-
-    cfg.model.use_lora = True
-    assert parse_config(cfg).model.fused_lora_branch is True
-
-
 @pytest.mark.parametrize("kind", ["diffusion_nft", "v_grpo"])
 def test_previous_policy_requirements_belong_to_algorithm(kind: str) -> None:
     # Whether the policy is a LoRA adapter or the whole transformer is the

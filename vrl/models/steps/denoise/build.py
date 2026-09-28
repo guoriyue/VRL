@@ -21,8 +21,6 @@ from vrl.models.loader import (
 from vrl.models.parking import module_on_host
 from vrl.models.precision import apply_float32_precision
 from vrl.nn.optimization import QuantizationPass, apply_rollout_optimizations
-from vrl.nn.optimization.frame_shared_adaln import share_adaln_across_frames
-from vrl.nn.optimization.fused_rms_norm import fuse_rms_norms
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -106,17 +104,6 @@ def assemble_replay_bundle(
         model.apply_lora(build)
     else:
         model.apply_full_finetune(build)
-
-    # Mirror of the rollout FusedRmsNormPass: the same flag swaps the same
-    # modules here, so replay and rollout normalize through one kernel. Before
-    # compile for the same reason as on the rollout side.
-    if build.fused_rms_norm:
-        for core in model.policy_cores.values():
-            fuse_rms_norms(core)
-    # Mirror of the rollout FrameSharedAdaLNPass, for the same reason.
-    if build.frame_shared_adaln:
-        for core in model.policy_cores.values():
-            share_adaln_across_frames(core)
 
     compile_cfg = build.torch_compile
     if compile_cfg is not None:

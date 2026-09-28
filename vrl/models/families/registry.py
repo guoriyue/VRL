@@ -713,7 +713,7 @@ _register_model_family(
     _full_sequence_entry(
         family="cosmos-predict2",
         task="v2w",
-        model_section_cls="vrl.models.families.cosmos.config:CosmosVideoModelSection",
+        model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosBatchExecutor",
         build=DenoiseFamilyBuild(

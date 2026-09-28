@@ -237,114 +237,6 @@ class QuantizationPass:
 
 
 @dataclass(frozen=True, slots=True)
-class FusedRmsNormPass:
-    """Run each policy core's hand-written RMSNorms as one fused kernel.
-
-    Swaps norm modules only, so it has no ordering relation to the GEMM swap;
-    it runs first so both the quantized tree and inductor see the final norm
-    modules. The replay bundle applies the same swap from the same flag, which
-    keeps the two roles on one kernel -- the reason this is not a drift source.
-    """
-
-    name: str = "fused_rms_norm"
-    # Swaps norm modules inside the existing tree; the root object is unchanged.
-    replaces_modules: bool = False
-
-    def enabled(self, build: Any) -> bool:
-        return bool(getattr(build, "fused_rms_norm", False))
-
-    def apply(self, model: Any, build: Any) -> PassResult:
-        from vrl.nn.optimization.fused_rms_norm import fuse_rms_norms
-
-        del build
-        count = sum(fuse_rms_norms(core) for core in model.policy_cores.values())
-        return PassResult(name=self.name, applied=count > 0, detail=f"{count} norms")
-
-
-@dataclass(frozen=True, slots=True)
-class FrameSharedAdaLNPass:
-    """Run each Cosmos AdaLN's conditioning chain once per frame, not per token.
-
-    Re-classes the norm modules in place and hooks the transformer root, so it
-    has no ordering relation to the GEMM swap; it runs beside the norm swap so
-    quantization (which may wrap ``linear_1`` / ``linear_2``) and inductor see
-    the final modules. The replay bundle applies the same swap from the same
-    flag, which keeps the two roles on one path -- the reason this is not a
-    drift source.
-    """
-
-    name: str = "frame_shared_adaln"
-    # Re-classes norm modules inside the existing tree; the root object is unchanged.
-    replaces_modules: bool = False
-
-    def enabled(self, build: Any) -> bool:
-        return bool(getattr(build, "frame_shared_adaln", False))
-
-    def apply(self, model: Any, build: Any) -> PassResult:
-        from vrl.nn.optimization.frame_shared_adaln import share_adaln_across_frames
-
-        del build
-        count = sum(share_adaln_across_frames(core) for core in model.policy_cores.values())
-        return PassResult(name=self.name, applied=count > 0, detail=f"{count} AdaLN sites")
-
-
-@dataclass(frozen=True, slots=True)
-class FusedGeluProjectionPass:
-    """Run each policy core's feed-forward up-projection and tanh-GELU as one GEMM.
-
-    Rollout only: the epilogue op has no autograd formula, so the replay bundle
-    keeps the reference kernel and this pass has no replay mirror. Swaps the
-    diffusers ``GELU`` modules in place, so it runs beside the norm swap, before
-    quantization (which then wraps the projection and switches the module back
-    to its reference path) and before compile (so inductor sees the final tree).
-    """
-
-    name: str = "fused_gelu_projection"
-    # Swaps activation modules inside the existing tree; the root object is unchanged.
-    replaces_modules: bool = False
-
-    def enabled(self, build: Any) -> bool:
-        return bool(getattr(build, "fused_gelu_projection", False))
-
-    def apply(self, model: Any, build: Any) -> PassResult:
-        from vrl.nn.optimization.fused_gelu_projection import fuse_gelu_projections
-
-        del build
-        count = sum(fuse_gelu_projections(core) for core in model.policy_cores.values())
-        return PassResult(
-            name=self.name,
-            applied=count > 0,
-            detail=f"{count} feed-forward projections",
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class FusedLoraBranchPass:
-    """Add each LoRA site's delta into the base output in place, no fp32 round trips.
-
-    Rollout only: the fast path runs with gradients disabled and is bit-identical
-    to peft's forward, so the replay bundle needs no mirror. Re-classes the peft
-    ``lora.Linear`` modules in place (same objects, same registry), so it runs
-    beside the other module swaps, before quantization (which replaces the
-    ``base_layer`` child the fused forward still calls) and before compile.
-    """
-
-    name: str = "fused_lora_branch"
-    # Re-classes LoRA modules inside the existing tree; the root object is unchanged.
-    replaces_modules: bool = False
-
-    def enabled(self, build: Any) -> bool:
-        return bool(getattr(build, "fused_lora_branch", False))
-
-    def apply(self, model: Any, build: Any) -> PassResult:
-        from vrl.nn.optimization.fused_lora_branch import fuse_lora_branches
-
-        del build
-        count = sum(fuse_lora_branches(core) for core in model.policy_cores.values())
-        return PassResult(name=self.name, applied=count > 0, detail=f"{count} LoRA sites")
-
-
-@dataclass(frozen=True, slots=True)
 class CompilePass:
     """torch.compile every policy core.
 
@@ -507,10 +399,6 @@ class VaeDecodeMemoryPass:
 # hooks must see the final tree; VAE memory is unordered (disjoint subtree) and
 # sits last only because nothing requires it earlier.
 ROLLOUT_PASSES: tuple[OptimizationPass, ...] = (
-    FusedRmsNormPass(),
-    FrameSharedAdaLNPass(),
-    FusedGeluProjectionPass(),
-    FusedLoraBranchPass(),
     QuantizationPass(),
     CompilePass(),
     OffloadPass(),
@@ -601,10 +489,6 @@ __all__ = [
     "REQUEST_SCOPED_DRIFT_SOURCES",
     "ROLLOUT_PASSES",
     "CompilePass",
-    "FrameSharedAdaLNPass",
-    "FusedGeluProjectionPass",
-    "FusedLoraBranchPass",
-    "FusedRmsNormPass",
     "OptimizationPass",
     "PassResult",
     "QuantizationPass",

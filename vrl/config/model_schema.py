@@ -165,30 +165,6 @@ class ModelSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
-    # Run the policy's hand-written RMSNorm modules (diffusers ``RMSNorm``, the
-    # Q/K norms of Cosmos, SD3.5 and Qwen-Image) as one fused kernel. Applied
-    # to rollout AND replay so both roles share one rounding; kernel choice
-    # only, same weights, so identity-excluded like torch_compile.
-    fused_rms_norm: bool | None = Field(
-        default=None,
-        json_schema_extra=checkpoint_identity_metadata("exclude"),
-    )
-    # Run each feed-forward up-projection and its tanh-GELU (diffusers ``GELU``
-    # in SD3.5, Wan, Flux, Qwen-Image) as one GEMM with the activation in the
-    # epilogue. Rollout only: the fused op has no backward, so replay keeps the
-    # reference kernel. Kernel choice, same weights, so identity-excluded.
-    fused_gelu_projection: bool | None = Field(
-        default=None,
-        json_schema_extra=checkpoint_identity_metadata("exclude"),
-    )
-    # Add each LoRA site's delta into the base output in place instead of
-    # materializing the fp32 sum and casting it back. Rollout only; bit-identical
-    # to the peft forward, so replay needs no mirror. Kernel choice, same
-    # weights, so identity-excluded.
-    fused_lora_branch: bool | None = Field(
-        default=None,
-        json_schema_extra=checkpoint_identity_metadata("exclude"),
-    )
     use_lora: bool | None = Field(
         default=None,
         json_schema_extra=checkpoint_identity_metadata("value", default=False),
@@ -202,9 +178,6 @@ class ModelSection(ConfigBase):
 
     @model_validator(mode="after")
     def _validate_lora(self) -> Self:
-        # Without adapters the pass cannot replace any LoRA branch.
-        if self.fused_lora_branch and not self.use_lora:
-            raise ValueError("model.fused_lora_branch requires model.use_lora=true")
         resolved = self.resolve_lora(self.lora)
         if resolved.parameter_dtype is not None and not self.use_lora:
             raise ValueError("model.lora.parameter_dtype requires model.use_lora=true")
