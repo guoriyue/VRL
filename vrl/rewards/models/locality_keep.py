@@ -23,6 +23,14 @@ Known blind spots of the key on that probe: a small object painted over
 spread inside one candidate group. This is a model-free measurement, not a
 judgement of the edit itself; it does not know which changes inside the
 boxes were asked for.
+
+On untiled manga outputs the legacy key can also reward added grain when
+high-frequency energy starts below the source. ``locality_detail_keep`` is an
+opt-in alternative: 1 / (1 + weighted penalty), with normalized pixel MSE,
+relative source-Laplacian MAE and absolute log high-frequency energy ratio.
+It requires explicit ``worker_config.detail_penalty_weights`` for those three
+features. Weights must be frozen after damaged-output calibration; there is
+no universal claim that this proxy detects every loss of detail.
 """
 
 from __future__ import annotations
@@ -41,6 +49,20 @@ PSNR_UNIT = 40.0
 class LocalityKeepRewardModel:
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self._sources: dict[str, np.ndarray] = {}
+        self._detail_weights = worker_config.get("detail_penalty_weights")
+        if self._detail_weights is not None:
+            keys = {"normalized_mse", "relative_laplacian_mae", "absolute_log_hf_ratio"}
+            if not isinstance(self._detail_weights, Mapping) or set(self._detail_weights) != keys:
+                raise ValueError(f"detail_penalty_weights must declare exactly {sorted(keys)}")
+            self._detail_weights = {
+                name: float(weight) for name, weight in self._detail_weights.items()
+            }
+            if any(
+                not np.isfinite(weight) or weight < 0 for weight in self._detail_weights.values()
+            ):
+                raise ValueError("detail penalty weights must be finite and nonnegative")
+            if not any(self._detail_weights.values()):
+                raise ValueError("at least one detail penalty weight must be positive")
 
     def _source(self, path: str) -> np.ndarray:
         if path not in self._sources:
@@ -90,15 +112,32 @@ class LocalityKeepRewardModel:
         gray = lambda a: cv2.cvtColor(a.astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float64)  # noqa: E731
         # Fill the boxes with the source so their edges do not leak into the outside statistic.
         filled = np.where(outside[..., None], candidate, source)
-        lap_c = cv2.Laplacian(gray(filled), cv2.CV_64F)[outside].var()
-        lap_s = cv2.Laplacian(gray(source), cv2.CV_64F)[outside].var()
+        lap_candidate = cv2.Laplacian(gray(filled), cv2.CV_64F)[outside]
+        lap_source = cv2.Laplacian(gray(source), cv2.CV_64F)[outside]
+        lap_c, lap_s = lap_candidate.var(), lap_source.var()
         hf_ratio = float(lap_c / lap_s) if lap_s > 0 else 1.0
         texture = min(hf_ratio, 1.0 / hf_ratio) if hf_ratio > 0 else 0.0
-        return {
+        scores = {
             "locality_keep": float(min(1.0, max(0.0, psnr / PSNR_UNIT)) * texture),
             "locality_psnr": float(psnr),
             "locality_hf_ratio": hf_ratio,
         }
+        if self._detail_weights is not None:
+            # Variance alone can reward adding noise to an already smoothed
+            # output. Error against the actual source's high-frequency pattern
+            # charges that noise; the energy gap separately charges smoothing.
+            # Calibrate both terms on real damaged-output controls before use.
+            features = {
+                "normalized_mse": mse / 255.0**2,
+                "relative_laplacian_mae": float(
+                    np.abs(lap_candidate - lap_source).mean() / (np.abs(lap_source).mean() + 1e-8)
+                ),
+                "absolute_log_hf_ratio": float(abs(np.log((lap_c + 1e-8) / (lap_s + 1e-8)))),
+            }
+            penalty = sum(self._detail_weights[name] * value for name, value in features.items())
+            scores.update({f"locality/{name}": value for name, value in features.items()})
+            scores["locality_detail_keep"] = 1.0 / (1.0 + penalty)
+        return scores
 
 
 __all__ = ["LocalityKeepRewardModel"]

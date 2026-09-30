@@ -15,7 +15,7 @@ class LocalityKeepReward(ModelRewardFunction):
     default_media_type = "image"
     default_artifact_format = "tensor"
     worker_config_only = True
-    score_keys = ("locality_keep", "locality_psnr", "locality_hf_ratio")
+    score_keys = ("locality_keep", "locality_detail_keep", "locality_psnr", "locality_hf_ratio")
 
     @classmethod
     def resolve_execution_device(cls, *, device: str, kwargs: Mapping[str, Any]) -> str:

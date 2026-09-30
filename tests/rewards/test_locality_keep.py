@@ -106,3 +106,53 @@ async def test_changes_inside_the_boxes_are_free_and_outside_changes_are_charged
         await reward.shutdown()
     assert output.scores[0] == 1 > output.scores[1]
     assert output.components["locality_keep/locality_hf_ratio"][0] == 1
+
+
+@pytest.mark.asyncio
+async def test_detail_penalty_selects_configured_key_and_keeps_diagnostics(tmp_path):
+    rng = np.random.default_rng(19)
+    source = rng.integers(0, 256, (64, 64, 3), dtype=np.uint8)
+    Image.fromarray(source).save(tmp_path / "source.png")
+    spec = {"source": str(tmp_path / "source.png"), "boxes": [[0, 0, 32, 32]]}
+    inside = source.copy()
+    inside[:32, :32] = 0
+    damaged = source.copy()
+    damaged[32:, 32:] //= 2
+    reward = MultiReward.from_dict(
+        {"locality_keep": 1.0},
+        device="cpu",
+        reward_kwargs={
+            "locality_keep": {
+                "score_key": "locality_detail_keep",
+                "worker_config": {
+                    "detail_penalty_weights": {
+                        "normalized_mse": 1.0,
+                        "relative_laplacian_mae": 0.2,
+                        "absolute_log_hf_ratio": 0.1,
+                    }
+                },
+            }
+        },
+        inference_configs={"locality_keep": RewardInferenceConfig(kind="in_process")},
+    )
+    try:
+        output = await reward.score_batch(
+            [
+                RewardSample(
+                    "edit",
+                    torch.from_numpy(a).permute(2, 0, 1).float() / 255,
+                    str(index),
+                    {"locality_keep": spec},
+                )
+                for index, a in enumerate((inside, damaged))
+            ]
+        )
+    finally:
+        await reward.shutdown()
+    assert output.scores[0] == 1 > output.scores[1] > 0
+    assert (
+        output.components["locality_keep"]
+        == output.components["locality_keep/locality_detail_keep"]
+    )
+    assert output.components["locality_keep/locality/normalized_mse"][0] == 0
+    assert output.components["locality_keep/locality/relative_laplacian_mae"][1] > 0
