@@ -68,3 +68,45 @@ def test_bad_criteria_are_rejected():
         VLMPreferenceRewardModel(
             {"device": "cpu", "criteria": [{"name": "x", "question": "q", "answer": "score"}]}
         )
+
+
+def test_pairwise_mode_reads_the_reference_and_averages_both_orders(tmp_path):
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (8, 8), (255, 0, 0)).save(ref)
+    model = VLMPreferenceRewardModel(
+        {"device": "cpu", "reference_key": "judge_reference", "data_root": str(tmp_path)}
+    )
+    calls = []
+
+    def answer_scores(image, questions, modes, reference=None):
+        calls.append((image.getpixel((0, 0)), reference.getpixel((0, 0)), list(questions)))
+        # candidate-first: 0.8 for every criterion; reference-first: 0.4 -> averaged 0.7
+        return [0.8 if image.getpixel((0, 0)) != (255, 0, 0) else 0.4] * len(questions)
+
+    model.answer_scores = answer_scores
+    artifact = RewardInferenceArtifact(
+        artifact_id="a",
+        sample_id="s",
+        path="",
+        prompt="a red fox",
+        media=torch.zeros(3, 8, 8, dtype=torch.uint8),
+        metadata={"judge_reference": "ref.png"},
+    )
+    scores = model(artifact)
+    assert scores["vlm_preference"] == pytest.approx(0.7)
+    assert len(calls) == 2 and calls[0][1] == (255, 0, 0) and calls[1][0] == (255, 0, 0)
+    assert all('"a red fox"' in q and "Image 1" in q for q in calls[0][2])
+
+
+def test_pairwise_mode_without_a_reference_in_metadata_is_rejected():
+    model = VLMPreferenceRewardModel({"device": "cpu", "reference_key": "judge_reference"})
+    artifact = RewardInferenceArtifact(
+        artifact_id="a",
+        sample_id="s",
+        path="",
+        prompt="x",
+        media=torch.zeros(3, 4, 4),
+        metadata={},
+    )
+    with pytest.raises(ValueError, match="judge_reference"):
+        model(artifact)

@@ -55,6 +55,46 @@ ANSWER_SUFFIX = {
     "rating": "\nAnswer with a single word: excellent, good, fair, poor, or bad.",
 }
 
+# Pairwise mode: the candidate is "Image 1" and the reference "Image 2" (and the
+# reverse order is also asked, so position bias cancels). Every question is a
+# yes/no "is Image 1 better" judgment.
+PAIRWISE_PREAMBLE = (
+    'Image 1 and Image 2 were both generated for the description: "{prompt}". '
+    "Compare them carefully. "
+)
+DEFAULT_PAIRWISE_CRITERIA: tuple[dict[str, Any], ...] = (
+    {
+        "name": "overall",
+        "weight": 2.0,
+        "answer": "yesno",
+        "question": (
+            "Is Image 1 better than Image 2 as a finished picture: more pleasing "
+            "composition, more natural and well-controlled lighting, more harmonious colors "
+            "without an exaggerated color cast, and more refined detail?"
+        ),
+    },
+    {
+        "name": "structure",
+        "weight": 1.0,
+        "answer": "yesno",
+        "question": (
+            "Is Image 1 better than Image 2 in structural correctness: hands with five "
+            "fingers, faces and bodies with normal proportions, and no merged, missing, "
+            "extra or twisted limbs or parts?"
+        ),
+    },
+    {
+        "name": "clean",
+        "weight": 1.0,
+        "answer": "yesno",
+        "question": (
+            "Is Image 1 freer than Image 2 of rendering defects such as noise or grain, "
+            "smudges, garbled text, floating fragments, purposeless tangled wires or cables, "
+            "and meaningless clutter that the description did not call for?"
+        ),
+    },
+)
+
 DEFAULT_CRITERIA: tuple[dict[str, Any], ...] = (
     {
         "name": "aesthetic",
@@ -108,7 +148,16 @@ class VLMPreferenceRewardModel(LazyTorchModule):
         self._judge_revision = cfg.get("judge_revision")
         self._judge_max_side = int(cfg.get("judge_max_side", 1024))
         self._local_files_only = bool(cfg.get("local_files_only", False))
-        raw = cfg.get("criteria") or DEFAULT_CRITERIA
+        # Pairwise mode: compare the candidate against a reference image whose
+        # path the artifact carries under ``metadata[<reference_key>]``
+        # (resolved under ``data_root``); ``both_orders`` asks each question in
+        # both image orders and averages, cancelling position bias.
+        self._reference_key = str(cfg.get("reference_key") or "").strip() or None
+        self._both_orders = bool(cfg.get("both_orders", True))
+        self.data_root = str(cfg.get("data_root") or "")
+        raw = cfg.get("criteria") or (
+            DEFAULT_PAIRWISE_CRITERIA if self._reference_key else DEFAULT_CRITERIA
+        )
         self.criteria = [self._validate_criterion(c) for c in raw]
         if not self.criteria:
             raise ValueError("vlm_preference needs at least one criterion")
@@ -170,13 +219,44 @@ class VLMPreferenceRewardModel(LazyTorchModule):
 
     def __call__(self, artifact: RewardInferenceArtifact) -> dict[str, float]:
         image = artifact_middle_frame_image(artifact)
-        return self.score(image, prompt=artifact.prompt)
+        reference = None
+        if self._reference_key:
+            from PIL import Image
 
-    def score(self, image: Any, *, prompt: str) -> dict[str, float]:
-        """Weighted mean of the per-criterion scores, plus every criterion."""
+            from vrl.utils.artifacts import default_data_root, resolve_artifact_path
+
+            raw = artifact.metadata.get(self._reference_key)
+            if not raw:
+                raise ValueError(
+                    f"vlm_preference pairwise mode needs metadata.{self._reference_key}"
+                )
+            path = resolve_artifact_path(
+                str(raw), data_root=self.data_root or default_data_root(), allow_absolute=True
+            )
+            with Image.open(path) as opened:
+                reference = opened.convert("RGB")
+        return self.score(image, prompt=artifact.prompt, reference=reference)
+
+    def score(self, image: Any, *, prompt: str, reference: Any = None) -> dict[str, float]:
+        """Weighted mean of the per-criterion scores, plus every criterion.
+
+        With ``reference`` (pairwise mode) each score is P(candidate better than
+        reference), averaged over both image orders when ``both_orders`` is set.
+        """
 
         questions = [c["question"].replace("{prompt}", prompt.strip()) for c in self.criteria]
-        values = self.answer_scores(image, questions, [c["answer"] for c in self.criteria])
+        answers = [c["answer"] for c in self.criteria]
+        if reference is None:
+            values = self.answer_scores(image, questions, answers)
+        else:
+            preamble = PAIRWISE_PREAMBLE.replace("{prompt}", prompt.strip())
+            questions = [preamble + q for q in questions]
+            forward = self.answer_scores(image, questions, answers, reference=reference)
+            if self._both_orders:
+                backward = self.answer_scores(reference, questions, answers, reference=image)
+                values = [(f + (1.0 - b)) / 2.0 for f, b in zip(forward, backward, strict=True)]
+            else:
+                values = forward
         out = {
             "vlm_preference": float(sum(w * v for w, v in zip(self._weights, values, strict=True)))
         }
@@ -185,7 +265,11 @@ class VLMPreferenceRewardModel(LazyTorchModule):
         return out
 
     def answer_scores(
-        self, image: Any, questions: Sequence[str], answers: Sequence[str]
+        self,
+        image: Any,
+        questions: Sequence[str],
+        answers: Sequence[str],
+        reference: Any = None,
     ) -> list[float]:
         """Expected answer value in [0, 1] per question, read off one batched forward.
 
@@ -197,19 +281,22 @@ class VLMPreferenceRewardModel(LazyTorchModule):
         from PIL import Image
 
         module = self._module_for_inference()
-        scale = self._judge_max_side / max(image.size)
-        if scale < 1:
-            image = image.resize(
-                (round(image.width * scale), round(image.height * scale)), Image.Resampling.BICUBIC
-            )
+
+        def fit(im: Any) -> Any:
+            scale = self._judge_max_side / max(im.size)
+            if scale < 1:
+                im = im.resize(
+                    (round(im.width * scale), round(im.height * scale)), Image.Resampling.BICUBIC
+                )
+            return im
+
+        images = [fit(image)] + ([fit(reference)] if reference is not None else [])
         messages = [
             [
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "image", "image": image},
-                        {"type": "text", "text": question + ANSWER_SUFFIX[answer]},
-                    ],
+                    "content": [{"type": "image", "image": im} for im in images]
+                    + [{"type": "text", "text": question + ANSWER_SUFFIX[answer]}],
                 }
             ]
             for question, answer in zip(questions, answers, strict=True)
@@ -237,4 +324,9 @@ class VLMPreferenceRewardModel(LazyTorchModule):
         return values
 
 
-__all__ = ["DEFAULT_CRITERIA", "RATING_LEVELS", "VLMPreferenceRewardModel"]
+__all__ = [
+    "DEFAULT_CRITERIA",
+    "DEFAULT_PAIRWISE_CRITERIA",
+    "RATING_LEVELS",
+    "VLMPreferenceRewardModel",
+]
