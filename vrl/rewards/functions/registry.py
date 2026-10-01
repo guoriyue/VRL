@@ -68,6 +68,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.target_dino_similarity import TargetDinoSimilarityReward
     from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
     from vrl.rewards.functions.videocon_physics import VideoConPhysicsReward
+    from vrl.rewards.functions.vlm_preference import VLMPreferenceReward
     from vrl.rewards.functions.wd_tagger import WDTaggerReward
 
     _REWARD_REGISTRY.update(
@@ -91,6 +92,7 @@ def _register_builtins() -> None:
             "hpsv3": HPSv3Reward,
             "kling_video_reward": KlingVideoReward,
             "videocon_physics": VideoConPhysicsReward,
+            "vlm_preference": VLMPreferenceReward,
             "unified_reward_video": UnifiedRewardVideoReward,
         }
     )

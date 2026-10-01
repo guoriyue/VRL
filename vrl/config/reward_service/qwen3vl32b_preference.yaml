@@ -1,0 +1,31 @@
+# Operator-owned generative preference judge: Qwen3-VL-32B (FP8, ~36 GB) on a
+# dedicated GPU, one forward per image covering all criteria. For FSDP runs
+# whose ranks each own one colocated trainer/rollout card. Pair with
+# /reward/vlm_preference_http; launch from the repo root first:
+#
+#   CUDA_VISIBLE_DEVICES=3 python -m vrl.rewards.service.server \
+#     --config vrl/config/reward_service/qwen3vl32b_preference.yaml
+host: 127.0.0.1
+port: 8318
+model_name: vlm-preference-qwen3vl32b
+model_version: Qwen/Qwen3-VL-32B-Instruct-FP8@4bf2c2f3
+artifact_roots:
+  - ../../../outputs
+  - /mnt/nvme/outputs
+max_concurrency: 1
+max_pending_requests: 256
+max_cached_requests: 8192
+# A batch of float32 1024 px image tensors plus base64 is ~270 MB (16 images).
+max_request_bytes: 1073741824
+# The judge owns its GPU; nothing to park while rollouts generate.
+generation_overlap_safe: true
+worker_config:
+  model_factory: vrl.rewards.models.vlm_preference:VLMPreferenceRewardModel
+  device: cuda:0
+  judge_model: Qwen/Qwen3-VL-32B-Instruct-FP8
+  judge_revision: 4bf2c2f3
+  judge_max_side: 1024
+  local_files_only: true
+  # Criteria default to vrl.rewards.models.vlm_preference.DEFAULT_CRITERIA
+  # (aesthetic, structure, clean, alignment; equal weights). Override here
+  # when the reward card logs a new blind spot to ask about.

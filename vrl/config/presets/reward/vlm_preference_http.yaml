@@ -1,0 +1,22 @@
+# Generative VLM preference reward scored by the operator-run Qwen3-VL-32B
+# judge on its own GPU (vrl/config/reward_service/qwen3vl32b_preference.yaml;
+# start it first). The judge sees the 1024 px image and answers yes/no on
+# aesthetics, anatomy/structure, artifacts and prompt adherence; the training
+# key is the weighted mean of the yes-probabilities. Qualification card:
+# docs/rewards/cards/vlm_preference_qwen3vl32b_qwen21_t2i.md.
+distributed:
+  resources:
+    reward:
+      device: cpu
+
+reward:
+  components:
+    vlm_preference: 1.0
+  kwargs:
+    vlm_preference:
+      score_key: vlm_preference
+  inference:
+    vlm_preference:
+      kind: http
+      endpoint: http://127.0.0.1:8318
+      expected_model: vlm-preference-qwen3vl32b
