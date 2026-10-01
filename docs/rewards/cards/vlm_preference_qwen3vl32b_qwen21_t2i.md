@@ -43,14 +43,13 @@ this sampler, still a guard against off-prompt collapse).
 Service config: `vrl/config/reward_service/qwen3vl32b_pairwise.yaml`; references
 `/mnt/nvme/data/external/aes_refs/<set>/<i>.png` named by `metadata.judge_reference` in the prompt jsonl.
 
-**Ready for a training key: yes, provisionally (gate 3 pending; stage-1 run started with it, gate 3 scored
-through the live service during the run).**
+**Ready for a training key: yes.**
 
 | gate | result | verdict |
 |---|---|---|
 | 1 repeatability | deterministic (reference vs itself = 0.500 exactly; pointwise range 0.0) | PASS |
 | 2 agreement | directional accuracy vs the same 134 blind pairs: composite **0.649** [0.575, 0.739], overall 0.627, structure 0.597, clean 0.619. HPSv3 0.694 [0.627, 0.776] on pairs that were picked by HPSv3/PickScore top-vs-random, which favors HPSv3 | PASS (above chance; not distinguishable from HPSv3) |
-| 3 shortcuts | pending (pointwise judge: blur/noise25/black/checker ≤ 3%) | -- |
+| 3 shortcuts | share of transforms of s0 scoring ≥ the genuine image against the base reference (64 groups, scored through the live service): noise σ10 **19%**, noise σ25 **0%**, blur r3 **0%** (HPSv3: 56% / 30% / 0%) | PASS |
 | 4 spread | within-group std of the key **0.120** (overall 0.175, structure 0.094, clean 0.069); raw key mean 0.48, std 0.18, 46% of rollouts beat the base reference | PASS |
 
 Composites on the same pairs (per-group z-scores): HPSv3 + 0.5·pairwise 0.687, + 1.0 0.679, + 2.0 0.664;
