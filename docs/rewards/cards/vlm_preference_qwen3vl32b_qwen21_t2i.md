@@ -24,6 +24,17 @@ small differences between eight shared-noise siblings of one prompt -- absolute 
 guard-gated HPSv3: 0.627). The 134 labeled pairs were built from the earlier rewards' top-vs-random picks, which
 inflates those rewards' accuracy somewhat, but the VLM's own criteria sit at chance, so the verdict stands.
 
+As a guard inside an HPSv3 composite (per-group z-scores), share of degraded images scoring ≥ the genuine one:
+
+| transform | HPSv3 alone | + 0.25·VLM | + 0.5·VLM | + 1.0·VLM | VLM alone |
+|---|---|---|---|---|---|
+| noise σ10 | 56% | 55% | 52% | 42% | 31% |
+| noise σ25 | 30% | 19% | 13% | 5% | 3% |
+| blur r3 | 0% | 0% | 0% | 0% | 3% |
+
+The weight that actually blocks grain (1.0) is the one that costs ranking accuracy (0.694 → 0.642); SigLIP
+(`hpsv3_siglip_qwen21_t2i.md`) is the cheaper anti-grain term.
+
 Blind spots to carry forward: fine within-prompt ranking; alignment question saturated (useless as a ranking signal at
 this sampler, still a guard against off-prompt collapse).
 
