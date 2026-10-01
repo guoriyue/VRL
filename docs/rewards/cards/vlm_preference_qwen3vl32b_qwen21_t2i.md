@@ -40,6 +40,23 @@ this sampler, still a guard against off-prompt collapse).
 
 ## Pairwise mode (`DEFAULT_PAIRWISE_CRITERIA`, candidate vs a deterministic base image of the same prompt, both orders)
 
-Pending: gate 2/4 running on the same 512 images against `/mnt/nvme/aes2/qual_ref` (seed 7000+i, native 1024/40).
-Smoke test on 3 groups: reference vs itself = 0.500 exactly (position bias cancels); within-group std of the
-"overall" criterion 0.04–0.14 (3–5× the pointwise spread); 7.3 s per image; 44 GB peak.
+Service config: `vrl/config/reward_service/qwen3vl32b_pairwise.yaml`; references
+`/mnt/nvme/data/external/aes_refs/<set>/<i>.png` named by `metadata.judge_reference` in the prompt jsonl.
+
+**Ready for a training key: yes, provisionally (gate 3 pending; stage-1 run started with it, gate 3 scored
+through the live service during the run).**
+
+| gate | result | verdict |
+|---|---|---|
+| 1 repeatability | deterministic (reference vs itself = 0.500 exactly; pointwise range 0.0) | PASS |
+| 2 agreement | directional accuracy vs the same 134 blind pairs: composite **0.649** [0.575, 0.739], overall 0.627, structure 0.597, clean 0.619. HPSv3 0.694 [0.627, 0.776] on pairs that were picked by HPSv3/PickScore top-vs-random, which favors HPSv3 | PASS (above chance; not distinguishable from HPSv3) |
+| 3 shortcuts | pending (pointwise judge: blur/noise25/black/checker ≤ 3%) | -- |
+| 4 spread | within-group std of the key **0.120** (overall 0.175, structure 0.094, clean 0.069); raw key mean 0.48, std 0.18, 46% of rollouts beat the base reference | PASS |
+
+Composites on the same pairs (per-group z-scores): HPSv3 + 0.5·pairwise 0.687, + 1.0 0.679, + 2.0 0.664;
+HPSv3 + 2.75·SigLIP 0.590 (its own card's blind set gave 0.664); pairwise + pointwise 0.642.
+corr(z HPSv3, z pairwise) = 0.37, so the judge ranks on something the CLIP-style rewards do not.
+
+Decision 2026-10-01: stage-1 trains on the pairwise key alone (Seedream 3.0 / RewardDance style, the user's
+chosen direction); HPSv3/SigLIP/PickScore are scored offline on checkpoints as diagnostics. Cost: 7.3 s/image on
+one L40S, i.e. ~2 min of judge time per 16-rollout round against ~10 min of generation + update.
