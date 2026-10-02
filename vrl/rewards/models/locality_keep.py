@@ -31,6 +31,11 @@ relative source-Laplacian MAE and absolute log high-frequency energy ratio.
 It requires explicit ``worker_config.detail_penalty_weights`` for those three
 features. Weights must be frozen after damaged-output calibration; there is
 no universal claim that this proxy detects every loss of detail.
+
+An optional fourth feature, ``mean_local_log_hf_ratio``, measures the same
+texture energy discrepancy separately in spatial tiles. Whole-image energy
+can hide the destruction of a small face; this feature requires an explicit
+``worker_config.local_texture`` specification and independent calibration.
 """
 
 from __future__ import annotations
@@ -50,10 +55,17 @@ class LocalityKeepRewardModel:
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self._sources: dict[str, np.ndarray] = {}
         self._detail_weights = worker_config.get("detail_penalty_weights")
+        self._local_texture: dict[str, Any] | None = None
         if self._detail_weights is not None:
             keys = {"normalized_mse", "relative_laplacian_mae", "absolute_log_hf_ratio"}
-            if not isinstance(self._detail_weights, Mapping) or set(self._detail_weights) != keys:
-                raise ValueError(f"detail_penalty_weights must declare exactly {sorted(keys)}")
+            if not isinstance(self._detail_weights, Mapping) or set(self._detail_weights) not in (
+                keys,
+                keys | {"mean_local_log_hf_ratio"},
+            ):
+                raise ValueError(
+                    f"detail_penalty_weights must declare {sorted(keys)}, optionally "
+                    "with mean_local_log_hf_ratio"
+                )
             self._detail_weights = {
                 name: float(weight) for name, weight in self._detail_weights.items()
             }
@@ -63,6 +75,29 @@ class LocalityKeepRewardModel:
                 raise ValueError("detail penalty weights must be finite and nonnegative")
             if not any(self._detail_weights.values()):
                 raise ValueError("at least one detail penalty weight must be positive")
+            if "mean_local_log_hf_ratio" in self._detail_weights:
+                from vrl.utils.validation import require_int
+
+                local = worker_config.get("local_texture")
+                local_keys = {"tile_size", "variance_floor", "minimum_protected_fraction"}
+                if not isinstance(local, Mapping) or set(local) != local_keys:
+                    raise ValueError(f"local_texture must declare exactly {sorted(local_keys)}")
+                tile_size = require_int(
+                    local["tile_size"], path="local_texture.tile_size", minimum=1
+                )
+                floor = float(local["variance_floor"])
+                fraction = float(local["minimum_protected_fraction"])
+                if not np.isfinite(floor) or floor <= 0:
+                    raise ValueError("local_texture.variance_floor must be finite and positive")
+                if not np.isfinite(fraction) or not 0 < fraction <= 1:
+                    raise ValueError("local_texture.minimum_protected_fraction must lie in (0, 1]")
+                self._local_texture = {
+                    "tile_size": tile_size,
+                    "variance_floor": floor,
+                    "minimum_protected_fraction": fraction,
+                }
+        if worker_config.get("local_texture") is not None and self._local_texture is None:
+            raise ValueError("local_texture requires a mean_local_log_hf_ratio weight")
 
     def _source(self, path: str) -> np.ndarray:
         if path not in self._sources:
@@ -112,8 +147,10 @@ class LocalityKeepRewardModel:
         gray = lambda a: cv2.cvtColor(a.astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float64)  # noqa: E731
         # Fill the boxes with the source so their edges do not leak into the outside statistic.
         filled = np.where(outside[..., None], candidate, source)
-        lap_candidate = cv2.Laplacian(gray(filled), cv2.CV_64F)[outside]
-        lap_source = cv2.Laplacian(gray(source), cv2.CV_64F)[outside]
+        candidate_laplacian = cv2.Laplacian(gray(filled), cv2.CV_64F)
+        source_laplacian = cv2.Laplacian(gray(source), cv2.CV_64F)
+        lap_candidate = candidate_laplacian[outside]
+        lap_source = source_laplacian[outside]
         lap_c, lap_s = lap_candidate.var(), lap_source.var()
         hf_ratio = float(lap_c / lap_s) if lap_s > 0 else 1.0
         texture = min(hf_ratio, 1.0 / hf_ratio) if hf_ratio > 0 else 0.0
@@ -134,6 +171,32 @@ class LocalityKeepRewardModel:
                 ),
                 "absolute_log_hf_ratio": float(abs(np.log((lap_c + 1e-8) / (lap_s + 1e-8)))),
             }
+            if self._local_texture is not None:
+                tile_size = self._local_texture["tile_size"]
+                floor = self._local_texture["variance_floor"]
+                fraction = self._local_texture["minimum_protected_fraction"]
+                errors = []
+                for top in range(0, height, tile_size):
+                    for left in range(0, width, tile_size):
+                        selection = outside[top : top + tile_size, left : left + tile_size]
+                        if selection.sum() < selection.size * fraction:
+                            continue
+                        candidate_tile = candidate_laplacian[
+                            top : top + tile_size, left : left + tile_size
+                        ][selection]
+                        source_tile = source_laplacian[
+                            top : top + tile_size, left : left + tile_size
+                        ][selection]
+                        errors.append(
+                            abs(
+                                np.log(
+                                    (candidate_tile.var() + floor) / (source_tile.var() + floor)
+                                )
+                            )
+                        )
+                if not errors:
+                    raise ValueError("local_texture settings leave no measured protected tiles")
+                features["mean_local_log_hf_ratio"] = float(np.mean(errors))
             penalty = sum(self._detail_weights[name] * value for name, value in features.items())
             scores.update({f"locality/{name}": value for name, value in features.items()})
             scores["locality_detail_keep"] = 1.0 / (1.0 + penalty)

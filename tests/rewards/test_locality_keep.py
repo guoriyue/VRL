@@ -156,3 +156,97 @@ async def test_detail_penalty_selects_configured_key_and_keeps_diagnostics(tmp_p
     )
     assert output.components["locality_keep/locality/normalized_mse"][0] == 0
     assert output.components["locality_keep/locality/relative_laplacian_mae"][1] > 0
+
+
+def test_local_texture_catches_damage_hidden_by_balanced_global_energy(tmp_path):
+    yy, xx = np.mgrid[:128, :128]
+    pattern = np.where((xx // 4 + yy // 4) % 2, 1, -1)
+    source = np.repeat((128 + 16 * pattern)[..., None], 3, axis=-1).astype(np.uint8)
+    path = tmp_path / "source.png"
+    Image.fromarray(source).save(path)
+    candidate = np.full_like(source, 128)
+    candidate[:, 64:] = np.repeat((128 + 23 * pattern[:, 64:])[..., None], 3, axis=-1)
+    artifact = RewardInferenceArtifact(
+        "a",
+        "a",
+        "",
+        media=Image.fromarray(candidate),
+        metadata={"locality_keep": {"source": str(path), "boxes": []}},
+    )
+    scores = LocalityKeepRewardModel(
+        {
+            "detail_penalty_weights": {
+                "normalized_mse": 0.0,
+                "relative_laplacian_mae": 0.0,
+                "absolute_log_hf_ratio": 0.1,
+                "mean_local_log_hf_ratio": 0.1,
+            },
+            "local_texture": {
+                "tile_size": 32,
+                "variance_floor": 1.0,
+                "minimum_protected_fraction": 0.5,
+            },
+        }
+    )(artifact)
+    # One half loses its pattern while the other adds energy. A pooled ratio
+    # stays near one, but spatial discrepancies do not cancel each other.
+    assert scores["locality/absolute_log_hf_ratio"] < 0.15
+    assert scores["locality/mean_local_log_hf_ratio"] > 2
+    assert scores["locality_detail_keep"] < 0.8
+
+
+def test_local_texture_ignores_legal_edits_and_charges_grain_on_flat_partial_tiles(tmp_path):
+    source = np.full((53, 77, 3), 128, dtype=np.uint8)
+    path = tmp_path / "source.png"
+    Image.fromarray(source).save(path)
+    spec = {"source": str(path), "boxes": [[0, 0, 32, 32]]}
+    inside = source.copy()
+    inside[:32, :32] = 0
+    config = {
+        "detail_penalty_weights": {
+            "normalized_mse": 1.0,
+            "relative_laplacian_mae": 0.2,
+            "absolute_log_hf_ratio": 0.1,
+            "mean_local_log_hf_ratio": 0.1,
+        },
+        "local_texture": {
+            "tile_size": 32,
+            "variance_floor": 1.0,
+            "minimum_protected_fraction": 0.5,
+        },
+    }
+    model = LocalityKeepRewardModel(config)
+    allowed = model(
+        RewardInferenceArtifact(
+            "a",
+            "a",
+            "",
+            media=Image.fromarray(inside),
+            metadata={"locality_keep": spec},
+        )
+    )
+    assert allowed["locality_detail_keep"] == 1
+    assert allowed["locality/mean_local_log_hf_ratio"] == 0
+    damaged = inside.copy()
+    damaged[32:] = np.clip(
+        damaged[32:].astype(int) + np.random.default_rng(7).integers(-12, 13, damaged[32:].shape),
+        0,
+        255,
+    )
+    measured = model(
+        RewardInferenceArtifact(
+            "b",
+            "b",
+            "",
+            media=Image.fromarray(damaged),
+            metadata={"locality_keep": spec},
+        )
+    )
+    assert measured["locality/mean_local_log_hf_ratio"] > 0
+    assert measured["locality_detail_keep"] < allowed["locality_detail_keep"]
+    with pytest.raises(ValueError, match="local_texture must declare"):
+        LocalityKeepRewardModel({"detail_penalty_weights": config["detail_penalty_weights"]})
+    with pytest.raises(ValueError, match="variance_floor must"):
+        LocalityKeepRewardModel(
+            {**config, "local_texture": {**config["local_texture"], "variance_floor": 0}}
+        )
