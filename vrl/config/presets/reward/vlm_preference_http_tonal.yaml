@@ -1,0 +1,29 @@
+# Pairwise Qwen3-VL-32B judge (operator-run service, port 8318) plus the
+# model-free tonal anchor: the judge is indifferent to a global brightening,
+# saturation boost or glow (it prefers those transforms 33-47% of the time,
+# docs/rewards/cards/vlm_preference_qwen3vl32b_qwen21_t2i.md), so stage-1
+# policies drifted brighter and glossier. The anchor is 0 inside a 0.02 band
+# around the base reference image's mean luma / saturation and negative
+# outside; weight 2.0 makes a 0.1 luma drift (-0.16) outweigh the judge's
+# within-group spread (~0.10). Both read metadata.judge_reference.
+distributed:
+  resources:
+    reward:
+      device: cpu
+
+reward:
+  components:
+    vlm_preference: 1.0
+    tonal_anchor: 2.0
+  kwargs:
+    vlm_preference:
+      score_key: vlm_preference
+    tonal_anchor:
+      reference_key: judge_reference
+      data_root: /mnt/nvme/data/external
+      tolerance: 0.02
+  inference:
+    vlm_preference:
+      kind: http
+      endpoint: http://127.0.0.1:8318
+      expected_model: vlm-preference-qwen3vl32b

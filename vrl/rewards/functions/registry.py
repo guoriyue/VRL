@@ -66,6 +66,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.pickscore import PickScoreReward
     from vrl.rewards.functions.robotics_video_reward import RoboticsVideoReward
     from vrl.rewards.functions.target_dino_similarity import TargetDinoSimilarityReward
+    from vrl.rewards.functions.tonal_anchor import TonalAnchorReward
     from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
     from vrl.rewards.functions.videocon_physics import VideoConPhysicsReward
     from vrl.rewards.functions.vlm_preference import VLMPreferenceReward
@@ -93,6 +94,7 @@ def _register_builtins() -> None:
             "kling_video_reward": KlingVideoReward,
             "videocon_physics": VideoConPhysicsReward,
             "vlm_preference": VLMPreferenceReward,
+            "tonal_anchor": TonalAnchorReward,
             "unified_reward_video": UnifiedRewardVideoReward,
         }
     )
