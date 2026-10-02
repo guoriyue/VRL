@@ -85,3 +85,31 @@ overall 0.5 with "washed-out brightness" added to the color-cast clause).
 - Brightness drift is the shortcut of this judge: add a brightness/contrast transform to the shortcut gate and,
   if it passes, a "no washed-out brightness" clause did not suffice, add an explicit exposure criterion.
 - Blind labels are model judgments, not human preference.
+
+## Anchored run `vlm_natural_tonal1` (natural criteria + tonal anchor, from base, 40 epochs, 2026-10-02)
+
+Reward `/reward=vlm_preference_http_tonal`: natural judge (`qwen3vl32b_pairwise_natural.yaml`) × 1 + `tonal_anchor` × 2
+(bands 0.04 luma / 0.06 saturation around the base reference). Training reward rose only from 0.27 to ~0.40 (5-round
+means); the judge term 0.48 → 0.58, the anchor −0.12 → −0.09, luma delta kept inside ±0.05.
+
+Held-out (115 safe prompts, same protocol; `s1ck30` = stage-1 checkpoint-30 as a reference arm):
+
+| arm | natural judge | fidelity | structure | brightness | HPSv3 | PickScore | blind pref vs base | adherence Δ | flagged fake (≥1 of 2 judges) |
+|---|---|---|---|---|---|---|---|---|---|
+| base | 0.500 | 0.500 | 0.500 | 0.383 | 8.91 | 0.828 | -- | -- | 8 / 115 |
+| ck40 | 0.558 | 0.671 | 0.698 | 0.335 | 9.97 | 0.840 | **68.3%** [60.0, 76.1] | +0.28 | 24 / 115 |
+| s1ck30 | 0.465 | 0.693 | 0.797 | 0.479 | 10.41 | 0.845 | 80.4% (earlier eval) | +0.37 | 20 / 115 |
+
+Head-to-head ck40 vs s1ck30 (115 pairs): s1ck30 preferred 58.5% [49.3, 67.6]; ck40 better adherence (+0.10) and fewer
+fake votes (12 vs 21 of 128), but the per-image flag counts above are a wash. Judge overlap agreement 20/32.
+
+What the fake flags correlate with (44 flagged of 230 trained-arm images): the natural judge's own score, AUC 0.59
+(fake images score lower); brightness 0.52 and saturation 0.51 (nothing); edge energy 0.63 (fake images are smoother).
+The flagged look is texture and style -- glossy toy-like eyes, airbrushed skin and fur, glow halos, sparkle FX -- not
+global tonality.
+
+Reading: the anchor did what it was built for (brightness 0.335 vs 0.479, adherence up) and the natural judge rates the
+anchored policy above base where it rates stage-1 below base, but RL under either judge still doubles-to-triples the
+share of images the blind judges call fake (8 → 20-24 of 115), and nothing we score today detects that look well
+(best AUC 0.63). Run continued to 80 epochs for the appeal curve; human fake labels (labelling page) are the next
+input before another reward change.
