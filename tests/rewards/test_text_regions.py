@@ -255,3 +255,96 @@ def test_cumulative_focus_charges_reverted_earlier_words_in_long_transcripts():
     artifact.metadata["text_focus"] = []
     with pytest.raises(ValueError, match="non-empty list"):
         model(artifact)
+
+
+@pytest.mark.asyncio
+async def test_english_word_reward_charges_neighbor_damage_without_punishing_ocr_separators():
+    class Engine:
+        def predict(self, frame):
+            text = {
+                40: "RETURN before midnight.with our tickets..",
+                80: "Return before midnight with our tickes.",
+                120: "Return before sunset with our tickets.",
+                160: "Return before midnight with our tickets tickets.",
+                200: "Return before midnight with our tickets. 待",
+            }[int(frame[0, 0, 0])]
+            return {"rec_texts": [text], "rec_scores": [0.99]}
+
+    metadata = {
+        "text_layout": {
+            "width": 20,
+            "height": 20,
+            "regions": [
+                {
+                    "region_id": "a",
+                    "text": "Return before midnight with our tickets.",
+                    "box": [0, 0, 20, 20],
+                }
+            ],
+        },
+        "text_focus": {"region_id": "a", "must_contain": "midnight", "must_not_contain": "sunset"},
+    }
+    reward = MultiReward.from_dict(
+        {"text_regions": 1.0},
+        device="cpu",
+        reward_kwargs={
+            "text_regions": {
+                "score_key": "text_focus_done+text_word_exact_fraction",
+                "worker_config": {
+                    "engine": Engine(),
+                    "punctuation": "ignore",
+                    "word_matching": "english",
+                },
+            }
+        },
+        inference_configs={"text_regions": RewardInferenceConfig(kind="in_process")},
+    )
+    try:
+        output = await reward.score_batch(
+            [
+                RewardSample(
+                    prompt="Replace sunset only; preserve all other words",
+                    output=torch.full((3, 20, 20), intensity / 255),
+                    sample_id=str(intensity),
+                    metadata=metadata,
+                )
+                for intensity in (40, 80, 120, 160, 200)
+            ]
+        )
+    finally:
+        await reward.shutdown()
+    assert output.scores == (2, 1, 0, 1, 1)
+    assert output.components["text_regions/text_focus_done"] == (1, 1, 0, 1, 1)
+    assert output.components["text_regions/text_focus_word_exact_fraction"] == (1, 0, 0, 0, 0)
+    assert output.components["text_regions/text_word_exact_fraction"] == (1, 0, 0, 0, 0)
+    damaged = RewardInferenceArtifact(
+        "a", "a", "", media=Image.new("RGB", (20, 20), (80, 80, 80)), metadata=metadata
+    )
+    legacy = TextRegionsRewardModel({"engine": Engine(), "punctuation": "ignore"})(damaged)
+    assert legacy["text_focus_done"] == 1 and legacy["text_worst_region"] > 0.97
+    assert "text_word_exact_fraction" not in legacy
+
+
+def test_english_word_matching_rejects_unsupported_target_scripts_before_ocr():
+    class MustNotRun:
+        def predict(self, frame):
+            raise AssertionError("unsupported text must fail before OCR")
+
+    with pytest.raises(ValueError, match="english or omitted"):
+        TextRegionsRewardModel({"word_matching": "any"})
+    artifact = RewardInferenceArtifact(
+        "a",
+        "a",
+        "",
+        media=Image.new("RGB", (20, 20)),
+        metadata={
+            "text_layout": {
+                "width": 20,
+                "height": 20,
+                "regions": [{"region_id": "a", "text": "待", "box": [0, 0, 20, 20]}],
+            }
+        },
+    )
+    model = TextRegionsRewardModel({"engine": MustNotRun(), "word_matching": "english"})
+    with pytest.raises(ValueError, match="ASCII alphabetic or numeric targets"):
+        model(artifact)

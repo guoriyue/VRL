@@ -32,6 +32,8 @@ class TextRegionsRewardModel:
 
     NFC Unicode normalization and collapsed whitespace tolerate OCR line wraps;
     case, punctuation, extra words and repeated words remain significant.
+    Optional English word scores ignore case and separators, while retaining
+    token order, spelling, numeric tokens, omissions and repetitions.
     """
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
@@ -43,6 +45,11 @@ class TextRegionsRewardModel:
         self._punctuation = worker_config.get("punctuation", "keep")
         if self._punctuation not in ("keep", "ignore"):
             raise ValueError("text_regions punctuation must be keep or ignore")
+        # Opt-in English word agreement tolerates OCR punctuation/line joins,
+        # while charging a complete region for misspelled or missing words.
+        self._word_matching = worker_config.get("word_matching")
+        if self._word_matching not in (None, "english"):
+            raise ValueError("text_regions word_matching must be english or omitted")
 
     def _normalize(self, text: str) -> str:
         text = unicodedata.normalize("NFC", text)
@@ -65,6 +72,14 @@ class TextRegionsRewardModel:
         results = []
         for artifact in artifacts:
             layout = TextLayout.model_validate(artifact.metadata.get("text_layout"))
+            if self._word_matching is not None and any(
+                character.isalnum() and not character.isascii()
+                for region in layout.regions
+                for character in region.text
+            ):
+                raise ValueError(
+                    "English word matching requires ASCII alphabetic or numeric targets"
+                )
             if artifact.path and not artifact.path.endswith(".pt"):
                 with Image.open(artifact.path) as source:
                     if getattr(source, "n_frames", 1) != 1:
@@ -107,6 +122,20 @@ class TextRegionsRewardModel:
                         ],
                     }
                 )
+                if self._word_matching is not None:
+                    target_words = re.findall(r"[a-z]+|[0-9]+", region.text.casefold())
+                    if not target_words:
+                        raise ValueError("English word matching requires words or numbers")
+                    observed_words = re.findall(r"[a-z]+|[0-9]+", recognized.casefold())
+                    evidence[-1].update(
+                        word_target=target_words,
+                        word_recognized=observed_words,
+                        word_exact=observed_words == target_words
+                        and not any(
+                            character.isalnum() and not character.isascii()
+                            for character in recognized
+                        ),
+                    )
             similarities = [row["similarity"] for row in evidence]
             focus = artifact.metadata.get("text_focus")
             focus_scores: dict[str, float] = {}
@@ -117,7 +146,7 @@ class TextRegionsRewardModel:
                 focuses = [focus] if isinstance(focus, Mapping) else focus
                 if not isinstance(focuses, (list, tuple)) or not focuses:
                     raise ValueError("text_focus must be a mapping or a non-empty list")
-                completed, focus_similarities = [], []
+                completed, focus_similarities, focus_word_exact = [], [], []
                 for item in focuses:
                     if not isinstance(item, Mapping) or not item.get("region_id"):
                         raise ValueError(
@@ -128,15 +157,25 @@ class TextRegionsRewardModel:
                         raise ValueError(
                             f"text_focus names an unknown region: {item['region_id']}"
                         )
-                    read = row["normalized_recognized"]
+                    read = (
+                        row["recognized"]
+                        if self._word_matching is not None
+                        else row["normalized_recognized"]
+                    )
                     present = _has_word(read, str(item.get("must_contain", "")))
                     gone = not _has_word(read, str(item.get("must_not_contain", "")))
                     completed.append(float(present and gone))
                     focus_similarities.append(float(row["similarity"]))
+                    if self._word_matching is not None:
+                        focus_word_exact.append(float(row["word_exact"]))
                 focus_scores = {
                     "text_focus_done": float(np.mean(completed)),
                     "text_focus_similarity": float(np.mean(focus_similarities)),
                 }
+                if self._word_matching is not None:
+                    focus_scores["text_focus_word_exact_fraction"] = float(
+                        np.mean(focus_word_exact)
+                    )
             results.append(
                 RewardInferenceResult(
                     artifact_id=artifact.artifact_id,
@@ -155,6 +194,15 @@ class TextRegionsRewardModel:
                             for axis, key in (("similarity", "similarity"), ("exact", "exact"))
                         },
                         **focus_scores,
+                        **(
+                            {
+                                "text_word_exact_fraction": float(
+                                    np.mean([row["word_exact"] for row in evidence])
+                                )
+                            }
+                            if self._word_matching is not None
+                            else {}
+                        ),
                     },
                     diagnostics={
                         "schema": "vrl.text-regions.v1",
@@ -162,6 +210,14 @@ class TextRegionsRewardModel:
                         + ("-ignore-punctuation" if self._punctuation == "ignore" else ""),
                         "ocr": "paddle_v4_en",
                         "regions": evidence,
+                        **(
+                            {
+                                "word_matching": self._word_matching,
+                                "word_normalization": "ascii-alphanumeric-casefold-ignore-separators-v1",
+                            }
+                            if self._word_matching
+                            else {}
+                        ),
                         "scope": "Specified regions only; no bubble detection, outside-text audit, "
                         "speaker attribution, global reading-order or aesthetic guarantee.",
                     },
