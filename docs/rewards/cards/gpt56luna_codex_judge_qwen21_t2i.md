@@ -36,3 +36,14 @@ question agrees with the other model judges instead.
 - Not usable as a training reward until within-group samples differ enough to be ranked (sampler change:
   more or noisier stochastic steps), after which this card's set-B numbers must be re-measured.
 - No logprobs: the reward would be a sampled mean, not a probability; budget ~100 calls per 16-rollout round.
+
+## Anchored run through the same rubric (30 face-free held-out prompts, both orders × 2)
+
+| comparison | composite | preferred | genuine | fidelity | structure |
+|---|---|---|---|---|---|
+| anchored ck40 vs base | +1.3 | 16/30 | −2.9 | +4.7 | +6.3 |
+| anchored ck40 vs stage-1 ck30 | +2.9 | 22/30 | **+4.8** | −0.3 | +2.2 |
+| (stage-1 ck30 vs base, set A above) | −1.9 | 11/30 | **−8.6** | +7.7 | +2.1 |
+
+The tonal anchor moved "genuine" from −8.6 (stage-1) to −2.9 relative to base and the anchored checkpoint beats
+stage-1 head-to-head 22/30 under this rubric, while stage-1 keeps the larger fidelity gain.
