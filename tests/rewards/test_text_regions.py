@@ -317,6 +317,8 @@ async def test_english_word_reward_charges_neighbor_damage_without_punishing_ocr
     assert output.components["text_regions/text_focus_done"] == (1, 1, 0, 1, 1)
     assert output.components["text_regions/text_focus_word_exact_fraction"] == (1, 0, 0, 0, 0)
     assert output.components["text_regions/text_word_exact_fraction"] == (1, 0, 0, 0, 0)
+    # These per-region signals are consumed by verified history constraints.
+    assert output.components["text_regions/region/a/word_exact"] == (1, 0, 0, 0, 0)
     damaged = RewardInferenceArtifact(
         "a", "a", "", media=Image.new("RGB", (20, 20), (80, 80, 80)), metadata=metadata
     )

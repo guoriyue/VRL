@@ -198,7 +198,13 @@ class TextRegionsRewardModel:
                             {
                                 "text_word_exact_fraction": float(
                                     np.mean([row["word_exact"] for row in evidence])
-                                )
+                                ),
+                                **{
+                                    f"region/{row['region_id']}/word_exact": float(
+                                        row["word_exact"]
+                                    )
+                                    for row in evidence
+                                },
                             }
                             if self._word_matching is not None
                             else {}

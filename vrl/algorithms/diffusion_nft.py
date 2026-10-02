@@ -164,6 +164,17 @@ class DiffusionNFT(PreviousPolicyObjective):
             flat_mix * positive_loss / beta + (1.0 - flat_mix) * negative_loss / beta
         )
         policy_loss = original_policy_loss.mean() * advantage_scale
+        auxiliary_loss = self.compute_clean_latent_auxiliary_loss(
+            batch, xt - t_expanded * forward_prediction.float()
+        )
+        if auxiliary_loss is not None:
+            if (
+                not isinstance(auxiliary_loss, torch.Tensor)
+                or auxiliary_loss.ndim != 0
+                or not bool(torch.isfinite(auxiliary_loss))
+            ):
+                raise ValueError("NFT clean-latent auxiliary loss must be a finite scalar tensor")
+            policy_loss = policy_loss + auxiliary_loss
         kl_loss = ((forward_prediction.float() - ref_prediction.float()) ** 2).mean()
         kl_term = float(cfg.kl_coef) * kl_loss
         loss = policy_loss + kl_term
@@ -178,6 +189,16 @@ class DiffusionNFT(PreviousPolicyObjective):
                 approx_kl=kl_value,
             ),
         )
+
+    def compute_clean_latent_auxiliary_loss(self, batch: Any, predicted_clean: Any) -> Any | None:
+        """Optional task loss on the live policy's FP32 clean prediction.
+
+        A task adapter can constrain selected spatial cells without duplicating
+        NFT's frozen-policy forwards or inserting targets at inference time.
+        The default contributes no loss. Targets and masks belong to the task.
+        """
+
+        return None
 
 
 __all__ = ["DiffusionNFT", "DiffusionNFTConfig"]

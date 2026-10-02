@@ -356,3 +356,68 @@ def test_edm_scale_timestep_grid_fails_loudly() -> None:
             0,
             torch.tensor([1.0]),
         )
+
+
+def test_clean_prediction_auxiliary_loss_learns_when_rewards_tie(monkeypatch) -> None:
+    """A task loss uses the live clean prediction without an extra model forward."""
+
+    class PreserveClean(DiffusionNFT):
+        def compute_clean_latent_auxiliary_loss(self, batch, predicted_clean):
+            return predicted_clean.square().mean()
+
+    torch.manual_seed(234)
+    x0, noise = torch.randn(_LATENT_SHAPE), torch.randn(_LATENT_SHAPE)
+    prompt = torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM)
+    model = _build_model("full")
+    batch = _build_batch(x0=x0, noise=noise, prompt_embeds=prompt, timestep=500.0)
+    forward = model.replay_forward_with_latents
+    calls = []
+
+    def record_forward(*args, **kwargs):
+        calls.append(torch.is_grad_enabled())
+        return forward(*args, **kwargs)
+
+    monkeypatch.setattr(model, "replay_forward_with_latents", record_forward)
+    xt = 0.5 * (x0 + noise)
+    timestep = torch.full((_BATCH,), 500.0)
+    before = (xt - 0.5 * _default_forward(model, xt, prompt, timestep)).detach().square().mean()
+    objective = PreserveClean(DiffusionNFTConfig(kl_coef=0))
+    loss, metrics = objective.compute_batch_timestep_loss(model, batch, 0, torch.zeros(_BATCH))
+    assert calls == [False, True]
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    after = (xt - 0.5 * _default_forward(model, xt, prompt, timestep)).detach().square().mean()
+    assert after < before
+    assert metrics.policy_loss == metrics.loss
+
+
+def test_zero_clean_prediction_auxiliary_loss_preserves_nft_loss_and_gradients() -> None:
+    class ZeroAuxiliary(DiffusionNFT):
+        def compute_clean_latent_auxiliary_loss(self, batch, predicted_clean):
+            return predicted_clean.sum() * 0
+
+    torch.manual_seed(321)
+    model = _build_model("full")
+    batch = _build_batch(
+        x0=torch.randn(_LATENT_SHAPE),
+        noise=torch.randn(_LATENT_SHAPE),
+        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
+        timestep=500.0,
+    )
+    config = DiffusionNFTConfig(nft_beta=0.5)
+    parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    advantage = torch.full((_BATCH,), -5.0)
+    expected, expected_metrics = DiffusionNFT(config).compute_batch_timestep_loss(
+        model, batch, 0, advantage
+    )
+    expected_gradients = torch.autograd.grad(expected, parameters)
+    actual, actual_metrics = ZeroAuxiliary(config).compute_batch_timestep_loss(
+        model, batch, 0, advantage
+    )
+    actual_gradients = torch.autograd.grad(actual, parameters)
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+    assert actual_metrics == expected_metrics
+    for left, right in zip(actual_gradients, expected_gradients, strict=True):
+        torch.testing.assert_close(left, right, atol=0, rtol=0)
