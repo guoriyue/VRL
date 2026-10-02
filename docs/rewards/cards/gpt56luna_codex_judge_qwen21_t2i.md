@@ -47,3 +47,20 @@ question agrees with the other model judges instead.
 
 The tonal anchor moved "genuine" from −8.6 (stage-1) to −2.9 relative to base and the anchored checkpoint beats
 stage-1 head-to-head 22/30 under this rubric, while stage-1 keeps the larger fidelity gain.
+
+## Does a more diverse sampler make within-group pairs rankable? (12 non-people prompts × 8, 3 sibling pairs each, both orders × 2)
+
+| sampler | pixel diversity (mean |Δ| at 128 px) | GPT gap | per-call sd | split-half sign agreement |
+|---|---|---|---|---|
+| current: shared noise, 2 SDE steps in [0,6], noise 0.7 | 0.098 | 3.1 | 2.4 | 0.81 |
+| 4 steps in [0,8], noise 0.7 | 0.115 | 2.1 | 2.5 | 0.69 |
+| 4 steps in [0,8], noise 1.0 | 0.040 | 2.0 | 2.2 | 0.75 |
+| 6 steps in [0,12], noise 1.0 | 0.039 | 2.0 | 1.8 | 0.83 |
+| independent initial noise per sample, 2 steps, 0.7 | 0.166 | 3.4 | 2.2 | 0.83 |
+
+Two findings. `noise_level: 1.0` is not "more noise": `flow_grpo_std_dev_t` switches to the reference
+parameterization at exactly 1.0, which at early steps is far smaller than the sqrt form × 0.7, so those groups came
+out nearly identical (use 0.9 for more noise). And even fully independent samples (diversity 1.7× the current sampler)
+only widen GPT's gap from 3.1 to 3.4 points against ~2.2 of per-call noise: the judge's resolution, not the sampler,
+is the ceiling. Making it a group reward would take ≥8 samples per order per image (sd → <1 pt), ~250 calls per
+16-rollout round -- affordable in calls, but the signal it would then rank is still unvalidated against the user.
