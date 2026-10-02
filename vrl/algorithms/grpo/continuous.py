@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from vrl.algorithms.advantages import GroupAdvantageEstimator
+from vrl.algorithms.advantages import GroupAdvantageConfig, GroupAdvantageEstimator
 from vrl.algorithms.config_contract import AlgorithmConfigContract
 from vrl.algorithms.logprob_mismatch import (
     PrecisionCorrectionConfig,
@@ -18,40 +17,6 @@ from vrl.algorithms.logprob_mismatch import (
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.rollouts.evaluators.types import FlowSDESignal
-
-
-@dataclass(slots=True)
-class GroupAdvantageConfig:
-    """Hyper-parameters shared only by group-relative advantage algorithms."""
-
-    eps: float = 1e-4
-    adv_clip_max: float = 5.0
-    global_std: bool = False
-    # How multiple reward components are combined into one advantage.
-    # "weighted_sum_raw" (default, legacy): sum weighted raw rewards then
-    # normalize once — a high-variance component dominates. "normalized_sum"
-    # (DanceGRPO-style): normalize each component to a per-group advantage first,
-    # then weighted-sum, so no reward dominates by scale/variance. New
-    # multi-objective strategies plug into vrl.algorithms.advantages.
-    advantage_combine: str = GroupAdvantageEstimator.DEFAULT_STRATEGY
-
-    def __post_init__(self) -> None:
-        GroupAdvantageEstimator.validate_strategy(self.advantage_combine)
-
-    def build_estimator(
-        self,
-        *,
-        component_weights: Mapping[str, float] | None = None,
-    ) -> GroupAdvantageEstimator:
-        """Build the runtime estimator from this algorithm configuration."""
-
-        return GroupAdvantageEstimator(
-            eps=self.eps,
-            adv_clip_max=self.adv_clip_max,
-            global_std=self.global_std,
-            strategy=self.advantage_combine,
-            component_weights=component_weights,
-        )
 
 
 @dataclass(slots=True)

@@ -176,7 +176,12 @@ class AlgorithmEvaluatorPair:
             from vrl.algorithms.diffusion_nft import DiffusionNFT
 
             return cls(
-                algorithm=DiffusionNFT(algorithm_config),
+                algorithm=DiffusionNFT(
+                    algorithm_config,
+                    advantage_estimator=algorithm_config.build_estimator(
+                        component_weights=reward.weights,
+                    ),
+                ),
                 evaluator=None,
             )
 

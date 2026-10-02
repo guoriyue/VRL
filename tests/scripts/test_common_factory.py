@@ -101,6 +101,37 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
     assert type(pair.algorithm) is expected_algorithm
 
 
+def test_nft_factory_passes_reward_weights_to_component_advantage_protocol() -> None:
+    """A real recipe build uses normalized components rather than the raw total."""
+    cfg = load_config(
+        "experiment/sd3_5/online_grpo_ocr",
+        overrides=[
+            "/recipe/online=diffusion_nft",
+            "trainer.entrypoint=vrl.scripts.train:train_online",
+            "algorithm.advantage_combine=normalized_sum",
+            "reward.components.locality_keep=0.3",
+        ],
+    )
+    pair = AlgorithmEvaluatorPair.from_configs(
+        family_entry=get_model_family_entry("sd3_5"),
+        built=build_configs(cfg),
+        collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
+    )
+    components = {
+        "ocr": torch.tensor([0.0, 1.0, 2.0]),
+        "locality_keep": torch.tensor([0.01, 0.03, 0.02]),
+    }
+    result = pair.algorithm.compute_advantages_from_components(
+        components["ocr"] + 0.3 * components["locality_keep"],
+        components,
+        torch.zeros(3, dtype=torch.long),
+    )
+    assert pair.evaluator is None
+    torch.testing.assert_close(
+        result, torch.tensor([-1.5921683, 0.3674235, 1.2247449]), atol=1e-5, rtol=0
+    )
+
+
 @pytest.mark.parametrize("recipe", ["flow_matching_dppo", "flow_matching_grpo_guard"])
 def test_trust_region_recipe_must_store_the_rollout_proposal_mean(recipe: str) -> None:
     """Flow-DPPO / GRPO-Guard score drift against the rollout mean; a recipe that

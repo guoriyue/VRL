@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 
@@ -272,4 +273,39 @@ class GroupAdvantageEstimator:
     }
 
 
-__all__ = ["GroupAdvantageEstimator", "group_relative_advantages", "nonzero_advantage_mask"]
+@dataclass(slots=True)
+class GroupAdvantageConfig:
+    """Normalization settings shared by group-relative policy objectives."""
+
+    eps: float = 1e-4
+    adv_clip_max: float = 5.0
+    global_std: bool = False
+    # The default normalizes the weighted raw total. normalized_sum standardizes
+    # each component before weighting, so its units cannot dominate the update.
+    advantage_combine: str = GroupAdvantageEstimator.DEFAULT_STRATEGY
+
+    def __post_init__(self) -> None:
+        GroupAdvantageEstimator.validate_strategy(self.advantage_combine)
+
+    def build_estimator(
+        self,
+        *,
+        component_weights: Mapping[str, float] | None = None,
+    ) -> GroupAdvantageEstimator:
+        """Bind reward weights to the algorithm's normalization settings."""
+
+        return GroupAdvantageEstimator(
+            eps=self.eps,
+            adv_clip_max=self.adv_clip_max,
+            global_std=self.global_std,
+            strategy=self.advantage_combine,
+            component_weights=component_weights,
+        )
+
+
+__all__ = [
+    "GroupAdvantageConfig",
+    "GroupAdvantageEstimator",
+    "group_relative_advantages",
+    "nonzero_advantage_mask",
+]

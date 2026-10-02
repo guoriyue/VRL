@@ -3,6 +3,7 @@ a high-variance reward from dominating the combined advantage."""
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from vrl.algorithms.advantages import GroupAdvantageEstimator
@@ -106,3 +107,41 @@ def test_unknown_strategy_raises() -> None:
         assert "unknown advantage_combine strategy" in str(exc)
     else:
         raise AssertionError("expected ValueError for unknown strategy")
+
+
+def test_nft_component_fusion_preserves_chain_credit_and_component_units() -> None:
+    """NFT gives every turn the same fused credit, independent of reward units."""
+    from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
+
+    config = DiffusionNFTConfig(advantage_combine="normalized_sum")
+    algorithm = DiffusionNFT(
+        config,
+        advantage_estimator=config.build_estimator(
+            component_weights={"instruction": 1.0, "preservation": 0.3}
+        ),
+    )
+    # Three candidate trajectories, each repeated across three editing turns.
+    instruction = torch.tensor([0.0, 1.0, 2.0]).repeat(3)
+    preservation = torch.tensor([0.01, 0.03, 0.02]).repeat(3)
+    groups = torch.zeros(9, dtype=torch.long)
+    actual = algorithm.compute_advantages_from_components(
+        instruction + 0.3 * preservation,
+        {"instruction": instruction, "preservation": preservation},
+        groups,
+    )
+    # Each component has standardized magnitude sqrt(3/2): IF ranks [0,1,2],
+    # CC ranks [0,2,1]. Their weighted sum is [-1.3,0.3,1]*sqrt(3/2).
+    expected = torch.tensor([-1.5921683, 0.3674235, 1.2247449]).repeat(3)
+    torch.testing.assert_close(actual, expected, atol=1e-5, rtol=0)
+    rescaled = algorithm.compute_advantages_from_components(
+        instruction + 300 * preservation,
+        {"instruction": instruction, "preservation": preservation * 1000},
+        groups,
+    )
+    torch.testing.assert_close(rescaled, expected, atol=1e-5, rtol=0)
+    with pytest.raises(ValueError, match="keys must match configured weights"):
+        algorithm.compute_advantages_from_components(
+            instruction, {"instruction": instruction}, groups
+        )
+    with pytest.raises(ValueError, match="unknown advantage_combine"):
+        DiffusionNFTConfig(advantage_combine="invalid")

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from vrl.algorithms.advantages import group_relative_advantages
+from vrl.algorithms.advantages import GroupAdvantageConfig, GroupAdvantageEstimator
 from vrl.algorithms.config_contract import AlgorithmConfigContract
 from vrl.algorithms.previous_policy import PreviousPolicyObjective
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -14,7 +14,7 @@ from vrl.models.precision import model_autocast
 
 
 @dataclass(slots=True)
-class DiffusionNFTConfig:
+class DiffusionNFTConfig(GroupAdvantageConfig):
     """Hyper-parameters for the DiffusionNFT training objective."""
 
     config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
@@ -25,13 +25,14 @@ class DiffusionNFTConfig:
     )
 
     eps: float = 1e-8
-    adv_clip_max: float = 5.0
-    global_std: bool = False
+    # Keep the existing positional constructor fields in their original order.
+    advantage_combine: str = field(default=GroupAdvantageEstimator.DEFAULT_STRATEGY, kw_only=True)
     nft_beta: float = 1.0
     kl_coef: float = 1.0
     advantage_scale: float = 5.0
 
     def __post_init__(self) -> None:
+        GroupAdvantageConfig.__post_init__(self)
         if float(self.nft_beta) <= 0:
             raise ValueError(f"DiffusionNFTConfig.nft_beta must be > 0, got {self.nft_beta}")
         if float(self.advantage_scale) <= 0:
@@ -51,21 +52,32 @@ class DiffusionNFT(PreviousPolicyObjective):
     against ``theta_old``, the detached current prediction.
     """
 
-    def __init__(self, config: DiffusionNFTConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: DiffusionNFTConfig | None = None,
+        *,
+        advantage_estimator: GroupAdvantageEstimator | None = None,
+    ) -> None:
         self.config = config or DiffusionNFTConfig()
+        self.advantage_estimator = advantage_estimator or self.config.build_estimator()
 
     def compute_advantages_from_tensors(
         self,
         rewards: Any,
         group_ids: Any,
     ) -> Any:
-        cfg = self.config
-        return group_relative_advantages(
-            rewards,
-            group_ids,
-            eps=cfg.eps,
-            adv_clip_max=cfg.adv_clip_max,
-            global_std=cfg.global_std,
+        return self.advantage_estimator.compute(rewards, group_ids)
+
+    def compute_advantages_from_components(
+        self,
+        rewards: Any,
+        component_rewards: dict[str, Any],
+        group_ids: Any,
+    ) -> Any:
+        """Fuse independently normalized objectives using the shared trainer protocol."""
+
+        return self.advantage_estimator.compute(
+            rewards, group_ids, component_rewards=component_rewards
         )
 
     def compute_loss(
@@ -128,7 +140,7 @@ class DiffusionNFT(PreviousPolicyObjective):
         previous_prediction = forward_prediction.detach()
 
         # Advantages are already clamped to ±adv_clip_max upstream in
-        # compute_advantages_from_tensors (group_relative_advantages). The final
+        # the shared advantage estimator. The final
         # .clamp(0.0, 1.0) on reward_mix makes any second ±advantage_scale clamp
         # on `adv` provably redundant — clamp(clamp(a,-s,s)/s/2+0.5, 0, 1) equals
         # clamp(a/s/2+0.5, 0, 1) for all a — so read advantages directly.
