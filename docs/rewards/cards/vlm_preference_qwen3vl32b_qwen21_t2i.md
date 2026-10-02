@@ -59,3 +59,24 @@ corr(z HPSv3, z pairwise) = 0.37, so the judge ranks on something the CLIP-style
 Decision 2026-10-01: stage-1 trains on the pairwise key alone (Seedream 3.0 / RewardDance style, the user's
 chosen direction); HPSv3/SigLIP/PickScore are scored offline on checkpoints as diagnostics. Cost: 7.3 s/image on
 one L40S, i.e. ~2 min of judge time per 16-rollout round against ~10 min of generation + update.
+
+## Drift shortcuts and the "natural" criteria (2026-10-01 evening)
+
+Stage-1 policies trained on the default pairwise criteria drifted brighter, more saturated and smoother
+(`docs/research/qwen21_aesthetic/VLM_STAGE1_RUN.md`), and the user judged later checkpoints "more fake".
+New shortcut transforms of s0, scored pairwise against the base reference (64 groups; rate = share of
+transforms scoring >= the genuine image):
+
+| criteria set | key agreement (134 pairs) | spread | noise25 | blur3 | bright +18% | sat +35% | smooth | bloom |
+|---|---|---|---|---|---|---|---|---|
+| default pairwise (overall 2, structure, clean) | 0.649 | 0.120 | 0.0 | 0.0 | -- | -- | -- | -- |
+| natural (`qwen3vl32b_pairwise_natural.yaml`: natural 2, fidelity, structure) | 0.604 | 0.100 | 0.047 | 0.0 | **0.375** | **0.453** | 0.016 | **0.469** |
+
+The judge is indifferent to global exposure, saturation and glow changes (rates near 50%) even when the
+question names them, so no wording stops that drift. The 134 appeal labels come from AI judges and favor
+polish, which explains the lower agreement of the natural set; human labels are being collected
+(`/mnt/nvme/aes2/label_page_hidden.json` maps the labelling page's pairs).
+
+Decision: train with `/reward=vlm_preference_http_tonal` -- the natural judge (weight 1) plus the model-free
+`tonal_anchor` guard (weight 2, `vrl/rewards/models/tonal_anchor.py`): 0 inside a 0.02 band around the
+base reference's mean luma / saturation, negative outside. Run `vlm_natural_tonal1` started 20:45 from base.
