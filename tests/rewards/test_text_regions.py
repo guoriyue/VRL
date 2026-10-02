@@ -207,3 +207,51 @@ def test_text_focus_requires_the_new_word_and_the_old_word_gone():
                 metadata={"text_layout": layout, "text_focus": {**focus, "region_id": "zz"}},
             )
         )
+
+
+def test_cumulative_focus_charges_reverted_earlier_words_in_long_transcripts():
+    class Engine:
+        def predict(self, frame):
+            text = {
+                40: "The cap is here beside the door. Wait for me before leaving.",
+                80: "The map is here beside the door. Wait for me before leaving.",
+                120: "Go south.",
+            }[int(frame[0, 0, 0])]
+            return [{"rec_texts": [text], "rec_scores": [0.99]}]
+
+    layout = {
+        "width": 20,
+        "height": 40,
+        "regions": [
+            {
+                "region_id": "a",
+                "text": "The cap is here beside the door. Wait for me before leaving.",
+                "box": [0, 0, 20, 20],
+            },
+            {"region_id": "b", "text": "Go south.", "box": [0, 20, 20, 40]},
+        ],
+    }
+    previous = {"region_id": "a", "must_contain": "cap", "must_not_contain": "map"}
+    current = {"region_id": "b", "must_contain": "south", "must_not_contain": "north"}
+    page = np.full((40, 20, 3), 40, dtype=np.uint8)
+    page[20:] = 120
+    model = TextRegionsRewardModel({"engine": Engine(), "punctuation": "ignore"})
+    artifact = RewardInferenceArtifact(
+        "a",
+        "a",
+        "",
+        media=Image.fromarray(page),
+        metadata={"text_layout": layout, "text_focus": [previous, current]},
+    )
+    assert model(artifact)["text_focus_done"] == 1
+    page[:20] = 80
+    artifact = replace(artifact, media=Image.fromarray(page))
+    reverted = model(artifact)
+    assert reverted["text_worst_region"] > 0.98
+    assert reverted["text_focus_done"] == 0.5
+    # The old single-step specification still reports this current edit as done.
+    artifact.metadata["text_focus"] = current
+    assert model(artifact)["text_focus_done"] == 1
+    artifact.metadata["text_focus"] = []
+    with pytest.raises(ValueError, match="non-empty list"):
+        model(artifact)

@@ -111,22 +111,31 @@ class TextRegionsRewardModel:
             focus = artifact.metadata.get("text_focus")
             focus_scores: dict[str, float] = {}
             if focus is not None:
-                # The one region an edit must change: the required word is read
-                # and the replaced word is gone. A word-level check survives the
-                # single-character OCR noise that exact match does not.
-                if not isinstance(focus, Mapping) or not focus.get("region_id"):
-                    raise ValueError(
-                        "text_focus needs region_id, must_contain and must_not_contain"
-                    )
-                row = next((r for r in evidence if r["region_id"] == focus["region_id"]), None)
-                if row is None:
-                    raise ValueError(f"text_focus names an unknown region: {focus['region_id']}")
-                read = row["normalized_recognized"]
-                present = _has_word(read, str(focus.get("must_contain", "")))
-                gone = not _has_word(read, str(focus.get("must_not_contain", "")))
+                # A single edit keeps its existing mapping. A sequence can pass
+                # all still-required edits, so undoing an earlier changed word
+                # cannot hide in the character similarity of a long transcript.
+                focuses = [focus] if isinstance(focus, Mapping) else focus
+                if not isinstance(focuses, (list, tuple)) or not focuses:
+                    raise ValueError("text_focus must be a mapping or a non-empty list")
+                completed, focus_similarities = [], []
+                for item in focuses:
+                    if not isinstance(item, Mapping) or not item.get("region_id"):
+                        raise ValueError(
+                            "text_focus needs region_id, must_contain and must_not_contain"
+                        )
+                    row = next((r for r in evidence if r["region_id"] == item["region_id"]), None)
+                    if row is None:
+                        raise ValueError(
+                            f"text_focus names an unknown region: {item['region_id']}"
+                        )
+                    read = row["normalized_recognized"]
+                    present = _has_word(read, str(item.get("must_contain", "")))
+                    gone = not _has_word(read, str(item.get("must_not_contain", "")))
+                    completed.append(float(present and gone))
+                    focus_similarities.append(float(row["similarity"]))
                 focus_scores = {
-                    "text_focus_done": float(present and gone),
-                    "text_focus_similarity": float(row["similarity"]),
+                    "text_focus_done": float(np.mean(completed)),
+                    "text_focus_similarity": float(np.mean(focus_similarities)),
                 }
             results.append(
                 RewardInferenceResult(
