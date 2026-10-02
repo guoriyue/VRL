@@ -6,9 +6,12 @@ the original 33-47% of the time), so a policy optimizing it drifts brighter and 
 being stopped. This guard measures the drift explicitly against the base-model image of the same
 prompt (``metadata[reference_key]``): mean luma and mean HSV saturation, each in ``[0, 1]``.
 
-Score = -(relu(|dL| - tol) + relu(|dS| - tol)), so it is 0 inside the tolerance band and
-negative outside; it never rewards anything, it only anchors. Pair it with a learned judge;
-it is not a quality measure.
+Score = -(relu(|dL| - tol_L) + relu(|dS| - tol_S)), so it is 0 inside the tolerance band and
+negative outside; it never rewards anything, it only anchors. The default bands (0.04 luma,
+0.06 saturation) are the 90th percentile of how far base-policy SDE rollouts (noise 0.7,
+window [0, 6]) already sit from their seed-7000 reference, so the guard is silent for a
+healthy policy and bites on the +0.10 luma drift seen in stage 1. Pair it with a learned
+judge; it is not a quality measure.
 """
 
 from __future__ import annotations
@@ -36,9 +39,16 @@ class TonalAnchorRewardModel:
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         cfg = dict(worker_config)
         self._reference_key = str(cfg.get("reference_key") or "judge_reference")
-        self._tolerance = float(cfg.get("tolerance", 0.02))
-        if not math.isfinite(self._tolerance) or self._tolerance < 0.0:
-            raise ValueError("tonal_anchor tolerance must be finite and >= 0")
+        tolerance = cfg.get("tolerance")
+        self._luma_tolerance = float(
+            cfg.get("luma_tolerance", 0.04 if tolerance is None else tolerance)
+        )
+        self._saturation_tolerance = float(
+            cfg.get("saturation_tolerance", 0.06 if tolerance is None else tolerance)
+        )
+        for value in (self._luma_tolerance, self._saturation_tolerance):
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError("tonal_anchor tolerances must be finite and >= 0")
         self.data_root = str(cfg.get("data_root") or "")
         self._cache: dict[str, tuple[float, float]] = {}
 
@@ -52,7 +62,9 @@ class TonalAnchorRewardModel:
         luma, sat = tonal_stats(frames.detach().cpu().numpy()[0])
         ref_luma, ref_sat = self._reference_stats(artifact)
         d_luma, d_sat = luma - ref_luma, sat - ref_sat
-        penalty = max(0.0, abs(d_luma) - self._tolerance) + max(0.0, abs(d_sat) - self._tolerance)
+        penalty = max(0.0, abs(d_luma) - self._luma_tolerance) + max(
+            0.0, abs(d_sat) - self._saturation_tolerance
+        )
         return {
             "tonal_anchor": -penalty,
             "tonal_anchor/luma_delta": d_luma,

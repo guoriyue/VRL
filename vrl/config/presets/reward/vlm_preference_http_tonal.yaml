@@ -2,10 +2,11 @@
 # model-free tonal anchor: the judge is indifferent to a global brightening,
 # saturation boost or glow (it prefers those transforms 33-47% of the time,
 # docs/rewards/cards/vlm_preference_qwen3vl32b_qwen21_t2i.md), so stage-1
-# policies drifted brighter and glossier. The anchor is 0 inside a 0.02 band
-# around the base reference image's mean luma / saturation and negative
-# outside; weight 2.0 makes a 0.1 luma drift (-0.16) outweigh the judge's
-# within-group spread (~0.10). Both read metadata.judge_reference.
+# policies drifted brighter and glossier. The anchor is 0 inside the band a
+# healthy policy already occupies (90th percentile of base rollouts: 0.04 luma,
+# 0.06 saturation from the reference) and negative outside; weight 2.0 makes
+# the +0.10 luma drift of stage 1 (-0.12) outweigh the judge's within-group
+# spread (~0.10). Both read metadata.judge_reference.
 distributed:
   resources:
     reward:
@@ -21,7 +22,8 @@ reward:
     tonal_anchor:
       reference_key: judge_reference
       data_root: /mnt/nvme/data/external
-      tolerance: 0.02
+      luma_tolerance: 0.04
+      saturation_tolerance: 0.06
   inference:
     vlm_preference:
       kind: http

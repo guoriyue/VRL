@@ -26,7 +26,7 @@ def test_identity_is_zero_and_drift_is_penalized_in_proportion(tmp_path):
     base = Image.fromarray(rng.integers(40, 200, (64, 64, 3), dtype=np.uint8))
     ref = tmp_path / "ref.png"
     base.save(ref)
-    model = TonalAnchorRewardModel({"tolerance": 0.02})
+    model = TonalAnchorRewardModel({"tolerance": 0.02})  # one band for both channels
 
     same = model(_artifact(base, ref))
     assert same["tonal_anchor"] == 0.0
@@ -60,3 +60,15 @@ def test_missing_reference_is_rejected(tmp_path):
         model(artifact)
     with pytest.raises(ValueError, match="finite"):
         TonalAnchorRewardModel({"tolerance": float("nan")})
+
+
+def test_default_bands_are_silent_for_a_small_shift(tmp_path):
+    rng = np.random.default_rng(1)
+    base = Image.fromarray(rng.integers(40, 200, (64, 64, 3), dtype=np.uint8))
+    ref = tmp_path / "ref.png"
+    base.save(ref)
+    model = TonalAnchorRewardModel({})  # luma 0.04, saturation 0.06
+    small = model(_artifact(ImageEnhance.Brightness(base).enhance(1.05), ref))
+    assert 0 < small["tonal_anchor/luma_delta"] < 0.04
+    assert small["tonal_anchor"] == 0.0
+    assert model(_artifact(ImageEnhance.Brightness(base).enhance(1.3), ref))["tonal_anchor"] < 0.0
