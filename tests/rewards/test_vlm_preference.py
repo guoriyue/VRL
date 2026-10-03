@@ -149,3 +149,15 @@ def test_crop_criteria_are_judged_per_tile_and_averaged(tmp_path):
     assert scores["vlm_preference/whole"] == 1.0
     assert scores["vlm_preference/detail"] == pytest.approx(0.25)
     assert scores["vlm_preference"] == pytest.approx(0.625)
+
+
+def test_compare_answer_mode_is_accepted_and_batched_with_its_suffix():
+    criteria = [{"name": "fidelity", "question": "F?", "answer": "compare"}]
+    model = _model([0.25], criteria=criteria)
+    scores = model.score(Image.new("RGB", (8, 8)), prompt="x")
+    assert scores["vlm_preference/fidelity"] == 0.25
+    assert model.asked[0][2] == ["compare"]
+    with pytest.raises(ValueError, match="answer must be one of"):
+        VLMPreferenceRewardModel(
+            {"device": "cpu", "criteria": [{"name": "x", "question": "q", "answer": "grade"}]}
+        )

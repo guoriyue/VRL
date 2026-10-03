@@ -50,9 +50,25 @@ RATING_LEVELS: tuple[tuple[str, float], ...] = (
     ("poor", 0.25),
     ("bad", 0.0),
 )
+# Graded pairwise answer: how Image 1 compares with Image 2. Against a much
+# stronger reference a yes/no "is Image 1 better" sits at P(yes) ~ 0 for every
+# sibling of a group and gives GRPO nothing to rank; the expectation over these
+# levels still separates "much worse" from "slightly worse".
+COMPARE_LEVELS: tuple[tuple[str, float], ...] = (
+    ("better", 1.0),
+    ("slightly", 0.75),
+    ("similar", 0.5),
+    ("worse", 0.25),
+    ("much", 0.0),
+)
 ANSWER_SUFFIX = {
     "yesno": "\nAnswer with a single word: yes or no.",
     "rating": "\nAnswer with a single word: excellent, good, fair, poor, or bad.",
+    "compare": (
+        "\nAnswer with one word for how Image 1 compares with Image 2 on this point: "
+        "better (clearly better), slightly (slightly better), similar, worse (slightly worse), "
+        "or much (much worse)."
+    ),
 }
 
 # Pairwise mode: the candidate is "Image 1" and the reference "Image 2" (and the
@@ -235,6 +251,7 @@ class VLMPreferenceRewardModel(LazyTorchModule):
         answers = {
             "yesno": [(first_tokens("yes"), 1.0), (first_tokens("no"), 0.0)],
             "rating": [(first_tokens(word), value) for word, value in RATING_LEVELS],
+            "compare": [(first_tokens(word), value) for word, value in COMPARE_LEVELS],
         }
         return {"judge": judge, "processor": processor, "answers": answers}
 
@@ -371,6 +388,7 @@ class VLMPreferenceRewardModel(LazyTorchModule):
 
 
 __all__ = [
+    "COMPARE_LEVELS",
     "DEFAULT_CRITERIA",
     "DEFAULT_PAIRWISE_CRITERIA",
     "RATING_LEVELS",
