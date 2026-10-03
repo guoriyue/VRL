@@ -113,3 +113,23 @@ anchored policy above base where it rates stage-1 below base, but RL under eithe
 share of images the blind judges call fake (8 → 20-24 of 115), and nothing we score today detects that look well
 (best AUC 0.63). Run continued to 80 epochs for the appeal curve; human fake labels (labelling page) are the next
 input before another reward change.
+
+## GPT-reference run `vlm_gptref1` (2026-10-02 20:04)
+
+RewardDance-style strong reference: the pairwise judge now compares each rollout with a **GPT 5.6 Luna image of
+the same prompt** (generated through the Codex CLI's image tool, 1024², `aes_refs/gpt1b/`), so 0.5 means "as
+good as GPT" instead of "as good as base". Sanity check with the natural judge on 40 prompts: P(GPT image better
+than the base image) = 0.727, GPT ahead on 93% of prompts (natural 0.66, fidelity 0.83, structure 0.76), so the
+anchor has gradient. 185 of the first 200 stage1b prompts have a GPT image; GPT's image safety system refused
+15 (2 minor-sexualization, 1 real-person nudity -- excluded from all training sets; 12 generic blocks -- kept
+in the 2000-prompt manifest per the user, absent from this run for lack of a reference).
+
+Reward `/reward=vlm_preference_http_tonal` with the anchor bands widened to 0.08 luma / 0.10 saturation
+(the anchor now means "move toward GPT's tonality, do not drift"). Same sampler and optimizer as the anchored
+run; 40 epochs. First rounds: judge 0.47 / 0.70 / 0.22 (2 prompts per round, high variance), structure the
+weakest criterion against GPT, rollouts ~+0.12 luma brighter than GPT images.
+
+Known limits of this run, stated before results: the judge resolves global look, not fine texture (AUC 0.59 on
+"fake" flags); the trained SDE window [0, 6] controls layout/lighting/style, not detail; RL reweights the base
+distribution and cannot add textures the base never produces. Candidate follow-ups: a detail stage (SDE window
+[14, 30], judge on 2×2 native-resolution crops) and SFT distillation on 1-2k GPT images before RL.
