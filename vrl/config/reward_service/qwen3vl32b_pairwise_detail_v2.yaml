@@ -13,6 +13,7 @@ model_version: Qwen/Qwen3-VL-32B-Instruct-FP8@4bf2c2f3
 artifact_roots:
   - ../../../outputs
   - /mnt/nvme/outputs
+  - /mnt/nvme/data/external  # clean-target images travel as reward auxiliary files
 max_concurrency: 1
 max_pending_requests: 256
 max_cached_requests: 8192
