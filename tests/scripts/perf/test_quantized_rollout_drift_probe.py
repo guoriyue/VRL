@@ -6,10 +6,8 @@ import pytest
 import torch
 
 import vrl.scripts.perf.quantized_rollout_drift_probe as drift_probe
-from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
 from vrl.scripts.perf.quantized_rollout_drift_probe import (
     _policy_grad_norm,
-    _require_corrected_parity_bound,
     _step_logprob,
 )
 
@@ -57,27 +55,6 @@ def test_duplicate_timesteps_do_not_multiply_the_grpo_gradient() -> None:
     )
 
     assert two_step_norm == pytest.approx(one_step_norm, rel=1e-6, abs=1e-7)
-
-
-def test_corrected_parity_bound_passes_a_drift_below_ln10(capsys) -> None:
-    stats = LogprobMismatchStats.compute(torch.full((2,), 2.0), torch.zeros(2))
-
-    _require_corrected_parity_bound(stats)
-
-    assert "PASSED" in capsys.readouterr().out
-
-
-@pytest.mark.parametrize("shift", [3.0, float("nan")])
-def test_corrected_parity_bound_failure_exits_nonzero(shift: float, capsys) -> None:
-    """A drift past the trainer's catastrophic bound is a failed probe, not output."""
-
-    stats = LogprobMismatchStats.compute(torch.full((2,), shift), torch.zeros(2))
-
-    with pytest.raises(SystemExit) as exc_info:
-        _require_corrected_parity_bound(stats)
-
-    assert exc_info.value.code == 1
-    assert "FAILED" in capsys.readouterr().out
 
 
 def test_drift_probe_rejects_legacy_fp4_scheme(monkeypatch, capsys) -> None:

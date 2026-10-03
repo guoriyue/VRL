@@ -133,20 +133,6 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _require_corrected_parity_bound(stats: LogprobMismatchStats) -> None:
-    """Apply the replay-parity gate's corrected-mode bound; a violation fails the probe."""
-
-    print("-- replay-parity gate under precision correction --")
-    limit = CORRECTED_REPLAY_MAX_ABS_LOG_RATIO
-    if not stats.finite or stats.logprob_abs_diff_max > limit:
-        print(
-            f"  FAILED: finite={stats.finite} "
-            f"abs_log_diff_max={stats.logprob_abs_diff_max:.4e} limit={limit:.4f}",
-        )
-        raise SystemExit(1)
-    print(f"  PASSED: abs_log_diff_max={stats.logprob_abs_diff_max:.4e} limit={limit:.4f}")
-
-
 def main() -> None:
     args = _parse_args()
     scheme = args.scheme
@@ -197,7 +183,15 @@ def main() -> None:
     )
 
     # -- replay-parity gate's corrected-mode bound on the real split --
-    _require_corrected_parity_bound(stats)
+    print("-- replay-parity gate under precision correction --")
+    limit = CORRECTED_REPLAY_MAX_ABS_LOG_RATIO
+    if not stats.finite or stats.logprob_abs_diff_max > limit:
+        print(
+            f"  FAILED: finite={stats.finite} "
+            f"abs_log_diff_max={stats.logprob_abs_diff_max:.4e} limit={limit:.4f}",
+        )
+        raise SystemExit(1)
+    print(f"  PASSED: abs_log_diff_max={stats.logprob_abs_diff_max:.4e} limit={limit:.4f}")
 
     # -- Production-equivalent correction across independent denoise steps --
     # OnlineTrainer calls the evaluator and GRPO once per timestep, then scales
