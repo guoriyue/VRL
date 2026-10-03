@@ -137,6 +137,18 @@ DEFAULT_CRITERIA: tuple[dict[str, Any], ...] = (
 )
 
 
+def _grid_crops(image: Any, grid: int) -> list[Any]:
+    """The ``grid`` x ``grid`` tiles of an image, row-major, at native resolution."""
+
+    w, h = image.size
+    tw, th = w // grid, h // grid
+    return [
+        image.crop((c * tw, r * th, (c + 1) * tw, (r + 1) * th))
+        for r in range(grid)
+        for c in range(grid)
+    ]
+
+
 class VLMPreferenceRewardModel(LazyTorchModule):
     """Score one image with per-criterion questions to a VLM judge."""
 
@@ -183,7 +195,16 @@ class VLMPreferenceRewardModel(LazyTorchModule):
             raise ValueError(
                 f"vlm_preference criterion {name!r} answer must be one of {sorted(ANSWER_SUFFIX)}"
             )
-        return {"name": name, "question": question, "weight": weight, "answer": answer}
+        crops = int(raw.get("crops", 0) or 0)
+        if crops < 0 or crops == 1:
+            raise ValueError(f"vlm_preference criterion {name!r} crops must be 0 or >= 2")
+        return {
+            "name": name,
+            "question": question,
+            "weight": weight,
+            "answer": answer,
+            "crops": crops,
+        }
 
     def _load_module(self) -> Any:
         import torch
@@ -251,12 +272,37 @@ class VLMPreferenceRewardModel(LazyTorchModule):
         else:
             preamble = PAIRWISE_PREAMBLE.replace("{prompt}", prompt.strip())
             questions = [preamble + q for q in questions]
-            forward = self.answer_scores(image, questions, answers, reference=reference)
-            if self._both_orders:
-                backward = self.answer_scores(reference, questions, answers, reference=image)
-                values = [(f + (1.0 - b)) / 2.0 for f, b in zip(forward, backward, strict=True)]
-            else:
-                values = forward
+            values = [0.0] * len(self.criteria)
+            # Criteria with ``crops: n`` are judged on an n x n grid of native-resolution
+            # crops (k-th crop of the candidate vs k-th crop of the reference) and
+            # averaged, so fine texture reaches the judge at full scale; the rest see
+            # the whole images.
+            by_grid: dict[int, list[int]] = {}
+            for i, c in enumerate(self.criteria):
+                by_grid.setdefault(int(c.get("crops", 0)), []).append(i)
+            for grid, idx in by_grid.items():
+                qs = [questions[i] for i in idx]
+                ans = [answers[i] for i in idx]
+                views = (
+                    [(image, reference)]
+                    if grid <= 1
+                    else list(
+                        zip(_grid_crops(image, grid), _grid_crops(reference, grid), strict=True)
+                    )
+                )
+                acc = [0.0] * len(idx)
+                for cand, ref in views:
+                    forward = self.answer_scores(cand, qs, ans, reference=ref)
+                    if self._both_orders:
+                        backward = self.answer_scores(ref, qs, ans, reference=cand)
+                        vals = [
+                            (f + (1.0 - b)) / 2.0 for f, b in zip(forward, backward, strict=True)
+                        ]
+                    else:
+                        vals = forward
+                    acc = [a + v for a, v in zip(acc, vals, strict=True)]
+                for j, i in enumerate(idx):
+                    values[i] = acc[j] / len(views)
         out = {
             "vlm_preference": float(sum(w * v for w, v in zip(self._weights, values, strict=True)))
         }

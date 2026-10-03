@@ -110,3 +110,42 @@ def test_pairwise_mode_without_a_reference_in_metadata_is_rejected():
     )
     with pytest.raises(ValueError, match="judge_reference"):
         model(artifact)
+
+
+def test_crop_criteria_are_judged_per_tile_and_averaged(tmp_path):
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (8, 8), (255, 0, 0)).save(ref)
+    criteria = [
+        {"name": "whole", "question": "W?", "weight": 1.0},
+        {"name": "detail", "question": "D?", "weight": 1.0, "crops": 2},
+    ]
+    model = VLMPreferenceRewardModel(
+        {
+            "device": "cpu",
+            "reference_key": "judge_reference",
+            "data_root": str(tmp_path),
+            "both_orders": False,
+            "criteria": criteria,
+        }
+    )
+    calls = []
+
+    def answer_scores(image, questions, modes, reference=None):
+        calls.append((image.size, list(questions)))
+        return [0.25 if "D?" in questions[0] else 1.0] * len(questions)
+
+    model.answer_scores = answer_scores
+    artifact = RewardInferenceArtifact(
+        artifact_id="a",
+        sample_id="s",
+        path="",
+        prompt="a red fox",
+        media=torch.zeros(3, 8, 8, dtype=torch.uint8),
+        metadata={"judge_reference": "ref.png"},
+    )
+    scores = model(artifact)
+    # one whole-image call plus four 4x4 tiles for the crop criterion
+    assert [size for size, _ in calls] == [(8, 8), (4, 4), (4, 4), (4, 4), (4, 4)]
+    assert scores["vlm_preference/whole"] == 1.0
+    assert scores["vlm_preference/detail"] == pytest.approx(0.25)
+    assert scores["vlm_preference"] == pytest.approx(0.625)
