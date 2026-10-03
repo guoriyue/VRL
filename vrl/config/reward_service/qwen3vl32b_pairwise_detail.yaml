@@ -65,6 +65,8 @@ worker_config:
       weight: 1.5
       answer: yesno
       question: >-
-        Does Image 1 follow the description "{prompt}" more faithfully than Image 2,
-        including every style and mood qualifier it contains, the requested subject,
-        action and setting?
+        Does Image 1 realize the description "{prompt}" more completely and faithfully than
+        Image 2: the requested subject, action and setting all present, every style and mood
+        qualifier respected, and the scene developed with the richness a professional would
+        deliver for that brief (a cutaway room fully furnished, a cityscape with depth and
+        activity, a product shot with its details), without unrelated clutter?
