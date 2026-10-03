@@ -2,8 +2,10 @@
 # reference image (GPT image of the same prompt, metadata.judge_reference).
 # `detail` is judged on a 2x2 grid of native-resolution crops (k-th crop vs k-th
 # crop, both orders, averaged) so texture reaches the judge at full scale; the
-# other criteria see the whole images. Prompt fidelity stays at half weight as a
-# guard against drifting off-prompt.
+# other criteria see the whole images. Prompt fidelity at 1.5: against a GPT
+# reference the judge separates off-prompt rollouts (missing or swapped main
+# subject) more cleanly than any other criterion, and the user ranks accuracy
+# with structure and realism.
 #
 #   CUDA_VISIBLE_DEVICES=3 python -m vrl.rewards.service.server \
 #     --config vrl/config/reward_service/qwen3vl32b_pairwise_detail.yaml
@@ -60,7 +62,7 @@ worker_config:
         brushwork), crisp edges without halos, and no smeared, waxy, noisy or repetitive
         patterns?
     - name: fidelity
-      weight: 0.5
+      weight: 1.5
       answer: yesno
       question: >-
         Does Image 1 follow the description "{prompt}" more faithfully than Image 2,
