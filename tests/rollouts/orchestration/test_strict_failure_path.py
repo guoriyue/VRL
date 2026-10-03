@@ -45,12 +45,10 @@ class _Strategy:
 
 
 class _Collector(PromptCollectionFake):
-    """RolloutCollectorControl fake whose generation raises mid-rollout."""
+    """Collector fake whose generation raises mid-rollout."""
 
     requires_generation_offload_before_reward = False
     requires_driver_model_offload_for_reward = False
-    supports_reward_generation_overlap = False
-    supports_continuous_reward_execution = True
 
     def __init__(
         self,

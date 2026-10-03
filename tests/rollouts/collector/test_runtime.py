@@ -27,6 +27,7 @@ from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import CollectorRequest, GenerationRequestBuilder
 from vrl.rollouts.stats import RolloutStats
+from vrl.trainers.data.prompts import PromptExample
 from vrl.trajectory.builders import (
     build_diffusion_trajectory,
 )
@@ -390,21 +391,35 @@ def test_collector_derives_reward_generation_overlap_from_topology_and_scorer(
     scorer_supports_overlap: bool,
     expected: bool,
 ) -> None:
+    import asyncio
+
     lifecycle = RayLifecyclePlan(
         trainer=(0,),
         rollout=(1,),
         reward=((1,) if rollout_handoff else ()) + ((0,) if trainer_handoff else ()),
     )
+    reward_runtime = _RewardRuntime(
+        scoring_is_nonblocking=scorer_supports_overlap,
+        external_accelerator_isolation_verified=scorer_supports_overlap,
+    )
     collector = _collector(
-        reward_runtime=_RewardRuntime(
-            scoring_is_nonblocking=scorer_supports_overlap,
-            external_accelerator_isolation_verified=scorer_supports_overlap,
-        ),
+        generation_runtime=_Runtime(),
+        reward_runtime=reward_runtime,
         lifecycle=lifecycle,
     )
 
-    assert collector.supports_reward_generation_overlap is expected
-    assert collector.supports_continuous_reward_execution is expected
+    asyncio.run(
+        collector.prepare_training_batches(
+            prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
+            group_size=1,
+            runtime_debug=False,
+            policy_version=None,
+            stats=RolloutStats(),
+        )
+    )
+
+    assert len(reward_runtime.calls) == (2 if expected else 1)
+    assert collector.reward_isolation_verified is expected
 
 
 def test_collector_keeps_continuous_admission_for_no_reward() -> None:
@@ -415,8 +430,7 @@ def test_collector_keeps_continuous_admission_for_no_reward() -> None:
         ),
     )
 
-    assert collector.supports_reward_generation_overlap is False
-    assert collector.supports_continuous_reward_execution is True
+    assert collector.reward_isolation_verified is True
 
 
 def test_collector_separates_nonblocking_scoring_from_accelerator_isolation() -> None:
@@ -425,21 +439,18 @@ def test_collector_separates_nonblocking_scoring_from_accelerator_isolation() ->
     runtime.external_accelerator_isolation_verified = False
     collector = _collector(reward_runtime=runtime)
 
-    assert collector.supports_reward_generation_overlap is False
-    assert collector.supports_continuous_reward_execution is False
+    assert collector.reward_isolation_verified is False
 
     runtime.external_accelerator_isolation_verified = True
 
-    assert collector.supports_reward_generation_overlap is True
-    assert collector.supports_continuous_reward_execution is True
+    assert collector.reward_isolation_verified is True
 
 
 def test_dedicated_local_reward_allows_concurrent_collects_without_streaming() -> None:
     runtime = _RewardRuntime(external_accelerator_isolation_verified=True)
     collector = _collector(reward_runtime=runtime)
 
-    assert collector.supports_reward_generation_overlap is False
-    assert collector.supports_continuous_reward_execution is True
+    assert collector.reward_isolation_verified is True
 
 
 def test_collector_blocks_trainer_handoff_when_reward_parking_fails() -> None:

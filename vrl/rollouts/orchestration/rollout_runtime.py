@@ -5,19 +5,16 @@ implementation of the trainer-side lease operations: parking/restoring
 training state around a shared-GPU phase, preparing weight snapshots on the
 trainer thread (strategy export may run DDP/FSDP collectives) and pushing
 them from any loop, and tracking the policy version across syncs.
-``RolloutCollectorControl`` describes the runtime-control subset; schedules
-also use the collector's prompt collection and scoring APIs.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 import torch
 
-from vrl.generation import GenerationRuntime
 from vrl.rollouts.stats import RolloutStats
 from vrl.utils.validation import require_int
 
@@ -37,32 +34,6 @@ class RolloutPhaseCleanupError(RuntimeError):
             "terminal cleanup failure: "
             f"{type(cleanup_error).__name__}: {cleanup_error}",
         )
-
-
-@runtime_checkable
-class RolloutCollectorControl(Protocol):
-    """Generation-runtime controls required for a complete phase handoff."""
-
-    @property
-    def generation_runtime(self) -> GenerationRuntime | None: ...
-
-    @property
-    def requires_driver_model_offload(self) -> bool: ...
-
-    @property
-    def requires_driver_model_offload_for_reward(self) -> bool: ...
-
-    @property
-    def supports_reward_generation_overlap(self) -> bool: ...
-
-    @property
-    def supports_continuous_reward_execution(self) -> bool: ...
-
-    async def activate_generation_runtime(self) -> None: ...
-
-    async def offload_generation_runtime_memory(self) -> None: ...
-
-    async def shutdown(self) -> None: ...
 
 
 class RolloutRuntimeCoordinator:
@@ -269,7 +240,6 @@ class RolloutRuntimeCoordinator:
 
 
 __all__ = [
-    "RolloutCollectorControl",
     "RolloutPhaseCleanupError",
     "RolloutRuntimeCoordinator",
 ]

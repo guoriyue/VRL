@@ -16,8 +16,7 @@ class CollectorControlFake(PromptCollectionFake):
     requires_generation_offload_before_reward = False
     requires_driver_model_offload = False
     requires_driver_model_offload_for_reward = False
-    supports_reward_generation_overlap = False
-    supports_continuous_reward_execution = True
+    reward_isolation_verified = True
 
     async def activate_generation_runtime(self) -> None:
         return None

@@ -295,7 +295,7 @@ prescribes.
 | `GenerationRequestBuilder`, `CollectorRequest` | Prompt batch → `GenerationRequest`. |
 | `TrajectoryRolloutBatchBuilder`, `RolloutBatchBuildContext`, `RolloutBatch` | Scored outputs → training batches. |
 | `RolloutSchedule` (protocol) → `StrictOnPolicyRolloutSchedule`, `ContinuousRolloutSchedule` | When to generate vs train. Strict drains everything per iteration; continuous keeps a producer/consumer pipeline running (`ContinuousRolloutOwner` / `Producer` / `Consumer` / `Queue`, `StalenessPolicy`, `ContinuousRolloutSettings/Item/ProducerState`). |
-| `RolloutRuntimeCoordinator`, `RolloutCollectorControl` (protocol) | Wires schedule ↔ collector ↔ trainer phases (`RolloutIteration`, `RolloutScheduleMode`). |
+| `RolloutRuntimeCoordinator` | Wires schedule ↔ collector ↔ trainer phases (`RolloutIteration`, `RolloutScheduleMode`). |
 | `Evaluator` (protocol) → `ReplayEvaluatorBase` (ABC) → `DiffusionSDELogProbEvaluator`, `ChunkAutoregressiveDenoiseLogProbEvaluator` | Replay-side log-prob evaluation per generation paradigm; produce `TrajectorySignalBatch` via `TrajectorySignalBuilder`; the SDE evaluator's segment is a `FlowSDESignal` (proposal mean, std, sqrt(-dt), sigma always present), the chunk evaluator's a plain `SegmentSignal`. Objectives read the type's fields; there is no declared key list. |
 | `RolloutStats` | Carries phase timing and throughput metrics; the trainer logs them and writes one `rollout_stats.jsonl` row per profiled step. |
 

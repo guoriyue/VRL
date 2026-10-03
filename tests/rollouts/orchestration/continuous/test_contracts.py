@@ -58,7 +58,6 @@ class _GatedCollector(PromptCollectionFake):
     requires_generation_offload_before_reward = False
     requires_driver_model_offload = False
     requires_driver_model_offload_for_reward = False
-    supports_reward_generation_overlap = False
 
     def __init__(self) -> None:
         self.allow_generate = asyncio.Event()
@@ -161,7 +160,6 @@ class _FiniteCollector(PromptCollectionFake):
     requires_generation_offload_before_reward = False
     requires_driver_model_offload = False
     requires_driver_model_offload_for_reward = False
-    supports_reward_generation_overlap = False
 
     def __init__(self, *, fail_once: set[str] | None = None) -> None:
         self.fail_once = set(fail_once or ())

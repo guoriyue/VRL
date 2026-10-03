@@ -39,7 +39,7 @@ class ContinuousRolloutSchedule:
         settings: ContinuousRolloutSettings,
     ) -> None:
         self.lifecycle = lifecycle
-        if not lifecycle.collector.supports_continuous_reward_execution:
+        if not lifecycle.collector.reward_isolation_verified:
             # Only known once the reward runtime is connected: an external
             # service advertises its own accelerator isolation. A single collect
             # task still overlaps the trainer in continuous mode, so limiting

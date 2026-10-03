@@ -449,10 +449,8 @@ class _SyntheticDiffusionReplayCollector:
     requires_generation_offload_before_reward = False
     requires_driver_model_offload = False
     requires_driver_model_offload_for_reward = False
-    # Synthetic replay has no reward runtime to overlap with or place beside
-    # continuous work; both capabilities are honestly absent.
-    supports_reward_generation_overlap = False
-    supports_continuous_reward_execution = False
+    # Synthetic replay has no reward runtime with verified device isolation.
+    reward_isolation_verified = False
 
     def __init__(
         self,
@@ -935,7 +933,6 @@ def _synthetic_diffusion_replay_batch(
 
     actions = torch.stack(action_steps, dim=1)
     old_log_prob = torch.stack(old_log_prob_steps, dim=1)
-    kl = torch.zeros_like(old_log_prob)
     trajectory = build_diffusion_trajectory(
         request=request,
         sample_rows=sample_rows,

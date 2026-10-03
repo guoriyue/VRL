@@ -84,8 +84,7 @@ class _Collector(PromptCollectionFake):
         self.requires_generation_offload_before_reward = False
         self.requires_driver_model_offload = False
         self.requires_driver_model_offload_for_reward = False
-        self.supports_reward_generation_overlap = False
-        self.supports_continuous_reward_execution = True
+        self.reward_isolation_verified = True
         self.calls: list[dict[str, Any]] = []
         self.activation_calls = 0
         self.offload_calls = 0
@@ -473,7 +472,7 @@ async def test_queue_capacity_fits_the_finite_prompt_batch() -> None:
 def test_rejects_unverified_external_reward_accelerator() -> None:
     runtime = _Runtime()
     collector = _Collector(runtime)
-    collector.supports_continuous_reward_execution = False
+    collector.reward_isolation_verified = False
 
     with pytest.raises(RuntimeError, match="verified reward accelerator isolation"):
         _build(_continuous_config(), collector, _Syncer(runtime))

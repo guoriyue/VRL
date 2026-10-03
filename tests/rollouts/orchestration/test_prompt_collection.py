@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -93,7 +94,10 @@ class _DeferredCollector(PromptCollectionFake):
         self.requires_generation_offload_before_reward = rollout_reward_handoff
         self.requires_driver_model_offload = False
         self.requires_driver_model_offload_for_reward = trainer_reward_handoff
-        self.supports_reward_generation_overlap = supports_overlap
+        self.reward_isolation_verified = (
+            supports_overlap and not rollout_reward_handoff and not trainer_reward_handoff
+        )
+        self.reward_runtime = SimpleNamespace(scoring_is_nonblocking=supports_overlap)
 
     async def generate_rollout(self, request) -> Any:
         inputs = request.inputs
@@ -222,7 +226,6 @@ class _PhasedCollector(PromptCollectionFake):
     requires_generation_offload_before_reward = True
     requires_driver_model_offload = False
     requires_driver_model_offload_for_reward = False
-    supports_reward_generation_overlap = False
 
     async def generate_rollout(self, request) -> _Unscored:
         inputs = request.inputs
@@ -471,26 +474,6 @@ async def test_safe_topology_without_runtime_capability_stays_batched_and_serial
         "generate:p1",
         "evaluate_rollout:[p0;p1]",
     ]
-
-
-@pytest.mark.asyncio
-async def test_missing_overlap_capability_fails_loud() -> None:
-    """The capability is part of the collector contract; absence is a bug, not
-    a silent downgrade to batched scoring."""
-    collector = _DeferredCollector(
-        rollout_reward_handoff=False,
-        trainer_reward_handoff=False,
-    )
-    del collector.supports_reward_generation_overlap
-
-    with pytest.raises(AttributeError, match="supports_reward_generation_overlap"):
-        await prepare_training_batches(
-            collector=collector,
-            prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
-            group_size=1,
-            runtime_debug=False,
-            policy_version=None,
-        )
 
 
 @pytest.mark.asyncio

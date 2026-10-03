@@ -387,23 +387,8 @@ class RolloutCollector:
         return lifecycle.park_trainer_for_reward
 
     @property
-    def supports_reward_generation_overlap(self) -> bool:
-        """Whether strict collection can stream score N beside generation N+1."""
-
-        return bool(
-            self._reward_accelerator_isolation_verified
-            and self.reward_runtime.scoring_is_nonblocking
-        )
-
-    @property
-    def supports_continuous_reward_execution(self) -> bool:
-        """Whether reward placement is safe beside continuous trainer/rollout work."""
-
-        return self._reward_accelerator_isolation_verified
-
-    @property
-    def _reward_accelerator_isolation_verified(self) -> bool:
-        """Combine local topology with proof for out-of-plan accelerators."""
+    def reward_isolation_verified(self) -> bool:
+        """Whether reward devices are verified safe beside generation and training."""
 
         return bool(
             not self.requires_generation_offload_before_reward
@@ -519,9 +504,12 @@ class RolloutCollector:
 
         generated_groups: list[RolloutGenerationResult] = []
         scored_batches: list[RolloutBatch] = []
-        # Only the collector's overlap capability (async scoring plus verified
-        # reward accelerator isolation) may alternate generation and scoring.
-        per_group_scoring = bool(self.supports_reward_generation_overlap)
+        # Scoring can run beside generation only when it yields the event loop
+        # and its accelerator does not need a GPU handoff.
+        per_group_scoring = bool(
+            self.reward_isolation_verified
+            and self.reward_runtime.scoring_is_nonblocking
+        )
         score_task: asyncio.Task[list[RolloutBatch]] | None = None
 
         async def score_unscored(groups: list[UnscoredRollout]) -> list[RolloutBatch]:
