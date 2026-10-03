@@ -477,6 +477,37 @@ class QwenImage21Model(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
             ),
         )
 
+    # -- encode_video_to_latents ---------------------------------------
+
+    def encode_video_to_latents(self, video: torch.Tensor) -> torch.Tensor:
+        """Encode clean target images into the packed, normalized latent domain.
+
+        ``video`` is ``[B, C, T, H, W]`` in ``[0, 1]`` at the training geometry
+        (``T == 1`` for this family). The result matches the rollout observation
+        layout exactly -- the inverse of :meth:`decode_latents`: deterministic
+        posterior mode, per-channel ``(z - mean) / std`` normalization, then the
+        2.1 spatial flatten to ``[B, tokens, C]`` -- so an offline
+        ``data.sft_latents`` shard can stand in for a rollout latent.
+        """
+
+        pipe = self.pipeline
+        if video.ndim != 5 or video.shape[2] != 1:
+            raise ValueError(
+                f"qwen_image_21 encodes single-frame targets [B, C, 1, H, W], got {tuple(video.shape)}"
+            )
+        x = (video.to(device=self.device, dtype=pipe.vae.dtype) * 2.0) - 1.0
+        if x.shape[1] == 3:
+            # The VAE is RGBA; a clean RGB target is fully opaque.
+            alpha = torch.ones_like(x[:, :1])
+            x = torch.cat([x, alpha], dim=1)
+        with torch.no_grad():
+            latent = torch.cat(
+                [pipe._encode_vae_image(sample.unsqueeze(0), generator=None) for sample in x],
+                dim=0,
+            )
+        latent_h, latent_w = latent.shape[-2:]
+        return pipe._pack_latents(latent, latent.shape[0], latent.shape[1], latent_h, latent_w)
+
     # -- decode_latents ------------------------------------------------
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
