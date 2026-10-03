@@ -22,7 +22,6 @@ import pytest
 
 import vrl.ray.actor_pool as actor_pool_module
 import vrl.ray.operation_deadline as deadline_module
-from vrl.generation.execution.batch_placement import plan_with_engine
 from vrl.generation.execution.types import (
     GenerationBatchEnvelope,
     GenerationBatchResult,
@@ -654,15 +653,6 @@ async def test_cancelling_middle_admission_waiter_preserves_identity_fifo() -> N
     assert await asyncio.wait_for(tail, timeout=1) == [(0, "tail")]
     assert await dispatch("after") == [(0, "after")]
     assert received == ["active", "head", "tail", "after"]
-
-
-def test_round_robin_planner_binds_workers_at_plan_time() -> None:
-    """Checks the default strategy keeps the historical binding."""
-    plan = plan_with_engine(_request(), _worker_ids(2))
-
-    worker_ids = [assignment.engine_id for assignment in plan.assignments]
-    assert worker_ids == ["w0", "w1", "w0", "w1"]
-    assert all(a.batch is a.envelope.batch for a in plan.assignments)
 
 
 # ----------------------------------------------------- executor end to end

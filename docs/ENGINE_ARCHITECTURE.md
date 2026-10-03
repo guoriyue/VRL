@@ -126,8 +126,8 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 | `RayGenerationWorker` (`ray/worker.py`) | The Ray actor shell; delegates to the core. |
 | `GenerationWorkerCore` | Worker-process brain: validates the launch contract, builds the family executor, runs forward calls. |
 | `GenerationWorkerParking` | The generation worker's parking owner (vocabulary in §1 Parking): phase tracking plus `WorkerMemoryParkingSnapshot` evidence the driver validates. Picks the mechanism from residency, not the family: a parking-required rank whose model is resident on CUDA uses `cumem`; under `pipeline_offload_mode` or with a model built off CUDA it uses `move`. Destination is always RAM. |
-| `plan_with_engine` (`batch_placement.py`) → `DistributedGenerationPlan`, `DeviceAssignment` | Splits a request into per-worker batch assignments. |
-| `EnginePlan` (`planner.py`) | The resolved per-request plan: which `sample_batches` run where. |
+| `RayGenerationExecutor` (`ray/executor.py`) | Assigns sample batches to engines in round-robin order when creating dispatch jobs. |
+| `EnginePlan` (`execution/planner.py`) | The shared per-request sample batch plan consumed by direct and Ray executors. |
 | `GenerationSampleBatch`, `SampleAlignedValues`, `BatchResultWithIdentity` (`sample_batches.py`) | The batch coordinate system: a batch is a slice of samples (`prompt_index`, `sample_start`, `sample_count`), not a time segment. `SampleAlignedValues` slices per-sample tensors consistently. |
 | `GenerationBatchEnvelope` / `GenerationBatchResult` (`execution/types.py`) | The wire pair around one dispatched batch. |
 | `BatchMemoryReading` | Per-batch memory telemetry: the measured denoise/decode peaks the driver logs for each batch. |

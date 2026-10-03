@@ -15,7 +15,6 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
-from vrl.generation.execution.batch_placement import plan_with_engine
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import (
     GenerationBatchEnvelope,
@@ -127,12 +126,7 @@ class RayGenerationExecutor:
         _gen_start = time.perf_counter()
         sample_rows = request.sample_rows()
         with profile_range("engine.plan"):
-            generation_plan = plan_with_engine(
-                request,
-                tuple(engine.engine_id for engine in self.engines),
-            )
-        assignments = list(generation_plan.assignments)
-        engine_plan = generation_plan.engine_plan
+            engine_plan = EnginePlan.from_request(request)
         pipelined_oom: RequestBatchOutOfMemory | None = None
         if self.pipelined and len(engine_plan.sample_batches) >= 2:
             pipelined_result = await self._execute_request_batches(
@@ -155,20 +149,22 @@ class RayGenerationExecutor:
                 pipelined_oom.worker_id,
                 pipelined_oom.error,
             )
-        engine_by_id = {engine.engine_id: engine for engine in self.engines}
         runtime_debug_on = request.runtime_debug
         remote_jobs: list[RayActorJob] = []
         result_pairs: list[tuple[int, GenerationBatchResult]] = []
         schedule_rows: list[dict[str, Any]] = []
+        envelope_by_batch_key: dict[str, GenerationBatchEnvelope] = {}
 
-        for job_index, assignment in enumerate(assignments):
-            engine = engine_by_id[assignment.engine_id]
+        for job_index, batch in enumerate(engine_plan.sample_batches):
+            engine = self.engines[job_index % len(self.engines)]
+            envelope = GenerationBatchEnvelope(request=request, batch=batch)
+            envelope_by_batch_key[batch.batch_key] = envelope
             remote_jobs.append(
                 RayActorJob(
                     job_index=job_index,
                     worker_id=engine.engine_id,
                     remote_method=engine.execute_batch(),
-                    payload=assignment.envelope,
+                    payload=envelope,
                 ),
             )
 
@@ -184,15 +180,12 @@ class RayGenerationExecutor:
 
         results = [result for _, result in sorted(result_pairs, key=lambda pair: pair[0])]
 
-        if len(results) != len(assignments):
+        if len(results) != len(engine_plan.sample_batches):
             raise RuntimeError(
                 "distributed rollout returned wrong number of batches: "
-                f"{len(results)} != {len(assignments)}",
+                f"{len(results)} != {len(engine_plan.sample_batches)}",
             )
 
-        envelope_by_batch_key = {
-            assignment.envelope.batch_key: assignment.envelope for assignment in assignments
-        }
         for result in results:
             self._validate_result_identity(result, envelope_by_batch_key)
 
@@ -245,13 +238,13 @@ class RayGenerationExecutor:
             by_index = {row["job_index"]: row for row in schedule_rows}
             schedule_summary = [
                 {
-                    "batch_key": assignment.batch.batch_key,
-                    "sample_count": assignment.batch.sample_count,
+                    "batch_key": batch.batch_key,
+                    "sample_count": batch.sample_count,
                     "assigned_worker": by_index[job_index]["worker_id"],
                     "queue_wait_s": by_index[job_index]["queue_wait_s"],
                     "execution_s": by_index[job_index]["execution_s"],
                 }
-                for job_index, assignment in enumerate(assignments)
+                for job_index, batch in enumerate(engine_plan.sample_batches)
                 if job_index in by_index
             ]
         if runtime_debug_on:
@@ -297,7 +290,7 @@ class RayGenerationExecutor:
                 if pipelined_oom is not None
                 else "per_batch_dispatch"
             ),
-            len(assignments),
+            len(engine_plan.sample_batches),
             time.perf_counter() - _gen_start,
         )
         return output

@@ -357,7 +357,7 @@ class RolloutConfig(ConfigBase):
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
-    # reader: generation planner (batch_placement.py) + diffusion layout. int =
+    # reader: generation planner (execution/planner.py) + diffusion layout. int =
     # fixed batch size; null = samples_per_prompt.
     samples_per_generation_batch: int | None = Field(
         default=None,
