@@ -1,6 +1,6 @@
 """Trainer-facing facade for disaggregated continuous rollout.
 
-The queue/producer/consumer and all asynchronous collector/runtime work live on
+The producer, consumer, and all asynchronous collector/runtime work live on
 ``ContinuousRolloutThread``'s dedicated thread.  This facade performs only
 main-thread policy-state export and command/future handoff, so synchronous
 training work cannot starve rollout admission or completion harvesting.
@@ -117,7 +117,7 @@ class ContinuousRolloutSchedule:
         return await self._rollout_thread.commit_weights(prepared_weights)
 
     def reset(self) -> None:
-        """Reset producer/queue state on the owner loop before a resumed rollout."""
+        """Reset producer and batch state on the owner loop before a resumed rollout."""
 
         self._rollout_thread.reset()
 

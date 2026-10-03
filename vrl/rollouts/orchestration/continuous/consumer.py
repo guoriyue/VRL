@@ -1,4 +1,4 @@
-"""Consumer that turns ready queue items into a trainer ``RolloutIteration``.
+"""Consumer that turns a completed prompt batch into a trainer ``RolloutIteration``.
 
 The consumer owns same-policy batch selection: it waits until one homogeneous
 policy version has a full iteration worth of distinct groups, reassigns
@@ -14,11 +14,11 @@ import time
 import torch
 
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.orchestration.continuous.scored_queue import ScoredRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutProducerState,
     ContinuousRolloutSettings,
+    PromptBatch,
     ScoredRollout,
 )
 from vrl.rollouts.orchestration.types import RolloutIteration
@@ -32,11 +32,9 @@ class ContinuousRolloutConsumer:
     def __init__(
         self,
         *,
-        queue: ScoredRolloutQueue,
         staleness: StalenessPolicy,
         settings: ContinuousRolloutSettings,
     ) -> None:
-        self.queue = queue
         self.staleness = staleness
         # Fresh-error count (with zero fresh completions) that ends the wait
         # early with the producer's root cause. 0 disables fail-fast. Range
@@ -46,8 +44,7 @@ class ContinuousRolloutConsumer:
     async def collect_iteration(
         self,
         *,
-        prompt_batch_id: int,
-        expected_group_count: int,
+        prompt_batch: PromptBatch,
         current_policy_version: int | None,
         wait_timeout_s: float,
         poll_interval_s: float,
@@ -55,8 +52,8 @@ class ContinuousRolloutConsumer:
     ) -> RolloutIteration:
         """Block until a homogeneous-version iteration is ready, then build it.
 
-        ``prompt_batch_id`` names the producer's installed prompt batch; the
-        owner always supplies the batch identity explicitly.
+        The owner supplies the producer's installed batch, including its
+        prompt-ordered result slots.
 
         ``producer_state`` lets the wait surface the background producer's
         health: a persistent generation/reward failure ends the wait early with
@@ -67,13 +64,7 @@ class ContinuousRolloutConsumer:
         # Both waits were validated by ContinuousRolloutConfig.
         deadline = time.monotonic() + wait_timeout_s
         wait_start = time.perf_counter()
-        ready_groups_at_demand = len(
-            {
-                item.group_slot
-                for item in self.queue.snapshot()
-                if item.batch_id == prompt_batch_id
-            },
-        )
+        ready_groups_at_demand = sum(item is not None for item in prompt_batch.results)
         start_completed = producer_state.completed_count if producer_state else 0
         start_errors = producer_state.error_count if producer_state else 0
         while True:
@@ -82,12 +73,13 @@ class ContinuousRolloutConsumer:
                 start_completed=start_completed,
                 start_errors=start_errors,
             )
-            items = self._take_ready_groups(
-                prompt_batch_id=prompt_batch_id,
-                expected_group_count=expected_group_count,
+            self.validate_ready_versions(
+                prompt_batch=prompt_batch,
                 current_policy_version=current_policy_version,
             )
-            if items is not None:
+            items = [item for item in prompt_batch.results if item is not None]
+            if len(items) == len(prompt_batch.prompts):
+                prompt_batch.results[:] = [None] * len(prompt_batch.prompts)
                 wait_s = time.perf_counter() - wait_start
                 return self._build_iteration(
                     items=items,
@@ -97,16 +89,18 @@ class ContinuousRolloutConsumer:
                 )
             remaining_s = deadline - time.monotonic()
             if remaining_s <= 0:
-                ready_groups = sum(
-                    item.batch_id == prompt_batch_id for item in self.queue.snapshot()
+                ready_groups = sum(item is not None for item in prompt_batch.results)
+                oldest_age = max(
+                    (item.age_s for item in prompt_batch.results if item is not None),
+                    default=0.0,
                 )
                 message = (
                     "continuous rollout consumer timed out waiting for "
-                    f"{expected_group_count} same-policy groups after {wait_timeout_s}s "
-                    f"(prompt_batch_id={prompt_batch_id}, "
-                    f"ready_groups={ready_groups}/{expected_group_count}, "
+                    f"{len(prompt_batch.prompts)} same-policy groups after {wait_timeout_s}s "
+                    f"(prompt_batch_id={prompt_batch.batch_id}, "
+                    f"ready_groups={ready_groups}/{len(prompt_batch.prompts)}, "
                     f"current_policy_version={current_policy_version}, "
-                    f"queue={self.queue.stats()})"
+                    f"oldest_item_age_s={oldest_age})"
                 )
                 if producer_state is not None:
                     message += (
@@ -162,19 +156,33 @@ class ContinuousRolloutConsumer:
                 f"last_error={producer_state.last_error}",
             )
 
-    def validate_ready_versions(self, *, current_policy_version: int | None) -> None:
+    def validate_ready_versions(
+        self,
+        *,
+        prompt_batch: PromptBatch,
+        current_policy_version: int | None,
+    ) -> None:
         """Fail when a ready item falls outside the trainable version window."""
 
-        if current_policy_version is None:
-            return
-        for item in self.queue.snapshot():
+        for slot, item in enumerate(prompt_batch.results):
+            if item is None:
+                continue
+            if (
+                item.batch_id != prompt_batch.batch_id
+                or item.group_slot != slot
+                or item.rollout_policy_version != prompt_batch.policy_version
+            ):
+                raise RuntimeError(
+                    "continuous scored result does not match its prompt batch "
+                    f"(batch_id={prompt_batch.batch_id}, slot={slot})",
+                )
             version = item.rollout_policy_version
             version_lag = self.staleness.staleness(version, current_policy_version)
             if version_lag is None:
                 continue
             if version_lag < 0:
                 raise RuntimeError(
-                    "continuous queue item is newer than the trainer policy "
+                    "continuous scored result is newer than the trainer policy "
                     f"(item={version}, trainer={current_policy_version}); weight-sync "
                     "barrier invariant violated",
                 )
@@ -183,29 +191,6 @@ class ContinuousRolloutConsumer:
                     "continuous ready prompt batch is older than the policy window "
                     f"(item={version}, trainer={current_policy_version})",
                 )
-
-    def _take_ready_groups(
-        self,
-        *,
-        prompt_batch_id: int,
-        expected_group_count: int,
-        current_policy_version: int | None,
-    ) -> list[ScoredRollout] | None:
-        """Pop the demanded batch once every one of its groups is ready.
-
-        The producer publishes exactly one item per slot of its installed batch,
-        all stamped with that batch's policy version, so a full count is a
-        complete, distinct-slot, homogeneous-version batch.
-        """
-
-        self.validate_ready_versions(current_policy_version=current_policy_version)
-
-        items = [item for item in self.queue.snapshot() if item.batch_id == prompt_batch_id]
-        if len(items) < expected_group_count:
-            return None
-        items.sort(key=lambda item: item.group_slot)
-        self.queue.remove(items)
-        return items
 
     def _build_iteration(
         self,
@@ -217,7 +202,7 @@ class ContinuousRolloutConsumer:
     ) -> RolloutIteration:
         batches: list[RolloutBatch] = []
         for index, item in enumerate(items):
-            # Each queued item is one prompt group. Reassign contiguous ids after
+            # Each result slot is one prompt group. Reassign contiguous ids after
             # prompt-order selection so advantage normalization cannot join
             # different prompts or retain sparse producer slot ids.
             item.batch.group_ids = torch.full_like(item.batch.group_ids, index)

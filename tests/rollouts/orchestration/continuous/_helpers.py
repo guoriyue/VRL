@@ -27,13 +27,13 @@ class OwnerSnapshot:
     """Immutable copy of owner-loop state, observed only by tests."""
 
     producer_state: ContinuousRolloutProducerState | None
-    queue_stats: dict[str, float]
+    batch_stats: dict[str, float]
     prompts: tuple[Any, ...]
     terminal_error: str | None
 
 
 async def owner_snapshot(owner: ContinuousRolloutThread) -> OwnerSnapshot:
-    """Copy producer/queue state off the owner loop without racing it.
+    """Copy producer and batch state off the owner loop without racing it.
 
     The owner runs on its own thread and event loop; the copy must execute as
     a coroutine on that loop (the same loop as the producer) to stay race-free,
@@ -46,10 +46,22 @@ async def owner_snapshot(owner: ContinuousRolloutThread) -> OwnerSnapshot:
 
     async def _copy() -> OwnerSnapshot:
         producer = runtime.producer
-        active_prompt_batch = None if producer is None else producer._batch
+        active_prompt_batch = None if producer is None else producer.prompt_batch
+        ready = (
+            []
+            if active_prompt_batch is None
+            else [item for item in active_prompt_batch.results if item is not None]
+        )
         return OwnerSnapshot(
             producer_state=(None if producer is None else replace(producer.state)),
-            queue_stats={} if runtime.queue is None else dict(runtime.queue.stats()),
+            batch_stats=(
+                {}
+                if active_prompt_batch is None
+                else {
+                    "ready_items": float(len(ready)),
+                    "oldest_item_age_s": max((item.age_s for item in ready), default=0.0),
+                }
+            ),
             prompts=(() if active_prompt_batch is None else active_prompt_batch.prompts),
             terminal_error=(
                 None if runtime._terminal_error is None else repr(runtime._terminal_error)

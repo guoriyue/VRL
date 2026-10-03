@@ -2,7 +2,7 @@
 
 The trainer's asyncio loop must remain free to run synchronous forward/backward
 work without starving rollout admission and completion harvesting.  This module
-owns the continuous producer, queue, consumer, and every asynchronous controller
+owns the continuous producer, consumer, and every asynchronous controller
 operation on one dedicated thread/event loop.  The trainer side communicates
 only through ``concurrent.futures.Future`` command boundaries.
 """
@@ -19,7 +19,6 @@ from typing import Any
 
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
-from vrl.rollouts.orchestration.continuous.scored_queue import ScoredRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
@@ -76,7 +75,6 @@ class _ContinuousRolloutController:
             max_stale_policy_versions=settings.max_stale_policy_versions,
         )
 
-        self.queue: ScoredRolloutQueue | None = None
         self.consumer: ContinuousRolloutConsumer | None = None
         self.producer: ContinuousRolloutProducer | None = None
         self._submitted_prompt_batch: _SubmittedPromptBatch | None = None
@@ -137,10 +135,10 @@ class _ContinuousRolloutController:
             assert self.consumer is not None
             assert self.producer is not None
             current_policy_version = self.lifecycle.current_policy_version()
-            batch_id = self.producer.current_batch_id
+            prompt_batch = self.producer.prompt_batch
+            assert prompt_batch is not None
             iteration = await self.consumer.collect_iteration(
-                expected_group_count=len(prompts),
-                prompt_batch_id=batch_id,
+                prompt_batch=prompt_batch,
                 current_policy_version=current_policy_version,
                 wait_timeout_s=self.settings.wait_timeout_s,
                 poll_interval_s=self.settings.queue_poll_interval_s,
@@ -177,13 +175,11 @@ class _ContinuousRolloutController:
         """Install the next finite prompt batch and dispatch it immediately."""
 
         assert self.producer is not None
-        assert self.queue is not None
         self.producer.set_prompt_batch(
             list(prompts),
             group_size=group_size,
             runtime_debug=runtime_debug,
         )
-        self.queue.set_item_limit(len(prompts))
         self._submitted_prompt_batch = _SubmittedPromptBatch(
             prompts=tuple(prompts),
             group_size=group_size,
@@ -212,7 +208,9 @@ class _ContinuousRolloutController:
                     )
                 await self.lifecycle.push_prepared_weights(prepared_weights, stats)
                 assert self.consumer is not None
+                assert producer.prompt_batch is not None
                 self.consumer.validate_ready_versions(
+                    prompt_batch=producer.prompt_batch,
                     current_policy_version=self.lifecycle.current_policy_version(),
                 )
                 producer.resume_admission()
@@ -225,7 +223,7 @@ class _ContinuousRolloutController:
         return await self._run_command(operation)
 
     async def reset(self) -> None:
-        """Clear continuous queue/producer state without touching the controller."""
+        """Clear continuous batch/producer state without touching the controller."""
 
         await self._run_command(self._stop_pipeline)
 
@@ -338,15 +336,12 @@ class _ContinuousRolloutController:
         if initial_weights is not None:
             await self.lifecycle.push_prepared_weights(initial_weights, stats)
 
-        self.queue = ScoredRolloutQueue(max_items=len(prompts))
         self.consumer = ContinuousRolloutConsumer(
-            queue=self.queue,
             staleness=self.staleness,
             settings=self.settings,
         )
         self.producer = ContinuousRolloutProducer(
             lifecycle=self.lifecycle,
-            queue=self.queue,
             staleness=self.staleness,
             settings=self.settings,
         )
@@ -364,14 +359,12 @@ class _ContinuousRolloutController:
 
     async def _stop_pipeline(self) -> None:
         producer = self.producer
-        queue = self.queue
         if producer is not None:
             await producer.stop(wait_timeout_s=_OWNER_STOP_TIMEOUT_S)
-        if queue is not None:
-            queue.clear()
+            if producer.prompt_batch is not None:
+                producer.prompt_batch.results.clear()
         # Retain owners until cleanup succeeds so shutdown can retry a failure.
         self.producer = None
-        self.queue = None
         self.consumer = None
         self._submitted_prompt_batch = None
 

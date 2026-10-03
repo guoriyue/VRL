@@ -409,7 +409,7 @@ async def test_partial_commit_failure_closes_admission_and_runtime() -> None:
         calls_after_failure = len(collector.calls)
         failed = await owner_snapshot(schedule._rollout_thread)
         assert failed.producer_state is None
-        assert failed.queue_stats == {}
+        assert failed.batch_stats == {}
         assert "worker install ACK mismatch" in str(failed.terminal_error)
         assert collector.shutdown_calls == 1
 
@@ -443,7 +443,7 @@ async def test_draining_sync_finishes_the_active_prompt_batch_before_commit() ->
         await schedule.after_train_step()
         assert runtime.current_policy_version == 2
         after = await owner_snapshot(schedule._rollout_thread)
-        assert after.queue_stats["ready_items"] == 2
+        assert after.batch_stats["ready_items"] == 2
 
         second = await schedule.next_iteration(["p2", "p3"], group_size=2)
         assert _iteration_stat(second, "continuous.rollout_policy_version") == 1.0
@@ -453,8 +453,8 @@ async def test_draining_sync_finishes_the_active_prompt_batch_before_commit() ->
 
 
 @pytest.mark.asyncio
-async def test_queue_capacity_fits_the_finite_prompt_batch() -> None:
-    """The internal queue must hold every group required by one iteration."""
+async def test_result_slots_fit_the_finite_prompt_batch() -> None:
+    """Every prompt group must reach the iteration even with serial admission."""
     runtime = _Runtime()
     collector = _Collector(runtime)
     syncer = _Syncer(runtime)
@@ -518,7 +518,7 @@ class _RewardFailingCollector(_Collector):
 @pytest.mark.asyncio
 async def test_reward_failure_fails_fast_and_never_reaches_queue() -> None:
     # Reward scoring (not generation) fails persistently: the consumer must
-    # surface that root cause and the ready queue must stay empty.
+    # surface that root cause and the result slots must stay empty.
     runtime = _Runtime()
     collector = _RewardFailingCollector(runtime)
     syncer = _Syncer(runtime)
@@ -531,7 +531,7 @@ async def test_reward_failure_fails_fast_and_never_reaches_queue() -> None:
     try:
         with pytest.raises(RuntimeError, match="reward model exploded"):
             await schedule.next_iteration(["p0", "p1"], group_size=2)
-        assert (await owner_snapshot(schedule._rollout_thread)).queue_stats == {}
+        assert (await owner_snapshot(schedule._rollout_thread)).batch_stats == {}
     finally:
         await schedule.shutdown()
 
@@ -733,7 +733,7 @@ async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence() -> No
 
         snapshot = await owner_snapshot(schedule._rollout_thread)
         assert snapshot.producer_state is not None
-        assert snapshot.queue_stats["ready_items"] == 0
+        assert snapshot.batch_stats["ready_items"] == 0
     finally:
         await schedule.shutdown()
 

@@ -1,4 +1,4 @@
-"""Staleness policy for the continuous rollout queue.
+"""Staleness policy for continuous rollout batches.
 
 Staleness is ``trainer_current_version - rollout_item_version``. A negative
 value means the item was produced by a policy newer than the trainer, which

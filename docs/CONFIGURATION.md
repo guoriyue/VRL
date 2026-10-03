@@ -298,18 +298,22 @@ to the archived versions, not current launch entrypoints.
 ### Continuous rollout components
 
 `ContinuousRolloutThread` manages the dedicated thread and event loop.
-Its `_ContinuousRolloutController` coordinates producer, queue, consumer,
+Its `_ContinuousRolloutController` coordinates producer, consumer,
 and weight synchronization on that loop.
 
 `ContinuousRolloutProducer` tracks the installed prompt batch in
-`_PromptBatchProgress` and asynchronous collect tasks in `_running_tasks`.
+`PromptBatch` and asynchronous collect tasks in `_running_tasks`.
 Each task generates and scores one prompt group; the next batch is installed
 only after the trainer consumes the current one.
 
-Completed `ScoredRollout` records enter `ScoredRolloutQueue`.
-`ContinuousRolloutConsumer` retrieves the requested complete batch and returns
-the shared `RolloutIteration` type. Configuration keys and metric names are
-unchanged.
+Completed `ScoredRollout` records occupy their prompt's slot in
+`PromptBatch.results`. `ContinuousRolloutConsumer` waits for every slot and
+returns the shared `RolloutIteration` type, then releases the stored results.
+The batch's prompt count determines capacity; there is no separate queue.
+Metric names retain their existing schema, including `continuous.queue_wait_s`.
+
+`max_inflight_groups` limits active collect tasks;
+`actor.prompts_per_collection` controls collection size independently.
 
 ## Documented-command compilation gate
 

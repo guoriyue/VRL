@@ -1,6 +1,6 @@
-# Continuous rollout queue: after consuming the current finite request, the
+# Continuous rollout: after consuming the current finite request, the
 # trainer arms the exact next microbatch before backward. A background producer
-# generates and rewards that request into a bounded ready queue while the trainer
+# generates and rewards that request into its result slots while the trainer
 # computes, then idles after every requested prompt group succeeds once.
 #
 # Continuous is the bounded-staleness path (default window: one policy version).
@@ -26,10 +26,10 @@
 # without generating duplicate work for the current prompt set.
 #
 # max_inflight_groups controls parallel prompt-group collection inside one
-# finite request. The ready queue always has exactly one item slot per prompt
+# finite request. The batch always has exactly one result slot per prompt
 # group of that request. Admission and weight-sync ordering are owned by the
 # continuous schedule state machine.
-# Queue/staleness tuning defaults (max_inflight_groups,
+# Concurrency/staleness tuning defaults (max_inflight_groups,
 # max_stale_policy_versions=1,
 # wait_timeout_s, queue_poll_interval_s) live on ContinuousRolloutConfig in
 # vrl/trainers/core/types.py — set them via dotlist as in the recipe above.

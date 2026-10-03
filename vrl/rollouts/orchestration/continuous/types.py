@@ -1,9 +1,11 @@
-"""Types for the continuous rollout producer/queue/consumer."""
+"""Batch state and results shared by continuous rollout production and consumption."""
 
 from __future__ import annotations
 
 import time
+from collections import deque
 from dataclasses import dataclass, field
+from typing import Any
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.stats import RolloutStats
@@ -31,13 +33,13 @@ class ContinuousRolloutSettings:
 
 @dataclass(frozen=True, slots=True)
 class ScoredRollout:
-    """One completed prompt group waiting in the ready queue.
+    """One completed prompt group waiting in its batch's result slot.
 
     ``batch_id + group_slot`` is the logical work identity. ``group_slot`` is
     the prompt's slot index in the batch's stable prompt list (not the prompt
     string) so that a prompt batch with duplicate strings still yields
     ``len(prompts)`` distinct groups per iteration.
-    Receipt fields are fixed at completion so queue identity stays stable. The
+    Receipt fields are fixed at completion so result identity stays stable. The
     referenced batch and stats remain mutable payload objects.
     """
 
@@ -48,7 +50,7 @@ class ScoredRollout:
     rollout_policy_version: int | None
     batch: RolloutBatch
     # display/provenance-only: receipt time on this process's monotonic clock
-    # (never wall time), exported as a queue-health age gauge. Computing age
+    # (never wall time), exported as a result-age gauge. Computing age
     # requires the same monotonic clock domain; this is not a portable timestamp
     # for a consumer on another machine.
     completed_at: float = field(default_factory=time.monotonic)
@@ -61,6 +63,27 @@ class ScoredRollout:
     @property
     def age_s(self) -> float:
         return max(0.0, time.monotonic() - self.completed_at)
+
+
+@dataclass(slots=True)
+class PromptBatch:
+    """Inputs, progress, and scored results of one finite continuous batch.
+
+    Each prompt owns one result slot. Completion order cannot change prompt
+    order, and retries keep the installed policy version and collection settings.
+    The consumer releases the results before the producer installs another batch.
+    """
+
+    batch_id: int
+    policy_version: int | None
+    prompts: tuple[Any, ...]
+    group_size: int
+    runtime_debug: bool
+    pending_slots: deque[int]
+    # Per-slot admission timestamps become the completed item's wait metric.
+    pending_since: dict[int, float]
+    results: list[ScoredRollout | None]
+    failure_counts: dict[int, int] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
