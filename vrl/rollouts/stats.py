@@ -1,4 +1,4 @@
-"""Per-request rollout stats accumulator and its per-step emitter.
+"""Per-request rollout stats accumulator.
 
 One typed object (``RolloutStats``) carries a request's phase wall-clock
 timings and its reward-inference timings as it flows
@@ -11,9 +11,8 @@ Two design choices make this robust:
   timings live with the request they describe instead of in a side dict on
   the scheduler. Concurrent collects never share mutable state, and the
   timings serialize naturally with the item.
-* Recording is decoupled from emitting: stats are accumulated into the typed
-  object, and ``record_step_stats`` writes a step's log line and JSONL row
-  without touching the accumulation sites.
+* Stats are accumulated into the typed object and emitted by the trainer at
+  the end of a step, without changing the collection sites.
 
 Metric keys are a *dynamic* namespace (``collect.*``, ``continuous.*``,
 ``advantage``, ``backward``, ``optim_step``, plus model-family phases), so they
@@ -25,13 +24,10 @@ their peak across merged microbatches.
 from __future__ import annotations
 
 import contextlib
-import json
-import logging
 import math
 import time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
 
 
 @dataclass(slots=True)
@@ -187,50 +183,4 @@ def _sum_optional(left: float | None, right: float | None) -> float | None:
     return float(right) if left is None else float(left) + float(right)
 
 
-def record_step_stats(
-    step: int,
-    stats: RolloutStats,
-    *,
-    jsonl_path: str | Path,
-    logger: logging.Logger,
-) -> None:
-    """Log one step's phase timings and append them as one JSONL row.
-
-    The log line is the human-facing view: ``collect.*`` phases are excluded
-    from its percentage base. The JSONL row is the complete machine-readable
-    view; ``metrics.csv`` exposes only the stable continuous-health subset,
-    not arbitrary ``collect.*`` phases. Empty stats emit nothing.
-    """
-
-    metrics = stats.as_metrics_dict()
-    if not metrics:
-        return
-    percentage_phases = {
-        name: seconds
-        for name, seconds in stats.phase_seconds.items()
-        if not name.startswith("collect.")
-    }
-    total = sum(percentage_phases.values())
-    if total <= 0:
-        total = 0.0
-        percentage_phases = {}
-    parts = " | ".join(
-        (
-            f"{name}={value:.3f}s ({100 * value / total:.1f}%)"
-            if name in percentage_phases
-            else f"{name}={value:.3f}"
-        )
-        for name, value in metrics.items()
-    )
-    logger.info("phase_times[step=%d] total=%.3fs | %s", step, total, parts)
-
-    path = Path(jsonl_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"step": int(step), **metrics}, sort_keys=True) + "\n")
-
-
-__all__ = [
-    "RolloutStats",
-    "record_step_stats",
-]
+__all__ = ["RolloutStats"]

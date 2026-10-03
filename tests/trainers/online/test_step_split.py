@@ -346,7 +346,7 @@ def test_streaming_scaler_skipped_update_does_not_publish_weights(tmp_path) -> N
 
 
 def test_phase_events_use_the_metric_step(tmp_path) -> None:
-    """JSON phase events and the stats sink use the same zero-based step."""
+    """JSON phase events and rollout stats use the same zero-based step."""
     import json
 
     trainer = _build_trainer(tmp_path)
@@ -356,8 +356,10 @@ def test_phase_events_use_the_metric_step(tmp_path) -> None:
 
     event_path = tmp_path / "phase_events.jsonl"
     events = [json.loads(line) for line in event_path.read_text().splitlines()]
+    stats = [json.loads(line) for line in (tmp_path / "rollout_stats.jsonl").read_text().splitlines()]
     assert events
     assert {event["step"] for event in events} == {0}
+    assert [row["step"] for row in stats] == [0]
     assert trainer.state.step == 1
 
 
@@ -384,6 +386,13 @@ def test_streaming_profiles_training_phases(tmp_path) -> None:
 
     for phase in ("evaluate", "backward", "optim_step"):
         assert metrics.phase_times[phase] > 0.0
+
+    stats = [
+        json.loads(line) for line in (tmp_path / "rollout_stats.jsonl").read_text().splitlines()
+    ]
+    assert len(stats) == 1
+    assert stats[0]["step"] == 0
+    assert all(stats[0][phase] > 0.0 for phase in ("evaluate", "backward", "optim_step"))
 
     events = [
         json.loads(line) for line in (tmp_path / "phase_events.jsonl").read_text().splitlines()

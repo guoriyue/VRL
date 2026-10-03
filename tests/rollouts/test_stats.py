@@ -1,11 +1,8 @@
-"""Tests for the per-request rollout stats accumulator and its step emitter."""
+"""Tests for the per-request rollout stats accumulator."""
 
 from __future__ import annotations
 
-import json
-import logging
-
-from vrl.rollouts.stats import RolloutStats, record_step_stats
+from vrl.rollouts.stats import RolloutStats
 
 
 def test_add_phase_sums_on_repeat() -> None:
@@ -94,65 +91,3 @@ def test_add_phases_accumulates_mapping() -> None:
     s.add_phases({"a": 1.0, "b": 2.0})
     assert s.phase_seconds == {"a": 1.0, "b": 2.0}
     assert RolloutStats().phase_seconds == {}
-
-
-def test_step_stats_log_excludes_collect_from_percent_base(caplog, tmp_path) -> None:
-    s = RolloutStats()
-    s.add_phase("denoise", 3.0)
-    s.add_phase("collect.engine_generate", 7.0)  # excluded from total base
-    logger = logging.getLogger("vrl.stats.test")
-    with caplog.at_level(logging.INFO, logger="vrl.stats.test"):
-        record_step_stats(5, s, jsonl_path=tmp_path / "stats.jsonl", logger=logger)
-    msg = caplog.records[-1].getMessage()
-    assert "total=3.000s" in msg  # collect.* not in the base
-    assert "denoise=3.000s (100.0%)" in msg
-
-
-def test_step_stats_emit_nothing_when_empty(caplog, tmp_path) -> None:
-    """Checks an empty record neither logs nor creates a file or a blank row."""
-
-    path = tmp_path / "rollout_stats.jsonl"
-    logger = logging.getLogger("vrl.stats.empty")
-    with caplog.at_level(logging.INFO, logger="vrl.stats.empty"):
-        record_step_stats(0, RolloutStats(), jsonl_path=path, logger=logger)
-    assert caplog.records == []
-    assert not path.exists()
-
-
-def test_step_stats_log_keeps_metrics_without_a_percentage_base(caplog, tmp_path) -> None:
-    stats = RolloutStats()
-    stats.add_phase("collect.wall", 2.0)
-    stats.add_counter("collect.sample_count", 4)
-    stats.observe_gauge("continuous.producer_inflight", 2)
-    logger = logging.getLogger("vrl.stats.collection")
-    with caplog.at_level(logging.INFO, logger="vrl.stats.collection"):
-        record_step_stats(3, stats, jsonl_path=tmp_path / "stats.jsonl", logger=logger)
-    message = caplog.records[-1].getMessage()
-    assert "total=0.000s" in message
-    assert "collect.wall=2.000" in message
-    assert "collect.sample_count=4.000" in message
-    assert "continuous.producer_inflight=2.000" in message
-    assert "%" not in message
-
-
-def test_step_stats_append_one_jsonl_row_per_step(tmp_path) -> None:
-    """Checks collect.* phases reach a machine-readable file, not just the log."""
-
-    path = tmp_path / "nested" / "rollout_stats.jsonl"
-    logger = logging.getLogger("vrl.stats.jsonl")
-
-    first = RolloutStats()
-    first.add_phases({"collect.wall": 2.0, "collect.generation_reward_overlap": 0.5})
-    first.add_counter("collect.group_count", 2)
-    record_step_stats(3, first, jsonl_path=path, logger=logger)
-
-    second = RolloutStats()
-    second.add_phases({"collect.wall": 1.5})
-    record_step_stats(4, second, jsonl_path=path, logger=logger)
-
-    rows = [json.loads(line) for line in path.read_text().splitlines()]
-    assert [row["step"] for row in rows] == [3, 4]
-    assert rows[0]["collect.wall"] == 2.0
-    assert rows[0]["collect.generation_reward_overlap"] == 0.5
-    assert rows[0]["collect.group_count"] == 2
-    assert rows[1]["collect.wall"] == 1.5

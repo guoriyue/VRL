@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import contextlib
 import itertools
+import json
 import logging
 import math
 import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -33,7 +35,7 @@ from vrl.rollouts.admission import AdmissionLedger
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.orchestration import build_rollout_schedule
-from vrl.rollouts.stats import RolloutStats, record_step_stats
+from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.core.types import CORRECTED_REPLAY_MAX_ABS_LOG_RATIO, TrainState
 from vrl.trainers.diagnostics import (
     append_jsonl_record,
@@ -1526,14 +1528,37 @@ class OnlineTrainer:
         self.state.step += 1
         stats.add_phases(optimizer_timer.times)
         stats.merge(sync_stats)
+        phase_times = stats.as_metrics_dict()
         if self.config.profile:
-            record_step_stats(
-                metric_step, stats, jsonl_path=self._rollout_stats_path, logger=logger
-            )
+            if phase_times:
+                percentage_phases = {
+                    name: seconds
+                    for name, seconds in stats.phase_seconds.items()
+                    if not name.startswith("collect.")
+                }
+                total = sum(percentage_phases.values())
+                if total <= 0:
+                    total = 0.0
+                    percentage_phases = {}
+                parts = " | ".join(
+                    (
+                        f"{name}={value:.3f}s ({100 * value / total:.1f}%)"
+                        if name in percentage_phases
+                        else f"{name}={value:.3f}"
+                    )
+                    for name, value in phase_times.items()
+                )
+                logger.info("phase_times[step=%d] total=%.3fs | %s", metric_step, total, parts)
+                path = Path(self._rollout_stats_path)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("a", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps({"step": int(metric_step), **phase_times}, sort_keys=True)
+                        + "\n"
+                    )
             for timer in (*self._update_phase_timers, optimizer_timer):
                 self._write_phase_events(timer, step=metric_step)
             self._update_phase_timers.clear()
-        phase_times = stats.as_metrics_dict()
         metrics = agg.build(
             reward_mean=reward_mean,
             reward_std=reward_std,
@@ -1674,7 +1699,7 @@ class OnlineTrainer:
         # collect.* phase timings arrive inside iteration.stats: each collect
         # call owns its timings (no shared collector state), and the
         # schedule/consumer aggregates them per iteration. The trainer phases
-        # (timer) merge on top into one typed accumulator, emitted via the sink.
+        # (timer) merge on top into one typed accumulator, emitted per step.
         step_stats = self._step_stats(iteration, timer)
         metric_step = self.state.step
 
@@ -1685,9 +1710,31 @@ class OnlineTrainer:
             step_stats.merge(await self.rollout_schedule.after_train_step())
         phase_times = step_stats.as_metrics_dict()
         if cfg.profile and phase_times:
-            record_step_stats(
-                metric_step, step_stats, jsonl_path=self._rollout_stats_path, logger=logger
+            percentage_phases = {
+                name: seconds
+                for name, seconds in step_stats.phase_seconds.items()
+                if not name.startswith("collect.")
+            }
+            total = sum(percentage_phases.values())
+            if total <= 0:
+                total = 0.0
+                percentage_phases = {}
+            parts = " | ".join(
+                (
+                    f"{name}={value:.3f}s ({100 * value / total:.1f}%)"
+                    if name in percentage_phases
+                    else f"{name}={value:.3f}"
+                )
+                for name, value in phase_times.items()
             )
+            logger.info("phase_times[step=%d] total=%.3fs | %s", metric_step, total, parts)
+            path = Path(self._rollout_stats_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps({"step": int(metric_step), **phase_times}, sort_keys=True)
+                    + "\n"
+                )
             self._write_phase_events(timer, step=metric_step)
 
         metrics = agg_metrics.build(
