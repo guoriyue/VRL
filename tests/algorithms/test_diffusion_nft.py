@@ -358,6 +358,36 @@ def test_edm_scale_timestep_grid_fails_loudly() -> None:
         )
 
 
+def test_bf16_predictions_preserve_advantage_flip_invariant(monkeypatch) -> None:
+    """Non-extreme advantages must not bias equal branches through BF16 weights.
+
+    theta_old is the detached live prediction, so both branch losses coincide
+    and flipping the advantage sign must leave the policy loss unchanged up to
+    FP32 rounding even when the model emits BF16 predictions: the complementary
+    mix weights stay in FP32 instead of inheriting the prediction dtype, where
+    mix + (1 - mix) drifts from one by ~1e-2.
+    """
+    torch.manual_seed(4321)
+    model = _build_model()
+    forward = model.replay_forward_with_latents
+
+    def bf16_forward(*args, **kwargs):
+        result = forward(*args, **kwargs)
+        return {**result, "noise_pred": result["noise_pred"].to(torch.bfloat16)}
+
+    monkeypatch.setattr(model, "replay_forward_with_latents", bf16_forward)
+    batch = _build_batch(
+        x0=torch.randn(_LATENT_SHAPE),
+        noise=torch.randn(_LATENT_SHAPE),
+        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
+        timestep=500.0,
+    )
+    nft = DiffusionNFT(DiffusionNFTConfig(nft_beta=1.0, kl_coef=0.0))
+    _, metrics_neg = nft.compute_batch_timestep_loss(model, batch, 0, torch.tensor([-4.9375]))
+    _, metrics_pos = nft.compute_batch_timestep_loss(model, batch, 0, torch.tensor([4.9375]))
+    assert abs(metrics_pos.policy_loss - metrics_neg.policy_loss) <= 1e-6
+
+
 def test_clean_prediction_auxiliary_loss_learns_when_rewards_tie(monkeypatch) -> None:
     """A task loss uses the live clean prediction without an extra model forward."""
 

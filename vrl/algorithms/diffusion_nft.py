@@ -144,7 +144,9 @@ class DiffusionNFT(PreviousPolicyObjective):
         # .clamp(0.0, 1.0) on reward_mix makes any second ±advantage_scale clamp
         # on `adv` provably redundant — clamp(clamp(a,-s,s)/s/2+0.5, 0, 1) equals
         # clamp(a/s/2+0.5, 0, 1) for all a — so read advantages directly.
-        adv = advantages.to(device=x0.device, dtype=forward_prediction.dtype)
+        # Keep complementary loss weights in FP32: BF16 rounding can make
+        # mix + (1 - mix) differ from one even with identical branch losses.
+        adv = advantages.to(device=x0.device, dtype=torch.float32)
         while adv.ndim < forward_prediction.ndim:
             adv = adv.unsqueeze(-1)
         reward_mix = ((adv / advantage_scale) / 2.0 + 0.5).clamp(0.0, 1.0)
