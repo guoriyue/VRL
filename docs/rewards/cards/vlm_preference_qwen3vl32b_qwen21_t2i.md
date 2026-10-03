@@ -80,3 +80,19 @@ polish, which explains the lower agreement of the natural set; human labels are 
 Decision: train with `/reward=vlm_preference_http_tonal` -- the natural judge (weight 1) plus the model-free
 `tonal_anchor` guard (weight 2, `vrl/rewards/models/tonal_anchor.py`): 0 inside a 0.02 band around the
 base reference's mean luma / saturation, negative outside. Run `vlm_natural_tonal1` started 20:45 from base.
+
+## Detail criteria (`qwen3vl32b_pairwise_detail.yaml`, 2026-10-02 evening): structure 2, natural 2, detail 1 on 2x2 crops, fidelity 0.5
+
+Quick gates through the live service (6 shared-noise groups vs their base reference, `/mnt/nvme/aes2/qualify_detail_http.py`):
+
+| key | spread | noise25 | blur3 | smooth | bloom | bright | sat |
+|---|---|---|---|---|---|---|---|
+| composite | 0.064 | 0.00 | 0.00 | 0.00 | 0.33 | 0.67 | 0.67 |
+| structure | 0.044 | 0.00 | 0.00 | 0.00 | 1.00 | 0.67 | 0.50 |
+| natural | 0.097 | 0.00 | 0.00 | 0.00 | 0.50 | 0.50 | 0.33 |
+| **detail (crops)** | 0.085 | **0.00** | **0.00** | **0.00** | 0.33 | 0.67 | 0.33 |
+
+The crop-judged detail criterion is not fooled by noise, blur or smoothing (the failure modes a "detail" reward
+usually has); exposure/saturation/glow remain blind spots of every criterion and stay with the tonal anchor.
+n = 6 groups, so rates are coarse; cost is 10 judge forwards per image (~23 s). In use for `vlm_gptref_detail1`
+(GPT references, SDE window [8, 24]).
