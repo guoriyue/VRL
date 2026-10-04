@@ -843,66 +843,6 @@ async def test_sibling_failure_before_lease_transition_preserves_root_and_force_
 
 
 @pytest.mark.asyncio
-async def test_generate_rejects_in_flight_offload() -> None:
-    runtime = _on_demand_runtime()
-    session = _BlockingSleepSession()
-    runtime._session = session
-    offload = asyncio.create_task(runtime.offload())
-    await asyncio.wait_for(session.sleep_started.wait(), timeout=1)
-
-    request = SimpleNamespace(
-        request_id="offload-race",
-        sampling={},
-        samples_per_generation_batch=None,
-        policy_version=None,
-    )
-    with pytest.raises(RuntimeError, match="offload to be idle"):
-        await runtime.generate(request)
-
-    session.finish_sleep.set()
-    await asyncio.wait_for(offload, timeout=1)
-
-
-@pytest.mark.asyncio
-async def test_generate_rejects_in_flight_activation() -> None:
-    runtime = _on_demand_runtime()
-    session = _BlockingRestoreSession()
-    runtime._session = session
-    runtime._session_parked = True
-    await _stage_pending_install(runtime, "W2", 2)
-
-    activation = asyncio.create_task(runtime.activate())
-    await asyncio.wait_for(session.restore_started.wait(), timeout=1)
-    request = SimpleNamespace(
-        request_id="activation-race",
-        sampling={},
-        samples_per_generation_batch=None,
-        policy_version=None,
-    )
-
-    with pytest.raises(RuntimeError, match="activation to complete"):
-        await runtime.generate(request)
-
-    session.finish_restore.set()
-    await asyncio.wait_for(activation, timeout=1)
-
-
-@pytest.mark.asyncio
-async def test_weight_update_rejects_in_flight_offload() -> None:
-    runtime = _on_demand_runtime()
-    session = _BlockingSleepSession()
-    runtime._session = session
-    offload = asyncio.create_task(runtime.offload())
-    await asyncio.wait_for(session.sleep_started.wait(), timeout=1)
-
-    with pytest.raises(RuntimeError, match="overlap rollout offload"):
-        await runtime.update_weights("W2", 2)
-
-    session.finish_sleep.set()
-    await asyncio.wait_for(offload, timeout=1)
-
-
-@pytest.mark.asyncio
 async def test_offload_failure_runs_terminal_cleanup() -> None:
     runtime = _on_demand_runtime()
     offload_error = RuntimeError("sleep failed")
@@ -1012,29 +952,6 @@ async def test_cancelled_launch_closes_the_fleet_its_thread_still_produces() -> 
     assert candidate.calls == ["shutdown"]
     assert runtime._session is None
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-
-
-@pytest.mark.asyncio
-async def test_update_rejects_in_flight_activation() -> None:
-    runtime = _on_demand_runtime()
-    await _stage_pending_install(runtime, "W1", 1)
-    candidate = _BlockingRestoreSession()
-
-    class _Factory:
-        async def launch_session(self):
-            return candidate
-
-    runtime._session_factory = _Factory().launch_session
-    activation = asyncio.create_task(runtime.activate())
-    await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
-
-    with pytest.raises(RuntimeError, match="overlap rollout activate"):
-        await runtime.update_weights("W2", 2)
-    _assert_pending_install(runtime, "W1", 1)
-
-    candidate.finish_restore.set()
-    await asyncio.wait_for(activation, timeout=1)
-    assert candidate.calls == [("update", "W1", 1)]
 
 
 @pytest.mark.asyncio

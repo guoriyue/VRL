@@ -332,7 +332,6 @@ async def test_submitted_generation_cancellation_force_kills_and_stays_cancelled
     assert caught.value.__cause__ is terminal
     assert runtime.lifecycle.failure is terminal
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._force_shutdown is True
     assert _Release.calls == 0
     assert _Ray.killed == [actor]
 
@@ -354,7 +353,6 @@ async def test_pre_submission_generation_cancellation_keeps_runtime_running() ->
     assert caught.value.__cause__ is None
     assert runtime.lifecycle.phase is RuntimePhase.RUNNING
     assert runtime.lifecycle.failure is None
-    assert runtime._force_shutdown is False
 
 
 @pytest.mark.asyncio
@@ -396,7 +394,6 @@ async def test_terminal_executor_error_closes_runtime() -> None:
         await runtime.generate(_request())
 
     assert caught.value is error
-    assert runtime._force_shutdown is True
     assert runtime.lifecycle.failure is error
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
 
@@ -585,7 +582,6 @@ async def test_later_timeout_upgrades_ordinary_failure_to_force_cleanup(monkeypa
 
     assert runtime.lifecycle.failure is ordinary
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-    assert runtime._force_shutdown is True
     assert _Release.calls == 0
     assert _Ray.killed == [actor]
 

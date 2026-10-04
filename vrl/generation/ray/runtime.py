@@ -7,7 +7,7 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from typing import Any
 
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.types import GenerationOutput, GenerationRequest
@@ -66,11 +66,9 @@ class RayGenerationRuntime:
         self._installed_policy_version = initial_policy_version if session is not None else None
         self._pending_install: _PendingPolicyInstall | None = None
         self._session_parked = False
-
-        # Set while activate/offload is awaited, so an overlapping call fails fast.
-        self._transition: Literal["activate", "offload"] | None = None
+        # Concurrent terminal failures each call shutdown; the lock lets the
+        # first release the fleet while the rest observe the terminated phase.
         self._shutdown_lock = asyncio.Lock()
-        self._force_shutdown = False
 
     @property
     def supports_non_draining_weight_sync(self) -> bool:
@@ -90,10 +88,7 @@ class RayGenerationRuntime:
                 raise
         else:
             return
-        stable_failure = await self._terminalize_after_failure(
-            failure,
-            force_shutdown=True,
-        )
+        stable_failure = await self._terminalize_after_failure(failure)
         raise stable_failure
 
     async def activate(self) -> None:
@@ -102,38 +97,10 @@ class RayGenerationRuntime:
         await self._admit_operation("activate")
         if self._session_factory is None:
             return
-        self._reject_transition_overlap("activate")
-        self._transition = "activate"
-        try:
-            await self._activate_once()
-        finally:
-            self._transition = None
-
-    def _reject_transition_overlap(self, operation: str) -> None:
-        """Reject an operation issued while activate/offload is still awaited.
-
-        The rollout schedule sequences these transitions; an overlap is a
-        schedule bug, reported before it can touch the fleet.
-        """
-
-        if self._transition is not None:
-            raise RuntimeError(
-                f"{operation} cannot overlap rollout {self._transition}; "
-                "the rollout schedule must await each GPU handoff in turn",
-            )
+        await self._activate_once()
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         await self._admit_operation("generate")
-        if self._transition == "activate":
-            raise RuntimeError(
-                "generate requires rollout activation to complete; "
-                "the rollout schedule must await activate() before collection",
-            )
-        if self._transition == "offload":
-            raise RuntimeError(
-                "generate requires rollout offload to be idle; "
-                "the rollout schedule must drain before the GPU handoff",
-            )
         try:
             session = self._session
             if session is None or self._session_parked:
@@ -172,8 +139,6 @@ class RayGenerationRuntime:
         """Install on active workers or stage the accepted target while inactive."""
 
         await self._admit_operation("update_weights")
-        self._reject_transition_overlap("update_weights")
-
         require_int(policy_version, path="policy_version", minimum=0)
         policy = _PendingPolicyInstall(
             trainable_state=trainable_state,
@@ -220,16 +185,14 @@ class RayGenerationRuntime:
                 await self._admit_operation("offload")
             await self.shutdown()
             return
-        self._reject_transition_overlap("offload")
         session = self._session
         if session is None or self._session_parked:
             return
-        self._transition = "offload"
         try:
             await session.sleep_engines()
             self._session_parked = True
         except BaseException as error:
-            failure = await self._terminalize_after_failure(error, force_shutdown=True)
+            failure = await self._terminalize_after_failure(error)
             if isinstance(error, asyncio.CancelledError):
                 if failure is not error:
                     error.__cause__ = failure
@@ -237,8 +200,6 @@ class RayGenerationRuntime:
             if failure is error:
                 raise
             raise failure from failure.__cause__
-        finally:
-            self._transition = None
 
     async def shutdown(self) -> None:
         """Close admission and release the one owned actor session.
@@ -263,18 +224,10 @@ class RayGenerationRuntime:
                 raise
             self.lifecycle.finish_shutdown()
 
-    async def _terminalize_after_failure(
-        self,
-        error: BaseException,
-        *,
-        force_shutdown: bool = False,
-    ) -> BaseException:
+    async def _terminalize_after_failure(self, error: BaseException) -> BaseException:
         """Close admission and return the stable first failure after cleanup."""
 
-        failure = self._publish_failure(
-            error,
-            force_shutdown=force_shutdown,
-        )
+        failure = self._publish_failure(error)
         self._pending_install = None
         try:
             await self.shutdown()
@@ -291,36 +244,28 @@ class RayGenerationRuntime:
             failure.add_note(f"generation terminal cleanup also failed: {cleanup_error!r}")
         return failure
 
-    def _publish_failure(
-        self,
-        error: BaseException,
-        *,
-        force_shutdown: bool = False,
-    ) -> BaseException:
-        """Publish the first failure and upgrade the owned session to force-close."""
+    def _publish_failure(self, error: BaseException) -> BaseException:
+        """Publish the first failure and upgrade the owned session to force-close.
+
+        A failed runtime never releases ranks gracefully, so an in-progress
+        graceful shutdown is interrupted here rather than waited out.
+        """
 
         terminal_error = find_error_cause(error, TerminalRuntimeError)
-        proposed_failure = terminal_error if terminal_error is not None else error
-        failure = self.lifecycle.fail(proposed_failure)
-        terminal_failure = find_error_cause(failure, TerminalRuntimeError)
-        if force_shutdown or terminal_error is not None or terminal_failure is not None:
-            self._force_shutdown = True
-            session = self._session
-            if session is not None:
-                session.force_close()
+        failure = self.lifecycle.fail(terminal_error if terminal_error is not None else error)
+        session = self._session
+        if session is not None:
+            session.force_close()
         return failure
 
     async def _activate_once(self) -> None:
         candidate: RayGenerationSession | None = None
-        force_shutdown = False
         try:
             session = self._session
             if session is not None:
                 if self._session_parked:
-                    force_shutdown = True
                     await session.wake_engines()
                     self._session_parked = False
-                    force_shutdown = False
                     pending = self._pending_install
                     if pending is not None and (
                         pending.policy_version != self._installed_policy_version
@@ -379,10 +324,7 @@ class RayGenerationRuntime:
                 and error.__cause__ is None
             ):
                 raise
-            failure = await self._terminalize_after_failure(
-                error,
-                force_shutdown=force_shutdown,
-            )
+            failure = await self._terminalize_after_failure(error)
             if isinstance(error, asyncio.CancelledError):
                 error.__cause__ = failure
                 raise
@@ -393,9 +335,7 @@ class RayGenerationRuntime:
     async def _teardown_session(self) -> None:
         session = self._session
         if session is not None:
-            await session.close(
-                force=self._force_shutdown or self.lifecycle.failure is not None,
-            )
+            await session.close(force=self.lifecycle.failure is not None)
         self._session = None
         self._session_parked = False
         self._installed_policy_version = None
