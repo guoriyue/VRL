@@ -8,7 +8,6 @@ from omegaconf import OmegaConf
 from vrl.config.schema import parse_config
 from vrl.ray.placement import BundleLayout
 from vrl.ray.resources import (
-    RayLifecyclePlan,
     ResolvedDistributedResources,
     format_distributed_resource_plan,
 )
@@ -861,34 +860,6 @@ def test_http_only_reward_owns_no_local_resource_or_handoff() -> None:
     assert BundleLayout.from_resources(resolved).reward_bundle_indices == ()
 
 
-def test_http_reward_explicit_parking_has_no_local_reservation() -> None:
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [0]},
-                    "offload": {"train": True, "rollout": True, "reward": True},
-                },
-                reward_components={"editreward": 1.0},
-                reward_inference={
-                    "editreward": {
-                        "kind": "http",
-                        "endpoint": "http://localhost:8315",
-                        "expected_model": "editreward-qwen25-7b",
-                    },
-                },
-            )
-        ),
-    )
-    assert resolved.reward_devices == ()
-    assert BundleLayout.from_resources(resolved).reward_bundle_indices == ()
-    assert resolved.lifecycle.park_trainer_for_reward
-    assert resolved.lifecycle.park_rollout_for_reward
-    assert resolved.lifecycle.offload_reward
-
-
 def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> None:
     """A remote sibling does not erase a real local component's CPU execution."""
 
@@ -918,37 +889,6 @@ def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> N
     assert resolved.reward_torch_device() == "cpu"
     # CPU rewards get no bundle: they execute in the driver process.
     assert BundleLayout.from_resources(resolved).reward_bundle_indices == ()
-
-
-def test_cpu_reward_does_not_cancel_http_shared_gpu_parking() -> None:
-    """A CPU fidelity scorer can accompany a GPU service's explicit lease."""
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [0]},
-                    "reward": {"device": "cpu"},
-                    "offload": {"train": True, "rollout": True, "reward": True},
-                },
-                reward_components={"image_sharpness": 4.0, "editreward": 1.0},
-                reward_inference={
-                    "editreward": {
-                        "kind": "http",
-                        "endpoint": "http://localhost:8315",
-                        "expected_model": "editreward-qwen25-7b",
-                    },
-                },
-            )
-        ),
-    )
-    assert resolved.reward_torch_device() == "cpu"
-    assert resolved.reward_devices == ()
-    assert BundleLayout.from_resources(resolved).reward_bundle_indices == ()
-    assert resolved.lifecycle.park_trainer_for_reward
-    assert resolved.lifecycle.park_rollout_for_reward
-    assert resolved.lifecycle.offload_reward
 
 
 def test_unpinned_reward_needs_a_rollout_gpu_to_share() -> None:
@@ -1203,130 +1143,3 @@ def test_cosmos_async_reward_recipe_resolves_resident_reward_overlap() -> None:
     # >=2 inflight groups is the invariant that lets rollout(N+1) produce while
     # reward(N) scores; assert the relation, not the literal value.
     assert typed.continuous.max_inflight_groups >= 2
-
-
-def test_offload_true_forces_parking_on_a_private_gpu() -> None:
-    """``offload.<role>: true`` parks a role that shares nothing."""
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0, 1, 2],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1]},
-                    "reward": {"device": "gpu", "devices": [2]},
-                    "offload": {"train": True, "rollout": True, "reward": True},
-                },
-            )
-        ),
-    )
-
-    plan = resolved.lifecycle
-    assert not resolved.colocated
-    assert plan.offload_train and plan.offload_rollout and plan.offload_reward
-    assert plan.rollout_mode == "on_demand"
-    assert plan.park_trainer_for_rollout and plan.park_rollout_for_reward
-    assert plan.park_trainer_for_reward and plan.park_rollout_for_train
-
-
-def test_resident_reward_does_not_disable_neighbour_parking() -> None:
-    """A resident reward on the rollout card (miles' colocated PickScore shape):
-    the reward never parks, while automatic trainer and rollout roles still
-    park before scoring and retain their mutual handoff."""
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [0]},
-                    "reward": {"device": "gpu"},
-                    "offload": {"reward": False},
-                },
-            )
-        ),
-    )
-
-    plan = resolved.lifecycle
-    assert plan.reward_offload is False and not plan.offload_reward
-    assert plan.park_rollout_for_reward and plan.park_trainer_for_reward
-    assert plan.offload_rollout and plan.offload_train
-    assert plan.park_rollout_for_train and plan.park_trainer_for_rollout
-
-
-def test_resident_rollout_on_a_trainer_gpu_is_rejected() -> None:
-    with pytest.raises(ValueError, match=r"offload\.rollout=false but rollout shares trainer"):
-        ResolvedDistributedResources.from_root(
-            parse_config(
-                _cfg(
-                    {
-                        "visible_devices": [0],
-                        "trainer": {"devices": [0]},
-                        "rollout": {"devices": [0]},
-                        "offload": {"rollout": False},
-                    },
-                )
-            ),
-        )
-
-
-def test_offload_true_on_a_gpu_less_role_is_rejected() -> None:
-    with pytest.raises(ValueError, match=r"offload\.reward=true but the reward role owns no GPU"):
-        ResolvedDistributedResources.from_root(
-            parse_config(
-                _cfg(
-                    {
-                        "visible_devices": [0, 1],
-                        "trainer": {"devices": [0]},
-                        "rollout": {"devices": [1]},
-                        "reward": {"device": "cpu"},
-                        "offload": {"reward": True},
-                    },
-                )
-            ),
-        )
-
-
-def test_offload_auto_keeps_the_derived_plan() -> None:
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0, 1],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1]},
-                    "offload": {"train": "auto", "rollout": "auto", "reward": "auto"},
-                },
-            )
-        ),
-    )
-
-    plan = resolved.lifecycle
-    assert not (plan.offload_train or plan.offload_rollout or plan.offload_reward)
-    assert plan.rollout_mode == "resident"
-
-
-@pytest.mark.parametrize("resident_role", ["trainer", "rollout", "reward"])
-@pytest.mark.parametrize("shared", [False, True])
-def test_auto_offload_depends_on_devices_not_neighbour_setting(resident_role, shared):
-    devices = {"trainer": (0,), "rollout": (0 if shared else 1,), "reward": (0 if shared else 2,)}
-    settings = {
-        "trainer": "train_offload",
-        "rollout": "rollout_offload",
-        "reward": "reward_offload",
-    }
-    plan = RayLifecyclePlan(**devices, **{settings[resident_role]: False})
-    actual = {
-        "trainer": plan.offload_train,
-        "rollout": plan.offload_rollout,
-        "reward": plan.offload_reward,
-    }
-    for role, offloads in actual.items():
-        assert offloads is (shared and role != resident_role)
-    for role, _other, parks in [
-        ("trainer", "rollout", plan.park_trainer_for_rollout),
-        ("rollout", "trainer", plan.park_rollout_for_train),
-        ("trainer", "reward", plan.park_trainer_for_reward),
-        ("rollout", "reward", plan.park_rollout_for_reward),
-    ]:
-        assert parks is (shared and role != resident_role)

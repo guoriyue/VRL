@@ -72,8 +72,8 @@ directory validation, frozen CPU mappings, host-memory reclamation and file
 cleanup, and `TrainingStateParking` only adds optimizer, gradient, EMA and
 scaler storage. The trainer does not allocate its state inside CuMem;
 generation CuMem backups use pinned RAM and do not implement disk storage. RAM
-capacity remains a resource requirement. `distributed.resources.offload`
-decides when roles park.
+capacity remains a resource requirement. GPU sharing in
+`distributed.resources` decides when roles park.
 
 ### Ray infrastructure (`vrl/ray`)
 

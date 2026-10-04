@@ -190,30 +190,6 @@ class RewardResourceConfig:
         return f"distributed.resources.{self.role}"
 
 
-OffloadSetting = Literal["auto"] | bool
-
-
-@dataclass(frozen=True, slots=True)
-class OffloadConfig:
-    """Per-role GPU offload switches (public key: distributed.resources.offload).
-
-    This decides WHETHER a role parks; how and where it parks is fixed per role
-    (vocabulary in ``vrl/models/parking.py``), except for the trainer's
-    ``trainer_parking_directory``.
-
-    ``auto`` (default) offloads a role exactly when it shares a GPU with another
-    role, as resolved from the device sets. ``true`` forces a role to park at
-    every phase boundary even on a private card (trade time for headroom).
-    ``false`` keeps only that role resident. It does not change another role's
-    offload decision: an automatic neighbour still parks when they share a GPU.
-    A resident role must fit alongside whichever other role is currently active.
-    """
-
-    train: OffloadSetting = "auto"
-    rollout: OffloadSetting = "auto"
-    reward: OffloadSetting = "auto"
-
-
 @dataclass(frozen=True, slots=True)
 class DistributedResourceConfig:
     """Top-level role resource request."""
@@ -222,11 +198,10 @@ class DistributedResourceConfig:
     trainer: RoleResourceConfig = field(default_factory=RoleResourceConfig)
     rollout: RolloutResourceConfig = field(default_factory=RolloutResourceConfig)
     reward: RewardResourceConfig = field(default_factory=RewardResourceConfig)
-    offload: OffloadConfig = field(default_factory=OffloadConfig)
     cross_node: bool = False
     # The trainer's parking destination (public key:
     # distributed.resources.trainer_parking_directory; vocabulary in
-    # vrl/models/parking.py). ``offload`` decides WHETHER a role gives up its
+    # vrl/models/parking.py). GPU sharing decides WHETHER a role gives up its
     # GPU; this decides WHERE the trainer's copy goes. Unset: host RAM. Set: a
     # node-local disk directory (NVMe) that the trainer's frozen shards are
     # written to as shared file mappings, so Linux can drop and re-read them
@@ -264,39 +239,19 @@ class RayLifecyclePlan:
 
     The three ``offload_*`` bits are the public vocabulary (they match miles'
     ``--offload-train`` / ``--offload-rollout``): a role offloads when it
-    shares a GPU with any other role, or when ``distributed.resources.offload``
-    forces it. The ``park_<role>_for_<phase>`` views name the boundary a park
-    happens at; they are finer than the offload bits because a role can share
-    with one neighbour but not the other (trainer+rollout on GPU 0, reward on
-    GPU 1 parks nothing around scoring). A forced role parks at every boundary;
-    a resident role (``offload.<role>: false``) never parks. Each neighbour
-    independently follows its own setting and physical GPU overlap.
+    shares a GPU with any other role. The ``park_<role>_for_<phase>`` views
+    name the boundary a park happens at; they are finer than the offload bits
+    because a role can share with one neighbour but not the other
+    (trainer+rollout on GPU 0, reward on GPU 1 parks nothing around scoring).
     """
 
     trainer: tuple[int, ...]
     rollout: tuple[int, ...]
     reward: tuple[int, ...]
-    # ``distributed.resources.offload.<role>``: "auto" derives from sharing,
-    # True forces a park on a private card, False declares the role resident.
-    train_offload: OffloadSetting = "auto"
-    rollout_offload: OffloadSetting = "auto"
-    reward_offload: OffloadSetting = "auto"
-
-    _SETTING_BY_ROLE: ClassVar[dict[str, str]] = {
-        "trainer": "train_offload",
-        "rollout": "rollout_offload",
-        "reward": "reward_offload",
-    }
-
-    def _setting(self, role: str) -> OffloadSetting:
-        return getattr(self, self._SETTING_BY_ROLE[role])
 
     def _should_offload_for(self, role: str, other: str) -> bool:
-        """Resolve this role's offload setting at the other role's phase."""
+        """Whether this role shares a GPU with the other role's phase."""
 
-        setting = self._setting(role)
-        if setting != "auto":
-            return setting
         return bool(set(getattr(self, role)) & set(getattr(self, other)))
 
     # ── the three offload bits ────────────────────────────────────────
@@ -597,44 +552,11 @@ class ResolvedDistributedResources:
             tuple(trainer_devices) if reward_uses_trainer_device else tuple(reward_devices)
         )
 
-        # Offload scheduling is read straight off the resolved device sets;
-        # ``offload.<role>`` may force a park or must agree with the sharing.
+        # Offload scheduling is read straight off the resolved device sets.
         lifecycle = RayLifecyclePlan(
             trainer=tuple(trainer_devices),
             rollout=tuple(rollout_devices),
             reward=tuple(reward_execution_devices),
-        )
-        for role, setting, owns_gpu in (
-            ("train", config.offload.train, bool(trainer_devices)),
-            ("rollout", config.offload.rollout, bool(rollout_devices)),
-            ("reward", config.offload.reward, bool(reward_execution_devices)),
-        ):
-            key = f"distributed.resources.offload.{role}"
-            if setting != "auto" and not isinstance(setting, bool):
-                raise ValueError(f"{key} must be auto, true or false; got {setting!r}")
-            # An operator-owned HTTP service has no local reservation, but
-            # may explicitly take a parking lease on this machine's GPU.
-            # The runtime still requires successful parking at the handoff.
-            external_reward_lease = role == "reward" and any(
-                inference.kind == "http" for inference in reward_inference.values()
-            )
-            if setting is True and not owns_gpu and not external_reward_lease:
-                raise ValueError(f"{key}=true but the {role} role owns no GPU to offload")
-        # A trainer GPU that rollout also uses is safe only when rollout hands it
-        # back between phases. Cross-node ordinals live in different spaces, so
-        # their overlap means nothing here.
-        shared_trainer_rollout = sorted(set(trainer_devices) & set(rollout_devices))
-        if config.offload.rollout is False and shared_trainer_rollout and not config.cross_node:
-            raise ValueError(
-                "distributed.resources.offload.rollout=false but rollout shares trainer "
-                f"GPU(s) {shared_trainer_rollout}; a shared trainer/rollout GPU must hand "
-                "ownership over between phases, so leave offload.rollout at auto or true",
-            )
-        lifecycle = replace(
-            lifecycle,
-            train_offload=config.offload.train,
-            rollout_offload=config.offload.rollout,
-            reward_offload=config.offload.reward,
         )
         return cls(
             visible_devices=visible_devices,
