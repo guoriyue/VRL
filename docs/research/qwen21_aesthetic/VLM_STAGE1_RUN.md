@@ -133,3 +133,29 @@ Known limits of this run, stated before results: the judge resolves global look,
 "fake" flags); the trained SDE window [0, 6] controls layout/lighting/style, not detail; RL reweights the base
 distribution and cannot add textures the base never produces. Candidate follow-ups: a detail stage (SDE window
 [14, 30], judge on 2×2 native-resolution crops) and SFT distillation on 1-2k GPT images before RL.
+
+## GPT-reference line, 2026-10-03: what failed and why
+
+| run | change | 15-round judge trend | same-22-prompt judge vs GPT (base 0.28-0.35) |
+|---|---|---|---|
+| detail1 | 4-criteria yes/no judge, SDE window [8,24], lr 1e-4/4 | flat | ck20 0.299 |
+| detail2 | warm from ck20, lr 2e-4/8 | down | ck15 0.250, repetitive micro-texture |
+| v2 | 5-level `compare` answers, detail 0.5 | flat/down | -- |
+| v3 | window back to [0,6] | (stopped: 13% of references were wrong) | -- |
+| v4 | correct references + SFT toward GPT latents, weight 0.5 | sft_loss 0.39 → 0.22, judge 0.23 → 0.17 | ck15 0.216: collapsed toward averaged GPT statistics (subjects dropped, cluttered scenes) |
+
+Three findings that carry forward:
+
+1. **Reference images were 13% misassigned.** Six parallel Codex image sessions mixed outputs
+   (`0000.png` was prompt 4's corgi). SigLIP text-image audit (`/mnt/nvme/aes2/audit_gpt_refs.py`) found 24/185
+   wrong; regenerated sequentially, re-audited to 1/185 ambiguous. detail1/detail2/v2/v3 all trained on the bad set.
+2. **Within-group signal lives in the early window.** Judge spread of 8 shared-noise siblings vs their GPT reference:
+   [0,6] 0.069, [4,14] 0.035, [8,24] 0.029 (pixel diversity 0.131 / 0.039 / 0.018). A "detail stage" in the mid
+   window has nothing for GRPO to rank.
+3. **Against a far stronger reference, yes/no questions saturate at 0** (fidelity 0.03 for base and every checkpoint);
+   the graded `compare` answer restores spread (fidelity 0.26-0.74 across rounds).
+4. **SFT toward 185 GPT images at weight 0.5 collapses the policy** (grad norm 1000× the RL term): judge 0.346 → 0.216
+   on the same prompts, visibly off-prompt. v5 runs the same recipe at the regularizer strength the Cosmos/Wan presets
+   use (0.1); real distillation needs 1-2k GPT images and a dedicated SFT stage, which the user has not approved.
+
+Housekeeping found on the way: `parking/` held 42k stale trainer dirs (837 GB, NVMe at 97%); pruned.
