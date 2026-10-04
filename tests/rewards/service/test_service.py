@@ -204,7 +204,6 @@ async def test_client_scores_through_async_server_and_validates_identity(tmp_pat
     main_thread = threading.get_ident()
 
     async with _running_service(runtime, tmp_path) as (service, client):
-        assert client.scoring_is_nonblocking is True
         assert client.external_accelerator_isolation_verified is False
         host, port = service.address
         # /live stays operator-facing (process supervisors probe it directly);
@@ -275,7 +274,6 @@ async def test_client_verifies_isolation_only_after_safe_service_preflight(tmp_p
         tmp_path,
         generation_overlap_safe=True,
     ) as (_service, client):
-        assert client.scoring_is_nonblocking is True
         assert client.external_accelerator_isolation_verified is False
 
         await client.ensure_ready()
@@ -814,7 +812,6 @@ def test_build_reward_scorer_accepts_typed_http_config() -> None:
         ),
     )
     assert isinstance(runtime, HttpRewardScorer)
-    assert runtime.scoring_is_nonblocking is True
     assert runtime.external_accelerator_isolation_verified is False
 
 

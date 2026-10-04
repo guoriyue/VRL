@@ -504,12 +504,10 @@ class RolloutCollector:
 
         generated_groups: list[RolloutGenerationResult] = []
         scored_batches: list[RolloutBatch] = []
-        # Scoring can run beside generation only when it yields the event loop
-        # and its accelerator does not need a GPU handoff.
-        per_group_scoring = bool(
-            self.reward_isolation_verified
-            and self.reward_runtime.scoring_is_nonblocking
-        )
+        # Scoring runs beside generation only when its accelerator needs no GPU
+        # handoff; online rewards are Ray actors or HTTP services, so scoring
+        # itself always yields the event loop.
+        per_group_scoring = self.reward_isolation_verified
         score_task: asyncio.Task[list[RolloutBatch]] | None = None
 
         async def score_unscored(groups: list[UnscoredRollout]) -> list[RolloutBatch]:

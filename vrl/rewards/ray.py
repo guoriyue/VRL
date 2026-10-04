@@ -170,7 +170,6 @@ class RayRewardScorer:
     never owns the Ray cluster or the run-level placement group.
     """
 
-    scoring_is_nonblocking = True
     external_accelerator_isolation_verified = True
 
     def __init__(

@@ -3,9 +3,9 @@
 ``HttpRewardScorer`` is the remote ``RewardScorer`` transport — the twin of
 the in-process ``InProcessRewardScorer`` (vrl/rewards/runtime.py). It exists
 so the trainer process holds no reward model weights: scoring crosses to an
-operator-owned service, which is why ``scoring_is_nonblocking`` is True and
-why accelerator isolation is *verified* against the service's advertised
-``generation_overlap_safe`` fact rather than assumed. Sessions are loop-affine (aiohttp binds a
+operator-owned service, which is why accelerator isolation is *verified*
+against the service's advertised ``generation_overlap_safe`` fact rather than
+assumed. Sessions are loop-affine (aiohttp binds a
 pool to its creation loop), so preflight on the trainer loop hands off only
 validated identity state and the scoring owner builds its own pool. An
 ambiguous POST outcome is settled via explicit request-id cancellation.
@@ -55,8 +55,6 @@ logger = init_logger(__name__)
 
 class HttpRewardScorer:
     """Score against an operator-owned reward service over async HTTP."""
-
-    scoring_is_nonblocking = True
 
     def __init__(
         self,

@@ -149,12 +149,6 @@ class RewardFunction:
         return cfg
 
     @property
-    def scoring_is_nonblocking(self) -> bool:
-        """Whether this scorer yields while scoring runs elsewhere."""
-
-        return False
-
-    @property
     def external_accelerator_isolation_verified(self) -> bool:
         """Whether out-of-plan reward accelerator work has been isolated."""
 
@@ -233,12 +227,6 @@ class InferenceRewardFunction(RewardFunction):
         self._request_prefix = request_prefix
         self._debug_basename = debug_basename
         self._inference_started = False
-
-    @property
-    def scoring_is_nonblocking(self) -> bool:
-        """Whether this scorer yields while inference runs elsewhere."""
-
-        return bool(self.scorer.scoring_is_nonblocking)
 
     @property
     def external_accelerator_isolation_verified(self) -> bool:

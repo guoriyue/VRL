@@ -507,9 +507,7 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
     component = reward.rewards[0][2]
     assert isinstance(component, ModelRewardFunction)
     assert isinstance(component.scorer, HttpRewardScorer)
-    assert component.scoring_is_nonblocking is True
     assert component.external_accelerator_isolation_verified is False
-    assert reward.scoring_is_nonblocking is True
     assert reward.external_accelerator_isolation_verified is False
 
 
@@ -545,7 +543,6 @@ def test_in_process_ocr_reward_keeps_media_in_memory() -> None:
 
     reward = OCRReward(device="cpu")
     assert isinstance(reward.artifact_store, InMemoryRewardArtifactStore)
-    assert reward.scoring_is_nonblocking is False
 
 
 def test_reward_config_rejects_runtime_injection_keys() -> None:
@@ -668,7 +665,6 @@ def test_mixed_runtime_components_fail_closed_for_generation_overlap(tmp_path) -
         },
     )
 
-    assert reward.scoring_is_nonblocking is False
     assert reward.external_accelerator_isolation_verified is False
 
 

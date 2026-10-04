@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -97,7 +96,6 @@ class _DeferredCollector(PromptCollectionFake):
         self.reward_isolation_verified = (
             supports_overlap and not rollout_reward_handoff and not trainer_reward_handoff
         )
-        self.reward_runtime = SimpleNamespace(scoring_is_nonblocking=supports_overlap)
 
     async def generate_rollout(self, request) -> Any:
         inputs = request.inputs

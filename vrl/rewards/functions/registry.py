@@ -131,14 +131,6 @@ class MultiReward(RewardFunction):
         self._shutdown_completed_children: set[int] = set()
 
     @property
-    def scoring_is_nonblocking(self) -> bool:
-        """Whether every component yields while its model work executes."""
-
-        return bool(self.rewards) and all(
-            reward.scoring_is_nonblocking for _, _, reward in self.rewards
-        )
-
-    @property
     def external_accelerator_isolation_verified(self) -> bool:
         """Whether every external component proved accelerator isolation."""
 

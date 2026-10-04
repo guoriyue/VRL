@@ -124,13 +124,11 @@ class _RewardRuntime:
         runtime: _Runtime | None = None,
         *,
         fail_park: bool = False,
-        scoring_is_nonblocking: bool = False,
         external_accelerator_isolation_verified: bool = False,
     ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.generation_runtime = runtime
         self.fail_park = fail_park
-        self.scoring_is_nonblocking = scoring_is_nonblocking
         self.external_accelerator_isolation_verified = external_accelerator_isolation_verified
         self.shutdown_failures = 0
         self.shutdown_calls = 0
@@ -399,7 +397,6 @@ def test_collector_derives_reward_generation_overlap_from_topology_and_scorer(
         reward=((1,) if rollout_handoff else ()) + ((0,) if trainer_handoff else ()),
     )
     reward_runtime = _RewardRuntime(
-        scoring_is_nonblocking=scorer_supports_overlap,
         external_accelerator_isolation_verified=scorer_supports_overlap,
     )
     collector = _collector(
@@ -424,18 +421,14 @@ def test_collector_derives_reward_generation_overlap_from_topology_and_scorer(
 
 def test_collector_keeps_continuous_admission_for_no_reward() -> None:
     collector = _collector(
-        reward_runtime=_RewardRuntime(
-            scoring_is_nonblocking=False,
-            external_accelerator_isolation_verified=True,
-        ),
+        reward_runtime=_RewardRuntime(external_accelerator_isolation_verified=True),
     )
 
     assert collector.reward_isolation_verified is True
 
 
-def test_collector_separates_nonblocking_scoring_from_accelerator_isolation() -> None:
+def test_collector_isolation_follows_external_accelerator_verification() -> None:
     runtime = _RewardRuntime()
-    runtime.scoring_is_nonblocking = True
     runtime.external_accelerator_isolation_verified = False
     collector = _collector(reward_runtime=runtime)
 

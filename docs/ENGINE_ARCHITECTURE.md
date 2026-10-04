@@ -184,7 +184,7 @@ engine.
 
 | Module | Classes | Role |
 |---|---|---|
-| `protocols.py` | `RewardRuntime` | The engine's only face toward vrl/rollouts (dual of `GenerationRuntime`): `scoring_is_nonblocking`, `external_accelerator_isolation_verified`, `preflight/activate/score/park_memory/shutdown`. isinstance-checked at `rollouts/collector/core.py`. |
+| `protocols.py` | `RewardRuntime` | The engine's only face toward vrl/rollouts (dual of `GenerationRuntime`): `external_accelerator_isolation_verified`, `preflight/activate/score/park_memory/shutdown`. isinstance-checked at `rollouts/collector/core.py`. |
 | | `RewardScorer` | The transport seam below `RewardFunction` (dual of the Ray executor layer): `score_batch(request) -> results`, `shutdown`, plus the two capability flags. Runtime-checkable; validated **once, completely** at scorer injection. |
 | | `RemoteReadyScorer` | Optional capability: remote transports expose `ensure_ready()` so a broken service fails at preflight, not after the first generation batch. |
 | | `MemoryParkingScorer` | Optional capability (dual of `BatchSizeProbeExecutor`): `requires_memory_parking`, `activate`, `park_memory` for verified GPU parking. |

@@ -73,7 +73,6 @@ _CASE_IDS = [case.reward_name for case in _CASES]
 
 
 class _FakeRuntime:
-    scoring_is_nonblocking = False
     external_accelerator_isolation_verified = False
 
     def __init__(self, scores: dict[str, float]) -> None:

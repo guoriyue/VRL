@@ -163,10 +163,6 @@ async def test_function_runtime_forwards_capabilities_and_retries_shutdown() -> 
             self.shutdown_calls = 0
 
         @property
-        def scoring_is_nonblocking(self) -> bool:
-            return True
-
-        @property
         def external_accelerator_isolation_verified(self) -> bool:
             return False
 
@@ -181,7 +177,6 @@ async def test_function_runtime_forwards_capabilities_and_retries_shutdown() -> 
     reward = _LifecycleReward()
     runtime = RewardFunctionRuntime(reward)
 
-    assert runtime.scoring_is_nonblocking is True
     assert runtime.external_accelerator_isolation_verified is False
     await runtime.preflight()
     assert reward.preflight_calls == 1

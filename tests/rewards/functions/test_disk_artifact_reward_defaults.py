@@ -8,7 +8,6 @@ from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
 
 
 class _Runtime:
-    scoring_is_nonblocking = False
     external_accelerator_isolation_verified = False
 
     async def score_batch(self, request):

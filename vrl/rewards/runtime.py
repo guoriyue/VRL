@@ -78,12 +78,6 @@ class RewardFunctionRuntime:
         self.lifecycle = RuntimeLifecycle(owner="reward runtime")
 
     @property
-    def scoring_is_nonblocking(self) -> bool:
-        """Whether scoring yields while every configured component executes."""
-
-        return self._reward_function.scoring_is_nonblocking
-
-    @property
     def external_accelerator_isolation_verified(self) -> bool:
         """Whether out-of-plan reward accelerator work is isolated."""
 
@@ -400,7 +394,6 @@ class InProcessRewardScorer:
     Its GPU residency between scores belongs to :class:`RewardParking`.
     """
 
-    scoring_is_nonblocking = False
     external_accelerator_isolation_verified = True
 
     def __init__(

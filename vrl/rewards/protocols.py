@@ -31,11 +31,6 @@ class RewardRuntime(Protocol):
     """Reward runtime consumed by rollout collectors."""
 
     @property
-    def scoring_is_nonblocking(self) -> bool:
-        """Whether scoring yields while its accelerator work runs elsewhere."""
-        ...
-
-    @property
     def external_accelerator_isolation_verified(self) -> bool:
         """Whether accelerator work outside the resource plan is isolated."""
         ...
@@ -85,11 +80,6 @@ class RewardScorer(Protocol):
     protocol once (methods and capability flags together) instead of probing
     a hand-picked subset that can drift from this declaration.
     """
-
-    @property
-    def scoring_is_nonblocking(self) -> bool:
-        """Whether scoring yields the caller while model work runs elsewhere."""
-        ...
 
     @property
     def external_accelerator_isolation_verified(self) -> bool:
