@@ -174,8 +174,8 @@ def validate_rollout_schedule_topology(
     if resources.colocated or resources.lifecycle.park_trainer_for_rollout:
         raise ValueError(
             "continuous rollout requires disjoint trainer and rollout GPUs without "
-            "trainer parking for generation; use strict_on_policy with "
-            "gpu_pool=trainer for shared-GPU phase handoff",
+            "trainer parking for generation; use strict_on_policy for shared-GPU "
+            "phase handoff",
         )
     if resources.lifecycle.park_rollout_for_reward:
         raise ValueError(

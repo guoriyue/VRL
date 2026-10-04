@@ -82,9 +82,6 @@ distributed:
       precision_policy: actor
       reshard_after_forward: true
       cpu_offload: false
-  resources:
-    rollout:
-      gpu_pool: trainer
 
 reward:
   components:

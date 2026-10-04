@@ -354,10 +354,7 @@ def _shared_reward_cfg(component: str) -> object:
                 "resources": {
                     "visible_devices": [0],
                     "trainer": {"devices": [0]},
-                    "rollout": {
-                        "devices": [0],
-                        "gpu_pool": "trainer",
-                    },
+                    "rollout": {"devices": [0]},
                 },
             },
             "reward": {"components": {component: 1.0}, "kwargs": {component: {}}},

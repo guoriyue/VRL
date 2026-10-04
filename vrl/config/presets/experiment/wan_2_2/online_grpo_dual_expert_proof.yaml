@@ -44,11 +44,6 @@ distributed:
       # expert selected by the current timestep, so the inactive root does not
       # consume the active GPU budget.
       cpu_offload: true
-  resources:
-    rollout:
-      # The online distributed path is symmetric-colocated: every torchrun rank
-      # owns one local rollout worker and time-shares its trainer GPU.
-      gpu_pool: trainer
 
 model:
   trainable_transformers: both

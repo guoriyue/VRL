@@ -7,22 +7,18 @@
 #       background producer keeps per-prompt groups in flight while the trainer
 #       drains homogeneous-policy ready groups.
 #   (2) reward on a DEDICATED GPU disjoint from rollout
-#       (distributed.resources.reward.gpu_pool: dedicated): the in-process reward
-#       model uses a spare GPU that does NOT overlap rollout's GPU.
+#       (distributed.resources.reward.devices: [2]): the reward model uses a
+#       GPU that does NOT overlap rollout's GPU.
 #   (3) cosmos full-param 8-bit training at 480p-native (720p weights are
 #       garbage at 240p/480p; see SPRINT_config_correctness_audit).
 #
 # GPU TOPOLOGY — use >= 3 visible GPUs: trainer GPU0, rollout GPU1, reward GPU2,
-# all disjoint. rollout.gpu_pool=dedicated takes a spare disjoint from the
-# trainer; reward.gpu_pool=dedicated then takes a spare disjoint from rollout.
-#   - 1 GPU: does NOT resolve. rollout=dedicated has no non-overlapping spare and
-#     resolve_distributed_resources raises ("Not enough non-overlapping rollout
-#     GPUs"). Continuous rollout requires a disjoint rollout GPU; shared-GPU
-#     recipes use strict phase handoff instead.
-#   - 2 GPUs: does NOT resolve. `dedicated` means disjoint from BOTH trainer and
-#     rollout, so there is no reward GPU left and resource resolution fails. Use
-#     3+ GPUs for the no-contention layout this recipe declares, or explicitly
-#     choose reward.gpu_pool=rollout for phase-separated sharing.
+# all disjoint. Both rollout and reward pin their own device; an unpinned role
+# would share the trainer (rollout) or rollout (reward) GPU instead.
+#   - fewer than 3 GPUs: does NOT resolve (the pinned devices lie outside
+#     visible_devices). Continuous rollout requires a disjoint rollout GPU;
+#     shared-GPU recipes use strict phase handoff instead. Drop
+#     reward.devices to share the rollout GPU with phase-separated scoring.
 #
 # WHY the dedicated reward GPU is load-bearing for throughput: when reward shares
 # rollout's GPU, the topology derives park_rollout_for_reward=True (rollout
@@ -55,11 +51,10 @@ model:
 distributed:
   resources:
     rollout:
-      num_gpus: 1
-      gpu_pool: dedicated             # rollout on its own GPU (GPU1), disjoint from trainer
+      devices: [1]                    # rollout on its own GPU, disjoint from trainer
     reward:
       device: gpu
-      gpu_pool: dedicated             # reward on a DISJOINT spare GPU (GPU2) -> async overlap
+      devices: [2]                    # reward on a DISJOINT GPU -> async overlap
 
 actor:
   optim:

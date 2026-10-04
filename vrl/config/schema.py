@@ -657,8 +657,8 @@ class RolloutRuntimeSection(ConfigBase):
 
     reader: vrl/generation/ray/config.py RayGenerationConfig.from_root. Release
     scheduling and colocation are NOT declared here: colocation lives in
-    distributed.resources.rollout.gpu_pool=trainer (mirrors reward.gpu_pool),
-    and release scheduling is derived from GPU topology. Rollout engines are
+    distributed.resources.<role>.devices (an unpinned rollout shares the trainer
+    GPU), and release scheduling is derived from GPU topology. Rollout engines are
     always resynced to the trained policy (the syncer flattens whatever is
     trainable — lora or full-param).
 
@@ -708,7 +708,7 @@ class DistributedSection(ConfigBase):
     # consuming dataclass is the section type, so pydantic validates it here.
     resources: DistributedResourceConfig | None = None
     # reader: vrl/generation/ray/config.py RayGenerationConfig.from_root (worker
-    # runtime knobs). Colocation lives in resources.rollout.gpu_pool.
+    # runtime knobs). Colocation lives in resources.<role>.devices.
     rollout: RolloutRuntimeSection | None = None
     # readers: vrl/trainers/distributed.py DistributedTrainingContext.from_root (rank/device)
     # + vrl/ray/resources.py strategy-aware trainer GPU validation

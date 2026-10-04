@@ -104,10 +104,8 @@ distributed:
       reshard_after_forward: true
       cpu_offload: false
   resources:
-    # Each rank colocates its rollout worker on its own trainer GPU; the reward
-    # then borrows the same rank-local card once both owners have parked.
-    rollout:
-      gpu_pool: trainer
+    # Each rank's unpinned rollout shares its own trainer GPU; the reward then
+    # borrows the same rank-local card once both owners have parked.
     # Four parked trainers plus four sleeping generators exceed this host's RAM;
     # the trainers' frozen shards go to node-local NVMe while generation runs.
     trainer_parking_directory: /mnt/nvme/vrl-parking

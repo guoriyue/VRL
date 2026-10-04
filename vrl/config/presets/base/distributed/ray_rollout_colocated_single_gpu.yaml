@@ -4,15 +4,13 @@
 # TIME-SHARE it in turn (never at the same instant):
 #     collect (rollout generates) -> train (backward) -> weight sync -> repeat.
 #
-# The `auto` rollout pool is spare-first-else-share: on a 1-GPU box trainer and
-# rollout both land on GPU 0 (colocated); on a box WITH a spare GPU, `auto`
-# prefers the spare (disaggregated). To FORCE colocation regardless of spares,
-# use the per-role `gpu_pool` grammar (mirrors reward.gpu_pool):
+# An unpinned rollout always shares the trainer GPU, whatever else the box
+# holds. To disaggregate instead, pin the rollout to its own card:
 #
 #   distributed:
 #     resources:
 #       rollout:
-#         gpu_pool: trainer        # borrow the trainer GPU = colocated
+#         devices: [1]             # rollout on GPU 1, trainer keeps GPU 0
 #
 # Shared trainer/rollout GPUs always use on-demand phase handoff: the trainer parks
 # during collect and the rollout worker parks before training, so each phase owns
@@ -20,8 +18,7 @@
 distributed:
   resources:
     rollout:
-      # Bound the auto pool to ONE worker GPU: without this, a multi-GPU box
-      # would hand every spare card to rollout instead of exactly one.
+      # ONE worker GPU: the shared trainer card.
       num_gpus: 1
 
   rollout:

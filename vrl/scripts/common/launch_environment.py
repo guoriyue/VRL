@@ -27,8 +27,10 @@ def narrow_rank_local_cuda_visibility(
     training = None if distributed is None else distributed.training
     resources = None if distributed is None else distributed.resources
     strategy = "single_process" if training is None else str(training.strategy)
-    rollout_pool = "auto" if resources is None else str(resources.rollout.gpu_pool)
-    if strategy not in {"ddp", "fsdp"} or rollout_pool != "trainer":
+    rollout_shares_trainer = resources is None or (
+        not resources.cross_node and not resources.rollout.pins_devices
+    )
+    if strategy not in {"ddp", "fsdp"} or not rollout_shares_trainer:
         return None
 
     environment = os.environ if environ is None else environ

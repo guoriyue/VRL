@@ -45,9 +45,9 @@ def _cfg(
     )
 
 
-def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
-    """``num_gpus: auto`` gives the rollout every visible GPU the trainer did not take, one engine
-    per GPU, and a trainer reservation on ``cuda:0``.
+def test_pinned_rollout_devices_split_the_box() -> None:
+    """Pinned rollout devices give one engine per GPU and a trainer reservation on
+    ``cuda:0``.
     """
     resolved = ResolvedDistributedResources.from_root(
         parse_config(
@@ -55,10 +55,7 @@ def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
                 {
                     "visible_devices": [0, 1, 2, 3],
                     "trainer": {"num_gpus": 1},
-                    "rollout": {
-                        "num_gpus": "auto",
-                        "num_engines": "auto",
-                    },
+                    "rollout": {"devices": [1, 2, 3]},
                 },
             )
         ),
@@ -143,39 +140,15 @@ def test_pinned_device_intersection_declares_colocation() -> None:
     assert resolved.requires_trainer_reservation is False
 
 
-def test_colocate_via_gpu_pool_trainer() -> None:
-    """gpu_pool=trainer declares sharing by pool word instead of pinned ids."""
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"devices": [0]},
-                    "rollout": {
-                        "devices": [0],
-                        "gpu_pool": "trainer",
-                    },
-                },
-            )
-        ),
-    )
-
-    assert resolved.colocated is True
-    assert resolved.lifecycle.rollout_mode == "on_demand"
-
-
-def test_colocate_auto_pins_rollout_to_trainer_gpu() -> None:
-    """Auto rollout placement is forced onto the trainer GPU, not a spare one."""
+def test_unpinned_rollout_shares_the_trainer_gpu_even_with_spares() -> None:
+    """An unpinned rollout lands on the trainer GPU, never on a spare one."""
     resolved = ResolvedDistributedResources.from_root(
         parse_config(
             _cfg(
                 {
                     "visible_devices": [0, 1, 2],
                     "trainer": {"devices": [0]},
-                    "rollout": {
-                        "num_gpus": "auto",
-                        "gpu_pool": "trainer",
-                    },
+                    "rollout": {"num_gpus": "auto"},
                 },
             )
         ),
@@ -183,25 +156,6 @@ def test_colocate_auto_pins_rollout_to_trainer_gpu() -> None:
 
     assert resolved.rollout_devices == (0,)
     assert resolved.colocated is True
-
-
-def test_colocate_rejects_explicit_disjoint_rollout_devices() -> None:
-    """Checks colocate cannot be silently reinterpreted as split-GPU resident."""
-    with pytest.raises(ValueError, match="disjoint from trainer"):
-        ResolvedDistributedResources.from_root(
-            parse_config(
-                _cfg(
-                    {
-                        "visible_devices": [0, 1],
-                        "trainer": {"devices": [0]},
-                        "rollout": {
-                            "devices": [1],
-                            "gpu_pool": "trainer",
-                        },
-                    },
-                )
-            ),
-        )
 
 
 def test_devices_must_be_subset_of_visible_devices() -> None:
@@ -235,10 +189,7 @@ def test_num_engines_must_match_the_resolved_gpu_count() -> None:
                     {
                         "visible_devices": [0, 1, 2],
                         "trainer": {"num_gpus": 1},
-                        "rollout": {
-                            "num_gpus": 2,
-                            "num_engines": 1,
-                        },
+                        "rollout": {"devices": [1, 2], "num_engines": 1},
                     },
                 )
             ),
@@ -327,8 +278,8 @@ def test_gpus_per_engine_rejects_cross_node_and_cpu_fleets() -> None:
         )
 
 
-def test_single_gpu_auto_split_shares_the_trainer_gpu() -> None:
-    """The auto pool is spare-first-else-share: no spare -> colocate on trainer."""
+def test_single_gpu_unpinned_rollout_shares_the_trainer_gpu() -> None:
+    """One GPU, unpinned rollout: trainer and rollout time-share it."""
     resolved = ResolvedDistributedResources.from_root(
         parse_config(
             _cfg(
@@ -350,20 +301,16 @@ def test_single_gpu_auto_split_shares_the_trainer_gpu() -> None:
     assert resolved.lifecycle.rollout_mode == "on_demand"
 
 
-def test_single_gpu_dedicated_rollout_pool_requires_a_spare() -> None:
-    """gpu_pool=dedicated never falls back to sharing the trainer GPU."""
-    with pytest.raises(ValueError, match="gpu_pool=dedicated requires spare"):
+def test_unpinned_rollout_cannot_outgrow_the_trainer_pool() -> None:
+    """A shared rollout needing more GPUs than the trainer owns must pin devices."""
+    with pytest.raises(ValueError, match=r"Pin distributed\.resources\.rollout\.devices"):
         ResolvedDistributedResources.from_root(
             parse_config(
                 _cfg(
                     {
-                        "visible_devices": [0],
+                        "visible_devices": [0, 1],
                         "trainer": {"num_gpus": 1},
-                        "rollout": {
-                            "num_gpus": 1,
-                            "num_engines": 1,
-                            "gpu_pool": "dedicated",
-                        },
+                        "rollout": {"num_gpus": 2},
                     },
                 )
             ),
@@ -468,7 +415,7 @@ def test_reward_torch_device_uses_the_reserved_local_gpu() -> None:
                     "visible_devices": [0, 1, 2],
                     "trainer": {"devices": [0]},
                     "rollout": {"devices": [1]},
-                    "reward": {"device": "gpu", "devices": [2], "gpu_pool": "dedicated"},
+                    "reward": {"device": "gpu", "devices": [2]},
                 },
             )
         ),
@@ -493,7 +440,6 @@ def test_reward_torch_device_translates_narrowed_rank_plan_ordinals(monkeypatch)
                 {
                     "visible_devices": [2],
                     "trainer": {"devices": [2]},
-                    "rollout": {"gpu_pool": "trainer"},
                     "reward": {"device": "gpu"},
                 },
             )
@@ -549,7 +495,7 @@ def test_mock_topology_replaces_inherited_cuda_mask(
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", inherited_mask)
     cuda_devices(count)
     resolved = ResolvedDistributedResources.from_root(
-        parse_config(_cfg({"rollout": {"gpu_pool": "trainer"}})),
+        parse_config(_cfg({})),
     )
     assert resolved.visible_devices == tuple(range(count))
 
@@ -636,7 +582,7 @@ def test_cross_node_dedicated_reward_gets_its_own_budget_token() -> None:
                     "cross_node": True,
                     "trainer": {"num_gpus": 1},
                     "rollout": {"num_gpus": 1},
-                    "reward": {"device": "gpu", "gpu_pool": "dedicated"},
+                    "reward": {"device": "gpu"},
                 }
             )
         )
@@ -768,31 +714,6 @@ def test_cross_node_kling_recipe_keeps_the_local_reward_on_the_driver() -> None:
     assert resolved.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
 
 
-def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
-    """The reward role takes a GPU left over after trainer and rollout, disjoint from the rollout
-    pool, so no rollout release is needed before scoring.
-    """
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0, 1, 2],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1]},
-                    "reward": {"device": "gpu"},
-                },
-            )
-        ),
-    )
-
-    assert resolved.reward_devices == (2,)
-    assert len(resolved.reward_devices) == 1
-    assert resolved.reward_runs_on_cpu is False
-    assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
-    assert resolved.requires_trainer_reservation is True
-    assert resolved.lifecycle.park_rollout_for_reward is False
-
-
 def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
     """Fully disjoint trainer/rollout/reward GPUs -> every role resident, no handoff."""
     resolved = ResolvedDistributedResources.from_root(
@@ -816,8 +737,9 @@ def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
     assert plan.offload_reward is False
 
 
-def test_lifecycle_plan_on_demand_for_shared_reward() -> None:
-    """Shared reward GPU -> rollout/reward on_demand, but no trainer handoff."""
+def test_unpinned_reward_shares_the_rollout_gpu() -> None:
+    """An unpinned GPU reward sits on the rollout GPU: rollout/reward on_demand,
+    rollout parks before scoring, no trainer handoff."""
     resolved = ResolvedDistributedResources.from_root(
         parse_config(
             _cfg(
@@ -825,13 +747,13 @@ def test_lifecycle_plan_on_demand_for_shared_reward() -> None:
                     "visible_devices": [0, 1],
                     "trainer": {"devices": [0]},
                     "rollout": {"devices": [1]},
-                    "reward": {"device": "gpu", "gpu_pool": "rollout"},
+                    "reward": {"device": "gpu"},
                 },
             )
         ),
     )
 
-    assert set(resolved.reward_devices) & set(resolved.rollout_devices)
+    assert resolved.reward_devices == (1,)
     plan = resolved.lifecycle
     assert plan.rollout_mode == "on_demand"
     assert plan.park_rollout_for_train is False
@@ -870,10 +792,7 @@ def test_in_process_reward_without_reservation_follows_trainer_topology() -> Non
                 {
                     "visible_devices": [0],
                     "trainer": {"devices": [0]},
-                    "rollout": {
-                        "devices": [0],
-                        "gpu_pool": "trainer",
-                    },
+                    "rollout": {"devices": [0]},
                     "reward": {"device": "trainer"},
                 },
                 reward_components={"aesthetic": 1.0},
@@ -1032,73 +951,9 @@ def test_cpu_reward_does_not_cancel_http_shared_gpu_parking() -> None:
     assert resolved.lifecycle.offload_reward
 
 
-def test_reward_auto_placement_prefers_dedicated_spare_gpu() -> None:
-    """Checks unset gpu_pool takes the spare GPU on multi-GPU boxes."""
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0, 1, 2],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1]},
-                    "reward": {"device": "gpu"},
-                },
-            )
-        ),
-    )
-
-    assert resolved.reward_devices == (2,)
-    assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
-    assert resolved.lifecycle.offload_reward is False
-
-
-def test_reward_auto_placement_falls_back_to_shared_pool_on_single_gpu() -> None:
-    """Checks unset gpu_pool shares the rollout GPU when none is spare."""
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [0]},
-                    "reward": {"device": "gpu"},
-                },
-            )
-        ),
-    )
-
-    assert resolved.reward_devices == (0,)
-    assert set(resolved.reward_devices) & set(resolved.rollout_devices)
-    assert resolved.lifecycle.park_rollout_for_reward is True
-    assert resolved.lifecycle.offload_reward is True
-
-
-def test_reward_can_share_rollout_pool_when_phases_release() -> None:
-    """``gpu_pool: rollout`` puts the reward on the rollout GPU, which requires the rollout to
-    release before scoring and the reward to release after.
-    """
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0, 1],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1]},
-                    "reward": {"device": "gpu", "gpu_pool": "rollout"},
-                },
-            )
-        ),
-    )
-
-    assert resolved.reward_devices == (1,)
-    assert set(resolved.reward_devices) & set(resolved.rollout_devices)
-    assert resolved.lifecycle.park_rollout_for_reward is True
-    assert resolved.lifecycle.offload_reward is True
-
-
-def test_reward_shared_pool_requires_a_rollout_gpu() -> None:
-    """gpu_pool=rollout with a CPU-only rollout has no GPU to share."""
-    with pytest.raises(ValueError, match="Not enough rollout GPUs"):
+def test_unpinned_reward_needs_a_rollout_gpu_to_share() -> None:
+    """With a CPU-only rollout an unpinned GPU reward has nothing to share."""
+    with pytest.raises(ValueError, match="shares the rollout GPU"):
         ResolvedDistributedResources.from_root(
             parse_config(
                 _cfg(
@@ -1106,7 +961,7 @@ def test_reward_shared_pool_requires_a_rollout_gpu() -> None:
                         "visible_devices": [0],
                         "trainer": {"devices": [0]},
                         "rollout": {"num_gpus": 0, "num_engines": 1},
-                        "reward": {"device": "gpu", "gpu_pool": "rollout"},
+                        "reward": {"device": "gpu"},
                     },
                 )
             ),
@@ -1173,7 +1028,7 @@ def test_shared_single_gpu_reward_reuses_rollout_bundle() -> None:
                     "visible_devices": [0],
                     "trainer": {"devices": [0]},
                     "rollout": {"devices": [0], "num_engines": 1},
-                    "reward": {"device": "gpu", "devices": [0], "gpu_pool": "rollout"},
+                    "reward": {"device": "gpu", "devices": [0]},
                 },
                 kling_video_reward=True,
             )
@@ -1269,68 +1124,6 @@ def test_single_process_still_rejects_multi_gpu_trainer() -> None:
         )
 
 
-# --- P0 surface: rollout.gpu_pool / reward.gpu_pool (single authoritative grammar) ---
-
-
-def test_reward_gpu_pool_rollout_shares_rollout_gpu() -> None:
-    """reward.gpu_pool=rollout forces the reward pool onto the rollout GPU."""
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0, 1],
-                    "trainer": {"num_gpus": 1},
-                    "rollout": {"num_gpus": 1},
-                    "reward": {"device": "gpu", "gpu_pool": "rollout"},
-                },
-                reward_components={"r": 1.0},
-                reward_kwargs={"r": {"execution": "pool"}},
-            )
-        ),
-    )
-    assert set(resolved.reward_devices) & set(resolved.rollout_devices)
-    assert resolved.reward_devices == resolved.rollout_devices
-
-
-def test_reward_gpu_pool_auto_prefers_spare_gpu() -> None:
-    """reward.gpu_pool=auto takes a dedicated spare GPU when one exists."""
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0, 1, 2],
-                    "trainer": {"num_gpus": 1},
-                    "rollout": {"num_gpus": 1},
-                    "reward": {"device": "gpu", "gpu_pool": "auto"},
-                },
-                reward_components={"r": 1.0},
-                reward_kwargs={"r": {"execution": "pool"}},
-            )
-        ),
-    )
-    assert resolved.reward_devices == (2,)
-    assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
-
-
-def test_reward_gpu_pool_rejects_unknown_value() -> None:
-    """reward.gpu_pool only accepts auto/rollout/dedicated."""
-    with pytest.raises(ValueError, match=r"unknown distributed\.resources\.reward\.gpu_pool"):
-        ResolvedDistributedResources.from_root(
-            parse_config(
-                _cfg(
-                    {
-                        "visible_devices": [0, 1],
-                        "trainer": {"num_gpus": 1},
-                        "rollout": {"num_gpus": 1},
-                        "reward": {"device": "gpu", "gpu_pool": "nonsense"},
-                    },
-                    reward_components={"r": 1.0},
-                    reward_kwargs={"r": {"execution": "pool"}},
-                )
-            ),
-        )
-
-
 # ── Symmetric colocated DDP (SPRINT_symmetric_colocated_ddp) ──
 
 
@@ -1338,8 +1131,8 @@ def test_reward_gpu_pool_rejects_unknown_value() -> None:
 def test_multi_rank_colocate_resolves_per_rank_local_single_gpu(strategy: str) -> None:
     """Symmetric colocated multi-rank training: each rank resolves only its LOCAL
     single GPU (trainer + colocated rollout on it). world_size drives only the
-    collectives, NOT the per-rank GPU plan -- signaled by rollout.gpu_pool=trainer,
-    so fsdp's world-covering asymmetric trainer rule and the disjoint rule do not
+    collectives, NOT the per-rank GPU plan -- signaled by an unpinned rollout, so
+    fsdp's world-covering asymmetric trainer rule and the disjoint rule do not
     apply (SPRINT_multi_gpu_training Phase 4)."""
     resolved = ResolvedDistributedResources.from_root(
         parse_config(
@@ -1350,7 +1143,6 @@ def test_multi_rank_colocate_resolves_per_rank_local_single_gpu(strategy: str) -
                         "resources": {
                             "visible_devices": [0],
                             "trainer": {"num_gpus": 1},
-                            "rollout": {"gpu_pool": "trainer"},
                         },
                     },
                 },
@@ -1448,7 +1240,7 @@ def test_resident_reward_does_not_disable_neighbour_parking() -> None:
                     "visible_devices": [0],
                     "trainer": {"devices": [0]},
                     "rollout": {"devices": [0]},
-                    "reward": {"device": "gpu", "gpu_pool": "rollout"},
+                    "reward": {"device": "gpu"},
                     "offload": {"reward": False},
                 },
             )

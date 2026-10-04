@@ -26,7 +26,7 @@ def _cfg(family: str, algorithm_kind: str) -> Any:
 def _distributed_cfg(
     *,
     strategy: str = "fsdp",
-    gpu_pool: str = "trainer",
+    rollout: dict[str, Any] | None = None,
     gpus_per_node: int = 4,
 ) -> Any:
     return OmegaConf.create(
@@ -36,7 +36,7 @@ def _distributed_cfg(
                     "strategy": strategy,
                     "gpus_per_node": gpus_per_node,
                 },
-                "resources": {"rollout": {"gpu_pool": gpu_pool}},
+                "resources": {"rollout": rollout or {}},
             },
         },
     )
@@ -141,7 +141,7 @@ def test_disjoint_rollout_does_not_change_cuda_visibility() -> None:
     }
 
     selected = narrow_rank_local_cuda_visibility(
-        parse_config(_distributed_cfg(gpu_pool="dedicated")),
+        parse_config(_distributed_cfg(rollout={"devices": [2, 3]})),
         environ=environ,
     )
 

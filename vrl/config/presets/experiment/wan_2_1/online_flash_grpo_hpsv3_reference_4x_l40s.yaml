@@ -105,8 +105,6 @@ distributed:
       reshard_after_forward: true
       cpu_offload: false
   resources:
-    rollout:
-      gpu_pool: trainer
     # Four parked trainers plus four sleeping generators exceed this host's RAM;
     # the trainers' frozen shards go to node-local NVMe while generation runs
     # (same as online_grpo_hpsv3_fsdp_4x_l40s).

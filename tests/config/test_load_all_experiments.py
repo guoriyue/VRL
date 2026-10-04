@@ -259,24 +259,15 @@ def test_all_experiments_load_and_validate() -> None:
 def test_all_online_experiments_pass_static_launch_preflight() -> None:
     """Every active online recipe has a valid schedule and reward topology.
 
-    Explicit ``dedicated`` pools and cross-node recipes describe disjoint GPU
-    topology, so supply the synthetic budget derived from their role requests.
-    Other auto/shared recipes get one synthetic device: ``make verify`` hides
-    CUDA, while this static test must still exercise single-GPU parking.
+    Unpinned roles share the trainer GPU, so a recipe needs exactly the ordinals
+    its pinned ``devices`` name (one synthetic device when nothing is pinned:
+    ``make verify`` hides CUDA, while this static test must still exercise
+    single-GPU parking). Cross-node recipes size their own budget from counts.
     """
 
-    def requested_gpus(node, *, default: int) -> int:
+    def pinned_devices(node) -> list[int]:
         devices = node.get("devices", "auto")
-        if devices != "auto":
-            return len(devices)
-        num_gpus = node.get("num_gpus", "auto")
-        if num_gpus not in (None, "auto"):
-            return int(num_gpus)
-        num_engines = node.get("num_engines", "auto")
-        if num_engines != "auto":
-            # One GPU per engine; num_engines: 0 declares no fleet.
-            return int(num_engines)
-        return default
+        return [] if devices == "auto" else [int(device) for device in devices]
 
     failures = []
     for name in _experiment_names():
@@ -285,25 +276,15 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
             continue
 
         resources_cfg = cfg.distributed.resources
-        rollout_pool = str((resources_cfg.get("rollout") or {}).get("gpu_pool", "auto"))
-        reward_pool = str(resources_cfg.get("reward", {}).get("gpu_pool", "auto"))
-        if resources_cfg.get("visible_devices", "auto") == "auto":
-            required = 1
-            requires_disjoint_devices = "dedicated" in {rollout_pool, reward_pool} or bool(
-                resources_cfg.get("cross_node", False)
-            )
-            if requires_disjoint_devices:
-                trainer_gpus = requested_gpus(resources_cfg.get("trainer") or {}, default=1)
-                rollout_gpus = requested_gpus(resources_cfg.get("rollout") or {}, default=1)
-                reward_cfg = resources_cfg.get("reward", {})
-                # Reward is in-process: device=gpu reserves exactly one GPU.
-                reward_gpus = 1 if str(reward_cfg.get("device", "trainer")) == "gpu" else 0
-                required = trainer_gpus
-                if rollout_pool != "trainer":
-                    required += rollout_gpus
-                if reward_pool == "dedicated":
-                    required += reward_gpus
-            resources_cfg.visible_devices = list(range(required))
+        if resources_cfg.get("visible_devices", "auto") == "auto" and not resources_cfg.get(
+            "cross_node", False
+        ):
+            pinned = [
+                device
+                for role in ("trainer", "rollout", "reward")
+                for device in pinned_devices(resources_cfg.get(role) or {})
+            ]
+            resources_cfg.visible_devices = list(range(max(pinned, default=0) + 1))
 
         try:
             built = build_configs(cfg)

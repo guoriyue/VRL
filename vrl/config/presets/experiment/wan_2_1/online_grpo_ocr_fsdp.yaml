@@ -11,12 +11,11 @@
 #   the rank-local view, each independent Ray cluster could reserve another
 #   rank's physical GPU.
 #
-# `rollout.gpu_pool: trainer` is REQUIRED, not a preference. The default `auto`
-# pool prefers a spare GPU, which on a multi-GPU host resolves to a DISJOINT
-# rollout plan -- and `_require_supported_distributed_rollout_topology`
-# (vrl/scripts/common/online.py) rejects that before model or Ray construction,
-# because every rank would independently launch the same rollout device plan
-# onto the same cards. Forcing the trainer pool keeps each rank self-contained.
+# The rollout stays unpinned so it shares each rank's trainer GPU. Pinning
+# disjoint rollout devices would resolve a DISJOINT rollout plan, which
+# `_require_supported_distributed_rollout_topology` (vrl/scripts/common/online.py)
+# rejects before model or Ray construction: every rank would independently launch
+# the same rollout device plan onto the same cards.
 #
 # Reward stays on CPU (OCR) so all visible GPUs are available as ranks. A heavy
 # GPU reward here would have to share each rank's card through the phase lease.
@@ -40,11 +39,6 @@ distributed:
       mesh: ["dp_shard"]
       precision_policy: actor
       reshard_after_forward: true
-  resources:
-    rollout:
-      # Colocated on the rank's own trainer GPU. See the header: `auto` would
-      # resolve to a disjoint plan and be rejected.
-      gpu_pool: trainer
 
 model:
   # Required by FSDP2, not a tuning choice: build_strategy fail-fasts on

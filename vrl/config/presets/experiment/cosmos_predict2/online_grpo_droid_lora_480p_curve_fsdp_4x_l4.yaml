@@ -32,8 +32,6 @@ distributed:
       reshard_after_forward: true
       cpu_offload: false
   resources:
-    rollout:
-      gpu_pool: trainer
     reward:
       device: cpu
 

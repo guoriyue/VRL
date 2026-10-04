@@ -190,7 +190,7 @@ def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> Non
         overrides=[
             "distributed.resources.visible_devices=[0,1]",
             "distributed.resources.trainer.num_gpus=0",
-            "distributed.resources.rollout.num_gpus=1",
+            "distributed.resources.rollout.devices=[0]",
             "distributed.resources.rollout.num_engines=1",
         ],
     )

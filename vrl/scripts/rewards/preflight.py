@@ -174,7 +174,6 @@ def preflight_rewards(
                     reward=RewardResourceConfig(
                         device="gpu" if selected else "cpu",
                         devices=list(selected) if selected else "auto",
-                        gpu_pool="dedicated",
                     ),
                 )
                 probe_root = built.root.model_copy(

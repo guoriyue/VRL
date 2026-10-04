@@ -690,9 +690,9 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
 ) -> None:
     """Multi-rank ranks must not duplicate one global dedicated rollout plan.
 
-    Two FSDP ranks on a four-GPU host with a dedicated two-GPU rollout pool: the
-    real resource plan resolves rollout to the spare cards, so the real topology
-    guard rejects it before any model or Ray work."""
+    Two FSDP ranks on a four-GPU host with the rollout pinned to the two spare
+    cards: the real resource plan resolves a disjoint rollout, so the real
+    topology guard rejects it before any model or Ray work."""
 
     _pin_torchrun_rank(monkeypatch, cuda_devices, gpus=4, world_size=2)
     run = _RealRun(
@@ -702,8 +702,7 @@ async def test_distributed_disjoint_rollout_fails_before_model_or_ray_launch(
             "distributed.training.strategy=fsdp",
             "distributed.training.num_nodes=1",
             "distributed.training.gpus_per_node=2",
-            "distributed.resources.rollout.num_gpus=2",
-            "distributed.resources.rollout.gpu_pool=dedicated",
+            "distributed.resources.rollout.devices=[2,3]",
         ),
     )
     state = _state()
@@ -740,7 +739,6 @@ async def test_shared_gpu_parking_capability_fails_before_model_or_ray_launch(
             "distributed.training.num_nodes=1",
             "distributed.training.gpus_per_node=1",
             "distributed.resources.rollout.num_gpus=1",
-            "distributed.resources.rollout.gpu_pool=trainer",
         ),
     )
     state = _state()

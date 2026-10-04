@@ -51,10 +51,8 @@ distributed:
                                   # (actor/bf16 params are unsound with activation checkpointing — see
                                   #  the LoRA fsdp_2x1 config for the full CheckpointError rationale)
       reshard_after_forward: true # ZeRO-3
-  resources:
-    rollout:
-      gpu_pool: trainer           # each rank colocates its rollout on its own GPU
-    # reward stays device: cpu from the parent recipe — paddleocr is CPU-only.
+  # The unpinned rollout shares each rank's own GPU; reward stays device: cpu
+  # from the parent recipe — paddleocr is CPU-only.
 
 actor:
   ema:

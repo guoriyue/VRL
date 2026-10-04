@@ -71,17 +71,12 @@ distributed:
       precision_policy: none       # fp32 master params; bf16 compute via trainer autocast
       reshard_after_forward: true  # ZeRO-3 (re-gather params each forward, lowest mem)
   resources:
-    rollout:
-      # Each rank colocates its rollout worker on its own (trainer) GPU — state the
-      # intent explicitly via gpu_pool rather than the base preset's overlap
-      # fallback. Same as the DDP variant.
-      gpu_pool: trainer
+    # Each rank's unpinned rollout shares its own (trainer) GPU. Same as the DDP
+    # variant.
     reward:
-      # 2 GPUs total (1 per rank), no spare card: the Kling reward time-shares the
-      # same card as rollout/trainer. Explicit `rollout` is fail-loud (see the DDP
-      # variant's note).
+      # 2 GPUs total (1 per rank), no spare card: the unpinned Kling reward
+      # time-shares the same card as rollout/trainer.
       device: gpu
-      gpu_pool: rollout
 
 model:
   # torch.compile (inductor graph capture) is unsound with FSDP2 fully_shard's

@@ -45,6 +45,12 @@ class RoleResourceConfig:
 
         return f"distributed.resources.{self.role}"
 
+    @property
+    def pins_devices(self) -> bool:
+        """Whether ``devices`` names explicit CUDA ordinals (else the role shares)."""
+
+        return _parse_devices(self.devices) != "auto"
+
 
 @dataclass(frozen=True, slots=True)
 class RolloutResourceConfig(RoleResourceConfig):
@@ -57,17 +63,10 @@ class RolloutResourceConfig(RoleResourceConfig):
 
     role: ClassVar[str] = "rollout"
 
-    # Rollout GPU pool source (public key: distributed.resources.rollout.gpu_pool).
-    # Mirrors reward.gpu_pool so all roles share one "which pool do I borrow" grammar:
-    #   "auto"      derive from topology: a dedicated spare GPU when one exists,
-    #               else share the trainer GPU (single-GPU colocated fallback).
-    #   "trainer"   share the trainer GPU pool (colocated); shared roles always
-    #               hand the GPU over between phases.
-    #   "dedicated" require a dedicated spare rollout GPU; error if none exists.
-    # Sharing needs no separate consent flag: it is declared either by a pool
-    # word ("trainer") or by hand-pinning intersecting ``devices`` sets, and the
-    # resolved sharing plan is announced in the startup resource receipt.
-    gpu_pool: Literal["auto", "trainer", "dedicated"] = "auto"
+    # Placement: unpinned ``devices`` share the trainer GPU(s) (colocated; the
+    # shared roles hand the GPU over between phases). Pinned ``devices`` resolve
+    # verbatim: disjoint ids are a dedicated rollout pool, intersecting ids
+    # declare sharing. The resolved plan is announced in the startup receipt.
 
     # Engine replica count (the data-parallel degree). A GPU fleet grants
     # ``gpus_per_engine`` GPUs to each engine, so the count derives from the
@@ -172,20 +171,17 @@ class RewardResourceConfig:
       "trainer"  follow the trainer's device; no reservation (default, and the
                  meaning of an absent reward block)
       "cpu"      score on CPU; no GPU reservation
-      "gpu"      reserve exactly one GPU, chosen from ``gpu_pool``
-    ``gpu_pool`` (device: gpu only):
-      "auto"      a dedicated spare GPU when one exists, else share rollout's
-      "rollout"   always share the rollout GPU pool
-      "dedicated" require a dedicated spare reward GPU; error if none exists
+      "gpu"      reserve exactly one GPU: ``devices`` pins it, otherwise it
+                 shares the rollout GPU (the rollout parks before scoring);
+                 under ``cross_node`` it takes its own budget token
     ``devices`` (device: gpu only): pin the reservation to one explicit CUDA
-    ordinal instead of pool selection.
+    ordinal.
     """
 
     role: ClassVar[str] = "reward"
 
     device: Literal["trainer", "cpu", "gpu"] = "trainer"
     devices: list[int] | str = "auto"
-    gpu_pool: Literal["auto", "rollout", "dedicated"] = "auto"
 
     @property
     def key_prefix(self) -> str:
@@ -517,10 +513,13 @@ class ResolvedDistributedResources:
         # cards) — the single-node multi-GPU model. SYMMETRIC COLOCATED: one torchrun
         # rank per node, each owning its 1 local GPU with a colocated rollout — the same
         # per-rank-local model ddp uses (SPRINT_symmetric_colocated_ddp), signaled by
-        # rollout.gpu_pool=trainer. Only asymmetric fsdp sizes the trainer to the whole
-        # world; symmetric fsdp follows the per-rank single-GPU rule like ddp.
+        # an unpinned rollout (it shares the trainer GPU). Only asymmetric fsdp sizes
+        # the trainer to the whole world; symmetric fsdp follows the per-rank
+        # single-GPU rule like ddp.
         fsdp_symmetric_colocated = (
-            training_strategy == "fsdp" and config.rollout.gpu_pool == "trainer"
+            training_strategy == "fsdp"
+            and not config.cross_node
+            and not config.rollout.pins_devices
         )
         fsdp_asymmetric = training_strategy == "fsdp" and not fsdp_symmetric_colocated
         trainer_default_auto = (
@@ -555,26 +554,23 @@ class ResolvedDistributedResources:
             visible_devices=visible_devices,
             trainer_devices=trainer_devices,
             rollout_config=config.rollout,
+            cross_node=config.cross_node,
         )
         rollout_num_gpus = len(rollout_devices)
         rollout_num_engines = config.rollout.resolve_num_engines(
             resolved_gpu_count=rollout_num_gpus,
         )
 
-        # Sharing is consent: an intersection can only arise from hand-pinned
-        # ``devices`` sets, a sharing pool word, or the auto spare-first-else-share
-        # fallback. All are declarations; the startup receipt announces the plan.
+        # Sharing is the default: an unpinned role sits on its neighbour's GPU, and
+        # pinned ``devices`` sets may intersect deliberately. The startup receipt
+        # announces the resolved plan.
         reward_mode = config.reward.device
-        if config.cross_node and reward_mode == "gpu" and config.reward.gpu_pool == "rollout":
-            raise ValueError(
-                "cross_node reward GPUs require a dedicated Ray bundle; "
-                "reward.gpu_pool=rollout cannot identify the remote shared GPU",
-            )
         reward_devices = _resolve_reward_devices(
             visible_devices=visible_devices,
             trainer_devices=trainer_devices,
             rollout_devices=rollout_devices,
             reward_config=config.reward,
+            cross_node=config.cross_node,
         )
         if config.cross_node and set(reward_devices) & (
             set(trainer_devices) | set(rollout_devices)
@@ -583,7 +579,7 @@ class ResolvedDistributedResources:
 
         # Asymmetric fsdp owns the whole training world with rollout/reward on separate
         # cards, so the trainer set must be disjoint from both regardless of any
-        # declared sharing. Symmetric colocated fsdp (rollout.gpu_pool=trainer) is the
+        # declared sharing. Symmetric colocated fsdp (unpinned rollout) is the
         # opposite by design — each rank's rollout shares its trainer GPU, exactly like
         # ddp — so the disjoint rule does not apply to it.
         if fsdp_asymmetric:
@@ -838,72 +834,42 @@ def _resolve_rollout_devices(
     visible_devices: tuple[int, ...],
     trainer_devices: tuple[int, ...],
     rollout_config: RolloutResourceConfig,
+    cross_node: bool,
 ) -> tuple[int, ...]:
-    gpu_pool = rollout_config.gpu_pool
+    """Pinned ``devices`` verbatim; otherwise the rollout shares the trainer GPU(s).
+
+    ``cross_node`` ordinals are budget tokens on other hosts, so a remote rollout
+    never shares the head-local trainer GPU: it takes the tokens after the trainer's.
+    """
+
+    prefix = rollout_config.key_prefix
     devices = _explicit_role_devices(rollout_config, visible_devices=visible_devices)
     if devices is not None:
-        trainer_pool = set(trainer_devices)
-        if gpu_pool == "trainer" and not set(devices).issubset(trainer_pool):
-            outside = sorted(set(devices) - trainer_pool)
-            raise ValueError(
-                "distributed.resources.rollout.gpu_pool=trainer requires every "
-                "rollout device to belong to the trainer pool, but "
-                f"rollout.devices={list(devices)} includes {outside} outside "
-                f"trainer={list(trainer_devices)}. Devices disjoint from trainer "
-                "or mixing trainer and spare GPUs are invalid; drop the explicit "
-                "devices (auto pins onto the trainer pool) or use "
-                "gpu_pool=dedicated.",
-            )
-        trainer_overlap = sorted(set(devices) & trainer_pool)
-        if gpu_pool == "dedicated" and trainer_overlap:
-            raise ValueError(
-                "distributed.resources.rollout.gpu_pool=dedicated requires rollout "
-                "devices disjoint from the trainer pool, but "
-                f"rollout={list(devices)} trainer={list(trainer_devices)} "
-                f"overlap={trainer_overlap}",
-            )
         return devices
 
-    if gpu_pool == "trainer":
-        # Borrow the trainer GPU(s): pin rollout onto them even when spare GPUs exist
-        # ("share the trainer card", not "find a free one").
-        requested = rollout_config.requested_gpu_count(available_count=len(trainer_devices))
-        if requested == 0:
-            return ()
-        if requested > len(trainer_devices):
+    if cross_node:
+        taken = set(trainer_devices)
+        pool = tuple(device for device in visible_devices if device not in taken)
+        requested = rollout_config.requested_gpu_count(available_count=len(pool))
+        if requested > len(pool):
             raise ValueError(
-                "distributed.resources.rollout.gpu_pool=trainer shares the trainer "
-                f"GPU(s), but rollout needs {requested} GPU(s) and trainer owns "
-                f"{list(trainer_devices)}. A shared rollout cannot exceed the trainer "
-                "pool; use gpu_pool=dedicated (or expose more trainer GPUs).",
+                f"{prefix}: cross_node rollout needs {requested} GPU token(s) but only "
+                f"{len(pool)} remain after trainer={list(trainer_devices)} in "
+                f"visible={list(visible_devices)}",
             )
-        return tuple(trainer_devices[:requested])
+        return tuple(pool[:requested])
 
-    # auto / dedicated: a pool disjoint from the trainer GPU(s). `dedicated` forbids
-    # the share fallback (a spare GPU is required); `auto` is spare-first-else-share.
-    excluded = set(trainer_devices)
-    pool = tuple(device for device in visible_devices if device not in excluded)
-    requested = rollout_config.requested_gpu_count(available_count=len(pool))
+    requested = rollout_config.requested_gpu_count(available_count=len(trainer_devices))
     if requested == 0:
         return ()
-    if requested <= len(pool):
-        return tuple(pool[:requested])
-    if gpu_pool == "dedicated":
+    if requested > len(trainer_devices):
         raise ValueError(
-            "distributed.resources.rollout.gpu_pool=dedicated requires spare "
-            f"rollout GPUs: requested={requested}, available={len(pool)}, "
-            f"trainer={list(trainer_devices)}, visible={list(visible_devices)}. "
-            "Expose more GPUs, or drop gpu_pool=dedicated to allow time-sharing "
-            "the trainer GPU.",
+            f"{prefix} shares the trainer GPU(s) unless {prefix}.devices pins its own, "
+            f"but rollout needs {requested} GPU(s) and trainer owns "
+            f"{list(trainer_devices)}. Pin {prefix}.devices to spare GPUs, or expose "
+            "more trainer GPUs.",
         )
-    fallback = tuple(device for device in visible_devices if device in excluded)
-    combined = pool + fallback
-    if requested > len(combined):
-        raise ValueError(
-            "Not enough visible GPUs for rollout even with overlap allowed: "
-            f"requested={requested}, visible={list(visible_devices)}",
-        )
-    return tuple(combined[:requested])
+    return tuple(trainer_devices[:requested])
 
 
 def _resolve_reward_devices(
@@ -912,8 +878,15 @@ def _resolve_reward_devices(
     trainer_devices: tuple[int, ...],
     rollout_devices: tuple[int, ...],
     reward_config: RewardResourceConfig,
+    cross_node: bool,
 ) -> tuple[int, ...]:
-    """Resolve the in-process reward reservation: () or exactly one GPU."""
+    """Resolve the reward reservation: () or exactly one GPU.
+
+    ``device: gpu`` with pinned ``devices`` reserves that GPU verbatim. Unpinned,
+    the reward shares the rollout GPU (the rollout parks before scoring). Under
+    ``cross_node`` a shared remote token is meaningless, so an unpinned reward
+    takes the budget token after the trainer's and rollout's.
+    """
 
     prefix = reward_config.key_prefix
     explicit = _parse_devices(reward_config.devices)
@@ -925,15 +898,6 @@ def _resolve_reward_devices(
             )
         return ()
 
-    def _validated(devices: tuple[int, ...]) -> tuple[int, ...]:
-        _validate_reward_overlap(
-            devices=devices,
-            trainer_devices=trainer_devices,
-            rollout_devices=rollout_devices,
-            reward_config=reward_config,
-        )
-        return devices
-
     if explicit != "auto":
         devices = tuple(_validate_device_ids(explicit, field_name=f"{prefix}.devices"))
         if len(devices) != 1:
@@ -943,72 +907,26 @@ def _resolve_reward_devices(
                 "Multi-GPU reward inference requires a remote runtime boundary.",
             )
         _validate_subset(devices, visible_devices, field_name=f"{prefix}.devices")
-        return _validated(devices)
+        return devices
 
-    pool_source = reward_config.gpu_pool
-    if pool_source == "auto":
-        # Auto placement: prefer a dedicated spare GPU when one exists;
-        # otherwise fall back to sharing the rollout pool. Removes the footgun
-        # where a spelled-out "rollout" kept forcing shared single-GPU churn
-        # even on machines with spare GPUs.
-        spare_excluded = set(trainer_devices) | set(rollout_devices)
-        spare_pool = tuple(device for device in visible_devices if device not in spare_excluded)
-        if spare_pool:
-            return _validated((spare_pool[0],))
-        pool_source = "rollout"
-
-    if pool_source == "rollout":
-        if not rollout_devices:
+    if cross_node:
+        taken = set(trainer_devices) | set(rollout_devices)
+        pool = tuple(device for device in visible_devices if device not in taken)
+        if not pool:
             raise ValueError(
-                "Not enough rollout GPUs for reward shared inference pool: "
-                f"requested=1, rollout={list(rollout_devices)}",
+                f"{prefix}.device=gpu under cross_node needs its own GPU token: "
+                f"trainer={list(trainer_devices)} rollout={list(rollout_devices)} "
+                f"visible={list(visible_devices)}",
             )
-        return _validated((rollout_devices[0],))
+        return (pool[0],)
 
-    # Explicit dedicated pool: a spare GPU is required. Auto placement may fall
-    # back to sharing, but a declared dedicated pool never does.
-    excluded = set(trainer_devices) | set(rollout_devices)
-    pool = tuple(device for device in visible_devices if device not in excluded)
-    if not pool:
+    if not rollout_devices:
         raise ValueError(
-            "Not enough non-overlapping reward GPUs: requested=1, available=0, "
-            f"trainer={list(trainer_devices)}, rollout={list(rollout_devices)}, "
-            f"visible={list(visible_devices)}. Set "
-            "distributed.resources.reward.gpu_pool=rollout for a shared "
-            "inference pool (release is derived automatically), or expose a "
-            "separate reward GPU.",
+            f"{prefix}.device=gpu shares the rollout GPU unless {prefix}.devices pins "
+            f"one, but the rollout owns no GPU; pin {prefix}.devices or set "
+            f"{prefix}.device=cpu",
         )
-    return _validated((pool[0],))
-
-
-def _validate_reward_overlap(
-    *,
-    devices: tuple[int, ...],
-    trainer_devices: tuple[int, ...],
-    rollout_devices: tuple[int, ...],
-    reward_config: RewardResourceConfig,
-) -> None:
-    device_set = set(devices)
-    rollout_pool = set(rollout_devices)
-    trainer_pool = set(trainer_devices)
-
-    if reward_config.gpu_pool == "rollout" and not device_set.issubset(rollout_pool):
-        outside = sorted(device_set - rollout_pool)
-        raise ValueError(
-            "distributed.resources.reward.gpu_pool=rollout requires every reward "
-            f"device to belong to rollout={list(rollout_devices)}, but "
-            f"reward={list(devices)} includes {outside} outside that pool",
-        )
-
-    rollout_overlap = sorted(device_set & rollout_pool)
-    trainer_overlap = sorted(device_set & trainer_pool)
-    if reward_config.gpu_pool == "dedicated" and (rollout_overlap or trainer_overlap):
-        raise ValueError(
-            "distributed.resources.reward.gpu_pool=dedicated requires reward "
-            "devices disjoint from both trainer and rollout pools: "
-            f"reward={list(devices)} trainer={list(trainer_devices)} "
-            f"rollout={list(rollout_devices)}",
-        )
+    return (rollout_devices[0],)
 
 
 def _parse_devices(value: Any) -> list[int] | str:

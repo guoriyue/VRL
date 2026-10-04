@@ -1,6 +1,6 @@
-# Ray rollout preset: auto split. Resource resolution defaults do the work —
-# the trainer takes one visible GPU and the rollout auto pool takes the spares
-# (spare-first-else-share). Pin `devices` per role to override placement.
+# Ray rollout preset: colocated by default. Resource resolution defaults do the
+# work — the trainer takes one visible GPU and an unpinned rollout shares it.
+# Pin `devices` per role to place it on other cards.
 distributed:
   rollout:
     cpus_per_worker: 4.0

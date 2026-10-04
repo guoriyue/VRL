@@ -54,7 +54,7 @@ model:
   # LoRA, not full-param: full-param 480p_93f training MEASURED not to fit 32GB
   # in this validation's own runs (backward ckpt-recompute OOM at 29.95GiB with
   # samples_per_generation_batch=1, after rollout release + cpu trajectories + reward
-  # gpu_pool were all in place; spc=4 and spc=2 OOM earlier in the loop).
+  # placement were all in place; spc=4 and spc=2 OOM earlier in the loop).
   # Matches the ~30.2GB trainer-alone peak documented by the LoRA sibling
   # (online_grpo_droid_full_target_480p_lora.yaml) at 33f. Full-param stays
   # multi-GPU-gated; LoRA at lr 1e-4 is the single-card path this validation
