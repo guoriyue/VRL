@@ -343,8 +343,6 @@ def test_collector_offloads_runtime_memory_before_reward_scoring() -> None:
         "offload",
         "reward_park",
     ]
-    assert collector.requires_driver_model_offload is True
-    assert collector.requires_driver_model_offload_for_reward is True
 
 
 def test_collector_does_not_offload_runtime_before_independent_reward() -> None:
@@ -365,8 +363,6 @@ def test_collector_does_not_offload_runtime_before_independent_reward() -> None:
     asyncio.run(collect_scored(collector, ["p0"], group_size=1))
 
     assert runtime.events == ["generate", "score"]
-    assert collector.requires_driver_model_offload is False
-    assert collector.requires_driver_model_offload_for_reward is False
 
 
 @pytest.mark.parametrize(

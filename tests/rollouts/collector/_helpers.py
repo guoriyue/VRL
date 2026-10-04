@@ -49,6 +49,8 @@ class PromptCollectionFake:
         return evaluated
 
     reward_runtime = SimpleNamespace()
+    # No lifecycle plan: nothing shares a GPU, so no role parks.
+    lifecycle = None
     reward_isolation_verified = False
     request_builder = SimpleNamespace(
         build=lambda inputs, group_size, **kwargs: SimpleNamespace(

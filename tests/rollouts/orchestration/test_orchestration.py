@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from tests.rollouts.collector._helpers import PromptCollectionFake
+from vrl.ray.resources import RayLifecyclePlan
 
 
 def _schedule_config(mode: str):
@@ -58,8 +59,7 @@ class _Collector(PromptCollectionFake):
     def __init__(self, runtime: _Runtime) -> None:
         self.generation_runtime = runtime
         self.requires_generation_offload_before_reward = False
-        self.requires_driver_model_offload = False
-        self.requires_driver_model_offload_for_reward = False
+        self.lifecycle = None
         self.calls: list[dict[str, Any]] = []
         self.activation_calls = 0
         self.offload_calls = 0
@@ -210,8 +210,13 @@ def _parking_schedule(
         fail_collect=fail_collect,
         fail_offload=fail_offload,
     )
-    collector.requires_driver_model_offload = not reward_uses_trainer
-    collector.requires_driver_model_offload_for_reward = reward_uses_trainer
+    # Either the rollout or the reward sits on the trainer GPU; both shapes park
+    # the trainer at phase entry.
+    collector.lifecycle = (
+        RayLifecyclePlan(trainer=(0,), rollout=(1,), reward=(0,))
+        if reward_uses_trainer
+        else RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=(2,))
+    )
     strategy = _ParkingStrategy(events, fail_restore=fail_restore)
 
     def _state() -> object:

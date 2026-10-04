@@ -133,22 +133,11 @@ class RolloutRuntimeCoordinator:
                 return require_int(value, path="current_policy_version", minimum=0)
         return None
 
-    def requires_driver_model_offload(self) -> bool:
-        """Whether generation borrows trainer-owned GPU capacity."""
-
-        return bool(self.collector.requires_driver_model_offload)
-
-    def requires_driver_model_offload_for_reward(self) -> bool:
-        """Whether reward scoring borrows trainer-owned GPU capacity."""
-
-        return bool(self.collector.requires_driver_model_offload_for_reward)
-
     def requires_training_state_parking(self) -> bool:
-        """Whether either rollout or reward needs the trainer's GPU lease."""
+        """Whether rollout or reward borrows the trainer's GPU (the plan's ``offload_train``)."""
 
-        return bool(
-            self.requires_driver_model_offload() or self.requires_driver_model_offload_for_reward()
-        )
+        plan = self.collector.lifecycle
+        return plan is not None and bool(plan.offload_train)
 
     def supports_non_draining_weight_sync(self) -> bool:
         # True only when every rollout worker retains versioned trainable-state

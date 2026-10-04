@@ -8,6 +8,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 
 from tests.rollouts.orchestration.test_strict_failure_path import _Collector, _schedule, _Strategy
+from vrl.ray.resources import RayLifecyclePlan
 from vrl.rollouts.orchestration.strict_on_policy import ContextParallelStrictRolloutSchedule
 from vrl.trainers.distributed import create_context_parallel_groups
 
@@ -37,7 +38,7 @@ def _worker(rank, rendezvous, spool):
         else:
             assert calls == []
         if owner is not None and groups.dp_rank == 0:
-            collector.requires_driver_model_offload = True
+            collector.lifecycle = RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=())
         with pytest.raises(RuntimeError, match="disjoint"):
             asyncio.run(schedule.next_iteration([], group_size=2))
 

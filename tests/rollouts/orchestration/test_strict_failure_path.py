@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from tests.rollouts.collector._helpers import PromptCollectionFake
+from vrl.ray.resources import RayLifecyclePlan
 from vrl.rollouts.orchestration.rollout_runtime import (
     RolloutPhaseCleanupError,
     RolloutRuntimeCoordinator,
@@ -48,7 +49,6 @@ class _Collector(PromptCollectionFake):
     """Collector fake whose generation raises mid-rollout."""
 
     requires_generation_offload_before_reward = False
-    requires_driver_model_offload_for_reward = False
 
     def __init__(
         self,
@@ -60,9 +60,11 @@ class _Collector(PromptCollectionFake):
         self.calls = calls
         self.collect_raises = collect_raises
         self.fail_rollout_offload = False
-        # requires_driver_model_offload drives whether the coordinator parks
-        # the trainer at phase entry (the shared-GPU topology fact).
-        self.requires_driver_model_offload = trainer_shares_gpu
+        # The lifecycle plan drives whether the coordinator parks the trainer at
+        # phase entry: a rollout on the trainer GPU is the shared-GPU fact.
+        self.lifecycle = (
+            RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=()) if trainer_shares_gpu else None
+        )
         self.generation_runtime = SimpleNamespace(current_policy_version=0)
 
     async def activate_generation_runtime(self) -> None:

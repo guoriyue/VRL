@@ -447,8 +447,7 @@ class _SyntheticDiffusionReplayCollector:
     """Collector that exercises replay training without full generation assets."""
 
     requires_generation_offload_before_reward = False
-    requires_driver_model_offload = False
-    requires_driver_model_offload_for_reward = False
+    lifecycle = None
     # Synthetic replay has no reward runtime with verified device isolation.
     reward_isolation_verified = False
 

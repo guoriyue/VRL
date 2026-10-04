@@ -141,7 +141,7 @@ class RolloutCollector:
         # Topology-derived handoff policy (vrl/ray/resources.py). None means no
         # shared GPU, so rollout never offloads before reward. Read here instead
         # of asking the runtime, which is now just transport.
-        self._lifecycle = lifecycle
+        self.lifecycle = lifecycle
         self._reward_phase_started = False
         self._reward_shutdown_complete = False
 
@@ -351,7 +351,7 @@ class RolloutCollector:
         return batches
 
     def _requires_reward_memory_release(self) -> bool:
-        lifecycle = self._lifecycle
+        lifecycle = self.lifecycle
         if lifecycle is None:
             return False
         return lifecycle.offload_reward
@@ -363,36 +363,18 @@ class RolloutCollector:
         # The release decision is derived once from GPU topology into the
         # lifecycle plan (vrl/ray/resources.py), not re-decided per call by the
         # runtime. None plan = no shared GPU = never release before reward.
-        lifecycle = self._lifecycle
+        lifecycle = self.lifecycle
         if lifecycle is None:
             return False
         return lifecycle.park_rollout_for_reward
 
     @property
-    def requires_driver_model_offload(self) -> bool:
-        """Whether generation borrows the trainer's in-process GPU."""
-
-        lifecycle = self._lifecycle
-        if lifecycle is None:
-            return False
-        return lifecycle.park_trainer_for_rollout
-
-    @property
-    def requires_driver_model_offload_for_reward(self) -> bool:
-        """Whether reward scoring borrows the trainer's in-process GPU."""
-
-        lifecycle = self._lifecycle
-        if lifecycle is None:
-            return False
-        return lifecycle.park_trainer_for_reward
-
-    @property
     def reward_isolation_verified(self) -> bool:
         """Whether reward devices are verified safe beside generation and training."""
 
+        lifecycle = self.lifecycle
         return bool(
-            not self.requires_generation_offload_before_reward
-            and not self.requires_driver_model_offload_for_reward
+            (lifecycle is None or not lifecycle.offload_reward)
             and self.reward_runtime.external_accelerator_isolation_verified
         )
 

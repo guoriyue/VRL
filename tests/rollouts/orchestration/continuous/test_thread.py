@@ -42,8 +42,6 @@ def _runtime(weight_sync: Any) -> RayGenerationRuntime:
 
 class _OwnerCollector(PromptCollectionFake):
     requires_generation_offload_before_reward = False
-    requires_driver_model_offload = False
-    requires_driver_model_offload_for_reward = False
 
     def __init__(
         self,
