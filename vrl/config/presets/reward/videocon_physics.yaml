@@ -1,11 +1,6 @@
 # VideoCon-Physics reward (videophysics/videocon_physics, mPLUG-Owl-Video 7B).
 # Custom architecture: model code is vendored under third_party/mplug_owl_video/.
 # Scores Yes/No entailment for "Does the video follow physical commonsense?".
-distributed:
-  resources:
-    reward:
-      device: gpu
-
 reward:
   components:
     videocon_physics: 1.0

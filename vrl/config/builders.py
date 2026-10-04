@@ -113,6 +113,26 @@ class RewardRuntimeConfig:
             inference.kind == "http" for inference in self.inference_configs.values()
         )
 
+    @property
+    def needs_gpu(self) -> bool:
+        """Whether any run-owned component would score on CUDA when offered a GPU.
+
+        The components own this fact: a CPU-only reward class or a component's
+        own ``device`` override answers CPU, so the resource plan reserves
+        nothing and parks no neighbour around scoring. HTTP services are
+        operator-owned and never consult the local plan.
+        """
+
+        from vrl.rewards.functions.registry import get_reward
+
+        return any(
+            get_reward(name)
+            .resolve_execution_device(device="cuda", kwargs=self.kwargs.get(name) or {})
+            .startswith("cuda")
+            for name, inference in self.inference_configs.items()
+            if inference.kind != "http"
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class BuiltConfigs:

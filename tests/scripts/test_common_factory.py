@@ -424,13 +424,12 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
                     "visible_devices": [0, 1],
                     "trainer": {"devices": [0]},
                     "rollout": {"devices": [1]},
-                    "reward": {"device": "cpu"},
                 },
             },
             "reward": {"components": {"ocr": 1.0}, "kwargs": {"ocr": {}}},
         },
     )
-    # A CPU-only reward reservation wins even when the trainer runs on CUDA.
+    # A CPU-only reward class scores on CPU even when the trainer runs on CUDA.
     cpu_reward = resolve_reward_inputs(
         _built_reward({"ocr": 1.0}, {"ocr": {}}),
         ResolvedDistributedResources.from_root(parse_config(cpu_cfg)),

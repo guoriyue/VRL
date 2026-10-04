@@ -37,11 +37,6 @@ rollout:
 
 
 distributed:
-  resources:
-    # Both local rewards support CPU execution but cannot completely park GPU
-    # state. Reserve no reward GPU in this single-card baseline.
-    reward:
-      device: cpu
 
 trainer:
   output_dir: outputs/cosmos_pred2_droid_target_480p
@@ -56,3 +51,12 @@ reward:
   components:
     target_dino_similarity: 1.0
     motion_dynamics: 0.2
+  kwargs:
+    # DINOv2 and RAFT support CPU execution but cannot prove complete GPU
+    # parking; CPU scoring keeps the single-GPU handoff sound.
+    target_dino_similarity:
+      worker_config:
+        device: cpu
+    motion_dynamics:
+      worker_config:
+        device: cpu

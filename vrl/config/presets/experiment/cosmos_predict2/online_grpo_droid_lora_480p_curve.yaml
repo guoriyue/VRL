@@ -94,11 +94,6 @@ rollout:
     device: cpu                       # 93f trajectories on the GPU wire OOM the collect handoff
 
 distributed:
-  resources:
-    reward:
-      # DINOv2 and RAFT support CPU execution but cannot prove complete GPU
-      # parking. CPU scoring preserves the single-GPU phase lease contract.
-      device: cpu
   rollout:
     pipelined: true
 
@@ -112,3 +107,12 @@ reward:
   components:
     target_dino_similarity: 1.0
     motion_dynamics: 0.2
+  kwargs:
+    # DINOv2 and RAFT support CPU execution but cannot prove complete GPU
+    # parking; CPU scoring keeps the single-GPU handoff sound.
+    target_dino_similarity:
+      worker_config:
+        device: cpu
+    motion_dynamics:
+      worker_config:
+        device: cpu

@@ -19,10 +19,10 @@ import os
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.utils.config import to_builtin_deep
 
 if TYPE_CHECKING:
+    from vrl.config.builders import RewardRuntimeConfig
     from vrl.config.schema import RootConfig
 
 
@@ -161,26 +161,17 @@ class RolloutResourceConfig(RoleResourceConfig):
 
 @dataclass(frozen=True, slots=True)
 class RewardResourceConfig:
-    """Compute ownership for in-process reward inference.
+    """GPU reservation for reward scoring.
 
-    Rewards score in the driver process — there is no reward worker fleet, so
-    the request is one question, not worker arithmetic: which compute does the
-    reward model own?
-
-    ``device`` (public key: distributed.resources.reward.device):
-      "trainer"  follow the trainer's device; no reservation (default, and the
-                 meaning of an absent reward block)
-      "cpu"      score on CPU; no GPU reservation
-      "gpu"      reserve exactly one GPU: ``devices`` pins it, otherwise it
-                 shares the rollout GPU (the rollout parks before scoring);
-                 under ``cross_node`` it takes its own budget token
-    ``devices`` (device: gpu only): pin the reservation to one explicit CUDA
-    ordinal.
+    Whether the reward needs a GPU at all is the components' own fact (a
+    component's ``device`` override, or a CPU-only reward class). ``devices``
+    (public key: distributed.resources.reward.devices) pins the one CUDA
+    ordinal the reward reserves. Left unset, a GPU reward follows the trainer's
+    card with no reservation of its own and the lifecycle plan parks around it.
     """
 
     role: ClassVar[str] = "reward"
 
-    device: Literal["trainer", "cpu", "gpu"] = "trainer"
     devices: list[int] | str = "auto"
 
     @property
@@ -188,6 +179,10 @@ class RewardResourceConfig:
         """Public config path of this role's block, for error messages."""
 
         return f"distributed.resources.{self.role}"
+
+    @property
+    def pins_devices(self) -> bool:
+        return _parse_devices(self.devices) != "auto"
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,9 +311,9 @@ class ResolvedDistributedResources:
     trainer_devices: tuple[int, ...]
     rollout_devices: tuple[int, ...]
     reward_devices: tuple[int, ...]
-    # distributed.resources.reward.device == "cpu": an explicit CPU reward
-    # reservation, distinct from "no reservation, follow the trainer device".
-    reward_runs_on_cpu: bool
+    # A GPU reward with no reservation of its own scores on the trainer's
+    # rank-local device; False with an empty reservation means CPU scoring.
+    reward_follows_trainer: bool
     rollout_num_engines: int
     # Ranks (GPUs) per rollout engine; consumed by the launcher's engine
     # grouping and BundleLayout's per-engine bundle groups.
@@ -370,7 +365,7 @@ class ResolvedDistributedResources:
             if self.cross_node:
                 return "cuda:0"
             return f"cuda:{self._local_torch_ordinal(int(devices[0]))}"
-        if self.reward_runs_on_cpu:
+        if not self.reward_follows_trainer:
             return "cpu"
         if trainer_device is not None:
             return str(trainer_device)
@@ -406,7 +401,7 @@ class ResolvedDistributedResources:
         cls,
         root: RootConfig,
         *,
-        reward_inference: dict[str, RewardInferenceConfig] | None = None,
+        reward: RewardRuntimeConfig | None = None,
     ) -> ResolvedDistributedResources:
         """Build the resource plan from the root: role-level requests to concrete CUDA ordinals.
 
@@ -414,10 +409,10 @@ class ResolvedDistributedResources:
         ownership. It intentionally does static ownership checks only; memory
         pressure is still a runtime concern.
 
-        ``reward_inference`` is the already-resolved per-component deployment map
-        (``BuiltConfigs.reward.inference_configs``); training scripts pass it so the
-        reward inference is resolved once at config-build time. When omitted (e.g.
-        isolated resource tests) it is resolved from ``root.reward``.
+        ``reward`` is the already-resolved reward bundle (``BuiltConfigs.reward``);
+        training scripts pass it so the reward section is resolved once at
+        config-build time. When omitted (e.g. isolated resource tests) it is
+        resolved from ``root.reward``.
         """
 
         distributed = root.distributed
@@ -426,23 +421,16 @@ class ResolvedDistributedResources:
             if distributed is not None and distributed.resources is not None
             else DistributedResourceConfig()
         )
-        if reward_inference is None:
-            if root.reward is None:
-                reward_inference = {}
-            else:
-                from vrl.config.builders import RewardRuntimeConfig
+        if reward is None and root.reward is not None:
+            from vrl.config.builders import RewardRuntimeConfig
 
-                reward_inference = RewardRuntimeConfig.from_cfg(root.reward).inference_configs
-        # In-process components and run-owned Ray actors consume this run's
-        # resource plan; only operator-owned HTTP services are external.
-        local_reward_configured = any(
-            inference.kind in {"in_process", "ray"} for inference in reward_inference.values()
-        )
-        if reward_inference and not local_reward_configured:
+            reward = RewardRuntimeConfig.from_cfg(root.reward)
+        if reward is not None and reward.all_external_inference:
             # External services own their accelerator and process placement. Ignore
             # inherited reward presets here instead of creating a phantom local GPU
-            # or CPU bundle; the HTTP runtime is a driver-side client.
+            # bundle; the HTTP runtime is a driver-side client.
             config = replace(config, reward=RewardResourceConfig())
+        reward_needs_gpu = reward is not None and reward.needs_gpu
         training = None if distributed is None else distributed.training
         training_strategy = "single_process" if training is None else str(training.strategy)
         training_world_size = (
@@ -516,16 +504,12 @@ class ResolvedDistributedResources:
             resolved_gpu_count=rollout_num_gpus,
         )
 
-        # Sharing is the default: an unpinned role sits on its neighbour's GPU, and
+        # Sharing is the default: an unpinned role sits on the trainer's GPU, and
         # pinned ``devices`` sets may intersect deliberately. The startup receipt
         # announces the resolved plan.
-        reward_mode = config.reward.device
         reward_devices = _resolve_reward_devices(
             visible_devices=visible_devices,
-            trainer_devices=trainer_devices,
-            rollout_devices=rollout_devices,
             reward_config=config.reward,
-            cross_node=config.cross_node,
         )
         if config.cross_node and set(reward_devices) & (
             set(trainer_devices) | set(rollout_devices)
@@ -540,16 +524,12 @@ class ResolvedDistributedResources:
         if fsdp_asymmetric:
             _validate_fsdp_trainer_disjoint(trainer_devices, rollout_devices, reward_devices)
 
-        reward_runs_on_cpu = reward_mode == "cpu"
-        # Rewards execute in-process. With no GPU reservation of their own, an active
-        # reward follows the trainer's rank-local device instead of disappearing from
-        # the topology — which is what makes trainer/reward sharing visible to the
-        # lifecycle plan below.
-        reward_uses_trainer_device = bool(
-            local_reward_configured and reward_mode == "trainer" and trainer_devices
-        )
+        # A GPU reward with no reservation of its own follows the trainer's
+        # rank-local device instead of disappearing from the topology — which is
+        # what makes trainer/reward sharing visible to the lifecycle plan below.
+        reward_follows_trainer = bool(reward_needs_gpu and not reward_devices and trainer_devices)
         reward_execution_devices = (
-            tuple(trainer_devices) if reward_uses_trainer_device else tuple(reward_devices)
+            tuple(trainer_devices) if reward_follows_trainer else tuple(reward_devices)
         )
 
         # Offload scheduling is read straight off the resolved device sets.
@@ -563,7 +543,7 @@ class ResolvedDistributedResources:
             trainer_devices=trainer_devices,
             rollout_devices=rollout_devices,
             reward_devices=reward_devices,
-            reward_runs_on_cpu=reward_runs_on_cpu,
+            reward_follows_trainer=reward_follows_trainer,
             rollout_num_engines=rollout_num_engines,
             rollout_gpus_per_engine=rollout_gpus_per_engine,
             cross_node=config.cross_node,
@@ -638,9 +618,9 @@ def format_distributed_resource_plan(resolved: ResolvedDistributedResources) -> 
         f"gpus_per_engine={resolved.rollout_gpus_per_engine}",
         "reward_mode="
         + (
-            "gpu"
+            "reserved"
             if resolved.reward_devices
-            else ("cpu" if resolved.reward_runs_on_cpu else "trainer")
+            else ("trainer" if resolved.reward_follows_trainer else "cpu")
         ),
         f"colocated={resolved.colocated}",
         f"cross_node={resolved.cross_node}",
@@ -678,8 +658,9 @@ def _resolve_cross_node_visible_devices(
         )
 
     total = _explicit_role_gpu_count(config.trainer) + _explicit_role_gpu_count(config.rollout)
-    if config.reward.device == "gpu":
-        total += 1
+    pinned_reward = _parse_devices(config.reward.devices)
+    if pinned_reward != "auto":
+        total += len(pinned_reward)
     return tuple(range(total))
 
 
@@ -797,58 +778,23 @@ def _resolve_rollout_devices(
 def _resolve_reward_devices(
     *,
     visible_devices: tuple[int, ...],
-    trainer_devices: tuple[int, ...],
-    rollout_devices: tuple[int, ...],
     reward_config: RewardResourceConfig,
-    cross_node: bool,
 ) -> tuple[int, ...]:
-    """Resolve the reward reservation: () or exactly one GPU.
-
-    ``device: gpu`` with pinned ``devices`` reserves that GPU verbatim. Unpinned,
-    the reward shares the rollout GPU (the rollout parks before scoring). Under
-    ``cross_node`` a shared remote token is meaningless, so an unpinned reward
-    takes the budget token after the trainer's and rollout's.
-    """
+    """The pinned reward reservation: () or exactly one visible GPU."""
 
     prefix = reward_config.key_prefix
     explicit = _parse_devices(reward_config.devices)
-    if reward_config.device != "gpu":
-        if explicit != "auto" and explicit:
-            raise ValueError(
-                f"{prefix}.devices={explicit} requires {prefix}.device=gpu; "
-                f"device={reward_config.device!r} reserves no GPU",
-            )
+    if explicit == "auto":
         return ()
-
-    if explicit != "auto":
-        devices = tuple(_validate_device_ids(explicit, field_name=f"{prefix}.devices"))
-        if len(devices) != 1:
-            raise ValueError(
-                f"{prefix}.device=gpu reserves exactly one GPU for the "
-                f"in-process reward model, got {prefix}.devices={list(devices)}. "
-                "Multi-GPU reward inference requires a remote runtime boundary.",
-            )
-        _validate_subset(devices, visible_devices, field_name=f"{prefix}.devices")
-        return devices
-
-    if cross_node:
-        taken = set(trainer_devices) | set(rollout_devices)
-        pool = tuple(device for device in visible_devices if device not in taken)
-        if not pool:
-            raise ValueError(
-                f"{prefix}.device=gpu under cross_node needs its own GPU token: "
-                f"trainer={list(trainer_devices)} rollout={list(rollout_devices)} "
-                f"visible={list(visible_devices)}",
-            )
-        return (pool[0],)
-
-    if not rollout_devices:
+    devices = tuple(_validate_device_ids(explicit, field_name=f"{prefix}.devices"))
+    if len(devices) != 1:
         raise ValueError(
-            f"{prefix}.device=gpu shares the rollout GPU unless {prefix}.devices pins "
-            f"one, but the rollout owns no GPU; pin {prefix}.devices or set "
-            f"{prefix}.device=cpu",
+            f"{prefix}.devices reserves exactly one GPU for the reward model, got "
+            f"{list(devices)}. Multi-GPU reward inference requires a remote runtime "
+            "boundary.",
         )
-    return (rollout_devices[0],)
+    _validate_subset(devices, visible_devices, field_name=f"{prefix}.devices")
+    return devices
 
 
 def _parse_devices(value: Any) -> list[int] | str:

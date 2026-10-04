@@ -131,7 +131,6 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",
             "distributed.resources.rollout.num_engines=1",
-            "distributed.resources.reward.device=cpu",
             "distributed.rollout.cpus_per_worker=1",
             "rollout.samples_per_generation_batch=2",
         ],
@@ -164,7 +163,6 @@ def test_rollout_profiler_is_resolved_before_launch_contract_serialization() -> 
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",
             "distributed.resources.rollout.num_engines=1",
-            "distributed.resources.reward.device=cpu",
         ],
     )
     cfg.rollout.torch_profiler = {
@@ -220,7 +218,6 @@ def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",
             "distributed.resources.rollout.num_engines=1",
-            "distributed.resources.reward.device=cpu",
         ],
     )
 
@@ -253,7 +250,6 @@ def test_sana_fp8_rollout_keeps_native_policy_and_bf16_prompt_encoder() -> None:
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",
             "distributed.resources.rollout.num_engines=1",
-            "distributed.resources.reward.device=cpu",
         ],
     )
     cfg.precision.rollout.quantization = {"format": "fp8"}
@@ -286,7 +282,6 @@ def test_generation_batch_width_reaches_the_request_not_the_executor() -> None:
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",
             "distributed.resources.rollout.num_engines=1",
-            "distributed.resources.reward.device=cpu",
             "rollout.samples_per_generation_batch=3",
         ],
     )
@@ -327,7 +322,6 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",
             "distributed.resources.rollout.num_engines=1",
-            "distributed.resources.reward.device=cpu",
             "actor.gradient_checkpointing=off",
             "model.torch_compile.enable=true",
             "model.torch_compile.mode=default",

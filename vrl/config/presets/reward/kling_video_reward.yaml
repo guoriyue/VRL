@@ -1,9 +1,4 @@
 # Kling VideoReward for world-model RL.
-distributed:
-  resources:
-    reward:
-      device: gpu
-
 reward:
   components:
     kling_video_reward: 1.0

@@ -81,8 +81,8 @@ distributed:
       devices: [0]
     rollout:
       devices: [1, 2]
-    # reward defaults to device: gpu (reward/hpsv3 preset); resolution assigns
-    # the spare GPU 3 with a reserved Ray bundle.
+    reward:
+      devices: [3]   # HPSv3 on its own card with a reserved Ray bundle
 
 rollout:
   # 24 prompt groups x G=4 = 96 samples per optimizer update — Flash-GRPO's

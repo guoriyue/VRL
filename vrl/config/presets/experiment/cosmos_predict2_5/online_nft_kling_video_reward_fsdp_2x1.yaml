@@ -70,13 +70,8 @@ distributed:
       # a follow-up; this is the correct, standard FSDP2+checkpointing recipe.
       precision_policy: none       # fp32 master params; bf16 compute via trainer autocast
       reshard_after_forward: true  # ZeRO-3 (re-gather params each forward, lowest mem)
-  resources:
-    # Each rank's unpinned rollout shares its own (trainer) GPU. Same as the DDP
-    # variant.
-    reward:
-      # 2 GPUs total (1 per rank), no spare card: the unpinned Kling reward
-      # time-shares the same card as rollout/trainer.
-      device: gpu
+  # Each rank's unpinned rollout and unpinned Kling reward share its own
+  # (trainer) GPU: 2 GPUs total, no spare card. Same as the DDP variant.
 
 model:
   # torch.compile (inductor graph capture) is unsound with FSDP2 fully_shard's

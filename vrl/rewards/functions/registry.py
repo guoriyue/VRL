@@ -366,8 +366,8 @@ def validate_reward_memory_parking_components(
             return
         raise ValueError(
             "shared reward GPU topology has no configured GPU reward "
-            "component. Declare the reward as CPU execution "
-            "(distributed.resources.reward.device=cpu) instead.",
+            "component. CPU-only components need no reservation; drop "
+            "distributed.resources.reward.devices.",
         )
     if len(gpu_components) > 1:
         raise ValueError(

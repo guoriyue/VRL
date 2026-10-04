@@ -5,11 +5,6 @@
 # Scores are unbounded (typically -1..+12, higher is better); GRPO's group
 # normalization makes the absolute scale irrelevant. Temporal coherence is NOT
 # in this reward — pair with a motion-aware component when motion matters.
-distributed:
-  resources:
-    reward:
-      device: gpu
-
 reward:
   components:
     hpsv3: 1.0

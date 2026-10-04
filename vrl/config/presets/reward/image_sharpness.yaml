@@ -1,12 +1,6 @@
 # Line-art sharpness reward — normalized Laplacian edge energy, CPU, model-free.
 # Defends crisp cel-shading, which every learned quality model failed to capture.
 # Must ride alongside a coherence reward (PickScore) so noise cannot game it.
-distributed:
-  resources:
-    reward:
-      # Pure numpy compute; keep it off the trainer GPU.
-      device: cpu
-
 reward:
   components:
     image_sharpness: 1.0

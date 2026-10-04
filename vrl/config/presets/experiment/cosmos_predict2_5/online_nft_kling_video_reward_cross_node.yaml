@@ -37,9 +37,5 @@ distributed:
       num_gpus: 1
     rollout:
       devices: [1]
-    reward:
-      # Override /reward/kling_video_reward's local-GPU reservation. In cross-node
-      # mode non-trainer ordinals are remote Ray budget tokens, while Kling runs
-      # inside the driver; an empty reservation makes the factory use node A's
-      # rank-local trainer device instead.
-      device: trainer
+    # The Kling reward stays unpinned: non-trainer ordinals are remote Ray budget
+    # tokens, so it follows node A's rank-local trainer device instead.

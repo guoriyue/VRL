@@ -275,6 +275,8 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
         if str(cfg.algorithm.kind) == "diffusion_dpo":
             continue
 
+        if OmegaConf.select(cfg, "distributed.resources") is None:
+            OmegaConf.update(cfg, "distributed.resources", {}, merge=True)
         resources_cfg = cfg.distributed.resources
         if resources_cfg.get("visible_devices", "auto") == "auto" and not resources_cfg.get(
             "cross_node", False

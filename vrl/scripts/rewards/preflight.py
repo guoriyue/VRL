@@ -172,7 +172,6 @@ def preflight_rewards(
                     trainer=RoleResourceConfig(num_gpus=0),
                     rollout=RolloutResourceConfig(num_gpus=0, num_engines=0),
                     reward=RewardResourceConfig(
-                        device="gpu" if selected else "cpu",
                         devices=list(selected) if selected else "auto",
                     ),
                 )
@@ -183,7 +182,7 @@ def preflight_rewards(
                 )
                 resources = ResolvedDistributedResources.from_root(
                     probe_root,
-                    reward_inference=built.reward.inference_configs,
+                    reward=built.reward,
                 )
                 owner = GlobalRayPlacementOwner(
                     resources,

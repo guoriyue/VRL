@@ -36,10 +36,6 @@ distributed:
       precision_policy: none
       reshard_after_forward: true
       cpu_offload: false
-  resources:
-    reward:
-      # DINOv2 and RAFT remain CPU-only so all four L4s can be FSDP ranks.
-      device: cpu
 
 model:
   # FSDP2 reshard hooks are not compatible with the compiled transformer path.

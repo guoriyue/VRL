@@ -41,11 +41,6 @@ rollout:
   samples_per_generation_batch: 4
 
 distributed:
-  resources:
-    # DINOv2 and RAFT both support CPU execution but do not provide complete
-    # GPU parking. Keep this single-card recipe honest by reserving no reward GPU.
-    reward:
-      device: cpu
   rollout:
     pipelined: true
 
@@ -60,3 +55,12 @@ reward:
   components:
     target_dino_similarity: 1.0
     motion_dynamics: 0.2
+  kwargs:
+    # DINOv2 and RAFT support CPU execution but cannot prove complete GPU
+    # parking; CPU scoring keeps the single-GPU handoff sound.
+    target_dino_similarity:
+      worker_config:
+        device: cpu
+    motion_dynamics:
+      worker_config:
+        device: cpu

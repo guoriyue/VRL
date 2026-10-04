@@ -119,11 +119,6 @@ rollout:
                                       # driver deserializes) — park them on host RAM (~1.7GB)
 
 distributed:
-  resources:
-    reward:
-      # DINOv2 and RAFT support CPU execution but cannot prove complete GPU
-      # parking. Explicit CPU ownership keeps the single-GPU handoff sound.
-      device: cpu
   rollout:
     pipelined: true
 
@@ -139,3 +134,12 @@ reward:
   components:
     target_dino_similarity: 1.0
     motion_dynamics: 1.0              # anti-static guard must dominate (see header)
+  kwargs:
+    # DINOv2 and RAFT support CPU execution but cannot prove complete GPU
+    # parking; CPU scoring keeps the single-GPU handoff sound.
+    target_dino_similarity:
+      worker_config:
+        device: cpu
+    motion_dynamics:
+      worker_config:
+        device: cpu

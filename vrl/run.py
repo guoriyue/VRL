@@ -322,7 +322,7 @@ def resolve_run(cfg: DictConfig) -> ResolvedRun:
     family = _model_family(built)
     resources = ray_resources.ResolvedDistributedResources.from_root(
         built.root,
-        reward_inference=built.reward.inference_configs if built.reward else None,
+        reward=built.reward,
     )
     device = torch.device(resources.trainer_torch_device)
     return ResolvedRun(
@@ -349,7 +349,7 @@ def resolve_online_run(cfg: DictConfig) -> ResolvedOnlineRun:
     family = _model_family(built)
     resources = ray_resources.ResolvedDistributedResources.from_root(
         built.root,
-        reward_inference=built.reward.inference_configs if built.reward else None,
+        reward=built.reward,
     )
     generation = RayGenerationConfig.from_root(
         built.root,

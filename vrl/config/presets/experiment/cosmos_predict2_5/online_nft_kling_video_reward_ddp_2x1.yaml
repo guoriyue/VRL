@@ -53,11 +53,7 @@ distributed:
       # this had to be true, or the first backward died on the "previous" params
       # getting no gradient under their no_grad replay.)
       find_unused_parameters: false
-  resources:
-    # Each rank's unpinned rollout shares its own (trainer) GPU. Shared roles
-    # always use on-demand phase handoff; the actor processes stay alive while
-    # their GPU state parks.
-    reward:
-      # 2 GPUs total (1 per rank): the unpinned Kling reward time-shares the same
-      # card as rollout/trainer.
-      device: gpu
+  # Each rank's unpinned rollout and unpinned Kling reward share its own
+  # (trainer) GPU: 2 GPUs total, one per rank. Shared roles always use
+  # on-demand phase handoff; the actor processes stay alive while their GPU
+  # state parks.

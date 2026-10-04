@@ -11,11 +11,6 @@
 #
 # Prefer /reward/ocr for a run-owned Ray actor: no manual service start, and
 # the knobs travel with the recipe. This preset is for external HTTP only.
-distributed:
-  resources:
-    reward:
-      device: cpu
-
 reward:
   components:
     ocr: 1.0

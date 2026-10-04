@@ -22,9 +22,6 @@ distributed:
     rollout:
       num_gpus: 1
       devices: auto
-    reward:
-      device: gpu
-      devices: auto
   rollout:
     cpus_per_worker: 4.0
 

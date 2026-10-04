@@ -31,9 +31,6 @@ distributed:
       precision_policy: none
       reshard_after_forward: true
       cpu_offload: false
-  resources:
-    reward:
-      device: cpu
 
 model:
   # FSDP2 reshard hooks are not compatible with the compiled transformer path.

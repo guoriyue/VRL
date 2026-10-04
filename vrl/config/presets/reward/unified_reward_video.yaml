@@ -3,11 +3,6 @@
 # Alignment / Physics / Style scores. Loaded via AutoModelForImageTextToText with
 # trust_remote_code. Default score_key is overall; use physics for cloth/skirt
 # plausibility and set worker_config.rubric_path to steer with a task rubric.
-distributed:
-  resources:
-    reward:
-      device: gpu
-
 reward:
   components:
     unified_reward_video: 1.0

@@ -42,6 +42,10 @@ def test_four_card_preset_resolves_rank_local_phase_owners(rank):
     resources = resolved.resources
     assert tuple(resources.trainer_devices) == (rank,)
     assert tuple(resources.rollout_devices) == (rank,)
-    assert tuple(resources.reward_devices) == (rank,)
+    # The unpinned Kling reward follows the rank's own card: no reservation,
+    # but the lifecycle plan sees the sharing.
+    assert tuple(resources.reward_devices) == ()
+    assert resources.reward_follows_trainer
+    assert tuple(resources.lifecycle.reward) == (rank,)
     assert resources.lifecycle.park_rollout_for_train
     assert resources.lifecycle.park_trainer_for_reward

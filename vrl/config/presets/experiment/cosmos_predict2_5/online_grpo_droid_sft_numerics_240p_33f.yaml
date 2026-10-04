@@ -37,12 +37,13 @@ rollout:
   samples_per_generation_batch: 1
   noise_level: 0.7
 
-distributed:
-  resources:
+reward:
+  kwargs:
     # This numerics gate values deterministic mechanics over reward throughput.
     # DINOv2 supports CPU execution and does not provide complete GPU parking.
-    reward:
-      device: cpu
+    target_dino_similarity:
+      worker_config:
+        device: cpu
 
 trainer:
   output_dir: outputs/cosmos_predict25_sft_numerics_240p_33f

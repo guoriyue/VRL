@@ -35,9 +35,6 @@ distributed:
       precision_policy: actor
       reshard_after_forward: true
       cpu_offload: true
-  resources:
-    reward:
-      device: cpu
 
 model:
   # Sequential layer offload is required for a complete rollout replica on L4.
