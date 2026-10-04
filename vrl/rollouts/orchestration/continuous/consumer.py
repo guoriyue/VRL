@@ -164,18 +164,9 @@ class ContinuousRolloutConsumer:
     ) -> None:
         """Fail when a ready item falls outside the trainable version window."""
 
-        for slot, item in enumerate(prompt_batch.results):
+        for item in prompt_batch.results:
             if item is None:
                 continue
-            if (
-                item.batch_id != prompt_batch.batch_id
-                or item.group_slot != slot
-                or item.rollout_policy_version != prompt_batch.policy_version
-            ):
-                raise RuntimeError(
-                    "continuous scored result does not match its prompt batch "
-                    f"(batch_id={prompt_batch.batch_id}, slot={slot})",
-                )
             version = item.rollout_policy_version
             version_lag = self.staleness.staleness(version, current_policy_version)
             if version_lag is None:

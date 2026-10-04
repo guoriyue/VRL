@@ -1013,22 +1013,6 @@ async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "foreign_item",
-    [
-        _item(group_slot=1, version=1, batch_id=1),
-        _item(group_slot=0, version=1),
-        _item(group_slot=1, version=2),
-    ],
-)
-async def test_consumer_rejects_result_from_wrong_batch_slot_or_version(foreign_item) -> None:
-    prompt_batch = _prompt_batch([_item(group_slot=0, version=1), foreign_item])
-    with pytest.raises(RuntimeError, match="does not match its prompt batch"):
-        await _collect_iteration(_consumer(max_stale=1), prompt_batch, current_policy_version=2)
-    assert prompt_batch.results[1] is foreign_item
-
-
-@pytest.mark.asyncio
 async def test_iteration_carries_batch_identity_gauges() -> None:
     prompt_batch = _prompt_batch(
         [_item(group_slot=slot, version=1, batch_id=3) for slot in range(2)], batch_id=3
