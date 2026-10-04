@@ -31,7 +31,12 @@ Scores: ``vlm_preference`` (weighted mean in [0, 1]) plus
 advantages make the absolute scale irrelevant; the per-criterion keys are for
 diagnostics and for the reward card's blind-spot bookkeeping.
 
-``{prompt}`` in a question is replaced by the artifact's prompt.
+``{prompt}`` in a question is replaced by the artifact's prompt. ``{intent}`` is
+replaced by ``metadata[<intent_key>]`` when ``intent_key`` is configured and the
+artifact carries it, otherwise by the prompt: an expanded reading of a terse or
+idiomatic prompt ("gold jaguar print hoodie" -> a hoodie with a gold leopard-spot
+animal-print pattern) that fidelity questions can judge against while the policy
+still sees the raw prompt.
 """
 
 from __future__ import annotations
@@ -181,6 +186,7 @@ class VLMPreferenceRewardModel(LazyTorchModule):
         # (resolved under ``data_root``); ``both_orders`` asks each question in
         # both image orders and averages, cancelling position bias.
         self._reference_key = str(cfg.get("reference_key") or "").strip() or None
+        self._intent_key = str(cfg.get("intent_key") or "").strip() or None
         self._both_orders = bool(cfg.get("both_orders", True))
         self.data_root = str(cfg.get("data_root") or "")
         raw = cfg.get("criteria") or (
@@ -273,21 +279,35 @@ class VLMPreferenceRewardModel(LazyTorchModule):
             )
             with Image.open(path) as opened:
                 reference = opened.convert("RGB")
-        return self.score(image, prompt=artifact.prompt, reference=reference)
+        intent = artifact.metadata.get(self._intent_key) if self._intent_key else None
+        return self.score(
+            image,
+            prompt=artifact.prompt,
+            reference=reference,
+            intent=str(intent) if intent else None,
+        )
 
-    def score(self, image: Any, *, prompt: str, reference: Any = None) -> dict[str, float]:
+    def score(
+        self, image: Any, *, prompt: str, reference: Any = None, intent: str | None = None
+    ) -> dict[str, float]:
         """Weighted mean of the per-criterion scores, plus every criterion.
 
         With ``reference`` (pairwise mode) each score is P(candidate better than
         reference), averaged over both image orders when ``both_orders`` is set.
+        ``intent`` fills ``{intent}`` in the questions; it defaults to the prompt.
         """
 
-        questions = [c["question"].replace("{prompt}", prompt.strip()) for c in self.criteria]
+        prompt = prompt.strip()
+        intent = (intent or prompt).strip()
+        questions = [
+            c["question"].replace("{prompt}", prompt).replace("{intent}", intent)
+            for c in self.criteria
+        ]
         answers = [c["answer"] for c in self.criteria]
         if reference is None:
             values = self.answer_scores(image, questions, answers)
         else:
-            preamble = PAIRWISE_PREAMBLE.replace("{prompt}", prompt.strip())
+            preamble = PAIRWISE_PREAMBLE.replace("{prompt}", prompt)
             questions = [preamble + q for q in questions]
             values = [0.0] * len(self.criteria)
             # Criteria with ``crops: n`` are judged on an n x n grid of native-resolution

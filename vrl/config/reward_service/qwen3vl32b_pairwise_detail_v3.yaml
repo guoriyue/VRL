@@ -1,0 +1,83 @@
+# v3 of the structure / realism / detail judge against a GPT reference.
+# Changes from qwen3vl32b_pairwise_detail_v2.yaml:
+# - `composition` (1.0): the reference images pick deliberate viewpoints (low or
+#   high angle, wide or close framing, layered depth) where the policy defaults to
+#   a flat frontal centered shot; nothing in v2 rewarded that choice.
+# - `fidelity` judges against `{intent}`, an expanded reading of the prompt
+#   carried in metadata.judge_intent (worker intent_key), so idioms such as
+#   "jaguar print" (a spot pattern, not a jaguar) or "wet clay of Capitol Hill"
+#   (the building as a clay model) are scored by their meaning; the policy still
+#   sees the raw prompt.
+# - judge_max_side 896: five criteria plus the 2x2 crop grid batched at 1024 px
+#   overflow the 44 GiB card; 896 keeps the whole batch resident.
+host: 127.0.0.1
+port: 8318
+model_name: vlm-preference-qwen3vl32b
+model_version: Qwen/Qwen3-VL-32B-Instruct-FP8@4bf2c2f3
+artifact_roots:
+  - ../../../outputs
+  - /mnt/nvme/outputs
+  - /mnt/nvme/data/external
+max_concurrency: 1
+max_pending_requests: 256
+max_cached_requests: 8192
+max_request_bytes: 1073741824
+generation_overlap_safe: true
+worker_config:
+  model_factory: vrl.rewards.models.vlm_preference:VLMPreferenceRewardModel
+  device: cuda:0
+  judge_model: Qwen/Qwen3-VL-32B-Instruct-FP8
+  judge_revision: 4bf2c2f3
+  judge_max_side: 896
+  local_files_only: true
+  reference_key: judge_reference
+  intent_key: judge_intent
+  both_orders: true
+  data_root: /mnt/nvme/data/external
+  criteria:
+    - name: structure
+      weight: 2.0
+      answer: compare
+      question: >-
+        Compare structural correctness: hands with five fingers, faces and bodies with
+        normal proportions, objects with coherent geometry and perspective, legible text
+        where text was requested, no merged, missing, extra or twisted parts.
+    - name: natural
+      weight: 2.0
+      answer: compare
+      question: >-
+        Both images were made for the description "{prompt}". Compare how much each looks
+        like a genuine work in the medium the description implies (a real photograph, an
+        actual painting, a real drawing) made by a skilled human: believable light and
+        shadow, natural materials, restrained color, the imperfections of the real medium;
+        plastic smoothness, airbrushed skin, over-brightening, over-saturation, glow halos
+        and a generic 3D-render or AI-illustration look count against an image.
+    - name: fidelity
+      weight: 1.5
+      answer: compare
+      question: >-
+        The description "{prompt}" means: {intent}. Compare how completely and faithfully
+        each image realizes that meaning: the requested subject, action and setting all
+        present, every style and mood qualifier respected, idioms rendered by their meaning
+        rather than literally, and the scene developed with the richness a professional
+        would deliver for that brief, without unrelated clutter.
+    - name: composition
+      weight: 1.0
+      answer: compare
+      question: >-
+        Compare the composition and camera choice: a deliberate, expressive viewpoint (low
+        or high angle, wide establishing shot or tight close-up, diagonal or off-center
+        framing when it serves the subject), layered foreground, midground and background
+        with depth, and framing that leads the eye to the subject. A flat, frontal, centered,
+        eye-level view with the subject floating on a plain background counts against an
+        image unless the description asks for exactly that.
+    - name: detail
+      weight: 0.5
+      answer: compare
+      crops: 2
+      question: >-
+        These are matching regions cut from two larger images. Compare the quality of fine
+        detail: sharp, physically plausible and coherent texture that belongs to the depicted
+        material (skin, fur, fabric, wood, stone, foliage, brushwork), crisp edges without
+        halos. Dense or repetitive micro-pattern, mesh-like or bramble-like filler, noise,
+        smearing and waxy smoothness all count against a region.

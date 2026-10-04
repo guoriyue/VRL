@@ -161,3 +161,26 @@ def test_compare_answer_mode_is_accepted_and_batched_with_its_suffix():
         VLMPreferenceRewardModel(
             {"device": "cpu", "criteria": [{"name": "x", "question": "q", "answer": "grade"}]}
         )
+
+
+def test_intent_metadata_fills_the_intent_placeholder_and_falls_back_to_the_prompt():
+    criteria = [{"name": "fid", "question": 'Does it show "{intent}" for "{prompt}"?'}]
+    model = _model([1.0], criteria=criteria, intent_key="judge_intent")
+
+    def artifact(metadata):
+        return RewardInferenceArtifact(
+            artifact_id="a",
+            sample_id="s",
+            path="",
+            prompt="gold jaguar print hoodie",
+            media=torch.zeros(3, 6, 6, dtype=torch.uint8),
+            metadata=metadata,
+        )
+
+    model(artifact({"judge_intent": "a hoodie with a gold leopard-spot pattern"}))
+    model(artifact({}))
+    expanded, plain = (q[0] for _, q, _ in model.asked)
+    assert expanded == (
+        'Does it show "a hoodie with a gold leopard-spot pattern" for "gold jaguar print hoodie"?'
+    )
+    assert plain == 'Does it show "gold jaguar print hoodie" for "gold jaguar print hoodie"?'
