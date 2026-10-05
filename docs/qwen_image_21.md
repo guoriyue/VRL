@@ -77,8 +77,6 @@ artifact_roots: [/absolute/path/to/outputs]
 worker_config:
   model_factory: vrl.rewards.models.editreward:EditRewardModel
   device: cuda:0
-  sleep_offload: true
-  memory_parking_mode: reload
   data_root: /absolute/path/to/source-images
   upstream_root: /absolute/path/to/EditReward
   base_model: Qwen/Qwen2.5-VL-7B-Instruct

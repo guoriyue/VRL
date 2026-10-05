@@ -360,10 +360,6 @@ def validate_reward_memory_parking_components(
         .startswith("cuda")
     ]
     if not gpu_components:
-        if any(inference_configs[name].kind == "http" for name in names):
-            # CPU siblings need no parking pool. The HTTP owner's advertised
-            # lease and successful park are checked by the runtime at handoff.
-            return
         raise ValueError(
             "shared reward GPU topology has no configured GPU reward "
             "component. CPU-only components need no reservation; drop "

@@ -1,4 +1,4 @@
-# The operator-run judge uses the standard shared-GPU parking lease.
+# The operator-run judge stays resident on its own device.
 reward:
   components:
     editreward: 1.0

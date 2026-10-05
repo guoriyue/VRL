@@ -5,7 +5,7 @@
 # is finding the target itself. Training rows are the unhinted removal +
 # addition rows only, and the reward is the released EditReward judge alone,
 # served by an operator-run service (outputs/local_edit/editreward_service.yaml,
-# port 18316) under the standard shared-GPU parking lease: it separates done
+# port 18316), resident on the same card: it separates done
 # from not-done at AUC 0.94 on blind labels. No hand-written consistency term
 # -- the DINOv2 keep heuristic could not see judge-labelled collateral (AUC
 # 0.70) and was dropped. Single-card settings follow the OCR recipe; the group

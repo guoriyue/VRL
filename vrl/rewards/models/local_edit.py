@@ -217,7 +217,7 @@ class LocalEditRewardModel(LazyTorchModule):
 
         # Media goes over the wire as base64 float32; the service caps a request
         # (max_request_bytes, 64 MiB by default), so a phase is split into
-        # requests under this budget -- all inside the one wake/park cycle.
+        # requests under this budget -- all through one client session.
         requests: list[RewardInferenceRequest] = []
         chunk: list[RewardInferenceArtifact] = []
         chunk_bytes = 0
@@ -254,15 +254,10 @@ class LocalEditRewardModel(LazyTorchModule):
             )
             results = []
             try:
-                await scorer.activate()
-                try:
-                    for request in requests:
-                        results += request.validate_and_order_results(
-                            await scorer.score_batch(request)
-                        )
-                finally:
-                    if scorer.requires_memory_parking:
-                        await scorer.park_memory()
+                for request in requests:
+                    results += request.validate_and_order_results(
+                        await scorer.score_batch(request)
+                    )
             finally:
                 await scorer.shutdown()
             return [

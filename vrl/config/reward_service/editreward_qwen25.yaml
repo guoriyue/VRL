@@ -1,5 +1,5 @@
 # Run in the isolated upstream EditReward environment (Transformers 4.57).
-# The shared-GPU lease unloads the judge before rollout or replay resumes.
+# The judge stays resident on its device; the trainer never parks a service.
 host: 127.0.0.1
 port: 8315
 model_name: editreward-qwen25-7b
@@ -14,8 +14,6 @@ generation_overlap_safe: false
 worker_config:
   model_factory: vrl.rewards.models.editreward:EditRewardModel
   device: cuda:0
-  sleep_offload: true
-  memory_parking_mode: reload
   # Relative reference paths in rollout metadata resolve under this root.
   data_root: outputs
   upstream_root: /tmp/vrl-edit-research/EditReward

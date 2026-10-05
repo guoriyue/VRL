@@ -98,10 +98,8 @@ class RewardScoringThread:
     async def run(self, method: str) -> Any:
         """Await one zero-argument runtime coroutine on the owner loop.
 
-        Used for the parking handoff (``park_memory`` / ``activate``): CUDA
-        pool sleep/wake must happen on the thread that built the model, and
-        these calls are serialized by the trainer's reward lease, so no
-        cancellation machinery is needed here.
+        Model-owning calls must run on the thread that built the model; the
+        service serializes them, so no cancellation machinery is needed here.
         """
 
         if not self.alive:

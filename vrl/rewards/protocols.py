@@ -43,10 +43,9 @@ class RewardRuntime(Protocol):
         """Pre-warm reward model ownership at a GPU handoff.
 
         The inverse of :meth:`park_memory`, mirroring the generation runtime's
-        activate/offload pair: parking-capable in-process rewards build or wake
-        their model now so the first score does not pay load latency inside the
-        measured scoring phase. Remote parking-capable scorers forward the
-        same handoff to the process that owns the model.
+        activate/offload pair: parking-capable rewards build or wake their
+        model now so the first score does not pay load latency inside the
+        measured scoring phase.
         """
         ...
 
