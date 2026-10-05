@@ -563,3 +563,61 @@ def test_coordinator_rejects_invalid_published_versions(source, version):
     )
     with pytest.raises(ValueError, match="current_policy_version"):
         lifecycle.current_policy_version()
+
+
+@pytest.mark.asyncio
+async def test_strict_schedule_generates_the_next_prompts_ahead_when_configured() -> None:
+    """``lookahead_next_group`` turns the recipe's ``next_prompts`` into a generation
+    that runs inside this iteration and is consumed, not regenerated, by the next."""
+    import torch
+    import torch.nn as nn
+
+    from vrl.models.parking import TrainingMemoryState
+    from vrl.rollouts.orchestration import build_rollout_schedule
+    from vrl.trainers.strategy import SingleProcessStrategy
+
+    runtime = _Runtime()
+    collector = _Collector(runtime)
+    collector.supports_reward_generation_overlap = True
+    config = _schedule_config("strict_on_policy")
+    config.lookahead_next_group = True
+
+    schedule = build_rollout_schedule(
+        config,
+        algorithm_tolerates_off_policy_staleness=True,
+        collector=collector,
+        strategy=SingleProcessStrategy(),
+        training_state_getter=lambda: TrainingMemoryState(
+            model=nn.Linear(1, 1),
+            ref_model=None,
+            optimizer=None,
+            ema=None,
+            grad_scaler=None,
+            device=torch.device("cpu"),
+        ),
+        weight_syncer=_Syncer(runtime),
+        sync_state_getter=lambda: {"w": 1},
+        weights_initialized=lambda: True,
+        set_weights_initialized=lambda value: None,
+    )
+
+    first = await schedule.next_iteration(["p0", "p1"], group_size=1, next_prompts=["p2", "p3"])
+    assert len(first.batches) == 2  # one plain request, one batch per prompt
+    assert [call["prompts"] for call in collector.calls] == [["p0", "p1"], ["p2", "p3"]]
+    assert first.stats.phase_seconds["collect.lookahead_wait_s"] >= 0.0
+
+    second = await schedule.next_iteration(["p2", "p3"], group_size=1)
+    assert len(second.batches) == 2
+    assert [call["prompts"] for call in collector.calls] == [["p0", "p1"], ["p2", "p3"]]
+    assert second.stats.counters["collect.lookahead_consumed"] == 1.0
+
+
+def test_lookahead_is_rejected_outside_strict_on_policy() -> None:
+    from vrl.trainers.core.types import RolloutOrchestrationConfig
+
+    with pytest.raises(ValueError, match="strict_on_policy only"):
+        RolloutOrchestrationConfig(
+            schedule_mode="continuous",
+            continuous={"max_stale_policy_versions": 1},
+            lookahead_next_group=True,
+        )

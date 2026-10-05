@@ -929,3 +929,107 @@ async def test_generation_handoff_is_demand_driven_and_never_scores() -> None:
     )
     assert len(scored) == 2
     assert all(batch.rewards.shape == (2,) for batch in scored)
+
+
+@pytest.mark.asyncio
+async def test_lookahead_generates_the_next_collections_first_group_during_the_scoring_tail() -> (
+    None
+):
+    """With ``lookahead_prompts`` the next call's first request is generated while
+    the current call's last group is being scored, and the next call reuses it."""
+
+    collector = _EngineOrderCollector(supports_overlap=True)
+    for name in ("p0", "p1", "p2", "p3"):
+        collector.release[name] = asyncio.Event()
+    first = asyncio.create_task(
+        prepare_training_batches(
+            collector=collector,
+            prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
+            group_size=1,
+            runtime_debug=False,
+            policy_version=3,
+            lookahead_prompts=[PromptExample(prompt="p2"), PromptExample(prompt="p3")],
+        ),
+    )
+    collector.release["p0"].set()
+    collector.release["p1"].set()
+    await _settle()
+    # Both groups of this collection are generated and p1's score is in flight:
+    # the engine already holds the NEXT collection's first request.
+    assert "submit:p2" in collector.events
+    assert "submit:p3" not in collector.events
+    assert not first.done()  # the ahead group must complete inside this call
+    collector.release["p2"].set()
+    batches = await first
+    assert [batch.group_ids.item() for batch in batches] == [0, 1]
+    assert collector.events.index("submit:p2") > collector.events.index("generated:p1")
+    assert (
+        collector.events.index("submit:p2") < collector.events.index("evaluate_rollout:[p1]") + 2
+    )
+
+    collector.events.clear()
+    collector.release["p3"].set()
+    batches = await prepare_training_batches(
+        collector=collector,
+        prompts=[PromptExample(prompt="p2"), PromptExample(prompt="p3")],
+        group_size=1,
+        runtime_debug=False,
+        policy_version=4,
+    )
+    # p2 is not generated again; its score runs beside p3's generation and
+    # completes before p3's (one scoring task at a time).
+    assert "submit:p2" not in collector.events
+    assert collector.events.index("evaluate_rollout:[p2]") < collector.events.index(
+        "evaluate_rollout:[p3]"
+    )
+    assert [batch.group_ids.item() for batch in batches] == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_lookahead_is_discarded_when_the_next_collection_starts_with_other_prompts() -> None:
+    collector = _EngineOrderCollector(supports_overlap=True)
+    for name in ("p0", "p1", "q0", "q1"):
+        collector.release[name] = asyncio.Event()
+        collector.release[name].set()
+    stats = RolloutStats()
+    await prepare_training_batches(
+        collector=collector,
+        prompts=[PromptExample(prompt="p0")],
+        group_size=1,
+        runtime_debug=False,
+        policy_version=None,
+        lookahead_prompts=[PromptExample(prompt="p1")],
+        stats=stats,
+    )
+    assert "generated:p1" in collector.events
+    collector.events.clear()
+    await prepare_training_batches(
+        collector=collector,
+        prompts=[PromptExample(prompt="q0"), PromptExample(prompt="q1")],
+        group_size=1,
+        runtime_debug=False,
+        policy_version=None,
+        stats=stats,
+    )
+    assert stats.counters["collect.lookahead_discarded"] == 1.0
+    assert "evaluate_rollout:[p1]" not in collector.events
+    assert [e for e in collector.events if e.startswith("submit")] == ["submit:q0", "submit:q1"]
+
+
+@pytest.mark.asyncio
+async def test_lookahead_needs_the_overlap_capability() -> None:
+    """A collector that must hand GPUs over for scoring never generates ahead."""
+
+    collector = _EngineOrderCollector(supports_overlap=False)
+    for name in ("p0", "p1"):
+        collector.release[name] = asyncio.Event()
+        collector.release[name].set()
+    await prepare_training_batches(
+        collector=collector,
+        prompts=[PromptExample(prompt="p0")],
+        group_size=1,
+        runtime_debug=False,
+        policy_version=None,
+        lookahead_prompts=[PromptExample(prompt="p1")],
+    )
+    assert "submit:p1" not in collector.events

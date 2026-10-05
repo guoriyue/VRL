@@ -203,8 +203,22 @@ class RolloutOrchestrationConfig:
     # vrl.rollouts, exactly as schedule_mode does above. The enum conversion and
     # the capability fail-closed check happen in the rollout layer.
     reward_collection_mode: str | None = field(default=None)
+    # strict_on_policy only: generate the next iteration's first prompt group
+    # while the current iteration's last group is being scored, instead of
+    # leaving the rollout GPUs idle for the scoring tail. On shared GPUs the
+    # group completes before the trainer's update, so it is exactly one policy
+    # version behind the update it trains; the algorithm's importance ratio
+    # sees that lag through the recorded behavior log-probs. Needs a collector
+    # that may overlap reward with generation (dedicated/CPU reward); otherwise
+    # it is silently a no-op.
+    lookahead_next_group: bool = field(default=False)
 
     def __post_init__(self) -> None:
+        if self.lookahead_next_group and self.schedule_mode != "strict_on_policy":
+            raise ValueError(
+                "rollout_orchestration.lookahead_next_group applies to strict_on_policy "
+                "only; continuous already generates ahead through its producer",
+            )
         if self.schedule_mode not in {"strict_on_policy", "continuous"}:
             raise ValueError(
                 "rollout_orchestration.schedule_mode must be 'strict_on_policy' or 'continuous'",

@@ -16,6 +16,7 @@ Trajectory packing details live in ``batch_builder``; request construction in
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from collections.abc import Iterator
@@ -44,6 +45,8 @@ from vrl.rollouts.collector.requests import (
 )
 from vrl.rollouts.stats import RolloutStats
 from vrl.utils.profiling import TimeIntervals, profile_range
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -154,6 +157,22 @@ class PromptCollectionCleanupError(RuntimeError):
         )
 
 
+def _request_prompt_key(request: CollectorRequest) -> tuple[str, ...]:
+    """Prompt texts of one generation request: the identity a lookahead is matched on."""
+
+    generation = getattr(request, "request", request)
+    return tuple(str(getattr(item, "prompt", item)) for item in generation.inputs)
+
+
+@dataclass(slots=True)
+class _LookaheadGeneration:
+    """One next-collection group generated ahead of its own collection call."""
+
+    key: tuple[str, ...]
+    task: asyncio.Task[UnscoredRollout]
+    started_at: float
+
+
 @dataclass(slots=True)
 class RolloutGenerationResult:
     """Unscored rollout plus original prompt indices and local generation timings.
@@ -215,6 +234,12 @@ class RolloutCollector:
         self._lifecycle = lifecycle
         self._reward_phase_started = False
         self._reward_shutdown_complete = False
+        # Cross-call lookahead: the first group of the NEXT collection, generated
+        # while this collection's last group is still being scored (the engine
+        # is idle then; the trainer has not started its update). Carried as the
+        # completed generation keyed by its prompts so the next call can match
+        # it; stale by exactly one policy version by construction.
+        self._lookahead: _LookaheadGeneration | None = None
 
     @classmethod
     def from_family(
@@ -255,6 +280,11 @@ class RolloutCollector:
     async def shutdown(self) -> None:
         """Release generation before waking/destroying the reward owner."""
 
+        carried = self._lookahead
+        self._lookahead = None
+        if carried is not None and not carried.task.done():
+            carried.task.cancel()
+            await asyncio.gather(carried.task, return_exceptions=True)
         runtime = self._generation_runtime
         if runtime is not None:
             # A slept reward pool must not remap pages while rollout ownership is
@@ -538,6 +568,7 @@ class RolloutCollector:
         policy_version: int | None,
         stats: RolloutStats,
         reward_mode: RewardCollectionMode | None = None,
+        lookahead_prompts: list[Any] | None = None,
     ) -> list[RolloutBatch]:
         """Collect every trainer prompt's sample group and return per-group batches.
 
@@ -551,6 +582,17 @@ class RolloutCollector:
         only; see :class:`RewardCollectionMode`. A capable collector may be forced
         onto either control arm, while an incapable collector stays on the batched
         baseline.
+
+        ``lookahead_prompts`` are the NEXT collection's prompts. When given (and
+        the collector may overlap reward with generation), the first group of
+        that collection is generated while this collection's last group is being
+        scored, instead of leaving the engine idle for the scoring tail. The
+        generation completes inside this call, so a shared-GPU trainer never
+        updates while a request is in flight; the next call consumes it when its
+        first request carries the same prompts, or discards it otherwise. That
+        group is one policy version behind the update it trains: its recorded
+        behavior log-probs are the collection-time policy's, so the algorithm's
+        importance ratio sees the lag.
 
         ``stats`` accumulates this call's collect phase timings
         (``collect.engine_generate`` / ``collect.reward_score`` /
@@ -646,6 +688,15 @@ class RolloutCollector:
         # submitted ahead so the engine never idles between two groups.
         prefetch_generation = schedule.submit_next_generation_early
         pending_generation: tuple[asyncio.Task[UnscoredRollout], float] | None = None
+        # Cross-call lookahead (see the docstring): only where reward scoring is
+        # already allowed to run beside generation, so starting a request while a
+        # score is in flight introduces no new GPU handoff.
+        lookahead_allowed = bool(lookahead_prompts) and bool(
+            self.supports_reward_generation_overlap
+        )
+        lookahead: _LookaheadGeneration | None = None
+        carried = self._lookahead
+        self._lookahead = None
 
         def start_generation(
             request: CollectorRequest,
@@ -654,6 +705,16 @@ class RolloutCollector:
                 asyncio.create_task(self.generate_rollout(request), name="rollout-generate"),
                 time.perf_counter(),
             )
+
+        async def cancel_generation(
+            task: asyncio.Task[UnscoredRollout], errors: list[BaseException]
+        ) -> None:
+            task.cancel()
+            for result in await asyncio.gather(task, return_exceptions=True):
+                if isinstance(result, BaseException) and not isinstance(
+                    result, asyncio.CancelledError
+                ):
+                    errors.append(result)
 
         try:
             planned = list(
@@ -664,6 +725,26 @@ class RolloutCollector:
                     policy_version=policy_version,
                 ),
             )
+            if carried is not None:
+                if planned and _request_prompt_key(planned[0][0]) == carried.key:
+                    # The previous call generated this collection's first group
+                    # during its own scoring tail; score it right away.
+                    pending_generation = (carried.task, carried.started_at)
+                    stats.add_counter("collect.lookahead_consumed", 1)
+                else:
+                    # The recipe handed over different prompts (resume, epoch
+                    # boundary, reordering): the ahead-generated group has no
+                    # consumer. Discard it; a mismatch is bookkeeping, not an error.
+                    logger.warning(
+                        "discarding lookahead generation for prompts %s: this collection "
+                        "starts with %s",
+                        carried.key,
+                        _request_prompt_key(planned[0][0]) if planned else (),
+                    )
+                    discarded: list[BaseException] = []
+                    await cancel_generation(carried.task, discarded)
+                    stats.add_counter("collect.lookahead_discarded", 1)
+                carried = None
             for index, (request, prompt_indices) in enumerate(planned):
                 if pending_generation is None:
                     generation, started = start_generation(request)
@@ -680,6 +761,28 @@ class RolloutCollector:
             if not generated_groups:
                 return []
 
+            if lookahead_allowed:
+                # Every group of this collection is generated and the last one is
+                # with the scorer (streaming) or about to be (batched): the engine
+                # is free until the trainer takes the GPU back. Generate the next
+                # collection's first group now, at the current policy version.
+                ahead = next(
+                    iter(
+                        self.build_generation_requests(
+                            prompts=list(lookahead_prompts or []),
+                            group_size=group_size,
+                            runtime_debug=False,
+                            policy_version=policy_version,
+                        )
+                    ),
+                    None,
+                )
+                if ahead is not None:
+                    task, started = start_generation(ahead[0])
+                    lookahead = _LookaheadGeneration(
+                        key=_request_prompt_key(ahead[0]), task=task, started_at=started
+                    )
+
             if per_group_scoring:
                 # PER_GROUP_SERIAL already drained inline; only streaming can still
                 # own a task here.
@@ -689,6 +792,17 @@ class RolloutCollector:
                 batches = await score_unscored(
                     [group.unscored for group in generated_groups],
                 )
+            if lookahead is not None:
+                # The group must be complete before this call returns: on shared
+                # GPUs the trainer's update follows immediately. Waiting here is the
+                # cost the lookahead hides, not an extra phase.
+                lookahead_started = time.perf_counter()
+                await lookahead.task
+                stats.add_phases(
+                    {"collect.lookahead_wait_s": time.perf_counter() - lookahead_started}
+                )
+                self._lookahead = lookahead
+                lookahead = None
         except BaseException as root_cause:
             cleanup_errors: list[BaseException] = []
             prefetched = pending_generation
@@ -698,14 +812,10 @@ class RolloutCollector:
                 # Cancel it so the engine is not left running a request nobody
                 # will score; its own failure is a cleanup error, not the cause.
                 prefetched_task, _ = prefetched
-                prefetched_task.cancel()
-                prefetch_results = await asyncio.gather(prefetched_task, return_exceptions=True)
-                cleanup_errors.extend(
-                    result
-                    for result in prefetch_results
-                    if isinstance(result, BaseException)
-                    and not isinstance(result, asyncio.CancelledError)
-                )
+                await cancel_generation(prefetched_task, cleanup_errors)
+            if lookahead is not None:
+                await cancel_generation(lookahead.task, cleanup_errors)
+                lookahead = None
             task = score_task
             score_task = None
             if task is not None:

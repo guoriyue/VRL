@@ -20,12 +20,17 @@ class StrictOnPolicyRolloutSchedule:
         *,
         lifecycle: RolloutRuntimeCoordinator,
         reward_mode: RewardCollectionMode | None = None,
+        lookahead_next_group: bool = False,
     ) -> None:
         self.lifecycle = lifecycle
         # None = derive the arm from the collector capability. A forced arm is an
         # acceptance-measurement control; prompt collection checks that it cannot
         # grant per-group execution to an incapable collector.
         self.reward_mode = reward_mode
+        # Generate the next iteration's first group during this iteration's
+        # scoring tail (one policy version behind); see
+        # RolloutCollector.prepare_training_batches(lookahead_prompts=...).
+        self.lookahead_next_group = lookahead_next_group
 
     async def next_iteration(
         self,
@@ -35,7 +40,9 @@ class StrictOnPolicyRolloutSchedule:
         runtime_debug: bool = False,
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
-        del next_prompts
+        lookahead_prompts = (
+            list(next_prompts) if self.lookahead_next_group and next_prompts else None
+        )
         # One accumulator for the whole iteration: schedule-level phases (weight
         # init / driver offload / activate / collect / sync) and the per-request
         # collect stats land in the same typed object.
@@ -59,6 +66,7 @@ class StrictOnPolicyRolloutSchedule:
                     policy_version=policy_version,
                     stats=stats,
                     reward_mode=self.reward_mode,
+                    lookahead_prompts=lookahead_prompts,
                 )
 
         return RolloutIteration(

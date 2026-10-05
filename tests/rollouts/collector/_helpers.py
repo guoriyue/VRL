@@ -56,6 +56,8 @@ class PromptCollectionFake:
     )
     build_generation_requests = RolloutCollector.build_generation_requests
     prepare_training_batches = RolloutCollector.prepare_training_batches
+    # Cross-call lookahead state the production __init__ owns.
+    _lookahead = None
 
     def finish_scored_prompt_groups(
         self,

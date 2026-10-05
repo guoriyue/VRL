@@ -150,6 +150,7 @@ def build_rollout_schedule(
         return StrictOnPolicyRolloutSchedule(
             lifecycle=lifecycle,
             reward_mode=None if reward_mode is None else RewardCollectionMode(reward_mode),
+            lookahead_next_group=bool(config.lookahead_next_group),
         )
     if mode is RolloutScheduleMode.CONTINUOUS:
         return ContinuousRolloutSchedule.from_config(
