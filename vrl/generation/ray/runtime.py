@@ -60,10 +60,10 @@ class RayGenerationRuntime:
         self._session_factory = session_factory
 
         self.lifecycle = RuntimeLifecycle(owner="rollout runtime")
-        # Accepted targets stamp new requests immediately; installed tracks the
-        # live fleet ACK, while pending retains the payload until that ACK exists.
+        # Accepted targets stamp new requests immediately; pending retains the
+        # payload until the fleet acknowledges it (at the next activate when the
+        # fleet is deferred or parked).
         self.current_policy_version = initial_policy_version
-        self._installed_policy_version = initial_policy_version if session is not None else None
         self._pending_install: _PendingPolicyInstall | None = None
         self._session_parked = False
         # Concurrent terminal failures each call shutdown; the lock lets the
@@ -152,7 +152,6 @@ class RayGenerationRuntime:
                     policy.policy_version,
                 )
                 with self.lifecycle.publication_guard("publish policy version"):
-                    self._installed_policy_version = policy.policy_version
                     self._pending_install = None
                     self.current_policy_version = policy.policy_version
                 return
@@ -267,18 +266,14 @@ class RayGenerationRuntime:
                     await session.wake_engines()
                     self._session_parked = False
                     pending = self._pending_install
-                    if pending is not None and (
-                        pending.policy_version != self._installed_policy_version
-                    ):
+                    if pending is not None:
                         await session.update_weights(
                             pending.trainable_state,
                             pending.policy_version,
                         )
-                    if pending is not None:
                         with self.lifecycle.publication_guard(
                             "publish restored policy version",
                         ):
-                            self._installed_policy_version = pending.policy_version
                             self._pending_install = None
                 return
 
@@ -296,15 +291,12 @@ class RayGenerationRuntime:
                     candidate = await launch
                 raise
             pending = self._pending_install
-            active_policy_version = self.current_policy_version
             if pending is not None:
                 await candidate.update_weights(
                     pending.trainable_state,
                     pending.policy_version,
                 )
-                active_policy_version = pending.policy_version
             with self.lifecycle.publication_guard("publish activated session"):
-                self._installed_policy_version = active_policy_version
                 self._pending_install = None
                 self._session = candidate
         except BaseException as error:
@@ -338,7 +330,6 @@ class RayGenerationRuntime:
             await session.close(force=self.lifecycle.failure is not None)
         self._session = None
         self._session_parked = False
-        self._installed_policy_version = None
 
 
 __all__ = ["RayGenerationRuntime"]

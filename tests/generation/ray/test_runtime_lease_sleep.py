@@ -172,7 +172,6 @@ def _attach_active_session(
     policy_version: int,
 ) -> None:
     runtime._session = session
-    runtime._installed_policy_version = policy_version
     runtime.current_policy_version = policy_version
     session.current_policy_version = policy_version
 
@@ -468,7 +467,6 @@ async def test_cold_weights_are_staged_then_applied_during_activation() -> None:
     assert runtime._session is None
     await runtime.activate()
     assert runtime._session is candidate
-    assert runtime._installed_policy_version == 2
     assert runtime._pending_install is None
     assert candidate.calls == [("update", "W2", 2)]
 
@@ -490,24 +488,8 @@ async def test_offload_keeps_workers_and_activation_wakes_latest_policy() -> Non
     await runtime.activate()
     assert runtime._session is inner
     assert runtime._session_parked is False
-    assert runtime._installed_policy_version == 2
     assert runtime._pending_install is None
     assert inner.calls == ["sleep", "wake", ("update", "W2", 2)]
-
-
-@pytest.mark.asyncio
-async def test_activation_does_not_reinstall_an_already_active_policy() -> None:
-    runtime = _on_demand_runtime()
-    inner = _FakeSession()
-    _attach_active_session(runtime, inner, 2)
-    runtime._session_parked = True
-    await _stage_pending_install(runtime, "W2", 2)
-
-    await runtime.activate()
-
-    assert inner.calls == ["wake"]
-    assert runtime._installed_policy_version == 2
-    assert runtime._pending_install is None
 
 
 @pytest.mark.asyncio
@@ -519,13 +501,11 @@ async def test_active_update_publishes_only_after_session_ack() -> None:
     update = asyncio.create_task(runtime.update_weights("W2", 2))
     await asyncio.wait_for(inner.restore_started.wait(), timeout=1)
     assert runtime._pending_install is None
-    assert runtime._installed_policy_version == 1
     assert runtime.current_policy_version == 1
 
     inner.finish_restore.set()
     await asyncio.wait_for(update, timeout=1)
     assert runtime._pending_install is None
-    assert runtime._installed_policy_version == 2
     assert runtime.current_policy_version == 2
 
 
@@ -543,7 +523,6 @@ async def test_active_update_releases_acknowledged_payload() -> None:
 
     assert payload_ref() is None
     assert runtime._pending_install is None
-    assert runtime._installed_policy_version == 2
 
 
 @pytest.mark.asyncio
@@ -568,7 +547,6 @@ async def test_cold_activation_releases_staged_payload_after_ack() -> None:
 
     assert payload_ref() is None
     assert runtime._pending_install is None
-    assert runtime._installed_policy_version == 2
 
 
 @pytest.mark.asyncio
@@ -589,7 +567,6 @@ async def test_wake_releases_staged_payload_after_ack() -> None:
 
     assert payload_ref() is None
     assert runtime._pending_install is None
-    assert runtime._installed_policy_version == 2
 
 
 @pytest.mark.asyncio
@@ -653,7 +630,6 @@ async def test_active_update_sibling_failure_does_not_publish_outer_version() ->
     assert caught.value is sibling_failure
     assert runtime._pending_install is None
     assert runtime.current_policy_version == 1
-    assert runtime._installed_policy_version is None
     assert runtime._session is None
     assert inner.current_policy_version == 2
     assert inner.calls == [("update", "W2", 2), "shutdown"]
@@ -706,7 +682,6 @@ async def test_active_timeout_force_kills_the_session_owner(
     timeout = RayOperationTimeout("rollout.weight_sync", 1.0)
     session, actor = _timeout_session(timeout)
     runtime._session = session
-    runtime._installed_policy_version = 1
 
     class _Ray:
         killed: ClassVar[list[object]] = []
@@ -1013,7 +988,6 @@ async def test_cold_restore_timeout_force_kills_unpublished_candidate(
 
     assert caught.value is timeout
     assert runtime._session is None
-    assert runtime._installed_policy_version is None
     assert runtime.current_policy_version == 2
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
     assert actor.release_calls == 0
