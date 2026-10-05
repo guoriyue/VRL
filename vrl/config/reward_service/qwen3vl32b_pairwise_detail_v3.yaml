@@ -12,6 +12,9 @@
 #   sees the raw prompt.
 # - judge_max_side 896: five criteria plus the 2x2 crop grid batched at 1024 px
 #   overflow the 44 GiB card; 896 keeps the whole batch resident.
+# - detail is judged on the whole image, not 2x2 crops: the crop grid cost 8 of
+#   16 judge forwards per image and made the single judge the round bottleneck
+#   (scoring 48 images took ~12 min against 6 min of generation per rank).
 host: 127.0.0.1
 port: 8318
 model_name: vlm-preference-qwen3vl32b
@@ -77,10 +80,8 @@ worker_config:
     - name: detail
       weight: 0.5
       answer: compare
-      crops: 2
       question: >-
-        These are matching regions cut from two larger images. Compare the quality of fine
-        detail: sharp, physically plausible and coherent texture that belongs to the depicted
+        Compare the quality of fine detail across the two images: sharp, physically plausible and coherent texture that belongs to the depicted
         material (skin, fur, fabric, wood, stone, foliage, brushwork), crisp edges without
         halos. Dense or repetitive micro-pattern, mesh-like or bramble-like filler, noise,
-        smearing and waxy smoothness all count against a region.
+        smearing and waxy smoothness all count against an image.
