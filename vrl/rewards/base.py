@@ -148,12 +148,6 @@ class RewardFunction:
             )
         return cfg
 
-    @property
-    def external_accelerator_isolation_verified(self) -> bool:
-        """Whether out-of-plan reward accelerator work has been isolated."""
-
-        return True
-
     async def preflight(self) -> None:
         """Validate dependencies before scoring begins."""
 
@@ -227,12 +221,6 @@ class InferenceRewardFunction(RewardFunction):
         self._request_prefix = request_prefix
         self._debug_basename = debug_basename
         self._inference_started = False
-
-    @property
-    def external_accelerator_isolation_verified(self) -> bool:
-        """Whether out-of-plan reward accelerator work has been isolated."""
-
-        return bool(self.scorer.external_accelerator_isolation_verified)
 
     async def preflight(self) -> None:
         """Fail before training starts when a remote scoring dependency is broken.

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
-from pydantic import ConfigDict, Field, StrictBool, StrictInt, ValidationError, field_validator
+from pydantic import ConfigDict, Field, StrictInt, ValidationError, field_validator
 
 from vrl.config.base import ConfigBase
 from vrl.rewards.launch_contract import RewardRuntimeLaunchContract
@@ -90,9 +90,6 @@ class RewardServiceConfig(ConfigBase):
     # must explicitly size this cap and admission together: parsing/decoding
     # temporarily holds both encoded and decoded copies of each request.
     max_request_bytes: StrictInt = 16 * 1024 * 1024
-    # Operator attestation for GPU services. CPU services are inferred safe by
-    # RewardService.from_yaml because they execute no accelerator work beside generation.
-    generation_overlap_safe: StrictBool = False
 
     @field_validator("artifact_roots", mode="before")
     @classmethod
@@ -144,8 +141,6 @@ class RewardService:
             path if Path(path).is_absolute() else config_path.parent / path
             for path in cfg.artifact_roots
         ]
-        configured_device = launch.device.strip().lower()
-        runs_on_cpu = configured_device == "cpu" or configured_device.startswith("cpu:")
         return cls(
             InProcessRewardScorer(launch.component_config),
             artifact_roots=roots,
@@ -156,7 +151,6 @@ class RewardService:
             max_pending_requests=int(cfg.max_pending_requests),
             max_cached_requests=int(cfg.max_cached_requests),
             max_request_bytes=int(cfg.max_request_bytes),
-            generation_overlap_safe=bool(cfg.generation_overlap_safe or runs_on_cpu),
         )
 
     def __init__(
@@ -171,7 +165,6 @@ class RewardService:
         max_pending_requests: int = 8,
         max_cached_requests: int = 1024,
         max_request_bytes: int = 16 * 1024 * 1024,
-        generation_overlap_safe: bool = False,
     ) -> None:
         if not host:
             raise ValueError("reward service host is required")
@@ -181,8 +174,6 @@ class RewardService:
             raise ValueError("reward service max_cached_requests must be >= 0")
         if max_request_bytes < 1:
             raise ValueError("reward service max_request_bytes must be >= 1")
-        if not isinstance(generation_overlap_safe, bool):
-            raise TypeError("reward service generation_overlap_safe must be a boolean")
 
         roots: list[Path] = []
         for value in artifact_roots:
@@ -204,7 +195,6 @@ class RewardService:
         self._info = RewardServiceInfo(
             model_name=str(model_name).strip() or type(runtime).__name__,
             model_version=str(model_version).strip(),
-            generation_overlap_safe=bool(generation_overlap_safe),
             max_pending_requests=max_pending_requests,
         )
         self._max_cached_requests = max_cached_requests

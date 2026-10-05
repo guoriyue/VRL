@@ -10,7 +10,6 @@
 #   .venv/bin/python -m vrl.rewards.service.server \
 #     --config vrl/config/reward_service/ocr_paddle.yaml
 #
-# The service advertises generation_overlap_safe automatically for a CPU device.
 host: 127.0.0.1
 port: 8312
 model_name: ocr-paddle
@@ -23,7 +22,6 @@ artifact_roots:
 
 max_pending_requests: 16
 max_cached_requests: 1024
-generation_overlap_safe: false
 
 worker_config:
   model_factory: vrl.rewards.models.ocr:OCRRewardModel

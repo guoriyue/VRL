@@ -232,7 +232,6 @@ async def _main_async(args: argparse.Namespace) -> dict[str, Any]:
             {
                 "model_name": info.model_name,
                 "model_version": info.model_version,
-                "generation_overlap_safe": info.generation_overlap_safe,
             },
         )
         if args.candidate_dir:

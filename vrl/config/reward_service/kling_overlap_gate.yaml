@@ -13,9 +13,7 @@
 #       --config vrl/config/reward_service/kling_overlap_gate.yaml
 #
 # CUDA_VISIBLE_DEVICES is how the physical disjointness is actually enforced;
-# `device: cuda:0` below is the device *within* that masked view. The wire
-# protocol carries no GPU UUIDs, so generation_overlap_safe is an operator
-# assertion the service cannot verify for itself.
+# `device: cuda:0` below is the device *within* that masked view.
 host: 127.0.0.1
 port: 8300
 model_name: kling-overlap-gate
@@ -32,10 +30,6 @@ artifact_roots:
 # backpressure instead of unbounded queue growth.
 max_pending_requests: 8
 max_cached_requests: 1024
-
-# The acceptance gate's entire premise: scoring may overlap generation because
-# this service owns a GPU no trainer or rollout worker can touch.
-generation_overlap_safe: true
 
 worker_config:
   model_factory: vrl.rewards.models.kling_video_reward:KlingVideoRewardModel

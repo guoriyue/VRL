@@ -14,9 +14,6 @@
 # `endpoint` and `expected_model` below are placeholders — every experiment is
 # expected to override them to match the service it actually talks to. HTTP
 # scoring uploads media bytes; no shared filesystem is required.
-#
-# An external service stays fail-closed for generation/reward overlap unless its
-# /info response advertises `generation_overlap_safe`; see presets/reward/README.md.
 reward:
   components:
     unified_reward_video: 1.0

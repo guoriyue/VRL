@@ -71,7 +71,6 @@ host: 127.0.0.1
 port: 8315
 model_name: editreward-qwen25-7b
 model_version: 51b92ab5246295637c4ab3bd71e54a26f0a5189d
-generation_overlap_safe: false
 max_request_bytes: 67108864
 artifact_roots: [/absolute/path/to/outputs]
 worker_config:

@@ -130,12 +130,6 @@ class MultiReward(RewardFunction):
         # failed instead of double-shutting siblings.
         self._shutdown_completed_children: set[int] = set()
 
-    @property
-    def external_accelerator_isolation_verified(self) -> bool:
-        """Whether every external component proved accelerator isolation."""
-
-        return all(reward.external_accelerator_isolation_verified for _, _, reward in self.rewards)
-
     async def preflight(self) -> None:
         """Check every component's remote dependency before training starts."""
 

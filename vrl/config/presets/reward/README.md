@@ -53,18 +53,14 @@ these saved copies are separate from the inputs sent for scoring. `debug_dir`
 remains available for reward-specific diagnostic records. GenEval's evaluator
 `artifact_dir` is a separate model argument, not a transport directory.
 
-Generation/reward streaming is capability-derived. It is enabled only when no
-GPU phase handoff is required and every reward component is both non-blocking
-and physically isolated from generation. HTTP is only a transport: an external
-service stays fail-closed unless its `/info` response advertises the
-`generation_overlap_safe` capability. The standalone service emits that
-capability for an explicit `generation_overlap_safe: true` operator attestation,
-or for an explicitly configured CPU device. Never attest a GPU service that can
-resolve to any trainer or generation GPU. Strict scheduling keeps an unverified
-service on the batched-serial path; continuous scheduling rejects it because even
-one reward call would overlap trainer backward. In-process rewards retain one
-batched scoring call even on a dedicated GPU; this avoids trading batch
-throughput for fake event-loop concurrency.
+Generation/reward streaming is topology-derived: it is enabled only when the
+resource plan gives the reward no GPU shared with generation or training. An
+HTTP service is outside the plan: it is operator-owned, stays resident on its
+own device and is never parked, so run it on a card no trainer or rollout
+worker uses (or on another host). Continuous scheduling rejects a shared local
+reward GPU because even one reward call would overlap trainer backward.
+In-process rewards retain one batched scoring call even on a dedicated GPU;
+this avoids trading batch throughput for fake event-loop concurrency.
 
 ## WD tagger
 

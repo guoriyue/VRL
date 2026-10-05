@@ -476,8 +476,6 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
     component = reward.rewards[0][2]
     assert isinstance(component, ModelRewardFunction)
     assert isinstance(component.scorer, HttpRewardScorer)
-    assert component.external_accelerator_isolation_verified is False
-    assert reward.external_accelerator_isolation_verified is False
 
 
 def test_http_ocr_reward_uses_media_uploads_and_the_remote_scorer(tmp_path) -> None:
@@ -556,11 +554,9 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
 
     A component nobody contacted at launch fails after the first generation batch
     instead, wasting the whole warmup. The observable is per-component and the
-    service produces it, not the test:
-    ``external_accelerator_isolation_verified`` only flips once that client's own
-    ``/ready`` + ``/info`` returned and ``/info`` advertised the overlap-safe
-    capability, so a preflight that stopped after the first component leaves the
-    second one False.
+    service produces it, not the test: each client's identity check only
+    completes once its own ``/ready`` + ``/info`` returned, so a preflight that
+    stopped after the first component leaves the second one unchecked.
 
     Call *order* is deliberately not asserted: ``/info`` does not carry a reward
     name, so the real wire cannot attribute a request to a component, and
@@ -575,7 +571,6 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
         artifact_roots=[tmp_path],
         model_name="unit-model",
         model_version="unit-v1",
-        generation_overlap_safe=True,
     )
     await service.start()
     host, port = service.address
@@ -607,34 +602,17 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
     )
     reward = MultiReward([("a", 1.0, remote_a), ("b", 1.0, remote_b), ("c", 1.0, local)])
     try:
-        assert remote_a.external_accelerator_isolation_verified is False
-        assert remote_b.external_accelerator_isolation_verified is False
+        assert not remote_a.scorer._identity_checked
+        assert not remote_b.scorer._identity_checked
 
         await reward.preflight()
 
-        assert remote_a.external_accelerator_isolation_verified is True
-        assert remote_b.external_accelerator_isolation_verified is True
+        assert remote_a.scorer._identity_checked
+        assert remote_b.scorer._identity_checked
     finally:
         await remote_a.scorer.shutdown()
         await remote_b.scorer.shutdown()
         await service.shutdown_async()
-
-
-def test_mixed_runtime_components_fail_closed_for_generation_overlap(tmp_path) -> None:
-    reward = MultiReward.from_dict(
-        {"unified_reward_video": 1.0, "ocr": 0.5},
-        device="cpu",
-        inference_configs={
-            "unified_reward_video": RewardInferenceConfig(
-                kind="http",
-                endpoint="http://reward:8300",
-                expected_model="unified-reward-v1",
-            ),
-            "ocr": RewardInferenceConfig(kind="in_process"),
-        },
-    )
-
-    assert reward.external_accelerator_isolation_verified is False
 
 
 def test_http_reward_rejects_local_worker_config() -> None:

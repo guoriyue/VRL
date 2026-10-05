@@ -124,12 +124,10 @@ class _RewardRuntime:
         runtime: _Runtime | None = None,
         *,
         fail_park: bool = False,
-        external_accelerator_isolation_verified: bool = False,
     ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.generation_runtime = runtime
         self.fail_park = fail_park
-        self.external_accelerator_isolation_verified = external_accelerator_isolation_verified
         self.shutdown_failures = 0
         self.shutdown_calls = 0
         self.memory_parked = False
@@ -369,20 +367,17 @@ def test_collector_does_not_offload_runtime_before_independent_reward() -> None:
     (
         "rollout_handoff",
         "trainer_handoff",
-        "scorer_supports_overlap",
         "expected",
     ),
     [
-        (False, False, True, True),
-        (False, False, False, False),
-        (True, False, True, False),
-        (False, True, True, False),
+        (False, False, True),
+        (True, False, False),
+        (False, True, False),
     ],
 )
-def test_collector_derives_reward_generation_overlap_from_topology_and_scorer(
+def test_collector_derives_reward_generation_overlap_from_topology(
     rollout_handoff: bool,
     trainer_handoff: bool,
-    scorer_supports_overlap: bool,
     expected: bool,
 ) -> None:
     import asyncio
@@ -392,9 +387,7 @@ def test_collector_derives_reward_generation_overlap_from_topology_and_scorer(
         rollout=(1,),
         reward=((1,) if rollout_handoff else ()) + ((0,) if trainer_handoff else ()),
     )
-    reward_runtime = _RewardRuntime(
-        external_accelerator_isolation_verified=scorer_supports_overlap,
-    )
+    reward_runtime = _RewardRuntime()
     collector = _collector(
         generation_runtime=_Runtime(),
         reward_runtime=reward_runtime,
@@ -415,29 +408,8 @@ def test_collector_derives_reward_generation_overlap_from_topology_and_scorer(
     assert collector.reward_isolation_verified is expected
 
 
-def test_collector_keeps_continuous_admission_for_no_reward() -> None:
-    collector = _collector(
-        reward_runtime=_RewardRuntime(external_accelerator_isolation_verified=True),
-    )
-
-    assert collector.reward_isolation_verified is True
-
-
-def test_collector_isolation_follows_external_accelerator_verification() -> None:
-    runtime = _RewardRuntime()
-    runtime.external_accelerator_isolation_verified = False
-    collector = _collector(reward_runtime=runtime)
-
-    assert collector.reward_isolation_verified is False
-
-    runtime.external_accelerator_isolation_verified = True
-
-    assert collector.reward_isolation_verified is True
-
-
-def test_dedicated_local_reward_allows_concurrent_collects_without_streaming() -> None:
-    runtime = _RewardRuntime(external_accelerator_isolation_verified=True)
-    collector = _collector(reward_runtime=runtime)
+def test_collector_without_a_lifecycle_plan_treats_reward_as_isolated() -> None:
+    collector = _collector(reward_runtime=_RewardRuntime())
 
     assert collector.reward_isolation_verified is True
 

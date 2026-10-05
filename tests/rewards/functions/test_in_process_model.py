@@ -160,8 +160,6 @@ def test_lazy_reward_models_defer_module_construction(
 
 def test_inference_reward_defaults_to_inmemory_artifact_store() -> None:
     class _Runtime:
-        external_accelerator_isolation_verified = False
-
         async def score_batch(self, request):
             return []
 
@@ -178,8 +176,6 @@ def test_inference_reward_defaults_to_inmemory_artifact_store() -> None:
 
 def test_inference_reward_rejects_empty_score_key_component() -> None:
     class _Runtime:
-        external_accelerator_isolation_verified = False
-
         async def score_batch(self, request):
             return []
 
@@ -197,8 +193,6 @@ def test_inference_reward_rejects_empty_score_key_component() -> None:
 @pytest.mark.asyncio
 async def test_reward_reports_operation_and_artifact_cleanup_failures() -> None:
     class _FailingRuntime:
-        external_accelerator_isolation_verified = False
-
         async def score_batch(self, request):
             raise RuntimeError("score failed")
 
@@ -229,8 +223,6 @@ async def test_reward_reports_operation_and_artifact_cleanup_failures() -> None:
 @pytest.mark.asyncio
 async def test_reward_retains_artifacts_when_remote_state_is_ambiguous() -> None:
     class _AmbiguousRuntime:
-        external_accelerator_isolation_verified = False
-
         async def score_batch(self, request):
             error = RuntimeError("remote state unknown")
             error.retain_reward_artifacts = True

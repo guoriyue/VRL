@@ -10,7 +10,6 @@ max_pending_requests: 16
 max_cached_requests: 1024
 # Eight float32 image tensors plus base64 encoding exceed the 16 MiB default.
 max_request_bytes: 67108864
-generation_overlap_safe: false
 worker_config:
   model_factory: vrl.rewards.models.editreward:EditRewardModel
   device: cuda:0

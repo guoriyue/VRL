@@ -30,11 +30,6 @@ from vrl.rewards.types import RewardOutput, RewardSample
 class RewardRuntime(Protocol):
     """Reward runtime consumed by rollout collectors."""
 
-    @property
-    def external_accelerator_isolation_verified(self) -> bool:
-        """Whether accelerator work outside the resource plan is isolated."""
-        ...
-
     async def preflight(self) -> None:
         """Validate external scoring dependencies before generation starts."""
         ...
@@ -79,11 +74,6 @@ class RewardScorer(Protocol):
     protocol once (methods and capability flags together) instead of probing
     a hand-picked subset that can drift from this declaration.
     """
-
-    @property
-    def external_accelerator_isolation_verified(self) -> bool:
-        """Whether accelerator work outside the resource plan is isolated."""
-        ...
 
     async def score_batch(
         self,

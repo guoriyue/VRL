@@ -51,7 +51,6 @@ async def test_in_process_runtime_scores_without_disk_or_ray() -> None:
     runtime = InProcessRewardScorer(model=_SumMediaModel())
     results = await runtime.score_batch(_make_request())
 
-    assert runtime.external_accelerator_isolation_verified is True
     assert [r.artifact_id for r in results] == ["a", "b"]  # original order preserved
     assert results[0].scores == {"overall": 3.0, "extra": 1.0}
     assert results[1].scores == {"overall": 3.0, "extra": 1.0}

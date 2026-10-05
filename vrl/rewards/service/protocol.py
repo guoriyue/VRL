@@ -41,10 +41,6 @@ class RewardServiceInfo:
 
     model_name: str
     model_version: str
-    # The one genuinely deployment-dependent fact: whether the operator proved
-    # this service's accelerators are isolated from the training topology, so
-    # the collector may overlap reward N with generation N+1.
-    generation_overlap_safe: bool
     max_pending_requests: int
 
     def __post_init__(self) -> None:
@@ -52,9 +48,6 @@ class RewardServiceInfo:
             raise ValueError("reward service model_name must be a non-empty string")
         if not isinstance(self.model_version, str):
             raise ValueError("reward service model_version must be a string")
-        if not isinstance(self.generation_overlap_safe, bool):
-            # bool("false") is True; a stringly wire value must fail, not flip.
-            raise ValueError("reward service generation_overlap_safe must be a boolean")
         require_int(
             self.max_pending_requests, path="reward service max_pending_requests", minimum=1
         )

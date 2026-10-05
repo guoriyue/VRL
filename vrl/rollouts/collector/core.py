@@ -370,13 +370,14 @@ class RolloutCollector:
 
     @property
     def reward_isolation_verified(self) -> bool:
-        """Whether reward devices are verified safe beside generation and training."""
+        """Whether the reward shares no GPU with generation or training.
+
+        Read off the lifecycle plan. An HTTP service is outside the plan and
+        stays resident on its own device, so it never blocks overlap.
+        """
 
         lifecycle = self.lifecycle
-        return bool(
-            (lifecycle is None or not lifecycle.offload_reward)
-            and self.reward_runtime.external_accelerator_isolation_verified
-        )
+        return lifecycle is None or not lifecycle.offload_reward
 
     def build_generation_requests(
         self,

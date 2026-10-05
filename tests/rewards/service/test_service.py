@@ -168,20 +168,7 @@ def test_wire_rejects_unknown_fields_and_versions(tmp_path) -> None:
 
 
 def test_wire_decodes_only_typed_scalars() -> None:
-    from vrl.rewards.service.wire import error_from_wire, info_from_wire
-
-    info_envelope = {
-        "info": {
-            "model_name": "m",
-            "model_version": "v",
-            # bool("false") is True; a stringly flag must be rejected, not
-            # silently flipped into a scheduling permission.
-            "generation_overlap_safe": "false",
-            "max_pending_requests": 1,
-        },
-    }
-    with pytest.raises(ValueError, match="must be a boolean"):
-        info_from_wire(info_envelope)
+    from vrl.rewards.service.wire import error_from_wire
 
     error_envelope = {
         "error": {
@@ -204,7 +191,6 @@ async def test_client_scores_through_async_server_and_validates_identity(tmp_pat
     main_thread = threading.get_ident()
 
     async with _running_service(runtime, tmp_path) as (service, client):
-        assert client.external_accelerator_isolation_verified is False
         host, port = service.address
         # /live stays operator-facing (process supervisors probe it directly);
         # the trainer client only consumes readiness + identity via preflight.
@@ -216,13 +202,11 @@ async def test_client_scores_through_async_server_and_validates_identity(tmp_pat
             assert (await live_response.json())["status"] == "live"
         assert await client.ready()
         await client.ensure_ready()
-        assert client.external_accelerator_isolation_verified is False
         info = await client.info()
         results = await client.score_batch(_request(str(artifact_file)))
 
     assert info.model_name == "unit-model"
     assert info.model_version == "unit-v1"
-    assert info.generation_overlap_safe is False
     assert [result.scores["overall"] for result in results] == [0.75]
     assert results[0].timing_ms["service_artifact_validation_ms"] >= 0.0
     assert results[0].timing_ms["service_inference_wall_ms"] >= 0.0
@@ -243,11 +227,7 @@ async def test_client_preflight_hands_session_to_continuous_owner_loop(tmp_path)
     runtime = _FakeRuntime()
     request = _request(str(artifact_file))
 
-    async with _running_service(
-        runtime,
-        tmp_path,
-        generation_overlap_safe=True,
-    ) as (_service, client):
+    async with _running_service(runtime, tmp_path) as (_service, client):
         await client.ensure_ready()
         assert client._session is None
 
@@ -263,24 +243,6 @@ async def test_client_preflight_hands_session_to_continuous_owner_loop(tmp_path)
         results = await asyncio.to_thread(score_on_owner_loop)
 
     assert [result.scores["overall"] for result in results] == [0.75]
-
-
-@pytest.mark.asyncio
-async def test_client_verifies_isolation_only_after_safe_service_preflight(tmp_path) -> None:
-    runtime = _FakeRuntime()
-
-    async with _running_service(
-        runtime,
-        tmp_path,
-        generation_overlap_safe=True,
-    ) as (_service, client):
-        assert client.external_accelerator_isolation_verified is False
-
-        await client.ensure_ready()
-        info = await client.info()
-
-        assert info.generation_overlap_safe is True
-        assert client.external_accelerator_isolation_verified is True
 
 
 @pytest.mark.asyncio
@@ -372,7 +334,6 @@ async def test_ensure_ready_fails_fast_on_identity_mismatch(tmp_path) -> None:
         await service.shutdown_async()
 
     assert runtime.requests == []
-    assert client.external_accelerator_isolation_verified is False
 
 
 @pytest.mark.asyncio
@@ -812,7 +773,6 @@ def test_build_reward_scorer_accepts_typed_http_config() -> None:
         ),
     )
     assert isinstance(runtime, HttpRewardScorer)
-    assert runtime.external_accelerator_isolation_verified is False
 
 
 def test_service_requires_explicit_existing_absolute_artifact_roots(tmp_path) -> None:
@@ -831,7 +791,6 @@ def test_obsolete_managed_launch_token_is_rejected_by_config_and_wire() -> None:
     info = RewardServiceInfo(
         model_name="external-model",
         model_version="v1",
-        generation_overlap_safe=False,
         max_pending_requests=8,
     )
     payload = info_to_wire(info)
@@ -852,16 +811,6 @@ def test_cli_config_rejects_unknown_top_level_keys_but_keeps_worker_config_open(
         },
     )
     assert parsed.worker_config == {"model_specific_knob": 7}
-    assert parsed.generation_overlap_safe is False
-    with pytest.raises(
-        ValueError, match=r"generation_overlap_safe: Input should be a valid boolean"
-    ):
-        RewardServiceConfig.from_mapping(
-            {
-                "artifact_roots": ["/tmp"],
-                "generation_overlap_safe": "true",
-            },
-        )
 
 
 def test_module_cli_handles_sigterm_without_eager_import_warning(tmp_path) -> None:
@@ -918,7 +867,7 @@ def test_module_cli_handles_sigterm_without_eager_import_warning(tmp_path) -> No
             timeout=1.0,
         ) as response:
             info = json.load(response)["info"]
-        assert info["generation_overlap_safe"] is True
+        assert info["model_name"]
         process.send_signal(signal.SIGTERM)
         stdout, stderr = process.communicate(timeout=15)
     finally:
@@ -1069,7 +1018,6 @@ def test_service_info_rejects_noninteger_capacity(value) -> None:
     info = {
         "model_name": "test",
         "model_version": "v1",
-        "generation_overlap_safe": False,
         "max_pending_requests": value,
     }
     with pytest.raises(RewardServiceProtocolError, match="max_pending_requests"):
@@ -1084,7 +1032,6 @@ def test_service_info_rejects_nonstring_identity(field, value) -> None:
     info = {
         "model_name": "test",
         "model_version": "",
-        "generation_overlap_safe": False,
         "max_pending_requests": 8,
     }
     info[field] = value

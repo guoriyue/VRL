@@ -3,9 +3,7 @@
 ``HttpRewardScorer`` is the remote ``RewardScorer`` transport — the twin of
 the in-process ``InProcessRewardScorer`` (vrl/rewards/runtime.py). It exists
 so the trainer process holds no reward model weights: scoring crosses to an
-operator-owned service, which is why accelerator isolation is *verified*
-against the service's advertised ``generation_overlap_safe`` fact rather than
-assumed. Sessions are loop-affine (aiohttp binds a
+operator-owned service that stays resident on its own device. Sessions are loop-affine (aiohttp binds a
 pool to its creation loop), so preflight on the trainer loop hands off only
 validated identity state and the scoring owner builds its own pool. An
 ambiguous POST outcome is settled via explicit request-id cancellation.
@@ -112,14 +110,7 @@ class HttpRewardScorer:
         self._session_lock = asyncio.Lock()
         self._identity_lock = asyncio.Lock()
         self._identity_checked = False
-        self._external_accelerator_isolation_verified = False
         self._closed = False
-
-    @property
-    def external_accelerator_isolation_verified(self) -> bool:
-        """Whether preflight proved the service safe beside generation."""
-
-        return self._external_accelerator_isolation_verified
 
     async def score_batch(
         self,
@@ -291,7 +282,6 @@ class HttpRewardScorer:
                         "actual_version": info.model_version,
                     },
                 )
-            self._external_accelerator_isolation_verified = info.generation_overlap_safe
             self._identity_checked = True
 
     async def _get_session(self) -> aiohttp.ClientSession:

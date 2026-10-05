@@ -40,14 +40,13 @@ class ContinuousRolloutSchedule:
     ) -> None:
         self.lifecycle = lifecycle
         if not lifecycle.collector.reward_isolation_verified:
-            # Only known once the reward runtime is connected: an external
-            # service advertises its own accelerator isolation. A single collect
-            # task still overlaps the trainer in continuous mode, so limiting
-            # group concurrency cannot make an unverified placement safe.
+            # A single collect task still overlaps the trainer in continuous
+            # mode, so limiting group concurrency cannot make a shared reward
+            # GPU safe.
             raise RuntimeError(
-                "continuous rollout requires verified reward accelerator isolation "
-                "from both trainer and rollout GPUs; use a service that advertises "
-                "generation_overlap_safe, or use strict_on_policy scheduling",
+                "continuous rollout requires a reward GPU disjoint from both trainer "
+                "and rollout GPUs; pin distributed.resources.reward.devices to a spare "
+                "card, or use strict_on_policy scheduling",
             )
         self._rollout_thread = ContinuousRolloutThread(lifecycle=lifecycle, settings=settings)
 

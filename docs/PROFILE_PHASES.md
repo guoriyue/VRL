@@ -89,7 +89,7 @@ grep -rhno 'profile_range("[a-z_.]*"' vrl/ --include=*.py \
 | `weight_sync.push` | Transport + worker-side load |
 
 These two are deliberately split. They are one logical operation today because
-rollout and training share a GPU (`generation_overlap_safe: false`), but they
+rollout and training share a GPU, but they
 have different costs and different overlap potential the moment they do not:
 the copy is trainer-side GPU work, the push is transport plus remote load. A
 fused range would hide which half to schedule against.

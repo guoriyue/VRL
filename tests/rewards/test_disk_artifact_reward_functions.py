@@ -73,8 +73,6 @@ _CASE_IDS = [case.reward_name for case in _CASES]
 
 
 class _FakeRuntime:
-    external_accelerator_isolation_verified = False
-
     def __init__(self, scores: dict[str, float]) -> None:
         self.scores = dict(scores)
         self.requests: list[Any] = []

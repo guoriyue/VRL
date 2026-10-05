@@ -10,7 +10,6 @@ artifact_roots:
 
 max_pending_requests: 8
 max_cached_requests: 1024
-generation_overlap_safe: true
 
 worker_config:
   model_factory: vrl.rewards.models.robotics_video_reward:RoboticsVideoRewardModel

@@ -468,12 +468,12 @@ async def test_result_slots_fit_the_finite_prompt_batch() -> None:
         await schedule.shutdown()
 
 
-def test_rejects_unverified_external_reward_accelerator() -> None:
+def test_rejects_a_reward_sharing_a_training_gpu() -> None:
     runtime = _Runtime()
     collector = _Collector(runtime)
     collector.reward_isolation_verified = False
 
-    with pytest.raises(RuntimeError, match="verified reward accelerator isolation"):
+    with pytest.raises(RuntimeError, match="reward GPU disjoint from both trainer and rollout"):
         _build(_continuous_config(), collector, _Syncer(runtime))
 
 

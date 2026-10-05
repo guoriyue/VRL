@@ -77,12 +77,6 @@ class RewardFunctionRuntime:
         # published only after a successful shutdown.
         self.lifecycle = RuntimeLifecycle(owner="reward runtime")
 
-    @property
-    def external_accelerator_isolation_verified(self) -> bool:
-        """Whether out-of-plan reward accelerator work is isolated."""
-
-        return self._reward_function.external_accelerator_isolation_verified
-
     async def preflight(self) -> None:
         """Validate the wrapped reward function before scoring begins."""
 
@@ -393,8 +387,6 @@ class InProcessRewardScorer:
 
     Its GPU residency between scores belongs to :class:`RewardParking`.
     """
-
-    external_accelerator_isolation_verified = True
 
     def __init__(
         self,
