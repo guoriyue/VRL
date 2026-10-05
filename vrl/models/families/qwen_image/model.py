@@ -323,7 +323,10 @@ class QwenImageModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         Masks / negative embeds are only stored when present, so ``restore`` reads
         them with ``.get`` and the no-CFG / all-ones-mask paths stay tensor-free.
         """
-        tensors: dict[str, Any] = {"prompt_embeds": state.prompt_embeds}
+        tensors: dict[str, Any] = {
+            "prompt_embeds": state.prompt_embeds,
+            "latents_clean": state.latents.detach(),
+        }
         if state.prompt_embeds_mask is not None:
             tensors["prompt_embeds_mask"] = state.prompt_embeds_mask
         if state.negative_prompt_embeds is not None:

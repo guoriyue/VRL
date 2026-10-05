@@ -248,7 +248,7 @@ def test_export_restore_roundtrip_feeds_forward_step() -> None:
     )
     replay = model.export_replay_tensors(state)
     ctx = model.export_batch_context(state)
-    assert set(replay) == {"video_context", "attention_mask"}
+    assert set(replay) == {"video_context", "attention_mask", "latents_clean"}
     assert ctx == {"num_train_timesteps": 1000}
 
     # Stored denoise timesteps are [B, num_steps]; restore one step.

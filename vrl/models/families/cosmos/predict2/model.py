@@ -466,6 +466,7 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersPipelineModelBase):
         return {
             "prompt_embeds": state.prompt_embeds,
             "negative_prompt_embeds": state.negative_prompt_embeds,
+            "latents_clean": state.latents.detach(),
             "init_latents": expand_tensor_to_batch(
                 state.init_latents, state.latents.shape[0], materialize=True
             ),

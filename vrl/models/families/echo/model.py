@@ -428,6 +428,7 @@ class EchoModel(DenoiseModelBase):
         return {
             "video_context": state.video_context,
             "attention_mask": state.attention_mask,
+            "latents_clean": state.latents.detach(),
         }
 
     def restore_eval_state(

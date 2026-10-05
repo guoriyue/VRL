@@ -443,13 +443,7 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         # Training tensors (latents/log_probs/replay) are NOT touched.
         if isinstance(video, torch.Tensor) and video.is_floating_point():
             video = to_uint8(video)
-        # Forward-process objectives train against the latent actually decoded,
-        # not the final action buffer (which may have rounded it to a lower dtype).
-        # This is a full-sequence binding fact, independent of the model family.
-        replay_tensors = {
-            **model.export_replay_tensors(state),
-            "latents_clean": state.latents.detach(),
-        }
+        replay_tensors = model.export_replay_tensors(state)
         # Carry the rollout proposal mean alongside the model's replay tensors so
         # it concatenates + lands under the denoise segment like old_log_prob,
         # readable at replay via replay_tensor_dict("denoise"). Only present when

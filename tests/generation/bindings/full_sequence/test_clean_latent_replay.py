@@ -28,7 +28,10 @@ def test_decoded_fp32_latent_survives_lower_precision_path_buffer_and_gather() -
             return latents.view(-1, 1, 1, 1).expand(-1, 3, 4, 4)
 
         def export_replay_tensors(self, state):
-            return {"prompt_embeds": torch.zeros(state.latents.shape[0], 1, 4)}
+            return {
+                "prompt_embeds": torch.zeros(state.latents.shape[0], 1, 4),
+                "latents_clean": state.latents.detach(),
+            }
 
         def export_batch_context(self, state):
             return {"height": 4, "width": 4}

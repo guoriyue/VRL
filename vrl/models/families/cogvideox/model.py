@@ -296,7 +296,10 @@ class CogVideoXModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
 
     def export_replay_tensors(self, state: CogVideoXSamplingState) -> dict[str, Any]:
         """Project CogVideoX sampling state into per-sample trajectory tensors."""
-        tensors: dict[str, Any] = {"prompt_embeds": state.prompt_embeds}
+        tensors: dict[str, Any] = {
+            "prompt_embeds": state.prompt_embeds,
+            "latents_clean": state.latents.detach(),
+        }
         if state.negative_prompt_embeds is not None:
             tensors["negative_prompt_embeds"] = state.negative_prompt_embeds
         return tensors

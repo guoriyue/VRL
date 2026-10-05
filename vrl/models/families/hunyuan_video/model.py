@@ -236,6 +236,7 @@ class HunyuanVideoModel(
         tensors: dict[str, Any] = {
             "prompt_embeds": state.prompt_embeds,
             "pooled_prompt_embeds": state.pooled_prompt_embeds,
+            "latents_clean": state.latents.detach(),
         }
         if state.prompt_attention_mask is not None:
             tensors["prompt_attention_mask"] = state.prompt_attention_mask

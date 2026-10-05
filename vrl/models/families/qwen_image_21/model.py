@@ -431,6 +431,7 @@ class QwenImage21Model(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         tensors: dict[str, Any] = {
             "prompt_embeds": state.prompt_embeds,
             "image_pad_mask": state.image_pad_mask.to(torch.int64),
+            "latents_clean": state.latents.detach(),
         }
         if state.reference_latents is not None:
             tensors["reference_latents"] = state.reference_latents

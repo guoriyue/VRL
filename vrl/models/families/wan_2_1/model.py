@@ -734,6 +734,7 @@ class WanT2VDiffusersModel(
         return {
             "prompt_embeds": state.prompt_embeds,
             "negative_prompt_embeds": state.negative_prompt_embeds,
+            "latents_clean": state.latents.detach(),
         }
 
     def restore_eval_state(
@@ -1156,6 +1157,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             "negative_prompt_embeds": state.negative_prompt_embeds,
             "image_embeds": state.image_embeds,
             "condition": state.condition,
+            "latents_clean": state.latents.detach(),
         }
 
     def restore_eval_state(

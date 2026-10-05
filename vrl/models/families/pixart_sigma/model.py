@@ -292,7 +292,10 @@ class PixArtSigmaModel(
 
     def export_replay_tensors(self, state: PixArtSigmaSamplingState) -> dict[str, Any]:
         """Project sampling state into per-sample trajectory tensors."""
-        tensors: dict[str, Any] = {"prompt_embeds": state.prompt_embeds}
+        tensors: dict[str, Any] = {
+            "prompt_embeds": state.prompt_embeds,
+            "latents_clean": state.latents.detach(),
+        }
         for name in (
             "prompt_attention_mask",
             "negative_prompt_embeds",

@@ -333,6 +333,7 @@ class HunyuanImageModel(
             "prompt_embeds_mask": state.prompt_embeds_mask,
             "prompt_embeds_2": state.prompt_embeds_2,
             "prompt_embeds_mask_2": state.prompt_embeds_mask_2,
+            "latents_clean": state.latents.detach(),
         }
         if state.negative_prompt_embeds is not None:
             tensors["negative_prompt_embeds"] = state.negative_prompt_embeds

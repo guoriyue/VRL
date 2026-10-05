@@ -168,7 +168,14 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
         raise NotImplementedError
 
     def export_replay_tensors(self, state: Any) -> dict[str, Any]:
-        """Project private sampling state into per-sample trajectory tensors."""
+        """Project private sampling state into per-sample trajectory tensors.
+
+        Every family exports ``latents_clean`` as ``state.latents.detach()``:
+        the final latent exactly as decoded, which forward-process objectives
+        (DiffusionNFT, V-GRPO) re-noise. The action buffer may have rounded
+        that step to a lower dtype, so the export reads the state, not the
+        buffer.
+        """
         raise NotImplementedError
 
     def restore_eval_state(
