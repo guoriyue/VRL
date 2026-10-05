@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.trainers.online._collector_control import CollectorControlFake
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
     _diffusion_rollout_batch,
@@ -271,7 +271,7 @@ class _ResumeAlgorithm(_EvaluatorAlgorithmFake):
         )
 
 
-class _ResumeCollector(CollectorControlFake):
+class _ResumeCollector(PromptCollectionFake):
     async def evaluate_rollout(self, pendings):
         return list(pendings)
 

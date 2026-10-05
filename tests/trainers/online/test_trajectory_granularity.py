@@ -8,7 +8,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from tests.trainers.online._collector_control import CollectorControlFake
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
     _diffusion_rollout_batch,
@@ -92,7 +92,7 @@ def _chunk_denoise_batch(batch_size: int = 2) -> RolloutBatch:
     )
 
 
-class _Collector(CollectorControlFake):
+class _Collector(PromptCollectionFake):
     async def evaluate_rollout(self, pendings):
         return list(pendings)
 

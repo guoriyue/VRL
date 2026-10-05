@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from tests.trainers.online._collector_control import CollectorControlFake
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
     _diffusion_rollout_batch,
@@ -63,7 +63,7 @@ class TestRewardUpdateFlow:
                     policy_loss=loss.item(),
                 )
 
-        class _CapturingCollector(CollectorControlFake):
+        class _CapturingCollector(PromptCollectionFake):
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
@@ -170,7 +170,7 @@ class TestRewardUpdateFlow:
                     policy_loss=loss.item(),
                 )
 
-        class _Collector(CollectorControlFake):
+        class _Collector(PromptCollectionFake):
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
@@ -277,7 +277,7 @@ class TestRewardUpdateFlow:
                 del model
                 after_step_calls.append(global_step)
 
-        class _Collector(CollectorControlFake):
+        class _Collector(PromptCollectionFake):
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
@@ -602,7 +602,7 @@ class TestRewardUpdateFlow:
                 loss = signals.log_prob.mean()
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
-        class _Collector(CollectorControlFake):
+        class _Collector(PromptCollectionFake):
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
@@ -713,7 +713,7 @@ class TestRewardUpdateFlow:
                 loss = signals.log_prob.mean()
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
-        class _Collector(CollectorControlFake):
+        class _Collector(PromptCollectionFake):
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 
@@ -831,7 +831,7 @@ def test_training_microbatch_size_splits_backward_and_preserves_gradient(monkeyp
             loss = signals.log_prob.mean()
             return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
-    class _Collector(CollectorControlFake):
+    class _Collector(PromptCollectionFake):
         async def evaluate_rollout(self, pendings):
             return list(pendings)
 

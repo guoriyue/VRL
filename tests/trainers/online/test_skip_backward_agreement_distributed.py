@@ -20,8 +20,8 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch import nn
 
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.trainers._strategy_policies import free_port
-from tests.trainers.online._collector_control import CollectorControlFake
 from tests.trainers.online._helpers import (
     _diffusion_rollout_batch,
     _EvaluatorAlgorithmFake,
@@ -356,7 +356,7 @@ def _run_replay_loop_rank(
         strategy.prepare_model = lambda model: model
         trainer = OnlineTrainer(
             algorithm=_Algorithm(),
-            collector=CollectorControlFake(),
+            collector=PromptCollectionFake(),
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(

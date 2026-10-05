@@ -17,8 +17,8 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from diffusers import CosmosTransformer3DModel, UniPCMultistepScheduler
 
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.trainers._strategy_policies import free_port
-from tests.trainers.online._collector_control import CollectorControlFake
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
@@ -48,7 +48,7 @@ from vrl.trainers.strategy import ContextParallelStrategy
 from vrl.trajectory.builders import build_diffusion_trajectory
 
 
-class _Collector(CollectorControlFake):
+class _Collector(PromptCollectionFake):
     def __init__(self, model, *, released=False):
         self.model = model
         self.released = released

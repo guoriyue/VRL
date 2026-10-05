@@ -15,7 +15,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from tests.trainers.online._collector_control import CollectorControlFake
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.trainers.online._helpers import (
     _diffusion_rollout_batch,
     _stamp_model_precision,
@@ -33,7 +33,7 @@ from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import OnlineTrainer
 
 
-class _Collector(CollectorControlFake):
+class _Collector(PromptCollectionFake):
     async def evaluate_rollout(self, pendings):
         return list(pendings)
 

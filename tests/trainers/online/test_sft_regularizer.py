@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from diffusers import FlowMatchEulerDiscreteScheduler
 
-from tests.trainers.online._collector_control import CollectorControlFake
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.trainers.online._helpers import (
     _diffusion_rollout_batch,
     _stamp_model_precision,
@@ -25,7 +25,7 @@ _TARGET_VIDEO = "targets/training.mp4"
 _TARGET_IMAGE = "targets/training.png"
 
 
-class _Collector(CollectorControlFake):
+class _Collector(PromptCollectionFake):
     async def evaluate_rollout(self, pendings):
         return list(pendings)
 

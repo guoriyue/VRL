@@ -42,16 +42,32 @@ async def collect_scored(
 
 
 class PromptCollectionFake:
-    """Run production prompt collection over fake generation and reward operations."""
+    """Run production prompt collection over fake generation and reward operations.
+
+    Also supplies the lifecycle surface the rollout schedules call on a
+    collector, so trainer and orchestration tests only specialize collection.
+    """
 
     def assemble_training_batches(self, evaluated):
         # These scheduling fakes use prebuilt batches as their reward result.
         return evaluated
 
     reward_runtime = SimpleNamespace()
-    # No lifecycle plan: nothing shares a GPU, so no role parks.
+    generation_runtime = SimpleNamespace(current_policy_version=None)
+    # No lifecycle plan: nothing shares a GPU, so no role parks and the reward
+    # counts as isolated.
     lifecycle = None
-    reward_isolation_verified = False
+    reward_isolation_verified = True
+
+    async def activate_generation_runtime(self) -> None:
+        return None
+
+    async def offload_generation_runtime_memory(self) -> None:
+        return None
+
+    async def shutdown(self) -> None:
+        return None
+
     request_builder = SimpleNamespace(
         build=lambda inputs, group_size, **kwargs: SimpleNamespace(
             inputs=inputs, options={"group_size": group_size, **kwargs}

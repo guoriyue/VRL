@@ -12,7 +12,7 @@ import pytest
 import torch
 
 from tests.models.steps.denoise.fixtures import build_tiny_vdn_h3_model, stamp_model_precision
-from tests.trainers.online._collector_control import CollectorControlFake
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
@@ -37,7 +37,7 @@ from vrl.trajectory.builders import build_diffusion_trajectory
 pytest.importorskip("src.models.hybrid_attention")
 
 
-class _Collector(CollectorControlFake):
+class _Collector(PromptCollectionFake):
     def __init__(self, model):
         self.model = model
         self.executor = VDNH3BatchExecutor(model)

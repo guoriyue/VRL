@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.trainers.online._collector_control import CollectorControlFake
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
     _diffusion_rollout_batch,
@@ -44,7 +44,7 @@ def _make_parity_boundary_trainer(
     _stamp_model_precision(model)
     return OnlineTrainer(
         algorithm=_Algorithm(),
-        collector=CollectorControlFake(),
+        collector=PromptCollectionFake(),
         evaluator=_Evaluator(),
         model=model,
         config=TrainerConfig(
@@ -122,7 +122,7 @@ class TestDiagnostics:
                     policy_loss=loss.item(),
                 )
 
-        class _Collector(CollectorControlFake):
+        class _Collector(PromptCollectionFake):
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 

@@ -15,7 +15,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from tests.trainers.online._collector_control import CollectorControlFake
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
     _diffusion_rollout_batch,
@@ -50,7 +50,7 @@ class _Algorithm(_EvaluatorAlgorithmFake):
         return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
 
-class _Collector(CollectorControlFake):
+class _Collector(PromptCollectionFake):
     async def evaluate_rollout(self, pendings):
         return list(pendings)
 
@@ -356,7 +356,9 @@ def test_phase_events_use_the_metric_step(tmp_path) -> None:
 
     event_path = tmp_path / "phase_events.jsonl"
     events = [json.loads(line) for line in event_path.read_text().splitlines()]
-    stats = [json.loads(line) for line in (tmp_path / "rollout_stats.jsonl").read_text().splitlines()]
+    stats = [
+        json.loads(line) for line in (tmp_path / "rollout_stats.jsonl").read_text().splitlines()
+    ]
     assert events
     assert {event["step"] for event in events} == {0}
     assert [row["step"] for row in stats] == [0]

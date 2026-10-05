@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.trainers.online._collector_control import CollectorControlFake
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.trainers.online._helpers import (
     DEFAULT_PRECISION,
     _algorithm_inputs,
@@ -109,7 +109,7 @@ class TestAdvantageAndMetrics:
                     metrics.update.rs_seq_masked_fraction = call / 40.0
                 return loss, metrics
 
-        class _Collector(CollectorControlFake):
+        class _Collector(PromptCollectionFake):
             def __init__(self, reward_values: list[float]) -> None:
                 self._reward_values = reward_values
                 self._cursor = 0
@@ -348,7 +348,7 @@ class TestAdvantageAndMetrics:
                 self.loss_calls += 1
                 return torch.tensor(0.0, requires_grad=True), TrainStepMetrics()
 
-        class _Collector(CollectorControlFake):
+        class _Collector(PromptCollectionFake):
             async def evaluate_rollout(self, pendings):
                 return list(pendings)
 

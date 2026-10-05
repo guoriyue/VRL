@@ -218,6 +218,9 @@ class _Unscored:
 class _PhasedCollector(PromptCollectionFake):
     """Collector fake exposing per-call phase timings like RolloutCollector."""
 
+    # Batched scoring: one reward call for every group, so its timings land once.
+    reward_isolation_verified = False
+
     async def generate_rollout(self, request) -> _Unscored:
         inputs = request.inputs
         kwargs = request.options

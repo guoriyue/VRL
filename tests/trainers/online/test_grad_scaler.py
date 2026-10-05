@@ -15,7 +15,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from tests.trainers.online._collector_control import CollectorControlFake
+from tests.rollouts.collector._helpers import PromptCollectionFake
 from tests.trainers.online._helpers import (
     _algorithm_inputs,
     _diffusion_rollout_batch,
@@ -266,7 +266,7 @@ class _Algorithm(_EvaluatorAlgorithmFake):
         self.after_step_calls.append(global_step)
 
 
-class _Collector(CollectorControlFake):
+class _Collector(PromptCollectionFake):
     async def evaluate_rollout(self, pendings):
         return list(pendings)
 
