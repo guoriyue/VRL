@@ -174,7 +174,7 @@ class GroupAdvantageEstimator:
         "strategy",
     )
 
-    DEFAULT_STRATEGY = "weighted_sum_raw"
+    DEFAULT_STRATEGY = "normalized_sum"
 
     def __init__(
         self,
@@ -234,16 +234,22 @@ class GroupAdvantageEstimator:
 
     def _normalize_components_then_sum(
         self,
-        _rewards: Any,
+        rewards: Any,
         component_rewards: Mapping[str, Any] | None,
         group_ids: Any,
     ) -> Any:
-        """Normalize each objective, weighted-sum it, then clamp once."""
+        """Normalize each objective, weighted-sum it, then clamp once.
+
+        With only the weighted total in hand (the tensor-only advantage path,
+        or a reward runtime that reports no components) there is exactly one
+        objective, so standardizing it is the whole strategy: the result is
+        the ``weighted_sum_raw`` advantage, not an error.
+        """
 
         import torch
 
         if not component_rewards:
-            raise ValueError("normalized_sum requires per-component rewards")
+            return self._normalize_weighted_rewards(rewards, None, group_ids)
         component_names = set(component_rewards)
         weight_names = set(self.component_weights)
         if component_names != weight_names:
@@ -268,7 +274,7 @@ class GroupAdvantageEstimator:
 
     # This table is both dispatch and the source of truth for public validation.
     _STRATEGIES: ClassVar = {
-        DEFAULT_STRATEGY: _normalize_weighted_rewards,
+        "weighted_sum_raw": _normalize_weighted_rewards,
         "normalized_sum": _normalize_components_then_sum,
     }
 
@@ -280,8 +286,9 @@ class GroupAdvantageConfig:
     eps: float = 1e-4
     adv_clip_max: float = 5.0
     global_std: bool = False
-    # The default normalizes the weighted raw total. normalized_sum standardizes
-    # each component before weighting, so its units cannot dominate the update.
+    # The default standardizes each component before weighting, so no reward's
+    # units can dominate the update. weighted_sum_raw normalizes the weighted
+    # raw total once instead.
     advantage_combine: str = GroupAdvantageEstimator.DEFAULT_STRATEGY
 
     def __post_init__(self) -> None:
