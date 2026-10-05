@@ -59,7 +59,7 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.data.artifacts import resolve_prompt_example_references
 from vrl.trainers.data.prompt_sampler import PromptBatchSampler
-from vrl.trainers.data.prompts import PromptExample, load_prompt_examples_from_config
+from vrl.trainers.data.prompts import load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, run_on_primary_rank
 from vrl.trainers.metrics_io import OnlineMetricsCSV
 from vrl.trainers.online.config import OnlineBatchPlan
@@ -761,14 +761,8 @@ class OnlineRecipeRun:
         )
 
 
-async def run_online_recipe(
-    cfg: DictConfig,
-    *,
-    prompt_examples: Sequence[PromptExample] | None = None,
-) -> None:
+async def run_online_recipe(cfg: DictConfig) -> None:
     """Run a family online training job through shared recipe glue."""
-
-    provided_examples = None if prompt_examples is None else list(prompt_examples)
 
     resolved = resolve_online_run(cfg)
     # Identical initialization on every rank, before any randomized model build.
@@ -861,11 +855,7 @@ async def run_online_recipe(
                 generator_names=("prompt_generator",),
             )
 
-    examples = (
-        load_prompt_examples_from_config(data_config)
-        if provided_examples is None
-        else provided_examples
-    )
+    examples = load_prompt_examples_from_config(data_config)
     artifact_data_root = data_config.artifact_data_root if data_config is not None else None
     # An owned collection (see ``OwnedCollection``) resolved its own paths.
     examples = [
@@ -1040,7 +1030,6 @@ async def run_online_recipe(
                 output_dir,
                 model_identity=model_identity,
                 resumed=resumed,
-                provided_examples=provided_examples is not None,
             )
             logger.info("Training launch evidence: %s", run_trace.launch_path)
 

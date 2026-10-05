@@ -110,25 +110,6 @@ class RewardScoringThread:
         )
         return await asyncio.wrap_future(future)
 
-    async def run_sync(self, fn: Any) -> Any:
-        """Run one blocking callable on the owner loop's thread (CUDA-affine)."""
-
-        if not self.alive:
-            raise RuntimeError("reward runtime owner is shutting down")
-        loop = asyncio.get_running_loop()
-        done: asyncio.Future = loop.create_future()
-
-        def call() -> None:
-            try:
-                result = fn()
-            except BaseException as error:
-                loop.call_soon_threadsafe(done.set_exception, error)
-            else:
-                loop.call_soon_threadsafe(done.set_result, result)
-
-        self._loop.call_soon_threadsafe(call)
-        return await done
-
     async def close(self) -> None:
         """Shut the runtime down exactly once, then stop its owner loop."""
 

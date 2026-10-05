@@ -47,9 +47,9 @@ class _OcrLine:
     confidence: float
 
 
-def _safe_filename_fragment(text: str, max_len: int = 24) -> str:
+def _safe_filename_fragment(text: str) -> str:
     """Sanitize arbitrary text for use inside a filename."""
-    return re.sub(r"[^A-Za-z0-9]+", "_", text)[:max_len].strip("_") or "empty"
+    return re.sub(r"[^A-Za-z0-9]+", "_", text)[:24].strip("_") or "empty"
 
 
 class OCRRewardModel:

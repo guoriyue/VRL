@@ -32,10 +32,6 @@ class StalenessPolicy:
             return None
         return current_version - item_version
 
-    def is_future(self, item_version: int | None, current_version: int | None) -> bool:
-        staleness = self.staleness(item_version, current_version)
-        return staleness is not None and staleness < 0
-
     def too_stale(self, item_version: int | None, current_version: int | None) -> bool:
         staleness = self.staleness(item_version, current_version)
         return staleness is not None and staleness > self.max_stale_policy_versions

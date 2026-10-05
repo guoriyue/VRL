@@ -190,7 +190,6 @@ class InferenceRewardFunction(RewardFunction):
         scorer: RewardScorer,
         artifact_store: RewardArtifactStore | None = None,
         archive_store: RewardArtifactStore | None = None,
-        retain_artifacts: bool = False,
         debug_dir: str = "",
         request_prefix: str = "reward",
         debug_basename: str = "reward",
@@ -216,7 +215,6 @@ class InferenceRewardFunction(RewardFunction):
         self.scorer = scorer
         self.artifact_store = artifact_store
         self._archive_store = archive_store
-        self._retain_artifacts = bool(retain_artifacts)
         self.debug_dir = str(debug_dir)
         self._request_prefix = request_prefix
         self._debug_basename = debug_basename
@@ -349,11 +347,7 @@ class InferenceRewardFunction(RewardFunction):
                 len(artifacts),
                 request_id,
             )
-        finalize = (
-            self.artifact_store.retain
-            if retain_for_remote or self._retain_artifacts
-            else self.artifact_store.release
-        )
+        finalize = self.artifact_store.retain if retain_for_remote else self.artifact_store.release
         try:
             finalize(artifacts)
         except BaseException as error:

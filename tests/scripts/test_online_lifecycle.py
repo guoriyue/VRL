@@ -32,7 +32,6 @@ from vrl.algorithms.types import TrainStepMetrics
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.scripts.common import online
 from vrl.trainers.checkpointing import save_training_checkpoint
-from vrl.trainers.data.prompts import PromptExample
 
 ray = pytest.importorskip("ray")
 
@@ -369,36 +368,6 @@ def _install_ray_side_fakes(
         lambda self, path, *args, **kwargs: state["checkpoint_paths"].append(path.name),
     )
     return reward
-
-
-@pytest.mark.asyncio
-async def test_injected_prompt_examples_bypass_manifest_loader(monkeypatch, tmp_path) -> None:
-    run = _RealRun(monkeypatch, tmp_path)
-    state = _state()
-    _install_ray_side_fakes(monkeypatch, tmp_path, state)
-    provided = PromptExample(prompt="frozen prompt", metadata={"source": "snapshot"})
-    monkeypatch.setattr(
-        online,
-        "load_prompt_examples_from_config",
-        lambda _cfg: (_ for _ in ()).throw(AssertionError("manifest path must not reopen")),
-    )
-    seen: list[PromptExample] = []
-
-    class _ReachedResolvedPrompt(RuntimeError):
-        pass
-
-    def _stop_after_selection(example: PromptExample, **_kwargs: Any) -> PromptExample:
-        seen.append(example)
-        raise _ReachedResolvedPrompt
-
-    monkeypatch.setattr(online, "resolve_prompt_example_references", _stop_after_selection)
-
-    with pytest.raises(_ReachedResolvedPrompt):
-        await online.run_online_recipe(run.cfg, prompt_examples=(provided,))
-
-    assert seen == [provided]
-    assert run.pipeline.loads == 0
-    assert state["owner_creates"] == 0
 
 
 @pytest.mark.asyncio

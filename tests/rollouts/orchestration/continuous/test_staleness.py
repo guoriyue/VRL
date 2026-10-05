@@ -15,13 +15,11 @@ def test_staleness_difference_and_none() -> None:
     assert policy.staleness(3, None) is None
 
 
-def test_too_stale_and_future() -> None:
+def test_too_stale() -> None:
     # Mechanism-only boundary: production continuous config requires >= 1.
     policy = StalenessPolicy(max_stale_policy_versions=0)
     assert policy.too_stale(4, 5) is True
     assert policy.too_stale(5, 5) is False
-    assert policy.is_future(6, 5) is True
-    assert policy.is_future(5, 5) is False
 
 
 @pytest.mark.parametrize("window", [1.5, "1", True])

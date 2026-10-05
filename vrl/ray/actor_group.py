@@ -13,7 +13,7 @@ the same handles.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -61,7 +61,6 @@ class RayActorGroup:
         placement_group: Any | None = None,
         bundle_indices: Sequence[int] | None = None,
         startup_method: str | None = None,
-        concurrency_groups: Mapping[str, int] | None = None,
     ) -> RayActorGroup:
         """Launch actors for ``worker_cls`` using serializable worker configs."""
 
@@ -77,13 +76,7 @@ class RayActorGroup:
             raise ValueError("operation_prefix must not be empty")
 
         ray = require_ray()
-        remote_options: dict[str, Any] = {
-            "num_cpus": float(num_cpus),
-            "num_gpus": float(num_gpus),
-        }
-        if concurrency_groups:
-            remote_options["concurrency_groups"] = dict(concurrency_groups)
-        remote_worker = ray.remote(**remote_options)(worker_cls)
+        remote_worker = ray.remote(num_cpus=float(num_cpus), num_gpus=float(num_gpus))(worker_cls)
         actors: list[Any] = []
         try:
             for index, (worker_id, worker_config) in enumerate(

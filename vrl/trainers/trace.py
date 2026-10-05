@@ -52,7 +52,6 @@ class TrainingRunTrace:
         *,
         model_identity: dict[str, Any],
         resumed: bool,
-        provided_examples: bool = False,
     ) -> TrainingRunTrace:
         """Publish a distinct, immutable launch record, including on every resume.
 
@@ -73,7 +72,6 @@ class TrainingRunTrace:
             "config": config,
             "config_sha256": canonical_json_sha256(config, allow_nan=False),
             "model_identity": model_identity,
-            "provided_examples": bool(provided_examples),
             "configured_data_files": cls._configured_data_files(config),
             "code": cls._git_snapshot(Path(__file__).resolve().parents[2]),
             "runtime": cls._runtime_snapshot(),
