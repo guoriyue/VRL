@@ -1,8 +1,10 @@
 # v3 of the structure / realism / detail judge against a GPT reference.
 # Changes from qwen3vl32b_pairwise_detail_v2.yaml:
-# - `composition` (1.0): the reference images pick deliberate viewpoints (low or
-#   high angle, wide or close framing, layered depth) where the policy defaults to
-#   a flat frontal centered shot; nothing in v2 rewarded that choice.
+# - `composition` (1.0): camera vantage point only (where the camera is and from
+#   what angle we see the subject). The references pick low, high, three-quarter,
+#   wide or close views where the policy defaults to a frontal eye-level centered
+#   shot; nothing in v2 rewarded that choice. Depth layering and leading lines were
+#   dropped from the question: they let multi-view sheets score as 'composed'.
 # - `fidelity` judges against `{intent}`, an expanded reading of the prompt
 #   carried in metadata.judge_intent (worker intent_key), so idioms such as
 #   "jaguar print" (a spot pattern, not a jaguar) or "wet clay of Capitol Hill"
@@ -65,12 +67,13 @@ worker_config:
       weight: 1.0
       answer: compare
       question: >-
-        Compare the composition and camera choice: a deliberate, expressive viewpoint (low
-        or high angle, wide establishing shot or tight close-up, diagonal or off-center
-        framing when it serves the subject), layered foreground, midground and background
-        with depth, and framing that leads the eye to the subject. A flat, frontal, centered,
-        eye-level view with the subject floating on a plain background counts against an
-        image unless the description asks for exactly that.
+        Compare the camera viewpoint, meaning where the camera is and from what angle we see
+        the subject: a deliberately chosen vantage point that suits the subject (a low angle
+        looking up, a high angle or top-down view, a three-quarter or profile view, a wide
+        establishing shot, a tight close-up, a view from behind or through foreground objects)
+        beats the default view. The default view, a frontal, eye-level, centered shot of the
+        subject facing the camera, counts against an image unless the description asks for
+        exactly that. Judge only the vantage point and angle, not color, detail or realism.
     - name: detail
       weight: 0.5
       answer: compare
