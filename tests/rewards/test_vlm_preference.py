@@ -184,3 +184,24 @@ def test_intent_metadata_fills_the_intent_placeholder_and_falls_back_to_the_prom
         'Does it show "a hoodie with a gold leopard-spot pattern" for "gold jaguar print hoodie"?'
     )
     assert plain == 'Does it show "gold jaguar print hoodie" for "gold jaguar print hoodie"?'
+
+
+def test_questions_per_forward_splits_one_image_into_bounded_forwards():
+    criteria = [{"name": f"c{i}", "question": f"Q{i}?"} for i in range(5)]
+    model = VLMPreferenceRewardModel(
+        {"device": "cpu", "criteria": criteria, "questions_per_forward": 2}
+    )
+    forwards = []
+
+    def leaf_forward(image, questions, answers, reference=None):
+        forwards.append(list(questions))
+        return [0.1 * (int(q[1]) + 1) for q in questions]
+
+    # The instance attribute replaces the per-chunk leaf; the class method on top
+    # of it is the chunking under test.
+    model.answer_scores = leaf_forward
+    scores = VLMPreferenceRewardModel.answer_scores(
+        model, Image.new("RGB", (4, 4)), [c["question"] for c in criteria], ["yesno"] * 5
+    )
+    assert forwards == [["Q0?", "Q1?"], ["Q2?", "Q3?"], ["Q4?"]]
+    assert scores == pytest.approx([0.1, 0.2, 0.3, 0.4, 0.5])

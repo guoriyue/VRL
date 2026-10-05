@@ -180,6 +180,12 @@ class VLMPreferenceRewardModel(LazyTorchModule):
         self._judge_model = str(cfg.get("judge_model", "Qwen/Qwen3-VL-32B-Instruct-FP8"))
         self._judge_revision = cfg.get("judge_revision")
         self._judge_max_side = int(cfg.get("judge_max_side", 1024))
+        # Upper bound on criterion questions batched into one forward. All
+        # questions of an image share one forward by default; on a 44 GiB card
+        # five pairwise questions at 896 px overflow, so the service caps it.
+        self._questions_per_forward = int(cfg.get("questions_per_forward", 0))
+        if self._questions_per_forward < 0:
+            raise ValueError("vlm_preference questions_per_forward must be >= 0 (0 = unbounded)")
         self._local_files_only = bool(cfg.get("local_files_only", False))
         # Pairwise mode: compare the candidate against a reference image whose
         # path the artifact carries under ``metadata[<reference_key>]``
@@ -354,11 +360,26 @@ class VLMPreferenceRewardModel(LazyTorchModule):
         answers: Sequence[str],
         reference: Any = None,
     ) -> list[float]:
-        """Expected answer value in [0, 1] per question, read off one batched forward.
+        """Expected answer value in [0, 1] per question, read off batched forwards.
 
         For ``yesno`` this is P(yes) renormalized over {yes, no}; for ``rating`` the
         probability-weighted mean of the level values, renormalized over the levels.
+        Questions share one forward, in chunks of ``questions_per_forward`` when set.
         """
+
+        limit = self._questions_per_forward
+        if limit and len(questions) > limit:
+            values: list[float] = []
+            for start in range(0, len(questions), limit):
+                values.extend(
+                    self.answer_scores(
+                        image,
+                        questions[start : start + limit],
+                        answers[start : start + limit],
+                        reference,
+                    )
+                )
+            return values
 
         import torch
         from PIL import Image

@@ -34,6 +34,7 @@ worker_config:
   judge_model: Qwen/Qwen3-VL-32B-Instruct-FP8
   judge_revision: 4bf2c2f3
   judge_max_side: 896
+  questions_per_forward: 3  # five whole-image questions in one forward OOM at 896 px on 44 GiB
   local_files_only: true
   reference_key: judge_reference
   intent_key: judge_intent
