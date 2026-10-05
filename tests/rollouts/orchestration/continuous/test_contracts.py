@@ -56,8 +56,6 @@ class _Unscored:
 class _GatedCollector(PromptCollectionFake):
     """Collector whose generation/reward phases block on explicit gates."""
 
-    requires_generation_offload_before_reward = False
-
     def __init__(self) -> None:
         self.allow_generate = asyncio.Event()
         self.allow_generate.set()
@@ -153,8 +151,6 @@ def _producer(
 
 class _FiniteCollector(PromptCollectionFake):
     """Records prompt-batch inputs and optionally fails one attempt per prompt."""
-
-    requires_generation_offload_before_reward = False
 
     def __init__(self, *, fail_once: set[str] | None = None) -> None:
         self.fail_once = set(fail_once or ())

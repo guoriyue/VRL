@@ -90,7 +90,6 @@ class _DeferredCollector(PromptCollectionFake):
     ) -> None:
         self.events: list[str] = []
         self._prompt_names: dict[int, tuple[str, ...]] = {}
-        self.requires_generation_offload_before_reward = rollout_reward_handoff
         self.reward_isolation_verified = (
             supports_overlap and not rollout_reward_handoff and not trainer_reward_handoff
         )
@@ -218,8 +217,6 @@ class _Unscored:
 
 class _PhasedCollector(PromptCollectionFake):
     """Collector fake exposing per-call phase timings like RolloutCollector."""
-
-    requires_generation_offload_before_reward = True
 
     async def generate_rollout(self, request) -> _Unscored:
         inputs = request.inputs

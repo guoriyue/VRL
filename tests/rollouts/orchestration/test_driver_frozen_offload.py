@@ -52,7 +52,6 @@ def _coordinator(model: _FakeDriverModel) -> RolloutRuntimeCoordinator:
     class _CollectorControl:
         def __init__(self, runtime: Any) -> None:
             self.generation_runtime = runtime
-            self.requires_generation_offload_before_reward = False
             # Rollout on the trainer GPU: the plan parks the trainer for generation.
             self.lifecycle = RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=())
 

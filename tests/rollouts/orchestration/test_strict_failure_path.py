@@ -48,8 +48,6 @@ class _Strategy:
 class _Collector(PromptCollectionFake):
     """Collector fake whose generation raises mid-rollout."""
 
-    requires_generation_offload_before_reward = False
-
     def __init__(
         self,
         calls: list[str],

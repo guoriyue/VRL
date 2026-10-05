@@ -13,7 +13,6 @@ class CollectorControlFake(PromptCollectionFake):
     """Supply the lifecycle protocol while tests specialize collection only."""
 
     generation_runtime = _RuntimeControl()
-    requires_generation_offload_before_reward = False
     reward_isolation_verified = True
 
     async def activate_generation_runtime(self) -> None:
