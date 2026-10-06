@@ -235,6 +235,16 @@ class VLMPreferenceRewardModel(LazyTorchModule):
                 f"vlm_preference checklist criterion {name!r} needs an {{item}} placeholder, "
                 "answer: yesno and no crops"
             )
+        # ``absolute``: asked about the candidate alone even in pairwise mode;
+        # ``invert``: the question names a defect, so the score is 1 - P(yes).
+        absolute = bool(raw.get("absolute", False)) or checklist
+        invert = bool(raw.get("invert", False))
+        if invert and (answer != "yesno" or not absolute):
+            raise ValueError(
+                f"vlm_preference criterion {name!r}: invert needs answer: yesno and absolute: true"
+            )
+        if absolute and crops:
+            raise ValueError(f"vlm_preference criterion {name!r}: absolute takes no crops")
         return {
             "name": name,
             "question": question,
@@ -242,6 +252,8 @@ class VLMPreferenceRewardModel(LazyTorchModule):
             "answer": answer,
             "crops": crops,
             "checklist": checklist,
+            "absolute": absolute,
+            "invert": invert,
         }
 
     def _load_module(self) -> Any:
@@ -346,7 +358,21 @@ class VLMPreferenceRewardModel(LazyTorchModule):
                 ["yesno"] * len(items),
             )
             values[i] = float(sum(per_item) / len(per_item))
-        plain = [i for i in range(len(self.criteria)) if i not in checks]
+        absolutes = [
+            i for i, c in enumerate(self.criteria) if c["absolute"] and not c["checklist"]
+        ]
+        if absolutes:
+            # Defect questions about the candidate alone ("does it have extra
+            # limbs / unrequested text?"); one forward for all of them.
+            for i, v in zip(
+                absolutes,
+                self.answer_scores(
+                    image, [questions[i] for i in absolutes], [answers[i] for i in absolutes]
+                ),
+                strict=True,
+            ):
+                values[i] = 1.0 - v if self.criteria[i]["invert"] else v
+        plain = [i for i in range(len(self.criteria)) if i not in checks and i not in absolutes]
         if reference is None:
             if plain:
                 for i, v in zip(

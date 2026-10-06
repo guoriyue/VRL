@@ -269,3 +269,54 @@ def test_checklist_criterion_needs_an_item_placeholder():
         VLMPreferenceRewardModel(
             {"device": "cpu", "criteria": [{"name": "c", "question": "Q?", "checklist": True}]}
         )
+
+
+def test_absolute_inverted_defect_questions_see_the_candidate_alone(tmp_path):
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (8, 8), (255, 0, 0)).save(ref)
+    criteria = [
+        {"name": "overall", "question": "Is Image 1 better?", "weight": 1.0},
+        {
+            "name": "anatomy",
+            "question": "Does Image 1 show extra or merged limbs?",
+            "weight": 1.0,
+            "absolute": True,
+            "invert": True,
+        },
+    ]
+    model = VLMPreferenceRewardModel(
+        {
+            "device": "cpu",
+            "criteria": criteria,
+            "reference_key": "judge_reference",
+            "data_root": str(tmp_path),
+        }
+    )
+    calls = []
+
+    def answer_scores(image, questions, modes, reference=None):
+        calls.append((list(questions), reference is not None))
+        return [0.8] * len(questions) if reference is None else [0.5] * len(questions)
+
+    model.answer_scores = answer_scores
+    scores = model(
+        RewardInferenceArtifact(
+            artifact_id="a",
+            sample_id="s",
+            path="",
+            prompt="a knight",
+            media=torch.zeros(3, 8, 8, dtype=torch.uint8),
+            metadata={"judge_reference": "ref.png"},
+        )
+    )
+    assert scores["vlm_preference/anatomy"] == pytest.approx(0.2)  # P(defect)=0.8 -> 0.2
+    alone = [q for q, paired in calls if not paired]
+    assert alone == [["Does Image 1 show extra or merged limbs?"]]
+    assert all("extra or merged" not in q for qs, paired in calls if paired for q in qs)
+
+
+def test_invert_requires_an_absolute_yesno_criterion():
+    with pytest.raises(ValueError, match="invert"):
+        VLMPreferenceRewardModel(
+            {"device": "cpu", "criteria": [{"name": "c", "question": "Q?", "invert": True}]}
+        )
