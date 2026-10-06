@@ -4,6 +4,8 @@
 # - `anatomy` and `stray_text` are absolute defect questions about the candidate
 #   alone (score = 1 - P(yes)). Pairwise structure against a strong GPT image
 #   stays near "worse" for every sibling, so an extra hand barely moved it.
+# - `composition` names an invented generic setting as filler: from ck100 on, v8
+#   put the robot, corgi, cat and Cthulhu statue in the same wooden workshop.
 # - `natural` weight 2 -> 3: on DrawBench v8 ck100 fell to 0.31 natural against
 #   0.42 for base while composition rose.
 host: 127.0.0.1
@@ -73,7 +75,9 @@ worker_config:
         alone in front of a plain or blurred backdrop, centered, with nothing in front
         of or around it counts against an image unless the description asks for that.
         A large subject with small copies, miniatures or decorative icons floating
-        around it is a collage, not layering, and counts against an image. Judge only
+        around it is a collage, not layering, and counts against an image. So does a
+        generic setting the description never mentions (a workshop, shelves, a window,
+        a tabletop, a cluttered room) added only to fill the frame. Judge only
         composition, not color, detail or realism.
     - name: elements
       weight: 1.5
