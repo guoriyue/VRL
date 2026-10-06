@@ -82,7 +82,6 @@ third_party/*
 !third_party/joyai_echo
 # Video reward / motion-eval benchmarks (no PyPI packaging; run via CLI or an
 # external command — not imported by vrl/, so no *_packaging wrapper needed).
-!third_party/PhyMotion
 !third_party/VMBench
 !third_party/DynamicEval
 !third_party/CausVid
