@@ -3,8 +3,8 @@
 状态：**planned**。2026-09-21 联网研究并修订；本次只更新研究计划，未实现或验证训练收益。
 
 用户目标：让现有 diffusion / flow 图像、视频 RL 的 reward 更强、更可靠；不建设 LLM
-agent 环境工厂。保留文件路径以延续引用。旧版的分层拆解/RGBA/TaskSpec 方案不再是本
-sprint 的实施计划；历史设计可在 git 提交 `2367741d3` 中查阅。
+agent 环境工厂作为前置条件。保留文件路径以延续引用。分层拆解/RGBA 是后续视觉能力
+路线，agentic 多步任务是更后的可选扩展，见 §5；旧设计可在 git 提交 `2367741d3` 中查阅。
 
 ## 0. 决策与证据边界
 
@@ -148,15 +148,188 @@ sprint 的实施计划；历史设计可在 git 提交 `2367741d3` 中查阅。
 - **本仓建议**：先报告同 prompt 不同 seed 的多样性，在保持质量的子集中检查塌缩。
 - **限制**：本次未复现；不能直接奖励像素差异（噪声也多样），移动参考也可能跟随坏策略。
 
-### 背景材料（不作为视觉训练方案）
+### 背景材料
 
-- [CodeMidas §3.2–3.4](https://arxiv.org/html/2609.22068v1)：迁移测试可靠性和对抗审核的
-  思路，不搬代码任务的二元难度过滤。论文明确说全成功/全失败不能单独说明原因。
-- [MiMo-V2.6 博客](https://mimo.mi.com/docs/zh-CN/news/latest/v2-6)：RL 算力、环境、grader
-  三个扩展方向；7k 环境不是我们应达到的视觉数据量。
+- CodeMidas 与 MiMo-V2.6 的 verifier / 环境纪律移至
+  `SPRINT_rollout_admission_and_failure_attribution.md`。
 - 检索发现 arXiv:2511.19356 的当前标题已是
   [Rethinking Reward Signals in Video GRPO: When Scores Become Targets](https://arxiv.org/abs/2511.19356)，
   与搜索摘要中的旧标题 Self-paced GRPO 不同；本计划不据旧摘要实施动态课程。
+
+## 2b. 补充材料（2026-09-21 第二轮联网检索；同一格式，编号接续）
+
+R1–R10 覆盖的是"评分器本身可靠不可靠"。这一组补的是用户点名的三个缺口：**局部编辑
+的奖励怎么定义**、**分层拆解有没有可执行的检查**、**任务/难度过滤与可验证奖励在视觉
+里长什么样**。每条标出与 §4 非目标的关系，供决策；本节不改变 §3 的 P0→P3 顺序。
+
+### R11 — Edit-R1 / Edit-RRM：编辑指令拆成 Keep / Follow / Quality 三类原则再逐条验证（局部编辑，优先）
+
+- [arXiv 2604.27505](https://arxiv.org/abs/2604.27505)（[HTML](https://arxiv.org/html/2604.27505v1)，
+  [CVPR 2026 PDF](https://openaccess.thecvf.com/content/CVPR2026/papers/Guo_Leveraging_Verifier-Based_Reinforcement_Learning_in_Image_Editing_CVPR_2026_paper.pdf)），
+  重点 §3（原则生成与验证）、§4（GCPO 训练 reward model）、Table 2/3。
+- **论文报告**：用 Seed-1.5-VL 把每条编辑指令展开成约 10 个问题，分三类——Keep（未提
+  及区域不得变）、Follow（要求的改动是否发生）、Quality；结构性检查（物体移除是否彻
+  底、位置偏移是否超过图像尺寸 10%）走规则，其余走 VLM + CoT；原则级 0/1 结果加权成
+  0–10 分。7B reward model 在 EditRewardBench 78.2%（EditScore-7B 65.9%）；用它做
+  GRPO（G=24，β=0.04）把 FLUX.Kontext 总分 5.77 → 6.24，人评 +23.2 GSB。
+- **本仓建议**：这是"局部编辑 reward 的最小结构"——三类原则对应本仓可以直接落的
+  三个 component：`keep`（遮罩外像素/特征恒等，可执行）、`follow`（VLM yes 概率，
+  backlog F）、`quality`（现有 HPS/伪影信号）。先在 P0 的体检集上按三类分别标注。
+- **限制**：原则由 VLM 写、多数检查由 VLM 判，仍是偏好代理；"位置偏移 >10%"这类规则
+  阈值来自他们的数据。与 §4 非目标不冲突：不需要新 family，只需要 `reference_image`
+  条件输入（已有）和三类 component。
+
+### R12 — CoCoEdit：非编辑区用像素指标、编辑区用 VLM，两者分开正则（局部编辑，优先）
+
+- [arXiv 2602.14068](https://arxiv.org/html/2602.14068v1)，重点 §3.2（遮罩获取）、
+  §3.3（r_sim 定义）、§3.4（DiffusionNFT 上的区域正则 L_ner+ / L_er-）、Table 1。
+- **论文报告**：Qwen2.5-VL-72B 定位编辑目标 → SAM 2 分割 → 膨胀得到编辑遮罩；非编
+  辑区奖励 `r_sim = 0.5·SSIM_masked + 0.5·PSNR/40dB`，编辑区由 Qwen2.5-VL-32B 判；
+  在 DiffusionNFT 上加两个区域正则：高奖励样本上保持非编辑区、欠编辑样本上放大编辑。
+  GEdit-Bench-EN 上 PSNR +1.16–2.8 dB，编辑分保持 6.9–7.8。
+- **本仓建议**：`r_sim` 是本仓可以今天就写的可执行检查（纯像素运算，有遮罩即可）；
+  它和 R11 的 Keep 是同一件事的两种实现——先做像素版，VLM 版做交叉校验。本仓已有
+  DiffusionNFT（`vrl/algorithms/diffusion_nft.py`），区域正则是它上面的一个 loss 项，
+  不是新算法。
+- **限制**：遮罩来自 VLM+SAM 流水线，遮罩错了 reward 就错——遮罩质量要单独审计；
+  "遮罩内确实变了"这条防"什么都不改拿满分"的检查论文里靠 L_er- 而不是 reward。
+
+### R13 — AutoRubric-T2I：从 256 个偏好对自动生成可解释 rubric，ℓ₁ 选出 20 条（图像，优先）
+
+- [arXiv 2605.17602](https://arxiv.org/abs/2605.17602)（[HTML](https://arxiv.org/html/2605.17602v1)），
+  重点 §3.1（seed 生成与失败驱动的迭代精炼）、§3.3（ℓ₁ 逻辑回归学权重）、Table 1/4。
+- **论文报告**：VLM 对偏好对做 CoT 解释差异，抽出"客观、确定"的 rubric 语句；误排
+  的难对触发新 rubric；每条 rubric 的分是 P(yes)，最终 `s = Σ w_j · s_j`，ℓ₁ 剪到 20
+  条。MMRB2 OOD 62.5%（HPSv3 微调 59.4%）；Flow-GRPO on SD3.5-M：TIIF 65.3 → 71.6，
+  UniGenBench++ 64.0 → 66.9；4×A6000 2–4 小时，只要 256 对。
+- **本仓建议**：和 R2 VisionReward 是同一思路，但它给出了**从本仓自己的失败样例生成
+  rubric** 的流程——P0 体检集里的人工偏好对正好是它的输入。rubric 级输出直接解释
+  "HPSv3 高但违反 prompt 约束"这类 hack，是 §3 P1 "互补信号"的候选实现。
+- **限制**：rubric 仍由 VLM 判 P(yes)；20 条对每张图 20 次推理，视频成本要测。
+
+### R14 — （已移出）任务准入 / 难度过滤 / 失败归因
+
+见 `SPRINT_rollout_admission_and_failure_attribution.md`：AdaGRPO 难度带、Qwen-Image-2.0-RL
+的组内极差过滤、NGU 重试、CodeMidas / MiMo 的 verifier 自检与归因，以及本仓的
+`rollouts/admission/` 块设计都在那里。本文只管"reward 本身可不可信"。
+
+### R15 — Qwen-Image-Layered：分层拆解的数据、重建定义与评测指标（分层，参考）
+
+- [arXiv 2512.15603](https://arxiv.org/html/2512.15603v1)，重点 §3.1（PSD 层提取与合并）、
+  §3.2（RGBA-VAE、Layer3D RoPE）、§4.1 指标定义。
+- **论文报告**：真实 PSD 用 psd-tools 抽层，过滤异常层、合并空间不重叠层减少层数，
+  Qwen2.5-VL 写描述；重建定义 `C_i = α_i·RGB_i + (1−α_i)·C_{i−1}`；指标 RGB L1（按
+  GT alpha 加权）、Alpha soft IoU、重建 PSNR/SSIM/rFID/LPIPS。**没有用 RL**。
+- **本仓建议**：如果将来做分层任务，这里给了 oracle 数据来源（PSD）和可执行检查的
+  精确定义（重建 + alpha IoU）；这两条不依赖任何学习模型，是视觉里少见的"跑测试"型
+  验证。相关：[LayerDiffuse](https://arxiv.org/abs/2402.17113)（latent transparency，
+  单层 RGBA 生成）、[LayerDecomp](https://arxiv.org/html/2411.17864)（CVPR 2025，带视觉
+  效果的拆层 + consistency loss）、[RevealLayer](https://arxiv.org/pdf/2605.11818)
+  （2026，遮挡感知拆层）。
+- **阶段边界**：作为 §5 的后续分层任务资料保留；不是本轮 reward 体检工具的前置条件。
+
+### R16 — Qwen-Image-2.0-RL：工业配方里的组内极差过滤、高噪声步聚焦、编辑身份保持（图像+编辑，参考）
+
+- [arXiv 2606.27608](https://arxiv.org/abs/2606.27608)（[PDF](https://arxiv.org/pdf/2606.27608)，
+  [alphaXiv 概览](https://www.alphaxiv.org/overview/2606.27608v1)），重点 §3 reward
+  设计、§4 训练框架。
+- **论文报告**：pointwise Likert + CoT 的 VLM reward；T2I 三维（对齐、审美、人像），
+  编辑两维（指令遵循、**人脸身份 embedding 级一致性**）；prompt 经"组内 reward 极差
+  过滤"进训练；按类别校准 reward 权重；rollout 用 CFG、策略优化不用（hybrid CFG）；
+  聚焦高噪声 timestep 以防"只加表面细节"的 hack。Qwen-Image-Bench +2.61，T2I arena
+  Elo +78，编辑 arena +93。
+- **本仓建议**：三条机制本仓都有对应物——组内极差过滤见 R14；高噪声步聚焦 =
+  `timestep_selection=sde_window` 取前段窗口；hybrid CFG = `replay_forward_with_latents
+  (classifier_free_guidance=False)`。缺的是编辑身份保持这一 component（人脸/物体
+  embedding 距离，可执行，无需 VLM）。
+- **限制**：全文摘要未给过滤阈值与权重校准细节，需要读 PDF 对应章节；工业规模数据不可复现。
+
+### R17 — VideoRLVR：视频生成真正的可验证奖励——符号检查器（视频，参考）
+
+- [arXiv 2605.15458](https://arxiv.org/html/2605.15458)，重点 §3（Maze / FlowFree /
+  Sokoban 的解析器与检查规则）、§4.2（early-step focus L=10/K=20）。
+- **论文报告**：把生成视频解析成抽象状态（路径掩码、格子颜色、动作序列），用图算法
+  /状态转移规则判对错；SDE-GRPO 只在前 10/20 步算梯度省 40% 时间；奖励是多个可验证
+  分量的乘/加组合。Maze 72.2% 成功率，超过 Sora 2 / Kling V3 / Veo 3.1。
+- **本仓建议**：这是"视频里什么任务能有 oracle"的答案：任务本身要带可解析的状态。
+  与本仓 `videophy` / `video_world` 那类物理合理性任务的区别在于——那些没有符号检查
+  器，只有 VLM 判断。若要一条真正可验证的视频 lane，从这类合成任务起步。
+- **限制**：任务是谜题类合成数据，不是自然视频；收益是否迁移到自然视频质量论文只在
+  OOD 基准上报告。
+
+### R18 — SoliReward：视频 reward model 的标注噪声与过度优化（视频，参考）
+
+- [arXiv 2512.22170](https://arxiv.org/html/2512.22170v2)，重点 §3.1（单项 Pass/Fail 标注
+  vs 成对；Krippendorff α 0.49 vs 0.35）、§3.3（BT-WT 损失）、Table 3。
+- **论文报告**：三个客观维度（物理合理、主体畸形、语义对齐）用单项二元标注，跨
+  prompt 配对增加数据利用；Bradley-Terry with Win-Tie 迫使两个正样本分数接近，压缩
+  reward 空间、减小组内 advantage 方差；ID 78.5% / OOD 80.1%（VideoAlign OOD 71.6%）；
+  VBench2 Human Fidelity 0.900 vs 0.870。
+- **本仓建议**：补 R1 的标注方法论——本仓 P0 做视频标注时用单项 Pass/Fail 而不是成对，
+  一致性更高、成本更低。
+- **限制**：论文不做对抗测试或 hack 测试集，"缓解 hacking"是通过损失形式间接得到的。
+
+### R19 — Adv-GRPO：参考图作正样本训练对抗 reward，DINO 稠密特征替代标量（图像，探索）
+
+- [arXiv 2511.20256](https://arxiv.org/abs/2511.20256)（[HTML](https://arxiv.org/html/2511.20256)）。
+- **论文报告**：reward model 与生成器交替更新，参考图作正样本、生成图作负样本；用
+  DINO 等视觉基础模型的稠密特征而非单标量；人评图像质量 70.0%、审美 72.4% 胜率。
+- **本仓建议**：与 R6 DDRL 的"数据锚定"同源，但锚在 reward 侧。本仓有 `sft_latents`
+  （目标图的 latent），是现成的参考正样本。
+- **限制**：交替训练多一份 reward 优化器与判别器崩溃风险；摘要未给检测 hacking 的
+  独立协议。
+
+### R20 — 其余检索到、暂不展开的材料
+
+- [Understanding Reward Hacking in T2I RL, 2601.03468](https://arxiv.org/html/2601.03468)：
+  R3 ArtifactReward 的原文；诊断集数字（HPS 53%、Aesthetic 42% 识别伪影）在 §4。
+- [Beyond VLM-Based Rewards: Diffusion-Native Latent Reward Modeling, 2602.11146](https://arxiv.org/pdf/2602.11146)
+  与 [Video Generation Models Are Good Latent Reward Models, 2511.21541](https://arxiv.org/html/2511.21541v3)：
+  在 latent 上打分，省 decode；前者明确记录了"代理 reward 与留出 golden metric 先同
+  升后分道扬镳"的曲线，是 P3 观察项的范式。
+- [A Systematic Post-Train Framework for Video Generation, 2604.25427](https://arxiv.org/html/2604.25427v1)：
+  四维 reward（视频审美、图像审美、运动、对齐）+ GSB 人评；无过滤、无 hack 诊断——
+  作为"工业报告不写什么"的对照。
+- [Scaling MoE Video Pretraining for Embodied Intelligence, 2607.07675](https://arxiv.org/pdf/2607.07675)：
+  六个专门 reward model（画质、对齐、动态度、运动一致、人体运动、物理），明确反对
+  单标量。[PhyMotion, 2605.14269](https://arxiv.org/html/2605.14269v1)：结构化 3D 人体
+  运动 reward。[PhyPrompt, 2603.03505](https://arxiv.org/abs/2603.03505)：语义先、物理
+  后的动态 reward 课程。
+- [Kwai Keye-VL-2.0, 2606.10651](https://arxiv.org/pdf/2606.10651)：理解侧的可验证
+  reward 清单（grounding IoU、counting 精确匹配、OCR 归一化文本匹配）——生成侧对应的
+  可执行检查就是本仓 `ocr`、`geneval_owl` 已有的那类。
+- [MAR-GRPO, 2604.06966](https://arxiv.org/pdf/2604.06966)、[AR-GRPO, 2508.06924](https://arxiv.org/pdf/2508.06924)：
+  AR/混合家族；后者把 CLIP/HPS 量化到三档以抗 hack。本仓无 AR 家族，仅记录。
+- [MixGRPO 项目页](https://tulvgengenr.github.io/MixGRPO-Project-Page/)、
+  [DanceGRPO 代码](https://github.com/XueZeyue/DanceGRPO)、
+  [Flow-GRPO 代码](https://github.com/yifan123/flow_grpo)：本仓已实现的算法基线。
+
+## 2A. 独立运行边界（2026-09-22 明确）
+
+“框架内复用代码”与“必须启动训练才能使用”是两回事。采用同仓、可独立运行的 reward
+评估工具，复用评分服务和协议；目前不拆新仓库、不另造一套评分服务。
+
+| 层 | 职责 | 不负责 |
+|---|---|---|
+| 现有 reward service/runtime | 接受媒体、prompt、metadata，加载指定评分器并返回评分；支持本地或 HTTP | 标注集管理、比较候选、选择训练组 |
+| 独立 reward 评估工具（本 sprint P0–P2） | 读取已有媒体，批量重评分、校准、比较、产出报告和冻结配置 | 启动 generator/trainer、修改训练中的评分配置 |
+| rollout 准入（另一个 sprint） | 用已评分组和历史决定 keep/drop/retry，记录决策 | 重新定义评分器、在线调 rubric、证明视觉正确 |
+| 训练/实验运行器（P3） | 加载冻结的奖励配置，运行短程 RL；导出 checkpoint 样本供独立工具复评 | 将评分器自检或报告系统塞入训练主循环 |
+
+已有入口：`vrl/rewards/service/server.py` / `client.py` 是独立评分服务与客户端；
+`vrl/scripts/eval/score_report.py` 可直接读取已有分数做统计，不加载模型；
+`vrl/scripts/rewards/preflight.py` 当前偏向训练配置与合成媒体的连通性检查，不能把它
+直接称为完整媒体重评分工具。新增离线入口应接受媒体清单与 reward 配置，而不要求
+完整训练配置、generator family 或 Ray 训练集群；仅在所选后端需要时连接其运行环境。
+
+验收必须包含：没有 trainer、optimizer 或 generation worker 的进程也能评分真实图像/
+视频；更换候选评分器可复用同一媒体清单；只改聚合权重可复用兼容的原始轴分数。
+缓存键须包含媒体、prompt/metadata、模型与预处理/rubric 版本；pairwise 还须包含双方及
+顺序，不能误复用单样本分数。
+
+reward 评估结果与准入账本共享稳定的 sample/group/run ID，但分开保存：离线候选比较
+可能对同一样本产生多份分数，不能覆盖原训练奖励或改写历史准入决策。线上训练只读取
+已选择且版本冻结的配置；校准不随每个 batch 自动生效。
 
 ## 3. 实施计划：先证明 reward 更好，再花训练预算
 
@@ -221,6 +394,27 @@ sprint 的实施计划；历史设计可在 git 提交 `2367741d3` 中查阅。
 - `REWARD_GROUP_ID_METADATA_KEY` 和 Kling 的特殊 token、输出 key 映射是 schema/protocol
   边界，应保留 ALL_CAPS。大型新 rubric/反例分类表应进入命名清楚的配置或资产；
   不把它们写成 trainer 里的硬编码词表。已有 prompt assets 无需为减少行数合并。
-- 不移植 RGBA family、不增加分层拆解任务、不开发 agent 数据工厂、不照搬 6 容器 oracle。
+- 本轮不移植 RGBA family、不增加分层拆解任务；后续路线见 §5。无需开发 agent 数据
+  工厂，也不照搬 6 容器 oracle。
 - 不设通用“运动越大越好”“图像必须写实”或“所有任务都应二元可验证”的隐含目标。
 - 本次研究没有下载模型、运行 reward GPU 推理或 RL；论文收益不是本仓已实现收益。
+
+
+## 5. 后续路线：保留目标，按能力逐步进入
+
+用户在 2026-09-22 明确：当前优先增强 reward，不代表删除未来 RGBA 或 agentic 方向。
+
+1. **当前：独立 reward 评估与训练集成。** 完成 P0–P3，能可靠重评分、比较，并验证
+   奖励改动确实改善现有图像/视频生成。
+2. **后续：局部编辑、RGBA 与分层任务。** 用现有研究材料定义输入/输出、参考图/遮罩/
+   层顺序和任务特定评分；再评估 family 能力与接入成本。RGBA 输出不等于语义拆层。
+   重建一致只是必要检查，正常遮挡可重叠、背景可不透明，不沿用旧版一律禁止的约束。
+   进入实施的证据：能运行的未训练基线、可信的正反例评分、可观测的学习信号；
+   不强制任意二元混合率。独立评分工具应能接收这些新媒体/metadata，不为此重造架构。
+3. **更后：有需要再做多步 agentic 视觉任务。** 仅当任务需要观察中间产物、选择编辑/
+   工具动作并进行多步信用分配时进入；单次生成、RGBA、反复重评分本身都不要求 agent。
+   后续 program 见 `../parked/SPRINT_agentic_visual_rl_program.md`。该文仍有已删除的
+   Janus/token-AR 前置说明，启动前必须更新，不能按旧入口直接实施。
+
+这里将可编辑、可分层的视觉生成保留为后续能力目标；agentic 是实现更复杂任务的一条
+可选路线，不是所有视觉 RL 的必然终点。后续实施另开有基线与验收的 sprint，本轮不扩建。
