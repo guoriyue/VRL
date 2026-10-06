@@ -1,0 +1,82 @@
+# v5 of the structure / realism / detail judge against a GPT reference.
+# Changes from qwen3vl32b_pairwise_detail_v4.yaml:
+# - `composition` replaces `camera`. The user means composition as layered depth
+#   and tension, not lens or vantage point: a foreground element framing or
+#   overlapping the subject, a distinct midground and background, scale contrast,
+#   diagonals and asymmetric balance. The v4 camera question (fisheye, extreme
+#   angles) moved 0.344 -> 0.361 in 30 rounds because the policy never produces
+#   those views, so it had nothing to rank.
+# - fidelity keeps the v4 anti-duplication clause, so layering cannot be won
+#   by repeating the subject in the background.
+host: 127.0.0.1
+port: 8318
+model_name: vlm-preference-qwen3vl32b
+model_version: Qwen/Qwen3-VL-32B-Instruct-FP8@4bf2c2f3
+artifact_roots:
+  - ../../../outputs
+  - /mnt/nvme/outputs
+  - /mnt/nvme/data/external
+max_concurrency: 1
+max_pending_requests: 256
+max_cached_requests: 8192
+max_request_bytes: 1073741824
+generation_overlap_safe: true
+worker_config:
+  model_factory: vrl.rewards.models.vlm_preference:VLMPreferenceRewardModel
+  device: cuda:0
+  judge_model: Qwen/Qwen3-VL-32B-Instruct-FP8
+  judge_revision: 4bf2c2f3
+  judge_max_side: 896
+  questions_per_forward: 3  # five whole-image questions in one forward OOM at 896 px on 44 GiB
+  local_files_only: true
+  reference_key: judge_reference
+  both_orders: true
+  data_root: /mnt/nvme/data/external
+  criteria:
+    - name: structure
+      weight: 2.0
+      answer: compare
+      question: >-
+        Compare structural correctness: hands with five fingers, faces and bodies with
+        normal proportions, objects with coherent geometry and perspective, legible text
+        where text was requested, no merged, missing, extra or twisted parts.
+    - name: natural
+      weight: 2.0
+      answer: compare
+      question: >-
+        Both images were made for the description "{prompt}". Compare how much each looks
+        like a genuine work in the medium the description implies (a real photograph, an
+        actual painting, a real drawing) made by a skilled human: believable light and
+        shadow, natural materials, restrained color, the imperfections of the real medium;
+        plastic smoothness, airbrushed skin, over-brightening, over-saturation, glow halos
+        and a generic 3D-render or AI-illustration look count against an image.
+    - name: fidelity
+      weight: 1.5
+      answer: compare
+      question: >-
+        Compare how faithfully each image realizes the description "{prompt}": the
+        requested subject, action and setting all present, every style and mood
+        qualifier respected, idioms read by their meaning (an "animal print" is a
+        pattern, not the animal). When the description asks for one subject, showing
+        it several times (copies, sticker sheets, character or turnaround sheets,
+        tiled grids) counts against an image, as does unrelated clutter.
+    - name: composition
+      weight: 1.0
+      answer: compare
+      question: >-
+        Compare composition: depth built from distinct layers (a foreground element
+        that frames or overlaps the subject, the subject in the midground, a readable
+        background behind it) and visual tension (strong diagonals, scale contrast
+        between near and far, asymmetric balance, a subject placed off-center with
+        purpose). A flat image where the subject sits alone in front of a plain or
+        blurred backdrop, centered, with nothing in front of or around it counts
+        against an image unless the description asks for that. Repeating the subject
+        does not count as layering. Judge only composition, not color, detail or realism.
+    - name: detail
+      weight: 0.5
+      answer: compare
+      question: >-
+        Compare the quality of fine detail across the two images: sharp, physically plausible and coherent texture that belongs to the depicted
+        material (skin, fur, fabric, wood, stone, foliage, brushwork), crisp edges without
+        halos. Dense or repetitive micro-pattern, mesh-like or bramble-like filler, noise,
+        smearing and waxy smoothness all count against an image.
