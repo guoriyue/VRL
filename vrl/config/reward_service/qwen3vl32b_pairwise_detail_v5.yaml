@@ -32,6 +32,7 @@ worker_config:
   questions_per_forward: 3  # five whole-image questions in one forward OOM at 896 px on 44 GiB
   local_files_only: true
   reference_key: judge_reference
+  checklist_key: judge_checklist
   both_orders: true
   data_root: /mnt/nvme/data/external
   criteria:
@@ -78,6 +79,12 @@ worker_config:
         A large subject with small copies, miniatures or decorative icons floating
         around it is a collage, not layering, and counts against an image. Judge only
         composition, not color, detail or realism.
+    - name: elements
+      weight: 1.5
+      answer: yesno
+      checklist: true
+      question: >-
+        Look at Image 1 only. Does it clearly and recognizably show {item}?
     - name: detail
       weight: 0.5
       answer: compare

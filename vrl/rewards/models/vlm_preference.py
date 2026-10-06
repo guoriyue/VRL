@@ -193,6 +193,9 @@ class VLMPreferenceRewardModel(LazyTorchModule):
         # both image orders and averages, cancelling position bias.
         self._reference_key = str(cfg.get("reference_key") or "").strip() or None
         self._intent_key = str(cfg.get("intent_key") or "").strip() or None
+        # Checklist criteria read their items (short phrases naming what the
+        # prompt requires: objects, actions, attributes) from this metadata key.
+        self._checklist_key = str(cfg.get("checklist_key") or "").strip() or None
         self._both_orders = bool(cfg.get("both_orders", True))
         self.data_root = str(cfg.get("data_root") or "")
         raw = cfg.get("criteria") or (
@@ -226,12 +229,19 @@ class VLMPreferenceRewardModel(LazyTorchModule):
         crops = int(raw.get("crops", 0) or 0)
         if crops < 0 or crops == 1:
             raise ValueError(f"vlm_preference criterion {name!r} crops must be 0 or >= 2")
+        checklist = bool(raw.get("checklist", False))
+        if checklist and ("{item}" not in question or answer != "yesno" or crops):
+            raise ValueError(
+                f"vlm_preference checklist criterion {name!r} needs an {{item}} placeholder, "
+                "answer: yesno and no crops"
+            )
         return {
             "name": name,
             "question": question,
             "weight": weight,
             "answer": answer,
             "crops": crops,
+            "checklist": checklist,
         }
 
     def _load_module(self) -> Any:
@@ -286,21 +296,34 @@ class VLMPreferenceRewardModel(LazyTorchModule):
             with Image.open(path) as opened:
                 reference = opened.convert("RGB")
         intent = artifact.metadata.get(self._intent_key) if self._intent_key else None
+        checklist = artifact.metadata.get(self._checklist_key) if self._checklist_key else None
         return self.score(
             image,
             prompt=artifact.prompt,
             reference=reference,
             intent=str(intent) if intent else None,
+            checklist=[str(item) for item in checklist or () if str(item).strip()],
         )
 
     def score(
-        self, image: Any, *, prompt: str, reference: Any = None, intent: str | None = None
+        self,
+        image: Any,
+        *,
+        prompt: str,
+        reference: Any = None,
+        intent: str | None = None,
+        checklist: Sequence[str] = (),
     ) -> dict[str, float]:
         """Weighted mean of the per-criterion scores, plus every criterion.
 
         With ``reference`` (pairwise mode) each score is P(candidate better than
         reference), averaged over both image orders when ``both_orders`` is set.
         ``intent`` fills ``{intent}`` in the questions; it defaults to the prompt.
+
+        A ``checklist`` criterion is absolute, never pairwise: its question is asked
+        once per ``checklist`` item about the candidate image alone and the score is
+        the mean P(yes). Without items it scores 0.5 (a constant within a prompt
+        group, so it adds no advantage).
         """
 
         prompt = prompt.strip()
@@ -310,19 +333,40 @@ class VLMPreferenceRewardModel(LazyTorchModule):
             for c in self.criteria
         ]
         answers = [c["answer"] for c in self.criteria]
+        values = [0.0] * len(self.criteria)
+        checks = [i for i, c in enumerate(self.criteria) if c["checklist"]]
+        for i in checks:
+            items = [item.strip() for item in checklist if item.strip()]
+            if not items:
+                values[i] = 0.5
+                continue
+            per_item = self.answer_scores(
+                image,
+                [questions[i].replace("{item}", item) for item in items],
+                ["yesno"] * len(items),
+            )
+            values[i] = float(sum(per_item) / len(per_item))
+        plain = [i for i in range(len(self.criteria)) if i not in checks]
         if reference is None:
-            values = self.answer_scores(image, questions, answers)
+            if plain:
+                for i, v in zip(
+                    plain,
+                    self.answer_scores(
+                        image, [questions[i] for i in plain], [answers[i] for i in plain]
+                    ),
+                    strict=True,
+                ):
+                    values[i] = v
         else:
             preamble = PAIRWISE_PREAMBLE.replace("{prompt}", prompt)
             questions = [preamble + q for q in questions]
-            values = [0.0] * len(self.criteria)
             # Criteria with ``crops: n`` are judged on an n x n grid of native-resolution
             # crops (k-th crop of the candidate vs k-th crop of the reference) and
             # averaged, so fine texture reaches the judge at full scale; the rest see
             # the whole images.
             by_grid: dict[int, list[int]] = {}
-            for i, c in enumerate(self.criteria):
-                by_grid.setdefault(int(c.get("crops", 0)), []).append(i)
+            for i in plain:
+                by_grid.setdefault(int(self.criteria[i].get("crops", 0)), []).append(i)
             for grid, idx in by_grid.items():
                 qs = [questions[i] for i in idx]
                 ans = [answers[i] for i in idx]

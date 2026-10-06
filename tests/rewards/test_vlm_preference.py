@@ -205,3 +205,67 @@ def test_questions_per_forward_splits_one_image_into_bounded_forwards():
     )
     assert forwards == [["Q0?", "Q1?"], ["Q2?", "Q3?"], ["Q4?"]]
     assert scores == pytest.approx([0.1, 0.2, 0.3, 0.4, 0.5])
+
+
+def test_checklist_criterion_asks_each_item_about_the_candidate_alone(tmp_path):
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (8, 8), (255, 0, 0)).save(ref)
+    criteria = [
+        {"name": "overall", "question": "Is Image 1 better?", "weight": 1.0},
+        {
+            "name": "elements",
+            "question": "Does Image 1 clearly show {item}?",
+            "weight": 1.0,
+            "checklist": True,
+        },
+    ]
+    model = VLMPreferenceRewardModel(
+        {
+            "device": "cpu",
+            "criteria": criteria,
+            "reference_key": "judge_reference",
+            "checklist_key": "judge_checklist",
+            "data_root": str(tmp_path),
+        }
+    )
+    calls = []
+
+    def answer_scores(image, questions, modes, reference=None):
+        calls.append((list(questions), reference is not None))
+        if reference is None:  # checklist: the motorcycle is missing
+            return [0.0 if "motorcycle" in q else 1.0 for q in questions]
+        return [0.6] * len(questions)
+
+    model.answer_scores = answer_scores
+
+    def artifact(items):
+        return RewardInferenceArtifact(
+            artifact_id="a",
+            sample_id="s",
+            path="",
+            prompt="a rabbit riding a suzuki",
+            media=torch.zeros(3, 8, 8, dtype=torch.uint8),
+            metadata={"judge_reference": "ref.png", "judge_checklist": items},
+        )
+
+    scores = model(artifact(["a black rabbit", "a Suzuki motorcycle being ridden"]))
+    checklist_calls = [q for q, paired in calls if not paired]
+    assert checklist_calls == [
+        [
+            "Does Image 1 clearly show a black rabbit?",
+            "Does Image 1 clearly show a Suzuki motorcycle being ridden?",
+        ]
+    ]
+    assert scores["vlm_preference/elements"] == pytest.approx(0.5)
+    assert all("{item}" not in q for q, _ in calls)
+
+    calls.clear()
+    assert model(artifact([]))["vlm_preference/elements"] == 0.5
+    assert all(paired for _, paired in calls)  # no checklist forward without items
+
+
+def test_checklist_criterion_needs_an_item_placeholder():
+    with pytest.raises(ValueError, match="item"):
+        VLMPreferenceRewardModel(
+            {"device": "cpu", "criteria": [{"name": "c", "question": "Q?", "checklist": True}]}
+        )
