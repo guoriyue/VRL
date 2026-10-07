@@ -24,7 +24,13 @@ from vrl.scripts.generation.qwen_layered_rl_probe import (
 )
 
 
-def run_probe(root, target_path, output, *, steps, learning_rate, seed):
+def velocity_loss(prediction, target, *, spatial_weights=None):
+    """Keep one loss definition for updates and fixed-noise evaluation."""
+    error = (prediction - target).square()
+    return error.mean() if spatial_weights is None else (error * spatial_weights).mean()
+
+
+def run_probe(root, target_path, output, *, steps, learning_rate, seed, weights_path=None):
     if steps < 1 or not np.isfinite(learning_rate) or learning_rate <= 0:
         raise ValueError("Positive update count and finite positive learning rate required")
     plan = json.loads((root / "plan.json").read_text())
@@ -43,6 +49,16 @@ def run_probe(root, target_path, output, *, steps, learning_rate, seed):
     )
     assert target["latents"].shape == (1, expected_tokens, 64)
     assert torch.isfinite(target["latents"]).all()
+    spatial_weights = None
+    if weights_path is not None:
+        weight_record = torch.load(weights_path, map_location="cpu", weights_only=True)
+        assert (
+            weight_record["target_sha256"] == hashlib.sha256(target_path.read_bytes()).hexdigest()
+        )
+        spatial_weights = weight_record["weights"]
+        assert spatial_weights.shape == (1, expected_tokens, 1)
+        assert torch.isfinite(spatial_weights).all() and (spatial_weights >= 0).all()
+        assert torch.isclose(spatial_weights.mean(), torch.tensor(1.0))
     upstream_path = Path(plan["upstream"])
     assert hashlib.sha256(upstream_path.read_bytes()).hexdigest() == plan["upstream_sha256"]
     output.mkdir(parents=True, exist_ok=False)
@@ -52,6 +68,9 @@ def run_probe(root, target_path, output, *, steps, learning_rate, seed):
         "steps": steps,
         "learning_rate": learning_rate,
         "seed": seed,
+        "spatial_weights_sha256": None
+        if weights_path is None
+        else hashlib.sha256(weights_path.read_bytes()).hexdigest(),
         "source_root": str(root),
         "target_path": str(target_path),
         "target_sha256": hashlib.sha256(target_path.read_bytes()).hexdigest(),
@@ -70,6 +89,8 @@ def run_probe(root, target_path, output, *, steps, learning_rate, seed):
         for name, value in parameters.items():
             value.copy_(initial[name])
     clean = target["latents"].cuda().float()
+    if spatial_weights is not None:
+        spatial_weights = spatial_weights.cuda().float()
     condition = {
         key: value.cuda() if isinstance(value, torch.Tensor) else value
         for key, value in condition.items()
@@ -97,6 +118,9 @@ def run_probe(root, target_path, output, *, steps, learning_rate, seed):
                 {
                     "index": index,
                     "before_mse": float((prediction - velocity_target).square().mean()),
+                    "before_training_loss": float(
+                        velocity_loss(prediction, velocity_target, spatial_weights=spatial_weights)
+                    ),
                 }
             )
     optimizer = torch.optim.AdamW(parameters.values(), lr=learning_rate, weight_decay=0)
@@ -111,7 +135,7 @@ def run_probe(root, target_path, output, *, steps, learning_rate, seed):
             scheduler, clean, noise, timestep[None]
         )
         prediction = predict_velocity(model, noisy, timestep, condition, upstream)
-        loss = (prediction - velocity_target).square().mean()
+        loss = velocity_loss(prediction, velocity_target, spatial_weights=spatial_weights)
         assert torch.isfinite(loss)
         loss.backward()
         gradients = [value.grad for value in parameters.values() if value.grad is not None]
@@ -126,7 +150,8 @@ def run_probe(root, target_path, output, *, steps, learning_rate, seed):
                 "step": step + 1,
                 "schedule_index": index,
                 "sigma": float(scheduler.sigmas[index]),
-                "mse": float(loss.detach()),
+                "training_loss": float(loss.detach()),
+                "mse": float((prediction.detach() - velocity_target).square().mean()),
                 "gradient_norm": float(norm),
                 "gradient_tensors": len(gradients),
             }
@@ -152,6 +177,9 @@ def run_probe(root, target_path, output, *, steps, learning_rate, seed):
             )
             prediction = predict_velocity(model, noisy, timestep, condition, upstream)
             row["after_mse"] = float((prediction - velocity_target).square().mean())
+            row["after_training_loss"] = float(
+                velocity_loss(prediction, velocity_target, spatial_weights=spatial_weights)
+            )
         for value in parameters.values():
             value.zero_()
         restored = torch.load(output / "adapter.pt", map_location="cpu", weights_only=True)
@@ -181,6 +209,7 @@ def main():
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=20261008)
+    parser.add_argument("--spatial-weights", type=Path)
     args = parser.parse_args()
     with Path("/tmp/vrl-preservation-gpu0.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -191,6 +220,7 @@ def main():
             steps=args.steps,
             learning_rate=args.learning_rate,
             seed=args.seed,
+            weights_path=args.spatial_weights,
         )
 
 
