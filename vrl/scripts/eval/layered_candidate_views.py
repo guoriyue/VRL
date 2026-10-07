@@ -59,14 +59,16 @@ def prepare_views(source, layers, directory):
         draw.text((x + 5, y + 6), label, fill="black")
     contact.save(directory / "review.png")
     alpha = np.array(full)[..., 3]
-    source_rgb = np.array(source.convert("RGB"), dtype=float)
     black = Image.new("RGBA", source.size, (0, 0, 0, 255))
+    source_rgba = source.convert("RGBA")
+    source_rgb = np.array(Image.alpha_composite(black, source_rgba).convert("RGB"), dtype=float)
     reconstructed = np.array(Image.alpha_composite(black, full).convert("RGB"), dtype=float)
     stats = {
         "rgba_layers": len(layers),
         "alpha_pixels_over_half": [int((np.array(layer)[..., 3] > 127).sum()) for layer in layers],
         "composite_under_opaque_pixels": int((alpha < 250).sum()),
         "rgb_mae_over_black": float(np.abs(reconstructed - source_rgb).mean()),
+        "alpha_mae": float(np.abs(alpha.astype(float) - np.array(source_rgba)[..., 3]).mean()),
         "scope": "View construction and diagnostics only; no semantic correctness or hidden truth claim.",
     }
     (directory / "diagnostics.json").write_text(json.dumps(stats, indent=2))
@@ -80,7 +82,9 @@ def main():
     plan = json.loads((args.root / "plan.json").read_text())
     rows = []
     for case in plan["cases"]:
-        source = Image.open(args.root / "conditions" / case["name"] / "source.png").convert("RGB")
+        source = Image.open(args.root / "conditions" / case["name"] / "source.png").convert(
+            case.get("input_mode", "RGB")
+        )
         for candidate in sorted((args.root / "rollouts" / case["name"]).glob("candidate*")):
             paths = [candidate / f"layer_{i}.png" for i in range(plan["layers"])]
             if not all(path.is_file() for path in paths):

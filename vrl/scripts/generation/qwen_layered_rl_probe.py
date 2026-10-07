@@ -78,7 +78,10 @@ def cache_conditions(plan, root, upstream):
         prompt, mask = prompts[text]
         source = Path(case["source"])
         assert hashlib.sha256(source.read_bytes()).hexdigest() == case["sha256"]
-        image = Image.open(source).convert("RGB")
+        input_mode = case.get("input_mode", "RGB")
+        if input_mode not in ("RGB", "RGBA"):
+            raise ValueError(f"Unsupported conditioning input mode: {input_mode}")
+        image = Image.open(source).convert(input_mode)
         width, height = upstream.compute_aspect_resize(*image.size, plan["size"])
         image = image.resize((width, height), Image.Resampling.LANCZOS)
         pixels = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 127.5 - 1
@@ -97,6 +100,7 @@ def cache_conditions(plan, root, upstream):
                 "height": height,
                 "layers": plan["layers"],
                 "source_sha256": case["sha256"],
+                "input_mode": input_mode,
             },
             directory / "condition.pt",
         )

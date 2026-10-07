@@ -136,7 +136,9 @@ def evaluate(root, *, arm, cases, seed, checkpoint=None, official_adapter=None):
         layers = [upstream.layer_to_pil_rgba(decoded[0, index]) for index in range(plan["layers"])]
         for index, layer in enumerate(layers):
             layer.save(directory / f"layer_{index}.png")
-        source = Image.open(root / "conditions" / case["name"] / "source.png").convert("RGB")
+        source = Image.open(root / "conditions" / case["name"] / "source.png").convert(
+            case.get("input_mode", "RGB")
+        )
         source.save(directory / "source.png")
         diagnostics = prepare_views(source, layers, directory / "review")
         record = {
