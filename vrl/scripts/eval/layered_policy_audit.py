@@ -10,7 +10,7 @@ from pathlib import Path
 
 import torch
 
-from vrl.math.denoise.flow_matching import sde_step_with_logprob
+from vrl.math.denoise.flow_matching import compute_kl_divergence, sde_step_with_logprob
 from vrl.scripts.generation.qwen_layered_rl_probe import (
     load_transformer,
     load_upstream,
@@ -122,6 +122,7 @@ def audit_likelihood(root):
                         noise_level=plan["noise_level"],
                         step_index=index,
                         math_dtype=torch.float64,
+                        return_dt=True,
                     )
                     before = sde_step_with_logprob(
                         scheduler,
@@ -134,6 +135,21 @@ def audit_likelihood(root):
                         scheduler, velocity, timestep[None], latent, **common
                     )
                     change = float((after.log_prob - before.log_prob).mean())
+                    ratio = (after.log_prob - before.log_prob).exp()
+                    advantage = original["advantage"]
+                    clipped_ratio = ratio.clamp(1 - config["clip_ratio"], 1 + config["clip_ratio"])
+                    policy_loss_change = float(
+                        torch.maximum(-advantage * ratio, -advantage * clipped_ratio).mean()
+                        + advantage
+                    )
+                    kl = float(
+                        compute_kl_divergence(
+                            after.prev_sample_mean,
+                            before.prev_sample_mean,
+                            after.std_dev_t,
+                            sqrt_neg_dt=after.sqrt_neg_dt,
+                        ).mean()
+                    )
                 row = {
                     "case": case["name"],
                     "candidate": candidate.name,
@@ -141,6 +157,10 @@ def audit_likelihood(root):
                     "advantage": original["advantage"],
                     "mean_element_log_density_change": change,
                     "advantage_weighted_change": original["advantage"] * change,
+                    "mean_element_gaussian_kl": kl,
+                    "clipped_policy_loss_change": policy_loss_change,
+                    "regularized_loss_change": policy_loss_change + config["kl_coef"] * kl,
+                    "ratio_clip_active": bool((ratio != clipped_ratio).any()),
                 }
                 rows.append(row)
                 (root / "update01/policy_audit_partial.json").write_text(
@@ -153,6 +173,12 @@ def audit_likelihood(root):
             row["advantage_weighted_change"] for row in rows
         )
         / len(rows),
+        "mean_clipped_policy_loss_change": sum(row["clipped_policy_loss_change"] for row in rows)
+        / len(rows),
+        "mean_gaussian_kl": sum(row["mean_element_gaussian_kl"] for row in rows) / len(rows),
+        "mean_regularized_loss_change": sum(row["regularized_loss_change"] for row in rows)
+        / len(rows),
+        "loss_interpretation": "Negative change is improvement relative to the initial policy. Mirrors the configured clipped surrogate plus exact mean-element Gaussian KL, recomputed in float64; not the training kernel's float32 rounding.",
         "audit_math": "Float64 Gaussian density calculation from actual stored float32 SDE states/actions; model remains bf16. Baseline recorded velocities passed exact pre-update replay checks during training.",
         "scope": "Recorded-trajectory optimization diagnostic only, not new-rollout reward or held-out visual improvement.",
     }
