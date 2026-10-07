@@ -32,8 +32,9 @@ def prepare_views(source, layers, directory):
     displays.extend(
         (f"Layer {index} (back to front)", layer) for index, layer in enumerate(layers)
     )
-    for index in range(1, len(layers)):
-        removed = composite([layer for i, layer in enumerate(layers) if i != index])
+    for index in range(len(layers)):
+        remaining = [layer for i, layer in enumerate(layers) if i != index]
+        removed = composite(remaining) if remaining else Image.new("RGBA", source.size)
         removed.save(directory / f"remove_{index}.png")
         shifted = Image.new("RGBA", source.size, (0, 0, 0, 0))
         shifted.paste(layers[index], (max(1, width // 12), 0))
