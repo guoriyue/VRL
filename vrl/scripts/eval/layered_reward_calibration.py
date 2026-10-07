@@ -47,6 +47,17 @@ def prepare_controls(source, layers, directory):
         pixels[covered, 3] = 0
         hole[index] = Image.fromarray(pixels)
     controls["background_hole"] = hole
+    # A perfectly opaque reconstruction can still hide missing background.
+    # Build this control from source pixels so its recomposition is exact,
+    # regardless of defects already present in the candidate's lower layers.
+    missing = np.array(whole)
+    missing[covered] = (0, 0, 0, 255)
+    cover = np.zeros_like(missing)
+    cover[covered] = np.array(whole)[covered]
+    opaque_hole = [empty.copy() for _ in layers]
+    opaque_hole[0] = Image.fromarray(missing)
+    opaque_hole[foreground] = Image.fromarray(cover)
+    controls["opaque_background_hole"] = opaque_hole
     rows = []
     for name, control in controls.items():
         target = directory / name

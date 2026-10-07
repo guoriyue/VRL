@@ -1,4 +1,4 @@
-version: 1
+version: 2
 weights:
   separation: 1
   completeness: 1
@@ -32,6 +32,9 @@ prompt: |
   colors and object identity, not merely overall scene similarity.
   exposed_background: Inspect Hide and Move views. Look for holes, residual
   object parts, seams and implausible structure where the object used to be.
+  An opaque black or flat-color silhouette replacing missing background is
+  also a hole: alpha coverage and perfect recomposition do not prove completion.
+  Distinguish such missing content from plausible scene shadows or dark objects.
   Missing foreground layers do not earn completion credit. The hidden truth
   is unknown; score plausibility, not recovery of an unknowable true scene.
   sharpness: Compare visible fine detail with Source; penalize blur, cloudy
