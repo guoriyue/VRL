@@ -134,12 +134,14 @@ def score_layers(reference, candidate):
     reconstruction_error = float(np.abs(composite(reference) - composite(candidate)).mean())
     components = {
         "mean_layer_quality": float(np.mean([row["layer_quality"] for row in rows])),
+        "worst_layer_quality": min(row["layer_quality"] for row in rows),
         "hidden_quality": 1 - float(np.mean(hidden_errors)) if hidden_errors else 1.0,
         "edit_quality": 1 - float(np.mean(edit_errors)) if edit_errors else 1.0,
         "nonredundancy": 1 - surplus_fraction,
         "reconstruction_quality": 1 - reconstruction_error,
     }
     return {
+        "diagnostic_version": 2,
         "assignment": assignment,
         "objects": rows,
         "components": components,

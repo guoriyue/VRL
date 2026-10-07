@@ -70,3 +70,20 @@ def test_matching_preserves_permutation_freedom_but_checks_depth_order():
     truth[2] = 0
     truth[2, 12:15, 12:15] = (0.8, 0.2, 0.1, 1)
     assert score_layers(truth, truth[[0, 2, 1]])["diagnostic_score"] == pytest.approx(1)
+
+
+def test_accurate_remaining_layers_cannot_compensate_for_a_deleted_object():
+    truth = _scene()
+    missing = truth.copy()
+    missing[2] = 0
+    complete_but_discolored = truth.copy()
+    complete_but_discolored[..., :3] = 0
+    deleted = score_layers(truth, missing)
+    discolored = score_layers(truth, complete_but_discolored)
+    # The old mean favored deletion over retaining all three object supports.
+    assert (
+        deleted["components"]["mean_layer_quality"]
+        > discolored["components"]["mean_layer_quality"]
+    )
+    assert deleted["components"]["worst_layer_quality"] == 0
+    assert deleted["diagnostic_score"] < discolored["diagnostic_score"]
