@@ -1,4 +1,4 @@
-"""Run one reviewed, reward-driven Flow-GRPO update on layered SDE rollouts.
+"""Run reviewed, reward-driven Flow-GRPO updates on a fixed layered SDE batch.
 
 This small-batch integration runner reuses the repository GRPO objective. It is
 not a replacement for iterative rollout collection or held-out quality testing.
@@ -48,6 +48,8 @@ def run_update(root, config):
     )
     advantages = algorithm.compute_advantages_from_tensors(rewards, groups)
     assert torch.isfinite(advantages).all() and advantages.abs().max() > 0, "No reward signal"
+    epochs = config.get("ppo_epochs", 1)
+    assert isinstance(epochs, int) and epochs > 0
     output = root / "update01"
     output.mkdir(exist_ok=False)
     (output / "config.json").write_text(json.dumps(config, indent=2))
@@ -71,46 +73,34 @@ def run_update(root, config):
     )
     count = len(rows) * len(indices)
     logs = []
-    optimizer.zero_grad(set_to_none=True)
-    for row_index, row in enumerate(rows):
-        directory = root / "rollouts" / row["case"] / row["candidate"]
-        assert hashlib.sha256(Path(row["view"]).read_bytes()).hexdigest() == row["view_sha256"]
-        trajectory = torch.load(directory / "trajectory.pt", weights_only=True)
-        assert trajectory["noise_level"] == plan["noise_level"] > 0
-        assert trajectory["condition_case"] == row["case"]
-        assert trajectory["initial_adapter_seed"] == plan["adapter_seed"]
-        condition = torch.load(
-            root / "conditions" / row["case"] / "condition.pt", weights_only=True
-        )
-        assert condition["source_sha256"] == cases[row["case"]]["sha256"]
-        condition = {
-            key: value.cuda() if isinstance(value, torch.Tensor) else value
-            for key, value in condition.items()
-        }
-        scheduler.sigmas = trajectory["sigmas"].cuda()
-        scheduler.timesteps = trajectory["timesteps"].cuda()
-        for index in indices:
-            latent = trajectory["observations"][index].cuda()
-            action = trajectory["actions"][index].cuda()
-            timestep = scheduler.timesteps[index]
-            velocity = predict_velocity(model, latent, timestep, condition, upstream)
-            replay = sde_step_with_logprob(
-                scheduler,
-                velocity,
-                timestep[None],
-                latent,
-                prev_sample=action,
-                noise_level=plan["noise_level"],
-                step_index=index,
-                return_dt=True,
+    epoch_records = []
+    for epoch in range(epochs):
+        optimizer.zero_grad(set_to_none=True)
+        for row_index, row in enumerate(rows):
+            directory = root / "rollouts" / row["case"] / row["candidate"]
+            assert hashlib.sha256(Path(row["view"]).read_bytes()).hexdigest() == row["view_sha256"]
+            trajectory = torch.load(directory / "trajectory.pt", weights_only=True)
+            assert trajectory["noise_level"] == plan["noise_level"] > 0
+            assert trajectory["condition_case"] == row["case"]
+            assert trajectory["initial_adapter_seed"] == plan["adapter_seed"]
+            condition = torch.load(
+                root / "conditions" / row["case"] / "condition.pt", weights_only=True
             )
-            old = trajectory["old_log_density_mean"][index].cuda()
-            parity = float((replay.log_prob.detach() - old).abs().max())
-            assert parity < 1e-5, f"Pre-update replay mismatch: {parity}"
-            with torch.no_grad():
-                reference = sde_step_with_logprob(
+            assert condition["source_sha256"] == cases[row["case"]]["sha256"]
+            condition = {
+                key: value.cuda() if isinstance(value, torch.Tensor) else value
+                for key, value in condition.items()
+            }
+            scheduler.sigmas = trajectory["sigmas"].cuda()
+            scheduler.timesteps = trajectory["timesteps"].cuda()
+            for index in indices:
+                latent = trajectory["observations"][index].cuda()
+                action = trajectory["actions"][index].cuda()
+                timestep = scheduler.timesteps[index]
+                velocity = predict_velocity(model, latent, timestep, condition, upstream)
+                replay = sde_step_with_logprob(
                     scheduler,
-                    trajectory["old_velocity"][index].cuda(),
+                    velocity,
                     timestep[None],
                     latent,
                     prev_sample=action,
@@ -118,53 +108,81 @@ def run_update(root, config):
                     step_index=index,
                     return_dt=True,
                 )
-            signal = FlowSDESignal(
-                name="layers",
-                distribution="flow_sde_mean_element_density",
-                log_prob=replay.log_prob,
-                old_log_prob=old,
-                mask=torch.ones_like(old),
-                ref_log_prob=reference.log_prob,
-                prev_sample_mean=replay.prev_sample_mean,
-                std_dev_t=replay.std_dev_t,
-                dt=replay.sqrt_neg_dt,
-                sigma=replay.sigma,
-                ref_prev_sample_mean=reference.prev_sample_mean,
-            )
-            loss, metrics = algorithm.compute_loss(
-                AlgorithmInput(
-                    signals=TrajectorySignalBatch(
-                        segments={"layers": signal},
-                        group_ids=groups[row_index : row_index + 1].cuda(),
-                    ),
-                    advantages=advantages[row_index : row_index + 1].cuda(),
-                    model=model,
-                    timestep_index=index,
+                old = trajectory["old_log_density_mean"][index].cuda()
+                parity = float((replay.log_prob.detach() - old).abs().max())
+                if epoch == 0:
+                    assert parity < 1e-5, f"Pre-update replay mismatch: {parity}"
+                with torch.no_grad():
+                    reference = sde_step_with_logprob(
+                        scheduler,
+                        trajectory["old_velocity"][index].cuda(),
+                        timestep[None],
+                        latent,
+                        prev_sample=action,
+                        noise_level=plan["noise_level"],
+                        step_index=index,
+                        return_dt=True,
+                    )
+                signal = FlowSDESignal(
+                    name="layers",
+                    distribution="flow_sde_mean_element_density",
+                    log_prob=replay.log_prob,
+                    old_log_prob=old,
+                    mask=torch.ones_like(old),
+                    ref_log_prob=reference.log_prob,
+                    prev_sample_mean=replay.prev_sample_mean,
+                    std_dev_t=replay.std_dev_t,
+                    dt=replay.sqrt_neg_dt,
+                    sigma=replay.sigma,
+                    ref_prev_sample_mean=reference.prev_sample_mean,
                 )
+                loss, metrics = algorithm.compute_loss(
+                    AlgorithmInput(
+                        signals=TrajectorySignalBatch(
+                            segments={"layers": signal},
+                            group_ids=groups[row_index : row_index + 1].cuda(),
+                        ),
+                        advantages=advantages[row_index : row_index + 1].cuda(),
+                        model=model,
+                        timestep_index=index,
+                    )
+                )
+                assert torch.isfinite(loss)
+                (loss / count).backward()
+                logs.append(
+                    {
+                        "epoch": epoch + 1,
+                        "case": row["case"],
+                        "candidate": row["candidate"],
+                        "step": index,
+                        "reward": row["reward"],
+                        "advantage": float(advantages[row_index]),
+                        "loss": float(loss.detach()),
+                        "preupdate_logprob_error": parity if epoch == 0 else None,
+                        "logprob_difference_from_behavior": float(
+                            (replay.log_prob.detach() - old).mean()
+                        ),
+                        "kl_penalty": metrics.kl_penalty,
+                        "active_clip_fraction": metrics.update.active_clip_fraction,
+                    }
+                )
+                print(json.dumps(logs[-1]), flush=True)
+                (output / "replay.json").write_text(json.dumps(logs, indent=2))
+                del velocity, replay, reference, signal, loss, metrics
+        gradients = [value.grad for value in parameters.values() if value.grad is not None]
+        assert gradients and all(torch.isfinite(value).all() for value in gradients)
+        norm = torch.nn.utils.clip_grad_norm_(
+            list(parameters.values()), config["max_grad_norm"], error_if_nonfinite=True
+        )
+        assert float(norm) > 0
+        optimizer.step()
+        epoch_records.append({"epoch": epoch + 1, "gradient_norm_before_clip": float(norm)})
+        (output / "epochs.json").write_text(json.dumps(epoch_records, indent=2))
+        if epochs > 1:
+            torch.save(
+                {name: value.detach().cpu().clone() for name, value in parameters.items()},
+                output / f"epoch{epoch + 1:02d}_adapter.pt",
             )
-            assert torch.isfinite(loss)
-            (loss / count).backward()
-            logs.append(
-                {
-                    "case": row["case"],
-                    "candidate": row["candidate"],
-                    "step": index,
-                    "reward": row["reward"],
-                    "advantage": float(advantages[row_index]),
-                    "loss": float(loss.detach()),
-                    "preupdate_logprob_error": parity,
-                }
-            )
-            print(json.dumps(logs[-1]), flush=True)
-            (output / "replay.json").write_text(json.dumps(logs, indent=2))
-            del velocity, replay, reference, signal, loss, metrics
-    gradients = [value.grad for value in parameters.values() if value.grad is not None]
-    assert gradients and all(torch.isfinite(value).all() for value in gradients)
-    norm = torch.nn.utils.clip_grad_norm_(
-        list(parameters.values()), config["max_grad_norm"], error_if_nonfinite=True
-    )
-    assert float(norm) > 0
-    optimizer.step()
     saved = {name: value.detach().cpu().clone() for name, value in parameters.items()}
     assert all(torch.isfinite(value).all() for value in saved.values())
     differences = {
@@ -184,7 +202,9 @@ def run_update(root, config):
         reloaded_velocity = predict_velocity(model, latent, timestep, condition, upstream)
     assert torch.equal(updated_velocity, reloaded_velocity)
     record = {
-        "optimizer_updates": 1,
+        "optimizer_updates": epochs,
+        "rollout_batches": 1,
+        "behavior_policy": "initial_adapter.pt; fixed throughout PPO epochs",
         "gradient_norm_before_clip": float(norm),
         "gradient_tensors": len(gradients),
         "changed_tensors": sum(value > 0 for value in differences.values()),
@@ -203,7 +223,7 @@ def run_update(root, config):
         ).hexdigest(),
         "peak_cuda_bytes": torch.cuda.max_memory_allocated(),
         "logprob_convention": "Mean element Gaussian log density, matching repository Flow-GRPO; not joint log probability.",
-        "scope": "One real group-reward optimizer update. Quality improvement and generalization remain untested.",
+        "scope": "Real group-reward optimizer updates on one fixed rollout batch. Quality improvement and generalization remain untested.",
     }
     (output / "result.json").write_text(json.dumps(record, indent=2))
     print(json.dumps(record), flush=True)
