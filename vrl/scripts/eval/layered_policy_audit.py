@@ -22,7 +22,7 @@ def audit_optimizer(root):
     initial = torch.load(root / "initial_adapter.pt", map_location="cpu", weights_only=True)
     updated = torch.load(root / "update01/adapter.pt", map_location="cpu", weights_only=True)
     state = torch.load(root / "update01/optimizer.pt", map_location="cpu", weights_only=True)
-    assert list(initial) == list(updated)
+    assert initial.keys() == updated.keys()
     assert len(state["param_groups"]) == 1
     group = state["param_groups"][0]
     assert len(group["params"]) == len(initial) and group["weight_decay"] == 0
@@ -30,7 +30,9 @@ def audit_optimizer(root):
     active_gradients = []
     parameters_without_optimizer_state = []
     step_squares = 0.0
-    for name, parameter_id in zip(initial, group["params"], strict=True):
+    # The update runner saves tensors in the same order used to construct Adam.
+    # Imported initial checkpoints may serialize those named tensors differently.
+    for name, parameter_id in zip(updated, group["params"], strict=True):
         if parameter_id not in state["state"]:
             assert torch.equal(initial[name], updated[name]), (
                 f"Parameter changed without optimizer state: {name}"

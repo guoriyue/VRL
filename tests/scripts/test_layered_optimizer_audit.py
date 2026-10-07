@@ -19,7 +19,8 @@ def test_unconnected_parameter_must_remain_unchanged(tmp_path):
     updated = {name: value.detach().clone() for name, value in parameters.items()}
     output = tmp_path / "update01"
     output.mkdir()
-    torch.save(initial, tmp_path / "initial_adapter.pt")
+    # Imported PEFT files need not use the optimizer's parameter order.
+    torch.save(dict(reversed(list(initial.items()))), tmp_path / "initial_adapter.pt")
     torch.save(updated, output / "adapter.pt")
     torch.save(optimizer.state_dict(), output / "optimizer.pt")
 
