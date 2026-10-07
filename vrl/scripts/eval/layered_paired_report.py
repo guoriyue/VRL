@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 
-def compare_records(records):
+def compare_records(records, *, reference="base"):
     """Reject mismatched sampling conditions before calculating paired deltas."""
     if len(records) < 2:
         return {}
@@ -25,9 +25,9 @@ def compare_records(records):
         ):
             if record[key] != first[key]:
                 raise ValueError(f"Unmatched evaluation condition {key}: {arm}")
-    if "base" not in records or "tuned" not in records:
+    if reference not in records or "tuned" not in records:
         return {}
-    base = records["base"]["diagnostics"]
+    base = records[reference]["diagnostics"]
     tuned = records["tuned"]["diagnostics"]
     return {
         "reconstruction_mae_change": tuned["rgb_mae_over_black"] - base["rgb_mae_over_black"],
@@ -68,6 +68,7 @@ def main():
                 "arms": records,
                 "missing_arms": sorted({"base", "stable", "tuned"} - records.keys()),
                 "paired_deltas": compare_records(records),
+                "stable_tuned_deltas": compare_records(records, reference="stable"),
                 "views": views,
             }
         )
