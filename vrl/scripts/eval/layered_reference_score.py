@@ -165,7 +165,15 @@ def score_layers(reference, candidate, *, include_first_layer_edits=False):
     extra_mass = sum(candidate[j, ..., 3].sum() for j in range(len(candidate)) if j not in used)
     total_mass = candidate[..., 3].sum()
     surplus_fraction = float(extra_mass / total_mass) if total_mass else 0.0
-    reconstruction_error = float(np.abs(composite(reference) - composite(candidate)).mean())
+    predicted_composite = composite(candidate)
+    reconstruction_error = float(np.abs(composite(reference) - predicted_composite).mean())
+    # Complete amodal references define where no object may exist. Composited
+    # alpha counts spill from every candidate, without dilution by empty layers.
+    exterior = reference[..., 3].max(axis=0) == 0
+    exterior_pixels = int(exterior.sum())
+    exterior_alpha = (
+        float(predicted_composite[..., 3][exterior].mean()) if exterior_pixels else 0.0
+    )
     components = {
         "mean_layer_quality": float(np.mean([row["layer_quality"] for row in rows])),
         "worst_layer_quality": min(row["layer_quality"] for row in rows),
@@ -208,22 +216,31 @@ def score_layers(reference, candidate, *, include_first_layer_edits=False):
             "validated_for_training": False,
         },
         "reconstruction_rgba_mae": reconstruction_error,
+        "exterior_alpha_mean": exterior_alpha,
+        "exterior_pixel_count": exterior_pixels,
         "scope": "Known-reference diagnostic only; candidate ranking needs visual calibration before RL use.",
     }
 
 
-def constrained_fidelity_reward(score, *, min_alpha_iou, min_alpha_recall, max_surplus_fraction):
+def constrained_fidelity_reward(
+    score, *, min_alpha_iou, min_alpha_recall, max_surplus_fraction, max_exterior_alpha=None
+):
     """Propose fidelity learning only after explicit known-reference geometry gates.
 
     Thresholds are experiment inputs, not universal semantic validity criteria.
     Failed geometry cannot be compensated by accurate remaining object colors.
     Existing v2/v3 scores are preserved; this proposal is not auto-approved for RL.
+    An optional exterior-alpha cap prevents fidelity gains compensating for
+    excess spill outside all complete reference objects. It does not constrain
+    visible RGB errors, and is vacuous for references covering the whole canvas.
     """
     thresholds = {
         "min_alpha_iou": min_alpha_iou,
         "min_alpha_recall": min_alpha_recall,
         "max_surplus_fraction": max_surplus_fraction,
     }
+    if max_exterior_alpha is not None:
+        thresholds["max_exterior_alpha"] = max_exterior_alpha
     if not all(np.isfinite(value) and 0 <= value <= 1 for value in thresholds.values()):
         raise ValueError("Geometry thresholds must be finite and in [0,1]")
     violations = {
@@ -233,6 +250,12 @@ def constrained_fidelity_reward(score, *, min_alpha_iou, min_alpha_recall, max_s
         ),
         "surplus": max(0.0, 1 - score["components"]["nonredundancy"] - max_surplus_fraction),
     }
+    geometry_passed = not any(violations.values())
+    if max_exterior_alpha is not None:
+        exterior_alpha = score["exterior_alpha_mean"]
+        if not np.isfinite(exterior_alpha) or not 0 <= exterior_alpha <= 1:
+            raise ValueError("Exterior alpha must be finite and in [0,1]")
+        violations["exterior_alpha"] = max(0.0, exterior_alpha - max_exterior_alpha)
     passed = not any(violations.values())
     components = score["reward_proposal"]["components"]
     fidelity = float(
@@ -249,16 +272,22 @@ def constrained_fidelity_reward(score, *, min_alpha_iou, min_alpha_recall, max_s
             ]
         )
     )
-    return {
-        "version": "constrained_fidelity_v1",
+    result = {
+        "version": "constrained_fidelity_v1"
+        if max_exterior_alpha is None
+        else "constrained_fidelity_exterior_v1",
         "value": fidelity if passed else -1.0 - sum(violations.values()),
-        "geometry_gate_passed": passed,
+        "geometry_gate_passed": geometry_passed,
         "violations": violations,
         "thresholds": thresholds,
         "fidelity": fidelity,
         "validated_for_training": False,
         "scope": "Known-reference proposal; numerical geometry gates do not prove semantic completeness.",
     }
+    if max_exterior_alpha is not None:
+        result["constraints_passed"] = passed
+        result["exterior_pixel_count"] = score["exterior_pixel_count"]
+    return result
 
 
 def main():
