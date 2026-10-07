@@ -117,6 +117,14 @@ def score_layers(reference, candidate):
         row = {
             "reference_layer": i,
             "candidate_layer": predicted_index,
+            "alpha_iou": float(
+                np.minimum(reference[i, ..., 3], predicted[..., 3]).sum()
+                / np.maximum(reference[i, ..., 3], predicted[..., 3]).sum()
+            ),
+            "reference_alpha_recall": float(
+                np.minimum(reference[i, ..., 3], predicted[..., 3]).sum()
+                / reference[i, ..., 3].sum()
+            ),
             "layer_quality": 0.0
             if predicted_index is None
             else float(similarities[i, predicted_index]),
@@ -196,6 +204,55 @@ def score_layers(reference, candidate):
         },
         "reconstruction_rgba_mae": reconstruction_error,
         "scope": "Known-reference diagnostic only; candidate ranking needs visual calibration before RL use.",
+    }
+
+
+def constrained_fidelity_reward(score, *, min_alpha_iou, min_alpha_recall, max_surplus_fraction):
+    """Propose fidelity learning only after explicit known-reference geometry gates.
+
+    Thresholds are experiment inputs, not universal semantic validity criteria.
+    Failed geometry cannot be compensated by accurate remaining object colors.
+    Existing v2/v3 scores are preserved; this proposal is not auto-approved for RL.
+    """
+    thresholds = {
+        "min_alpha_iou": min_alpha_iou,
+        "min_alpha_recall": min_alpha_recall,
+        "max_surplus_fraction": max_surplus_fraction,
+    }
+    if not all(np.isfinite(value) and 0 <= value <= 1 for value in thresholds.values()):
+        raise ValueError("Geometry thresholds must be finite and in [0,1]")
+    violations = {
+        "alpha_iou": max(0.0, min_alpha_iou - min(row["alpha_iou"] for row in score["objects"])),
+        "alpha_recall": max(
+            0.0, min_alpha_recall - min(row["reference_alpha_recall"] for row in score["objects"])
+        ),
+        "surplus": max(0.0, 1 - score["components"]["nonredundancy"] - max_surplus_fraction),
+    }
+    passed = not any(violations.values())
+    components = score["reward_proposal"]["components"]
+    fidelity = float(
+        np.mean(
+            [
+                components[name]
+                for name in (
+                    "visible_quality",
+                    "visible_detail_quality",
+                    "hidden_quality",
+                    "edit_quality",
+                    "reconstruction_quality",
+                )
+            ]
+        )
+    )
+    return {
+        "version": "constrained_fidelity_v1",
+        "value": fidelity if passed else -1.0 - sum(violations.values()),
+        "geometry_gate_passed": passed,
+        "violations": violations,
+        "thresholds": thresholds,
+        "fidelity": fidelity,
+        "validated_for_training": False,
+        "scope": "Known-reference proposal; numerical geometry gates do not prove semantic completeness.",
     }
 
 
