@@ -60,10 +60,13 @@ def cache_conditions(plan, root, upstream):
         plan["base_path"], transformer=None, torch_dtype=torch.bfloat16, local_files_only=True
     )
     pipe.text_encoder.requires_grad_(False).eval().to("cuda")
+    prompts = {}
     with torch.no_grad():
-        prompt, mask = pipe.encode_prompt(plan["prompt"], device=torch.device("cuda"))
-    prompt = prompt.cpu()
-    mask = mask.cpu() if mask is not None else None
+        for case in plan["cases"]:
+            text = case.get("prompt", plan["prompt"])
+            if text not in prompts:
+                prompt, mask = pipe.encode_prompt(text, device=torch.device("cuda"))
+                prompts[text] = (prompt.cpu(), mask.cpu() if mask is not None else None)
     pipe.text_encoder.to("cpu")
     pipe.text_encoder = None
     gc.collect()
@@ -71,6 +74,8 @@ def cache_conditions(plan, root, upstream):
     pipe.vae.requires_grad_(False).eval().to("cuda")
     pipe.vae.enable_slicing()
     for case in plan["cases"]:
+        text = case.get("prompt", plan["prompt"])
+        prompt, mask = prompts[text]
         source = Path(case["source"])
         assert hashlib.sha256(source.read_bytes()).hexdigest() == case["sha256"]
         image = Image.open(source).convert("RGB")
@@ -87,6 +92,7 @@ def cache_conditions(plan, root, upstream):
                 "condition": condition,
                 "prompt": prompt,
                 "mask": mask,
+                "prompt_text": text,
                 "width": width,
                 "height": height,
                 "layers": plan["layers"],
