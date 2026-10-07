@@ -24,6 +24,29 @@ from PIL import Image
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 
 
+def recorded_schedule(trajectory):
+    """Resolve local action indices against the original sampling schedule."""
+    local_times = trajectory["timesteps"]
+    count = len(local_times)
+    if trajectory.get("teacher_initialized") or trajectory.get("schedule_start_index", 0):
+        required = ("full_sigmas", "full_timesteps", "absolute_step_indices")
+        if not all(key in trajectory for key in required):
+            raise ValueError("Restarted trajectories require the complete sampling schedule")
+        sigmas, times, indices = (trajectory[key] for key in required)
+        start = trajectory["schedule_start_index"]
+        expected = torch.arange(start, start + count, device=indices.device)
+        if not torch.equal(indices, expected) or start < 0 or start + count > len(times):
+            raise ValueError("Invalid restarted trajectory step mapping")
+        if len(sigmas) != len(times) + 1:
+            raise ValueError("Incomplete original sigma schedule")
+        if not torch.equal(times[indices], local_times) or not torch.equal(
+            sigmas[start : start + count + 1], trajectory["sigmas"]
+        ):
+            raise ValueError("Local trajectory schedule disagrees with original schedule")
+        return sigmas, times, indices
+    return trajectory["sigmas"], local_times, torch.arange(count)
+
+
 class FrozenCPUBlock(torch.nn.Module):
     """Materialize frozen weights per checkpointed block; retain GPU LoRA leaves.
 

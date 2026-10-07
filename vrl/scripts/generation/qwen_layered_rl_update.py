@@ -22,6 +22,7 @@ from vrl.scripts.generation.qwen_layered_rl_probe import (
     load_transformer,
     load_upstream,
     predict_velocity,
+    recorded_schedule,
 )
 
 
@@ -93,7 +94,8 @@ def run_update(root, config):
                 map_location="cpu",
                 weights_only=True,
             )
-            current = (trajectory["sigmas"], trajectory["timesteps"])
+            sigmas, times, _ = recorded_schedule(trajectory)
+            current = (sigmas, times)
             if schedule is not None:
                 assert all(torch.equal(a, b) for a, b in zip(schedule, current, strict=True)), (
                     "Temporal normalization requires a shared recorded schedule"
@@ -128,12 +130,15 @@ def run_update(root, config):
                 key: value.cuda() if isinstance(value, torch.Tensor) else value
                 for key, value in condition.items()
             }
-            scheduler.sigmas = trajectory["sigmas"].cuda()
-            scheduler.timesteps = trajectory["timesteps"].cuda()
+            sigmas, times, absolute_indices = recorded_schedule(trajectory)
+            scheduler.sigmas = sigmas.cuda()
+            scheduler.timesteps = times.cuda()
+            assert all(index < len(trajectory["timesteps"]) for index in indices)
             for index in indices:
                 latent = trajectory["observations"][index].cuda()
                 action = trajectory["actions"][index].cuda()
-                timestep = scheduler.timesteps[index]
+                absolute_index = int(absolute_indices[index])
+                timestep = scheduler.timesteps[absolute_index]
                 velocity = predict_velocity(model, latent, timestep, condition, upstream)
                 replay = sde_step_with_logprob(
                     scheduler,
@@ -142,7 +147,7 @@ def run_update(root, config):
                     latent,
                     prev_sample=action,
                     noise_level=plan["noise_level"],
-                    step_index=index,
+                    step_index=absolute_index,
                     return_dt=True,
                 )
                 old = trajectory["old_log_density_mean"][index].cuda()
@@ -157,7 +162,7 @@ def run_update(root, config):
                         latent,
                         prev_sample=action,
                         noise_level=plan["noise_level"],
-                        step_index=index,
+                        step_index=absolute_index,
                         return_dt=True,
                     )
                 signal = FlowSDESignal(
@@ -192,6 +197,7 @@ def run_update(root, config):
                         "case": row["case"],
                         "candidate": row["candidate"],
                         "step": index,
+                        "absolute_step": absolute_index,
                         "reward": row["reward"],
                         "advantage": float(advantages[row_index]),
                         "loss": float(loss.detach()),
@@ -264,6 +270,7 @@ def run_update(root, config):
         "peak_cuda_bytes": torch.cuda.max_memory_allocated(),
         "logprob_convention": "Mean element Gaussian log density, matching repository Flow-GRPO; not joint log probability.",
         "scope": "Real group-reward optimizer updates on one fixed rollout batch. Quality improvement and generalization remain untested.",
+        "teacher_initialized": plan.get("teacher_initialized", False),
     }
     (output / "result.json").write_text(json.dumps(record, indent=2))
     print(json.dumps(record), flush=True)
