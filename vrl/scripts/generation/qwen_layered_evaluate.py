@@ -57,7 +57,9 @@ def evaluate(root, *, arm, cases, seed, checkpoint=None, official_adapter=None):
         weight_path = official_adapter / "adapter_model.safetensors"
     else:
         model = load_transformer(plan)
-        weight_path = root / "initial_adapter.pt" if arm == "base" else checkpoint
+        weight_path = checkpoint
+        if arm == "base" and weight_path is None:
+            weight_path = root / "initial_adapter.pt"
         assert weight_path is not None
         saved = torch.load(weight_path, weights_only=True)
         parameters = {
@@ -161,7 +163,11 @@ def main():
     parser.add_argument("--arm", choices=("base", "stable", "tuned"), required=True)
     parser.add_argument("--cases", nargs="+", required=True)
     parser.add_argument("--seed", type=int, default=4242)
-    parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        help="Trained adapter, or an explicit zero-B adapter for the frozen base arm.",
+    )
     parser.add_argument("--official-adapter", type=Path)
     args = parser.parse_args()
     with Path("/tmp/vrl-preservation-gpu0.lock").open("a") as lock:
