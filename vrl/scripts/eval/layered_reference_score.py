@@ -53,13 +53,22 @@ def match_layers(similarities):
     return max(states.values(), key=lambda item: item[0])[1]
 
 
-def score_layers(reference, candidate, *, include_first_layer_edits=False, min_match_quality=0.0):
+def score_layers(
+    reference,
+    candidate,
+    *,
+    include_first_layer_edits=False,
+    min_match_quality=0.0,
+    include_source_preservation=False,
+):
     """Return diagnostics, optionally editing the first object of an object-only stack.
 
     The default preserves historical background-first reward calculations.
     Changing the edit scope changes the reward and requires fresh calibration.
     A positive match floor lets weak geometric/color overlaps remain unmatched.
     It is an experiment setting, not a semantic object detector.
+    Source preservation optionally measures visible reconstruction relative to
+    each object's deletion contrast; it does not certify hidden completeness.
     """
     if not np.isfinite(min_match_quality) or not 0 <= min_match_quality < 1:
         raise ValueError("Minimum match quality must be finite and in [0,1)")
@@ -226,6 +235,37 @@ def score_layers(reference, candidate, *, include_first_layer_edits=False, min_m
     }
     if min_match_quality:
         result["min_match_quality"] = min_match_quality
+    if include_source_preservation:
+        truth_composite = composite(reference)
+        residual = np.abs(truth_composite - predicted_composite).mean(axis=-1)
+        source_rows = []
+        normalized_errors = []
+        for i, layer in enumerate(reference):
+            visible = layer[..., 3] * np.prod(1 - reference[i + 1 :, ..., 3], axis=0)
+            mass = float(visible.sum())
+            deleted = reference.copy()
+            deleted[i] = 0
+            deletion_residual = np.abs(truth_composite - composite(deleted)).mean(axis=-1)
+            error = float((residual * visible).sum() / mass) if mass else None
+            deletion_error = float((deletion_residual * visible).sum() / mass) if mass else None
+            normalized = error / deletion_error if mass and deletion_error > 1e-12 else None
+            if normalized is not None:
+                normalized_errors.append(normalized)
+            source_rows.append(
+                {
+                    "reference_layer": i,
+                    "visible_mass": mass,
+                    "source_rgba_mae": error,
+                    "reference_deletion_rgba_mae": deletion_error,
+                    "deletion_normalized_error": normalized,
+                }
+            )
+        result["source_preservation"] = {
+            "objects": source_rows,
+            "informative_objects": len(normalized_errors),
+            "quality": 1 / (1 + max(normalized_errors)) if normalized_errors else 1.0,
+            "scope": "Visible reference contrast only; fully occluded or zero-contrast objects provide no source-preservation evidence. Hidden completion is scored separately.",
+        }
     return result
 
 
@@ -236,6 +276,8 @@ def coverage_fidelity_reward(score):
     a product over object qualities, an absent object does not erase all credit
     for repairing other layers. The match floor must be calibrated separately;
     counting geometric matches does not establish semantic completeness.
+    Optional source preservation prevents small-object deletion being diluted
+    by full-canvas reconstruction. Neither version is approved for training.
     """
     if not 0 < score.get("min_match_quality", 0) < 1:
         raise ValueError("Coverage reward requires an explicitly positive match floor")
@@ -259,8 +301,13 @@ def coverage_fidelity_reward(score):
     within_coverage = (
         score["components"]["mean_layer_quality"] * fidelity * components["nonredundancy"]
     )
+    source_preservation = score.get("source_preservation")
+    if source_preservation is not None:
+        within_coverage *= source_preservation["quality"]
     return {
-        "version": "coverage_fidelity_v1",
+        "version": "coverage_fidelity_source_v2"
+        if source_preservation is not None
+        else "coverage_fidelity_v1",
         "value": (matched + within_coverage) / (len(objects) + 1),
         "matched_references": matched,
         "reference_count": len(objects),
