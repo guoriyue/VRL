@@ -6,6 +6,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 from pathlib import Path
 
 import torch
@@ -112,6 +113,12 @@ def audit_likelihood(root):
                     and row["candidate"] == candidate.name
                     and row["step"] == index
                 )
+                temporal_weight = (
+                    original["temporal_weight"]
+                    if config.get("temporal_rectification", False)
+                    else 1.0
+                )
+                assert math.isfinite(temporal_weight) and temporal_weight > 0
                 latent = trajectory["observations"][index].cuda()
                 action = trajectory["actions"][index].cuda()
                 timestep = trajectory["timesteps"][index].cuda()
@@ -142,6 +149,9 @@ def audit_likelihood(root):
                         torch.maximum(-advantage * ratio, -advantage * clipped_ratio).mean()
                         + advantage
                     )
+                    # Flash-GRPO weights the policy surrogate, not the KL term.
+                    # Use the actual weight recorded by this training run.
+                    policy_loss_change *= temporal_weight
                     kl = float(
                         compute_kl_divergence(
                             after.prev_sample_mean,
@@ -155,6 +165,7 @@ def audit_likelihood(root):
                     "candidate": candidate.name,
                     "step": index,
                     "advantage": original["advantage"],
+                    "temporal_weight": temporal_weight,
                     "mean_element_log_density_change": change,
                     "advantage_weighted_change": original["advantage"] * change,
                     "mean_element_gaussian_kl": kl,
@@ -178,7 +189,7 @@ def audit_likelihood(root):
         "mean_gaussian_kl": sum(row["mean_element_gaussian_kl"] for row in rows) / len(rows),
         "mean_regularized_loss_change": sum(row["regularized_loss_change"] for row in rows)
         / len(rows),
-        "loss_interpretation": "Negative change is improvement relative to the initial policy. Mirrors the configured clipped surrogate plus exact mean-element Gaussian KL, recomputed in float64; not the training kernel's float32 rounding.",
+        "loss_interpretation": "Negative change is improvement relative to the initial policy. Mirrors the clipped surrogate with recorded temporal policy weights plus unweighted exact mean-element Gaussian KL, recomputed in float64; not the training kernel's float32 rounding.",
         "audit_math": "Float64 Gaussian density calculation from actual stored float32 SDE states/actions; model remains bf16. Baseline recorded velocities passed exact pre-update replay checks during training.",
         "scope": "Recorded-trajectory optimization diagnostic only, not new-rollout reward or held-out visual improvement.",
     }
