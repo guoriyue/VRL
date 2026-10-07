@@ -2,8 +2,10 @@
 
 import hashlib
 import json
+import shutil
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
@@ -45,6 +47,7 @@ def test_multiple_updates_keep_frozen_behavior_and_reload_exactly(tmp_path, monk
     }
     (tmp_path / "plan.json").write_text(json.dumps(plan))
     torch.save({"weight": model.weight.detach().clone()}, tmp_path / "initial_adapter.pt")
+    behavior_sha256 = hashlib.sha256((tmp_path / "initial_adapter.pt").read_bytes()).hexdigest()
     condition = tmp_path / "conditions/room"
     condition.mkdir(parents=True)
     torch.save({"source_sha256": "source"}, condition / "condition.pt")
@@ -76,6 +79,7 @@ def test_multiple_updates_keep_frozen_behavior_and_reload_exactly(tmp_path, monk
                 "noise_level": 0.2,
                 "condition_case": "room",
                 "initial_adapter_seed": 7,
+                "behavior_adapter_sha256": behavior_sha256,
             },
             directory / "trajectory.pt",
         )
@@ -128,3 +132,16 @@ def test_multiple_updates_keep_frozen_behavior_and_reload_exactly(tmp_path, monk
     assert torch.count_nonzero(initial) == 0
     assert not torch.equal(first, final)
     assert torch.equal(model.weight.detach(), final)
+
+    # A density-tolerance check alone could accept a subtly different policy.
+    # Even numerically identical transitions must belong to this checkpoint.
+    trajectory_path = tmp_path / "rollouts/room/candidate00/trajectory.pt"
+    trajectory = torch.load(trajectory_path, weights_only=True)
+    trajectory["behavior_adapter_sha256"] = "different-checkpoint"
+    torch.save(trajectory, trajectory_path)
+    config = json.loads((output / "config.json").read_text())
+    shutil.rmtree(output)
+    with pytest.raises(AssertionError, match="Trajectory behavior checkpoint mismatch"):
+        runner.run_update(tmp_path, config)
+    assert not (output / "adapter.pt").exists()
+    assert torch.equal(model.weight.detach(), initial)

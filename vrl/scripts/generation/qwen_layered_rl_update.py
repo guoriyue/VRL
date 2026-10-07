@@ -58,6 +58,7 @@ def run_update(root, config):
     upstream = load_upstream(upstream_path)
     model = load_transformer(plan)
     parameters = {name: value for name, value in model.named_parameters() if value.requires_grad}
+    initial_sha256 = hashlib.sha256((root / "initial_adapter.pt").read_bytes()).hexdigest()
     initial = torch.load(root / "initial_adapter.pt", weights_only=True)
     assert initial.keys() == parameters.keys()
     with torch.no_grad():
@@ -80,6 +81,9 @@ def run_update(root, config):
             directory = root / "rollouts" / row["case"] / row["candidate"]
             assert hashlib.sha256(Path(row["view"]).read_bytes()).hexdigest() == row["view_sha256"]
             trajectory = torch.load(directory / "trajectory.pt", weights_only=True)
+            behavior_sha256 = trajectory.get("behavior_adapter_sha256")
+            if behavior_sha256 is not None:
+                assert behavior_sha256 == initial_sha256, "Trajectory behavior checkpoint mismatch"
             assert trajectory["noise_level"] == plan["noise_level"] > 0
             assert trajectory["condition_case"] == row["case"]
             assert trajectory["initial_adapter_seed"] == plan["adapter_seed"]
@@ -218,9 +222,7 @@ def run_update(root, config):
         ),
         "adapter_sha256": hashlib.sha256((output / "adapter.pt").read_bytes()).hexdigest(),
         "scores_sha256": validation["scores_sha256"],
-        "initial_adapter_sha256": hashlib.sha256(
-            (root / "initial_adapter.pt").read_bytes()
-        ).hexdigest(),
+        "initial_adapter_sha256": initial_sha256,
         "peak_cuda_bytes": torch.cuda.max_memory_allocated(),
         "logprob_convention": "Mean element Gaussian log density, matching repository Flow-GRPO; not joint log probability.",
         "scope": "Real group-reward optimizer updates on one fixed rollout batch. Quality improvement and generalization remain untested.",
