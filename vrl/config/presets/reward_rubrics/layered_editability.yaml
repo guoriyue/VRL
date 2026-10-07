@@ -1,0 +1,41 @@
+version: 1
+weights:
+  separation: 1
+  completeness: 1
+  nonredundancy: 1
+  alpha_edges: 1
+  reconstruction: 1
+  exposed_background: 1
+  sharpness: 1
+prompt: |
+  Evaluate this layered image decomposition for independent object editing.
+  The contact sheet shows Source, Recomposed, all RGBA layers back to front,
+  and composites after hiding or moving each foreground layer. Checkerboard
+  means transparency, not image content. Judge the actual pictures, not labels.
+
+  Return one JSON object with integer scores from 0 (unusable) to 4 (excellent)
+  for these exact keys, plus an evidence string describing concrete defects:
+  separation, completeness, nonredundancy, alpha_edges, reconstruction,
+  exposed_background, sharpness, evidence.
+
+  separation: Main editable objects occupy separate layers. A whole scene in
+  one layer scores 0 even when its reconstruction is perfect. More layers alone
+  are not better. Multiple unrelated objects glued together score poorly.
+  completeness: Each object is whole where it should continue behind an
+  occluder. Truncated bodies, detached parts and objects split among layers
+  score poorly. Do not reward missing difficult objects.
+  nonredundancy: Penalize duplicated objects across layers, meaningless empty
+  layers and fragments. A useful background layer is legitimate.
+  alpha_edges: Foreground transparency tightly follows the object with natural
+  antialiasing. Penalize halos, opaque rectangles and disconnected debris.
+  reconstruction: Compare with Source: preserve all visible details, geometry,
+  colors and object identity, not merely overall scene similarity.
+  exposed_background: Inspect Hide and Move views. Look for holes, residual
+  object parts, seams and implausible structure where the object used to be.
+  Missing foreground layers do not earn completion credit. The hidden truth
+  is unknown; score plausibility, not recovery of an unknowable true scene.
+  sharpness: Compare visible fine detail with Source; penalize blur, cloudy
+  texture, noise, distorted text and lost facial detail.
+
+  Use the full score range. A beautiful recomposition cannot compensate for
+  unusable individual layers. Explain which layers and edits support scores.
