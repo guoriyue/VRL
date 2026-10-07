@@ -318,6 +318,58 @@ def coverage_fidelity_reward(score):
     }
 
 
+def completeness_priority_reward(
+    score, *, min_alpha_iou, min_alpha_recall, max_normalized_source_error
+):
+    """Prioritize visible retention, then complete supports, then partial matches.
+
+    The bounded quality term still distinguishes incomplete candidates in the
+    same priority tier. Thresholds are explicit experiment inputs; alpha recall
+    tolerances are not anatomical completeness or pixel-exact guarantees.
+    """
+    if "source_preservation" not in score:
+        raise ValueError("Completeness priority requires source-preservation diagnostics")
+    if not all(np.isfinite(x) and 0 < x <= 1 for x in (min_alpha_iou, min_alpha_recall)):
+        raise ValueError("Completeness thresholds must be finite and in (0,1]")
+    if not np.isfinite(max_normalized_source_error) or max_normalized_source_error <= 0:
+        raise ValueError("Source-error threshold must be finite and positive")
+    partial = coverage_fidelity_reward(score)
+    source = score["source_preservation"]
+    preserved = sum(
+        row["deletion_normalized_error"] is not None
+        and row["deletion_normalized_error"] < max_normalized_source_error
+        for row in source["objects"]
+    )
+    complete = sum(
+        row["candidate_layer"] is not None
+        and row["alpha_iou"] >= min_alpha_iou
+        and row["reference_alpha_recall"] >= min_alpha_recall
+        for row in score["objects"]
+    )
+    base = partial["reference_count"] + 1
+    value = (
+        preserved * base**2
+        + complete * base
+        + partial["matched_references"]
+        + partial["within_coverage_quality"]
+    ) / ((source["informative_objects"] + 1) * base**2)
+    return {
+        "version": "completeness_priority_v1",
+        "value": value,
+        "preserved_visible_references": preserved,
+        "complete_support_references": complete,
+        "matched_references": partial["matched_references"],
+        "within_coverage_quality": partial["within_coverage_quality"],
+        "thresholds": {
+            "min_alpha_iou": min_alpha_iou,
+            "min_alpha_recall": min_alpha_recall,
+            "max_normalized_source_error": max_normalized_source_error,
+        },
+        "validated_for_training": False,
+        "scope": "Known-reference priority proposal; geometric support and source contrast do not prove semantic completeness.",
+    }
+
+
 def constrained_fidelity_reward(
     score, *, min_alpha_iou, min_alpha_recall, max_surplus_fraction, max_exterior_alpha=None
 ):
