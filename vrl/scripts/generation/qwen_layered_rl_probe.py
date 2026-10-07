@@ -244,14 +244,17 @@ def run_model(plan, root, upstream, *, stage):
                 parameter.copy_(saved[name])
     else:
         torch.save({name: param.detach().cpu() for name, param in trainable.items()}, adapter_path)
+    adapter_sha256 = hashlib.sha256(adapter_path.read_bytes()).hexdigest()
     (root / "model_record.json").write_text(
         json.dumps(
             {
                 "quantization": plan.get("quantization", "nf4") + " frozen base; fp32 LoRA",
                 "trainable_parameters": sum(p.numel() for p in trainable.values()),
                 "trainable_tensors": len(trainable),
-                "initial_adapter_sha256": hashlib.sha256(adapter_path.read_bytes()).hexdigest(),
+                "initial_adapter_sha256": adapter_sha256,
+                "source_optimizer_updates": plan.get("source_optimizer_updates", 0),
                 "rl_update_completed": False,
+                "scope": "This collection/probe does not update parameters; source policy may already be trained.",
             },
             indent=2,
         )
@@ -371,6 +374,7 @@ def run_model(plan, root, upstream, *, stage):
                     "noise_level": plan["noise_level"],
                     "condition_case": case["name"],
                     "initial_adapter_seed": plan["adapter_seed"],
+                    "behavior_adapter_sha256": adapter_sha256,
                     "action_dtype": "float32",
                 },
                 directory / "trajectory.pt",
