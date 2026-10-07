@@ -20,7 +20,7 @@ from PIL import Image
 from vrl.scripts.eval.layered_candidate_views import prepare_views
 
 
-def prepare_controls(source, layers, directory):
+def prepare_controls(source, layers, directory, *, foreground=None):
     """Retain known-invalid decompositions for falsifying reward behavior."""
     empty = Image.new("RGBA", source.size)
     whole = source.convert("RGBA")
@@ -40,7 +40,9 @@ def prepare_controls(source, layers, directory):
     hole = [layer.copy() for layer in layers]
     # Remove underlying pixels behind the strongest upper foreground layer.
     # This preserves the original foreground but breaks exposed lower content.
-    foreground = max(range(1, len(layers)), key=lambda i: np.array(layers[i])[..., 3].sum())
+    if foreground is None:
+        foreground = max(range(1, len(layers)), key=lambda i: np.array(layers[i])[..., 3].sum())
+    assert 0 < foreground < len(layers), "Control must hide an upper layer"
     covered = np.array(layers[foreground])[..., 3] > 127
     for index in range(foreground):
         pixels = np.array(hole[index])
@@ -121,7 +123,14 @@ def main():
             if candidate.name == "candidate00":
                 rows.extend(
                     {"case": case["name"], **row}
-                    for row in prepare_controls(source, layers, output / case["name"])
+                    for row in prepare_controls(
+                        source,
+                        layers,
+                        output / case["name"],
+                        foreground=plan.get("reward_control_foreground_layers", {}).get(
+                            case["name"]
+                        ),
+                    )
                 )
     if not rows:
         raise RuntimeError("No complete training candidates available")
