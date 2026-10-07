@@ -28,8 +28,15 @@ def audit_optimizer(root):
     assert len(group["params"]) == len(initial) and group["weight_decay"] == 0
     gradient_dot_step = 0.0
     active_gradients = []
+    parameters_without_optimizer_state = []
     step_squares = 0.0
     for name, parameter_id in zip(initial, group["params"], strict=True):
+        if parameter_id not in state["state"]:
+            assert torch.equal(initial[name], updated[name]), (
+                f"Parameter changed without optimizer state: {name}"
+            )
+            parameters_without_optimizer_state.append(name)
+            continue
         moment = state["state"][parameter_id]
         assert float(moment["step"]) == 1, "This diagnostic assumes a single AdamW step"
         gradient = moment["exp_avg"].double() / (1 - group["betas"][0])
@@ -38,12 +45,14 @@ def audit_optimizer(root):
         step_squares += float(change.square().sum())
         if "lora_B" in name:
             active_gradients.append(gradient.abs().float().flatten())
+    assert active_gradients, "No LoRA B optimizer state to audit"
     active = torch.cat(active_gradients)
     record = {
         "gradient_dot_parameter_step": gradient_dot_step,
         "descent_direction_for_recorded_surrogate": gradient_dot_step < 0,
         "parameter_step_l2": step_squares**0.5,
         "adam_epsilon": group["eps"],
+        "parameters_without_optimizer_state": parameters_without_optimizer_state,
         "lora_B_gradient_abs_median": float(active.median()),
         "lora_B_gradient_below_adam_epsilon_fraction": float(
             (active < group["eps"]).float().mean()
