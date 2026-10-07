@@ -28,6 +28,10 @@ from vrl.scripts.generation.qwen_layered_rl_probe import (
 def run_update(root, config):
     from diffusers import FlowMatchEulerDiscreteScheduler
 
+    if config.get("deterministic_algorithms", False):
+        # The launcher must supply CUBLAS_WORKSPACE_CONFIG before CUDA starts.
+        # Fail on unsupported kernels instead of silently accepting noisy replay.
+        torch.use_deterministic_algorithms(True)
     plan = json.loads((root / "plan.json").read_text())
     reward_directory = root / config.get("reward_directory", "reward_calibration")
     scores_path = reward_directory / "scores.json"
@@ -256,6 +260,7 @@ def run_update(root, config):
         "scores_sha256": validation["scores_sha256"],
         "initial_adapter_sha256": initial_sha256,
         "temporal_rectification": rectify,
+        "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
         "peak_cuda_bytes": torch.cuda.max_memory_allocated(),
         "logprob_convention": "Mean element Gaussian log density, matching repository Flow-GRPO; not joint log probability.",
         "scope": "Real group-reward optimizer updates on one fixed rollout batch. Quality improvement and generalization remain untested.",
