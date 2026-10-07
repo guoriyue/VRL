@@ -161,6 +161,26 @@ def score_layers(reference, candidate):
         "nonredundancy": 1 - surplus_fraction,
         "reconstruction_quality": 1 - reconstruction_error,
     }
+    visible_errors = [
+        row["visible_rgba_mae"] for row in rows if row["visible_rgba_mae"] is not None
+    ]
+    detail_errors = [
+        row["visible_gradient_mae"] for row in rows if row["visible_gradient_mae"] is not None
+    ]
+    # Keep the v2 diagnostic for historical comparisons. Its minimum has a
+    # plateau: an already better object can deteriorate without changing it.
+    # This proposal responds to all objects while an absent object still zeros
+    # the product. It requires counterexample and candidate calibration before use.
+    reward_components = {
+        "all_object_quality": float(np.prod([row["layer_quality"] for row in rows])),
+        "hidden_quality": components["hidden_quality"],
+        "edit_quality": components["edit_quality"],
+        "nonredundancy": components["nonredundancy"],
+        "reconstruction_quality": components["reconstruction_quality"],
+        "visible_quality": 1 - float(np.mean(visible_errors)) if visible_errors else 1.0,
+        # Signed gradient residuals can have magnitude up to two.
+        "visible_detail_quality": 1 - float(np.mean(detail_errors)) / 2 if detail_errors else 1.0,
+    }
     return {
         "diagnostic_version": 2,
         "visible_diagnostics_version": 1,
@@ -168,6 +188,12 @@ def score_layers(reference, candidate):
         "objects": rows,
         "components": components,
         "diagnostic_score": min(components.values()),
+        "reward_proposal": {
+            "version": 3,
+            "value": float(np.prod(list(reward_components.values()))),
+            "components": reward_components,
+            "validated_for_training": False,
+        },
         "reconstruction_rgba_mae": reconstruction_error,
         "scope": "Known-reference diagnostic only; candidate ranking needs visual calibration before RL use.",
     }
