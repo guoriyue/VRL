@@ -1,8 +1,9 @@
 """Diagnose editable layers against complete, known RGBA references.
 
 This is a small-fixture reward candidate, not a semantic judge for real photos.
-Reference layer zero is the background; later layers are complete objects in
-compositing order. Transparent RGB is ignored. No model pixels are repaired.
+By default reference layer zero is treated as background. Object-only stacks
+can explicitly include it in edit diagnostics. Transparent RGB is ignored.
+No model pixels are repaired.
 """
 
 from __future__ import annotations
@@ -52,8 +53,12 @@ def match_layers(similarities):
     return max(states.values(), key=lambda item: item[0])[1]
 
 
-def score_layers(reference, candidate):
-    """Return per-object, hidden-region, and counterfactual diagnostics."""
+def score_layers(reference, candidate, *, include_first_layer_edits=False):
+    """Return diagnostics, optionally editing the first object of an object-only stack.
+
+    The default preserves historical background-first reward calculations.
+    Changing the edit scope changes the reward and requires fresh calibration.
+    """
     reference = np.asarray(reference, dtype=np.float64)
     candidate = np.asarray(candidate, dtype=np.float64)
     if (
@@ -132,7 +137,7 @@ def score_layers(reference, candidate):
             "visible_rgba_mae": visible_error,
             "visible_gradient_mae": gradient_error_sum / gradient_mass if gradient_mass else None,
         }
-        if i > 0:
+        if i > 0 or include_first_layer_edits:
             for operation in ("hide", "move"):
                 truth_layers = reference.copy()
                 predicted_layers = candidate.copy()
