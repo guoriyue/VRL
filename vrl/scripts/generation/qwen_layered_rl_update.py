@@ -14,7 +14,7 @@ from pathlib import Path
 
 import torch
 
-from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+from vrl.algorithms.grpo.continuous import GRPO, FlashGRPO, FlashGRPOConfig, GRPOConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.rollouts.evaluators.types import FlowSDESignal, TrajectorySignalBatch
@@ -43,8 +43,13 @@ def run_update(root, config):
     assert all((groups == group).sum() >= 2 for group in groups.unique())
     rewards = torch.tensor([row["reward"] for row in rows], dtype=torch.float32)
     assert torch.isfinite(rewards).all()
-    algorithm = GRPO(
-        GRPOConfig(clip_ratio=config["clip_ratio"], kl_coef=config["kl_coef"], flow_kl_use_dt=True)
+    rectify = config.get("temporal_rectification", False)
+    assert isinstance(rectify, bool)
+    algorithm_class, config_class = (FlashGRPO, FlashGRPOConfig) if rectify else (GRPO, GRPOConfig)
+    algorithm = algorithm_class(
+        config_class(
+            clip_ratio=config["clip_ratio"], kl_coef=config["kl_coef"], flow_kl_use_dt=True
+        )
     )
     advantages = algorithm.compute_advantages_from_tensors(rewards, groups)
     assert torch.isfinite(advantages).all() and advantages.abs().max() > 0, "No reward signal"
@@ -73,6 +78,30 @@ def run_update(root, config):
         0 <= index < plan["steps"] for index in indices
     )
     count = len(rows) * len(indices)
+    if rectify:
+        # Only the temporal loss weighting changes. These remain the existing
+        # full-SDE trajectories, not the full single-stochastic-step Flash recipe.
+        recorded_timesteps = []
+        schedule = None
+        for row in rows:
+            trajectory = torch.load(
+                root / "rollouts" / row["case"] / row["candidate"] / "trajectory.pt",
+                map_location="cpu",
+                weights_only=True,
+            )
+            current = (trajectory["sigmas"], trajectory["timesteps"])
+            if schedule is not None:
+                assert all(torch.equal(a, b) for a, b in zip(schedule, current, strict=True)), (
+                    "Temporal normalization requires a shared recorded schedule"
+                )
+            schedule = current
+            recorded_timesteps.append(trajectory["timesteps"][indices])
+        scheduler.sigmas, scheduler.timesteps = [value.cuda() for value in schedule]
+        algorithm.prepare_update(
+            torch.cat(recorded_timesteps).cuda(),
+            scheduler=scheduler,
+            noise_level=plan["noise_level"],
+        )
     logs = []
     epoch_records = []
     for epoch in range(epochs):
@@ -168,6 +197,9 @@ def run_update(root, config):
                         ),
                         "kl_penalty": metrics.kl_penalty,
                         "active_clip_fraction": metrics.update.active_clip_fraction,
+                        "temporal_weight": float(algorithm._loss_weight(signal).mean())
+                        if rectify
+                        else 1.0,
                     }
                 )
                 print(json.dumps(logs[-1]), flush=True)
@@ -223,6 +255,7 @@ def run_update(root, config):
         "adapter_sha256": hashlib.sha256((output / "adapter.pt").read_bytes()).hexdigest(),
         "scores_sha256": validation["scores_sha256"],
         "initial_adapter_sha256": initial_sha256,
+        "temporal_rectification": rectify,
         "peak_cuda_bytes": torch.cuda.max_memory_allocated(),
         "logprob_convention": "Mean element Gaussian log density, matching repository Flow-GRPO; not joint log probability.",
         "scope": "Real group-reward optimizer updates on one fixed rollout batch. Quality improvement and generalization remain untested.",
