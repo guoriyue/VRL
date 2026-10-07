@@ -90,6 +90,25 @@ def score_layers(reference, candidate):
         for above in reference[i + 1 :]:
             transmission *= 1 - above[..., 3]
         hidden = reference[i, ..., 3] * (1 - transmission)
+        visible = reference[i, ..., 3] * transmission
+        residual = ref_features[i] - premultiplied(predicted)
+        visible_error = None
+        if visible.sum() > 0:
+            visible_error = float((np.abs(residual).mean(axis=-1) * visible).sum() / visible.sum())
+        # Compare texture to the reference, rather than rewarding edge energy:
+        # noise and oversharpening must not earn a sharpness bonus. Both pixels
+        # must be visible, so hidden content cannot contaminate this diagnostic.
+        gradient_error_sum = 0.0
+        gradient_mass = 0.0
+        for axis in (0, 1):
+            before = [slice(None), slice(None)]
+            after = [slice(None), slice(None)]
+            before[axis] = slice(None, -1)
+            after[axis] = slice(1, None)
+            support = np.minimum(visible[tuple(before)], visible[tuple(after)])
+            difference = np.abs(np.diff(residual, axis=axis)).mean(axis=-1)
+            gradient_error_sum += float((difference * support).sum())
+            gradient_mass += float(support.sum())
         hidden_error = None
         if hidden.sum() > 0:
             difference = np.abs(ref_features[i] - premultiplied(predicted)).mean(axis=-1)
@@ -102,6 +121,8 @@ def score_layers(reference, candidate):
             if predicted_index is None
             else float(similarities[i, predicted_index]),
             "hidden_rgba_mae": hidden_error,
+            "visible_rgba_mae": visible_error,
+            "visible_gradient_mae": gradient_error_sum / gradient_mass if gradient_mass else None,
         }
         if i > 0:
             for operation in ("hide", "move"):
@@ -142,6 +163,7 @@ def score_layers(reference, candidate):
     }
     return {
         "diagnostic_version": 2,
+        "visible_diagnostics_version": 1,
         "assignment": assignment,
         "objects": rows,
         "components": components,
