@@ -16,6 +16,7 @@ from vrl.scripts.generation.qwen_layered_rl_probe import (
     load_transformer,
     load_upstream,
     predict_velocity,
+    recorded_noise_levels,
     recorded_schedule,
 )
 
@@ -104,7 +105,7 @@ def audit_likelihood(root):
         }
         for candidate in sorted((root / "rollouts" / case["name"]).glob("candidate*")):
             trajectory = torch.load(candidate / "trajectory.pt", weights_only=True)
-            assert trajectory["noise_level"] == plan["noise_level"]
+            noise_levels = recorded_noise_levels(trajectory, plan)
             sigmas, times, absolute_indices = recorded_schedule(trajectory)
             scheduler.sigmas = sigmas.cuda()
             scheduler.timesteps = times.cuda()
@@ -129,7 +130,7 @@ def audit_likelihood(root):
                     velocity = predict_velocity(model, latent, timestep, condition, upstream)
                     common = dict(
                         prev_sample=action,
-                        noise_level=plan["noise_level"],
+                        noise_level=noise_levels[index],
                         step_index=int(absolute_indices[index]),
                         math_dtype=torch.float64,
                         return_dt=True,

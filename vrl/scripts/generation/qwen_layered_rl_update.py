@@ -22,6 +22,7 @@ from vrl.scripts.generation.qwen_layered_rl_probe import (
     load_transformer,
     load_upstream,
     predict_velocity,
+    recorded_noise_levels,
     recorded_schedule,
 )
 
@@ -87,6 +88,7 @@ def run_update(root, config):
         # Only the temporal loss weighting changes. These remain the existing
         # full-SDE trajectories, not the full single-stochastic-step Flash recipe.
         recorded_timesteps = []
+        selected_noise = set()
         schedule = None
         for row in rows:
             trajectory = torch.load(
@@ -95,6 +97,8 @@ def run_update(root, config):
                 weights_only=True,
             )
             sigmas, times, _ = recorded_schedule(trajectory)
+            noise_levels = recorded_noise_levels(trajectory, plan)
+            selected_noise.update(noise_levels[index] for index in indices)
             current = (sigmas, times)
             if schedule is not None:
                 assert all(torch.equal(a, b) for a, b in zip(schedule, current, strict=True)), (
@@ -103,10 +107,12 @@ def run_update(root, config):
             schedule = current
             recorded_timesteps.append(trajectory["timesteps"][indices])
         scheduler.sigmas, scheduler.timesteps = [value.cuda() for value in schedule]
+        if len(selected_noise) != 1:
+            raise ValueError("Temporal rectification requires equal noise at selected steps")
         algorithm.prepare_update(
             torch.cat(recorded_timesteps).cuda(),
             scheduler=scheduler,
-            noise_level=plan["noise_level"],
+            noise_level=selected_noise.pop(),
         )
     logs = []
     epoch_records = []
@@ -119,7 +125,7 @@ def run_update(root, config):
             behavior_sha256 = trajectory.get("behavior_adapter_sha256")
             if behavior_sha256 is not None:
                 assert behavior_sha256 == initial_sha256, "Trajectory behavior checkpoint mismatch"
-            assert trajectory["noise_level"] == plan["noise_level"] > 0
+            noise_levels = recorded_noise_levels(trajectory, plan)
             assert trajectory["condition_case"] == row["case"]
             assert trajectory["initial_adapter_seed"] == plan["adapter_seed"]
             condition = torch.load(
@@ -146,7 +152,7 @@ def run_update(root, config):
                     timestep[None],
                     latent,
                     prev_sample=action,
-                    noise_level=plan["noise_level"],
+                    noise_level=noise_levels[index],
                     step_index=absolute_index,
                     return_dt=True,
                 )
@@ -161,7 +167,7 @@ def run_update(root, config):
                         timestep[None],
                         latent,
                         prev_sample=action,
-                        noise_level=plan["noise_level"],
+                        noise_level=noise_levels[index],
                         step_index=absolute_index,
                         return_dt=True,
                     )
@@ -198,6 +204,7 @@ def run_update(root, config):
                         "candidate": row["candidate"],
                         "step": index,
                         "absolute_step": absolute_index,
+                        "noise_level": noise_levels[index],
                         "reward": row["reward"],
                         "advantage": float(advantages[row_index]),
                         "loss": float(loss.detach()),

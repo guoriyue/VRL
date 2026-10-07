@@ -14,6 +14,7 @@ import gc
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 
@@ -22,6 +23,27 @@ import torch
 from PIL import Image
 
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
+
+
+def noise_schedule(spec, count):
+    """Resolve and validate positive stochastic noise for every recorded action."""
+    values = spec.get("noise_levels", [spec["noise_level"]] * count)
+    if len(values) != count or any(
+        not math.isfinite(value) or not 0 < value <= 1 for value in values
+    ):
+        raise ValueError("Noise schedule requires one finite positive value <= 1 per step")
+    return [float(value) for value in values]
+
+
+def recorded_noise_levels(trajectory, plan):
+    """Bind replay noise to the recorded behavior and the planned absolute steps."""
+    count = len(trajectory["timesteps"])
+    actual = noise_schedule(trajectory, count)
+    start = trajectory.get("schedule_start_index", 0)
+    expected = noise_schedule(plan, plan.get("steps", count))[start : start + count]
+    if actual != expected:
+        raise ValueError("Recorded noise schedule disagrees with collection plan")
+    return actual
 
 
 def recorded_schedule(trajectory):
@@ -260,6 +282,7 @@ def compare_precision(plan, root, upstream):
 def run_model(plan, root, upstream, *, stage):
     from diffusers import AutoencoderKLQwenImage, FlowMatchEulerDiscreteScheduler
 
+    noise_levels = noise_schedule(plan, plan["steps"])
     model = load_transformer(plan)
     trainable = {name: param for name, param in model.named_parameters() if param.requires_grad}
     adapter_path = root / "initial_adapter.pt"
@@ -337,7 +360,7 @@ def run_model(plan, root, upstream, *, stage):
                         timestep[None],
                         latent,
                         generator=generator,
-                        noise_level=plan["noise_level"],
+                        noise_level=noise_levels[index],
                         step_index=index,
                     )
                 if stage == "probe":
@@ -350,7 +373,7 @@ def run_model(plan, root, upstream, *, stage):
                         timestep[None],
                         latent,
                         prev_sample=transition.prev_sample,
-                        noise_level=plan["noise_level"],
+                        noise_level=noise_levels[index],
                         step_index=index,
                     )
                     parity = float((replay.log_prob.detach() - transition.log_prob).abs().max())
@@ -400,6 +423,7 @@ def run_model(plan, root, upstream, *, stage):
                     "timesteps": scheduler.timesteps.cpu(),
                     "seed": seed,
                     "noise_level": plan["noise_level"],
+                    "noise_levels": noise_levels,
                     "condition_case": case["name"],
                     "initial_adapter_seed": plan["adapter_seed"],
                     "behavior_adapter_sha256": adapter_sha256,
