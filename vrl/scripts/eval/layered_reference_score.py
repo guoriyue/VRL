@@ -53,12 +53,16 @@ def match_layers(similarities):
     return max(states.values(), key=lambda item: item[0])[1]
 
 
-def score_layers(reference, candidate, *, include_first_layer_edits=False):
+def score_layers(reference, candidate, *, include_first_layer_edits=False, min_match_quality=0.0):
     """Return diagnostics, optionally editing the first object of an object-only stack.
 
     The default preserves historical background-first reward calculations.
     Changing the edit scope changes the reward and requires fresh calibration.
+    A positive match floor lets weak geometric/color overlaps remain unmatched.
+    It is an experiment setting, not a semantic object detector.
     """
+    if not np.isfinite(min_match_quality) or not 0 <= min_match_quality < 1:
+        raise ValueError("Minimum match quality must be finite and in [0,1)")
     reference = np.asarray(reference, dtype=np.float64)
     candidate = np.asarray(candidate, dtype=np.float64)
     if (
@@ -83,7 +87,7 @@ def score_layers(reference, candidate, *, include_first_layer_edits=False):
             iou = np.minimum(ref[..., 3], pred[..., 3]).sum() / union.sum()
             error = np.abs(ref_features[i] - pred_features[j]).mean(axis=-1)
             similarities[i, j] = iou * (1 - (error * union).sum() / union.sum())
-    assignment = match_layers(similarities)
+    assignment = match_layers(similarities - min_match_quality)
     blank = np.zeros_like(reference[0])
     rows = []
     hidden_errors = []
@@ -202,7 +206,7 @@ def score_layers(reference, candidate, *, include_first_layer_edits=False):
         # Signed gradient residuals can have magnitude up to two.
         "visible_detail_quality": 1 - float(np.mean(detail_errors)) / 2 if detail_errors else 1.0,
     }
-    return {
+    result = {
         "diagnostic_version": 2,
         "visible_diagnostics_version": 1,
         "assignment": assignment,
@@ -219,6 +223,51 @@ def score_layers(reference, candidate, *, include_first_layer_edits=False):
         "exterior_alpha_mean": exterior_alpha,
         "exterior_pixel_count": exterior_pixels,
         "scope": "Known-reference diagnostic only; candidate ranking needs visual calibration before RL use.",
+    }
+    if min_match_quality:
+        result["min_match_quality"] = min_match_quality
+    return result
+
+
+def coverage_fidelity_reward(score):
+    """Keep credit within incomplete candidates after rejecting weak matches.
+
+    Matched-reference count takes priority over a bounded fidelity term. Unlike
+    a product over object qualities, an absent object does not erase all credit
+    for repairing other layers. The match floor must be calibrated separately;
+    counting geometric matches does not establish semantic completeness.
+    """
+    if not 0 < score.get("min_match_quality", 0) < 1:
+        raise ValueError("Coverage reward requires an explicitly positive match floor")
+    objects = score["objects"]
+    matched = sum(row["candidate_layer"] is not None for row in objects)
+    components = score["reward_proposal"]["components"]
+    fidelity = float(
+        np.mean(
+            [
+                components[name]
+                for name in (
+                    "visible_quality",
+                    "visible_detail_quality",
+                    "hidden_quality",
+                    "edit_quality",
+                    "reconstruction_quality",
+                )
+            ]
+        )
+    )
+    within_coverage = (
+        score["components"]["mean_layer_quality"] * fidelity * components["nonredundancy"]
+    )
+    return {
+        "version": "coverage_fidelity_v1",
+        "value": (matched + within_coverage) / (len(objects) + 1),
+        "matched_references": matched,
+        "reference_count": len(objects),
+        "within_coverage_quality": within_coverage,
+        "min_match_quality": score["min_match_quality"],
+        "validated_for_training": False,
+        "scope": "Known-reference proposal; a calibrated geometric match is not semantic proof.",
     }
 
 
