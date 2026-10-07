@@ -74,6 +74,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument(
         "--rubric",
         type=Path,
@@ -84,8 +86,8 @@ def main():
     root = args.root.resolve()
     plan = json.loads((root / "plan.json").read_text())
     rubric = yaml.safe_load(args.rubric.read_text())
-    output = root / "reward_calibration"
-    output.mkdir(exist_ok=True)
+    output = args.output_dir.resolve() if args.output_dir else root / "reward_calibration"
+    output.mkdir(parents=True, exist_ok=True)
     rows = []
     for case in plan["cases"]:
         if case["split"] != "train":
@@ -119,10 +121,12 @@ def main():
     result_path = output / "scores.json"
     if result_path.exists():
         raise FileExistsError(result_path)
-    from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+    from transformers import AutoModelForImageTextToText, AutoProcessor
 
     record = {
         "model": str(args.model.resolve()),
+        "max_new_tokens": args.max_new_tokens,
+        "enable_thinking": False,
         "rubric_sha256": hashlib.sha256(args.rubric.read_bytes()).hexdigest(),
         "rubric": rubric,
         "status": "running",
@@ -133,7 +137,7 @@ def main():
     with Path("/tmp/vrl-preservation-gpu0.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         model = (
-            Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            AutoModelForImageTextToText.from_pretrained(
                 args.model, dtype=torch.bfloat16, attn_implementation="sdpa", local_files_only=True
             )
             .eval()
@@ -151,11 +155,13 @@ def main():
                 }
             ]
             prompt = processor.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
+                messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
             )
             inputs = processor(text=[prompt], images=[view], return_tensors="pt").to("cuda")
             with torch.inference_mode():
-                tokens = model.generate(**inputs, do_sample=False, max_new_tokens=512)
+                tokens = model.generate(
+                    **inputs, do_sample=False, max_new_tokens=args.max_new_tokens
+                )
             answer = processor.batch_decode(
                 tokens[:, inputs.input_ids.shape[1] :], skip_special_tokens=True
             )[0]

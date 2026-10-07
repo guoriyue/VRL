@@ -29,8 +29,9 @@ def run_update(root, config):
     from diffusers import FlowMatchEulerDiscreteScheduler
 
     plan = json.loads((root / "plan.json").read_text())
-    scores_path = root / "reward_calibration/scores.json"
-    validation = json.loads((root / "reward_calibration/validation.json").read_text())
+    reward_directory = root / config.get("reward_directory", "reward_calibration")
+    scores_path = reward_directory / "scores.json"
+    validation = json.loads((reward_directory / "validation.json").read_text())
     assert validation["usable_for_small_update"] is True
     assert validation["scores_sha256"] == hashlib.sha256(scores_path.read_bytes()).hexdigest()
     scored = json.loads(scores_path.read_text())
