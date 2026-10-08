@@ -69,3 +69,40 @@ def test_match_floor_requires_an_explicit_valid_setting():
     for floor in [-0.1, 1, float("nan")]:
         with pytest.raises(ValueError, match="Minimum match quality"):
             score_layers(truth, truth, min_match_quality=floor)
+
+
+def test_complete_parts_cannot_compensate_for_merging_two_objects():
+    truth = np.zeros((4, 32, 40, 4))
+    truth[0] = (0.8, 0.7, 0.6, 1)
+    truth[1, 12:24, 8:24] = (0.5, 0.3, 0.1, 1)
+    truth[1, 24:28, 8:10] = (0.5, 0.3, 0.1, 1)
+    truth[1, 24:28, 22:24] = (0.5, 0.3, 0.1, 1)
+    truth[2, 6:12, 14:18] = (0.9, 0.9, 0.2, 1)
+    truth[3, 12:28, 28:36] = (0.2, 0.6, 0.4, 1)
+    footless = truth.copy()
+    footless[1, 24:] = 0
+    merged = truth.copy()
+    merged[1] = np.where(truth[2, ..., 3:] == 1, truth[2], truth[1])
+    merged[2] = 0
+    separate_score = score_layers(truth, footless, min_match_quality=0.1)
+    merged_score = score_layers(truth, merged, min_match_quality=0.1)
+    separate = coverage_fidelity_reward(separate_score)
+    coupled = coverage_fidelity_reward(merged_score)
+    # Reproduce the failure of an unrestricted part bonus before checking repair.
+    assert 0.75 * coupled["value"] + 0.25 > 0.75 * separate["value"]
+    repaired_separate = coverage_fidelity_reward(separate_score, part_quality=0)
+    repaired_merged = coverage_fidelity_reward(merged_score, part_quality=1)
+    assert repaired_separate["value"] > repaired_merged["value"]
+    assert (
+        coverage_fidelity_reward(separate_score, part_quality=1)["value"]
+        > repaired_separate["value"]
+    )
+    assert (
+        coverage_fidelity_reward(separate_score, part_quality=1, part_weight=0)["value"]
+        == separate["value"]
+    )
+    for invalid in (-0.1, 1.1, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="Part quality"):
+            coverage_fidelity_reward(separate_score, part_quality=invalid)
+        with pytest.raises(ValueError, match="Part weight"):
+            coverage_fidelity_reward(separate_score, part_quality=0.5, part_weight=invalid)

@@ -269,7 +269,7 @@ def score_layers(
     return result
 
 
-def coverage_fidelity_reward(score):
+def coverage_fidelity_reward(score, *, part_quality=None, part_weight=0.25):
     """Keep credit within incomplete candidates after rejecting weak matches.
 
     Matched-reference count takes priority over a bounded fidelity term. Unlike
@@ -277,10 +277,17 @@ def coverage_fidelity_reward(score):
     for repairing other layers. The match floor must be calibrated separately;
     counting geometric matches does not establish semantic completeness.
     Optional source preservation prevents small-object deletion being diluted
-    by full-canvas reconstruction. Neither version is approved for training.
+    by full-canvas reconstruction. Optional part quality shares the bounded
+    within-coverage budget; it cannot compensate for losing a matched object.
+    Without part quality, historical calculations are unchanged. None of these
+    proposals is automatically approved for training.
     """
     if not 0 < score.get("min_match_quality", 0) < 1:
         raise ValueError("Coverage reward requires an explicitly positive match floor")
+    if not np.isfinite(part_weight) or not 0 <= part_weight <= 1:
+        raise ValueError("Part weight must be finite and in [0,1]")
+    if part_quality is not None and (not np.isfinite(part_quality) or not 0 <= part_quality <= 1):
+        raise ValueError("Part quality must be finite and in [0,1]")
     objects = score["objects"]
     matched = sum(row["candidate_layer"] is not None for row in objects)
     components = score["reward_proposal"]["components"]
@@ -304,7 +311,7 @@ def coverage_fidelity_reward(score):
     source_preservation = score.get("source_preservation")
     if source_preservation is not None:
         within_coverage *= source_preservation["quality"]
-    return {
+    result = {
         "version": "coverage_fidelity_source_v2"
         if source_preservation is not None
         else "coverage_fidelity_v1",
@@ -316,6 +323,16 @@ def coverage_fidelity_reward(score):
         "validated_for_training": False,
         "scope": "Known-reference proposal; a calibrated geometric match is not semantic proof.",
     }
+    if part_quality is not None:
+        combined = (1 - part_weight) * within_coverage + part_weight * part_quality
+        result.update(
+            version="coverage_bounded_parts_v1",
+            value=(matched + combined) / (len(objects) + 1),
+            part_quality=float(part_quality),
+            part_weight=float(part_weight),
+            combined_within_coverage_quality=float(combined),
+        )
+    return result
 
 
 def completeness_priority_reward(
