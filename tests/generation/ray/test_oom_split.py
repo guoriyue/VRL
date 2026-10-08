@@ -498,24 +498,6 @@ async def test_pipelined_oom_on_one_engine_retries_the_request_per_batch(
 
 @pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_pipelined_requires_a_finalizer_at_executor_construction(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, _fault_worker(), batch=2) as run:
-        engines = run.runtime._session.executor.engines
-
-        with pytest.raises(ValueError, match="requires at least one finalizer"):
-            RayGenerationExecutor(
-                engines=list(engines),
-                gatherer=run.resolved.family.new_gatherer(),
-                actor_dispatcher=RayActorDispatcher(tuple(e.engine_id for e in engines)),
-                generation_stall_timeout_s=30.0,
-                pipelined=True,
-            )
-
-
-@pytest.mark.slow_test
-@pytest.mark.asyncio
 async def test_pipelined_stale_slot_is_a_graceful_discard_that_frees_the_engine(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:

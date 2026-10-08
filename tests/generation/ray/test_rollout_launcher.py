@@ -24,18 +24,12 @@ from vrl.generation.types import GenerationOutput
 pytestmark = pytest.mark.slow_test
 
 
-@pytest.mark.parametrize("section", [False, 0, "", []])
-def test_worker_section_does_not_treat_invalid_values_as_absent(section) -> None:
-    from pydantic import ValidationError
+def test_worker_section_absent_means_its_defaults() -> None:
+    from vrl.config.schema import RolloutRuntimeSection
 
-    with pytest.raises(ValidationError):
-        RolloutWorkerConfig.from_public_section(section)
-
-
-def test_worker_section_defaults_only_for_absent_or_empty_mapping() -> None:
     assert RolloutWorkerConfig.from_public_section(
         None
-    ) == RolloutWorkerConfig.from_public_section({})
+    ) == RolloutWorkerConfig.from_public_section(RolloutRuntimeSection())
 
 
 @contextlib.asynccontextmanager
@@ -262,7 +256,7 @@ def test_cross_node_validation_preserves_driver_node_query_failure(monkeypatch) 
         raise failure
 
     monkeypatch.setattr(launcher, "current_node_ip", fail)
-    config = SimpleNamespace(resources=SimpleNamespace(rollout_devices=(0,), cross_node=True))
+    resources = SimpleNamespace(rollout_devices=(0,), cross_node=True)
     with pytest.raises(RuntimeError, match="driver node query failed") as caught:
-        launcher.RayGenerationLauncher._validate_rank_gpu_ids(config, [], expected_gpu_ids=())
+        launcher.RayGenerationLauncher._validate_rank_gpu_ids(resources, [])
     assert caught.value is failure

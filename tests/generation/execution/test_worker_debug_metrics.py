@@ -47,4 +47,3 @@ def test_disabled_debug_does_not_read_batch_properties() -> None:
 
     worker = object.__new__(GenerationWorkerCore)
     assert worker._rank_metrics(runtime_debug=False, batch_output=UnreadableOutput()) == {}
-    assert worker._rank_metrics(runtime_debug=True, batch_output=None) == {}

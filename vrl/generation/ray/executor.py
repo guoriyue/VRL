@@ -44,7 +44,6 @@ class RayGenerationExecutor:
         *,
         actor_dispatcher: RayActorDispatcher,
         generation_stall_timeout_s: float,
-        pipelined: bool = False,
         finalizers: Sequence[RayActorHandle] = (),
     ) -> None:
         if not engines:
@@ -56,18 +55,15 @@ class RayGenerationExecutor:
             generation_stall_timeout_s,
             name="generation_stall_timeout_s",
         )
-        self.pipelined = bool(pipelined)
         # The per-request path stages batch payloads in the object store and
         # merges them on a finalizer actor, never on the rank or the driver.
         # Finalizers get the same admission as engines: one slot each, FIFO
         # waiters, and a call's deadline starts only once it holds a slot, so
         # a request queued behind a slow merge does not burn its budget waiting.
         self.finalizers = tuple(finalizers)
-        if self.pipelined and not self.finalizers:
-            raise ValueError(
-                "pipelined Ray generation requires at least one finalizer actor "
-                "to merge staged batch payloads",
-            )
+        # Per-request (pipelined) execution exists exactly when the fleet was
+        # launched with finalizer actors to merge the staged batch payloads.
+        self.pipelined = bool(self.finalizers)
         self._finalizer_dispatcher = (
             RayActorDispatcher(tuple(finalizer.worker_id for finalizer in self.finalizers))
             if self.finalizers

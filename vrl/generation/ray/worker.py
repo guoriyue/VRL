@@ -31,11 +31,6 @@ class RayGenerationWorker:
         worker_id: str,
         launch_inputs: RayGenerationLaunchInputs,
     ) -> None:
-        if not isinstance(launch_inputs, RayGenerationLaunchInputs):
-            raise TypeError(
-                "launch_inputs must be RayGenerationLaunchInputs, "
-                f"got {type(launch_inputs).__name__}",
-            )
         # Batch results and trajectories leave this process as byte views of
         # their pinned host buffers instead of pickled storages, so a request's
         # return does not stall the actor for a copy of every trajectory tensor.
@@ -125,14 +120,12 @@ class RayGenerationWorker:
                 worker_id=self.core.worker_id,
                 batch_keys=(),
                 batch_refs=(),
-                policy_version=request.policy_version,
             )
         return StagedBatchRefs(
             request_id=request_id,
             worker_id=self.core.worker_id,
             batch_keys=tuple(batch.batch_key for batch in engine_plan.sample_batches),
             batch_refs=tuple(staged),
-            policy_version=request.policy_version,
         )
 
 

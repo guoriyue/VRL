@@ -81,8 +81,6 @@ class BundleLayout:
     bundle_gpu_ids: tuple[int | None, ...]
     rollout_bundle_indices: tuple[int, ...]
     reward_bundle_indices: tuple[int, ...]
-    # Ranks per rollout engine; consecutive rollout bundles group per engine.
-    rollout_gpus_per_engine: int = 1
 
     @property
     def total_bundles(self) -> int:
@@ -144,7 +142,6 @@ class BundleLayout:
             bundle_gpu_ids=tuple(bundle_gpu_ids),
             rollout_bundle_indices=rollout,
             reward_bundle_indices=reward,
-            rollout_gpus_per_engine=resolved.rollout_gpus_per_engine,
         )
 
 
@@ -340,8 +337,7 @@ class RolePlacement:
         """This role's bundles split into consecutive per-engine groups.
 
         The bundles-to-engines rule lives with the type that owns the bundles, so
-        the fleet the launcher actually starts cannot disagree with the plan
-        ``BundleLayout`` made (it delegates here).
+        the fleet the launcher starts cannot disagree with the placement.
         """
 
         if len(self.bundle_indices) % gpus_per_engine:

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from torch.distributed import ProcessGroup
 
-from vrl.generation.execution.memory_parking import GenerationWorkerParking
+from vrl.generation.execution.memory_parking import GenerationWorkerParking, executor_device
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.rank_group import (
     RankGroupSpec,
@@ -52,10 +52,6 @@ class GenerationWorkerCore:
         rank_group: RankGroupSpec | None = None,
     ) -> None:
         self.worker_id = worker_id
-        if rank_group is not None and not isinstance(rank_group, RankGroupSpec):
-            raise TypeError(
-                f"rank_group must be a RankGroupSpec or None, got {type(rank_group).__name__}",
-            )
         # None for single-rank engines. A spec makes this rank join its
         # engine's process group around the model lifetime (load -> release).
         self.rank_group_spec = rank_group
@@ -146,13 +142,7 @@ class GenerationWorkerCore:
         separate cold-eviction path that drops the executor entirely.
         """
 
-        restore_device = (
-            self._executor_device(self.executor) if self.executor is not None else "cpu"
-        )
-        return self._memory_parking.sleep(
-            self.executor,
-            restore_device=restore_device,
-        )
+        return self._memory_parking.sleep(self.executor)
 
     def wake(self) -> None:
         """Restore a slept model from host RAM onto its GPU (no disk reload).
@@ -196,7 +186,7 @@ class GenerationWorkerCore:
                 )
                 model.install_trainable_state(policy_version, trainable_state)
                 self._uses_versioned_slots = True
-            elif trainable_state is not None:
+            else:
                 model = require_runtime_model(
                     policy_obj,
                     owner=f"{type(self.executor).__name__}.model",
@@ -237,7 +227,6 @@ class GenerationWorkerCore:
                     worker_id=self.worker_id,
                     batch=batch,
                     output=None,
-                    rank_metrics=self._rank_metrics(runtime_debug=runtime_debug),
                     policy_version=expected_version,
                     error=(f"trainable-state slot evicted for policy_version={expected_version}"),
                     stale_slot=True,
@@ -248,7 +237,6 @@ class GenerationWorkerCore:
                 worker_id=self.worker_id,
                 batch=batch,
                 output=None,
-                rank_metrics=self._rank_metrics(runtime_debug=runtime_debug),
                 policy_version=self._policy_version,
                 error=(
                     "policy_version mismatch: "
@@ -285,7 +273,6 @@ class GenerationWorkerCore:
                 worker_id=self.worker_id,
                 batch=batch,
                 output=None,
-                rank_metrics=self._rank_metrics(runtime_debug=runtime_debug),
                 policy_version=result_version,
                 error=str(exc),
             )
@@ -391,7 +378,7 @@ class GenerationWorkerCore:
             f"policy{self._policy_version}_batch{batch.prompt_index}_{batch.sample_start}"
         )
         try:
-            device = self._executor_device(self.executor)
+            device = executor_device(self.executor)
             with (
                 capture_torch_trace(
                     self._profiler_config,
@@ -408,14 +395,11 @@ class GenerationWorkerCore:
             raise
 
     def _rank_metrics(
-        self,
-        *,
-        runtime_debug: bool,
-        batch_output: Any | None = None,
+        self, *, runtime_debug: bool, batch_output: Any
     ) -> dict[str, dict[str, Any]]:
         """This rank's runtime-debug diagnostics, keyed by its worker id."""
 
-        if not runtime_debug or batch_output is None:
+        if not runtime_debug:
             return {}
 
         def counter_value(value: Any) -> Any:
@@ -574,17 +558,6 @@ class GenerationWorkerCore:
                 "forward_batch(...) and merge_generation_batches(...)",
             )
         return built
-
-    @staticmethod
-    def _executor_device(executor: Any) -> Any:
-        """Use the model device, or discover a default without hiding probe errors."""
-        policy = getattr(executor, "model", None)
-        device = getattr(policy, "device", None)
-        if device is not None:
-            return device
-        import torch
-
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 __all__ = ["GenerationWorkerCore"]

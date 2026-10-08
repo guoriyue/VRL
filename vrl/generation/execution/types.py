@@ -55,11 +55,8 @@ class WorkerMemoryParkingSnapshot:
     loaded_gpu_used_bytes: int
     residual_gpu_used_bytes: int
     residual_bytes_limit: int = 0
-    measurement_scope: Literal["process"] = "process"
 
     def validate(self) -> None:
-        if self.measurement_scope != "process":
-            raise ValueError("parking evidence must measure process-attributed memory")
         if not self.worker_id:
             raise ValueError("parking snapshot worker_id must be non-empty")
         if self.backend not in get_args(ParkingBackend):
@@ -193,7 +190,7 @@ class GenerationBatchResult:
         cls,
         rank_results: list[Any],
         *,
-        expected_worker_ids: Sequence[str] | None = None,
+        expected_worker_ids: Sequence[str],
     ) -> GenerationBatchResult:
         """Fold one generation batch's per-rank results into the result the driver acts on.
 
@@ -258,7 +255,6 @@ class StagedBatchRefs:
     worker_id: str
     batch_keys: tuple[str, ...]
     batch_refs: tuple[Any, ...]
-    policy_version: int | None = None
 
     def __post_init__(self) -> None:
         if len(self.batch_keys) != len(self.batch_refs):

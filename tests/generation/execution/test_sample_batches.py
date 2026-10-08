@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 
@@ -70,8 +72,8 @@ def test_engine_plan_rejects_invalid_explicit_width(width):
         inputs=["p"],
         samples_per_prompt=2,
     )
-    with pytest.raises(ValueError, match="max_samples_per_batch must be a positive integer"):
-        EnginePlan.from_request(request, max_samples_per_batch=width)
+    with pytest.raises(ValueError, match="samples_per_generation_batch must be >= 1"):
+        EnginePlan.from_request(replace(request, samples_per_generation_batch=width))
 
 
 @pytest.mark.parametrize("field", ["prompt_index", "sample_start", "sample_count"])

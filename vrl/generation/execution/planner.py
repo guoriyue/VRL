@@ -15,28 +15,19 @@ class EnginePlan:
     sample_batches: tuple[GenerationSampleBatch, ...]
 
     @classmethod
-    def from_request(
-        cls,
-        request: GenerationRequest,
-        *,
-        max_samples_per_batch: int | None = None,
-    ) -> EnginePlan:
+    def from_request(cls, request: GenerationRequest) -> EnginePlan:
         """Plan the batches consumed by direct and distributed executors.
 
-        THE single batch-width resolution: explicit ``max_samples_per_batch``
-        argument, then the request's ``samples_per_generation_batch``,
-        then ``samples_per_prompt`` (the whole group in one batch). Every
-        planner — Ray placement and in-process alike — goes through this one
-        fallback.
+        THE single batch-width resolution: the request's
+        ``samples_per_generation_batch``, else ``samples_per_prompt`` (the whole
+        group in one batch). Every planner, Ray placement and in-process alike,
+        goes through this one fallback.
         """
 
         from vrl.utils.profiling import profile_range
 
-        if max_samples_per_batch is not None:
-            batch_size = max_samples_per_batch
-        else:
-            raw = request.samples_per_generation_batch
-            batch_size = raw if raw is not None else request.samples_per_prompt
+        raw = request.samples_per_generation_batch
+        batch_size = raw if raw is not None else request.samples_per_prompt
         with profile_range("engine.plan"):
             return cls(
                 sample_batches=GenerationSampleBatch.plan_generation_batches(

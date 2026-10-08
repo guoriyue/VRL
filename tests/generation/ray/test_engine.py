@@ -296,8 +296,15 @@ def test_generation_combiner_prioritizes_terminal_errors_over_retry_and_discard(
     oom = GenerationBatchResult("r", "r0", batch, None, error="CUDA out of memory")
     stale = GenerationBatchResult("r", "r1", batch, None, error="evicted", stale_slot=True)
     terminal = GenerationBatchResult("r", "r2", batch, None, error="decode failed")
-    assert GenerationBatchResult.from_rank_results([oom, stale, terminal]) is terminal
-    assert GenerationBatchResult.from_rank_results([oom, stale]) is stale
+    ranks = ["r0", "r1", "r2"]
+    assert (
+        GenerationBatchResult.from_rank_results([oom, stale, terminal], expected_worker_ids=ranks)
+        is terminal
+    )
+    assert (
+        GenerationBatchResult.from_rank_results([oom, stale], expected_worker_ids=ranks[:2])
+        is stale
+    )
 
 
 @pytest.mark.asyncio
@@ -329,10 +336,12 @@ def test_generation_combiner_rejects_rank_identity_disagreement(field):
     values = {"request_id": "other", "batch": GenerationSampleBatch(0, 1, 1), "policy_version": 2}
     other = replace(good, worker_id="r1", **{field: values[field]})
     with pytest.raises(RuntimeError, match="engine ranks returned different"):
-        GenerationBatchResult.from_rank_results([good, other])
+        GenerationBatchResult.from_rank_results([good, other], expected_worker_ids=["r0", "r1"])
     good = replace(good, rank_metrics={"r0": {"peak_memory_mb": 10}})
     other = replace(good, worker_id="r1", rank_metrics={"r1": {"peak_memory_mb": 20}})
-    result = GenerationBatchResult.from_rank_results([good, other])
+    result = GenerationBatchResult.from_rank_results(
+        [good, other], expected_worker_ids=["r0", "r1"]
+    )
     assert result.worker_id == good.worker_id
     assert result.output is good.output
     assert result.rank_metrics == {"r0": {"peak_memory_mb": 10}, "r1": {"peak_memory_mb": 20}}

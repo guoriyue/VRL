@@ -22,6 +22,7 @@ from vrl.ray.actor_group import RayActorGroup, RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.dependencies import current_node_ip
 from vrl.ray.placement import RolePlacement, require_actor_gpu_ids
+from vrl.ray.resources import ResolvedDistributedResources
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +46,11 @@ class RayGenerationLauncher:
 
     @staticmethod
     def _validate_rank_gpu_ids(
-        config: RayGenerationConfig,
+        resources: ResolvedDistributedResources,
         metadata: Sequence[RayActorHandle],
-        *,
-        expected_gpu_ids: tuple[int, ...],
     ) -> None:
         """Validate launched rank actors against the resolved rollout placement."""
 
-        resources = config.resources
         if not resources.rollout_devices:
             return
 
@@ -60,11 +58,10 @@ class RayGenerationLauncher:
         if resources.cross_node:
             driver_node_ip = current_node_ip()
 
-        # The placement owner supplies the role's expected GPUs (empty under
-        # cross-node, where the node-aware check applies instead).
+        # Under cross-node the node-aware check applies and the ids are ignored.
         require_actor_gpu_ids(
             metadata,
-            expected_gpu_ids=expected_gpu_ids,
+            expected_gpu_ids=resources.rollout_devices,
             role="generation",
             cross_node=resources.cross_node,
             driver_node_ip=driver_node_ip,
@@ -97,7 +94,6 @@ class RayGenerationLauncher:
         engine_count = len(placement.engine_bundle_groups(gpus_per_engine))
 
         placement_group = placement.placement_group
-        expected_gpu_ids = placement.expected_gpu_ids
 
         engine_ids = [f"rollout-{engine_idx}" for engine_idx in range(engine_count)]
         rank_ids = [
@@ -144,11 +140,7 @@ class RayGenerationLauncher:
                 bundle_indices=bundle_indices,
                 startup_method="load_policy",
             )
-            self._validate_rank_gpu_ids(
-                config,
-                actor_group.handles,
-                expected_gpu_ids=expected_gpu_ids,
-            )
+            self._validate_rank_gpu_ids(config.resources, actor_group.handles)
             engines = [
                 RayGenerationEngine(
                     engine_id,
@@ -189,7 +181,6 @@ class RayGenerationLauncher:
                 launch_inputs.gatherer,
                 actor_dispatcher=actor_dispatcher,
                 generation_stall_timeout_s=worker.generation_stall_timeout_s,
-                pipelined=worker.pipelined,
                 finalizers=finalizer_handles,
             )
             weight_sync = RayGenerationWeightSync(

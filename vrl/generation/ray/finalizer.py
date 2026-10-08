@@ -27,11 +27,6 @@ class RayGenerationFinalizer:
     def __init__(self, finalizer_id: str, gatherer: GenerationBatchGatherer) -> None:
         if not finalizer_id:
             raise ValueError("finalizer_id must be non-empty")
-        if not isinstance(gatherer, GenerationBatchGatherer):
-            raise TypeError(
-                "RayGenerationFinalizer requires a GenerationBatchGatherer, "
-                f"got {type(gatherer).__name__}",
-            )
         # The merged trajectory leaves this process the same way batch results
         # leave the rank: as byte views of its host buffers.
         register_tensor_wire_serializer()

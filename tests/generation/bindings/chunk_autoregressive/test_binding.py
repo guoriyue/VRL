@@ -165,7 +165,7 @@ def test_generic_executor_delegates_temporal_generation_to_model() -> None:
         gatherer=ChunkAutoregressiveDenoiseGatherer(),
     )
 
-    plan = EnginePlan.from_request(request, max_samples_per_batch=1)
+    plan = EnginePlan.from_request(replace(request, samples_per_generation_batch=1))
     output = executor.forward_plan(request, sample_rows, plan)
 
     assert model.calls == [(0, 0, 1), (0, 1, 1)]

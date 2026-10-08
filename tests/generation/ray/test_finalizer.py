@@ -31,11 +31,6 @@ def _batch(start: int, count: int) -> DenoiseBatchResult:
     )
 
 
-def test_finalizer_requires_a_gatherer() -> None:
-    with pytest.raises(TypeError, match="GenerationBatchGatherer"):
-        RayGenerationFinalizer("finalize-0", object())
-
-
 def test_merge_fetches_references_gathers_in_plan_order_and_boxes_media(monkeypatch) -> None:
     store = {"ref-a": _batch(2, 2), "ref-b": _batch(0, 2)}
     fetched: list[list[str]] = []

@@ -5,15 +5,14 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from vrl.config.schema import RootConfig
+    from vrl.config.schema import RolloutRuntimeSection, RootConfig
 
 from vrl.ray.resources import (
     ResolvedDistributedResources,
 )
-from vrl.utils.config import to_builtin_deep
 from vrl.utils.profiling import TorchProfilerConfig
 
 
@@ -40,16 +39,12 @@ class RolloutWorkerConfig:
             raise ValueError("generation_stall_timeout_s must be finite and > 0")
 
     @classmethod
-    def from_public_section(cls, section: Any) -> RolloutWorkerConfig:
-        """Freeze a validated public section without introducing fallback values."""
+    def from_public_section(cls, section: RolloutRuntimeSection | None) -> RolloutWorkerConfig:
+        """Freeze the validated public section; an absent block means its defaults."""
 
         from vrl.config.schema import RolloutRuntimeSection
 
-        if not isinstance(section, RolloutRuntimeSection):
-            section = RolloutRuntimeSection.model_validate(
-                {} if section is None else to_builtin_deep(section)
-            )
-        return cls(**section.model_dump())
+        return cls(**(section or RolloutRuntimeSection()).model_dump())
 
 
 @dataclass(slots=True)

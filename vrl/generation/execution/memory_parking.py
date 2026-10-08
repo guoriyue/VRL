@@ -58,6 +58,17 @@ def _log_parking_diagnostics(model: Any, *, worker_id: str) -> None:
         logger.exception("parking diagnostics unavailable: worker=%s", worker_id)
 
 
+def executor_device(executor: Any) -> Any:
+    """The model's device, or the process default when the executor has no model."""
+
+    device = getattr(getattr(executor, "model", None), "device", None)
+    if device is not None:
+        return device
+    import torch
+
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 def _resident_on_cuda(executor: Any) -> bool:
     """Whether the built executor's model holds its weights on a CUDA device."""
 
@@ -88,10 +99,6 @@ class GenerationWorkerParking:
     ) -> None:
         if not worker_id:
             raise ValueError("worker memory parking requires a non-empty worker_id")
-        if not isinstance(launch_contract, GenerationRuntimeLaunchContract):
-            raise TypeError(
-                "worker memory parking requires a GenerationRuntimeLaunchContract",
-            )
         rollout = launch_contract.model_build.get("rollout")
         pipeline_offload_mode = "none"
         if isinstance(rollout, Mapping):
@@ -192,12 +199,7 @@ class GenerationWorkerParking:
                 f"{type(executor).__name__}: model parking requires executor.model.to(...)"
             )
 
-    def sleep(
-        self,
-        executor: GenerationBatchExecutor | None,
-        *,
-        restore_device: Any,
-    ) -> WorkerMemoryParkingSnapshot:
+    def sleep(self, executor: GenerationBatchExecutor | None) -> WorkerMemoryParkingSnapshot:
         """Park the loaded executor and return physical handoff evidence."""
 
         self.require_healthy("sleep", executor=executor)
@@ -237,7 +239,9 @@ class GenerationWorkerParking:
             else:
                 ledger = session.backend
                 assert isinstance(ledger, ModelParking)
-                session.park(move=lambda: ledger.park(model, restore_device=restore_device))
+                session.park(
+                    move=lambda: ledger.park(model, restore_device=executor_device(executor))
+                )
                 snapshot_backend = (
                     "cpu_offload" if str(ledger.restore_device).startswith("cuda") else "cpu_only"
                 )

@@ -44,7 +44,7 @@ def test_bundle_plan_groups_rollout_bundles_per_engine() -> None:
     )
     plan = BundleLayout.from_resources(resolved)
 
-    assert plan.rollout_gpus_per_engine == 2
+    assert resolved.rollout_gpus_per_engine == 2
     # The grouping rule lives on RolePlacement (the type that owns the bundles),
     # which is what the generation launcher calls to size its engine fleet.
     placement = RolePlacement(
@@ -52,7 +52,7 @@ def test_bundle_plan_groups_rollout_bundles_per_engine() -> None:
         bundle_indices=plan.rollout_bundle_indices,
         expected_gpu_ids=(),
     )
-    groups = placement.engine_bundle_groups(plan.rollout_gpus_per_engine)
+    groups = placement.engine_bundle_groups(resolved.rollout_gpus_per_engine)
     assert len(groups) == 2
     assert all(len(group) == 2 for group in groups)
     assert tuple(index for group in groups for index in group) == plan.rollout_bundle_indices

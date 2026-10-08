@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 import torch
 
+from vrl.generation.execution.memory_parking import executor_device
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.types import GenerationRequest
@@ -238,14 +239,14 @@ def test_executor_device_preserves_cuda_discovery_errors(monkeypatch) -> None:
     monkeypatch.setattr(torch.cuda, "is_available", fail_discovery)
 
     with pytest.raises(RuntimeError, match="CUDA device discovery failed"):
-        GenerationWorkerCore._executor_device(SimpleNamespace(model=SimpleNamespace()))
+        executor_device(SimpleNamespace(model=SimpleNamespace()))
 
 
 @pytest.mark.parametrize("cuda_available", [False, True])
 def test_executor_device_default_follows_cuda_availability(monkeypatch, cuda_available) -> None:
     monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda_available)
 
-    device = GenerationWorkerCore._executor_device(SimpleNamespace(model=SimpleNamespace()))
+    device = executor_device(SimpleNamespace(model=SimpleNamespace()))
 
     assert device == torch.device("cuda" if cuda_available else "cpu")
 
