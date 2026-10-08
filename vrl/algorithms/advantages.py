@@ -240,30 +240,36 @@ class GroupAdvantageEstimator:
     ) -> Any:
         """Normalize each objective, weighted-sum it, then clamp once.
 
-        With only the weighted total in hand (the tensor-only advantage path,
-        or a reward runtime that reports no components) there is exactly one
-        objective, so standardizing it is the whole strategy: the result is
-        the ``weighted_sum_raw`` advantage, not an error.
+        Only the configured objectives combine. A reward also reports
+        observation axes beside them (``MultiReward`` namespaces them as
+        ``<component>/<axis>``) for logging; those never enter the advantage.
+        With no configured objective in hand (the tensor-only advantage path,
+        or a reward that reports only observations) there is exactly one
+        objective, the weighted total, so standardizing it is the whole
+        strategy: the result is the ``weighted_sum_raw`` advantage, not an
+        error. Some but not all configured objectives is a misconfiguration.
         """
 
         import torch
 
-        if not component_rewards:
+        objectives = {
+            name: values
+            for name, values in (component_rewards or {}).items()
+            if name in self.component_weights
+        }
+        if not objectives:
             return self._normalize_weighted_rewards(rewards, None, group_ids)
-        component_names = set(component_rewards)
-        weight_names = set(self.component_weights)
-        if component_names != weight_names:
+        missing = sorted(set(self.component_weights) - set(objectives))
+        if missing:
             raise ValueError(
-                "reward component keys must match configured weights; "
-                f"missing={sorted(weight_names - component_names)}, "
-                f"unknown={sorted(component_names - weight_names)}",
+                f"reward reports configured components {sorted(objectives)} but not {missing}",
             )
 
         total = None
         # Stable ordering keeps global-std collectives aligned across DDP ranks.
-        for name in sorted(component_rewards):
+        for name in sorted(objectives):
             advantage = _standardize_group_rewards(
-                component_rewards[name],
+                objectives[name],
                 group_ids,
                 eps=self.eps,
                 global_std=self.global_std,

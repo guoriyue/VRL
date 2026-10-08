@@ -153,9 +153,37 @@ def test_nft_component_fusion_preserves_chain_credit_and_component_units() -> No
         groups,
     )
     torch.testing.assert_close(rescaled, expected, atol=1e-5, rtol=0)
-    with pytest.raises(ValueError, match="keys must match configured weights"):
+    with pytest.raises(ValueError, match=r"but not \['preservation'\]"):
         algorithm.compute_advantages_from_components(
             instruction, {"instruction": instruction}, groups
         )
     with pytest.raises(ValueError, match="unknown advantage_combine"):
         DiffusionNFTConfig(advantage_combine="invalid")
+
+
+def test_normalized_sum_combines_configured_objectives_and_ignores_observations() -> None:
+    """A MultiReward reports ``<component>/<axis>`` observations beside its
+    objectives; they are logged, never combined. A reward that reports only
+    observations leaves the weighted total as the one objective."""
+
+    group_ids = torch.tensor([0, 0, 0, 1, 1, 1])
+    sharpness = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 7.0])
+    estimator = GroupAdvantageEstimator(
+        strategy="normalized_sum", component_weights={"sharpness": 1.0}, **_KW
+    )
+
+    with_observation = estimator.compute(
+        sharpness,
+        group_ids,
+        component_rewards={"sharpness": sharpness, "sharpness/edge_energy": sharpness * 100.0},
+    )
+    alone = estimator.compute(sharpness, group_ids, component_rewards={"sharpness": sharpness})
+    torch.testing.assert_close(with_observation, alone, atol=0.0, rtol=0.0)
+
+    only_observations = estimator.compute(
+        sharpness, group_ids, component_rewards={"observer": sharpness + 10.0}
+    )
+    total = GroupAdvantageEstimator(strategy="weighted_sum_raw", **_KW).compute(
+        sharpness, group_ids
+    )
+    torch.testing.assert_close(only_observations, total, atol=0.0, rtol=0.0)
