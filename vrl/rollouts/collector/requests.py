@@ -5,17 +5,14 @@ from __future__ import annotations
 import random
 import uuid
 from collections.abc import Mapping
-from dataclasses import fields, replace
+from dataclasses import replace
 from typing import Any, NamedTuple
 
 from vrl.config.schema import sampling_section_class_for_family
 from vrl.generation import GenerationInput, GenerationRequest
-from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.models.families.registry import ModelFamilyEntry
 from vrl.models.families.semantics import task_type_for
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-
-_DENOISE_FIELDS = frozenset(item.name for item in fields(DenoiseRequestOptions))
 
 
 class CollectorRequest(NamedTuple):
@@ -58,16 +55,11 @@ class GenerationRequestBuilder:
             str(field_name): list(value) if isinstance(value, tuple) else value
             for field_name, value in self.config.request_sampling.items()
         }
+        # Overrides are the family's own sampling vocabulary, so an unknown key
+        # fails here rather than riding the wire. The denoise options are not
+        # overridable per prompt: the trainer's replay evaluator scores every
+        # sample under the run's one noise_level/sde_type.
         overrides = dict(request_overrides or {})
-        # A per-prompt override of a denoise knob lands on the typed options
-        # (re-validated by replace); the rest must be the family's own sampling
-        # vocabulary, so an unknown key fails here rather than riding the wire.
-        denoise = self.config.denoise
-        denoise_overrides = {
-            name: overrides.pop(name) for name in tuple(overrides) if name in _DENOISE_FIELDS
-        }
-        if denoise_overrides:
-            denoise = replace(denoise or DenoiseRequestOptions(), **denoise_overrides)
         if overrides:
             sampling.update(
                 sampling_section_class_for_family(self.entry.family).require_overrides(overrides)
@@ -108,7 +100,7 @@ class GenerationRequestBuilder:
             sampling=sampling,
             samples_per_generation_batch=self.config.samples_per_generation_batch,
             trajectory_storage=self.config.trajectory_storage,
-            denoise=denoise,
+            denoise=self.config.denoise,
             reward_media_refs=reward_media_refs,
             runtime_debug=runtime_debug,
             policy_version=policy_version,

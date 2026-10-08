@@ -164,3 +164,14 @@ def test_explicit_null_override_draws_a_fresh_rollout_seed() -> None:
         assert random.getstate() != before
     finally:
         random.setstate(before)
+
+
+def test_engine_request_builder_rejects_a_per_prompt_denoise_override() -> None:
+    """Replay scores every sample under the run's SDE, so a manifest row cannot change it."""
+    builder = GenerationRequestBuilder(
+        entry=get_model_family_entry("sd3_5"),
+        config=RolloutCollectorConfig(),
+    )
+
+    with pytest.raises(ValueError, match=r"unknown sampling\.noise_level"):
+        builder.build(["prompt"], 1, request_overrides={"noise_level": 0.5})
