@@ -155,18 +155,24 @@ def test_prepare_config_applies_paths_sampling_and_per_sample_seed(
     assert base["runtime_config"]["seed"] == 1234
 
 
-def test_prepare_config_rejects_multi_process_official_config(tmp_path: Path) -> None:
-    config, _ = _installation(tmp_path)
-    base = _base_config()
-    base["engine_config"]["pp_size"] = 2
+def test_installation_preflight_rejects_multi_process_official_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vrl.models.families.magi_1 import model as magi_model
+
+    config, config_path = _installation(tmp_path)
+    official = _base_config()
+    official["engine_config"]["pp_size"] = 2
+    config_path.write_text(json.dumps(official), encoding="utf-8")
+    monkeypatch.setattr(
+        magi_model,
+        "source_head_revision",
+        lambda source_path: MAGI_1_SUPPORTED_SOURCE_REVISION,
+    )
 
     with pytest.raises(ValueError, match="single-process"):
-        prepare_magi_runtime_config(
-            base,
-            config=config,
-            sampling={},
-            sample_index=0,
-        )
+        Magi1SubprocessModel(config)
 
 
 @pytest.mark.parametrize(

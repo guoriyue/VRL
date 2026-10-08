@@ -527,7 +527,8 @@ def prepare_magi_runtime_config(
     if base_seed is None:
         base_seed = runtime.get("seed", 1234)
     runtime["seed"] = require_int(base_seed, path="MAGI-1 seed") + sample_index
-    _validate_single_process_config(prepared)
+    # engine_config is copied untouched from the base config, whose
+    # single-process shape the installation preflight already checked.
     _validate_magi_sampling_contract(prepared, sampling=sampling)
     _validate_runtime_paths(prepared, source_path=config.source_path)
     return prepared

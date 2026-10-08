@@ -322,10 +322,13 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
             workflow=_WORKFLOW,
             **build.pretrained_kwargs,
         )
-        # ``workflow`` keeps the 33B ``transformer_ref`` partition (ref2va) off
-        # the load; the dtype mapping follows the shared pipeline convention
-        # (per-component keys plus ``default``).
-        pipeline.load_components(workflow=_WORKFLOW, **load_kwargs)
+        # ``from_pretrained(workflow=...)`` already pruned the blocks to the t2va
+        # workflow, so loading every expected component loads exactly that
+        # workflow's set and keeps the 33B ``transformer_ref`` partition (ref2va)
+        # on disk. Naming the workflow again fails: the pruned blocks no longer
+        # carry a workflow map. The dtype mapping follows the shared pipeline
+        # convention (per-component keys plus ``default``).
+        pipeline.load_components(**load_kwargs)
         flow_scheduler_cls = build_flow_scheduler_class()
         components = MiniMaxH3Components(
             transformer=pipeline.transformer,

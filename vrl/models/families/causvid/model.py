@@ -633,7 +633,6 @@ class CausVidModel(_CausVidPolicyModel):
     @classmethod
     def from_build(cls, build: ModelBuild) -> CausVidModel:
         build.require_rollout()
-        _validate_released_build(build)
         backend = _load_official_backend(build, generation=True)
         return cls(backend=backend)
 
@@ -741,14 +740,24 @@ class CausVidReplayModel(_CausVidPolicyModel):
     @classmethod
     def from_build(cls, build: ModelBuild) -> CausVidReplayModel:
         build.require_replay()
-        _validate_released_build(build)
         backend = _load_official_backend(build, generation=False)
         return cls(backend=backend)
 
 
-def _validate_released_build(build: ModelBuild) -> None:
-    model_config = build.model_config or {}
-    _require_noncommercial_license(model_config)
+def _require_noncommercial_license(model_config: Mapping[str, Any]) -> None:
+    accepted = model_config.get("accept_noncommercial_license")
+    if accepted is not True:
+        raise ValueError(
+            "CausVid released weights are CC BY-NC-SA 4.0 and restricted to "
+            "non-commercial use. Set model.accept_noncommercial_license=true "
+            "to acknowledge those terms before source/weight resolution.",
+        )
+
+
+def _load_official_backend(build: ModelBuild, *, generation: bool) -> _OfficialCausVidBackend:
+    # The released checkpoint supports one sampling contract; reject any other
+    # before the license check, source resolution and weight loading in
+    # CausVidResolvedArtifacts.from_build.
     sampling = build.sampling_config or {}
     expected_sampling = {
         "width": OFFICIAL_CAUSVID_GEOMETRY.pixel_width,
@@ -767,19 +776,6 @@ def _validate_released_build(build: ModelBuild) -> None:
         raise ValueError("released CausVid requires sampling.guidance_scale=1")
     if sampling.get("negative_prompt") not in (None, ""):
         raise ValueError("released CausVid does not support negative prompts")
-
-
-def _require_noncommercial_license(model_config: Mapping[str, Any]) -> None:
-    accepted = model_config.get("accept_noncommercial_license")
-    if accepted is not True:
-        raise ValueError(
-            "CausVid released weights are CC BY-NC-SA 4.0 and restricted to "
-            "non-commercial use. Set model.accept_noncommercial_license=true "
-            "to acknowledge those terms before source/weight resolution.",
-        )
-
-
-def _load_official_backend(build: ModelBuild, *, generation: bool) -> _OfficialCausVidBackend:
     artifacts = CausVidResolvedArtifacts.from_build(build)
 
     # Importing this module triggers upstream's FlexAttention compile; this is

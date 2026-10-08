@@ -48,6 +48,7 @@ from vrl.models.steps.denoise.common import (
     expand_batch_timestep,
     pack_eval_timestep,
 )
+from vrl.models.weight_utils import unwrap_compile_and_ddp
 
 
 @dataclass
@@ -210,9 +211,11 @@ class SanaModel(
 
         latent_input = state.latents.to(td)
         # SanaPipeline multiplies the raw timestep by config.timestep_scale and
-        # keeps it in fp32; the time embedding owns its internal conversion.
+        # keeps it in fp32; the time embedding owns its internal conversion. The
+        # config lives on the module itself, behind any DDP/compile wrapper.
+        config = unwrap_compile_and_ddp(self.transformer).config
         timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device) * float(
-            getattr(self.transformer.config, "timestep_scale", 1.0)
+            getattr(config, "timestep_scale", 1.0)
         )
         negative_embeds = (
             None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)

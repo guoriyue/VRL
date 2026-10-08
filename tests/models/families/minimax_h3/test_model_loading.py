@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 import torch
 
-from tests.models.steps.denoise.fixtures import RecordingModule, build_tiny_minimax_h3_transformer
+from tests.models.steps.denoise.fixtures import build_tiny_minimax_h3_transformer
 from vrl.config.precision import RolePrecision
 from vrl.models.families.minimax_h3.model import MiniMaxH3Model
 from vrl.models.families.minimax_h3.runtime import (
@@ -108,60 +108,41 @@ def test_partitioned_loader_rejects_unverified_modes_before_loading(monkeypatch,
         load_partitioned_transformer(build, (0, 1))
 
 
-class _FakeModularPipeline:
-    def __init__(self, calls: list[dict[str, Any]]) -> None:
-        from diffusers import MiniMaxH3Scheduler
-
-        self.calls = calls
-        self.transformer = build_tiny_minimax_h3_transformer()
-        self.vae = RecordingModule()
-        self.audio_vae = RecordingModule()
-        self.text_encoder = RecordingModule()
-        self.tokenizer = object()
-        self.processor = object()
-        self.scheduler = MiniMaxH3Scheduler(shift=12.0)
-        self.audio_scheduler = MiniMaxH3Scheduler(shift=3.0)
-
-    def load_components(self, **kwargs: Any) -> None:
-        self.calls.append({"load_components": kwargs})
-
-
 def test_from_build_loads_the_t2va_workflow_and_freezes_the_generation_modules(
-    monkeypatch,
+    tmp_path,
 ) -> None:
-    from diffusers import ModularPipeline
+    """A real modular snapshot, loaded through diffusers by the family's own path."""
 
-    calls: list[dict[str, Any]] = []
-    fake = _FakeModularPipeline(calls)
+    from dataclasses import replace
 
-    def fake_from_pretrained(path: str, **kwargs: Any) -> Any:
-        calls.append({"from_pretrained": {"path": path, **kwargs}})
-        return fake
+    from diffusers import MiniMaxH3Transformer3DModel
 
-    monkeypatch.setattr(ModularPipeline, "from_pretrained", staticmethod(fake_from_pretrained))
+    from tests.models.steps.denoise.fixtures import write_tiny_minimax_h3_snapshot
 
-    model = MiniMaxH3Model.from_build(_build(rollout=True))
+    snapshot = write_tiny_minimax_h3_snapshot(tmp_path / "minimax-h3")
+    build = replace(
+        _build(rollout=True, device="cpu"),
+        model_name_or_path=str(snapshot),
+        revision=None,
+        parameter_dtype=torch.float32,
+        precision=RolePrecision("fp32", "ieee", outer_autocast=False),
+        rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.bfloat16),
+    )
 
-    assert calls[0]["from_pretrained"] == {"path": _PATH, "workflow": "t2va", "revision": "abc123"}
-    assert calls[1]["load_components"] == {
-        "workflow": "t2va",
-        "revision": "abc123",
-        "torch_dtype": {
-            "default": torch.bfloat16,
-            "transformer": torch.bfloat16,
-            "vae": torch.float32,
-            "audio_vae": torch.float32,
-        },
-    }
-    assert model.transformer is fake.transformer
-    assert fake.text_encoder.requires_grad_enabled is False
-    assert fake.text_encoder.to_calls == [("cuda:0", torch.bfloat16)]
-    for vae in (fake.vae, fake.audio_vae):
-        assert vae.requires_grad_enabled is False
-        assert vae.to_calls == [("cuda:0", torch.float32)]
+    model = MiniMaxH3Model.from_build(build)
+
+    assert isinstance(model.transformer, MiniMaxH3Transformer3DModel)
+    assert model.transformer.dtype == torch.float32
+    # The frozen conditioner follows the rollout prompt dtype; both VAEs stay fp32.
+    text_encoder = model.pipeline.components["text_encoder"]
+    assert {p.dtype for p in text_encoder.parameters()} == {torch.bfloat16}
+    assert not any(p.requires_grad for p in text_encoder.parameters())
+    for vae in (model.pipeline.components["vae"], model.pipeline.components["audio_vae"]):
+        assert not any(p.requires_grad for p in vae.parameters())
+        assert {p.dtype for p in vae.parameters()} == {torch.float32}
     assert type(model.scheduler).__name__ == "MiniMaxH3FlowScheduler"
     assert model.scheduler.config.shift == 12.0
-    assert model.audio_scheduler is fake.audio_scheduler
+    assert model.audio_scheduler.config.shift == 3.0
     # The shell exposes every frozen module for the offload discipline.
     assert set(model.pipeline.components) == {"transformer", "vae", "audio_vae", "text_encoder"}
 
