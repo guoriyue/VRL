@@ -624,13 +624,15 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 entry,
                 reward_runtime=RewardFunctionRuntime(reward_fn),
                 config=collector_config,
-                generation_runtime=_DirectExecutorGenerationRuntime(
+                lifecycle=lifecycle or resources.lifecycle,
+            )
+            collector.set_generation_runtime(
+                _DirectExecutorGenerationRuntime(
                     executor,
                     model=bundle.model,
                     device=device,
                     park_model=lifecycle is not None and lifecycle.park_rollout_for_train,
-                ),
-                lifecycle=lifecycle,
+                )
             )
         pair = AlgorithmEvaluatorPair.from_configs(
             family_entry=entry,

@@ -353,7 +353,7 @@ def _reward_sample_builder(
         output.output = outputs
     return TrajectoryRolloutBatchBuilder(
         output,
-        RolloutBatchBuildContext(metadata=dict(metadata or {}), device="cpu"),
+        RolloutBatchBuildContext(metadata=dict(metadata or {})),
     )
 
 

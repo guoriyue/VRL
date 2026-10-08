@@ -165,14 +165,15 @@ class TrainerSide:
     ) -> RolloutRuntimeCoordinator:
         """The coordinator the trainer builds, over this bench and this trainer side."""
 
-        return RolloutRuntimeCoordinator(
+        coordinator = RolloutRuntimeCoordinator(
             collector=bench.collector,
             strategy=self.strategy,
             training_state_getter=self.training_state,
             weight_syncer=RayRuntimeWeightSyncer(bench.runtime) if syncer else None,
             sync_state_getter=self.export if syncer else None,
-            weights_initialized=self.initialized,
         )
+        coordinator.weights_initialized = self.initialized
+        return coordinator
 
 
 def trainer_side(bench: CollectorBench, *, initialized: bool = False) -> TrainerSide:
@@ -228,9 +229,12 @@ def real_collector(
         stack.family,
         reward_runtime=RewardFunctionRuntime(reward),
         config=stack.collector_config(),
-        generation_runtime=stack.runtime if attach_runtime else None,
-        lifecycle=lifecycle,
+        # A test passes a plan to model a shared-GPU topology; the run's own
+        # plan is the tiny CPU run's disjoint one.
+        lifecycle=lifecycle or stack.resolved.resources.lifecycle,
     )
+    if attach_runtime:
+        collector.set_generation_runtime(stack.runtime)
     return CollectorBench(stack, collector, stack.runtime, reward, trace)
 
 

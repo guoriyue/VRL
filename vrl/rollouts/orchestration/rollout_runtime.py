@@ -46,7 +46,6 @@ class RolloutRuntimeCoordinator:
         training_state_getter: Callable[[], Any],
         weight_syncer: Any | None,
         sync_state_getter: Callable[[], dict[str, Any]] | None,
-        weights_initialized: bool = False,
     ) -> None:
         self.collector = collector
         self.strategy = strategy
@@ -57,7 +56,7 @@ class RolloutRuntimeCoordinator:
         # this coordinator changes it: a successful push sets it, and
         # ``require_weight_resync`` clears it after the trainer's weights are
         # replaced underneath the runtime (a checkpoint restore).
-        self.weights_initialized = weights_initialized
+        self.weights_initialized = False
 
     async def ensure_initial_weights(self, stats: RolloutStats) -> None:
         prepared = self.prepare_initial_weight_sync_state()
@@ -137,8 +136,7 @@ class RolloutRuntimeCoordinator:
     def requires_training_state_parking(self) -> bool:
         """Whether rollout or reward borrows the trainer's GPU (the plan's ``offload_train``)."""
 
-        plan = self.collector.lifecycle
-        return plan is not None and bool(plan.offload_train)
+        return self.collector.lifecycle.offload_train
 
     def park_training_state_for_rollout(self, stats: RolloutStats) -> bool:
         if not self.requires_training_state_parking():

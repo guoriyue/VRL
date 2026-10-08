@@ -191,8 +191,7 @@ class InferenceRewardFunction(RewardFunction):
         artifact_store: RewardArtifactStore | None = None,
         archive_store: RewardArtifactStore | None = None,
         debug_dir: str = "",
-        request_prefix: str = "reward",
-        debug_basename: str = "reward",
+        name: str = "reward",
     ) -> None:
         normalized_reward_name = str(reward_name).strip()
         if not normalized_reward_name:
@@ -216,8 +215,8 @@ class InferenceRewardFunction(RewardFunction):
         self.artifact_store = artifact_store
         self._archive_store = archive_store
         self.debug_dir = str(debug_dir)
-        self._request_prefix = request_prefix
-        self._debug_basename = debug_basename
+        # Prefixes request ids and names the debug sidecar files.
+        self._name = name
         self._inference_started = False
 
     async def preflight(self) -> None:
@@ -292,7 +291,7 @@ class InferenceRewardFunction(RewardFunction):
                     "reward artifact store returned wrong number of artifacts: "
                     f"artifacts={len(artifacts)}, samples={len(samples)}",
                 )
-            request_id = f"{self._request_prefix}-{uuid.uuid4().hex}"
+            request_id = f"{self._name}-{uuid.uuid4().hex}"
             request = RewardInferenceRequest(
                 request_id=request_id,
                 artifacts=tuple(artifacts),
@@ -404,8 +403,8 @@ class InferenceRewardFunction(RewardFunction):
             "inference_total_ms": inference_total_ms,
             "total_reward_latency_ms": total_reward_latency_ms,
         }
-        requests_file = debug_path / f"{self._debug_basename}_requests.jsonl"
-        results_file = debug_path / f"{self._debug_basename}_results.jsonl"
+        requests_file = debug_path / f"{self._name}_requests.jsonl"
+        results_file = debug_path / f"{self._name}_results.jsonl"
         with requests_file.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(request_row, sort_keys=True) + "\n")
         with results_file.open("a", encoding="utf-8") as handle:
@@ -425,8 +424,10 @@ class ModelRewardFunction(InferenceRewardFunction):
     ``scorer`` injects a ready transport in place of factory construction.
     ``artifact_store`` is an explicit alternative input store, while
     ``archive_dir`` independently retains experiment output; an archive is
-    never selected merely because scoring is remote. ``sleep_offload`` lets
-    the scorer release its model's GPU memory between scoring phases.
+    never selected merely because scoring is remote. ``worker_config``'s
+    ``sleep_offload``, which the registry sets for a GPU component of a
+    shared reward, lets the scorer release its model's GPU memory between
+    scoring phases.
     """
 
     # Concrete model rewards differ in these declarations, so each subclass is
@@ -464,7 +465,6 @@ class ModelRewardFunction(InferenceRewardFunction):
         archive_dir: str = "",
         debug_dir: str = "",
         device: str | None = None,
-        sleep_offload: bool = False,
         worker_config: Mapping[str, Any] | None = None,
         scorer: RewardScorer | None = None,
         artifact_store: RewardArtifactStore | None = None,
@@ -555,8 +555,6 @@ class ModelRewardFunction(InferenceRewardFunction):
                     worker_cfg,
                     device=str(device),
                 )
-            if sleep_offload:
-                worker_cfg["sleep_offload"] = True
             # ``inference`` selects in-process (None/default) or a placed Ray
             # actor that receives this same worker_cfg. External
             # HTTP components never reach here: the registry injects their
@@ -581,8 +579,7 @@ class ModelRewardFunction(InferenceRewardFunction):
             artifact_store=artifact_store,
             archive_store=archive_store,
             debug_dir=debug_dir,
-            request_prefix=self.name,
-            debug_basename=self.name,
+            name=self.name,
         )
 
 

@@ -51,11 +51,12 @@ class ContinuousRolloutProducer:
         self,
         *,
         lifecycle: RolloutRuntimeCoordinator,
-        staleness: StalenessPolicy,
         settings: ContinuousRolloutSettings,
     ) -> None:
         self.lifecycle = lifecycle
-        self.staleness = staleness
+        self.staleness = StalenessPolicy(
+            max_stale_policy_versions=settings.max_stale_policy_versions,
+        )
         # Validated once at the config boundary; trusted here (no re-checks).
         self.max_inflight_groups = settings.max_inflight_groups
         self.poll_interval_s = settings.queue_poll_interval_s

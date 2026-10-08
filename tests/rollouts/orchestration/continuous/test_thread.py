@@ -392,8 +392,9 @@ async def _ray_owner(
             resolved.family,
             reward_runtime=RewardFunctionRuntime(reward),
             config=resolved.collector,
-            generation_runtime=ray_run.runtime,
+            lifecycle=resolved.resources.lifecycle,
         )
+        collector.set_generation_runtime(ray_run.runtime)
         trace = Trace(monkeypatch)
         trace.watch(collector, "shutdown", "collector_shutdown")
         replay = run.resolve_model(

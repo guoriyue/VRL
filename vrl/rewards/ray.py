@@ -77,6 +77,13 @@ def _remove_actor_media_directory(path: str, token: str) -> None:
         raise RuntimeError(f"reward actor media directory still exists after cleanup: {root}")
 
 
+# The reward actor reserves no CPU of its own (bundles are sized for the
+# rank it shares) and gets fixed startup / shutdown budgets.
+_REWARD_ACTOR_CPUS = 0.0
+_STARTUP_TIMEOUT_S = 600.0
+_SHUTDOWN_TIMEOUT_S = 30.0
+
+
 class _RewardActor:
     """Serial actor: synchronous model code never blocks the driver's loop."""
 
@@ -84,12 +91,12 @@ class _RewardActor:
         self,
         worker_config: dict[str, Any],
         *,
-        cuda: bool,
         shared_gpu_id: int | None,
         media_directory_token: str,
     ) -> None:
         from vrl.rewards.runtime import InProcessRewardScorer
 
+        cuda = str(worker_config.get("device", "")).startswith("cuda")
         assigned = current_gpu_ids()
         if cuda:
             if shared_gpu_id is None:
@@ -175,10 +182,7 @@ class RayRewardScorer:
         worker_config: Mapping[str, Any] | None = None,
         *,
         placement: RayRewardPlacement | None = None,
-        cpus_per_worker: float = 0.0,
         timeout_s: float = 1800.0,
-        startup_timeout_s: float = 600.0,
-        shutdown_timeout_s: float = 30.0,
     ) -> None:
         self._launch = RewardRuntimeLaunchContract.from_component_config(worker_config)
         self._cuda = self._launch.device.startswith("cuda")
@@ -206,12 +210,10 @@ class RayRewardScorer:
                 raise ValueError(
                     "a reward scorer requires exactly one rank-local placement bundle"
                 )
-        self._cpus = float(cpus_per_worker)
-        if not math.isfinite(self._cpus) or self._cpus < 0:
-            raise ValueError("cpus_per_worker must be finite and >= 0")
+        self._cpus = _REWARD_ACTOR_CPUS
         self._timeout = require_timeout(timeout_s)
-        self._startup_timeout = require_timeout(startup_timeout_s)
-        self._shutdown_timeout = require_timeout(shutdown_timeout_s)
+        self._startup_timeout = _STARTUP_TIMEOUT_S
+        self._shutdown_timeout = _SHUTDOWN_TIMEOUT_S
         self.lifecycle = RuntimeLifecycle(owner="Ray reward scorer")
         self._operation_lock = asyncio.Lock()
         self._shutdown_lock = asyncio.Lock()
@@ -274,7 +276,6 @@ class RayRewardScorer:
             .options(**self._actor_options())
             .remote(
                 dict(self._launch.component_config),
-                cuda=self._cuda,
                 shared_gpu_id=(None if self._placement is None else self._placement.shared_gpu_id),
                 media_directory_token=self._media_directory_token,
             )

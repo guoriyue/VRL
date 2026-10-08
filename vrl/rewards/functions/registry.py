@@ -185,14 +185,6 @@ class MultiReward(RewardFunction):
             if inference_configs is None
             else inference_configs
         )
-        if memory_parking_required:
-            validate_reward_memory_parking_components(
-                tuple(reward_classes),
-                device=device,
-                reward_kwargs=reward_kwargs,
-                inference_configs=resolved_inference_configs,
-            )
-
         gpu_actor_count = sum(
             resolved_inference_configs[name].kind == "ray"
             and reward_cls.resolve_execution_device(
@@ -268,7 +260,10 @@ class MultiReward(RewardFunction):
                 # reward parks. For a Ray actor the knob travels in its
                 # worker_config and its scorer owns the park/wake lifecycle.
                 # Dedicated and CPU components stay resident.
-                extra["sleep_offload"] = True
+                extra["worker_config"] = {
+                    **(extra.get("worker_config") or {}),
+                    "sleep_offload": True,
+                }
             component = reward_cls(device=component_device, **extra)
             triples.append((name, weight, component))
         return cls(triples)

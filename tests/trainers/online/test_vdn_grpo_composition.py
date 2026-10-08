@@ -138,8 +138,9 @@ def _stack(
         # Scores [0, 1] for the two samples of the one prompt group.
         reward_runtime=RewardFunctionRuntime(IndexReward()),
         config=resolved.collector,
-        generation_runtime=runtime,
+        lifecycle=resolved.resources.lifecycle,
     )
+    collector.set_generation_runtime(runtime)
     # The recipe's strategy: built from the run's own training context, so it
     # places the trainable roots on the trainer device.
     strategy = build_strategy(

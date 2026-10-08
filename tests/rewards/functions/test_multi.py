@@ -13,6 +13,7 @@ from vrl.rewards.base import (
 )
 from vrl.rewards.functions.registry import (
     MultiReward,
+    validate_reward_memory_parking_components,
 )
 from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
 from vrl.rewards.runtime import InProcessRewardScorer, RewardFunctionRuntime
@@ -390,11 +391,7 @@ def test_shared_parking_allows_one_gpu_reward_with_cpu_sibling() -> None:
 def test_shared_parking_rejects_multiple_gpu_reward_components() -> None:
     """CuMem tags cannot make multiple reward pools independently sleepable."""
     with pytest.raises(ValueError, match="at most one configured GPU"):
-        MultiReward.from_dict(
-            {"aesthetic": 1.0, "pickscore": 1.0},
-            device="cuda:0",
-            memory_parking_required=True,
-        )
+        validate_reward_memory_parking_components(("aesthetic", "pickscore"), device="cuda:0")
 
 
 @pytest.mark.parametrize(

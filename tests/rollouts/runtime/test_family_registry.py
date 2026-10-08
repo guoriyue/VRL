@@ -29,6 +29,7 @@ from vrl.models.interfaces.generation_memory import (
     VaeDecodeMemory,
 )
 from vrl.models.interfaces.runtime import ModelBuild
+from vrl.ray.resources import RayLifecyclePlan
 from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
@@ -443,6 +444,7 @@ def test_all_registry_entries_build_collectors_from_the_same_entry() -> None:
             entry,
             reward_runtime=SimpleNamespace(),
             config=RolloutCollectorConfig(samples_per_generation_batch=1),
+            lifecycle=RayLifecyclePlan(trainer=(0,), rollout=(1,), reward=(2,)),
         )
         assert collector.request_builder.entry is entry
         assert callable(collector.generate_rollout)

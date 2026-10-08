@@ -64,14 +64,15 @@ def _coordinator(model: _FakeDriverModel) -> RolloutRuntimeCoordinator:
         async def shutdown(self) -> None:
             return None
 
-    return RolloutRuntimeCoordinator(
+    coordinator = RolloutRuntimeCoordinator(
         collector=_CollectorControl(runtime),
         strategy=strategy,
         training_state_getter=lambda: state,
         weight_syncer=None,
         sync_state_getter=None,
-        weights_initialized=True,
     )
+    coordinator.weights_initialized = True
+    return coordinator
 
 
 def test_offload_and_restore_move_frozen_components() -> None:

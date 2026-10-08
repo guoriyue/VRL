@@ -47,7 +47,7 @@ from vrl.rewards.protocols import RewardScorer
 from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import release_cuda_memory_for_parking
-from vrl.utils.deadline import OperationDeadline, require_timeout
+from vrl.utils.deadline import OperationDeadline
 from vrl.utils.lifecycle import RuntimeLifecycle, RuntimePhase
 
 if TYPE_CHECKING:
@@ -61,21 +61,14 @@ _DEFAULT_SCORE_TIMEOUT_S = 1800.0
 class RewardFunctionRuntime:
     """Expose a reward function through the collector-facing runtime contract."""
 
-    def __init__(
-        self,
-        reward_function: RewardFunction,
-        *,
-        score_timeout_s: float = _DEFAULT_SCORE_TIMEOUT_S,
-    ) -> None:
-        if not isinstance(reward_function, RewardFunction):
-            raise TypeError("reward_function must be a RewardFunction")
+    def __init__(self, reward_function: RewardFunction) -> None:
         self._reward_function = reward_function
         # Whether the function may hold device memory: set when it is woken or
         # scores, cleared by a successful park. When to park is the scheduler's
         # decision (the collector reads the placement plan); this runtime only
         # knows whether there is anything to release.
         self._holds_memory = False
-        self._score_timeout_s = require_timeout(score_timeout_s, name="score_timeout_s")
+        self._score_timeout_s = _DEFAULT_SCORE_TIMEOUT_S
         self._operation_lock = asyncio.Lock()
         # Same terminal FSM as the generation runtime: RUNNING accepts work,
         # SHUTTING_DOWN closes admission (retryable teardown), TERMINATED is

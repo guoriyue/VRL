@@ -194,6 +194,7 @@ def preflight_rewards(
                 )
                 owner.create()
                 placement = reward.actor_placement(owner)
+            reward.validate_parking()
             runtime = RewardFunctionRuntime(reward.build_function(ray_placement=placement))
             await runtime.preflight()
             await runtime.activate()

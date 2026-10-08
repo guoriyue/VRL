@@ -29,13 +29,11 @@ from vrl.runtime_errors import TerminalRuntimeError, find_error_cause
 class ContinuousRolloutConsumer:
     """Drain same-policy ready groups into a trainer iteration."""
 
-    def __init__(
-        self,
-        *,
-        staleness: StalenessPolicy,
-        settings: ContinuousRolloutSettings,
-    ) -> None:
-        self.staleness = staleness
+    def __init__(self, *, settings: ContinuousRolloutSettings) -> None:
+        self.settings = settings
+        self.staleness = StalenessPolicy(
+            max_stale_policy_versions=settings.max_stale_policy_versions,
+        )
         # Fresh-error count (with zero fresh completions) that ends the wait
         # early with the producer's root cause. 0 disables fail-fast. Range
         # validated once at the config boundary; trusted here.
@@ -46,8 +44,6 @@ class ContinuousRolloutConsumer:
         *,
         prompt_batch: PromptBatch,
         current_policy_version: int,
-        wait_timeout_s: float,
-        poll_interval_s: float,
         producer_state: ContinuousRolloutProducerState | None = None,
     ) -> RolloutIteration:
         """Block until a homogeneous-version iteration is ready, then build it.
@@ -62,6 +58,8 @@ class ContinuousRolloutConsumer:
         """
 
         # Both waits were validated by ContinuousRolloutConfig.
+        wait_timeout_s = self.settings.wait_timeout_s
+        poll_interval_s = self.settings.queue_poll_interval_s
         deadline = time.monotonic() + wait_timeout_s
         wait_start = time.perf_counter()
         ready_groups_at_demand = sum(item is not None for item in prompt_batch.results)

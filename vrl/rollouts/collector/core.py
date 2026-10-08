@@ -127,21 +127,17 @@ class RolloutCollector:
     def __init__(
         self,
         *,
-        config: RolloutCollectorConfig,
         request_builder: GenerationRequestBuilder,
         reward_runtime: RewardRuntime,
-        generation_runtime: GenerationRuntime | None = None,
-        lifecycle: RayLifecyclePlan | None = None,
+        lifecycle: RayLifecyclePlan,
     ) -> None:
-        self.config = config
         self.request_builder = request_builder
         self.reward_runtime = reward_runtime
+        # The recipe attaches the generation runtime once it is launched; the
+        # collector exists first so its shutdown covers the launch.
         self._generation_runtime: GenerationRuntime | None = None
-        if generation_runtime is not None:
-            self.set_generation_runtime(generation_runtime)
-        # Topology-derived handoff policy (vrl/ray/resources.py). None means no
-        # shared GPU, so rollout never offloads before reward. Read here instead
-        # of asking the runtime, which is now just transport.
+        # Topology-derived handoff policy (vrl/ray/resources.py), read here
+        # instead of asking the runtime, which is just transport.
         self.lifecycle = lifecycle
         self._reward_shutdown_complete = False
 
@@ -152,16 +148,13 @@ class RolloutCollector:
         *,
         reward_runtime: RewardRuntime,
         config: RolloutCollectorConfig,
-        generation_runtime: GenerationRuntime | None = None,
-        lifecycle: RayLifecyclePlan | None = None,
+        lifecycle: RayLifecyclePlan,
     ) -> RolloutCollector:
         """Build a rollout collector from an already resolved family entry."""
 
         return cls(
-            config=config,
             request_builder=GenerationRequestBuilder(entry=entry, config=config),
             reward_runtime=reward_runtime,
-            generation_runtime=generation_runtime,
             lifecycle=lifecycle,
         )
 
@@ -252,7 +245,7 @@ class RolloutCollector:
         # self.config already holds these as resolved, typed fields (frozen for the
         # batch). Read them directly — feeding the typed trajectory_storage policy
         # back through TrajectoryStoragePolicy.from_config raised TypeError.
-        trajectory_storage_policy = self.config.trajectory_storage
+        trajectory_storage_policy = self.request_builder.config.trajectory_storage
         builders = []
         for rollout in unscored:
             reward_metadata = dict(rollout.collector_request.metadata)
@@ -264,10 +257,6 @@ class RolloutCollector:
                 reward_metadata["rollout_policy_version"] = int(policy_version)
             context = RolloutBatchBuildContext(
                 metadata=reward_metadata,
-                # Collector/continuous-owner output is host-owned. The trainer
-                # moves the completed batch to its device later; creating reward
-                # tensors here on the trainer GPU would race backward.
-                device="cpu",
                 trajectory_storage_policy=trajectory_storage_policy,
             )
             builders.append(TrajectoryRolloutBatchBuilder(rollout.output, context))
@@ -331,7 +320,9 @@ class RolloutCollector:
             group_rewards = torch.tensor(
                 score_result.scores[sample_offset:sample_stop],
                 dtype=torch.float32,
-                device=builder.context.device or "cpu",
+                # Collector output is host-owned; the trainer moves the batch
+                # to its device later, so reward tensors never race backward.
+                device="cpu",
             )
             batch = builder.build(group_rewards)
             if score_result.components:
@@ -364,17 +355,13 @@ class RolloutCollector:
         # The release decision is derived once from GPU topology into the
         # lifecycle plan (vrl/ray/resources.py), not re-decided per call by the
         # runtime. None plan = no shared GPU = never release before reward.
-        lifecycle = self.lifecycle
-        if lifecycle is None:
-            return False
-        return lifecycle.park_rollout_for_reward
+        return self.lifecycle.park_rollout_for_reward
 
     @property
     def reward_yields_gpu(self) -> bool:
         """Whether the reward shares a GPU and must park after scoring (plan bit)."""
 
-        lifecycle = self.lifecycle
-        return lifecycle is not None and lifecycle.offload_reward
+        return self.lifecycle.offload_reward
 
     @property
     def reward_isolation_verified(self) -> bool:
@@ -384,8 +371,7 @@ class RolloutCollector:
         stays resident on its own device, so it never blocks overlap.
         """
 
-        lifecycle = self.lifecycle
-        return lifecycle is None or not lifecycle.offload_reward
+        return not self.lifecycle.offload_reward
 
     def build_generation_requests(
         self,

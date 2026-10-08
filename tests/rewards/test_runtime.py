@@ -18,15 +18,19 @@ def _sample(sample_id: str = "sample-0") -> RewardSample:
 
 
 @pytest.mark.asyncio
-async def test_score_deadline_bounds_awaitable_scoring() -> None:
+async def test_score_deadline_bounds_awaitable_scoring(monkeypatch) -> None:
     """A scorer stuck at an await point raises the shared terminal timeout."""
+
+    import vrl.rewards.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_DEFAULT_SCORE_TIMEOUT_S", 0.05)
 
     class _StuckReward(RewardFunction):
         async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
             await asyncio.sleep(3600)
             raise AssertionError("unreachable")
 
-    runtime = RewardFunctionRuntime(_StuckReward(), score_timeout_s=0.05)
+    runtime = RewardFunctionRuntime(_StuckReward())
 
     with pytest.raises(OperationTimeout, match=r"reward\.score"):
         await runtime.score((_sample(),))

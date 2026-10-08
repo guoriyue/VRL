@@ -179,14 +179,16 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
         before = {
             name: p.detach().clone() for name, p in model.named_parameters() if p.requires_grad
         }
+        collector = RolloutCollector.from_family(
+            resolved.family,
+            reward_runtime=RewardFunctionRuntime(IndexReward()),
+            config=collector_config,
+            lifecycle=resolved.resources.lifecycle,
+        )
+        collector.set_generation_runtime(runtime)
         trainer = OnlineTrainer(
             algorithm=pair.algorithm,
-            collector=RolloutCollector.from_family(
-                resolved.family,
-                reward_runtime=RewardFunctionRuntime(IndexReward()),
-                config=collector_config,
-                generation_runtime=runtime,
-            ),
+            collector=collector,
             evaluator=pair.evaluator,
             model=model,
             weight_syncer=RayRuntimeWeightSyncer(runtime),

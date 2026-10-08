@@ -26,7 +26,6 @@ class RolloutBatchBuildContext:
     """Non-engine metadata needed while building a trainer RolloutBatch."""
 
     metadata: dict[str, Any]
-    device: Any | None = None
     trajectory_storage_policy: TrajectoryStoragePolicy = field(
         default_factory=TrajectoryStoragePolicy,
     )

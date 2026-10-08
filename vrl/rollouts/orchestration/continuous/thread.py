@@ -18,7 +18,6 @@ from typing import Any
 
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
-from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.types import RolloutIteration
@@ -63,9 +62,6 @@ class _ContinuousRolloutController:
         self.lifecycle = lifecycle
         # The validated carrier travels whole; only derived values are unpacked.
         self.settings = settings
-        self.staleness = StalenessPolicy(
-            max_stale_policy_versions=settings.max_stale_policy_versions,
-        )
 
         self.consumer: ContinuousRolloutConsumer | None = None
         self.producer: ContinuousRolloutProducer | None = None
@@ -131,8 +127,6 @@ class _ContinuousRolloutController:
             iteration = await self.consumer.collect_iteration(
                 prompt_batch=prompt_batch,
                 current_policy_version=current_policy_version,
-                wait_timeout_s=self.settings.wait_timeout_s,
-                poll_interval_s=self.settings.queue_poll_interval_s,
                 producer_state=self.producer.state,
             )
             self.producer.release_results()
@@ -324,12 +318,10 @@ class _ContinuousRolloutController:
             await self.lifecycle.push_prepared_weights(initial_weights, stats)
 
         self.consumer = ContinuousRolloutConsumer(
-            staleness=self.staleness,
             settings=self.settings,
         )
         self.producer = ContinuousRolloutProducer(
             lifecycle=self.lifecycle,
-            staleness=self.staleness,
             settings=self.settings,
         )
         self.producer.set_prompt_batch(

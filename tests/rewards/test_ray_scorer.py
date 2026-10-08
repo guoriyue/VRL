@@ -50,7 +50,7 @@ def _scorer(**kwargs):
         "scale": 2.0,
     }
     worker_config.update(kwargs.pop("worker_config", {}))
-    return RayRewardScorer(worker_config, startup_timeout_s=60, shutdown_timeout_s=10, **kwargs)
+    return RayRewardScorer(worker_config, **kwargs)
 
 
 def _request(media=None, **metadata):
@@ -183,13 +183,16 @@ def test_real_ray_shutdown_interrupts_inflight_score(local_ray):
 
 
 @pytest.mark.slow_test
-def test_real_ray_startup_deadline_cancels_unschedulable_cpu_actor(local_ray):
+def test_real_ray_startup_deadline_cancels_unschedulable_cpu_actor(local_ray, monkeypatch):
+    import vrl.rewards.ray as ray_module
+
+    # The test-owned cluster exposes only two CPUs, so the actor never schedules.
+    monkeypatch.setattr(ray_module, "_REWARD_ACTOR_CPUS", 3.0)
+    monkeypatch.setattr(ray_module, "_STARTUP_TIMEOUT_S", 0.1)
+
     async def exercise():
         scorer = RayRewardScorer(
             {"device": "cpu", "model_factory": "tests.rewards._ray_model:TinyRewardModel"},
-            cpus_per_worker=3,  # The test-owned cluster exposes only two CPUs.
-            startup_timeout_s=0.1,
-            shutdown_timeout_s=10,
         )
         try:
             with pytest.raises(RayRewardTimeout, match=r"reward\.ready"):
