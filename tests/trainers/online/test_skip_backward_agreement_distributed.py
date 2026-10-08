@@ -31,7 +31,7 @@ from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainSte
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.base import RewardFunction
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trainers.distributed import DistributedTrainingContext, TrainingCollectives
+from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.online.trainer import (
     OnlineTrainer,
     _distributed_initial_replay_stats,
@@ -323,11 +323,10 @@ def _rank_trainer(monkeypatch: pytest.MonkeyPatch, root: Path, *, samples: int) 
         world_size=dist.get_world_size(),
         device=torch.device("cpu"),
     )
-    strategy = SingleProcessStrategy(context, collectives=TrainingCollectives(context))
+    strategy = SingleProcessStrategy(context)
     pair = AlgorithmEvaluatorPair.from_configs(
         family_entry=stack.family,
         built=built,
-        collector_config=stack.collector_config(),
         scheduler=getattr(bundle, "scheduler", None),
     )
     trainer = OnlineTrainer(
@@ -335,7 +334,6 @@ def _rank_trainer(monkeypatch: pytest.MonkeyPatch, root: Path, *, samples: int) 
         collector=bench.collector,
         evaluator=pair.evaluator,
         model=bundle.model,
-        ref_model=bundle.model,
         weight_syncer=RayRuntimeWeightSyncer(bench.runtime),
         sync_state_getter=lambda: strategy.export_rollout_state(bundle),
         config=built.trainer,

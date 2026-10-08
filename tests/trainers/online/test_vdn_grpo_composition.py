@@ -149,7 +149,6 @@ def _stack(
     pair = AlgorithmEvaluatorPair.from_configs(
         family_entry=resolved.family,
         built=built,
-        collector_config=resolved.collector,
         scheduler=getattr(bundle, "scheduler", None),
     )
     trainer = OnlineTrainer(
@@ -157,7 +156,6 @@ def _stack(
         collector=collector,
         evaluator=pair.evaluator,
         model=bundle.model,
-        ref_model=None,
         weight_syncer=RayRuntimeWeightSyncer(runtime),
         sync_state_getter=lambda: strategy.export_rollout_state(bundle),
         config=built.trainer,

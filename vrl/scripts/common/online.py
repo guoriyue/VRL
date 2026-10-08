@@ -459,10 +459,10 @@ async def _run_global_std_streaming_update(
     trainer: OnlineTrainer,
     example_batch: list[Any],
     *,
-    batch_plan: OnlineBatchPlan,
     next_example_batch: list[Any] | None,
 ) -> Any:
     """Compute update-wide advantages before replay, keeping trajectories on disk."""
+    batch_plan = trainer.config.batch_plan
     micro = batch_plan.prompts_per_collection
     microbatches = [example_batch[k : k + micro] for k in range(0, len(example_batch), micro)]
     output = Path(trainer.config.output_dir)
@@ -568,7 +568,6 @@ async def _run_global_std_streaming_update(
         return await _run_streaming_optimizer_update(
             trainer,
             example_batch,
-            batch_plan=batch_plan,
             next_example_batch=next_example_batch,
             _prepared=prepared(),
             _total_groups=effective_groups,
@@ -579,7 +578,6 @@ async def _run_streaming_optimizer_update(
     trainer: OnlineTrainer,
     example_batch: list[Any],
     *,
-    batch_plan: OnlineBatchPlan,
     next_example_batch: list[Any] | None = None,
     _prepared: Any | None = None,
     _total_groups: int | None = None,
@@ -598,6 +596,7 @@ async def _run_streaming_optimizer_update(
     checked against the host-RAM budget and the run fails fast if it is already
     over budget (SPRINT_memory_budgeted_microbatch T2).
     """
+    batch_plan = trainer.config.batch_plan
     if not batch_plan.streaming:
         raise ValueError("_run_streaming_optimizer_update requires a streaming batch plan")
     collection_size = batch_plan.prompts_per_collection
@@ -609,7 +608,7 @@ async def _run_streaming_optimizer_update(
 
     if _prepared is None and trainer.algorithm.config.global_std:
         return await _run_global_std_streaming_update(
-            trainer, example_batch, batch_plan=batch_plan, next_example_batch=next_example_batch
+            trainer, example_batch, next_example_batch=next_example_batch
         )
 
     trainer.begin_optimizer_update()
@@ -925,7 +924,6 @@ async def run_online_recipe(cfg: DictConfig) -> None:
         algorithm_and_evaluator = AlgorithmEvaluatorPair.from_configs(
             family_entry=family_entry,
             built=built,
-            collector_config=collector_config,
             scheduler=scheduler,
         )
         # An unreachable or wrong-identity external reward service must fail
@@ -949,16 +947,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
         collector.set_generation_runtime(generation_runtime)
         _host_memory.log("after_rollout_backend_build")
 
-        # The policy model supplies its own reference (``reference_policy``): the
-        # base weights under an adapter, a pre-training snapshot otherwise. Only
-        # objectives that read a reference ask for one.
-        ref_model = None
-        contract = built.root.algorithm.hyperparameters.config_contract
         algorithm = algorithm_and_evaluator.algorithm
-        if algorithm.uses_evaluator and algorithm.kl_coef > 0:
-            ref_model = bundle.model
-        if contract.requires_reference_policy:
-            ref_model = bundle.model
         # The strategy built during preflight is the single owner of trainable-state
         # export for both rollout weight sync and checkpointing. prepare_model
         # (called once in the trainer) creates any process group and wraps the
@@ -968,7 +957,6 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             collector=collector,
             evaluator=algorithm_and_evaluator.evaluator,
             model=model,
-            ref_model=ref_model,
             weight_syncer=RayRuntimeWeightSyncer(collector.generation_runtime),
             # Rollout weight sync re-reads live trainable state on every push, so
             # bind the strategy export lazily instead of snapshotting once.
@@ -1103,7 +1091,6 @@ async def run_online_recipe(cfg: DictConfig) -> None:
                     metrics = await _run_streaming_optimizer_update(
                         trainer,
                         example_batch,
-                        batch_plan=batch_plan,
                         next_example_batch=next_example_batch,
                     )
                 else:

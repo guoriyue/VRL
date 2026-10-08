@@ -143,7 +143,6 @@ def _fsdp_strategy(
     config = FSDPConfig.model_validate(overrides)
     return FSDPStrategy(
         context,
-        mesh_dims=config.mesh,
         precision_policy=config.precision_policy,
         reshard_after_forward=config.reshard_after_forward,
         cpu_offload=config.cpu_offload,

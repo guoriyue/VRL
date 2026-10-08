@@ -148,9 +148,7 @@ def create_context_parallel_groups(cp_size: int) -> ContextParallelGroups:
     )
 
 
-def synchronize_context_parallel_rng(
-    *, groups: ContextParallelGroups, device: torch.device
-) -> None:
+def synchronize_context_parallel_rng(*, groups: ContextParallelGroups) -> None:
     """Copy a CP leader's process RNGs without touching other CUDA devices.
 
     Call at the strict replay boundary after leader-only collection. Does not
@@ -163,11 +161,12 @@ def synchronize_context_parallel_rng(
     import numpy as np
     import torch.distributed as dist
 
-    device = torch.device(device)
-    if device.type == "cuda" and (
-        device.index is None or device.index != torch.cuda.current_device()
-    ):
-        raise ValueError("CP RNG synchronization requires the current rank-local CUDA device")
+    # An NCCL group exchanges through this rank's current CUDA device.
+    device = (
+        torch.device("cuda", torch.cuda.current_device())
+        if dist.get_backend(groups.cp_group) == "nccl"
+        else torch.device("cpu")
+    )
     payload = [None]
     if groups.cp_rank == 0:
         payload[0] = {
@@ -416,11 +415,7 @@ def cpu_coordination_group() -> Any:
     return None
 
 
-def init_training_process_group(
-    context: DistributedTrainingContext,
-    *,
-    backend: str = "nccl",
-) -> None:
+def init_training_process_group(context: DistributedTrainingContext) -> None:
     """Create the torch.distributed process group for a ddp/fsdp rank.
 
     No-op for ``single_process`` and when a group already exists. The owning
@@ -435,6 +430,7 @@ def init_training_process_group(
     global _CPU_COORDINATION_GROUP
     if not context.distributed or dist.is_initialized():
         return
+    backend = "nccl" if context.device.type == "cuda" else "gloo"
     if context.device.type == "cuda":
         # ``context.device`` is the CUDA ordinal inside this rank's masked view.
         torch.cuda.set_device(context.device)

@@ -191,8 +191,6 @@ class TrainerParking:
 
     def _park_training_state_locally(self, state: TrainingMemoryState) -> None:
         self.validate_training_state_parking()
-        if not isinstance(state, TrainingMemoryState):
-            raise TypeError("training state parking requires TrainingMemoryState")
         if self._parking is not None:
             if self._parked_state().identity_key == state.identity_key:
                 return
@@ -385,8 +383,6 @@ class SingleProcessStrategy(TrainerParking, _UnshardedStateStrategy):
     def __init__(
         self,
         context: DistributedTrainingContext | None = None,
-        *,
-        collectives: TrainingCollectives | None = None,
     ) -> None:
         self.context = context or DistributedTrainingContext(
             strategy="single_process",
@@ -394,10 +390,7 @@ class SingleProcessStrategy(TrainerParking, _UnshardedStateStrategy):
             world_size=1,
             device=torch.device("cpu"),
         )
-
-        self.collectives = (
-            collectives if collectives is not None else TrainingCollectives(self.context)
-        )
+        self.collectives = TrainingCollectives(self.context)
 
     def prepare_model(self, model: Any) -> Any:
         # Single process trains the model as-is once placed; the seam exists so
@@ -483,8 +476,6 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
         self,
         context: DistributedTrainingContext,
         *,
-        collectives: TrainingCollectives | None = None,
-        mesh_dims: list[str],
         precision_policy: str,
         reshard_after_forward: bool,
         cpu_offload: bool,
@@ -494,8 +485,7 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
         parking_directory: str | None = None,
     ) -> None:
         self.context = context
-        self.collectives = collectives if collectives is not None else TrainingCollectives(context)
-        self._mesh_dims = list(mesh_dims)
+        self.collectives = TrainingCollectives(context)
         self._precision_policy = precision_policy
         self._reshard_after_forward = reshard_after_forward
         self._cpu_offload = cpu_offload
@@ -521,7 +511,7 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
         if self._mesh is None:
             from vrl.trainers.fsdp import build_fsdp_mesh
 
-            self._mesh = build_fsdp_mesh(self.context, self._mesh_dims)
+            self._mesh = build_fsdp_mesh(self.context)
         return self._mesh
 
     @property
@@ -548,8 +538,7 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
         # single-node multi-GPU box. Doing it here keeps the two strategies symmetric
         # and the device choice explicit. No-op for single_process and when a group
         # already exists (the CPU gloo test fixture pre-inits one).
-        backend = "gloo" if self.context.device.type == "cpu" else "nccl"
-        init_training_process_group(self.context, backend=backend)
+        init_training_process_group(self.context)
         mesh = self._ensure_mesh()
 
         # A rank that built the replay model without weights (``materialize_weights``
@@ -931,10 +920,10 @@ class ContextParallelStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
     the same fixed-row/FP32-LoRA compute contract without replay CP hooks.
     """
 
-    def __init__(self, context: DistributedTrainingContext, *, cp_size: int):
+    def __init__(self, context: DistributedTrainingContext):
         self.context = context
         self.collectives = TrainingCollectives(context)
-        self.cp_size = cp_size
+        self.cp_size = context.cp_size
         self.groups = None
         self._execution = ExitStack()
         self._parameters: list[nn.Parameter] = []
@@ -970,9 +959,7 @@ class ContextParallelStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
             or float32_precision_state()["matmul"] != "ieee"
         ):
             raise ValueError("CP CUDA strategy requires strict deterministic IEEE compute")
-        init_training_process_group(
-            self.context, backend="nccl" if self.context.device.type == "cuda" else "gloo"
-        )
+        init_training_process_group(self.context)
         if (
             dist.get_rank() != self.context.rank
             or dist.get_world_size() != self.context.world_size
@@ -1063,11 +1050,10 @@ class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
         self,
         context: DistributedTrainingContext,
         *,
-        collectives: TrainingCollectives | None = None,
         find_unused_parameters: bool,
     ) -> None:
         self.context = context
-        self.collectives = collectives if collectives is not None else TrainingCollectives(context)
+        self.collectives = TrainingCollectives(context)
         self._find_unused_parameters = find_unused_parameters
 
     def prepare_model(self, model: Any) -> Any:
@@ -1084,8 +1070,7 @@ class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
         # model fails fast (and the guard tests need no live PG).
         handles = _trainable_module_handles(model)
         self.place_trainable_roots(model)
-        backend = "gloo" if self.context.device.type == "cpu" else "nccl"
-        init_training_process_group(self.context, backend=backend)
+        init_training_process_group(self.context)
         device_ids = None
         if self.context.device.type == "cuda":
             if self.context.device.index is None:
@@ -1149,9 +1134,8 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
             f"config={configured_strategy!r}, context={context.strategy!r}",
         )
 
-    collectives = TrainingCollectives(context)
     if configured_strategy == "single_process":
-        return SingleProcessStrategy(context, collectives=collectives)
+        return SingleProcessStrategy(context)
     if configured_strategy == "fsdp":
         from vrl.models.interfaces.runtime import torch_compile_for_role
 
@@ -1169,8 +1153,6 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
         fsdp = training.fsdp
         return FSDPStrategy(
             context,
-            collectives=collectives,
-            mesh_dims=fsdp.mesh,
             ulysses_degree=fsdp.context_parallel.ulysses_degree,
             ring_degree=fsdp.context_parallel.ring_degree,
             precision_policy=fsdp.precision_policy,
@@ -1188,7 +1170,6 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
             raise AssertionError("typed ddp config was not resolved")
         return DDPStrategy(
             context,
-            collectives=collectives,
             find_unused_parameters=training.ddp.find_unused_parameters,
         )
     raise AssertionError(

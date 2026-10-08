@@ -455,12 +455,9 @@ class OnlineTrainer:
             return None
         precision = model_precision(model)
         uses_fp16_autocast = precision.outer_autocast and precision.dtype == "fp16"
-        has_native_fp16_gradients = bool(
-            model is not None
-            and any(
-                parameter.requires_grad and parameter.dtype == torch.float16
-                for parameter in model.parameters()
-            )
+        has_native_fp16_gradients = any(
+            parameter.requires_grad and parameter.dtype == torch.float16
+            for parameter in model.parameters()
         )
         if not (uses_fp16_autocast or has_native_fp16_gradients):
             return None
@@ -473,7 +470,6 @@ class OnlineTrainer:
         evaluator: Evaluator | None,
         model: nn.Module,
         config: TrainerConfig,
-        ref_model: nn.Module | None = None,
         weight_syncer: RayRuntimeWeightSyncer | None = None,
         sync_state_getter: TrainableStateGetter | None = None,
         device: torch.device | str = "cuda",
@@ -484,7 +480,6 @@ class OnlineTrainer:
         self.collector = collector
         self.evaluator = evaluator
         self.model = model
-        self.ref_model = ref_model
         self.weight_syncer = weight_syncer
         if weight_syncer is not None and sync_state_getter is None:
             raise ValueError(
@@ -496,14 +491,13 @@ class OnlineTrainer:
         # RuntimeBundle stamps the selected role policy on the model so trainer
         # process settings cannot be paired with a different build.
         self.precision = model_precision(model)
-        # The KL term needs the reference replay; decide it here, once, instead
-        # of discovering a missing ref_log_prob inside the loss.
-        if algorithm.uses_evaluator and algorithm.kl_coef > 0 and ref_model is None:
-            raise ValueError(
-                f"{type(algorithm).__name__} has kl_coef={algorithm.kl_coef} > 0 but "
-                "OnlineTrainer received no ref_model; the KL term compares against "
-                "the reference replay",
-            )
+        # The policy supplies its own reference (the base weights under an
+        # adapter, a pre-training snapshot otherwise); only objectives that
+        # read one get it: a KL term, or a contract that asks for it.
+        contract = type(algorithm.config).config_contract
+        uses_reference = (
+            algorithm.uses_evaluator and algorithm.kl_coef > 0
+        ) or contract.requires_reference_policy
         # Clean fine-tuning latents ({target artifact -> [C,T,H,W]}) for the GRPO
         # diffusion-loss regularizer; the recipe loads data.sft_latents, which
         # vrl/config/rules.py requires whenever sft_weight > 0.
@@ -537,7 +531,8 @@ class OnlineTrainer:
         # The reference is the policy as it stands here — after sharding, before
         # any checkpoint restore — so a full fine-tune snapshots pre-training
         # weights on the sharded layout and an adapter costs nothing.
-        if self.ref_model is self.model:
+        self.ref_model = self.model if uses_reference else None
+        if self.ref_model is not None:
             self.model.attach_reference_policy()
         # Per-step phase timings under profile: one log line plus one JSONL row.
         self._rollout_stats_path = f"{self.config.output_dir}/rollout_stats.jsonl"
@@ -641,8 +636,6 @@ class OnlineTrainer:
         self,
         batch: RolloutBatch,
         timestep_index: int,
-        *,
-        need_ref: bool = False,
     ) -> TrajectorySignalBatch:
         """The one call into the evaluator: replay one step into typed signals.
 
@@ -661,7 +654,7 @@ class OnlineTrainer:
                 batch,
                 timestep_index,
                 ref_model=self.ref_model,
-                signal_request=SignalRequest(need_ref=need_ref),
+                signal_request=SignalRequest(need_ref=self.algorithm.kl_coef > 0),
             )
         if not isinstance(signals, TrajectorySignalBatch):
             raise TypeError(
@@ -693,11 +686,7 @@ class OnlineTrainer:
                     ),
                 )
 
-        signals = self._evaluate_signals(
-            group_batch,
-            timestep_index,
-            need_ref=self.algorithm.kl_coef > 0,
-        )
+        signals = self._evaluate_signals(group_batch, timestep_index)
         with profile_range("trainer.loss"):
             loss, metrics = self.algorithm.compute_loss(
                 AlgorithmInput(signals=signals, advantages=batch_advantages),
@@ -1008,12 +997,7 @@ class OnlineTrainer:
         step_size = num_timesteps / train_timestep_count
         return [int(i * step_size) for i in range(train_timestep_count)]
 
-    def _train_replay_indices(
-        self,
-        batch: RolloutBatch,
-        timestep_fraction: float,
-        selection: str,
-    ) -> list[int]:
+    def _train_replay_indices(self, batch: RolloutBatch) -> list[int]:
         """Return evaluator invocations for one replay batch.
 
         Existing evaluators replay one denoise step per invocation and retain
@@ -1022,6 +1006,8 @@ class OnlineTrainer:
         API-compatible sentinel and must not be interpreted as a selected
         temporal chunk or denoise transition.
         """
+        timestep_fraction = self.config.timestep_fraction
+        selection = self.config.timestep_selection
 
         # Evaluator-less objectives replay one step per call like step evaluators.
         granularity = "step" if self.evaluator is None else self.evaluator.replay_granularity
@@ -1091,7 +1077,6 @@ class OnlineTrainer:
         self,
         batches: list[RolloutBatch],
         default_indices: list[int],
-        selection: str,
     ) -> torch.Tensor:
         """Recorded timestep of every (sample, trained step) pair in ``batches``.
 
@@ -1100,6 +1085,7 @@ class OnlineTrainer:
         ``default_indices``), so the tensor enumerates exactly the transitions
         the update will put loss on.
         """
+        selection = self.config.timestep_selection
 
         from vrl.trajectory.reader import TrajectoryReader
 
@@ -1156,7 +1142,6 @@ class OnlineTrainer:
         self,
         sample_batch: _TrainingMicrobatch,
         default_indices: list[int],
-        selection: str,
     ) -> list[int]:
         """Per-microbatch replay indices; only ``sde_window`` varies by batch.
 
@@ -1165,6 +1150,7 @@ class OnlineTrainer:
         match everywhere — loss_scale and the cross-rank microbatch counts are
         derived from it, and sampling config fixes window_size for the run.
         """
+        selection = self.config.timestep_selection
 
         if selection != "sde_window":
             return default_indices
@@ -1204,9 +1190,7 @@ class OnlineTrainer:
         train_indices: list[int],
         agg: _ReplayMetrics,
         capture_initial_replay: bool,
-        defer_replay_tensors: bool,
-        timer: PhaseTimer | None = None,
-        ema_per_microbatch: EMAWeights | None = None,
+        timer: PhaseTimer,
     ) -> None:
         """One replay/backward sweep over the update's sample batches.
 
@@ -1221,6 +1205,10 @@ class OnlineTrainer:
         optimizer-step counter; the caller steps it once more after the
         optimizer step with the advanced counter (``EMAConfig.step_per_microbatch``).
         """
+        defer_replay_tensors = (
+            self.algorithm.uses_evaluator and self.evaluator.supports_deferred_replay_tensor_move
+        )
+        ema_per_microbatch = self._ensure_ema() if self.config.ema.step_per_microbatch else None
 
         cfg = self.config
         loss_scale = int(total_groups) * len(train_indices)
@@ -1230,7 +1218,7 @@ class OnlineTrainer:
         # recorded timesteps of every sample it is about to train on, before
         # the first replay forward.
         self.algorithm.prepare_update(
-            lambda: self._update_timesteps(batches, train_indices, cfg.timestep_selection),
+            lambda: self._update_timesteps(batches, train_indices),
         )
         sample_batches = _TrainingMicrobatch.plan_balanced(
             batches,
@@ -1251,12 +1239,8 @@ class OnlineTrainer:
                 is_dummy=sample_batch.is_dummy,
                 agg=agg,
             )
-            for j in self._sample_batch_train_indices(
-                sample_batch,
-                train_indices,
-                cfg.timestep_selection,
-            ):
-                with timer.time("evaluate") if timer else contextlib.nullcontext():
+            for j in self._sample_batch_train_indices(sample_batch, train_indices):
+                with timer.time("evaluate"):
                     loss, metrics = self._compute_replay_loss(
                         group_batch,
                         batch_adv,
@@ -1265,7 +1249,7 @@ class OnlineTrainer:
                     # Average across the complete optimizer target batch;
                     # step evaluators retain the per-denoise-step surrogate.
                     loss = loss * sample_batch.loss_weight / loss_scale
-                with timer.time("backward") if timer else contextlib.nullcontext():
+                with timer.time("backward"):
                     self._backward(loss)
                 if not sample_batch.is_dummy:
                     agg.add(
@@ -1277,7 +1261,7 @@ class OnlineTrainer:
                 trainable = [p for p in self.model.parameters() if p.requires_grad]
                 ema_per_microbatch.step(trainable, self.state.global_step)
 
-    def _ema_after_optimizer_step(self, ema: EMAWeights | None) -> None:
+    def _ema_after_optimizer_step(self) -> None:
         """Step the EMA shadow for one completed optimizer step.
 
         Default: one step at the counter of the update just taken. Reference
@@ -1286,6 +1270,7 @@ class OnlineTrainer:
         for the update's last microbatch — so the final lerp of the update
         reads the next counter.
         """
+        ema = self._ema
 
         if ema is None:
             return
@@ -1299,7 +1284,6 @@ class OnlineTrainer:
         self,
         batches: list[RolloutBatch],
         advantages: list[torch.Tensor],
-        steps: int,
     ) -> list[tuple[list[RolloutBatch], list[torch.Tensor]]]:
         """Split one collected batch into ``steps`` disjoint optimizer updates.
 
@@ -1310,6 +1294,7 @@ class OnlineTrainer:
         without samples. The permutation is seeded from the optimizer-step
         counter and rank, so a resumed run deals the same way.
         """
+        steps = self.config.batch_plan.optimizer_steps_per_batch
 
         if steps <= 1:
             return [(batches, advantages)]
@@ -1358,13 +1343,7 @@ class OnlineTrainer:
         if not self._strategy.collectives.all_true(bool(batch.batches)):
             return
         self._update_had_training_work = True
-        uses_evaluator = self.algorithm.uses_evaluator
-        defer = uses_evaluator and self.evaluator.supports_deferred_replay_tensor_move
-        train_indices = self._train_replay_indices(
-            batch.batches[0],
-            cfg.timestep_fraction,
-            cfg.timestep_selection,
-        )
+        train_indices = self._train_replay_indices(batch.batches[0])
         self._run_replay_pass(
             batch.batches,
             batch.advantages,
@@ -1372,9 +1351,7 @@ class OnlineTrainer:
             train_indices=train_indices,
             agg=self._update_agg_metrics,
             capture_initial_replay=True,
-            defer_replay_tensors=defer,
             timer=batch.timer,
-            ema_per_microbatch=(self._update_ema if self.config.ema.step_per_microbatch else None),
         )
 
     async def finish_optimizer_update(
@@ -1411,7 +1388,7 @@ class OnlineTrainer:
             agg.grad_norms.append(grad_norm)
             if stepped:
                 self.algorithm.after_optimizer_step(self.state.global_step)
-                self._ema_after_optimizer_step(self._update_ema)
+                self._ema_after_optimizer_step()
             self.state.global_step += 1
             if stepped:
                 sync_stats = await self.rollout_schedule.after_train_step()
@@ -1485,7 +1462,7 @@ class OnlineTrainer:
 
         cfg = self.config
         optimizer = self._ensure_optimizer()
-        ema = self._ensure_ema()
+        self._ensure_ema()
         iteration = batch.iteration
         timer = batch.timer
         filtered_batches = batch.batches
@@ -1506,7 +1483,6 @@ class OnlineTrainer:
         # 3. Train loop — gradient accumulation across per-prompt batches.
         self.model.train()
         agg_metrics = _ReplayMetrics()
-        uses_evaluator = self.algorithm.uses_evaluator
 
         # If every batch was filtered out (all dead), skip training this step.
         # Unanimous across ranks (see all_ranks_true): a backward fires
@@ -1536,22 +1512,13 @@ class OnlineTrainer:
                 phase_times=self._step_stats(iteration, timer).as_metrics_dict(),
             )
 
-        defer_replay_tensor_move = (
-            uses_evaluator and self.evaluator.supports_deferred_replay_tensor_move
-        )
-
         # Replay schedule — step evaluators use the configured denoise subset;
         # trajectory evaluators perform one causal pass over all policy axes.
         # Trajectory schemas are consistent across batches, so inspect the first batch.
-        train_indices = self._train_replay_indices(
-            filtered_batches[0],
-            cfg.timestep_fraction,
-            cfg.timestep_selection,
-        )
+        train_indices = self._train_replay_indices(filtered_batches[0])
 
         initial_replay = InitialReplayStats()
         policy_updated = False
-        ema_per_microbatch = ema if cfg.ema.step_per_microbatch else None
         for _ppo_epoch in range(cfg.ppo_epochs):
             # ``train_on_rollout_batch`` receives one already-collected optimizer
             # target batch. Streaming accumulation is owned by the recipe and
@@ -1559,11 +1526,7 @@ class OnlineTrainer:
             # again here would turn one target batch into several optimizer steps.
             # ``optimizer_steps_per_batch`` deals the batch's samples into that
             # many disjoint updates, each with its own optimizer step.
-            chunks = self._optimizer_step_chunks(
-                filtered_batches,
-                filtered_advs,
-                cfg.batch_plan.optimizer_steps_per_batch,
-            )
+            chunks = self._optimizer_step_chunks(filtered_batches, filtered_advs)
             for chunk_index, (chunk_batches, chunk_advs) in enumerate(chunks):
                 capture_initial_replay = _ppo_epoch == 0 and chunk_index == 0
                 self._run_replay_pass(
@@ -1573,9 +1536,7 @@ class OnlineTrainer:
                     train_indices=train_indices,
                     agg=agg_metrics,
                     capture_initial_replay=capture_initial_replay,
-                    defer_replay_tensors=defer_replay_tensor_move,
                     timer=timer,
-                    ema_per_microbatch=ema_per_microbatch,
                 )
 
                 with timer.time("optim_step"):
@@ -1593,7 +1554,7 @@ class OnlineTrainer:
                 if _stepped:
                     policy_updated = True
                     self.algorithm.after_optimizer_step(self.state.global_step)
-                    self._ema_after_optimizer_step(ema)
+                    self._ema_after_optimizer_step()
 
                 self.state.global_step += 1
 

@@ -110,7 +110,7 @@ def test_ddp_wraps_resolved_device_after_per_rank_mask(monkeypatch) -> None:
     wrap_calls: list[dict[str, object]] = []
     monkeypatch.setattr(
         "vrl.trainers.strategy.init_training_process_group",
-        lambda _context, *, backend: None,
+        lambda _context: None,
     )
     # Placement would move the toy roots onto a CUDA device this lane does not
     # have; the assertion is about the device index DDP receives, not the move.

@@ -190,19 +190,13 @@ def real_trainer(
     pair = AlgorithmEvaluatorPair.from_configs(
         family_entry=stack.family,
         built=built,
-        collector_config=stack.collector_config(),
         scheduler=getattr(bundle, "scheduler", None),
-    )
-    contract = built.root.algorithm.hyperparameters.config_contract
-    uses_reference = (pair.evaluator is not None and pair.algorithm.kl_coef > 0) or (
-        contract.requires_reference_policy
     )
     trainer = OnlineTrainer(
         algorithm=pair.algorithm,
         collector=bench.collector,
         evaluator=pair.evaluator,
         model=bundle.model,
-        ref_model=bundle.model if uses_reference else None,
         weight_syncer=RayRuntimeWeightSyncer(bench.runtime),
         sync_state_getter=lambda: strategy.export_rollout_state(bundle),
         config=built.trainer,

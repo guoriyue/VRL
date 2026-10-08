@@ -39,7 +39,6 @@ def _stream(bench: TrainerBench, prompts: list[Any], **kwargs: Any) -> Any:
         _run_streaming_optimizer_update(
             bench.trainer,
             prompts,
-            batch_plan=bench.trainer.config.batch_plan,
             **kwargs,
         ),
     )
@@ -244,7 +243,6 @@ def test_streaming_stats_sum_phases_and_keep_peak_gauges(monkeypatch, tmp_path) 
             await _run_streaming_optimizer_update(
                 bench.trainer,
                 ["prompt-a", "prompt-b"],
-                batch_plan=bench.trainer.config.batch_plan,
                 next_example_batch=["prompt-c", "prompt-d"],
             )
             microbatch_stats.clear()
@@ -253,7 +251,6 @@ def test_streaming_stats_sum_phases_and_keep_peak_gauges(monkeypatch, tmp_path) 
             return await _run_streaming_optimizer_update(
                 bench.trainer,
                 ["prompt-c", "prompt-d"],
-                batch_plan=bench.trainer.config.batch_plan,
             )
         finally:
             await bench.trainer.rollout_schedule.shutdown()

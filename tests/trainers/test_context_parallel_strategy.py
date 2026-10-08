@@ -36,7 +36,7 @@ def _worker(rank, rendezvous, cuda):
         timeout=timedelta(seconds=120),
     )
     strategy = ContextParallelStrategy(
-        DistributedTrainingContext("context_parallel", rank, 4, device), cp_size=2
+        DistributedTrainingContext("context_parallel", rank, 4, device, cp_size=2)
     )
     try:
         torch.manual_seed(911)

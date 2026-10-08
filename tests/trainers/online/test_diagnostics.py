@@ -262,9 +262,7 @@ class TestDiagnostics:
 
         with pytest.raises(RuntimeError, match="replay parity failed"):
             asyncio.run(
-                _run_streaming_optimizer_update(
-                    tb.trainer, ["a cat"], batch_plan=tb.trainer.config.batch_plan
-                ),
+                _run_streaming_optimizer_update(tb.trainer, ["a cat"]),
             )
 
         assert "optimizer_step" not in tb.collector.trace.events

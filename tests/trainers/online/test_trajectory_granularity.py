@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -20,6 +21,13 @@ from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 from vrl.trajectory.builders import build_chunk_autoregressive_denoise_trajectory
 from vrl.trajectory.reader import TrajectoryReader
 from vrl.trajectory.types import TrajectoryTensor
+
+
+def _indices(trainer, batch, fraction: float, selection: str) -> list[int]:
+    """The trainer reads its selection off its config; set it per call."""
+
+    trainer.config = SimpleNamespace(timestep_fraction=fraction, timestep_selection=selection)
+    return trainer._train_replay_indices(batch)
 
 
 def _trajectory_signals(
@@ -140,7 +148,6 @@ def _trainer(
     algorithm = AlgorithmEvaluatorPair.from_configs(
         family_entry=stack.family,
         built=built,
-        collector_config=stack.collector_config(),
         scheduler=getattr(bundle, "scheduler", None),
     ).algorithm
     evaluator = _TrajectoryEvaluator()
@@ -172,7 +179,6 @@ def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(
             await _run_streaming_optimizer_update(
                 trainer,
                 ["prompt"],
-                batch_plan=trainer.config.batch_plan,
                 _prepared=iter([(iteration, None, None)]),
             )
         else:
@@ -194,7 +200,7 @@ def test_unknown_replay_granularity_fails_fast() -> None:
     )
 
     with pytest.raises(ValueError, match="replay_granularity"):
-        trainer._train_replay_indices(batch, 1.0, "strided")
+        _indices(trainer, batch, 1.0, "strided")
 
 
 def test_step_evaluator_uses_primary_action_axis_for_fractional_selection() -> None:
@@ -212,14 +218,14 @@ def test_step_evaluator_uses_primary_action_axis_for_fractional_selection() -> N
         role="observation",
     )
 
-    assert trainer._train_replay_indices(batch, 0.5, "strided") == [0, 2]
+    assert _indices(trainer, batch, 0.5, "strided") == [0, 2]
 
 
 def test_step_replay_rejects_multiple_primary_action_axes() -> None:
     trainer = bare_trainer(evaluator=None)
 
     with pytest.raises(ValueError, match="exactly one non-sample axis"):
-        trainer._train_replay_indices(_chunk_denoise_batch(), 1.0, "strided")
+        _indices(trainer, _chunk_denoise_batch(), 1.0, "strided")
 
 
 def test_evaluator_less_diffusion_uses_primary_action_axis() -> None:
@@ -230,4 +236,4 @@ def test_evaluator_less_diffusion_uses_primary_action_axis() -> None:
         num_steps=4,
     )
 
-    assert trainer._train_replay_indices(batch, 0.5, "strided") == [0, 2]
+    assert _indices(trainer, batch, 0.5, "strided") == [0, 2]

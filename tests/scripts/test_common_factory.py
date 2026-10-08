@@ -60,7 +60,6 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
     pair = AlgorithmEvaluatorPair.from_configs(
         family_entry=get_model_family_entry("wan_2_1"),
         built=built,
-        collector_config=collector_config,
         scheduler=object(),
     )
 
@@ -97,7 +96,6 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
     pair = AlgorithmEvaluatorPair.from_configs(
         family_entry=get_model_family_entry("sd3_5"),
         built=build_configs(cfg),
-        collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
         scheduler=object(),
     )
 
@@ -118,7 +116,6 @@ def test_nft_factory_passes_reward_weights_to_component_advantage_protocol() -> 
     pair = AlgorithmEvaluatorPair.from_configs(
         family_entry=get_model_family_entry("sd3_5"),
         built=build_configs(cfg),
-        collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
     )
     components = {
         "ocr": torch.tensor([0.0, 1.0, 2.0]),
@@ -141,7 +138,6 @@ def test_chunk_autoregressive_factory_builds_grouped_grpo_evaluator() -> None:
     pair = AlgorithmEvaluatorPair.from_configs(
         family_entry=get_model_family_entry("causvid"),
         built=build_configs(cfg),
-        collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
     )
 
     assert type(pair.algorithm) is GRPO
@@ -155,7 +151,6 @@ def test_generation_only_chunk_family_fails_before_algorithm_construction() -> N
         AlgorithmEvaluatorPair.from_configs(
             family_entry=get_model_family_entry("magi_1"),
             built=build_configs(cfg),
-            collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
         )
 
 
@@ -186,7 +181,6 @@ def test_chunk_autoregressive_factory_rejects_undefined_algorithm_semantics(
         AlgorithmEvaluatorPair.from_configs(
             family_entry=get_model_family_entry("causvid"),
             built=build_configs(cfg),
-            collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
         )
 
 
@@ -200,7 +194,6 @@ def test_chunk_autoregressive_factory_rejects_non_fp32_transition_math() -> None
         AlgorithmEvaluatorPair.from_configs(
             family_entry=get_model_family_entry("causvid"),
             built=build_configs(cfg),
-            collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
         )
 
 
@@ -213,7 +206,6 @@ def test_chunk_autoregressive_factory_rejects_full_sequence_sft_regularizer() ->
         AlgorithmEvaluatorPair.from_configs(
             family_entry=get_model_family_entry("causvid"),
             built=built,
-            collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
         )
 
 

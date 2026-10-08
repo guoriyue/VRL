@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import math
 
-import pytest
 import torch
 
 from tests.trainers.online._helpers import real_trainer
@@ -48,27 +47,6 @@ def test_trust_region_with_multi_epoch_is_allowed(monkeypatch, tmp_path) -> None
     bench = real_trainer(monkeypatch, tmp_path, overrides=(_FLOW_DPPO, "actor.ppo_epochs=2"))
 
     _trains_one_step(bench)
-
-
-def test_kl_term_without_a_reference_model_is_rejected(monkeypatch, tmp_path) -> None:
-    # The KL compares the replay against the reference; the trainer decides
-    # once, at construction, instead of the loss finding ref_log_prob missing.
-    from vrl.trainers.online.trainer import OnlineTrainer
-
-    bench = real_trainer(monkeypatch, tmp_path, overrides=("algorithm.kl_coef=0.1",))
-    trainer = bench.trainer
-
-    with pytest.raises(ValueError, match="ref_model"):
-        OnlineTrainer(
-            algorithm=trainer.algorithm,
-            collector=bench.collector.collector,
-            evaluator=trainer.evaluator,
-            model=bench.model,
-            ref_model=None,
-            config=trainer.config,
-            device="cpu",
-            strategy=bench.strategy,
-        )
 
 
 def test_plain_grpo_single_epoch_is_allowed(monkeypatch, tmp_path) -> None:

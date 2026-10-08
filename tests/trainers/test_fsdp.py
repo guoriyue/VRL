@@ -66,7 +66,6 @@ def _fsdp_strategy(
     config = FSDPConfig.model_validate(overrides)
     return FSDPStrategy(
         context,
-        mesh_dims=config.mesh,
         precision_policy=config.precision_policy,
         reshard_after_forward=config.reshard_after_forward,
         cpu_offload=config.cpu_offload,
@@ -102,7 +101,7 @@ def _strategy_config(
 def _shard(module: nn.Module) -> nn.Module:
     return apply_fsdp(
         module,
-        mesh=build_fsdp_mesh(_cpu_fsdp_context(), ["dp_shard"]),
+        mesh=build_fsdp_mesh(_cpu_fsdp_context()),
         mp_policy=mixed_precision_policy("none"),  # fp32 keeps the CPU path simple
     )
 
@@ -271,11 +270,6 @@ def test_native_fsdp_still_rejects_frozen_nonfloating_parameters() -> None:
 
     with pytest.raises(ValueError, match="non-floating parameters"):
         normalize_fsdp_parameter_dtype(net, torch.bfloat16, allow_cast=False)
-
-
-def test_build_fsdp_mesh_rejects_2d_hsdp() -> None:
-    with pytest.raises(ValueError, match="1D"):
-        build_fsdp_mesh(_cpu_fsdp_context(), ["dp_replicate", "dp_shard"])
 
 
 # ── real FSDP2 on a single CPU rank ──────────────────────────────────────────
@@ -688,7 +682,6 @@ def test_fsdp_actor_prepare_normalizes_mixed_sources_before_first_forward(
 
     FSDPStrategy(
         _cpu_fsdp_context(),
-        mesh_dims=["dp_shard"],
         precision_policy="actor",
         reshard_after_forward=True,
         cpu_offload=False,
@@ -819,7 +812,7 @@ def test_fsdp_prepare_model_initializes_process_group(cpu_process_group, monkeyp
     fully_shard could bind the wrong card on a single-node multi-GPU box.
     FSDPStrategy.prepare_model therefore calls init_training_process_group up front.
     Spy on it to lock the wiring in (the gloo PG already exists here, so the real
-    init is a no-op — we assert the call, with the cpu-context gloo backend).
+    init is a no-op — we assert the call on the CPU context).
     """
 
     import vrl.trainers.strategy as strategy_mod
@@ -827,16 +820,17 @@ def test_fsdp_prepare_model_initializes_process_group(cpu_process_group, monkeyp
     calls: list[tuple] = []
     real = strategy_mod.init_training_process_group
 
-    def _spy(context, *, backend):
-        calls.append((context.strategy, backend))
-        return real(context, backend=backend)
+    def _spy(context):
+        calls.append((context.strategy, context.device.type))
+        return real(context)
 
     monkeypatch.setattr(strategy_mod, "init_training_process_group", _spy)
 
     policy = FakePolicy(ToyTransformer())
     _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
 
-    assert calls == [("fsdp", "gloo")]
+    # The backend follows the context device: a CPU context forms a gloo group.
+    assert calls == [("fsdp", "cpu")]
 
 
 def test_process_group_binds_resolved_device_after_per_rank_mask(monkeypatch) -> None:
@@ -856,7 +850,7 @@ def test_process_group_binds_resolved_device_after_per_rank_mask(monkeypatch) ->
     monkeypatch.setattr(torch.cuda, "set_device", bound_devices.append)
     monkeypatch.setattr(dist, "init_process_group", lambda **kwargs: init_calls.append(kwargs))
 
-    init_training_process_group(context, backend="nccl")
+    init_training_process_group(context)
 
     assert bound_devices == [torch.device("cuda:0")]
     assert init_calls == [{"backend": "nccl", "rank": 3, "world_size": 4}]
@@ -912,7 +906,6 @@ def test_build_strategy_fsdp_reads_public_defaults_and_overrides(
     )
 
     assert isinstance(strategy, FSDPStrategy)
-    assert strategy._mesh_dims == ["dp_shard"]
     assert strategy._precision_policy == precision_policy
     assert strategy._reshard_after_forward is reshard_after_forward
     assert strategy._cpu_offload is cpu_offload

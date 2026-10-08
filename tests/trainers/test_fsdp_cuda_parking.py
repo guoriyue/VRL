@@ -98,7 +98,6 @@ def _equivalence_worker(rank, port, shard_trainable_only=True, parking_directory
     device = torch.device("cuda", rank)
     strategy = FSDPStrategy(
         DistributedTrainingContext("fsdp", rank, 4, device),
-        mesh_dims=["dp_shard"],
         precision_policy="none",
         reshard_after_forward=True,
         cpu_offload=False,
@@ -170,7 +169,6 @@ def _worker(rank, port):
     device = torch.device("cuda", rank)
     strategy = FSDPStrategy(
         DistributedTrainingContext("fsdp", rank, 4, device),
-        mesh_dims=["dp_shard"],
         precision_policy="none",
         reshard_after_forward=True,
         cpu_offload=False,

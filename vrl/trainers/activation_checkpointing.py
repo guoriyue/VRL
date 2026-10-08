@@ -124,10 +124,7 @@ def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> 
         if conflict.feature == "gradient_checkpointing":
             raise ValueError(conflict.message)
 
-    trainable_modules = getattr(bundle, "trainable_modules", None) or {
-        "transformer": bundle.model.transformer,
-    }
-    for name, module in trainable_modules.items():
+    for name, module in bundle.trainable_modules.items():
         enable = getattr(module, "enable_gradient_checkpointing", None)
         if enable is None:
             raise AttributeError(

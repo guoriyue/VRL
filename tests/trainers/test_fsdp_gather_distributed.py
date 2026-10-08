@@ -77,7 +77,7 @@ def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
         )
         apply_fsdp(
             model,
-            mesh=build_fsdp_mesh(ctx, ["dp_shard"]),
+            mesh=build_fsdp_mesh(ctx),
             mp_policy=mixed_precision_policy("none"),
             reshard_after_forward=True,
         )
@@ -179,7 +179,7 @@ def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> N
         )
         apply_fsdp(
             model,
-            mesh=build_fsdp_mesh(ctx, ["dp_shard"]),
+            mesh=build_fsdp_mesh(ctx),
             mp_policy=mixed_precision_policy("none"),
             reshard_after_forward=True,
         )
@@ -335,7 +335,7 @@ def _run_checkpoint_ema_export_rank(
         )
         model = apply_fsdp(
             model,
-            mesh=build_fsdp_mesh(ctx, ["dp_shard"]),
+            mesh=build_fsdp_mesh(ctx),
             mp_policy=mixed_precision_policy("none"),
             reshard_after_forward=True,
         )
@@ -360,7 +360,6 @@ def _run_checkpoint_ema_export_rank(
 
         strategy = FSDPStrategy(
             ctx,
-            mesh_dims=["dp_shard"],
             precision_policy="none",
             reshard_after_forward=True,
             cpu_offload=False,

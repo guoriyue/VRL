@@ -87,16 +87,16 @@ def _new_strategy(strategy_cls: type) -> Strategy:
         rank=0,
         world_size=2 if strategy_cls is ContextParallelStrategy else 1,
         device=torch.device("cpu"),
+        cp_size=2 if strategy_cls is ContextParallelStrategy else 1,
     )
     if strategy_cls is SingleProcessStrategy:
         return SingleProcessStrategy(context)
     if strategy_cls is DDPStrategy:
         return DDPStrategy(context, find_unused_parameters=False)
     if strategy_cls is ContextParallelStrategy:
-        return ContextParallelStrategy(context, cp_size=2)
+        return ContextParallelStrategy(context)
     return FSDPStrategy(
         context,
-        mesh_dims=["dp"],
         precision_policy="actor",
         reshard_after_forward=True,
         cpu_offload=False,

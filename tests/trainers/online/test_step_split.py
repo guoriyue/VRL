@@ -223,9 +223,7 @@ def test_streaming_all_filtered_update_does_not_advance_policy(monkeypatch, tmp_
     before = _snapshot(tb)
 
     metrics = asyncio.run(
-        _run_streaming_optimizer_update(
-            tb.trainer, ["a cat"], batch_plan=tb.trainer.config.batch_plan
-        ),
+        _run_streaming_optimizer_update(tb.trainer, ["a cat"]),
     )
 
     assert tb.trainer.state.step == 1
@@ -264,9 +262,7 @@ def test_corrected_replay_fails_parity_only_at_the_catastrophic_bound(
 
     async def run_update():
         if streaming:
-            return await _run_streaming_optimizer_update(
-                tb.trainer, ["a cat"], batch_plan=tb.trainer.config.batch_plan
-            )
+            return await _run_streaming_optimizer_update(tb.trainer, ["a cat"])
         return await tb.trainer.step(["a cat"])
 
     try:
@@ -313,9 +309,7 @@ def test_streaming_scaler_skipped_update_does_not_publish_weights(monkeypatch, t
     _seed()
 
     asyncio.run(
-        _run_streaming_optimizer_update(
-            tb.trainer, ["a cat"], batch_plan=tb.trainer.config.batch_plan
-        ),
+        _run_streaming_optimizer_update(tb.trainer, ["a cat"]),
     )
 
     # The scaler skipped the overflowed step and backed off.
@@ -347,9 +341,7 @@ def test_streaming_profiles_training_phases(monkeypatch, tmp_path) -> None:
     tb = real_trainer(monkeypatch, tmp_path, overrides=("trainer.profile=true", *_STREAMING))
 
     metrics = asyncio.run(
-        _run_streaming_optimizer_update(
-            tb.trainer, ["a cat"], batch_plan=tb.trainer.config.batch_plan
-        ),
+        _run_streaming_optimizer_update(tb.trainer, ["a cat"]),
     )
 
     for phase in ("evaluate", "backward", "optim_step"):

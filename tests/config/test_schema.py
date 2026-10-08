@@ -229,3 +229,11 @@ def test_unknown_top_level_sections_are_rejected() -> None:
     OmegaConf.update(cfg, "some_future_section.foo", "bar")
     with pytest.raises(ValueError, match=r"unknown some_future_section"):
         parse_config(cfg)
+
+
+def test_fsdp_mesh_vocabulary_is_closed_at_parse() -> None:
+    """2D HSDP is the multi-node follow-on; the schema refuses it before any mesh is built."""
+    from vrl.config.schema import FSDPConfig
+
+    with pytest.raises(ValueError, match=r"mesh must be \['dp_shard'\]"):
+        FSDPConfig(mesh=["dp_replicate", "dp_shard"])

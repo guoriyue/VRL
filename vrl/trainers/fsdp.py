@@ -31,28 +31,21 @@ from vrl.trainers.distributed import DistributedTrainingContext
 logger = logging.getLogger(__name__)
 
 
-def build_fsdp_mesh(context: DistributedTrainingContext, mesh_dims: list[str]) -> Any:
+def build_fsdp_mesh(context: DistributedTrainingContext) -> Any:
     """Build the 1D DeviceMesh FSDP2 shards over.
 
-    ``["dp_shard"]`` is plain ZeRO-3 across the whole world — the single-node
-    start point (sprint §3). ``["dp_shard", "cp"]`` shards parameters over the
-    same whole world: context-parallel peers are *inside* the shard axis, so
-    parameter memory keeps scaling with every rank
-    and FSDP's reduce-scatter is the only gradient collective; the CP mesh is a
-    separate object (``build_context_parallel_mesh``). 2D HSDP
-    (``["dp_replicate", "dp_shard"]``) needs ``num_nodes`` * ``gpus_per_node``
-    from config, which the single-process-shaped context here does not carry; it
-    is the multi-node follow-on and fail-fasts rather than half-working.
+    Plain ZeRO-3 across the whole world, the single-node start point (sprint
+    §3). With context parallelism the peers are *inside* the shard axis, so
+    parameter memory keeps scaling with every rank and FSDP's reduce-scatter
+    is the only gradient collective; the CP mesh is a separate object
+    (``build_context_parallel_mesh``). The config schema admits only the
+    ``["dp_shard"]`` / ``["dp_shard", "cp"]`` spellings of ``fsdp.mesh``; 2D
+    HSDP needs ``num_nodes`` * ``gpus_per_node`` from config, which the
+    single-process-shaped context here does not carry.
     """
 
     from torch.distributed.device_mesh import init_device_mesh
 
-    if mesh_dims not in (["dp_shard"], ["dp_shard", "cp"]):
-        raise ValueError(
-            f"distributed.training.fsdp.mesh only supports 1D ['dp_shard'] (optionally "
-            f"with a 'cp' axis) for now, got {mesh_dims!r}; 2D HSDP is the multi-node "
-            "follow-on (SPRINT_multi_gpu_training.md §3).",
-        )
     return init_device_mesh(
         context.device.type,
         (context.world_size,),

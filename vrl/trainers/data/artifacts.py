@@ -67,11 +67,15 @@ class DatasetFileReport:
     manifest_path: Path
     data_root: Path
     row_count: int
-    artifact_count: int
     # display/provenance-only, per the ResolvedArtifact docstring above; grows
     # with the manifest, so a caller that only wants the count reads that.
     resolved_artifacts: tuple[ResolvedArtifact, ...] = ()
     warnings: tuple[str, ...] = ()
+
+    @property
+    def artifact_count(self) -> int:
+        return len(self.resolved_artifacts)
+
     source_episodes: tuple[str, ...] = ()
     eval_manifest_path: Path | None = None
     eval_source_episodes: tuple[str, ...] = ()
@@ -245,7 +249,6 @@ class DatasetFileReport:
             manifest_path=path,
             data_root=root,
             row_count=len(examples),
-            artifact_count=len(resolved),
             resolved_artifacts=tuple(resolved),
             warnings=tuple(warnings),
             source_episodes=source_episodes,

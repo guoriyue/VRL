@@ -7,12 +7,21 @@ now drops it for the flow-SDE evaluator; other evaluators keep every step.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import torch
 from diffusers import FlowMatchEulerDiscreteScheduler
 
 from tests.trainers.online._helpers import _diffusion_rollout_batch, bare_trainer
 from vrl.math.denoise.flow_matching import flow_sde_scale_terms
 from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
+
+
+def _indices(trainer, batch, fraction: float, selection: str) -> list[int]:
+    """The trainer reads its selection off its config; set it per call."""
+
+    trainer.config = SimpleNamespace(timestep_fraction=fraction, timestep_selection=selection)
+    return trainer._train_replay_indices(batch)
 
 
 def _scheduler(steps: int) -> FlowMatchEulerDiscreteScheduler:
@@ -47,15 +56,15 @@ def test_the_last_flow_sde_step_is_the_only_near_deterministic_one() -> None:
 def test_flow_sde_training_skips_the_last_step_and_other_evaluators_keep_it() -> None:
     batch = _batch(20)
     flow = bare_trainer(evaluator=DenoiseSDELogProbEvaluator(scheduler=_scheduler(20)))
-    assert flow._train_replay_indices(batch, 1.0, "strided") == list(range(19))
-    assert flow._train_replay_indices(batch, 0.5, "strided") == [2 * i for i in range(10)]
+    assert _indices(flow, batch, 1.0, "strided") == list(range(19))
+    assert _indices(flow, batch, 0.5, "strided") == [2 * i for i in range(10)]
     torch.manual_seed(0)
-    random_pick = flow._train_replay_indices(batch, 1.0, "random")
+    random_pick = _indices(flow, batch, 1.0, "random")
     assert 19 not in random_pick and len(random_pick) == 19
 
     ddim = bare_trainer(
         evaluator=DenoiseSDELogProbEvaluator(scheduler=_scheduler(20), sde_type="ddim")
     )
-    assert ddim._train_replay_indices(batch, 1.0, "strided") == list(range(20))
+    assert _indices(ddim, batch, 1.0, "strided") == list(range(20))
     other = bare_trainer(evaluator=None)
-    assert other._train_replay_indices(batch, 1.0, "strided") == list(range(20))
+    assert _indices(other, batch, 1.0, "strided") == list(range(20))

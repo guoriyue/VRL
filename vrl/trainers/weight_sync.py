@@ -79,27 +79,22 @@ def flatten_trainable_module_state(modules: Mapping[str, Any]) -> dict[str, Any]
     for module_name, module in modules.items():
         name = str(module_name)
         module = unwrap_compile_and_ddp(module)
-        state.update(select_trainable_state(module, name, module.state_dict()))
+        state.update(select_trainable_state(module, name))
     if not state:
         raise ValueError("trainable module state is empty")
     return state
 
 
-def select_trainable_state(module: Any, name: str, module_state: Any) -> dict[str, Any]:
-    """Pick a module's trainable-parameter entries, prefixed ``name.``.
+def select_trainable_state(module: Any, name: str) -> dict[str, Any]:
+    """Pick a module's trainable-parameter entries from its state dict, prefixed ``name.``.
 
-    Shared by single-process sync (``module_state`` from ``module.state_dict()``)
-    and FSDP2 (``module_state`` gathered from DTensor shards): both select the same
-    ``module_name.param`` keys in the policy-facing, unwrapped namespace, so the
-    rollout payload is byte-for-byte identical whether or not the trainer was
-    sharded. ``module`` must already be unwrapped enough that its
-    ``named_parameters()`` names match ``module_state`` keys.
+    ``module`` must already be unwrapped enough that its ``named_parameters()``
+    names match its ``state_dict()`` keys.
     """
 
     if not name:
         raise ValueError("trainable module names must be non-empty")
-    if not isinstance(module_state, Mapping):
-        raise TypeError(f"trainable module {name!r} state_dict() must return a mapping")
+    module_state = module.state_dict()
     named_parameters = getattr(module, "named_parameters", None)
     if not callable(named_parameters):
         raise TypeError(

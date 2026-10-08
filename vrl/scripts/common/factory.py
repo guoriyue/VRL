@@ -10,6 +10,7 @@ from vrl.config.builders import BuiltConfigs
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import ModelFamilyEntry
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.evaluators.base import Evaluator
 
 
@@ -26,7 +27,6 @@ class AlgorithmEvaluatorPair:
         *,
         family_entry: ModelFamilyEntry,
         built: BuiltConfigs,
-        collector_config: Any,
         scheduler: Any | None = None,
     ) -> AlgorithmEvaluatorPair:
         """Build the algorithm/evaluator pair for a strict online recipe."""
@@ -73,7 +73,9 @@ class AlgorithmEvaluatorPair:
             )
             trainer_config = built.trainer
             correction = None if trainer_config is None else trainer_config.precision_correction
-            denoise = collector_config.denoise or DenoiseRequestOptions()
+            denoise = (
+                RolloutCollectorConfig.from_root(built.root).denoise or DenoiseRequestOptions()
+            )
             if kind == "flash_grpo":
                 # The rectification weight is defined over the rollout SDE the
                 # replay evaluator integrates: same scheduler, same noise.

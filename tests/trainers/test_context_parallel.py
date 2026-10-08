@@ -122,8 +122,6 @@ def test_context_parallel_mesh_rejects_degrees_that_disagree_with_the_context() 
     )
     with pytest.raises(ValueError, match="disagree"):
         build_context_parallel_mesh(ctx, ulysses_degree=2, ring_degree=1)
-    with pytest.raises(ValueError, match="only supports 1D"):
-        build_fsdp_mesh(ctx, ["dp_replicate", "dp_shard"])
 
 
 def test_backward_scales_the_loss_by_the_cp_size() -> None:
@@ -136,7 +134,6 @@ def test_backward_scales_the_loss_by_the_cp_size() -> None:
     )
     strategy = FSDPStrategy(
         ctx,
-        mesh_dims=["dp_shard", "cp"],
         precision_policy="none",
         reshard_after_forward=True,
         cpu_offload=False,
@@ -266,7 +263,7 @@ def _run_rank(rank: int, port: int, q: mp.Queue) -> None:
         )
         groups = create_context_parallel_peer_group(ctx)
         cp_mesh = build_context_parallel_mesh(ctx, ulysses_degree=2, ring_degree=1)
-        fsdp_mesh = build_fsdp_mesh(ctx, ["dp_shard", "cp"])
+        fsdp_mesh = build_fsdp_mesh(ctx)
         # FSDP shards over the whole world; the CP mesh is its own 3D object.
         mesh_ok = (
             tuple(cp_mesh.mesh_dim_names) == ("dp_shard", "ring", "ulysses")

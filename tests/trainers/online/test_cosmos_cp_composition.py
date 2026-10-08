@@ -141,7 +141,7 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 0)
     root = Path(root)
     strategy = ContextParallelStrategy(
-        DistributedTrainingContext("context_parallel", rank, 2, torch.device("cpu")), cp_size=2
+        DistributedTrainingContext("context_parallel", rank, 2, torch.device("cpu"), cp_size=2)
     )
     trainer = None
     try:
@@ -173,7 +173,6 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
         pair = AlgorithmEvaluatorPair.from_configs(
             family_entry=resolved.family,
             built=built,
-            collector_config=collector_config,
             scheduler=bundle.scheduler,
         )
         before = {
@@ -469,11 +468,11 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
         torch.cuda.set_device(rank)
     device = torch.device("cuda", rank) if cuda else torch.device("cpu")
     rollout_device = torch.device("cuda", 2) if cuda and rank == 0 else torch.device("cpu")
-    context = DistributedTrainingContext("context_parallel", rank, 2, device)
+    context = DistributedTrainingContext("context_parallel", rank, 2, device, cp_size=2)
     if cuda:
         os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ["MASTER_PORT"] = str(rendezvous)
-        init_training_process_group(context, backend="nccl")
+        init_training_process_group(context)
     else:
         dist.init_process_group(
             "gloo",
@@ -482,7 +481,7 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
             world_size=2,
             timeout=timedelta(seconds=120),
         )
-    strategy = ContextParallelStrategy(context, cp_size=2)
+    strategy = ContextParallelStrategy(context)
     trainer = None
     try:
         torch.manual_seed(31)

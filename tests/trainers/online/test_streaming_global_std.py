@@ -121,9 +121,7 @@ def test_streaming_matches_full_batch_advantages_gradients_and_adam(
     full_metrics = asyncio.run(full.trainer.step(list(prompts)))
     random.seed(0)
     streamed_metrics = asyncio.run(
-        _run_streaming_optimizer_update(
-            streamed.trainer, list(prompts), batch_plan=streamed.trainer.config.batch_plan
-        )
+        _run_streaming_optimizer_update(streamed.trainer, list(prompts))
     )
 
     # Same request seeds, so both updates train on the same real rollouts.
@@ -188,11 +186,7 @@ def test_spool_cleanup_on_failure(monkeypatch, tmp_path, stage):
     monkeypatch.setattr(trainer, "backward_on_training_batch", backward)
 
     with pytest.raises(RuntimeError, match="injected"):
-        asyncio.run(
-            _run_streaming_optimizer_update(
-                trainer, ["a", "b"], batch_plan=trainer.config.batch_plan
-            )
-        )
+        asyncio.run(_run_streaming_optimizer_update(trainer, ["a", "b"]))
 
     assert not list(output.glob(".advantage-spool-*"))
     assert trainer.state.global_step == 0

@@ -104,7 +104,6 @@ def _trainer(
     pair = AlgorithmEvaluatorPair.from_configs(
         family_entry=stack.family,
         built=built,
-        collector_config=stack.collector_config(),
         scheduler=getattr(bundle, "scheduler", None),
     )
     return OnlineTrainer(
@@ -112,7 +111,6 @@ def _trainer(
         collector=bench.collector,
         evaluator=pair.evaluator,
         model=bundle.model,
-        ref_model=bundle.model,
         weight_syncer=RayRuntimeWeightSyncer(bench.runtime),
         sync_state_getter=lambda: strategy.export_rollout_state(bundle),
         config=built.trainer,
@@ -137,9 +135,7 @@ def _full(value: Any) -> torch.Tensor:
 async def _updates(trainer: OnlineTrainer, prompts: list[str]) -> list[float]:
     norms = []
     for _ in range(2):
-        metric = await _run_streaming_optimizer_update(
-            trainer, prompts, batch_plan=trainer.config.batch_plan
-        )
+        metric = await _run_streaming_optimizer_update(trainer, prompts)
         norms.append(metric.grad_norm)
         state = trainer._training_memory_state()
         trainer._strategy.park_training_state(state)
@@ -175,7 +171,6 @@ def _rank(rank: int, port: int, root: str, uneven: bool, queue: Any) -> None:
         monkeypatch.setattr(torch.cuda, "device_count", lambda: 0)
         strategy = FSDPStrategy(
             DistributedTrainingContext("fsdp", rank, _WORLD, torch.device("cpu")),
-            mesh_dims=["dp_shard"],
             precision_policy="none",
             reshard_after_forward=True,
             cpu_offload=False,

@@ -66,7 +66,7 @@ def _run_snapshot_round_trip(
         model = _Transformer().to(device)
         apply_fsdp(
             model,
-            mesh=build_fsdp_mesh(context, ["dp_shard"]),
+            mesh=build_fsdp_mesh(context),
             mp_policy=mixed_precision_policy("none"),
         )
         trainable = [p for p in model.parameters() if p.requires_grad]

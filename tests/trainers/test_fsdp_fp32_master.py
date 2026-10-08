@@ -81,7 +81,6 @@ def _strategy() -> FSDPStrategy:
             world_size=1,
             device=torch.device("cpu"),
         ),
-        mesh_dims=["dp_shard"],
         precision_policy="none",
         reshard_after_forward=True,
         cpu_offload=False,
@@ -194,7 +193,7 @@ def _run_two_rank_master_round_trip(
         model = _Transformer().to(device)
         apply_fsdp(
             model,
-            mesh=build_fsdp_mesh(context, ["dp_shard"]),
+            mesh=build_fsdp_mesh(context),
             mp_policy=mixed_precision_policy("none"),
             cpu_offload=cpu_offload,
         )

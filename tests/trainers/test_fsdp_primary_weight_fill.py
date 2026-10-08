@@ -86,7 +86,6 @@ def _run_rank(
         )
         strategy = FSDPStrategy(
             context,
-            mesh_dims=config.mesh,
             precision_policy=config.precision_policy,
             reshard_after_forward=config.reshard_after_forward,
             cpu_offload=config.cpu_offload,

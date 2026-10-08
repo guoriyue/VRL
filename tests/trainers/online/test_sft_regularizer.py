@@ -66,7 +66,6 @@ def _sft_trainer(
         collector=tb.collector.collector,
         evaluator=base.evaluator,
         model=base.model,
-        ref_model=base.ref_model,
         weight_syncer=base.weight_syncer,
         sync_state_getter=base.sync_state_getter,
         config=base.config,
