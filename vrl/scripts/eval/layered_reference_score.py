@@ -60,6 +60,7 @@ def score_layers(
     include_first_layer_edits=False,
     min_match_quality=0.0,
     include_source_preservation=False,
+    surplus_mode="alpha_mass",
 ):
     """Return diagnostics, optionally editing the first object of an object-only stack.
 
@@ -69,9 +70,13 @@ def score_layers(
     It is an experiment setting, not a semantic object detector.
     Source preservation optionally measures visible reconstruction relative to
     each object's deletion contrast; it does not certify hidden completeness.
+    Counterfactual surplus discounts unmatched pixels whose removal worsens
+    reconstruction. It is opt-in and needs separate native ranking calibration.
     """
     if not np.isfinite(min_match_quality) or not 0 <= min_match_quality < 1:
         raise ValueError("Minimum match quality must be finite and in [0,1)")
+    if surplus_mode not in {"alpha_mass", "counterfactual"}:
+        raise ValueError("Unknown surplus mode")
     reference = np.asarray(reference, dtype=np.float64)
     candidate = np.asarray(candidate, dtype=np.float64)
     if (
@@ -180,6 +185,28 @@ def score_layers(
     surplus_fraction = float(extra_mass / total_mass) if total_mass else 0.0
     predicted_composite = composite(candidate)
     reconstruction_error = float(np.abs(composite(reference) - predicted_composite).mean())
+    surplus_rows = []
+    if surplus_mode == "counterfactual":
+        truth_composite = composite(reference)
+        residual = np.abs(truth_composite - predicted_composite).mean(axis=-1)
+        unnecessary_mass = 0.0
+        for j in range(len(candidate)):
+            if j in used:
+                continue
+            removed = candidate.copy()
+            removed[j] = 0
+            without = composite(removed)
+            effect = np.abs(without - predicted_composite).mean(axis=-1)
+            harm = np.abs(truth_composite - without).mean(axis=-1) - residual
+            # Below one quantization level, tiny effects cannot excuse surplus.
+            useful = np.clip(harm / np.maximum(effect, 1 / 255), 0, 1)
+            mass = float(candidate[j, ..., 3].sum())
+            unnecessary = float((candidate[j, ..., 3] * (1 - useful)).sum())
+            unnecessary_mass += unnecessary
+            surplus_rows.append(
+                {"candidate_layer": j, "alpha_mass": mass, "unnecessary_mass": unnecessary}
+            )
+        surplus_fraction = unnecessary_mass / total_mass if total_mass else 0.0
     # Complete amodal references define where no object may exist. Composited
     # alpha counts spill from every candidate, without dilution by empty layers.
     exterior = reference[..., 3].max(axis=0) == 0
@@ -235,6 +262,13 @@ def score_layers(
     }
     if min_match_quality:
         result["min_match_quality"] = min_match_quality
+    if surplus_mode == "counterfactual":
+        result["surplus_diagnostic"] = {
+            "version": "counterfactual_surplus_v1",
+            "rows": surplus_rows,
+            "validated_for_training": False,
+            "scope": "Compositing utility only; matched-layer fidelity still penalizes fragmentation.",
+        }
     if include_source_preservation:
         truth_composite = composite(reference)
         residual = np.abs(truth_composite - predicted_composite).mean(axis=-1)
@@ -332,6 +366,8 @@ def coverage_fidelity_reward(score, *, part_quality=None, part_weight=0.25):
             part_weight=float(part_weight),
             combined_within_coverage_quality=float(combined),
         )
+    if "surplus_diagnostic" in score:
+        result["surplus_version"] = score["surplus_diagnostic"]["version"]
     return result
 
 
