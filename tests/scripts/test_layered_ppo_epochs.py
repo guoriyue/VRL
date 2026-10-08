@@ -12,7 +12,10 @@ from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.scripts.generation import qwen_layered_rl_update as runner
 
 
-def test_multiple_updates_keep_frozen_behavior_and_reload_exactly(tmp_path, monkeypatch):
+@pytest.mark.parametrize("normalization", ["mean", "sqrt_dimension"])
+def test_multiple_updates_keep_frozen_behavior_and_reload_exactly(
+    tmp_path, monkeypatch, normalization
+):
     from diffusers import FlowMatchEulerDiscreteScheduler
 
     # The runner uses CUDA placement; this CPU test exercises the real SDE loss,
@@ -113,6 +116,7 @@ def test_multiple_updates_keep_frozen_behavior_and_reload_exactly(tmp_path, monk
     runner.run_update(
         tmp_path,
         {
+            "density_normalization": normalization,
             "ppo_epochs": 3,
             "learning_rate": 0.01,
             "clip_ratio": 0.2,
@@ -126,6 +130,11 @@ def test_multiple_updates_keep_frozen_behavior_and_reload_exactly(tmp_path, monk
     assert all(row["preupdate_logprob_error"] == 0 for row in replay[:2])
     assert any(abs(row["logprob_difference_from_behavior"]) > 1e-5 for row in replay[2:])
     assert all(row["kl_penalty"] > 0 for row in replay[2:])
+    scale = 2.0 if normalization == "sqrt_dimension" else 1.0
+    for row in replay:
+        assert row["policy_log_ratio"] == pytest.approx(
+            scale * row["logprob_difference_from_behavior"]
+        )
     state = torch.load(output / "optimizer.pt", weights_only=True)
     assert state["state"][0]["step"].item() == 3
     initial = torch.load(tmp_path / "initial_adapter.pt", weights_only=True)["weight"]

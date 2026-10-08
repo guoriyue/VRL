@@ -73,6 +73,9 @@ def audit_likelihood(root):
 
     plan = json.loads((root / "plan.json").read_text())
     config = json.loads((root / "update01/config.json").read_text())
+    normalization = config.get("density_normalization", "mean")
+    if normalization not in {"mean", "sqrt_dimension"}:
+        raise ValueError(f"Unsupported density normalization: {normalization}")
     result = json.loads((root / "update01/result.json").read_text())
     checkpoint = root / "update01/adapter.pt"
     assert hashlib.sha256(checkpoint.read_bytes()).hexdigest() == result["adapter_sha256"]
@@ -146,7 +149,10 @@ def audit_likelihood(root):
                         scheduler, velocity, timestep[None], latent, **common
                     )
                     change = float((after.log_prob - before.log_prob).mean())
-                    ratio = (after.log_prob - before.log_prob).exp()
+                    density_scale = (
+                        math.sqrt(action[0].numel()) if normalization == "sqrt_dimension" else 1.0
+                    )
+                    ratio = ((after.log_prob - before.log_prob) * density_scale).exp()
                     advantage = original["advantage"]
                     clipped_ratio = ratio.clamp(1 - config["clip_ratio"], 1 + config["clip_ratio"])
                     policy_loss_change = float(
@@ -171,6 +177,8 @@ def audit_likelihood(root):
                     "advantage": original["advantage"],
                     "temporal_weight": temporal_weight,
                     "mean_element_log_density_change": change,
+                    "density_scale": density_scale,
+                    "policy_log_ratio": change * density_scale,
                     "advantage_weighted_change": original["advantage"] * change,
                     "mean_element_gaussian_kl": kl,
                     "clipped_policy_loss_change": policy_loss_change,
@@ -183,6 +191,7 @@ def audit_likelihood(root):
                 )
                 print(json.dumps(row), flush=True)
     record = {
+        "density_normalization": normalization,
         "rows": rows,
         "mean_advantage_weighted_log_density_change": sum(
             row["advantage_weighted_change"] for row in rows

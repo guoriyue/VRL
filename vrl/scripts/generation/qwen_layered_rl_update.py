@@ -10,6 +10,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 from pathlib import Path
 
 import torch
@@ -34,6 +35,9 @@ def run_update(root, config):
         # The launcher must supply CUBLAS_WORKSPACE_CONFIG before CUDA starts.
         # Fail on unsupported kernels instead of silently accepting noisy replay.
         torch.use_deterministic_algorithms(True)
+    normalization = config.get("density_normalization", "mean")
+    if normalization not in {"mean", "sqrt_dimension"}:
+        raise ValueError(f"Unsupported density normalization: {normalization}")
     plan = json.loads((root / "plan.json").read_text())
     reward_directory = root / config.get("reward_directory", "reward_calibration")
     scores_path = reward_directory / "scores.json"
@@ -171,13 +175,31 @@ def run_update(root, config):
                         step_index=absolute_index,
                         return_dt=True,
                     )
+                # Center on the fixed behavior density before scaling in float64.
+                # This is only a sum/sqrt(D) ablation, not GRPO-Guard centering.
+                density_scale = (
+                    math.sqrt(action[0].numel()) if normalization == "sqrt_dimension" else 1.0
+                )
+                policy_log_prob = replay.log_prob
+                behavior_log_prob = old
+                reference_log_prob = reference.log_prob
+                if normalization == "sqrt_dimension":
+                    policy_log_prob = (replay.log_prob.double() - old.double()) * density_scale
+                    behavior_log_prob = torch.zeros_like(policy_log_prob)
+                    reference_log_prob = (
+                        reference.log_prob.double() - old.double()
+                    ) * density_scale
                 signal = FlowSDESignal(
                     name="layers",
-                    distribution="flow_sde_mean_element_density",
-                    log_prob=replay.log_prob,
-                    old_log_prob=old,
+                    distribution=(
+                        "flow_sde_mean_element_density"
+                        if normalization == "mean"
+                        else "flow_sde_sqrt_dimension_density"
+                    ),
+                    log_prob=policy_log_prob,
+                    old_log_prob=behavior_log_prob,
                     mask=torch.ones_like(old),
-                    ref_log_prob=reference.log_prob,
+                    ref_log_prob=reference_log_prob,
                     prev_sample_mean=replay.prev_sample_mean,
                     std_dev_t=replay.std_dev_t,
                     dt=replay.sqrt_neg_dt,
@@ -205,6 +227,10 @@ def run_update(root, config):
                         "step": index,
                         "absolute_step": absolute_index,
                         "noise_level": noise_levels[index],
+                        "density_scale": density_scale,
+                        "policy_log_ratio": float(
+                            (policy_log_prob.detach() - behavior_log_prob).mean()
+                        ),
                         "reward": row["reward"],
                         "advantage": float(advantages[row_index]),
                         "loss": float(loss.detach()),
@@ -275,7 +301,8 @@ def run_update(root, config):
         "temporal_rectification": rectify,
         "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
         "peak_cuda_bytes": torch.cuda.max_memory_allocated(),
-        "logprob_convention": "Mean element Gaussian log density, matching repository Flow-GRPO; not joint log probability.",
+        "density_normalization": normalization,
+        "logprob_convention": "Mean Gaussian log density; sqrt_dimension optionally scales the behavior-relative difference by sqrt(D). Gaussian KL and temporal weights are unchanged. Not full GRPO-Guard.",
         "scope": "Real group-reward optimizer updates on one fixed rollout batch. Quality improvement and generalization remain untested.",
         "teacher_initialized": plan.get("teacher_initialized", False),
     }

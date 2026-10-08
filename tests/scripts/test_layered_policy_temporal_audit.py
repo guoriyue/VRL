@@ -95,3 +95,23 @@ def test_temporal_weight_changes_policy_only(tmp_path, monkeypatch):
     assert rectified["mean_gaussian_kl"] == pytest.approx(kl)
     assert rectified["mean_regularized_loss_change"] == pytest.approx(3 * policy + 0.1 * kl)
     assert rectified["rows"][0]["temporal_weight"] == 3.0
+
+    (update / "config.json").write_text(
+        json.dumps(
+            {
+                "timesteps": [0],
+                "clip_ratio": 0.2,
+                "kl_coef": 0.1,
+                "density_normalization": "sqrt_dimension",
+            }
+        )
+    )
+    audit.audit_likelihood(tmp_path)
+    scaled = json.loads((update / "policy_audit.json").read_text())
+    row = scaled["rows"][0]
+    log_ratio = plain["rows"][0]["mean_element_log_density_change"] * 2**0.5
+    ratio = torch.tensor(log_ratio).exp().item()
+    expected_policy = max(-ratio, -min(max(ratio, 0.8), 1.2)) + 1
+    assert row["policy_log_ratio"] == pytest.approx(log_ratio)
+    assert scaled["mean_clipped_policy_loss_change"] == pytest.approx(expected_policy)
+    assert scaled["mean_gaussian_kl"] == pytest.approx(kl)
