@@ -21,7 +21,7 @@ def test_full_pipeline_propagates_revision_like_component_loader() -> None:
         model_config={},
     )
 
-    _, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build, torch.float16)
+    _, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build)
 
     assert kwargs["revision"] == "immutable-revision"
 
@@ -37,7 +37,7 @@ def test_full_pipeline_propagates_local_files_only_like_component_loader() -> No
         model_config={"local_files_only": True},
     )
 
-    _, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build, torch.float16)
+    _, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build)
 
     assert kwargs["revision"] == "immutable-revision"
     assert kwargs["local_files_only"] is True
@@ -54,7 +54,7 @@ def test_full_pipeline_omits_absent_revision() -> None:
         model_config={},
     )
 
-    _, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build, torch.float16)
+    _, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build)
 
     assert "revision" not in kwargs
     assert "local_files_only" not in kwargs
@@ -132,7 +132,7 @@ def test_pipeline_load_preserves_source_vae_precision(tmp_path) -> None:
         precision=RolePrecision("bf16", "tf32"),
         model_config={},
     )
-    _, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build, torch.bfloat16)
+    _, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build)
     loaded = type(pipeline).from_pretrained(tmp_path, text_encoder=None, **kwargs)
     assert next(loaded.transformer.parameters()).dtype == torch.bfloat16
     assert next(loaded.vae.parameters()).dtype == torch.float32
@@ -153,10 +153,7 @@ def test_pipeline_dtype_projection_keeps_encoder_override_separate_from_model() 
         rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.float32),
     )
 
-    encoder_dtype, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(
-        build,
-        torch.bfloat16,
-    )
+    encoder_dtype, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build)
     assert encoder_dtype == torch.float32
     # Frozen components (every encoder) load at the rollout encoder dtype; only
     # the trainable transformer and the fp32 VAE are named.

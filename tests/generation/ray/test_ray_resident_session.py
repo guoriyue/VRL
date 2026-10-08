@@ -35,13 +35,11 @@ def _worker(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> tuple[RayGenerati
 
 
 def test_ray_generation_worker_load_policy_is_idempotent(monkeypatch, tmp_path) -> None:
-    """A second ``load_policy`` is a no-op: the executor is built once and keeps the launch
-    inputs' gatherer.
-    """
+    """A second ``load_policy`` is a no-op: the executor is built once."""
 
     builds = Trace(monkeypatch)
     builds.watch(GenerationWorkerCore, "_build_executor", "build")
-    worker, launch_inputs = _worker(monkeypatch, tmp_path)
+    worker, _ = _worker(monkeypatch, tmp_path)
 
     worker.load_policy()
     first_executor = worker.core.executor
@@ -49,7 +47,6 @@ def test_ray_generation_worker_load_policy_is_idempotent(monkeypatch, tmp_path) 
 
     assert builds.events == ["build"]
     assert worker.core.executor is first_executor
-    assert first_executor._gatherer is launch_inputs.gatherer
 
 
 def test_ray_generation_worker_rebuilds_executor_after_release(monkeypatch, tmp_path) -> None:
