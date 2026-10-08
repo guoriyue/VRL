@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from vrl.utils.config import to_builtin_deep
 
 if TYPE_CHECKING:
-    from vrl.config.builders import RewardRuntimeConfig
     from vrl.config.schema import RootConfig
 
 
@@ -410,22 +409,12 @@ class ResolvedDistributedResources:
         return plan_ordinal
 
     @classmethod
-    def from_root(
-        cls,
-        root: RootConfig,
-        *,
-        reward: RewardRuntimeConfig | None = None,
-    ) -> ResolvedDistributedResources:
+    def from_root(cls, root: RootConfig) -> ResolvedDistributedResources:
         """Build the resource plan from the root: role-level requests to concrete CUDA ordinals.
 
         This is the single source of truth for trainer/rollout/reward GPU
         ownership. It intentionally does static ownership checks only; memory
         pressure is still a runtime concern.
-
-        ``reward`` is the already-resolved reward bundle (``BuiltConfigs.reward``);
-        training scripts pass it so the reward section is resolved once at
-        config-build time. When omitted (e.g. isolated resource tests) it is
-        resolved from ``root.reward``.
         """
 
         distributed = root.distributed
@@ -434,7 +423,8 @@ class ResolvedDistributedResources:
             if distributed is not None and distributed.resources is not None
             else DistributedResourceConfig()
         )
-        if reward is None and root.reward is not None:
+        reward = None
+        if root.reward is not None:
             from vrl.config.builders import RewardRuntimeConfig
 
             reward = RewardRuntimeConfig.from_cfg(root.reward)

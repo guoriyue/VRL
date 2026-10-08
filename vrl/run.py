@@ -137,10 +137,7 @@ class ResolvedRun:
     def from_built(cls, built: BuiltConfigs) -> ResolvedRun:
         return cls(
             built=built,
-            resources=ray_resources.ResolvedDistributedResources.from_root(
-                built.root,
-                reward=built.reward,
-            ),
+            resources=ray_resources.ResolvedDistributedResources.from_root(built.root),
         )
 
     @property
@@ -283,10 +280,6 @@ class ResolvedOnlineRun(ResolvedRun):
     ) -> RayGenerationLaunchInputs:
         """Build the serializable Ray worker contract for this online run."""
 
-        if not isinstance(replay_model, ResolvedModel):
-            raise TypeError(
-                f"replay_model must be a ResolvedModel, got {type(replay_model).__name__}",
-            )
         if replay_model.entry.family != self.family.family:
             raise ValueError(
                 "replay model family does not match the resolved online run: "
@@ -298,9 +291,7 @@ class ResolvedOnlineRun(ResolvedRun):
             raise ValueError("online generation launch requires a trainer config")
 
         generation = self.generation
-        runtime_device = torch.device(
-            "cuda" if generation.resources.rollout_devices else "cpu",
-        )
+        runtime_device = torch.device("cuda" if self.resources.rollout_devices else "cpu")
         build = self.family.resolve_model_build(
             self.built.root,
             runtime_device,

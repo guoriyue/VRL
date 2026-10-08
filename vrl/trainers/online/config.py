@@ -19,7 +19,6 @@ from vrl.utils.profiling import TorchProfilerConfig
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
-    from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import RootConfig
 
 
@@ -225,12 +224,7 @@ class TrainerConfig:
     versioned_weight_sync: bool = False
 
     @classmethod
-    def from_root(
-        cls,
-        root: RootConfig,
-        *,
-        precision: PrecisionPolicy | None = None,
-    ) -> TrainerConfig:
+    def from_root(cls, root: RootConfig) -> TrainerConfig:
         """Project the parsed ``actor`` / ``trainer`` sections into ``TrainerConfig``.
 
         Each field is read from the public section that declares its name;
@@ -289,9 +283,9 @@ class TrainerConfig:
         if missing:
             raise ValueError("config missing required key(s): " + ", ".join(sorted(missing)))
 
-        # Resolve the public policy once; trainer fields are its runtime projection.
-        if precision is None:
-            precision = PrecisionPolicy.from_section(root.precision)
+        # The precision policy is a pure projection of root.precision; the
+        # trainer fields that depend on it are derived from it here.
+        precision = PrecisionPolicy.from_section(root.precision)
         payload.update(batch_plan=OnlineBatchPlan.from_root(root))
         # The trace directory is a run-level decision: an unset value lands
         # under the run's output directory, resolved here once so every

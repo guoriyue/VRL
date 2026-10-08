@@ -72,9 +72,7 @@ def _sft_trainer(
         config=base.config,
         device=torch.device("cpu"),
         strategy=tb.strategy,
-        sft_latents=_load_sft_latents_from_config(
-            built, tb.collector.stack.family.family, sft_weight=base.algorithm.sft_weight
-        ),
+        sft_latents=_load_sft_latents_from_config(built, sft_weight=base.algorithm.sft_weight),
     )
     tb.trainer = trainer
     tb.collector.trace.watch(tb.model, "replay_forward_with_latents", "sft_forward")

@@ -400,7 +400,7 @@ def _log_global_std_streaming_scope(
 
 
 def _load_sft_latents_from_config(
-    built: BuiltConfigs, family: str, *, sft_weight: float
+    built: BuiltConfigs, *, sft_weight: float
 ) -> dict[str, Any] | None:
     """Load the clean-latents shard when the objective's SFT regularizer is on.
 
@@ -417,7 +417,7 @@ def _load_sft_latents_from_config(
     model = built.root.model
     return load_sft_latents(
         str(built.root.data.sft_latents),
-        family=family,
+        family=built.family.family,
         model_path=str(model.path or ""),
         model_revision=str(model.revision or ""),
     )
@@ -976,11 +976,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             config=trainer_config,
             device=device,
             strategy=strategy,
-            sft_latents=_load_sft_latents_from_config(
-                built,
-                family_entry.family,
-                sft_weight=algorithm.sft_weight,
-            ),
+            sft_latents=_load_sft_latents_from_config(built, sft_weight=algorithm.sft_weight),
         )
         lifecycle.rollout_schedule = trainer.rollout_schedule
 

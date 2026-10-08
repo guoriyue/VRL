@@ -58,14 +58,14 @@ _QUANTIZATION_FORMAT_RULES = {
 _PRECISION_TOKENS = (*_PLAIN_DTYPES, *_QUANTIZATION_FORMAT_RULES)
 
 
-def normalize_precision(value: Any, *, default: str = "fp32") -> str:
+def normalize_precision(value: Any) -> str:
     """Normalize a known precision token at a config or tool boundary."""
 
     if value is None:
-        return default
+        return "fp32"
     token = str(value).lower().strip()
     if not token:
-        return default
+        return "fp32"
     if token == "no":
         return "fp32"
     if token not in _PRECISION_TOKENS:

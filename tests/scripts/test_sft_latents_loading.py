@@ -17,9 +17,4 @@ def test_zero_sft_weight_does_not_read_configured_shard(monkeypatch, tmp_path) -
     built = tb.collector.stack.resolved.built
 
     assert tb.trainer.algorithm.sft_weight == 0.0
-    assert (
-        _load_sft_latents_from_config(
-            built, tb.collector.stack.family.family, sft_weight=tb.trainer.algorithm.sft_weight
-        )
-        is None
-    )
+    assert _load_sft_latents_from_config(built, sft_weight=tb.trainer.algorithm.sft_weight) is None

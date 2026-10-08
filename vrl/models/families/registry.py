@@ -253,10 +253,6 @@ class ModelFamilyEntry:
             )
         )
         resolved_precision_role = precision_role or ("rollout" if for_rollout else "training")
-        if resolved_precision_role not in ("training", "rollout"):
-            raise ValueError(
-                f"precision_role must be 'training' or 'rollout'; got {resolved_precision_role!r}",
-            )
         role_precision = getattr(precision, resolved_precision_role)
         role_parameter_dtype = role_precision.dtype
         parameter_dtype = (
@@ -309,10 +305,7 @@ class ModelFamilyEntry:
             rollout=rollout,
         )
 
-        if (
-            isinstance(self.family_build, DenoiseFamilyBuild)
-            and self.family_build.model_build_normalizer is not None
-        ):
+        if self.family_build.model_build_normalizer is not None:
             from vrl.utils.config import import_from_path
 
             build = import_from_path(self.family_build.model_build_normalizer)(build)

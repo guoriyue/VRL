@@ -180,10 +180,7 @@ def preflight_rewards(
                         "distributed": DistributedSection(resources=resource_config),
                     }
                 )
-                resources = ResolvedDistributedResources.from_root(
-                    probe_root,
-                    reward=built.reward,
-                )
+                resources = ResolvedDistributedResources.from_root(probe_root)
                 owner = GlobalRayPlacementOwner(
                     resources,
                     RolloutWorkerConfig.from_public_section(None),
