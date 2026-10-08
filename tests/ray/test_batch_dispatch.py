@@ -1,27 +1,26 @@
-"""Deterministic tests for batch placement and pull-based actor dispatch.
+"""Batch placement and pull-based actor dispatch on real Ray actors.
 
-These use awaitable fake refs so completion order is fully controlled — no Ray
-runtime, no slow markers. They pin the dispatch contract:
-plan-time round-robin binding is kept bit-for-bit, and pull dispatch (used by
-the per-request finalizers) never changes gather order.
-
-The fakes are a controlled clock, not a Ray protocol fake, and the ``real_cover``
-labels below name what covers each half for real: the dispatch loop's ObjectRef
-handling by ``test_ray_actor_pool.py``, and the executor's whole
-envelope-over-the-wire-to-result crossing by the real-cluster twins in
-``tests/ray/test_real_batch_execution.py``.
+Every dispatched call is a real actor method on the package cluster
+(``tests/ray/conftest.py``) returning a real ``ObjectRef``. Completion order is
+controlled with real mechanisms: per-worker execution delays far apart, and a
+real gate actor a worker method awaits until the test opens it. They pin the
+dispatch contract: plan-time binding is kept bit-for-bit, pull dispatch never
+changes gather order, deadlines start at real submission, and terminal
+failures, cancellations and admission waits linearize as documented.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Generator
+import threading
+import time
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
 
 import vrl.ray.actor_pool as actor_pool_module
-import vrl.ray.operation_deadline as deadline_module
+from tests.rollouts.collector._helpers import Trace
 from vrl.generation.execution.types import (
     GenerationBatchEnvelope,
     GenerationBatchResult,
@@ -38,82 +37,119 @@ from vrl.ray.actor_pool import (
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.trajectory.types import TrajectoryBatch
 
-# Carried by the tests that actually drive `_FakeRef`/`_FakeWorker`; the planner
-# and argument-validation tests below use no double, so a module-level pytestmark
-# would over-claim on their behalf.
-_CONTROLLED_CLOCK = pytest.mark.real_cover(
-    "tests/ray/test_ray_actor_pool.py::test_actor_dispatcher_awaits_real_object_refs",
-    why=(
-        "the fake refs control event-loop completion ORDER, which a real Ray cluster cannot "
-        "make deterministic; the protocol assumption they encode — a real ObjectRef awaits "
-        "directly and resolves to the task result — is pinned against a live cluster there"
-    ),
-)
+# Far apart, so the fast worker's completions all land inside one slow call.
+_FAST_S = 0.01
+_SLOW_S = 1.0
 
 
-class _FakeRef:
-    """One in-flight fake actor call; completion_rank orders completion.
+class _Gate:
+    """A real actor holding an event other actors await until the test opens it."""
 
-    ``RayActorDispatcher`` awaits refs directly (like real Ray ObjectRefs), so
-    the fake controls order by suspending ``completion_rank`` event-loop steps
-    before resolving: a lower-rank ref finishes first, one per ``asyncio.wait``
-    iteration, with no wall-clock sleeps.
-    """
+    def __init__(self) -> None:
+        self._event = asyncio.Event()
 
-    def __init__(self, result: Any, completion_rank: int) -> None:
-        self.result = result
-        self.completion_rank = completion_rank
+    async def wait(self) -> None:
+        await self._event.wait()
 
-    def __await__(self) -> Generator[Any, None, Any]:
-        for _ in range(self.completion_rank):
-            yield
-        return self.result
+    def open(self) -> None:
+        self._event.set()
 
 
-class _NeverRef:
-    def __await__(self) -> Generator[Any, None, Any]:
-        while True:
-            yield
+class _Worker:
+    """A real async actor whose calls run, block on a gate, fail or never return."""
 
-
-class _GatedRef:
-    def __init__(self, gate: asyncio.Event, result: Any) -> None:
-        self.gate = gate
-        self.result = result
-
-    def __await__(self):
-        async def wait() -> Any:
-            await self.gate.wait()
-            return self.result
-
-        return wait().__await__()
-
-
-class _GatedErrorRef:
-    def __init__(self, gate: asyncio.Event, error: BaseException) -> None:
-        self.gate = gate
-        self.error = error
-
-    def __await__(self):
-        async def wait() -> Any:
-            await self.gate.wait()
-            raise self.error
-
-        return wait().__await__()
-
-
-class _FakeWorker:
-    """Remote method returning refs whose completion rank encodes speed."""
-
-    def __init__(self, worker_id: str, speed_rank_base: int) -> None:
+    def __init__(self, worker_id: str, delay_s: float = 0.0, gate: Any = None) -> None:
         self.worker_id = worker_id
-        self._rank = speed_rank_base
-        self.received: list[Any] = []
+        self.delay_s = delay_s
+        self.gate = gate
+        self._received: list[Any] = []
 
-    def remote(self, payload: Any) -> _FakeRef:
-        self.received.append(payload)
-        self._rank += 1
-        return _FakeRef(result=(self.worker_id, payload), completion_rank=self._rank)
+    def received(self) -> list[Any]:
+        return list(self._received)
+
+    async def run(self, payload: Any) -> tuple[str, Any]:
+        self._received.append(payload)
+        await asyncio.sleep(self.delay_s)
+        return self.worker_id, payload
+
+    async def echo(self, payload: Any) -> Any:
+        self._received.append(payload)
+        return payload
+
+    async def hold(self, payload: Any) -> Any:
+        self._received.append(payload)
+        await self.gate.wait.remote()
+        return payload
+
+    async def hold_then_fail(self, payload: Any) -> Any:
+        self._received.append(payload)
+        await self.gate.wait.remote()
+        raise ValueError(f"actor failed: {payload}")
+
+    async def hang(self, payload: Any) -> Any:
+        self._received.append(payload)
+        await asyncio.Event().wait()
+
+    async def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
+        batch = envelope.batch
+        self._received.append(batch.batch_key)
+        await asyncio.sleep(self.delay_s)
+        return GenerationBatchResult(
+            request_id=envelope.request.request_id,
+            worker_id=self.worker_id,
+            batch=batch,
+            output={"batch_key": batch.batch_key, "samples": batch.sample_count},
+        )
+
+
+@pytest.fixture
+def spawn(local_ray) -> Iterator[Callable[..., Any]]:
+    """Create real actors on the package cluster; every one is killed after the test."""
+
+    created: list[Any] = []
+
+    def make(cls: type, *args: Any) -> Any:
+        actor = local_ray.remote(num_cpus=0)(cls).remote(*args)
+        created.append(actor)
+        # Started before use, so no deadline under test pays for process startup.
+        local_ray.get(actor.__ray_ready__.remote(), timeout=60)
+        return actor
+
+    yield make
+    for actor in created:
+        local_ray.kill(actor, no_restart=True)
+
+
+def _received(ray: Any, actor: Any) -> list[Any]:
+    return ray.get(actor.received.remote(), timeout=30)
+
+
+def _recording(remote: Callable[[Any], Any], log: list[Any], refs: list[Any]) -> Callable:
+    """The real ``.remote`` submission, noting each payload and the ref it returned."""
+
+    def submit(payload: Any) -> Any:
+        log.append(payload)
+        ref = remote(payload)
+        refs.append(ref)
+        return ref
+
+    return submit
+
+
+async def _until(condition: Callable[[], bool], timeout_s: float = 30.0) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while not condition():
+        assert loop.time() < deadline, "condition not reached"
+        await asyncio.sleep(0.005)
+
+
+def _observe_completion(ray: Any, refs: list[Any]) -> None:
+    """Block the loop until the actor calls finished and Ray queued their callbacks."""
+
+    ready, _ = ray.wait(refs, num_returns=len(refs), timeout=30)
+    assert len(ready) == len(refs)
+    time.sleep(0.05)
 
 
 def _request(num_steps: int = 10, samples: int = 8, sbs: int = 2) -> GenerationRequest:
@@ -129,23 +165,22 @@ def _request(num_steps: int = 10, samples: int = 8, sbs: int = 2) -> GenerationR
     )
 
 
-def _worker_ids(count: int) -> list[str]:
-    return [f"w{idx}" for idx in range(count)]
+pytestmark = pytest.mark.slow_test
 
 
 # ---------------------------------------------------------------- actor pool
 
 
-@_CONTROLLED_CLOCK
-def test_bound_jobs_keep_plan_time_binding_and_order() -> None:
-    """Checks the static path is unchanged: binding and order preserved."""
-    fast = _FakeWorker("w0", speed_rank_base=0)
-    slow = _FakeWorker("w1", speed_rank_base=100)
+def test_bound_jobs_keep_plan_time_binding_and_order(local_ray, spawn) -> None:
+    """The static path is unchanged: binding and order preserved."""
+
+    fast = spawn(_Worker, "w0", _FAST_S)
+    slow = spawn(_Worker, "w1", _SLOW_S)
     jobs = [
         RayActorJob(
             job_index=i,
             worker_id=("w0" if i % 2 == 0 else "w1"),
-            remote_method=(fast.remote if i % 2 == 0 else slow.remote),
+            remote_method=(fast.run.remote if i % 2 == 0 else slow.run.remote),
             payload=f"batch-{i}",
         )
         for i in range(4)
@@ -161,15 +196,15 @@ def test_bound_jobs_keep_plan_time_binding_and_order() -> None:
 
     assert [index for index, _ in pairs] == [0, 1, 2, 3]
     # Even though w1 is slow, its batches never migrate to w0.
-    assert fast.received == ["batch-0", "batch-2"]
-    assert slow.received == ["batch-1", "batch-3"]
+    assert _received(local_ray, fast) == ["batch-0", "batch-2"]
+    assert _received(local_ray, slow) == ["batch-1", "batch-3"]
 
 
-@_CONTROLLED_CLOCK
-def test_pull_dispatch_lets_fast_worker_take_more_chunks() -> None:
-    """Checks unbound jobs flow to whichever worker frees up first."""
-    fast = _FakeWorker("w0", speed_rank_base=0)
-    slow = _FakeWorker("w1", speed_rank_base=100)
+def test_pull_dispatch_lets_fast_worker_take_more_chunks(local_ray, spawn) -> None:
+    """Unbound jobs flow to whichever worker frees up first."""
+
+    fast = spawn(_Worker, "w0", _FAST_S)
+    slow = spawn(_Worker, "w1", _SLOW_S)
     jobs = [
         RayActorJob(job_index=i, worker_id=None, remote_method=None, payload=f"batch-{i}")
         for i in range(4)
@@ -180,18 +215,19 @@ def test_pull_dispatch_lets_fast_worker_take_more_chunks() -> None:
             jobs,
             operation="test.actor_job",
             call_timeout_s=30.0,
-            worker_methods={"w0": fast.remote, "w1": slow.remote},
+            worker_methods={"w0": fast.run.remote, "w1": slow.run.remote},
         ),
     )
 
     assert [index for index, _ in pairs] == [0, 1, 2, 3]
-    # w0 completes first every time, so it pulls every queued batch.
-    assert fast.received == ["batch-0", "batch-2", "batch-3"]
-    assert slow.received == ["batch-1"]
+    # w0 finishes every call inside w1's one, so it pulls every queued batch.
+    assert _received(local_ray, fast) == ["batch-0", "batch-2", "batch-3"]
+    assert _received(local_ray, slow) == ["batch-1"]
 
 
 def test_unbound_jobs_without_worker_methods_fail_loudly() -> None:
-    """Checks pull dispatch without worker handles is a hard error."""
+    """Pull dispatch without worker handles is a hard error."""
+
     jobs = [RayActorJob(job_index=0, worker_id=None, remote_method=None, payload="x")]
 
     with pytest.raises(ValueError, match="worker_methods"):
@@ -205,12 +241,10 @@ def test_unbound_jobs_without_worker_methods_fail_loudly() -> None:
 
 
 @pytest.mark.asyncio
-async def test_actor_pool_validates_every_worker_before_first_submission() -> None:
-    submitted: list[str] = []
-
-    def submit(payload: str) -> _FakeRef:
-        submitted.append(payload)
-        return _FakeRef(payload, completion_rank=1)
+async def test_actor_pool_validates_every_worker_before_first_submission(spawn) -> None:
+    worker = spawn(_Worker, "w0")
+    submitted: list[Any] = []
+    submit = _recording(worker.echo.remote, submitted, [])
 
     dispatcher = RayActorDispatcher(("w0",))
     with pytest.raises(ValueError, match="unknown Ray actor worker"):
@@ -231,12 +265,12 @@ async def test_actor_pool_validates_every_worker_before_first_submission() -> No
     ) == [(0, "still-open")]
 
 
-@_CONTROLLED_CLOCK
-def test_schedule_telemetry_rows_are_emitted() -> None:
-    """Checks the dispatch loop emits one telemetry row per job."""
-    worker = _FakeWorker("w0", speed_rank_base=0)
+def test_schedule_telemetry_rows_are_emitted(spawn) -> None:
+    """The dispatch loop emits one telemetry row per job."""
+
+    worker = spawn(_Worker, "w0", _FAST_S)
     jobs = [
-        RayActorJob(job_index=i, worker_id="w0", remote_method=worker.remote, payload=i)
+        RayActorJob(job_index=i, worker_id="w0", remote_method=worker.run.remote, payload=i)
         for i in range(2)
     ]
     schedule: list[dict[str, Any]] = []
@@ -259,51 +293,24 @@ def test_schedule_telemetry_rows_are_emitted() -> None:
 
 @pytest.mark.asyncio
 async def test_actor_pool_timeout_discards_completed_partial_result(
-    monkeypatch: pytest.MonkeyPatch,
+    local_ray, spawn, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    class _Deadline:
-        def __init__(self, operation: str, timeout_s: float, context: str | None = None) -> None:
-            del operation, timeout_s
-            self.context = context
-            self.expires_at = 0.0 if "worker_id=w1" in str(context) else 1.0
-            self._remaining_calls = 0
-
-        def remaining_s(self) -> float:
-            self._remaining_calls += 1
-            if "worker_id=w1" in str(self.context) and self._remaining_calls > 1:
-                return 0.0
-            return 30.0
-
-        def timeout_error(self) -> RayOperationTimeout:
-            return RayOperationTimeout(
-                "rollout.generation.batch",
-                30.0,
-                context=self.context,
-            )
-
-    cancelled: list[Any] = []
-
-    class _Ray:
-        @staticmethod
-        def cancel(ref: Any, *, force: bool) -> None:
-            assert force is False
-            cancelled.append(ref)
-
-    fast = _FakeWorker("w0", speed_rank_base=0)
-    never_ref = _NeverRef()
-    monkeypatch.setattr(actor_pool_module, "RayCallDeadline", _Deadline)
-    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+    fast = spawn(_Worker, "w0", _FAST_S)
+    hung = spawn(_Worker, "w1")
+    hung_refs: list[Any] = []
+    cancels = Trace(monkeypatch)
+    cancels.watch(local_ray, "cancel", "cancel")
     jobs = [
         RayActorJob(
             job_index=0,
             worker_id="w0",
-            remote_method=fast.remote,
+            remote_method=fast.run.remote,
             payload="complete-first",
         ),
         RayActorJob(
             job_index=1,
             worker_id="w1",
-            remote_method=lambda _payload: never_ref,
+            remote_method=_recording(hung.hang.remote, [], hung_refs),
             payload="never",
         ),
     ]
@@ -312,16 +319,17 @@ async def test_actor_pool_timeout_discards_completed_partial_result(
         await RayActorDispatcher(("w0", "w1")).run(
             jobs,
             operation="test.actor_job",
-            call_timeout_s=30.0,
+            call_timeout_s=1.0,
         )
 
-    assert fast.received == ["complete-first"]
-    assert cancelled == [never_ref]
+    assert _received(local_ray, fast) == ["complete-first"]
+    # Only the call still in flight is cancelled, and never forcefully.
+    assert [args for _, args in cancels.calls] == [(hung_refs[0],)]
 
 
 @pytest.mark.asyncio
 async def test_queued_job_gets_its_deadline_only_when_submitted(
-    monkeypatch: pytest.MonkeyPatch,
+    spawn, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     real_deadline = actor_pool_module.RayCallDeadline
     deadlines: list[Any] = []
@@ -332,20 +340,15 @@ async def test_queued_job_gets_its_deadline_only_when_submitted(
         deadlines.append(deadline)
         return deadline
 
-    class _Worker:
-        def remote(self, payload: str) -> _FakeRef:
-            deadlines_seen_at_submit.append(len(deadlines))
-            return _FakeRef(payload, completion_rank=1)
+    worker = spawn(_Worker, "w0", _FAST_S)
+
+    def submit(payload: str) -> Any:
+        deadlines_seen_at_submit.append(len(deadlines))
+        return worker.echo.remote(payload)
 
     monkeypatch.setattr(actor_pool_module, "RayCallDeadline", recording_deadline)
-    worker = _Worker()
     jobs = [
-        RayActorJob(
-            job_index=index,
-            worker_id="w0",
-            remote_method=worker.remote,
-            payload=f"job-{index}",
-        )
+        RayActorJob(job_index=index, worker_id="w0", remote_method=submit, payload=f"job-{index}")
         for index in range(2)
     ]
 
@@ -360,28 +363,20 @@ async def test_queued_job_gets_its_deadline_only_when_submitted(
     assert len(deadlines) == 2
 
 
-@_CONTROLLED_CLOCK
 @pytest.mark.asyncio
 async def test_partial_submission_failure_cancels_registered_refs_and_closes(
-    monkeypatch: pytest.MonkeyPatch,
+    local_ray, spawn, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    active_ref = _NeverRef()
-    cancelled: list[Any] = []
-
-    class _Ray:
-        @staticmethod
-        def cancel(ref: Any, *, force: bool) -> None:
-            assert force is False
-            cancelled.append(ref)
-
-    def reject(_payload: Any) -> Any:
-        raise ValueError("driver submission failed")
-
-    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+    held = spawn(_Worker, "w0")
+    other = spawn(_Worker, "w1")
+    held_refs: list[Any] = []
+    cancels = Trace(monkeypatch)
+    cancels.watch(local_ray, "cancel", "cancel")
     dispatcher = RayActorDispatcher(("w0", "w1"))
     jobs = [
-        RayActorJob(0, "w0", lambda _payload: active_ref, "active"),
-        RayActorJob(1, "w1", reject, "rejected"),
+        RayActorJob(0, "w0", _recording(held.hang.remote, [], held_refs), "active"),
+        # A payload Ray cannot serialize fails the driver-side submission.
+        RayActorJob(1, "w1", other.echo.remote, threading.Lock()),
     ]
 
     with pytest.raises(RayActorCallError) as caught:
@@ -391,8 +386,8 @@ async def test_partial_submission_failure_cancels_registered_refs_and_closes(
             call_timeout_s=30.0,
         )
 
-    assert isinstance(caught.value.__cause__, ValueError)
-    assert cancelled == [active_ref]
+    assert isinstance(caught.value.__cause__, TypeError)
+    assert [args for _, args in cancels.calls] == [(held_refs[0],)]
     with pytest.raises(RuntimeError) as closed:
         await dispatcher.run(
             [],
@@ -402,43 +397,45 @@ async def test_partial_submission_failure_cancels_registered_refs_and_closes(
     assert closed.value.__cause__ is caught.value
 
 
-@_CONTROLLED_CLOCK
 @pytest.mark.asyncio
-async def test_concurrent_runs_propagate_the_first_terminal_identity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    first_gate = asyncio.Event()
-    second_gate = asyncio.Event()
-    first_ref = _GatedErrorRef(first_gate, ValueError("first actor failure"))
-    second_ref = _GatedErrorRef(second_gate, ValueError("second actor failure"))
-
-    class _Ray:
-        @staticmethod
-        def cancel(_ref: Any, *, force: bool) -> None:
-            assert force is False
-
-    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+async def test_concurrent_runs_propagate_the_first_terminal_identity(local_ray, spawn) -> None:
+    first_gate = spawn(_Gate)
+    second_gate = spawn(_Gate)
+    first_worker = spawn(_Worker, "w0", 0.0, first_gate)
+    second_worker = spawn(_Worker, "w1", 0.0, second_gate)
+    submitted: list[Any] = []
     dispatcher = RayActorDispatcher(("w0", "w1"))
     first_task = asyncio.create_task(
         dispatcher.run(
-            [RayActorJob(0, "w0", lambda _payload: first_ref, "first")],
+            [
+                RayActorJob(
+                    0, "w0", _recording(first_worker.hold_then_fail.remote, submitted, []), "first"
+                )
+            ],
             operation="test.first",
             call_timeout_s=30.0,
         ),
     )
     second_task = asyncio.create_task(
         dispatcher.run(
-            [RayActorJob(0, "w1", lambda _payload: second_ref, "second")],
+            [
+                RayActorJob(
+                    0,
+                    "w1",
+                    _recording(second_worker.hold_then_fail.remote, submitted, []),
+                    "second",
+                )
+            ],
             operation="test.second",
             call_timeout_s=30.0,
         ),
     )
-    await asyncio.sleep(0)
+    await _until(lambda: len(submitted) == 2)
 
-    first_gate.set()
+    local_ray.get(first_gate.open.remote(), timeout=30)
     with pytest.raises(RayActorCallError) as first:
         await first_task
-    second_gate.set()
+    local_ray.get(second_gate.open.remote(), timeout=30)
     with pytest.raises(RuntimeError) as second:
         await second_task
 
@@ -446,38 +443,36 @@ async def test_concurrent_runs_propagate_the_first_terminal_identity(
     assert second.value.__cause__ is first.value
 
 
-@_CONTROLLED_CLOCK
 @pytest.mark.asyncio
-async def test_cancellation_race_preserves_a_completed_actor_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    gate = asyncio.Event()
-    actor_error = ValueError("actor failed before caller cancellation")
-    ref = _GatedErrorRef(gate, actor_error)
+async def test_cancellation_race_preserves_a_completed_actor_failure(local_ray, spawn) -> None:
+    """The actor call failed and the loop observed it, but the caller's
+    cancellation lands before the dispatcher handles the failure: the failure
+    is the terminal identity, not a generic cancellation."""
 
-    class _Ray:
-        @staticmethod
-        def cancel(_ref: Any, *, force: bool) -> None:
-            assert force is False
-
-    monkeypatch.setattr(deadline_module, "require_ray", lambda: _Ray)
+    gate = spawn(_Gate)
+    worker = spawn(_Worker, "w0", 0.0, gate)
+    refs: list[Any] = []
     dispatcher = RayActorDispatcher(("w0",))
     task = asyncio.create_task(
         dispatcher.run(
-            [RayActorJob(0, "w0", lambda _payload: ref, "payload")],
+            [RayActorJob(0, "w0", _recording(worker.hold_then_fail.remote, [], refs), "payload")],
             operation="test.cancel_race",
             call_timeout_s=30.0,
         ),
     )
-    await asyncio.sleep(0)
+    await _until(lambda: len(refs) == 1)
 
-    gate.set()
+    local_ray.get(gate.open.remote(), timeout=30)
+    _observe_completion(local_ray, refs)
+    await asyncio.sleep(0)
     task.cancel()
     with pytest.raises(asyncio.CancelledError) as caught:
         await task
 
     assert isinstance(caught.value.__cause__, RayActorCallError)
-    assert caught.value.__cause__.__cause__ is actor_error
+    actor_error = caught.value.__cause__.__cause__
+    assert isinstance(actor_error, ValueError)
+    assert "actor failed: payload" in str(actor_error)
     with pytest.raises(RuntimeError) as closed:
         await dispatcher.run(
             [],
@@ -487,138 +482,179 @@ async def test_cancellation_race_preserves_a_completed_actor_failure(
     assert closed.value.__cause__ is caught.value.__cause__
 
 
-@_CONTROLLED_CLOCK
 @pytest.mark.asyncio
-async def test_completed_actor_success_wins_cancellation_linearization() -> None:
-    gate = asyncio.Event()
+async def test_completed_actor_success_wins_cancellation_linearization(local_ray, spawn) -> None:
+    gate = spawn(_Gate)
+    worker = spawn(_Worker, "w0", 0.0, gate)
+    refs: list[Any] = []
     dispatcher = RayActorDispatcher(("w0",))
     task = asyncio.create_task(
         dispatcher.run(
-            [RayActorJob(0, "w0", lambda _payload: _GatedRef(gate, "committed"), None)],
+            [RayActorJob(0, "w0", _recording(worker.hold.remote, [], refs), "committed")],
             operation="test.cancel_after_success",
             call_timeout_s=30.0,
         ),
     )
-    await asyncio.sleep(0)
+    await _until(lambda: len(refs) == 1)
 
-    gate.set()
+    local_ray.get(gate.open.remote(), timeout=30)
+    _observe_completion(local_ray, refs)
+    await asyncio.sleep(0)
     task.cancel()
 
     assert await task == [(0, "committed")]
     assert await dispatcher.run(
-        [RayActorJob(0, "w0", lambda _payload: _FakeRef("next", 1), None)],
+        [RayActorJob(0, "w0", worker.echo.remote, "next")],
         operation="test.after_committed_cancel",
         call_timeout_s=30.0,
     ) == [(0, "next")]
 
 
 @pytest.mark.asyncio
+async def test_actor_completion_is_the_linearization_point_for_cancellation(
+    local_ray, spawn
+) -> None:
+    """The actor finished, but the driver loop has not yet run Ray's completion
+    callback when the caller cancels: the committed call still wins, because
+    what the actor did -- possibly a weight install -- already happened."""
+
+    gate = spawn(_Gate)
+    worker = spawn(_Worker, "w0", 0.0, gate)
+    refs: list[Any] = []
+    dispatcher = RayActorDispatcher(("w0",))
+    task = asyncio.create_task(
+        dispatcher.run(
+            [RayActorJob(0, "w0", _recording(worker.hold.remote, [], refs), "committed")],
+            operation="test.cancel_before_observation",
+            call_timeout_s=30.0,
+        ),
+    )
+    await _until(lambda: len(refs) == 1)
+
+    local_ray.get(gate.open.remote(), timeout=30)
+    # Block the loop until the call finished: the completion callback is
+    # queued, not yet run, when the cancellation is delivered.
+    _observe_completion(local_ray, refs)
+    task.cancel()
+
+    assert await task == [(0, "committed")]
+
+
+@pytest.mark.asyncio
+async def test_unobserved_actor_failure_wins_over_cancellation(local_ray, spawn) -> None:
+    gate = spawn(_Gate)
+    worker = spawn(_Worker, "w0", 0.0, gate)
+    refs: list[Any] = []
+    dispatcher = RayActorDispatcher(("w0",))
+    task = asyncio.create_task(
+        dispatcher.run(
+            [RayActorJob(0, "w0", _recording(worker.hold_then_fail.remote, [], refs), "payload")],
+            operation="test.fail_before_observation",
+            call_timeout_s=30.0,
+        ),
+    )
+    await _until(lambda: len(refs) == 1)
+
+    local_ray.get(gate.open.remote(), timeout=30)
+    _observe_completion(local_ray, refs)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await task
+
+    assert isinstance(caught.value.__cause__, RayActorCallError)
+    assert "actor failed: payload" in str(caught.value.__cause__.__cause__)
+
+
+def _admission_worker(spawn: Callable[..., Any], held_payload: str) -> tuple[Any, Any, Callable]:
+    """One real worker whose ``held_payload`` call blocks on a gate; others echo."""
+
+    gate = spawn(_Gate)
+    worker = spawn(_Worker, "w0", 0.0, gate)
+    received: list[str] = []
+
+    def remote(payload: str) -> Any:
+        received.append(payload)
+        if payload == held_payload:
+            return worker.hold.remote(payload)
+        return worker.echo.remote(payload)
+
+    remote.received = received  # type: ignore[attr-defined]
+    return gate, worker, remote
+
+
+@pytest.mark.asyncio
 async def test_concurrent_requests_start_deadline_after_shared_worker_admission(
-    monkeypatch: pytest.MonkeyPatch,
+    local_ray, spawn, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     real_deadline = actor_pool_module.RayCallDeadline
     deadlines: list[Any] = []
-    first_gate = asyncio.Event()
-    received: list[str] = []
 
     def recording_deadline(*args: Any, **kwargs: Any) -> Any:
         deadline = real_deadline(*args, **kwargs)
         deadlines.append(deadline)
         return deadline
 
-    def remote(payload: str) -> Any:
-        received.append(payload)
-        if payload == "first":
-            return _GatedRef(first_gate, payload)
-        return _FakeRef(payload, completion_rank=1)
-
+    gate, _worker, remote = _admission_worker(spawn, "first")
     monkeypatch.setattr(actor_pool_module, "RayCallDeadline", recording_deadline)
     dispatcher = RayActorDispatcher(("w0",))
 
     async def dispatch(payload: str) -> list[tuple[int, Any]]:
         return await dispatcher.run(
-            [
-                RayActorJob(
-                    job_index=0,
-                    worker_id="w0",
-                    remote_method=remote,
-                    payload=payload,
-                ),
-            ],
+            [RayActorJob(job_index=0, worker_id="w0", remote_method=remote, payload=payload)],
             operation="test.actor_job",
             call_timeout_s=30.0,
         )
 
     first = asyncio.create_task(dispatch("first"))
-    await asyncio.sleep(0)
+    await _until(lambda: remote.received == ["first"])
     second = asyncio.create_task(dispatch("second"))
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.1)
 
-    assert received == ["first"]
+    # The second call waits for the worker locally, with no deadline running.
+    assert remote.received == ["first"]
     assert len(deadlines) == 1
 
-    first_gate.set()
+    local_ray.get(gate.open.remote(), timeout=30)
     assert await first == [(0, "first")]
     assert await second == [(0, "second")]
-    assert received == ["first", "second"]
+    assert remote.received == ["first", "second"]
     assert len(deadlines) == 2
 
 
 @pytest.mark.asyncio
-async def test_cancelling_local_admission_wait_keeps_dispatcher_open() -> None:
-    first_gate = asyncio.Event()
-    received: list[str] = []
-
-    def remote(payload: str) -> Any:
-        received.append(payload)
-        if payload == "first":
-            return _GatedRef(first_gate, payload)
-        return _FakeRef(payload, completion_rank=1)
-
+async def test_cancelling_local_admission_wait_keeps_dispatcher_open(local_ray, spawn) -> None:
+    gate, _worker, remote = _admission_worker(spawn, "first")
     dispatcher = RayActorDispatcher(("w0",))
 
     async def dispatch(payload: str) -> list[tuple[int, Any]]:
         return await dispatcher.run(
-            [
-                RayActorJob(
-                    job_index=0,
-                    worker_id="w0",
-                    remote_method=remote,
-                    payload=payload,
-                ),
-            ],
+            [RayActorJob(job_index=0, worker_id="w0", remote_method=remote, payload=payload)],
             operation="test.actor_job",
             call_timeout_s=30.0,
         )
 
     first = asyncio.create_task(dispatch("first"))
-    await asyncio.sleep(0)
+    await _until(lambda: remote.received == ["first"])
     waiting = asyncio.create_task(dispatch("cancel-before-submit"))
-    await asyncio.sleep(0)
+    await asyncio.sleep(0.05)
     waiting.cancel()
 
     with pytest.raises(asyncio.CancelledError) as caught:
         await waiting
     assert caught.value.__cause__ is None
-    assert received == ["first"]
+    assert remote.received == ["first"]
 
-    first_gate.set()
+    local_ray.get(gate.open.remote(), timeout=30)
     assert await first == [(0, "first")]
     assert await dispatch("third") == [(0, "third")]
-    assert received == ["first", "third"]
+    assert remote.received == ["first", "third"]
 
 
 @pytest.mark.asyncio
-async def test_cancelling_middle_admission_waiter_preserves_identity_fifo() -> None:
-    active_gate = asyncio.Event()
-    received: list[str] = []
-
-    def remote(payload: str) -> Any:
-        received.append(payload)
-        if payload == "active":
-            return _GatedRef(active_gate, payload)
-        return _FakeRef(payload, completion_rank=1)
-
+async def test_cancelling_middle_admission_waiter_preserves_identity_fifo(
+    local_ray, spawn
+) -> None:
+    gate, _worker, remote = _admission_worker(spawn, "active")
     dispatcher = RayActorDispatcher(("w0",))
 
     async def dispatch(payload: str) -> list[tuple[int, Any]]:
@@ -629,79 +665,37 @@ async def test_cancelling_middle_admission_waiter_preserves_identity_fifo() -> N
         )
 
     active = asyncio.create_task(dispatch("active"))
-    await asyncio.sleep(0)
+    await _until(lambda: remote.received == ["active"])
     head = asyncio.create_task(dispatch("head"))
     await asyncio.sleep(0)
     middle = asyncio.create_task(dispatch("middle"))
     await asyncio.sleep(0)
     tail = asyncio.create_task(dispatch("tail"))
-
-    for _ in range(20):
-        if len(dispatcher._admission_queues["w0"]) == 3:
-            break
-        await asyncio.sleep(0)
-    assert len(dispatcher._admission_queues["w0"]) == 3
+    await _until(lambda: len(dispatcher._admission_queues["w0"]) == 3)
 
     middle.cancel()
     with pytest.raises(asyncio.CancelledError):
         await middle
     assert len(dispatcher._admission_queues["w0"]) == 2
 
-    active_gate.set()
-    assert await asyncio.wait_for(active, timeout=1) == [(0, "active")]
-    assert await asyncio.wait_for(head, timeout=1) == [(0, "head")]
-    assert await asyncio.wait_for(tail, timeout=1) == [(0, "tail")]
+    local_ray.get(gate.open.remote(), timeout=30)
+    assert await asyncio.wait_for(active, timeout=30) == [(0, "active")]
+    assert await asyncio.wait_for(head, timeout=30) == [(0, "head")]
+    assert await asyncio.wait_for(tail, timeout=30) == [(0, "tail")]
     assert await dispatch("after") == [(0, "after")]
-    assert received == ["active", "head", "tail", "after"]
+    assert remote.received == ["active", "head", "tail", "after"]
 
 
 # ----------------------------------------------------- executor end to end
 
 
-# Carried by the two `execute` tests. Their fake actor is called in-process, so
-# no envelope is ever pickled: a field that became unserializable (a lambda, an
-# open handle, a torch device reference) would pass here and break on production's
-# first batch. That crossing is what the twins named here run for real; the
-# completion ORDER these tests pin is what a real cluster cannot give.
-_CONTROLLED_CLOCK_OVER_A_REAL_WIRE = pytest.mark.real_cover(
-    "tests/ray/test_real_batch_execution.py",
-    why=(
-        "a real cluster cannot make batch completion order deterministic, which is the whole "
-        "point of the fake refs; the envelope -> pickle -> actor -> GenerationBatchResult crossing "
-        "they therefore skip is pinned against a live cluster by both twins in the named file"
-    ),
-)
-
-
-class _FakeActor:
-    """Fake Ray actor: execute_batch.remote returns a real batch result."""
-
-    def __init__(self, worker_id: str, speed_rank_base: int) -> None:
-        self.worker_id = worker_id
-        self._rank = speed_rank_base
-        self.executed: list[str] = []
-
-        class _ExecuteChunk:
-            @staticmethod
-            def remote(envelope: GenerationBatchEnvelope) -> _FakeRef:
-                return self._execute(envelope)
-
-        self.execute_batch = _ExecuteChunk()
-
-    def _execute(self, envelope: GenerationBatchEnvelope) -> _FakeRef:
-        batch = envelope.batch
-        self.executed.append(batch.batch_key)
-        self._rank += 1
-        result = GenerationBatchResult(
-            request_id=envelope.request.request_id,
-            worker_id=self.worker_id,
-            batch=batch,
-            output={"batch_key": batch.batch_key, "samples": batch.sample_count},
-        )
-        return _FakeRef(result=result, completion_rank=self._rank)
-
-
 class _ListGatherer:
+    """Gathers the workers' model-free batch payloads in batch order.
+
+    The batch payload shape is owned by the binding that produced it; these
+    workers produce coordinates, so this is the binding's gatherer.
+    """
+
     def merge_generation_batches(
         self,
         request: GenerationRequest,
@@ -721,37 +715,32 @@ class _ListGatherer:
         )
 
 
-def _executor(actors: list[_FakeActor]) -> RayGenerationExecutor:
+def _executor(actors: list[tuple[str, Any]]) -> RayGenerationExecutor:
     engines = [
-        RayGenerationEngine(
-            actor.worker_id,
-            [RayActorHandle(worker_id=actor.worker_id, actor=actor)],
-        )
-        for actor in actors
+        RayGenerationEngine(worker_id, [RayActorHandle(worker_id=worker_id, actor=actor)])
+        for worker_id, actor in actors
     ]
     return RayGenerationExecutor(
         engines,
         _ListGatherer(),
-        actor_dispatcher=RayActorDispatcher(
-            tuple(engine.engine_id for engine in engines),
-        ),
+        actor_dispatcher=RayActorDispatcher(tuple(engine.engine_id for engine in engines)),
         generation_stall_timeout_s=30.0,
     )
 
 
-@_CONTROLLED_CLOCK_OVER_A_REAL_WIRE
 @pytest.mark.asyncio
-async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
-    """Checks config strategy round_robin reaches the actual dispatch."""
-    actors = [_FakeActor("w0", 0), _FakeActor("w1", 100)]
-    executor = _executor(actors)
+async def test_executor_round_robin_dispatches_per_plan_binding(local_ray, spawn) -> None:
+    """Round-robin plan binding reaches the real dispatch: a slow engine keeps
+    its own batches."""
 
-    request = _request(num_steps=10, samples=8, sbs=2)
-    output = await executor.execute(request)
+    fast = spawn(_Worker, "w0", _FAST_S)
+    slow = spawn(_Worker, "w1", _SLOW_S / 2)
+    executor = _executor([("w0", fast), ("w1", slow)])
 
-    # 4 batches alternate w0/w1 even though w1 is much slower: plan-time binding.
-    assert actors[0].executed == ["prompt:0:samples:0:2", "prompt:0:samples:4:6"]
-    assert actors[1].executed == ["prompt:0:samples:2:4", "prompt:0:samples:6:8"]
+    output = await executor.execute(_request(num_steps=10, samples=8, sbs=2))
+
+    assert _received(local_ray, fast) == ["prompt:0:samples:0:2", "prompt:0:samples:4:6"]
+    assert _received(local_ray, slow) == ["prompt:0:samples:2:4", "prompt:0:samples:6:8"]
     assert output.runtime_debug is not None
     schedule = output.runtime_debug["chunk_schedule"]
     assert [row["assigned_worker"] for row in schedule] == ["w0", "w1", "w0", "w1"]
@@ -759,12 +748,11 @@ async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
         assert row["sample_count"] == 2
 
 
-@_CONTROLLED_CLOCK_OVER_A_REAL_WIRE
 @pytest.mark.asyncio
-async def test_executor_runtime_debug_exposes_chunk_schedule() -> None:
-    """Checks runtime_debug surfaces per-batch placement telemetry."""
-    actors = [_FakeActor("w0", 0), _FakeActor("w1", 100)]
-    executor = _executor(actors)
+async def test_executor_runtime_debug_exposes_chunk_schedule(spawn) -> None:
+    """runtime_debug surfaces per-batch placement telemetry."""
+
+    executor = _executor([("w0", spawn(_Worker, "w0")), ("w1", spawn(_Worker, "w1"))])
     request = _request(num_steps=10, samples=8, sbs=2)
     request.runtime_debug = True
 

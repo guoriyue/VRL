@@ -71,12 +71,12 @@ def test_pinned_rollout_devices_split_the_box() -> None:
 def test_auto_device_discovery_preserves_cuda_query_failure(monkeypatch) -> None:
     import torch
 
+    from tests.rollouts.collector._helpers import Trace
+
     error = RuntimeError("CUDA discovery failed")
-
-    def unavailable():
-        raise error
-
-    monkeypatch.setattr(torch.cuda, "is_available", unavailable)
+    cuda = Trace(monkeypatch)
+    cuda.watch(torch.cuda, "is_available", "cuda.is_available")
+    cuda.fail("cuda.is_available", error)
     root = parse_config(_cfg({"visible_devices": "auto"}))
     with pytest.raises(RuntimeError) as caught:
         ResolvedDistributedResources.from_root(root)
@@ -406,7 +406,7 @@ def test_reward_torch_device_uses_the_reserved_local_gpu() -> None:
     assert resolved.reward_torch_device(trainer_device="cuda:0") == "cuda:2"
 
 
-def test_reward_torch_device_translates_narrowed_rank_plan_ordinals(monkeypatch) -> None:
+def test_reward_torch_device_translates_narrowed_rank_plan_ordinals(cuda_devices) -> None:
     """A rank narrowed to one physical GPU addresses its reward as torch cuda:0.
 
     Rank-local torchrun launches keep the plan in physical ordinal space
@@ -414,8 +414,6 @@ def test_reward_torch_device_translates_narrowed_rank_plan_ordinals(monkeypatch)
     process to that single card; the raw physical id is then an invalid torch
     ordinal (measured: non-zero ranks of the hpsv3 fsdp 4-rank smoke).
     """
-    import torch
-
     resolved = ResolvedDistributedResources.from_root(
         parse_config(
             _cfg(
@@ -428,22 +426,21 @@ def test_reward_torch_device_translates_narrowed_rank_plan_ordinals(monkeypatch)
         ),
     )
 
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    # The rank process sees exactly its one masked card.
+    cuda_devices(1)
     assert resolved.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
 
 
 @pytest.mark.parametrize("devices", [(3,), (3, 1), (2, 0, 3)])
-def test_auto_resources_preserve_cuda_mask_ids_and_order(monkeypatch, devices) -> None:
-    from types import SimpleNamespace
-
-    import torch
-
+def test_auto_resources_preserve_cuda_mask_ids_and_order(
+    cuda_devices, monkeypatch, devices
+) -> None:
+    from vrl.generation.ray.config import RolloutWorkerConfig
     from vrl.ray.placement import GlobalRayPlacementOwner
 
+    # A host whose operator mask names these physical cards, in this order.
+    cuda_devices(len(devices))
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", ",".join(map(str, devices)))
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: len(devices))
     resolved = ResolvedDistributedResources.from_root(
         parse_config(_cfg({"rollout": {"devices": list(devices[1:] or devices)}})),
     )
@@ -452,19 +449,24 @@ def test_auto_resources_preserve_cuda_mask_ids_and_order(monkeypatch, devices) -
     assert resolved.trainer_torch_device == "cuda:0"
     for local, physical in enumerate(devices):
         assert resolved._local_torch_ordinal(physical) == local
-    owner = GlobalRayPlacementOwner(resolved, SimpleNamespace(cpus_per_worker=1))
+    worker = RolloutWorkerConfig(
+        cpus_per_worker=1.0,
+        worker_rpc_timeout_s=60.0,
+        generation_stall_timeout_s=60.0,
+        pipelined=False,
+    )
+    owner = GlobalRayPlacementOwner(resolved, worker)
+    # A CPU host has no GPU probe actor to run; the probe answer is the one
+    # input, with bundles reporting their cards in reverse order.
     probed = {i: gpu for i, gpu in enumerate(reversed(owner.layout.bundle_gpu_ids))}
     roles = owner.assign_roles(probed)
     assert tuple(probed[i] for i in roles["rollout"]) == resolved.rollout_devices
 
 
 @pytest.mark.parametrize("mask", ["3,3", "3,", "GPU-abc", "3,1,2"])
-def test_auto_resources_reject_ambiguous_cuda_mask(monkeypatch, mask) -> None:
-    import torch
-
+def test_auto_resources_reject_ambiguous_cuda_mask(cuda_devices, monkeypatch, mask) -> None:
+    cuda_devices(2)
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", mask)
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
     with pytest.raises(ValueError, match="CUDA_VISIBLE_DEVICES"):
         ResolvedDistributedResources.from_root(parse_config(_cfg({})))
 

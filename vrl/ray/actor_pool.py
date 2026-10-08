@@ -10,12 +10,14 @@ mailboxes before their own deadlines start.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from vrl.ray.dependencies import require_ray
 from vrl.ray.operation_deadline import (
     RayCallDeadline,
     RayOperationCancelled,
@@ -332,6 +334,32 @@ class RayActorDispatcher:
                     )
             self._require_open()
         except asyncio.CancelledError as cancellation:
+            # The actor's completion, not the driver's observation of it, is
+            # the linearization point: a call Ray reports finished already
+            # happened (it may have committed a weight install), so let the
+            # loop deliver its outcome before deciding between a completed
+            # result and a cancellation. An aggregate engine ref is finished
+            # when every rank ref is.
+            unobserved = {task: ref for task, ref in waiters.items() if not task.done()}
+            if unobserved:
+                rank_refs = {
+                    task: tuple(getattr(ref, "child_refs", (ref,)))
+                    for task, ref in unobserved.items()
+                }
+                flat = [child for children in rank_refs.values() for child in children]
+                finished, _ = require_ray().wait(flat, num_returns=len(flat), timeout=0)
+                finished = set(finished)
+                settled = [
+                    task
+                    for task, children in rank_refs.items()
+                    if all(child in finished for child in children)
+                ]
+                if settled:
+                    # A second cancellation while the settled wrappers deliver
+                    # must not escape this handler: the bookkeeping below is
+                    # what returns workers to admission and cancels live refs.
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await asyncio.wait(settled)
             first_failure: tuple[int, str, BaseException] | None = None
             for task, ref in waiters.items():
                 if not task.done():

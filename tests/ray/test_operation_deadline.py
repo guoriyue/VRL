@@ -1,15 +1,19 @@
-"""Deterministic tests for driver-owned Ray operation deadlines."""
+"""Driver-owned Ray operation deadlines, on the package's real Ray cluster.
+
+Every barrier here waits on real ObjectRefs from real actors that sleep past a
+short real deadline; cancellation and actor kills go through the real ``ray``
+module, recorded by wrappers that delegate to it.
+"""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+import time
 from typing import Any
 
 import pytest
 
 import vrl.ray.actor_group as actor_group_module
-from vrl.generation.ray.launcher import RayGenerationLauncher
-from vrl.ray.actor_group import RayActorGroup, RayActorHandle
+from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.operation_deadline import (
     RayCallDeadline,
     RayOperationTimeout,
@@ -19,12 +23,89 @@ from vrl.ray.operation_deadline import (
 from vrl.utils.deadline import require_timeout
 
 
-class _CancelLedger:
-    def __init__(self) -> None:
-        self.cancelled: list[tuple[Any, bool]] = []
+class _StartupWorker:
+    """A real actor body whose startup and metadata calls take configured time."""
 
-    def cancel(self, ref: Any, *, force: bool) -> None:
-        self.cancelled.append((ref, force))
+    def __init__(self, worker_id: str, config: dict) -> None:
+        self.worker_id = worker_id
+        self.config = dict(config)
+
+    def load_policy(self) -> None:
+        time.sleep(float(self.config.get("load_s", 0.0)))
+
+    def worker_metadata(self) -> dict:
+        from vrl.ray.dependencies import current_gpu_ids, current_node_ip
+
+        time.sleep(float(self.config.get("metadata_s", 0.0)))
+        return {
+            "worker_id": self.worker_id,
+            "node_ip": current_node_ip(),
+            "gpu_ids": current_gpu_ids(),
+        }
+
+    def ping(self) -> bool:
+        return True
+
+
+class _Sleeper:
+    def sleep(self, seconds: float) -> float:
+        time.sleep(seconds)
+        return seconds
+
+
+def _record_cancels(monkeypatch, ray: Any) -> list[tuple[Any, bool]]:
+    """Record every ``ray.cancel`` the code under test issues; the real call still runs."""
+
+    cancelled: list[tuple[Any, bool]] = []
+    real_cancel = ray.cancel
+
+    def cancel(ref: Any, *, force: bool = False, **kwargs: Any) -> Any:
+        cancelled.append((ref, force))
+        return real_cancel(ref, force=force, **kwargs)
+
+    monkeypatch.setattr(ray, "cancel", cancel)
+    return cancelled
+
+
+def _record_kills(monkeypatch) -> list[Any]:
+    """Record the actors the group kills; the real kill still runs."""
+
+    killed: list[Any] = []
+    real_kill = actor_group_module.kill_actors
+
+    def kill(ray: Any, actors: list[Any]) -> list[tuple[Any, Exception]]:
+        killed.extend(actors)
+        return real_kill(ray, actors)
+
+    monkeypatch.setattr(actor_group_module, "kill_actors", kill)
+    return killed
+
+
+def _record_barriers(monkeypatch) -> list[tuple[str, list[Any]]]:
+    """Record each ``get_ray_refs`` barrier the group waits on: operation and refs."""
+
+    barriers: list[tuple[str, list[Any]]] = []
+    real_get = actor_group_module.get_ray_refs
+
+    def get(ray: Any, refs: Any, *, operation: str, **kwargs: Any) -> Any:
+        barriers.append((operation, list(refs)))
+        return real_get(ray, refs, operation=operation, **kwargs)
+
+    monkeypatch.setattr(actor_group_module, "get_ray_refs", get)
+    return barriers
+
+
+def _dead(ray: Any, actor: Any, *, timeout_s: float = 30.0) -> bool:
+    """Whether the actor is gone within ``timeout_s``; ``ray.kill`` is asynchronous."""
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            ray.get(actor.ping.remote(), timeout=5)
+        except ray.exceptions.RayActorError:
+            return True
+        time.sleep(0.05)
+    return False
 
 
 @pytest.mark.parametrize("timeout_s", [0.0, float("nan")])
@@ -35,188 +116,113 @@ def test_ray_deadline_rejects_invalid_timeout(timeout_s: float) -> None:
         RayCallDeadline("test.operation", timeout_s)
 
 
-class _GetTimeoutError(TimeoutError):
-    pass
+def test_sync_deadline_cancels_refs_and_preserves_timeout_cause(local_ray, monkeypatch) -> None:
+    ray = local_ray
+    actor = ray.remote(num_cpus=0)(_Sleeper).remote()
+    try:
+        # Two calls that outlive the deadline. Ray cannot interrupt a sync
+        # actor task; correctness comes from the owner's actor kill.
+        refs = [actor.sleep.remote(3.0), actor.sleep.remote(3.0)]
+        cancelled = _record_cancels(monkeypatch, ray)
+
+        with pytest.raises(RayOperationTimeout) as caught:
+            get_ray_refs(ray, refs, operation="test.sync_barrier", timeout_s=1.0)
+
+        assert caught.value.operation == "test.sync_barrier"
+        assert isinstance(caught.value.__cause__, ray.exceptions.GetTimeoutError)
+        assert cancelled == [(refs[0], False), (refs[1], False)]
+    finally:
+        ray.kill(actor, no_restart=True)
 
 
-class _SyncTimeoutRay(_CancelLedger):
-    exceptions = SimpleNamespace(GetTimeoutError=_GetTimeoutError)
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.get_timeout_s: float | None = None
-
-    def get(self, refs: list[Any], *, timeout: float) -> None:
-        del refs
-        self.get_timeout_s = timeout
-        raise _GetTimeoutError("driver wait expired")
-
-
-def test_sync_deadline_cancels_refs_and_preserves_timeout_cause() -> None:
-    ray = _SyncTimeoutRay()
-    refs = [object(), object()]
-
-    with pytest.raises(RayOperationTimeout) as caught:
-        get_ray_refs(
-            ray,
-            refs,
-            operation="test.sync_barrier",
-            timeout_s=2.0,
-        )
-
-    assert caught.value.operation == "test.sync_barrier"
-    assert isinstance(caught.value.__cause__, _GetTimeoutError)
-    assert ray.get_timeout_s is not None and 0 < ray.get_timeout_s <= 2.0
-    assert ray.cancelled == [(refs[0], False), (refs[1], False)]
-
-
-def test_cancel_failure_is_attached_without_replacing_root_error() -> None:
+def test_cancel_failure_is_attached_without_replacing_root_error(local_ray) -> None:
     root = RayOperationTimeout("test.cancel", 1.0)
 
-    class _Ray:
-        @staticmethod
-        def cancel(_ref: Any, *, force: bool) -> None:
-            assert force is False
-            raise RuntimeError("cancel transport failed")
+    # Real ``ray.cancel`` refuses anything that is not an ObjectRef.
+    failures = cancel_ray_refs(local_ray, [object(), object()], root_error=root)
 
-    cancel_ray_refs(_Ray(), [object(), object()], root_error=root)
-
-    assert root.__notes__ == [
-        "Ray ref cancellation incomplete: 2 cancellation attempt(s) failed; "
-        "first=RuntimeError('cancel transport failed')",
-    ]
+    assert [type(error) for error in failures] == [TypeError, TypeError]
+    (note,) = root.__notes__
+    assert note.startswith(
+        "Ray ref cancellation incomplete: 2 cancellation attempt(s) failed; first=TypeError("
+    )
+    assert "ray.cancel() only supported for object refs" in note
 
 
-class _FakeRemoteMethod:
-    def __init__(self, ref: Any) -> None:
-        self.ref = ref
-
-    def remote(self, *_args: Any, **_kwargs: Any) -> Any:
-        return self.ref
-
-
-class _StartupActor:
-    def __init__(self, startup_ref: Any) -> None:
-        self.load_policy = _FakeRemoteMethod(startup_ref)
-        self.worker_metadata = _FakeRemoteMethod(object())
-
-
-class _RemoteWorkerClass:
-    def __init__(self, actors: list[_StartupActor]) -> None:
-        self.actors = actors
-
-    def options(self, **_kwargs: Any) -> _RemoteWorkerClass:
-        return self
-
-    def remote(self, *_args: Any, **_kwargs: Any) -> _StartupActor:
-        return self.actors.pop(0)
-
-
-class _ActorLaunchRay(_SyncTimeoutRay):
-    def __init__(self, actors: list[_StartupActor]) -> None:
-        super().__init__()
-        self.actors = actors
-
-    def remote(self, **_kwargs: Any):
-        return lambda _worker_cls: _RemoteWorkerClass(list(self.actors))
-
-
-class _MetadataTimeoutRay(_ActorLaunchRay):
-    def __init__(self, actors: list[_StartupActor]) -> None:
-        super().__init__(actors)
-        self.get_calls = 0
-
-    def get(self, refs: list[Any], *, timeout: float) -> list[None]:
-        self.get_calls += 1
-        self.get_timeout_s = timeout
-        if self.get_calls == 1:
-            return [None for _ in refs]
-        raise _GetTimeoutError("metadata wait expired")
-
-
-def test_actor_group_timeout_kills_every_candidate_actor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    startup_refs = [object(), object()]
-    actors = [_StartupActor(ref) for ref in startup_refs]
-    ray = _ActorLaunchRay(actors)
-    killed: list[Any] = []
-
-    monkeypatch.setattr(actor_group_module, "require_ray", lambda: ray)
-
-    def kill(_ray: Any, candidates: list[Any]) -> list[Any]:
-        killed.extend(candidates)
-        return []
-
-    monkeypatch.setattr(actor_group_module, "kill_actors", kill)
+def test_actor_group_timeout_kills_every_candidate_actor(local_ray, monkeypatch) -> None:
+    ray = local_ray
+    cancelled = _record_cancels(monkeypatch, ray)
+    killed = _record_kills(monkeypatch)
+    barriers = _record_barriers(monkeypatch)
 
     with pytest.raises(RayOperationTimeout, match=r"rollout\.startup\.load_policy"):
         RayActorGroup.launch(
-            worker_cls=object,
-            worker_configs=[{}, {}],
+            worker_cls=_StartupWorker,
+            worker_configs=[{"load_s": 30.0}, {"load_s": 30.0}],
             worker_ids=["w0", "w1"],
             num_cpus=0.0,
             num_gpus=0.0,
-            rpc_timeout_s=0.01,
+            rpc_timeout_s=3.0,
             operation_prefix="rollout",
             startup_method="load_policy",
         )
 
-    assert killed == actors
-    assert ray.cancelled == [(startup_refs[0], False), (startup_refs[1], False)]
+    ((operation, startup_refs),) = barriers
+    assert operation == "rollout.startup.load_policy"
+    assert cancelled == [(ref, False) for ref in startup_refs]
+    assert len(killed) == 2
+    assert all(_dead(ray, actor) for actor in killed)
 
 
-def test_actor_group_metadata_timeout_has_a_fresh_budget_and_kills_candidates(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    startup_refs = [object(), object()]
-    actors = [_StartupActor(ref) for ref in startup_refs]
-    metadata_refs = [actor.worker_metadata.ref for actor in actors]
-    ray = _MetadataTimeoutRay(actors)
-    killed: list[Any] = []
+def test_actor_group_metadata_wait_has_a_fresh_budget(local_ray, monkeypatch) -> None:
+    """Startup and metadata each take most of one budget; only per-barrier budgets fit."""
 
-    monkeypatch.setattr(actor_group_module, "require_ray", lambda: ray)
-    monkeypatch.setattr(
-        actor_group_module,
-        "kill_actors",
-        lambda _ray, candidates: killed.extend(candidates) or [],
+    barriers = _record_barriers(monkeypatch)
+    group = RayActorGroup.launch(
+        worker_cls=_StartupWorker,
+        worker_configs=[{"load_s": 2.5, "metadata_s": 2.5}],
+        worker_ids=["w0"],
+        num_cpus=0.0,
+        num_gpus=0.0,
+        rpc_timeout_s=4.0,
+        operation_prefix="rollout",
+        startup_method="load_policy",
     )
+    try:
+        assert [operation for operation, _ in barriers] == [
+            "rollout.startup.load_policy",
+            "rollout.startup.worker_metadata",
+        ]
+        (handle,) = group.handles
+        assert handle.worker_id == "w0"
+        assert handle.node_ip == local_ray.util.get_node_ip_address()
+    finally:
+        group.shutdown()
+
+
+def test_actor_group_metadata_timeout_kills_candidates(local_ray, monkeypatch) -> None:
+    ray = local_ray
+    cancelled = _record_cancels(monkeypatch, ray)
+    killed = _record_kills(monkeypatch)
+    barriers = _record_barriers(monkeypatch)
 
     with pytest.raises(RayOperationTimeout, match=r"rollout\.startup\.worker_metadata"):
         RayActorGroup.launch(
-            worker_cls=object,
-            worker_configs=[{}, {}],
+            worker_cls=_StartupWorker,
+            worker_configs=[{"metadata_s": 30.0}, {"metadata_s": 30.0}],
             worker_ids=["w0", "w1"],
             num_cpus=0.0,
             num_gpus=0.0,
-            rpc_timeout_s=0.01,
+            rpc_timeout_s=3.0,
             operation_prefix="rollout",
             startup_method="load_policy",
         )
 
-    assert ray.get_calls == 2
-    assert killed == actors
-    assert ray.cancelled == [(metadata_refs[0], False), (metadata_refs[1], False)]
-
-
-def test_capability_timeout_is_not_downgraded_to_safe_false() -> None:
-    refs = [object(), object()]
-    actors = [
-        SimpleNamespace(
-            supports_versioned_trainable_state=_FakeRemoteMethod(ref),
-        )
-        for ref in refs
+    assert [operation for operation, _ in barriers] == [
+        "rollout.startup.load_policy",
+        "rollout.startup.worker_metadata",
     ]
-    workers = [
-        RayActorHandle(worker_id=f"w{index}", actor=actor) for index, actor in enumerate(actors)
-    ]
-    ray = _SyncTimeoutRay()
-
-    with pytest.raises(RayOperationTimeout, match=r"rollout\.startup\.versioned_slots"):
-        RayGenerationLauncher._all_ranks_support_versioned_slots(
-            ray,
-            workers,
-            worker_rpc_timeout_s=0.01,
-        )
-
-    assert ray.cancelled == [(refs[0], False), (refs[1], False)]
+    metadata_refs = barriers[1][1]
+    assert cancelled == [(ref, False) for ref in metadata_refs]
+    assert len(killed) == 2
+    assert all(_dead(ray, actor) for actor in killed)

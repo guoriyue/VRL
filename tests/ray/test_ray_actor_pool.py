@@ -28,7 +28,14 @@ class _EchoWorker:
         self.started = True
 
     def worker_metadata(self) -> dict:
-        return {"worker_id": self.worker_id, "node_ip": "test-node", "gpu_ids": []}
+        # What a production worker reports: its own Ray node and GPU assignment.
+        from vrl.ray.dependencies import current_gpu_ids, current_node_ip
+
+        return {
+            "worker_id": self.worker_id,
+            "node_ip": current_node_ip(),
+            "gpu_ids": current_gpu_ids(),
+        }
 
     def echo(self, payload: int) -> tuple[str, int]:
         return self.worker_id, payload + int(self.config["offset"])
@@ -45,6 +52,8 @@ def test_failed_startup_actor_is_reclaimed_by_placement_removal(local_ray, monke
     pg = placement_group([{"CPU": 1}])
     retained = []
 
+    # The kill RPC is the fault: report it failed for every actor, so only
+    # placement-group removal can reclaim the candidate.
     def fail_kill(_ray, actors):
         retained.extend(actors)
         return [(actor, RuntimeError("kill unavailable")) for actor in actors]
@@ -101,7 +110,9 @@ def test_ray_actor_group_launch_lifecycle(local_ray) -> None:
         )
 
         assert [handle.worker_id for handle in group.handles] == ["w0", "w1"]
-        assert all(handle.node_ip == "test-node" for handle in group.handles)
+        # Single-node cluster: both actors report the driver's own Ray node.
+        driver_node = ray.util.get_node_ip_address()
+        assert all(handle.node_ip == driver_node for handle in group.handles)
         results = ray.get(
             [
                 group.handles[0].actor.echo.remote(1),
@@ -127,13 +138,10 @@ class _PayloadWorker:
 
 
 def test_actor_dispatcher_awaits_real_object_refs(local_ray) -> None:
-    """Real-Ray twin of tests/ray/test_batch_dispatch.py: the deterministic
-    fake refs there encode the assumption that real ObjectRefs are directly
-    awaitable inside the dispatch loop and resolve to the task result. Pin it
-    against a live cluster for both plan-time-bound and pull-dispatched jobs
-    (placement distribution is scheduling-dependent, so only totals and gather
-    order are asserted here; the distribution contract stays deterministic in
-    the fake-ref tests)."""
+    """Real ObjectRefs are awaitable inside the dispatch loop and resolve to the
+    task result, for both plan-time-bound and pull-dispatched jobs. Placement
+    distribution is scheduling-dependent, so only totals and gather order are
+    asserted; tests/ray/test_batch_dispatch.py pins the distribution contract."""
     ray = local_ray
     actor_cls = ray.remote(num_cpus=0)(_PayloadWorker)
     w0 = actor_cls.remote("w0")
