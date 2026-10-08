@@ -151,7 +151,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         build_adapter_exports,
         capture_rng_state,
         restore_rng_state,
-        restore_training_checkpoint,
         save_resolved_config,
         save_training_checkpoint,
     )
@@ -259,8 +258,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         device=device,
     )
     if resume_checkpoint is not None:
-        restore_training_checkpoint(
-            resume_checkpoint,
+        resume_checkpoint.restore_training(
             trainer=trainer,
             bundle=bundle,
             family="wan_2_1",

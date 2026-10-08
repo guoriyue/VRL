@@ -467,7 +467,7 @@ async def test_resume_releases_full_checkpoint_payload_before_training(
     )
     roles = _roles(monkeypatch)
     roles.watch(online.TrainingCheckpoint, "load_for_resume", "checkpoint.load")
-    roles.watch(online, "restore_training_checkpoint", "checkpoint.restore")
+    roles.watch(online.TrainingCheckpoint, "restore_training", "checkpoint.restore")
     roles.watch(gc, "collect", "gc.collect")
 
     await online.run_online_recipe(run.cfg)

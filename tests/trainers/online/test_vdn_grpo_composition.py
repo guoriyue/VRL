@@ -147,8 +147,7 @@ def _stack(
         built.root, DistributedTrainingContext.from_root(built.root, device=resolved.device)
     )
     pair = AlgorithmEvaluatorPair.from_configs(
-        family_entry=resolved.family,
-        built=built,
+        built,
         scheduler=getattr(bundle, "scheduler", None),
     )
     trainer = OnlineTrainer(
@@ -181,7 +180,6 @@ def _verify_update_and_resume(
     from vrl.trainers.checkpointing import (
         TrainingCheckpoint,
         restore_rng_state,
-        restore_training_checkpoint,
         save_training_checkpoint,
     )
 
@@ -228,8 +226,7 @@ def _verify_update_and_resume(
         overrides=overrides,
     )
     checkpoint = TrainingCheckpoint.load(path)
-    restore_training_checkpoint(
-        checkpoint,
+    checkpoint.restore_training(
         trainer=resumed.trainer,
         bundle=resumed.bundle,
         family="vdn_h3",

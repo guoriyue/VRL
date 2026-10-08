@@ -49,7 +49,6 @@ from vrl.trainers.checkpointing import (
     build_adapter_exports,
     capture_rng_state,
     restore_rng_state,
-    restore_training_checkpoint,
     save_resolved_config,
     save_training_checkpoint,
     validate_rng_state,
@@ -920,8 +919,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             ),
         )
         algorithm_and_evaluator = AlgorithmEvaluatorPair.from_configs(
-            family_entry=family_entry,
-            built=built,
+            built,
             scheduler=scheduler,
         )
         # An unreachable or wrong-identity external reward service must fail
@@ -966,8 +964,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
         lifecycle.rollout_schedule = trainer.rollout_schedule
 
         if resume_checkpoint is not None:
-            restore_training_checkpoint(
-                resume_checkpoint,
+            resume_checkpoint.restore_training(
                 trainer=trainer,
                 bundle=bundle,
                 family=family_entry.family,

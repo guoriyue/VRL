@@ -114,7 +114,6 @@ def main() -> None:
     from vrl.run import resolve_model
     from vrl.trainers.checkpointing import (
         TrainingCheckpoint,
-        restore_model_checkpoint,
     )
 
     checkpoint = TrainingCheckpoint.load(args.checkpoint) if args.checkpoint else None
@@ -157,9 +156,10 @@ def main() -> None:
             family=entry.family, expected_model_identity=resolved.identity
         )
     bundle = resolved.materialize(context="Qwen reference/RGBA probe")
-    restore_model_checkpoint(
-        checkpoint, bundle=bundle, family=entry.family, expected_model_identity=resolved.identity
-    )
+    if checkpoint is not None:
+        checkpoint.restore_model(
+            bundle=bundle, family=entry.family, expected_model_identity=resolved.identity
+        )
     model = bundle.model.eval()
     pipe = model.pipeline
     replay_cls = import_from_path(entry.family_build.replay_cls)

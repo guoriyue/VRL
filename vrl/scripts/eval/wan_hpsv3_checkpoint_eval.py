@@ -54,7 +54,6 @@ from vrl.trainers.checkpointing import (
     CheckpointTarget,
     TrainingCheckpoint,
     load_resolved_run_config,
-    restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
 from vrl.trainers.data.prompts import load_prompt_dataset_index
@@ -207,8 +206,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
             with model.disable_adapter():
                 videos += _generate_arm(model, BASE_LABEL, examples, sampling, args)
         for target in targets:
-            restore_model_checkpoint(
-                TrainingCheckpoint.load(target.path),
+            TrainingCheckpoint.load(target.path).restore_model(
                 bundle=bundle,
                 family=entry.family,
                 expected_model_identity=identity,

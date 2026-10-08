@@ -368,7 +368,7 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
 
     built = _spy_from_build(monkeypatch, on_built=previous_model_is_gone)
     restored: list[tuple[Path, float]] = []
-    real_restore = eval_script.restore_model_checkpoint
+    real_restore = eval_script.TrainingCheckpoint.restore_model
 
     def spy_restore(checkpoint, *, bundle, **kwargs):
         real_restore(checkpoint, bundle=bundle, **kwargs)
@@ -377,7 +377,7 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
         )
         restored.append((checkpoint.checkpoint_dir, float(weight.flatten()[0])))
 
-    monkeypatch.setattr(eval_script, "restore_model_checkpoint", spy_restore)
+    monkeypatch.setattr(eval_script.TrainingCheckpoint, "restore_model", spy_restore)
     sampling = eval_script._resolve_sampling(
         eval_script.build_parser().parse_args(["--checkpoint", "unused"]), root
     )

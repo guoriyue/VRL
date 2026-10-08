@@ -145,7 +145,7 @@ def test_run_generates_base_before_strict_restore_and_current(monkeypatch, tmp_p
     checkpoint is saved by ``save_training_checkpoint`` from the same tiny
     transformer with every weight set to 1.0, so the restore is observable in
     the weights: the first image must be painted while the transformer still
-    holds its base weights, the second after ``restore_model_checkpoint``
+    holds its base weights, the second after ``TrainingCheckpoint.restore_model``
     replaced them.
     """
 

@@ -39,7 +39,6 @@ from vrl.trainers.checkpointing import (
     TrainingCheckpoint,
     is_complete_checkpoint,
     read_checkpoint_meta,
-    restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
 from vrl.trainers.data.prompts import load_prompt_dataset_index
@@ -418,8 +417,7 @@ def _generate_images(
                         f"checkpoint progress changed during evaluation: {target.path} "
                         f"next_epoch={checkpoint.next_epoch}, expected={source_epoch}",
                     )
-                restore_model_checkpoint(
-                    checkpoint,
+                checkpoint.restore_model(
                     bundle=bundle,
                     family="sana",
                     expected_model_identity=expected_model_identity,

@@ -9,7 +9,6 @@ from vrl.algorithms.base import Algorithm
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.models.families.registry import ModelFamilyEntry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.evaluators.base import Evaluator
 
@@ -24,13 +23,13 @@ class AlgorithmEvaluatorPair:
     @classmethod
     def from_configs(
         cls,
-        *,
-        family_entry: ModelFamilyEntry,
         built: BuiltConfigs,
+        *,
         scheduler: Any | None = None,
     ) -> AlgorithmEvaluatorPair:
         """Build the algorithm/evaluator pair for a strict online recipe."""
 
+        family_entry = built.family
         if not family_entry.supports_policy_replay:
             raise RuntimeError(
                 f"{family_entry.family} is generation-only: its runtime exposes no "

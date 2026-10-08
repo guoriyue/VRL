@@ -204,7 +204,7 @@ class EvaluationPlan:
     def generate(self, output_dir: Path) -> list[dict[str, Any]]:
         import torch
 
-        from vrl.trainers.checkpointing import TrainingCheckpoint, restore_model_checkpoint
+        from vrl.trainers.checkpointing import TrainingCheckpoint
         from vrl.utils.cuda_memory import release_cuda_memory
 
         if (
@@ -225,8 +225,7 @@ class EvaluationPlan:
                         raise ValueError(
                             f"checkpoint state epoch differs from metadata: {target.path}"
                         )
-                    restore_model_checkpoint(
-                        checkpoint,
+                    checkpoint.restore_model(
                         bundle=bundle,
                         family=self.resolved_model.entry.family,
                         expected_model_identity=self.resolved_model.identity,

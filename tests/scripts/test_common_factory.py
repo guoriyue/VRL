@@ -58,8 +58,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
     built = build_configs(cfg)
 
     pair = AlgorithmEvaluatorPair.from_configs(
-        family_entry=get_model_family_entry("wan_2_1"),
-        built=built,
+        built,
         scheduler=object(),
     )
 
@@ -94,8 +93,7 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
     )
 
     pair = AlgorithmEvaluatorPair.from_configs(
-        family_entry=get_model_family_entry("sd3_5"),
-        built=build_configs(cfg),
+        build_configs(cfg),
         scheduler=object(),
     )
 
@@ -114,8 +112,7 @@ def test_nft_factory_passes_reward_weights_to_component_advantage_protocol() -> 
         ],
     )
     pair = AlgorithmEvaluatorPair.from_configs(
-        family_entry=get_model_family_entry("sd3_5"),
-        built=build_configs(cfg),
+        build_configs(cfg),
     )
     components = {
         "ocr": torch.tensor([0.0, 1.0, 2.0]),
@@ -132,12 +129,25 @@ def test_nft_factory_passes_reward_weights_to_component_advantage_protocol() -> 
     )
 
 
+def _chunk_config(model_preset: str, *overrides: str):
+    """The OCR GRPO recipe on a chunk-autoregressive family.
+
+    The family's model preset overlays the sd3_5 recipe; the sd3_5-only
+    ``model.executor`` section has no counterpart on these families.
+    """
+
+    cfg = load_config(
+        "experiment/sd3_5/online_grpo_ocr", overrides=[f"+model/{model_preset}", *overrides]
+    )
+    del cfg.model["executor"]
+    return cfg
+
+
 def test_chunk_autoregressive_factory_builds_grouped_grpo_evaluator() -> None:
-    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
+    cfg = _chunk_config("causvid=wan_1_3b_ar")
 
     pair = AlgorithmEvaluatorPair.from_configs(
-        family_entry=get_model_family_entry("causvid"),
-        built=build_configs(cfg),
+        build_configs(cfg),
     )
 
     assert type(pair.algorithm) is GRPO
@@ -145,12 +155,13 @@ def test_chunk_autoregressive_factory_builds_grouped_grpo_evaluator() -> None:
 
 
 def test_generation_only_chunk_family_fails_before_algorithm_construction() -> None:
-    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
+    cfg = _chunk_config("magi_1=4_5b_base")
+    # The image recipe's CFG knob has no meaning for Magi's sampler.
+    del cfg.sampling["guidance_scale"]
 
     with pytest.raises(RuntimeError, match=r"generation-only.*no trainable actions"):
         AlgorithmEvaluatorPair.from_configs(
-            family_entry=get_model_family_entry("magi_1"),
-            built=build_configs(cfg),
+            build_configs(cfg),
         )
 
 
@@ -168,44 +179,36 @@ def test_chunk_autoregressive_factory_rejects_undefined_algorithm_semantics(
 ) -> None:
     # A trust-region objective needs a second epoch over the full batch to be
     # a valid run; plain GRPO accepts the same schedule.
-    cfg = load_config(
-        "experiment/sd3_5/online_grpo_ocr",
-        overrides=[
-            f"/recipe/online={recipe}",
-            "actor.ppo_epochs=2",
-            "actor.prompts_per_collection=0",
-        ],
+    cfg = _chunk_config(
+        "causvid=wan_1_3b_ar",
+        f"/recipe/online={recipe}",
+        "actor.ppo_epochs=2",
+        "actor.prompts_per_collection=0",
     )
 
     with pytest.raises(ValueError, match=message):
         AlgorithmEvaluatorPair.from_configs(
-            family_entry=get_model_family_entry("causvid"),
-            built=build_configs(cfg),
+            build_configs(cfg),
         )
 
 
 def test_chunk_autoregressive_factory_rejects_non_fp32_transition_math() -> None:
-    cfg = load_config(
-        "experiment/sd3_5/online_grpo_ocr",
-        overrides=["precision.denoise_math.dtype=bf16"],
-    )
+    cfg = _chunk_config("causvid=wan_1_3b_ar", "precision.denoise_math.dtype=bf16")
 
     with pytest.raises(ValueError, match="exact fp32 Gaussian re-noise"):
         AlgorithmEvaluatorPair.from_configs(
-            family_entry=get_model_family_entry("causvid"),
-            built=build_configs(cfg),
+            build_configs(cfg),
         )
 
 
 def test_chunk_autoregressive_factory_rejects_full_sequence_sft_regularizer() -> None:
-    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
+    cfg = _chunk_config("causvid=wan_1_3b_ar")
     built = build_configs(cfg)
     built.algorithm.sft_weight = 0.1
 
     with pytest.raises(ValueError, match=r"grouped causal-chunk replay.*sft_weight"):
         AlgorithmEvaluatorPair.from_configs(
-            family_entry=get_model_family_entry("causvid"),
-            built=built,
+            built,
         )
 
 

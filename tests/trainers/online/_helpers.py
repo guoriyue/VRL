@@ -188,8 +188,7 @@ def real_trainer(
     bundle = stack.trainer_bundle()
     strategy = strategy if strategy is not None else SingleProcessStrategy()
     pair = AlgorithmEvaluatorPair.from_configs(
-        family_entry=stack.family,
-        built=built,
+        built,
         scheduler=getattr(bundle, "scheduler", None),
     )
     trainer = OnlineTrainer(

@@ -183,3 +183,30 @@ D 批的难点：trainer 测试用 `nn.Linear(1, 1)` 策略和手造 batch 断�
 复审确认但不改：resume 后权重版本从 1 重新编号（没有消费者跨重启比较版本）；
 `recompute_old_logprob` 的检查现在对所有目标生效（更严，预设无一命中）；Flash-GRPO 的
 `prepare_update` 在流式模式下按每个 collection 而非整个 update 取均值（范围之外的既有行为，待定）。
+
+## 7. 构造器与签名的全仓清扫（2026-10-07 / 10-08）
+
+判据：一个参数如果能从同一调用里的另一个参数推出、只是转交给被构造的对象、唯一生产调用方永远传同一个值，
+或者是对非可选类型参数的 None / isinstance 守卫，就删掉。按包分组，每组一个提交。
+
+| 层 | 删除的参数 / 守卫 | 读取来源 |
+|---|---|---|
+| config / run | `ResolvedRun` 多个只转手的属性；`TrainerConfig.from_root(root)`、`ResolvedDistributedResources.from_root(root)` 的第二个"派生"参数；`normalize_precision` 的默认值 | 被调方自己从 root 推导 |
+| generation | 执行器 `pipelined` 标志（有 finalizer 即流水）；`GenerationWorkerParking.sleep` 的设备参数；`EnginePlan.from_request` 外的 request 字段；`BundleLayout.rollout_gpus_per_engine`、`StagedBatchRefs.policy_version`、`measurement_scope`；`from_rank_results` 的可选 `expected_worker_ids`；若干 isinstance 守卫 | executor / 请求 / 契约本身 |
+| generation | `merge_generation_batches` / `forward_plan` / `forward_plan_pipelined` / `sort_and_validate_batch_coverage` / finalizer `merge_request` 的 `sample_rows`；Ray 执行器不再把行随请求发给 finalizer | `request.sample_rows()`（确定性，contracts 用例钉住） |
+| generation | `GenerationWorkerCore` 的 gatherer（rank 只产 batch，从不合并）和执行器"是否实现 forward_batch/merge"的可调用检查 | 合并在 driver 侧的注册表 gatherer |
+| rollouts / rewards | `ContinuousRolloutConsumer`/`Producer`/`collect_iteration` 只转交的参数；`RolloutCollector` 构造改为 `from_family(entry, …)`；`RayRewardScorer` 三个常量化的超时 / CPU 参数；`RewardFunctionRuntime(reward_function)`；协调器的 `weights_initialized`；预检改调 `reward.validate_parking()` | 对象自己持有 |
+| trainer / strategy / data | 流式更新 helper 的 `batch_plan`；`OnlineTrainer` 的 `ref_model`（KL 项或契约要求时策略即参考）与 `device`（恒等于 `strategy.context.device`）；回放选择 helper 的 config 字段参数；`init_training_process_group` 的 backend；策略各自建 collectives；FSDP mesh 词表由 schema 持有；`ContextParallelStrategy` 读 `context.cp_size`；`select_trainable_state`、`ImageCaptionPromptDataset.from_config`、`DatasetFileReport.artifact_count` | trainer config / strategy context / 模块自身 |
+| scripts | `AlgorithmEvaluatorPair.from_configs` 的 `family_entry`（`built.family`）；`OnlineRecipeRun.initialize_metrics` 的 `training_context` / `output_dir`；`_load_sft_latents_from_config(built, *, sft_weight)` | run 持有的 strategy / trainer config |
+| checkpointing | `restore_training_checkpoint` / `restore_model_checkpoint` 两个 None 容忍的转发包装；所有生产调用方本来就先判空或手持已加载的检查点 | `TrainingCheckpoint.restore_training` / `.restore_model` |
+| rewards | `HttpRewardScorer` 的双模构造（URL + 关键字，或 `RewardInferenceConfig` 外加"不许同时传关键字"的守卫） | 单一构造器 + `from_config`（schema 已校验 origin 和 `expected_model`） |
+| data | `PromptExample.references`（进 reward metadata 但没有任何 reward 读它） | 删除 |
+
+审查后保留：
+
+- **`OnlineTrainer.weight_syncer` / `sync_state_getter`**：syncer 在所有真实调用方都是 `RayRuntimeWeightSyncer(collector.generation_runtime)`，
+  但 getter 需要 `bundle`（`strategy.export_rollout_state(bundle)`），训练器只持有 `model`，无法派生；两者成对出现是协议要求。
+- **`RuntimeBundle.raw_handle`**：离线 DPO 脚本读它取 pipeline。
+- **`RayGenerationLauncher`**：无状态类，改成模块函数属于命名层面的整理，不计入本轮。
+- **`TrainingCheckpoint.restore_training` 里对 `trainer._strategy` 的 getattr**：离线 DPO 训练器没有策略对象。
+- **`restore_model_checkpoint` 的 None 容忍在 Qwen probe 里确实被用到**：改为调用方判空。

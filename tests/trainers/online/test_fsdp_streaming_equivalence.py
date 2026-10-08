@@ -102,8 +102,7 @@ def _trainer(
         materialize_weights=strategy.materialize_weights,
     )
     pair = AlgorithmEvaluatorPair.from_configs(
-        family_entry=stack.family,
-        built=built,
+        built,
         scheduler=getattr(bundle, "scheduler", None),
     )
     return OnlineTrainer(

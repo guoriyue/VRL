@@ -29,8 +29,6 @@ from vrl.trainers.checkpointing import (
     TrainingResumeConfig,
     export_checkpoint_state,
     load_checkpoint_state,
-    restore_model_checkpoint,
-    restore_training_checkpoint,
     save_training_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
@@ -156,8 +154,7 @@ def test_training_checkpoint_round_trips_trainer_and_owned_state(tmp_path) -> No
     restored = _Bundle()
     with torch.no_grad():
         restored.module.weight.fill_(0.0)
-    restore_training_checkpoint(
-        checkpoint,
+    checkpoint.restore_training(
         trainer=trainer,
         bundle=restored,
         family="unit",
@@ -188,8 +185,7 @@ def test_restore_model_checkpoint_restores_without_trainer_state(tmp_path) -> No
     with torch.no_grad():
         restored.module.weight.zero_()
 
-    restore_model_checkpoint(
-        TrainingCheckpoint.load(path),
+    TrainingCheckpoint.load(path).restore_model(
         bundle=restored,
         family="unit",
         expected_model_identity=UNIT_IDENTITY,
@@ -214,8 +210,7 @@ def test_restore_model_checkpoint_rejects_identity_before_loading(tmp_path) -> N
     before = restored.module.weight.detach().clone()
 
     with pytest.raises(ValueError, match="model identity mismatch"):
-        restore_model_checkpoint(
-            TrainingCheckpoint.load(path),
+        TrainingCheckpoint.load(path).restore_model(
             bundle=restored,
             family="unit",
             expected_model_identity={"schema": "wrong/v1"},
@@ -240,8 +235,7 @@ def test_restore_training_checkpoint_rejects_family_mismatch(tmp_path) -> None:
 
     checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-sd3")
     with pytest.raises(ValueError, match="family mismatch"):
-        restore_training_checkpoint(
-            checkpoint,
+        checkpoint.restore_training(
             trainer=trainer,
             bundle=_Bundle(),
             family="wan_2_1",
@@ -268,8 +262,7 @@ def test_restore_training_checkpoint_strictly_checks_model_identity(tmp_path) ->
     )
     checkpoint = TrainingCheckpoint.load(path)
 
-    restore_training_checkpoint(
-        checkpoint,
+    checkpoint.restore_training(
         trainer=_Trainer(),
         bundle=_Bundle(),
         family="wan_2_1_i2v",
@@ -277,8 +270,7 @@ def test_restore_training_checkpoint_strictly_checks_model_identity(tmp_path) ->
     )
     wrong = {**identity, "boundary_ratio": 0.8}
     with pytest.raises(ValueError, match="model identity mismatch"):
-        restore_training_checkpoint(
-            checkpoint,
+        checkpoint.restore_training(
             trainer=_Trainer(),
             bundle=_Bundle(),
             family="wan_2_1_i2v",
@@ -419,8 +411,7 @@ def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path
     trainer._strategy = _SpyStrategy()
     restored = _Bundle()
 
-    restore_training_checkpoint(
-        checkpoint,
+    checkpoint.restore_training(
         trainer=trainer,
         bundle=restored,
         family="unit",

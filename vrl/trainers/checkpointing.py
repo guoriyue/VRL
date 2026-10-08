@@ -1122,44 +1122,6 @@ def save_training_checkpoint(
     return published_meta
 
 
-def restore_training_checkpoint(
-    checkpoint: TrainingCheckpoint | None,
-    *,
-    trainer: Any,
-    bundle: Any,
-    family: str,
-    expected_model_identity: dict[str, Any] | None = None,
-) -> None:
-    """Restore model and trainer state when a resume checkpoint was selected."""
-
-    if checkpoint is not None:
-        checkpoint.restore_training(
-            trainer=trainer,
-            bundle=bundle,
-            family=family,
-            expected_model_identity=expected_model_identity,
-        )
-
-
-def restore_model_checkpoint(
-    checkpoint: TrainingCheckpoint | None,
-    *,
-    bundle: Any,
-    family: str,
-    expected_model_identity: dict[str, Any] | None = None,
-    strategy: Any | None = None,
-) -> None:
-    """Restore selected model weights for evaluation or training resume."""
-
-    if checkpoint is not None:
-        checkpoint.restore_model(
-            bundle=bundle,
-            family=family,
-            expected_model_identity=expected_model_identity,
-            strategy=strategy,
-        )
-
-
 def validate_checkpoint_meta_compatibility(
     meta: Mapping[str, Any],
     *,
@@ -1680,9 +1642,7 @@ __all__ = [
     "load_full_checkpoint_state",
     "load_resolved_run_config",
     "read_checkpoint_meta",
-    "restore_model_checkpoint",
     "restore_rng_state",
-    "restore_training_checkpoint",
     "save_resolved_config",
     "save_training_checkpoint",
     "validate_checkpoint_meta_compatibility",

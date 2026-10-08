@@ -60,7 +60,6 @@ from vrl.trainers.checkpointing import (
     TrainingCheckpoint,
     _require_equal_tensor_tree,
     restore_rng_state,
-    restore_training_checkpoint,
     save_training_checkpoint,
 )
 from vrl.trainers.core.types import EMAConfig, OptimConfig
@@ -171,8 +170,7 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
         trace.watch(runtime, "update_weights", "update_weights")
         collector_config = RolloutCollectorConfig.from_root(built.root)
         pair = AlgorithmEvaluatorPair.from_configs(
-            family_entry=resolved.family,
-            built=built,
+            built,
             scheduler=bundle.scheduler,
         )
         before = {
@@ -204,8 +202,7 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
         checkpoint_dir = root / "checkpoint-1"
         if phase == "resume":
             checkpoint = TrainingCheckpoint.load(checkpoint_dir)
-            restore_training_checkpoint(
-                checkpoint,
+            checkpoint.restore_training(
                 trainer=trainer,
                 bundle=bundle,
                 family="cosmos-predict2.5",
@@ -614,8 +611,7 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
         checkpoint_dir = Path(root) / "checkpoint-1"
         if phase == "resume":
             checkpoint = TrainingCheckpoint.load(checkpoint_dir)
-            restore_training_checkpoint(
-                checkpoint,
+            checkpoint.restore_training(
                 trainer=trainer,
                 bundle=bundle,
                 family="cosmos-predict2.5",

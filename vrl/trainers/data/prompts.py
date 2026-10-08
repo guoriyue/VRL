@@ -34,7 +34,6 @@ class PromptExample:
     # reference resolution must never rewrite either target identity.
     target_image: str | None = field(default=None, metadata={"artifact": True})
     target_video: str | None = field(default=None, metadata={"artifact": True})
-    references: list[str] = field(default_factory=list, metadata={"artifact": True})
     # Empty delegates the modality to the selected model-family registry entry.
     # A video default silently mislabeled image-family JSONL rows.
     task_type: str = ""
@@ -68,8 +67,6 @@ class PromptExample:
         metadata = dict(self.metadata)
         if self.target_text:
             metadata["target_text"] = self.target_text
-        if self.references:
-            metadata["references"] = list(self.references)
         if self.target_image is not None:
             metadata["target_image"] = self.target_image
         if self.target_video is not None:
@@ -94,7 +91,6 @@ class PromptExample:
             self,
             reference_video=resolve(reference_video) if reference_video else None,
             reference_images=[resolve(item) for item in self.reference_images],
-            references=[resolve(item) for item in self.references],
         )
 
     def with_resolved_artifacts(

@@ -325,8 +325,7 @@ def _rank_trainer(monkeypatch: pytest.MonkeyPatch, root: Path, *, samples: int) 
     )
     strategy = SingleProcessStrategy(context)
     pair = AlgorithmEvaluatorPair.from_configs(
-        family_entry=stack.family,
-        built=built,
+        built,
         scheduler=getattr(bundle, "scheduler", None),
     )
     trainer = OnlineTrainer(

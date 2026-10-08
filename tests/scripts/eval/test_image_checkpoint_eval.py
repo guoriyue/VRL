@@ -125,7 +125,6 @@ def test_prompt_selection_uses_user_strata_and_preserves_reward_metadata():
         PromptExample(
             prompt=f"{scene} {index}",
             target_text="OPEN",
-            references=["reference.png"],
             metadata={"scene": scene, "object_class": "car", "expected_count": 2},
         )
         for scene in ("street", "shop")
@@ -138,7 +137,6 @@ def test_prompt_selection_uses_user_strata_and_preserves_reward_metadata():
         "object_class": "car",
         "expected_count": 2,
         "target_text": "OPEN",
-        "references": ["reference.png"],
     }
     with pytest.raises(ValueError, match="fewer rows"):
         checkpoint_eval.select_prompts(examples, strata=("scene",), per_stratum=4)
@@ -259,16 +257,18 @@ def test_base_disables_adapter_before_checkpoint_restores(tmp_path, plan, monkey
         events.append(("generate", model.adapter_enabled, kwargs["seed"]))
         return [Image.new("RGB", (8, 8))]
 
-    def restore(checkpoint, **kwargs):
-        assert kwargs["expected_model_identity"] == plan.resolved_model.identity
-        events.append(("restore", checkpoint.next_epoch))
+    def load(path):
+        checkpoint = SimpleNamespace(next_epoch=int(path.name.rsplit("-", 1)[1]))
+
+        def restore(**kwargs):
+            assert kwargs["expected_model_identity"] == plan.resolved_model.identity
+            events.append(("restore", checkpoint.next_epoch))
+
+        checkpoint.restore_model = restore
+        return checkpoint
 
     monkeypatch.setattr(checkpoint_eval, "generate_images", generate)
-    monkeypatch.setattr(
-        "vrl.trainers.checkpointing.TrainingCheckpoint.load",
-        lambda path: SimpleNamespace(next_epoch=int(path.name.rsplit("-", 1)[1])),
-    )
-    monkeypatch.setattr("vrl.trainers.checkpointing.restore_model_checkpoint", restore)
+    monkeypatch.setattr("vrl.trainers.checkpointing.TrainingCheckpoint.load", load)
     monkeypatch.setattr("vrl.utils.cuda_memory.release_cuda_memory", lambda: None)
     rows = plan.generate(tmp_path / "generated")
     assert events == [

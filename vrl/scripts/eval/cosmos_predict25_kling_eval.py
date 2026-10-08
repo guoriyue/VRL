@@ -31,7 +31,6 @@ from vrl.trainers.checkpointing import (
     CheckpointTarget,
     TrainingCheckpoint,
     read_checkpoint_meta,
-    restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
 from vrl.trainers.data.prompts import load_prompt_dataset_index
@@ -272,8 +271,7 @@ def _generate_all(
                     )
             logger.info("Loading checkpoint-owned state from %s", target.path)
             training_checkpoint = TrainingCheckpoint.load(target.path)
-            restore_model_checkpoint(
-                training_checkpoint,
+            training_checkpoint.restore_model(
                 bundle=bundle,
                 family=entry.family,
                 expected_model_identity=expected_model_identity,

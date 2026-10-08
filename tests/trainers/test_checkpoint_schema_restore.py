@@ -17,7 +17,6 @@ from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
     TrainingCheckpoint,
     export_checkpoint_state,
-    restore_training_checkpoint,
 )
 
 
@@ -124,8 +123,7 @@ def test_strict_schema_v2_restore_requires_exact_owned_keys(tmp_path) -> None:
         "rng": {},
     }
 
-    restore_training_checkpoint(
-        _training_checkpoint(tmp_path, payload),
+    _training_checkpoint(tmp_path, payload).restore_training(
         trainer=_Trainer(),
         bundle=bundle,
         family="unit",
@@ -169,8 +167,7 @@ def test_schema_v2_wrong_shape_rejects_all_roots_before_mutation(tmp_path) -> No
     }
 
     with pytest.raises(ValueError, match="shape mismatch"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, payload),
+        _training_checkpoint(tmp_path, payload).restore_training(
             trainer=_Trainer(),
             bundle=bundle,
             family="unit",
@@ -205,8 +202,7 @@ def test_schema_v2_non_tensor_owned_value_rejects_before_mutation(tmp_path) -> N
     }
 
     with pytest.raises(TypeError, match="must be a tensor"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, payload),
+        _training_checkpoint(tmp_path, payload).restore_training(
             trainer=_Trainer(),
             bundle=bundle,
             family="unit",
@@ -252,8 +248,7 @@ def test_strict_schema_v2_restore_rejects_missing_extra_keys_and_roots(
     }
 
     with pytest.raises(ValueError, match=r"keys mismatch|roots mismatch"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, payload),
+        _training_checkpoint(tmp_path, payload).restore_training(
             trainer=_Trainer(),
             bundle=_OwnedBundle(),
             family="unit",
@@ -269,8 +264,7 @@ def test_strict_schema_v1_full_state_restores_without_identity(tmp_path) -> None
         source.module.previous.fill_(8.0)
     restored = _OwnedBundle()
 
-    restore_training_checkpoint(
-        _training_checkpoint(tmp_path, _v1_payload(source.module.state_dict())),
+    _training_checkpoint(tmp_path, _v1_payload(source.module.state_dict())).restore_training(
         trainer=_Trainer(),
         bundle=restored,
         family="unit",
@@ -313,8 +307,7 @@ def test_strict_schema_v1_full_wrong_shape_rejects_all_roots_before_mutation(
     }
 
     with pytest.raises(ValueError, match="shape mismatch"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, payload),
+        _training_checkpoint(tmp_path, payload).restore_training(
             trainer=_Trainer(),
             bundle=restored,
             family="unit",
@@ -346,8 +339,7 @@ def test_strict_schema_v1_malformed_full_state_rejects_before_mutation(
     before = {name: value.clone() for name, value in restored.module.state_dict().items()}
 
     with pytest.raises(ValueError, match=r"verified model identity|keys mismatch"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, _v1_payload(state)),
+        _training_checkpoint(tmp_path, _v1_payload(state)).restore_training(
             trainer=_Trainer(),
             bundle=restored,
             family="unit",
@@ -365,8 +357,7 @@ def test_strict_schema_v1_compiled_full_state_normalizes_legacy_prefix(tmp_path)
     legacy_compiled = dict(torch.compile(source.module).state_dict())
     restored = _OwnedBundle()
 
-    restore_training_checkpoint(
-        _training_checkpoint(tmp_path, _v1_payload(legacy_compiled)),
+    _training_checkpoint(tmp_path, _v1_payload(legacy_compiled)).restore_training(
         trainer=_Trainer(),
         bundle=restored,
         family="unit",
@@ -385,8 +376,7 @@ def test_strict_schema_v1_rejects_mixed_compile_prefixes(tmp_path) -> None:
     }
 
     with pytest.raises(ValueError, match="mixes compiled and uncompiled"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, _v1_payload(mixed)),
+        _training_checkpoint(tmp_path, _v1_payload(mixed)).restore_training(
             trainer=_Trainer(),
             bundle=_OwnedBundle(),
             family="unit",
@@ -412,8 +402,7 @@ def test_strict_schema_v2_never_normalizes_compile_prefix(tmp_path) -> None:
     }
 
     with pytest.raises(ValueError, match="keys mismatch"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, payload),
+        _training_checkpoint(tmp_path, payload).restore_training(
             trainer=_Trainer(),
             bundle=_OwnedBundle(),
             family="unit",
@@ -428,8 +417,7 @@ def test_strict_schema_v1_selective_state_requires_verified_identity(tmp_path) -
     }
 
     with pytest.raises(ValueError, match="verified model identity"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, _v1_payload(selective)),
+        _training_checkpoint(tmp_path, _v1_payload(selective)).restore_training(
             trainer=_Trainer(),
             bundle=_OwnedBundle(),
             family="unit",
@@ -443,8 +431,7 @@ def test_strict_schema_v1_selective_state_rejects_missing_registered_state(tmp_p
     )
 
     with pytest.raises(ValueError, match=r"missing=.*previous"):
-        restore_training_checkpoint(
-            _training_checkpoint(tmp_path, payload),
+        _training_checkpoint(tmp_path, payload).restore_training(
             trainer=_Trainer(),
             bundle=_OwnedBundle(),
             family="unit",

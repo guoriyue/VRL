@@ -544,7 +544,7 @@ def test_fsdp_checkpoint_loader_rejects_unselected_legacy_full_state(cpu_process
 def test_fsdp_restore_protocol_normalizes_schema_v1_full_state(
     cpu_process_group, tmp_path
 ) -> None:
-    from vrl.trainers.checkpointing import TrainingCheckpoint, restore_training_checkpoint
+    from vrl.trainers.checkpointing import TrainingCheckpoint
 
     strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
     src_module = ToyTransformer()
@@ -580,8 +580,7 @@ def test_fsdp_restore_protocol_normalizes_schema_v1_full_state(
         meta={},
     )
 
-    restore_training_checkpoint(
-        checkpoint,
+    checkpoint.restore_training(
         trainer=trainer,
         bundle=Bundle(dst),
         family="toy",
@@ -598,7 +597,7 @@ def test_fsdp_restore_preflights_global_shape_before_mutation(
 ) -> None:
     from torch.distributed.tensor import DTensor
 
-    from vrl.trainers.checkpointing import TrainingCheckpoint, restore_model_checkpoint
+    from vrl.trainers.checkpointing import TrainingCheckpoint
 
     strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
     destination_module = ToyTransformer()
@@ -632,8 +631,7 @@ def test_fsdp_restore_preflights_global_shape_before_mutation(
     )
 
     with pytest.raises(ValueError, match="shape mismatch"):
-        restore_model_checkpoint(
-            checkpoint,
+        checkpoint.restore_model(
             bundle=Bundle(destination),
             family="toy",
             expected_model_identity=identity,

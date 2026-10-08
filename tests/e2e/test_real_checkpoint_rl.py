@@ -636,8 +636,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 )
             )
         pair = AlgorithmEvaluatorPair.from_configs(
-            family_entry=entry,
-            built=built,
+            built,
             scheduler=bundle.scheduler,
         )
         trainer = OnlineTrainer(

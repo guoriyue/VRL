@@ -39,7 +39,6 @@ from vrl.trainers.checkpointing import (
     TrainingCheckpoint,
     load_resolved_run_config,
     read_checkpoint_meta,
-    restore_model_checkpoint,
     validate_checkpoint_meta_compatibility,
 )
 from vrl.utils.artifacts import sha256_file
@@ -182,8 +181,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     checkpoint_path = checkpoint.checkpoint_path
     checkpoint_meta = dict(checkpoint.meta)
     logger.info("Loading full-parameter checkpoint through the generic checkpoint boundary")
-    restore_model_checkpoint(
-        checkpoint,
+    checkpoint.restore_model(
         bundle=bundle,
         family="sana",
         expected_model_identity=model_identity,

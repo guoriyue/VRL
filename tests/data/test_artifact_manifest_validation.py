@@ -93,16 +93,12 @@ def test_reference_resolution_preserves_target_identity_fields(tmp_path: Path) -
         reference_video="references/context.mp4",
         target_image="targets/result.ppm",
         target_video="targets/result.mp4",
-        references=["references/alternate.ppm"],
     )
 
     resolved = example.with_resolved_references(data_root=tmp_path)
 
     assert resolved.reference_images == [str((tmp_path / "references/frame.ppm").resolve())]
     assert resolved.reference_video == str((tmp_path / "references/context.mp4").resolve())
-    assert resolved.references == [
-        str((tmp_path / "references/alternate.ppm").resolve()),
-    ]
     assert resolved.target_image == "targets/result.ppm"
     assert resolved.target_video == "targets/result.mp4"
     assert example.reference_images == ["references/frame.ppm"]

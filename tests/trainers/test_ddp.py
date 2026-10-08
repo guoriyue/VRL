@@ -230,7 +230,7 @@ def test_ddp_restore_protocol_loads_schema_v1_full_frozen_state(
     cpu_process_group,
     tmp_path,
 ) -> None:
-    from vrl.trainers.checkpointing import TrainingCheckpoint, restore_model_checkpoint
+    from vrl.trainers.checkpointing import TrainingCheckpoint
 
     source_module = ToyTransformer()
     source_module.head.requires_grad_(False)
@@ -259,8 +259,7 @@ def test_ddp_restore_protocol_loads_schema_v1_full_frozen_state(
         meta={},
     )
 
-    restore_model_checkpoint(
-        checkpoint,
+    checkpoint.restore_model(
         bundle=Bundle(restored),
         family="toy",
         strategy=_ddp_strategy(_cpu_ddp_context()),
