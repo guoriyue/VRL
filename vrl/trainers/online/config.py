@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import MISSING, dataclass, field, fields, is_dataclass
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_type_hints
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
@@ -292,6 +293,14 @@ class TrainerConfig:
         if precision is None:
             precision = PrecisionPolicy.from_section(root.precision)
         payload.update(batch_plan=OnlineBatchPlan.from_root(root))
+        # The trace directory is a run-level decision: an unset value lands
+        # under the run's output directory, resolved here once so every
+        # capture reads a final path.
+        profiler = payload.get("torch_profiler") or TorchProfilerConfig()
+        if not profiler.output_dir:
+            payload["torch_profiler"] = replace(
+                profiler, output_dir=str(Path(payload["output_dir"]) / "torch_profiler")
+            )
         orchestration = payload.get("rollout_orchestration") or RolloutOrchestrationConfig()
         payload["versioned_weight_sync"] = orchestration.schedule_mode == "continuous" and bool(
             root.model is not None and root.model.use_lora

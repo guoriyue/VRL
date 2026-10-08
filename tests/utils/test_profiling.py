@@ -156,12 +156,13 @@ def test_capture_fails_fast_on_missing_activity(
 ) -> None:
     # Force a CPU-only machine view so requesting cuda is genuinely unsupported.
     monkeypatch.setattr(torch.profiler, "supported_activities", lambda: {CPU})
-    cfg = TorchProfilerConfig(enabled=True, activities=("cuda",))
+    cfg = TorchProfilerConfig(
+        enabled=True, activities=("cuda",), output_dir=str(tmp_path / "torch_profiler")
+    )
     with (
         pytest.raises(RuntimeError, match="unsupported activities"),
         capture_torch_trace(
             cfg,
-            output_dir=str(tmp_path),
             step=0,
             device="cpu",
             worker_name="t",
@@ -171,8 +172,8 @@ def test_capture_fails_fast_on_missing_activity(
 
 
 def test_capture_disabled_is_passthrough(tmp_path: Path) -> None:
-    cfg = TorchProfilerConfig(enabled=False)
-    with capture_torch_trace(cfg, output_dir=str(tmp_path), step=0, device="cpu", worker_name="t"):
+    cfg = TorchProfilerConfig(enabled=False, output_dir=str(tmp_path / "torch_profiler"))
+    with capture_torch_trace(cfg, step=0, device="cpu", worker_name="t"):
         ran = True
     assert ran
     assert not (tmp_path / "torch_profiler").exists()
@@ -227,11 +228,12 @@ def test_config_selects_capture_window(enabled, skip_first, max_steps, expected)
 
 
 def test_capture_manifest_does_not_include_another_step_trace(tmp_path: Path) -> None:
-    cfg = TorchProfilerConfig(enabled=True, activities=("cpu",), max_steps=0)
+    cfg = TorchProfilerConfig(
+        enabled=True, activities=("cpu",), max_steps=0, output_dir=str(tmp_path / "torch_profiler")
+    )
     for step in (10, 1):
         with capture_torch_trace(
             cfg,
-            output_dir=str(tmp_path),
             step=step,
             device="cpu",
             worker_name="trainer",

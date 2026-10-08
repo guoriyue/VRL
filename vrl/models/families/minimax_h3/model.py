@@ -312,10 +312,7 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
     def from_build(cls, build: ModelBuild) -> MiniMaxH3Model:
         from diffusers import ModularPipeline
 
-        prompt_encoder_dtype, load_kwargs = cls._pipeline_load_dtypes(
-            build,
-            build.parameter_dtype,
-        )
+        prompt_encoder_dtype, load_kwargs = cls._pipeline_load_dtypes(build)
         load_kwargs["torch_dtype"]["audio_vae"] = torch.float32
         pipeline = ModularPipeline.from_pretrained(
             build.model_name_or_path,

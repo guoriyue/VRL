@@ -22,7 +22,7 @@ from vrl.generation.bindings.full_sequence import (
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.protocols import GenerationBatchGatherer
-from vrl.generation.types import DenoiseRequest, GenerationRequest
+from vrl.generation.types import GenerationRequest
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.utils.logging import init_logger
 
@@ -70,18 +70,17 @@ class Cosmos3BatchExecutor(DenoiseBatchExecutorBase):
         self,
         *,
         generation_request: GenerationRequest,
-        model_request: DenoiseRequest,
         params: DenoiseSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
         return self.model.encode_prompt(
             generation_request.inputs[batch.prompt_index].prompt,
-            model_request.negative_prompt or None,
+            params.model_request.negative_prompt or None,
             guidance_scale=params.model_request.guidance_scale,
-            num_frames=model_request.frame_count,
-            height=model_request.height,
-            width=model_request.width,
-            fps=model_request.fps or 24,
+            num_frames=params.model_request.frame_count,
+            height=params.model_request.height,
+            width=params.model_request.width,
+            fps=params.model_request.fps or 24,
         )
 
 

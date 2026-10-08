@@ -10,7 +10,7 @@ from vrl.generation.bindings.full_sequence import (
 )
 from vrl.generation.bindings.full_sequence.layout import DenoiseSamplingParams
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.generation.types import DenoiseRequest, GenerationRequest
+from vrl.generation.types import GenerationRequest
 
 
 class QwenImage21BatchExecutor(ReferenceConditionedBatches, DenoiseBatchExecutorBase):
@@ -33,7 +33,6 @@ class QwenImage21BatchExecutor(ReferenceConditionedBatches, DenoiseBatchExecutor
         self,
         *,
         generation_request: GenerationRequest,
-        model_request: DenoiseRequest,
         params: DenoiseSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
@@ -47,7 +46,7 @@ class QwenImage21BatchExecutor(ReferenceConditionedBatches, DenoiseBatchExecutor
         )
         return self.model.encode_prompt(
             item.prompt,
-            model_request.negative_prompt or None,
+            params.model_request.negative_prompt or None,
             **params.text_encode_kwargs(),
             reference_images=self._reference_images_for_batch(generation_request, batch),
             reference_resolution=options.reference_resolution,

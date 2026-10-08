@@ -168,8 +168,7 @@ def test_echo_executor_forwards_negative_prompt_to_model_contract() -> None:
                 inputs=["a dog"],
                 samples_per_prompt=1,
             ),
-            model_request=SimpleNamespace(negative_prompt="low quality"),
-            params=object(),
+            params=SimpleNamespace(model_request=SimpleNamespace(negative_prompt="low quality")),
             batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1),
         )
 

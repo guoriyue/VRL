@@ -21,7 +21,7 @@ from vrl.generation.bindings.full_sequence import (
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.protocols import GenerationBatchGatherer
-from vrl.generation.types import DenoiseRequest, GenerationRequest
+from vrl.generation.types import GenerationRequest
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.utils.logging import init_logger
 
@@ -131,11 +131,9 @@ class MiniMaxH3BatchExecutor(DenoiseBatchExecutorBase):
         self,
         *,
         generation_request: GenerationRequest,
-        model_request: DenoiseRequest,
         params: DenoiseSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
-        del model_request  # distilled: no negative prompt
         return self.model.encode_prompt(
             generation_request.inputs[batch.prompt_index].prompt,
             None,

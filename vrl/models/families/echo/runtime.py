@@ -22,7 +22,7 @@ from vrl.generation.bindings.full_sequence import (
     DenoiseSamplingParams,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.generation.types import DenoiseRequest, GenerationRequest
+from vrl.generation.types import GenerationRequest
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.utils.logging import init_logger
 
@@ -128,14 +128,12 @@ class EchoBatchExecutor(DenoiseBatchExecutorBase):
         self,
         *,
         generation_request: GenerationRequest,
-        model_request: DenoiseRequest,
         params: DenoiseSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
-        del params
         return self.model.encode_prompt(
             generation_request.inputs[batch.prompt_index].prompt,
-            model_request.negative_prompt or None,
+            params.model_request.negative_prompt or None,
         )
 
 

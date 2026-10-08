@@ -54,7 +54,6 @@ def test_manifest_references_reach_encoder_in_order_with_alpha(tmp_path) -> None
     params = executor.parse_sampling_params(request)
     executor.encode_prompt_for_batch(
         generation_request=request,
-        model_request=params.model_request,
         params=params,
         batch=GenerationSampleBatch(prompt_index=1, sample_start=0, sample_count=2),
     )
@@ -99,7 +98,6 @@ def test_single_reference_alias_and_text_only_requests_share_the_executor(tmp_pa
     for index in range(2):
         executor.encode_prompt_for_batch(
             generation_request=request,
-            model_request=params.model_request,
             params=params,
             batch=GenerationSampleBatch(prompt_index=index, sample_start=0, sample_count=1),
         )

@@ -745,7 +745,6 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
     def _pipeline_load_dtypes(
         cls,
         build: ModelBuild,
-        model_dtype: torch.dtype,
     ) -> tuple[torch.dtype, dict[str, Any]]:
         """Resolve prompt-encoder dtype plus pipeline load kwargs.
 
@@ -760,13 +759,15 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
         rollout = getattr(build, "rollout", None)
         prompt_encoder_dtype = getattr(rollout, "prompt_encoder_dtype", None)
         if prompt_encoder_dtype is None:
-            prompt_encoder_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
+            prompt_encoder_dtype = (
+                torch.float16 if build.parameter_dtype == torch.float32 else build.parameter_dtype
+            )
         # Full-pipeline rollout and component-only replay must resolve the same
         # immutable Hub snapshot; otherwise parity can compare different weights.
         load_kwargs: dict[str, Any] = build.pretrained_kwargs
         load_kwargs["torch_dtype"] = {
             "default": prompt_encoder_dtype,
-            "transformer": model_dtype,
+            "transformer": build.parameter_dtype,
             "vae": torch.float32,
         }
         return prompt_encoder_dtype, load_kwargs
@@ -832,10 +833,7 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
 
         from diffusers import DiffusionPipeline
 
-        prompt_encoder_dtype, load_kwargs = cls._pipeline_load_dtypes(
-            build,
-            build.parameter_dtype,
-        )
+        prompt_encoder_dtype, load_kwargs = cls._pipeline_load_dtypes(build)
         pipeline = DiffusionPipeline.from_pretrained(
             build.model_name_or_path,
             **load_kwargs,

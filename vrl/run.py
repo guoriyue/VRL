@@ -127,27 +127,29 @@ class OnlineRunConfig:
 
 @dataclass(frozen=True, slots=True)
 class ResolvedRun:
-    """Core resolution shared by every training entrypoint."""
+    """Core resolution shared by every training entrypoint: the built configs
+    and the distributed resource plan; the family and trainer device read off them."""
 
     built: BuiltConfigs
-    family: ModelFamilyEntry
     resources: ResolvedDistributedResources
-    device: torch.device
 
     @classmethod
     def from_built(cls, built: BuiltConfigs) -> ResolvedRun:
-        """The configured family, the distributed resource plan, the trainer device."""
-
-        resources = ray_resources.ResolvedDistributedResources.from_root(
-            built.root,
-            reward=built.reward,
-        )
         return cls(
             built=built,
-            family=built.family,
-            resources=resources,
-            device=torch.device(resources.trainer_torch_device),
+            resources=ray_resources.ResolvedDistributedResources.from_root(
+                built.root,
+                reward=built.reward,
+            ),
         )
+
+    @property
+    def family(self) -> ModelFamilyEntry:
+        return self.built.family
+
+    @property
+    def device(self) -> torch.device:
+        return torch.device(self.resources.trainer_torch_device)
 
 
 @dataclass(frozen=True, slots=True)
@@ -365,9 +367,7 @@ def resolve_online_run(cfg: DictConfig) -> ResolvedOnlineRun:
     core = ResolvedRun.from_built(built)
     return ResolvedOnlineRun(
         built=built,
-        family=core.family,
         resources=core.resources,
-        device=core.device,
         run=OnlineRunConfig.from_root(built.root),
         generation=RayGenerationConfig.from_root(built.root, resources=core.resources),
         collector=RolloutCollectorConfig.from_root(built.root),

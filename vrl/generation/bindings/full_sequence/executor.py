@@ -115,7 +115,6 @@ class ReferenceConditionedBatches:
         self,
         *,
         generation_request: GenerationRequest,
-        model_request: DenoiseRequest,
         params: Any,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
@@ -124,7 +123,7 @@ class ReferenceConditionedBatches:
         reference_image = self._reference_image_for_batch(generation_request, batch)
         return self.model.encode_prompt(
             generation_request.inputs[batch.prompt_index].prompt,
-            model_request.negative_prompt or None,
+            params.model_request.negative_prompt or None,
             **params.text_encode_kwargs(),
             reference_image=reference_image,
         )
@@ -279,7 +278,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         with profile_range("generation.prompt_encode"):
             encoded = self.encode_prompt_for_batch(
                 generation_request=request,
-                model_request=params.model_request,
                 params=params,
                 batch=batch,
             )
@@ -500,7 +498,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         self,
         *,
         generation_request: GenerationRequest,
-        model_request: DenoiseRequest,
         params: DenoiseSamplingParams,
         batch: GenerationSampleBatch,
     ) -> dict[str, Any]:
@@ -508,9 +505,9 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
 
         return self.model.encode_prompt(
             generation_request.inputs[batch.prompt_index].prompt,
-            model_request.negative_prompt or None,
+            params.model_request.negative_prompt or None,
             **params.text_encode_kwargs(),
-            request=model_request,
+            request=params.model_request,
         )
 
     # Encoded keys copied through UNREPEATED by the default expand_conditioning_to_batch.

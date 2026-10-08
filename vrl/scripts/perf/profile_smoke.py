@@ -52,11 +52,11 @@ def run_smoke(activities: tuple[str, ...], output_dir: Path) -> dict:
     config = TorchProfilerConfig(
         enabled=True,
         activities=activities,
+        output_dir=str(output_dir / "torch_profiler"),
     )
     trace_subdir = "profile_smoke"
     with capture_torch_trace(
         config,
-        output_dir=str(output_dir),
         step=0,
         device=device,
         worker_name="profile_smoke",

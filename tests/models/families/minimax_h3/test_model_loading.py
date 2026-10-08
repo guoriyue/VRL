@@ -212,11 +212,11 @@ def test_batch_executor_pins_one_sample_and_carries_only_the_prompt() -> None:
     assert executor.default_fps == 24
     request = SimpleNamespace(inputs=[SimpleNamespace(prompt="a cat video")])
     params = SimpleNamespace(
-        text_encode_kwargs=lambda: {"guidance_scale": 1.0, "max_sequence_length": 64}
+        model_request=SimpleNamespace(negative_prompt="blurry"),
+        text_encode_kwargs=lambda: {"guidance_scale": 1.0, "max_sequence_length": 64},
     )
     encoded = executor.encode_prompt_for_batch(
         generation_request=request,
-        model_request=SimpleNamespace(negative_prompt="blurry"),
         params=params,
         batch=SimpleNamespace(prompt_index=0, sample_count=1),
     )

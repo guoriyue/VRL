@@ -167,10 +167,7 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         import diffusers.pipelines.cosmos.pipeline_cosmos2_5_predict as _predict_mod
         from diffusers import Cosmos2_5_PredictBasePipeline
 
-        prompt_dtype, kwargs = cls._pipeline_load_dtypes(
-            build,
-            build.parameter_dtype,
-        )
+        prompt_dtype, kwargs = cls._pipeline_load_dtypes(build)
         revision = kwargs.get("revision")
         skip_text_encoder = bool((build.model_config or {}).get("skip_text_encoder", False))
         with torch.set_grad_enabled(torch.is_grad_enabled()):

@@ -200,10 +200,7 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersPipelineModelBase):
         import diffusers.pipelines.cosmos.pipeline_cosmos2_video2world as _v2w_mod
         from diffusers import Cosmos2VideoToWorldPipeline
 
-        prompt_dtype, load_kwargs = cls._pipeline_load_dtypes(
-            build,
-            build.parameter_dtype,
-        )
+        prompt_dtype, load_kwargs = cls._pipeline_load_dtypes(build)
         with torch.set_grad_enabled(torch.is_grad_enabled()), no_safety_checker(_v2w_mod):
             pipeline = Cosmos2VideoToWorldPipeline.from_pretrained(
                 build.model_name_or_path,

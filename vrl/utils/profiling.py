@@ -240,7 +240,6 @@ def profile_range(name: str, *, emit_nvtx: bool | None = None) -> Iterator[None]
 def capture_torch_trace(
     config: TorchProfilerConfig,
     *,
-    output_dir: str,
     step: int,
     device: Any,
     worker_name: str,
@@ -276,7 +275,12 @@ def capture_torch_trace(
         yield
         return
 
-    root = Path(config.output_dir) if config.output_dir else Path(output_dir) / "torch_profiler"
+    if not config.output_dir:
+        raise ValueError(
+            "TorchProfilerConfig.output_dir must be resolved before capture; the "
+            "trainer and rollout configs set it to <output_dir>/torch_profiler",
+        )
+    root = Path(config.output_dir)
     trace_dir = root / trace_subdir if trace_subdir else root
     trace_dir.mkdir(parents=True, exist_ok=True)
     safe_worker_name = _safe_worker_name(worker_name, step)

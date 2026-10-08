@@ -805,7 +805,6 @@ class OnlineTrainer:
 
         with capture_torch_trace(
             self.config.torch_profiler,
-            output_dir=self.config.output_dir,
             step=self.state.step,
             device=self.device,
             worker_name="online_trainer",

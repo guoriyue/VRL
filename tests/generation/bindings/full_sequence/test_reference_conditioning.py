@@ -92,8 +92,10 @@ def test_encode_and_prepare_share_the_loaded_reference(tmp_path, monkeypatch, fa
     )
     encoded = executor.encode_prompt_for_batch(
         generation_request=request,
-        model_request=SimpleNamespace(negative_prompt=None),
-        params=SimpleNamespace(text_encode_kwargs=lambda: {}),
+        params=SimpleNamespace(
+            model_request=SimpleNamespace(negative_prompt=None),
+            text_encode_kwargs=lambda: {},
+        ),
         batch=_batch(0),
     )
     batch_encoded = executor.expand_conditioning_to_batch(

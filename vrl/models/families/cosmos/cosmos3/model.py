@@ -90,10 +90,7 @@ class Cosmos3Model(CosmosReplayForward, DiffusersPipelineModelBase):
         # Lazy: the optional cosmos extra must not be imported at module load.
         from diffusers import Cosmos3OmniPipeline
 
-        prompt_dtype, kwargs = cls._pipeline_load_dtypes(
-            build,
-            build.parameter_dtype,
-        )
+        prompt_dtype, kwargs = cls._pipeline_load_dtypes(build)
         # enable_safety_checker=False avoids the cosmos_guardrail import/dep in dev.
         with torch.set_grad_enabled(torch.is_grad_enabled()):
             pipeline = Cosmos3OmniPipeline.from_pretrained(
