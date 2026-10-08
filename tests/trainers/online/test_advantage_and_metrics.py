@@ -1,275 +1,190 @@
-"""OnlineTrainer advantage normalization, KL propagation, and zero-advantage gradient behavior."""
+"""OnlineTrainer advantage normalization, metric aggregation, and zero-advantage gradients.
+
+Every trainer is ``real_trainer`` (tiny SANA, real GRPO and SDE evaluator).
+Rewards are real ``RewardFunction``s with chosen scores; what the algorithm
+saw and returned is read off the traced real calls.
+"""
 
 from __future__ import annotations
 
-import pytest
+import asyncio
+import statistics
+from collections.abc import Sequence
+from dataclasses import replace
 
-from tests.rollouts.collector._helpers import PromptCollectionFake
-from tests.trainers.online._helpers import (
-    DEFAULT_PRECISION,
-    _algorithm_inputs,
-    _diffusion_rollout_batch,
-    _EvaluatorAlgorithmFake,
-    _stamp_model_precision,
-    _trajectory_signals,
-)
-from vrl.rollouts.evaluators.base import Evaluator
+import pytest
+import torch
+
+from tests.rollouts.collector._helpers import IndexReward
+from tests.trainers.online._helpers import TrainerBench, real_trainer
+from vrl.rewards import RewardOutput, RewardSample
+from vrl.trainers.online.trainer import TrainingBatch
+
+
+class _ScriptedReward(IndexReward):
+    """Hands out the next scripted score per sample, plus an ``observer`` component."""
+
+    def __init__(self, scores: list[float]) -> None:
+        super().__init__()
+        self._scores = list(scores)
+        self._cursor = 0
+
+    async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
+        await super().score_batch(samples)
+        scores = tuple(self._scores[self._cursor : self._cursor + len(samples)])
+        self._cursor += len(samples)
+        return RewardOutput(
+            scores=scores,
+            components={"observer": tuple(score + 10.0 for score in scores)},
+        )
+
+
+def _trainer(monkeypatch, tmp_path, *overrides: str, reward=None) -> TrainerBench:
+    tb = real_trainer(monkeypatch, tmp_path, reward=reward, overrides=tuple(overrides))
+    tb.collector.trace.watch(tb.trainer.algorithm, "compute_loss", "compute_loss")
+    return tb
+
+
+def _loss_metrics(tb: TrainerBench) -> list:
+    """The ``TrainStepMetrics`` every real ``compute_loss`` call returned."""
+
+    return [metrics for _loss, metrics in tb.collector.trace.results.get("compute_loss", [])]
+
+
+def _shift_rollout_log_prob(batch: TrainingBatch, deltas: torch.Tensor) -> None:
+    """The rollout recorded log-probs the replay disagrees with by ``deltas`` per sample."""
+
+    for rollout in batch.batches:
+        old_log_prob = rollout.trajectory.segments["denoise"].tensors["old_log_prob"].value
+        old_log_prob[:, 0] += deltas
 
 
 class TestAdvantageAndMetrics:
     """Groups tests for advantage and metrics."""
 
-    def test_admission_audit_failure_prevents_backward_on_local_and_peer_rank(self, monkeypatch):
-        import asyncio
-
-        trainer = self._make_cea_trainer([0.1, 0.9])
-
-        def disk_failure(*args, **kwargs):
-            raise OSError("audit volume full")
-
-        monkeypatch.setattr(trainer.admission_ledger, "_record", disk_failure)
-        with pytest.raises(OSError, match="audit volume full"):
-            asyncio.run(trainer.step(["prompt"]))
-        assert trainer.algorithm.loss_calls == 0
-
-        peer = self._make_cea_trainer([0.1, 0.9])
-        monkeypatch.setattr(peer._strategy.collectives, "all_true", lambda value: False)
-        with pytest.raises(RuntimeError, match="another training rank"):
-            asyncio.run(peer.step(["prompt"]))
-        assert peer.algorithm.loss_calls == 0
-
-    def _make_cea_trainer(
-        self,
-        rewards: list[float],
-        *,
-        ppo_epochs: int = 1,
-        emit_diagnostics: bool = False,
-        prompts_per_collection: int = 0,
+    def test_admission_audit_failure_prevents_backward_on_local_and_peer_rank(
+        self, monkeypatch, tmp_path
     ):
-        import torch
-        import torch.nn as nn
+        local = _trainer(monkeypatch, tmp_path / "local")
+        # The audit file cannot be created: a directory already holds its path.
+        local.trainer.admission_ledger.path.mkdir(parents=True)
+        with pytest.raises(OSError):
+            asyncio.run(local.trainer.step(["a cat"]))
+        assert "compute_loss" not in local.collector.trace.events
 
-        from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-        from vrl.trainers.online.trainer import OnlineTrainer
+        peer = _trainer(monkeypatch, tmp_path / "peer")
+        # Another rank reports a failed admission through the agreement
+        # collective; a single-process strategy has no peer to ask, so its
+        # answer is injected at that boundary.
+        monkeypatch.setattr(peer.strategy.collectives, "all_true", lambda value: False)
+        with pytest.raises(RuntimeError, match="another training rank"):
+            asyncio.run(peer.trainer.step(["a cat"]))
+        assert "compute_loss" not in peer.collector.trace.events
 
-        class _Algorithm(_EvaluatorAlgorithmFake):
-            class _Config:
-                global_std = False
-                eps = 1e-8
-                adv_clip_max = 5.0
-                kl_coef = 0.0
-
-            config = _Config()
-
-            def __init__(self) -> None:
-                self.loss_calls = 0
-                self.component_advantage_calls = 0
-
-            def compute_advantages_from_tensors(self, rewards, group_ids):
-                advantages = torch.zeros_like(rewards)
-                for gid in torch.unique(group_ids):
-                    mask = group_ids == gid
-                    gr = rewards[mask]
-                    if gr.numel() <= 1:
-                        continue
-                    mean = gr.mean()
-                    std = gr.std().clamp(min=1e-8)
-                    advantages[mask] = (gr - mean) / std
-                return advantages
-
-            def compute_advantages_from_components(
-                self,
-                rewards,
-                component_rewards,
-                group_ids,
-            ):
-                self.component_advantage_calls += 1
-                assert set(component_rewards) == {"observer"}
-                return self.compute_advantages_from_tensors(rewards, group_ids)
-
-            def compute_loss(self, inputs):
-                signals, _advantages, old_log_probs = _algorithm_inputs(inputs)
-                self.loss_calls += 1
-                loss = signals.log_prob.mean()
-                metrics = TrainStepMetrics(
-                    loss=loss.item(),
-                    policy_loss=loss.item(),
-                    update=PolicyUpdateStats(
-                        approx_kl=float(old_log_probs.mean().item()),
-                    ),
-                )
-                if emit_diagnostics:
-                    call = float(self.loss_calls)
-                    metrics.update.clip_fraction = call
-                    metrics.update.active_clip_fraction = call / 10.0
-                    metrics.weighted_kl_loss = call / 100.0
-                    metrics.update.tis_clip_fraction = call / 20.0
-                    metrics.update.rs_seq_masked_fraction = call / 40.0
-                return loss, metrics
-
-        class _Collector(PromptCollectionFake):
-            def __init__(self, reward_values: list[float]) -> None:
-                self._reward_values = reward_values
-                self._cursor = 0
-
-            async def evaluate_rollout(self, pendings):
-
-                return list(pendings)
-
-            async def generate_rollout(self, request):
-                kwargs = request.options
-                group_size = int(kwargs["group_size"])
-                rewards = []
-                for _ in range(group_size):
-                    rewards.append(self._reward_values[self._cursor])
-                    self._cursor += 1
-                return _diffusion_rollout_batch(
-                    rewards=torch.tensor(rewards, dtype=torch.float32),
-                    group_ids=torch.zeros(group_size, dtype=torch.long),
-                    num_steps=2,
-                    extras={
-                        "reward_components": {
-                            "observer": torch.tensor(rewards, dtype=torch.float32) + 10.0,
-                        },
-                    },
-                )
-
-        class _Evaluator(Evaluator):
-            def __init__(self) -> None:
-                self.calls = 0
-
-            def evaluate(
-                self,
-                model,
-                batch,
-                timestep_idx,
-                ref_model=None,
-                signal_request=None,
-            ):
-                assert model.precision is DEFAULT_PRECISION
-                assert model.precision.outer_autocast is False
-                batch_size = batch.rewards.shape[0]
-                self.calls += 1
-                old = torch.full(
-                    (batch_size,),
-                    float(timestep_idx),
-                    device=model.weight.device,
-                )
-                log_prob = old + self.calls / 1000.0 + model.weight.view(1) * 0.0
-                return _trajectory_signals(
-                    batch,
-                    log_prob,
-                    timestep_idx,
-                    old_log_prob=old,
-                )
-
-        model = nn.Linear(1, 1, bias=False)
-        _stamp_model_precision(model)
-        with torch.no_grad():
-            model.weight.fill_(1.0)
-
-        trainer = OnlineTrainer(
-            algorithm=_Algorithm(),
-            collector=_Collector(rewards),
-            evaluator=_Evaluator(),
-            model=model,
-            config=TrainerConfig(
-                batch_plan=OnlineBatchPlan(
-                    prompts_per_batch=1,
-                    n_samples_per_prompt=2,
-                    prompts_per_collection=prompts_per_collection,
-                ),
-                timestep_fraction=1.0,
-                ppo_epochs=ppo_epochs,
-                drop_zero_advantage=False,
-                output_dir="outputs/",
-                optim=OptimConfig(lr=0.01),
-                ema=EMAConfig(),
-                debug=DebugConfig(),
-            ),
-            device="cpu",
-        )
-        return trainer
-
-    def test_cea_step_advantages_independent_across_steps(self) -> None:
-        """Second-step advantages should be normalized against the current group only,
+    def test_cea_step_advantages_independent_across_steps(self, monkeypatch, tmp_path) -> None:
+        """Second-step advantages are normalized against the current group only,
         with no state leaking from previous steps."""
-        import asyncio
 
-        trainer = self._make_cea_trainer([0.0, 0.0, 0.0, 1.0])
+        tb = _trainer(
+            monkeypatch,
+            tmp_path,
+            "actor.drop_zero_advantage=false",
+            reward=_ScriptedReward([0.0, 0.0, 0.0, 1.0]),
+        )
+        tb.collector.trace.watch(
+            tb.trainer.algorithm, "compute_advantages_from_components", "component_advantages"
+        )
 
-        asyncio.run(trainer.step(["prompt-a"]))
-        second_step = asyncio.run(trainer.step(["prompt-a"]))
+        asyncio.run(tb.trainer.step(["a cat"]))
+        second_step = asyncio.run(tb.trainer.step(["a cat"]))
 
-        # Advantages are computed purely from current group — no stale history
+        # Advantages are computed purely from the current group: no stale history.
         assert second_step.advantage_mean == pytest.approx(0.0, abs=1e-3)
         # Component metrics belong to the consumed second batch only. The first
         # step's observations must not accumulate on a shared reward object.
         assert second_step.reward_components == {"observer": pytest.approx(10.5)}
-        assert trainer.algorithm.component_advantage_calls == 2
+        assert tb.collector.trace.events.count("component_advantages") == 2
 
-    def test_cea_metrics_propagate_approx_kl(self) -> None:
-        """CEA aggregation should not silently drop approx_kl."""
-        import asyncio
+    def test_cea_metrics_propagate_approx_kl(self, monkeypatch, tmp_path) -> None:
+        """CEA aggregation must not silently drop approx_kl."""
 
-        trainer = self._make_cea_trainer([0.0, 1.0])
-        metrics = asyncio.run(trainer.step(["prompt-a"]))
+        tb = _trainer(monkeypatch, tmp_path)
 
-        assert metrics.update.approx_kl == pytest.approx(0.5)
+        metrics = asyncio.run(tb.trainer.step(["a cat"]))
 
-    def test_cea_metrics_capture_the_complete_first_optimizer_update(self) -> None:
+        per_call = [m.update.approx_kl for m in _loss_metrics(tb)]
+        # Four PPO epochs: the later ones replay a moved policy.
+        assert len(per_call) == tb.trainer.config.ppo_epochs
+        assert any(value != 0.0 for value in per_call)
+        assert metrics.update.approx_kl == pytest.approx(statistics.fmean(per_call))
+
+    def test_cea_metrics_capture_the_complete_first_optimizer_update(
+        self, monkeypatch, tmp_path
+    ) -> None:
         """Initial replay covers every replay unit in the first optimizer update."""
-        import asyncio
-        from dataclasses import replace
 
-        trainer = self._make_cea_trainer(
-            [0.0, 1.0],
-            emit_diagnostics=True,
-            prompts_per_collection=1,
+        tb = _trainer(
+            monkeypatch,
+            tmp_path,
+            "actor.prompts_per_collection=1",
+            "actor.ppo_epochs=1",
+            # The test's own rollout/replay disagreement is the measured signal.
+            "trainer.replay_parity.max_abs_logprob_diff=1.0",
         )
-        batch = asyncio.run(trainer.collect_training_batch(["prompt-a"]))
+        batch = asyncio.run(tb.trainer.collect_training_batch(["a cat"]))
+        _shift_rollout_log_prob(batch, torch.tensor([1e-4, 3e-4]))
         two_boundaries = replace(
             batch,
             batches=batch.batches * 2,
             advantages=batch.advantages * 2,
         )
-        metrics = asyncio.run(trainer.train_on_rollout_batch(two_boundaries))
 
-        # One optimizer target evaluates four sample batches x two timesteps.
-        assert metrics.update.clip_fraction == pytest.approx(4.5)
-        assert metrics.initial_replay.clip_fraction == pytest.approx(4.5)
-        assert metrics.update.active_clip_fraction == pytest.approx(0.45)
-        assert metrics.initial_replay.active_clip_fraction == pytest.approx(0.45)
-        assert metrics.logprob_mismatch.logprob_abs_diff_max == pytest.approx(
-            0.008,
-            abs=1e-6,
+        metrics = asyncio.run(tb.trainer.train_on_rollout_batch(two_boundaries))
+
+        per_call = _loss_metrics(tb)
+        assert len(per_call) == 2
+
+        def mean(read):
+            return pytest.approx(statistics.fmean(read(m) for m in per_call))
+
+        assert metrics.update.clip_fraction == mean(lambda m: m.update.clip_fraction)
+        assert metrics.update.clip_fraction > 0.0
+        assert metrics.initial_replay.clip_fraction == mean(lambda m: m.update.clip_fraction)
+        assert metrics.update.active_clip_fraction == mean(lambda m: m.update.active_clip_fraction)
+        assert metrics.initial_replay.active_clip_fraction == mean(
+            lambda m: m.update.active_clip_fraction
         )
-        assert metrics.initial_replay.logprob_abs_diff_max == pytest.approx(
-            0.008,
-            abs=1e-6,
-        )
+        assert metrics.logprob_mismatch.logprob_abs_diff_max == pytest.approx(3e-4, rel=1e-3)
+        assert metrics.initial_replay.logprob_abs_diff_max == pytest.approx(3e-4, rel=1e-3)
         assert metrics.initial_replay.finite is True
-        assert metrics.weighted_kl_loss == pytest.approx(0.045)
-        assert metrics.update.tis_clip_fraction == pytest.approx(0.225)
-        assert metrics.update.rs_seq_masked_fraction == pytest.approx(0.1125)
+        assert metrics.weighted_kl_loss == mean(lambda m: m.weighted_kl_loss)
+        assert metrics.update.tis_clip_fraction == mean(lambda m: m.update.tis_clip_fraction)
+        assert metrics.update.rs_seq_masked_fraction == mean(
+            lambda m: m.update.rs_seq_masked_fraction
+        )
 
-    def test_replay_metrics_follow_uneven_sample_chunk_weights(self) -> None:
+    def test_replay_metrics_follow_uneven_sample_chunk_weights(
+        self, monkeypatch, tmp_path
+    ) -> None:
         """An 8+2 split represents 80%+20% of the optimized group, not 50%+50%."""
-        import torch
 
         from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
         from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
         from vrl.trainers.online.trainer import _ReplayMetrics, _TrainingMicrobatch
 
-        batch = _diffusion_rollout_batch(
-            rewards=torch.zeros(10),
-            group_ids=torch.zeros(10, dtype=torch.long),
-            num_steps=1,
+        tb = real_trainer(
+            monkeypatch,
+            tmp_path,
+            overrides=(
+                "rollout.n_samples_per_prompt=10",
+                "rollout.samples_per_generation_batch=10",
+            ),
         )
+        group = asyncio.run(tb.trainer.collect_training_batch(["a cat"])).batches[0]
+        assert group.rewards.shape == (10,)
+
         batches = _TrainingMicrobatch.from_prompt_group(
-            batch, torch.ones(10), training_microbatch_size=8
+            group, torch.ones(10), training_microbatch_size=8
         )
         assert [batch.loss_weight for batch in batches] == pytest.approx([0.8, 0.2])
 
@@ -311,117 +226,25 @@ class TestAdvantageAndMetrics:
         assert metrics.initial_replay.clip_fraction == pytest.approx(2.6)
         assert metrics.initial_replay.logprob_abs_diff_max == pytest.approx(9.0)
 
-    def test_zero_advantage_samples_do_not_get_epsilon_gradient(self) -> None:
-        """All-zero advantages should skip backward instead of inventing gradients."""
-        import asyncio
+    def test_zero_advantage_samples_do_not_get_epsilon_gradient(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """All-zero advantages skip backward instead of inventing gradients."""
 
-        import torch
-        import torch.nn as nn
+        tb = _trainer(monkeypatch, tmp_path, reward=_ScriptedReward([1.0, 1.0]))
+        assert tb.trainer.config.drop_zero_advantage is True
+        before = {
+            name: value.detach().clone() for name, value in tb.trainable_parameters().items()
+        }
 
-        from vrl.algorithms.types import TrainStepMetrics
-        from vrl.generation import GenerationRequest, GenerationSampleRow
-        from vrl.rollouts.batch import RolloutBatch
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-        from vrl.trainers.online.trainer import OnlineTrainer
-        from vrl.trajectory.builders import build_diffusion_trajectory
+        metrics = asyncio.run(tb.trainer.step(["a cat"]))
 
-        class _Algorithm(_EvaluatorAlgorithmFake):
-            class _Config:
-                global_std = True
-                eps = 1e-8
-                adv_clip_max = 5.0
-                kl_coef = 0.0
-
-            config = _Config()
-
-            def __init__(self) -> None:
-                self.loss_calls = 0
-
-            def compute_advantages_from_tensors(self, rewards, group_ids):
-                del group_ids
-                return torch.zeros_like(rewards)
-
-            def compute_loss(self, inputs):
-                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
-                del signals, advantages, old_log_probs
-                self.loss_calls += 1
-                return torch.tensor(0.0, requires_grad=True), TrainStepMetrics()
-
-        class _Collector(PromptCollectionFake):
-            async def evaluate_rollout(self, pendings):
-                return list(pendings)
-
-            async def generate_rollout(self, request):
-                prompts = request.inputs
-                kwargs = request.options
-                group_size = int(kwargs["group_size"])
-                prompts = list(prompts)
-                request = GenerationRequest(
-                    request_id="zero-adv",
-                    family="sd3_5",
-                    task="t2i",
-                    inputs=prompts,
-                    samples_per_prompt=group_size,
-                )
-                sample_rows = [
-                    GenerationSampleRow(
-                        prompt_index=index // group_size,
-                        sample_index=index % group_size,
-                        prompt=request.inputs[index // group_size].prompt,
-                        sample_id=f"sample-{index}",
-                    )
-                    for index in range(len(prompts) * group_size)
-                ]
-                batch_size = len(sample_rows)
-                actions = torch.arange(batch_size * 2, dtype=torch.float32).view(batch_size, 2, 1)
-                trajectory = build_diffusion_trajectory(
-                    request=request,
-                    sample_rows=sample_rows,
-                    observations=torch.zeros_like(actions),
-                    actions=actions,
-                    old_log_prob=torch.zeros(batch_size, 2),
-                    timesteps=torch.zeros(batch_size, 2),
-                    replay_tensors={},
-                    context={"model_family": "sd3_5"},
-                )
-                return RolloutBatch(
-                    rewards=torch.ones(batch_size, dtype=torch.float32),
-                    group_ids=torch.zeros(batch_size, dtype=torch.long),
-                    context={},
-                    trajectory=trajectory,
-                )
-
-        class _Evaluator(Evaluator):
-            def evaluate(self, model, batch, timestep_idx, **kw):
-                del model, kw
-                return _trajectory_signals(batch, torch.zeros(1), timestep_idx)
-
-        algorithm = _Algorithm()
-        model = nn.Linear(1, 1, bias=False)
-        _stamp_model_precision(model)
-        trainer = OnlineTrainer(
-            algorithm=algorithm,
-            collector=_Collector(),
-            evaluator=_Evaluator(),
-            model=model,
-            config=TrainerConfig(
-                batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
-                timestep_fraction=1.0,
-                output_dir="outputs/",
-                optim=OptimConfig(lr=0.01),
-                ema=EMAConfig(),
-                debug=DebugConfig(),
-                drop_zero_advantage=True,
-            ),
-            device="cpu",
-        )
-
-        metrics = asyncio.run(trainer.step(["prompt-a"]))
-
-        assert algorithm.loss_calls == 0
-        assert trainer.state.step == 1
-        assert trainer.state.global_step == 0
+        assert "compute_loss" not in tb.collector.trace.events
+        assert tb.trainer.state.step == 1
+        assert tb.trainer.state.global_step == 0
         assert metrics.grad_norm == 0.0
         assert metrics.group_size == 2.0
         assert metrics.trained_prompt_num == 1
+        assert all(
+            torch.equal(before[name], value) for name, value in tb.trainable_parameters().items()
+        )

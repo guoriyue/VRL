@@ -54,6 +54,11 @@ class Strategy(Protocol):
     context: DistributedTrainingContext
 
     @property
+    def context_parallel_groups(self) -> ContextParallelPeerGroup | None:
+        """The FSDP context-parallel peer group the rollout schedule shares, if any."""
+        ...
+
+    @property
     def materialize_weights(self) -> bool:
         """Whether this process must load the replay model with real weights.
 
@@ -280,6 +285,10 @@ class _UnshardedStateStrategy:
     Concrete strategies inherit this implementation mixin directly. ``Strategy``
     stays outside their MRO as the structural contract consumed by the trainer.
     """
+
+    # Unsharded backends shard no sequence dimension across FSDP peers; the
+    # FSDP strategy owns the only context-parallel peer group.
+    context_parallel_groups: ContextParallelPeerGroup | None = None
 
     @property
     def materialize_weights(self) -> bool:

@@ -1,137 +1,89 @@
-"""L1 invariant: a trust-region algorithm's ratio term must be able to engage.
+"""The schedules a trust-region algorithm accepts actually train.
 
 Flow-DPPO / GRPO-Guard are *defined* by a clipped/guarded importance ratio
-r = pi_new/pi_old. With strict_on_policy + ppo_epochs=1 the behavior and target
-policy are identical on the single replay pass, so r==1, the trust-region term is
-identically zero, and the run is byte-equivalent to plain GRPO (the documented
-flat-curve root cause). The trainer must refuse that config at construction
-instead of silently training a no-op mechanism. Plain GRPO's clip is only a
-safety rail, so it stays valid at ppo_epochs=1 (honest REINFORCE+group-baseline).
+r = pi_new/pi_old; config resolution refuses the strict single-epoch schedule
+that makes r identically 1 (tests/config/test_algorithm_schedule_soundness.py).
+These cases run the schedules it accepts: a second epoch or continuous staleness
+moves the behavior policy, and plain GRPO stays valid at one epoch.
+
+Every trainer here is the online recipe's own wiring on the tiny SANA run; the
+algorithm is selected by swapping the recipe preset, exactly as a user would.
 """
 
 from __future__ import annotations
 
+import asyncio
+import math
+
 import pytest
 import torch
-import torch.nn as nn
 
-from tests.rollouts.collector._helpers import PromptCollectionFake
-from tests.trainers.online._helpers import (
-    _diffusion_rollout_batch,
-    _stamp_model_precision,
-    _trajectory_signals,
-)
-from vrl.algorithms.grpo.continuous import GRPO, FlowDPPO, GRPOConfig, GRPOGuard
-from vrl.rollouts.evaluators.base import Evaluator
-from vrl.trainers.core.types import (
-    ContinuousRolloutConfig,
-    EMAConfig,
-    OptimConfig,
-    RolloutOrchestrationConfig,
-)
-from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-from vrl.trainers.online.trainer import OnlineTrainer
+from tests.trainers.online._helpers import real_trainer
+
+_FLOW_DPPO = "/recipe/online=flow_matching_dppo"
+_GRPO_GUARD = "/recipe/online=flow_matching_grpo_guard"
+_CONTINUOUS = "/base/rollout/orchestration=continuous"
 
 
-class _Collector(PromptCollectionFake):
-    async def evaluate_rollout(self, pendings):
-        return list(pendings)
+def _trains_one_step(bench) -> None:
+    """The accepted configuration runs a real update that moves the policy."""
 
-    async def generate_rollout(self, request):
-        kwargs = request.options
-        group_size = int(kwargs["group_size"])
-        return _diffusion_rollout_batch(
-            rewards=torch.arange(group_size, dtype=torch.float32),
-            group_ids=torch.zeros(group_size, dtype=torch.long),
-            num_steps=2,
-        )
+    before = {name: value.detach().clone() for name, value in bench.trainable_parameters().items()}
 
+    async def step():
+        try:
+            return await bench.trainer.step(["a cat", "a dog"])
+        finally:
+            await bench.trainer.rollout_schedule.shutdown()
 
-class _Evaluator(Evaluator):
-    def evaluate(self, model, batch, timestep_idx, **kw):
-        del kw
-        return _trajectory_signals(
-            batch,
-            model.weight.view(1).expand(batch.rewards.shape[0]),
-            timestep_idx,
-        )
+    metrics = asyncio.run(step())
+    after = bench.trainable_parameters()
+
+    assert math.isfinite(metrics.loss)
+    assert any(not torch.equal(before[name], after[name]) for name in before)
 
 
-def _build_trainer(
-    tmp_path,
-    *,
-    algorithm,
-    ppo_epochs: int = 1,
-    schedule_mode: str = "strict_on_policy",
-    max_stale_policy_versions: int = 1,
-) -> OnlineTrainer:
-    model = nn.Linear(1, 1, bias=False)
-    _stamp_model_precision(model)
-    with torch.no_grad():
-        model.weight.fill_(1.0)
-    return OnlineTrainer(
-        algorithm=algorithm,
-        collector=_Collector(),
-        evaluator=_Evaluator(),
-        model=model,
-        config=TrainerConfig(
-            batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
-            timestep_fraction=1.0,
-            ppo_epochs=ppo_epochs,
-            drop_zero_advantage=False,
-            optim=OptimConfig(lr=0.01),
-            ema=EMAConfig(),
-            rollout_orchestration=RolloutOrchestrationConfig(
-                schedule_mode=schedule_mode,
-                continuous=ContinuousRolloutConfig(
-                    max_stale_policy_versions=max_stale_policy_versions,
-                ),
-            ),
-            output_dir=str(tmp_path),
-        ),
-        device="cpu",
-    )
-
-
-def test_flow_dppo_strict_single_epoch_is_rejected(tmp_path) -> None:
-    with pytest.raises(ValueError, match="trust region"):
-        _build_trainer(tmp_path, algorithm=FlowDPPO(), ppo_epochs=1)
-
-
-def test_grpo_guard_strict_single_epoch_is_rejected(tmp_path) -> None:
-    with pytest.raises(ValueError, match="ppo_epochs"):
-        _build_trainer(tmp_path, algorithm=GRPOGuard(), ppo_epochs=1)
-
-
-def test_trust_region_with_multi_epoch_is_allowed(tmp_path) -> None:
+def test_trust_region_with_multi_epoch_is_allowed(monkeypatch, tmp_path) -> None:
     # ppo_epochs>1 lets the policy move between epochs, so the ratio engages.
-    trainer = _build_trainer(tmp_path, algorithm=FlowDPPO(), ppo_epochs=2)
-    assert trainer is not None
+    bench = real_trainer(monkeypatch, tmp_path, overrides=(_FLOW_DPPO, "actor.ppo_epochs=2"))
+
+    _trains_one_step(bench)
 
 
-def test_kl_term_without_a_reference_model_is_rejected(tmp_path) -> None:
+def test_kl_term_without_a_reference_model_is_rejected(monkeypatch, tmp_path) -> None:
     # The KL compares the replay against the reference; the trainer decides
     # once, at construction, instead of the loss finding ref_log_prob missing.
+    from vrl.trainers.online.trainer import OnlineTrainer
+
+    bench = real_trainer(monkeypatch, tmp_path, overrides=("algorithm.kl_coef=0.1",))
+    trainer = bench.trainer
+
     with pytest.raises(ValueError, match="ref_model"):
-        _build_trainer(tmp_path, algorithm=GRPO(GRPOConfig(kl_coef=0.1)))
+        OnlineTrainer(
+            algorithm=trainer.algorithm,
+            collector=bench.collector.collector,
+            evaluator=trainer.evaluator,
+            model=bench.model,
+            ref_model=None,
+            config=trainer.config,
+            device="cpu",
+            strategy=bench.strategy,
+        )
 
 
-def test_plain_grpo_single_epoch_is_allowed(tmp_path) -> None:
+def test_plain_grpo_single_epoch_is_allowed(monkeypatch, tmp_path) -> None:
     # Plain GRPO at one epoch is honest REINFORCE+group-baseline, not a no-op.
-    trainer = _build_trainer(tmp_path, algorithm=GRPO(), ppo_epochs=1)
-    assert trainer is not None
+    bench = real_trainer(monkeypatch, tmp_path, overrides=("actor.ppo_epochs=1",))
+
+    _trains_one_step(bench)
 
 
-def test_continuous_zero_staleness_is_rejected_by_typed_config() -> None:
-    with pytest.raises(ValueError, match=r"max_stale_policy_versions must be >= 1"):
-        ContinuousRolloutConfig(max_stale_policy_versions=0)
-
-
-def test_continuous_with_staleness_allows_single_epoch_trust_region(tmp_path) -> None:
-    trainer = _build_trainer(
+def test_continuous_with_staleness_allows_single_epoch_trust_region(monkeypatch, tmp_path) -> None:
+    # A stale behavior policy makes the ratio differ from 1 even at one epoch.
+    bench = real_trainer(
+        monkeypatch,
         tmp_path,
-        algorithm=FlowDPPO(),
-        schedule_mode="continuous",
-        max_stale_policy_versions=1,
+        overrides=(_FLOW_DPPO, "actor.ppo_epochs=1", _CONTINUOUS),
     )
-    assert trainer is not None
+
+    _trains_one_step(bench)

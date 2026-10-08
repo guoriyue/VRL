@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from vrl.algorithms.types import TrainStepMetrics
@@ -18,16 +19,9 @@ class Algorithm(Protocol):
     - compute_loss(inputs)
     """
 
-    # Behavior declarations the trainer and the factory read once at startup.
-    #
-    # requires_active_trust_region: the loss is *defined* by a clipped/guarded
-    #   importance ratio r = pi_new/pi_old (Flow-DPPO / GRPO-Guard). When True the
-    #   trainer refuses strict_on_policy + ppo_epochs==1, where r==1 makes the
-    #   trust-region term identically zero (the run degenerates to plain GRPO).
-    #   False for objectives whose ratio clip is only a safety rail
-    #   (plain GRPO at ppo_epochs=1 is honest REINFORCE-with-group-baseline).
-    #   The factory also reads it as "measures drift against the rollout
-    #   proposal mean" and requires ``rollout.return_prev_sample_mean``.
+    # Which schedules an objective is sound under (off-policy staleness, an
+    # active trust region) is a config fact: its config class declares it in
+    # ``config_contract`` and config resolution enforces it before launch.
     #
     # What a loss reads is the type of its input (``SegmentSignal`` /
     # ``FlowSDESignal`` on the evaluator branch, ``ForwardProcessReplay`` on the
@@ -35,8 +29,29 @@ class Algorithm(Protocol):
     # declaration. Root objectives own their values; subclasses inherit only
     # when the family theorem is the same.
     uses_evaluator: bool
-    tolerates_off_policy_staleness: bool
-    requires_active_trust_region: bool
+    # Weight of the KL term against the reference replay (the trainer then
+    # replays the reference policy) and of the clean-target SFT regularizer
+    # (the trainer then loads the clean latents); 0.0 for objectives without
+    # the term.
+    kl_coef: float
+    sft_weight: float
+
+    # Lifecycle entry points. The trainer calls both on every objective, the
+    # way a scheduler calls a thread's fixed entry points; an objective with
+    # nothing to do at one implements it as a no-op.
+
+    def prepare_update(self, update_timesteps: Callable[[], Any]) -> None:
+        """Once per optimizer update, before its first replay forward.
+
+        ``update_timesteps()`` returns the recorded timestep of every (sample,
+        trained step) the update puts loss on; an objective normalizing over
+        the whole update evaluates it, others ignore it.
+        """
+        ...
+
+    def after_optimizer_step(self, global_step: int) -> None:
+        """After every applied (not scaler-skipped) optimizer step."""
+        ...
 
     @property
     def config(self) -> object:

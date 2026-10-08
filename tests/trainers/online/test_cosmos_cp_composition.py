@@ -1,4 +1,17 @@
-"""Native Cosmos/CPS/GRPO through a complete CP OnlineTrainer.step."""
+"""Native Cosmos/CPS/GRPO through a complete CP OnlineTrainer.step.
+
+The CPU tests run the real stack on every rank: a tiny Cosmos-Predict2.5
+snapshot the family loads unpatched, the run resolved from the GRPO experiment
+preset, ``InProcessGenerationRuntime`` serving the rollout on the CP leader, a
+real ``RolloutCollector`` and reward runtime, the recipe's algorithm/evaluator
+pair, the real weight syncer, and ``ContextParallelStrategy`` over gloo.
+
+The disjoint-CUDA tests and the released-weight probe keep ``_worker``, whose
+collector synthesizes trajectories from a rollout model on a third GPU: the
+in-process runtime has no rollout-device placement of its own (it generates on
+the calling process's current CUDA device), so it cannot carry the
+"rollout on a disjoint GPU" property those tests pin.
+"""
 
 import asyncio
 import copy
@@ -6,9 +19,11 @@ import json
 import os
 import random
 import time
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -17,8 +32,11 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from diffusers import CosmosTransformer3DModel, UniPCMultistepScheduler
 
-from tests.rollouts.collector._helpers import PromptCollectionFake
+from tests.generation._in_process_runtime import InProcessGenerationRuntime
+from tests.rollouts.collector._helpers import IndexReward, Trace
+from tests.scripts.eval.fixtures import write_tiny_cosmos25_snapshot
 from tests.trainers._strategy_policies import free_port
+from vrl import run
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
@@ -30,9 +48,14 @@ from vrl.models.families.cosmos.predict2_5.model import (
 )
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.models.precision import apply_float32_precision, fixed_row_linear_compute
+from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.collector import RolloutCollector, RolloutCollectorConfig
+from vrl.rollouts.collector.core import RolloutGenerationResult
 from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
 from vrl.rollouts.orchestration.strict_on_policy import ContextParallelStrictRolloutSchedule
+from vrl.rollouts.stats import RolloutStats
+from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 from vrl.trainers.checkpointing import (
     TrainingCheckpoint,
     _require_equal_tensor_tree,
@@ -45,10 +68,275 @@ from vrl.trainers.distributed import DistributedTrainingContext, init_training_p
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import OnlineTrainer
 from vrl.trainers.strategy import ContextParallelStrategy
+from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 from vrl.trajectory.builders import build_diffusion_trajectory
+from vrl.trajectory.reader import TrajectoryReader
+
+_TINY_PROMPT = "controlled text"
 
 
-class _Collector(PromptCollectionFake):
+def _write_tiny_run_inputs(root: Path) -> None:
+    """The snapshot and manifest every rank and both phases resolve the run from."""
+
+    write_tiny_cosmos25_snapshot(root / "snapshot")
+    (root / "prompts.jsonl").write_text(json.dumps({"prompt": _TINY_PROMPT}) + "\n")
+
+
+def _tiny_cosmos_config(root: Path, *, rank: int, ema: bool) -> Any:
+    """The Cosmos-Predict2.5 GRPO preset resolved onto the tiny snapshot, fp32 on CPU."""
+
+    from vrl.config.loading import load_config
+
+    return load_config(
+        "experiment/cosmos_predict2_5/online_grpo_kling_video_reward",
+        overrides=[
+            f"model.path={root / 'snapshot'}",
+            "model.revision=null",
+            "model.skip_text_encoder=true",
+            "model.torch_compile.enable=false",
+            "model.lora.rank=2",
+            "model.lora.alpha=4",
+            "model.lora.target_modules=[to_q,to_k,to_v,to_out.0]",
+            f"data.manifest={root / 'prompts.jsonl'}",
+            f"trainer.output_dir={root / f'rank-{rank}'}",
+            "precision.training.dtype=fp32",
+            "precision.rollout.dtype=fp32",
+            "precision.float32_precision=ieee",
+            "sampling.width=32",
+            "sampling.height=32",
+            "sampling.num_frames=1",
+            "sampling.num_steps=2",
+            "sampling.fps=4",
+            "sampling.max_sequence_length=8",
+            "rollout.n_samples_per_prompt=2",
+            "rollout.prompts_per_batch=1",
+            "rollout.sde.window_range=[0,2]",
+            "algorithm.kl_coef=0.0",
+            "actor.ppo_epochs=1",
+            "actor.timestep_fraction=1.0",
+            "actor.drop_zero_advantage=false",
+            f"actor.ema.enable={str(ema).lower()}",
+            "distributed.resources.rollout.num_gpus=0",
+        ],
+    )
+
+
+def _last_actions(trace: Trace) -> torch.Tensor:
+    output = trace.results["generate"][-1]
+    return TrajectoryReader(output.trajectory).role_value("denoise", "action").detach().cpu()
+
+
+def _cpu_worker(rank, rendezvous, root, phase=None):
+    """One CP rank of the real tiny-Cosmos online run (``phase``: control/resume)."""
+
+    torch.set_num_threads(1)
+    torch.use_deterministic_algorithms(True)
+    apply_float32_precision("ieee")
+    dist.init_process_group(
+        "gloo", init_method=rendezvous, rank=rank, world_size=2, timeout=timedelta(seconds=120)
+    )
+    monkeypatch = pytest.MonkeyPatch()
+    # A spawned rank escapes the conftest CUDA pin; this harness is CPU-only.
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 0)
+    root = Path(root)
+    strategy = ContextParallelStrategy(
+        DistributedTrainingContext("context_parallel", rank, 2, torch.device("cpu")), cp_size=2
+    )
+    trainer = None
+    try:
+        torch.manual_seed(31)
+        resolved = run.resolve_online_run(
+            _tiny_cosmos_config(root, rank=rank, ema=phase is not None)
+        )
+        built = resolved.built
+        replay = run.resolve_model(
+            resolved.family,
+            built.root,
+            resolved.device,
+            precision=built.precision,
+            for_rollout=False,
+        )
+        bundle = replay.materialize(context="cosmos cp composition")
+        model = bundle.model
+        runtime = InProcessGenerationRuntime(resolved.ray_launch_inputs(replay))
+        if rank == 0:
+            # The in-process policy build draws LoRA init from this process's
+            # global RNG (a Ray actor would draw from its own). Load it before
+            # any checkpointed RNG is captured or restored, so both phases see
+            # the same stream afterwards.
+            asyncio.run(runtime.activate())
+        trace = Trace(monkeypatch)
+        trace.watch(runtime, "generate", "generate")
+        trace.watch(runtime, "update_weights", "update_weights")
+        collector_config = RolloutCollectorConfig.from_root(built.root)
+        pair = AlgorithmEvaluatorPair.from_configs(
+            family_entry=resolved.family,
+            built=built,
+            collector_config=collector_config,
+            scheduler=bundle.scheduler,
+        )
+        before = {
+            name: p.detach().clone() for name, p in model.named_parameters() if p.requires_grad
+        }
+        trainer = OnlineTrainer(
+            algorithm=pair.algorithm,
+            collector=RolloutCollector.from_family(
+                resolved.family,
+                reward_runtime=RewardFunctionRuntime(IndexReward()),
+                config=collector_config,
+                generation_runtime=runtime,
+            ),
+            evaluator=pair.evaluator,
+            model=model,
+            weight_syncer=RayRuntimeWeightSyncer(runtime),
+            sync_state_getter=lambda: strategy.export_rollout_state(bundle),
+            config=built.trainer,
+            device=torch.device("cpu"),
+            strategy=strategy,
+        )
+        # Only the CP leader owns rollout; the other rank receives the spool.
+        trainer.rollout_schedule = ContextParallelStrictRolloutSchedule(
+            owner=trainer.rollout_schedule if rank == 0 else None,
+            groups=strategy.groups,
+            spool_dir=root,
+        )
+        checkpoint_dir = root / "checkpoint-1"
+        if phase == "resume":
+            checkpoint = TrainingCheckpoint.load(checkpoint_dir)
+            restore_training_checkpoint(
+                checkpoint,
+                trainer=trainer,
+                bundle=bundle,
+                family="cosmos-predict2.5",
+                expected_model_identity=replay.identity,
+            )
+            restore_rng_state(checkpoint.rng_state, rank=rank, world_size=2)
+            assert trainer.state.step == 1
+            assert trainer._ema.has_updates
+        updates = 1 if phase == "resume" else 2
+        for index in range(updates):
+            metrics = asyncio.run(trainer.step([_TINY_PROMPT]))
+            assert metrics.grad_norm > 0
+            assert metrics.initial_replay.finite
+            assert metrics.initial_replay.logprob_abs_diff_max <= 1e-3
+            if phase == "control" and index == 0:
+                assert trainer._ema.has_updates
+                save_training_checkpoint(
+                    checkpoint_dir,
+                    trainer=trainer,
+                    bundle=bundle,
+                    family="cosmos-predict2.5",
+                    model_identity=replay.identity,
+                    progress={"next_step": 1},
+                    strategy=strategy,
+                )
+                strategy.collectives.barrier()
+        assert trainer.state.step == 2
+        assert trainer.state.global_step >= 2
+        assert any(
+            not torch.equal(before[name], p)
+            for name, p in model.named_parameters()
+            if name in before
+        )
+        # The leader generated once per update at the version it had just
+        # pushed; the initial push plus one per update reached its runtime.
+        stamped = [request.policy_version for request in trace.requests]
+        assert stamped == (list(range(1, updates + 1)) if rank == 0 else [])
+        assert trace.events.count("update_weights") == (updates + 1 if rank == 0 else 0)
+        for parameter in model.parameters():
+            reference = parameter.detach().clone()
+            dist.broadcast(reference, src=0)
+            torch.testing.assert_close(parameter, reference, rtol=0, atol=0)
+        if phase is not None:
+            assert trainer._ema.num_updates == trainer.state.global_step
+            trainable = [p for p in model.parameters() if p.requires_grad]
+            assert any(
+                not torch.equal(shadow, parameter)
+                for shadow, parameter in zip(trainer._ema.ema_parameters, trainable, strict=True)
+            )
+            outcome = {
+                "model": model.state_dict(),
+                "trainer": trainer.state_dict(),
+                "actions": _last_actions(trace) if rank == 0 else None,
+                "next_rng": {
+                    "torch": torch.rand(8),
+                    "python": random.random(),
+                    "numpy": torch.from_numpy(np.random.rand(8)),
+                },
+            }
+            reference_path = root / f"control-rank-{rank}.pt"
+            if phase == "control":
+                torch.save(outcome, reference_path)
+            else:
+                reference = torch.load(reference_path, map_location="cpu", weights_only=False)
+                _require_equal_tensor_tree(reference, outcome, label="fresh-process resume")
+    finally:
+        if trainer is not None:
+            asyncio.run(trainer.rollout_schedule.shutdown())
+        strategy.shutdown()
+        monkeypatch.undo()
+
+
+class _PromptCollectionShell:
+    """Production prompt collection over this module's own generation and reward.
+
+    The disjoint-CUDA composition tests below drive the real trainer on a
+    collector whose generation is the loaded Cosmos model and whose "reward"
+    is the prebuilt batch; the lifecycle surface the schedule calls is a no-op.
+    """
+
+    def assemble_training_batches(self, evaluated):
+        # These scheduling fakes use prebuilt batches as their reward result.
+        return evaluated
+
+    reward_runtime = SimpleNamespace()
+    generation_runtime = SimpleNamespace(current_policy_version=None)
+    # No lifecycle plan: nothing shares a GPU, so no role parks and the reward
+    # counts as isolated.
+    lifecycle = None
+    reward_isolation_verified = True
+
+    async def activate_generation_runtime(self) -> None:
+        return None
+
+    async def offload_generation_runtime_memory(self) -> None:
+        return None
+
+    async def shutdown(self) -> None:
+        return None
+
+    request_builder = SimpleNamespace(
+        build=lambda inputs, group_size, **kwargs: SimpleNamespace(
+            inputs=inputs, options={"group_size": group_size, **kwargs}
+        )
+    )
+    build_generation_requests = RolloutCollector.build_generation_requests
+    prepare_training_batches = RolloutCollector.prepare_training_batches
+
+    def finish_scored_prompt_groups(
+        self,
+        generated_groups: list[RolloutGenerationResult],
+        batches: list[RolloutBatch],
+        stats: RolloutStats,
+    ) -> list[RolloutBatch]:
+        # Scheduling fakes may return a batch directly, without building a
+        # generation request/output. Supply its omitted timing fields here;
+        # production UnscoredRollout always owns both dictionaries.
+        groups = [
+            replace(
+                group,
+                unscored=SimpleNamespace(
+                    phases=getattr(group.unscored, "phases", {}),
+                    reward_timing_ms=getattr(group.unscored, "reward_timing_ms", {}),
+                ),
+            )
+            for group in generated_groups
+        ]
+        return RolloutCollector.finish_scored_prompt_groups(self, groups, batches, stats)
+
+
+class _Collector(_PromptCollectionShell):
     def __init__(self, model, *, released=False):
         self.model = model
         self.released = released
@@ -441,7 +729,8 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
 
 
 def test_native_cosmos_cp_online_step(tmp_path):
-    mp.spawn(_worker, args=((tmp_path / "gloo").as_uri(), str(tmp_path)), nprocs=2, join=True)
+    _write_tiny_run_inputs(tmp_path)
+    mp.spawn(_cpu_worker, args=((tmp_path / "gloo").as_uri(), str(tmp_path)), nprocs=2, join=True)
 
 
 @pytest.mark.distributed
@@ -454,17 +743,23 @@ def test_native_cosmos_cp_online_step_disjoint_cuda(tmp_path):
 
 def _run_resume_comparison(tmp_path, *, cuda):
     for phase in ("control", "resume"):
-        rendezvous = free_port() if cuda else (tmp_path / phase).as_uri()
         mp.spawn(
             _worker,
-            args=(rendezvous, str(tmp_path), cuda, phase),
+            args=(free_port(), str(tmp_path), cuda, phase),
             nprocs=2,
             join=True,
         )
 
 
 def test_native_cosmos_cp_checkpoint_resume_ema(tmp_path):
-    _run_resume_comparison(tmp_path, cuda=False)
+    _write_tiny_run_inputs(tmp_path)
+    for phase in ("control", "resume"):
+        mp.spawn(
+            _cpu_worker,
+            args=((tmp_path / phase).as_uri(), str(tmp_path), phase),
+            nprocs=2,
+            join=True,
+        )
 
 
 @pytest.mark.distributed

@@ -1,185 +1,68 @@
-"""OnlineTrainer trainable-state / weight-sync wiring: pre-collect sync ordering and getter requirement."""
+"""OnlineTrainer trainable-state / weight-sync wiring: pre-collect sync ordering and getter requirement.
+
+Both run on the online recipe's own wiring over the tiny SANA stack: the real
+strategy export is the payload, the real weight syncer pushes it, and the
+in-process rollout runtime installs it.
+"""
 
 from __future__ import annotations
 
-from tests.rollouts.collector._helpers import PromptCollectionFake
-from tests.trainers.online._helpers import (
-    _algorithm_inputs,
-    _diffusion_rollout_batch,
-    _EvaluatorAlgorithmFake,
-    _stamp_model_precision,
-    _trajectory_signals,
-)
-from vrl.rollouts.evaluators.base import Evaluator
+import asyncio
+
+import pytest
+import torch
+
+from tests.trainers.online._helpers import real_trainer
 
 
-class TestTrainableState:
-    """Groups tests for trainable state."""
+def test_initial_rollout_weight_sync_happens_before_collect(monkeypatch, tmp_path) -> None:
+    """The first step syncs the driver's trainable state to the rollout before collecting;
+    the post-train sync then publishes the updated weights."""
 
-    def test_initial_rollout_weight_sync_happens_before_collect(self) -> None:
-        """The first step syncs the driver's trainable state to the rollout before collecting; the
-        collector already sees the sync done.
-        """
-        import asyncio
+    bench = real_trainer(monkeypatch, tmp_path, overrides=("actor.ppo_epochs=1",))
+    initial = {
+        f"transformer.{name}": value.detach().clone()
+        for name, value in bench.trainable_parameters().items()
+    }
 
-        import torch
-        import torch.nn as nn
+    asyncio.run(bench.trainer.step(["a cat"]))
 
-        from vrl.algorithms.types import TrainStepMetrics
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-        from vrl.trainers.online.trainer import OnlineTrainer
+    trace = bench.collector.trace
+    assert trace.events.index("update_weights") < trace.events.index("generate")
+    pushes = [args for event, args in trace.calls if event == "update_weights"]
+    assert [version for _state, version in pushes] == [1, 2]
+    first, second = (state for state, _version in pushes)
+    assert first.keys() == initial.keys()
+    assert all(torch.equal(first[key], initial[key]) for key in initial)
+    live = {
+        f"transformer.{name}": value.detach()
+        for name, value in bench.trainable_parameters().items()
+    }
+    assert any(not torch.equal(live[key], initial[key]) for key in initial)
+    assert all(torch.equal(second[key], live[key]) for key in live)
 
-        collect_seen_sync_counts: list[int] = []
 
-        class _Algorithm(_EvaluatorAlgorithmFake):
-            class _Config:
-                global_std = False
-                eps = 1e-8
-                adv_clip_max = 5.0
-                kl_coef = 0.0
+def test_weight_sync_requires_explicit_trainable_state_getter(monkeypatch, tmp_path) -> None:
+    """A trainer with a weight syncer but no trainable-state getter is refused at
+    construction, before any collect could run."""
 
-            config = _Config()
+    from vrl.trainers.online.trainer import OnlineTrainer
+    from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 
-            def compute_advantages_from_tensors(self, rewards, group_ids):
-                del group_ids
-                return rewards - rewards.mean()
+    bench = real_trainer(monkeypatch, tmp_path)
+    trainer = bench.trainer
 
-            def compute_loss(self, inputs):
-                signals, advantages, _old_log_probs = _algorithm_inputs(inputs)
-                loss = signals.log_prob.mean() + advantages.mean() * 0.0
-                return loss, TrainStepMetrics(
-                    loss=loss.item(),
-                    policy_loss=loss.item(),
-                )
-
-        class _Syncer:
-            current_policy_version = None  # This fake does not track a policy version.
-
-            def __init__(self) -> None:
-                self.calls: list[dict] = []
-
-            async def push(self, state_dict):
-                self.calls.append(dict(state_dict))
-
-            async def pull(self):
-                return dict(self.calls[-1])
-
-        syncer = _Syncer()
-
-        class _Collector(PromptCollectionFake):
-            async def evaluate_rollout(self, pendings):
-                return list(pendings)
-
-            async def generate_rollout(self, request):
-                kwargs = request.options
-                collect_seen_sync_counts.append(len(syncer.calls))
-                group_size = int(kwargs["group_size"])
-                return _diffusion_rollout_batch(
-                    rewards=torch.arange(group_size, dtype=torch.float32),
-                    group_ids=torch.zeros(group_size, dtype=torch.long),
-                    num_steps=2,
-                )
-
-        class _Evaluator(Evaluator):
-            def evaluate(self, model, batch, timestep_idx, **kw):
-                del kw
-                return _trajectory_signals(
-                    batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx
-                )
-
-        model = nn.Linear(1, 1, bias=False)
-        _stamp_model_precision(model)
-        with torch.no_grad():
-            model.weight.fill_(1.0)
-
-        trainer = OnlineTrainer(
-            algorithm=_Algorithm(),
-            collector=_Collector(),
-            evaluator=_Evaluator(),
-            model=model,
-            weight_syncer=syncer,
-            sync_state_getter=lambda: {"linear.weight": model.weight.detach().clone()},
-            config=TrainerConfig(
-                batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
-                timestep_fraction=1.0,
-                drop_zero_advantage=False,
-                output_dir="outputs/",
-                optim=OptimConfig(lr=0.01),
-                ema=EMAConfig(),
-                debug=DebugConfig(),
-            ),
+    with pytest.raises(ValueError, match="trainable-state getter"):
+        OnlineTrainer(
+            algorithm=trainer.algorithm,
+            collector=bench.collector.collector,
+            evaluator=trainer.evaluator,
+            model=bench.model,
+            ref_model=bench.model,
+            weight_syncer=RayRuntimeWeightSyncer(bench.collector.runtime),
+            config=trainer.config,
             device="cpu",
+            strategy=bench.strategy,
         )
 
-        asyncio.run(trainer.step(["prompt-a"]))
-
-        assert collect_seen_sync_counts == [1]
-        assert len(syncer.calls) == 2
-        torch.testing.assert_close(
-            syncer.calls[0]["linear.weight"], torch.ones(1, 1), rtol=0, atol=0
-        )
-        assert not torch.equal(model.weight, syncer.calls[0]["linear.weight"])
-        torch.testing.assert_close(syncer.calls[1]["linear.weight"], model.weight, rtol=0, atol=0)
-
-    def test_weight_sync_requires_explicit_trainable_state_getter(self) -> None:
-        """A trainer with a weight syncer but no trainable-state getter is refused at
-        construction, before any collect could run.
-        """
-        import pytest
-        import torch.nn as nn
-
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-        from vrl.trainers.online.trainer import OnlineTrainer
-
-        class _Algorithm(_EvaluatorAlgorithmFake):
-            class _Config:
-                global_std = False
-                eps = 1e-8
-                adv_clip_max = 5.0
-                kl_coef = 0.0
-
-            config = _Config()
-
-        class _Collector(PromptCollectionFake):
-            async def evaluate_rollout(self, pendings):
-                return list(pendings)
-
-            async def generate_rollout(self, request):
-                prompts = request.inputs
-                kwargs = request.options
-                del prompts, kwargs
-                raise AssertionError("constructor guard should run before collect")
-
-        class _Evaluator(Evaluator):
-            pass
-
-        class _Syncer:
-            async def push(self, state_dict):
-                del state_dict
-
-            async def pull(self):
-                return {}
-
-        with pytest.raises(ValueError, match="trainable-state getter"):
-            OnlineTrainer(
-                algorithm=_Algorithm(),
-                collector=_Collector(),
-                evaluator=_Evaluator(),
-                model=nn.Linear(1, 1),
-                weight_syncer=_Syncer(),
-                config=TrainerConfig(
-                    batch_plan=OnlineBatchPlan(
-                        prompts_per_batch=1,
-                        n_samples_per_prompt=2,
-                    ),
-                    timestep_fraction=1.0,
-                    drop_zero_advantage=False,
-                    output_dir="outputs/",
-                    optim=OptimConfig(lr=0.01),
-                    ema=EMAConfig(),
-                    debug=DebugConfig(),
-                ),
-                device="cpu",
-            )
+    assert bench.collector.trace.events == []

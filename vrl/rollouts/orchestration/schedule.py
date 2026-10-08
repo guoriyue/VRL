@@ -113,21 +113,14 @@ def build_rollout_schedule(
     config: RolloutOrchestrationConfig,
     lifecycle: RolloutRuntimeCoordinator,
     *,
-    algorithm_tolerates_off_policy_staleness: bool,
     versioned_weight_sync: bool,
 ) -> RolloutSchedule:
     """Select the RL rollout schedule the trainer config names, over ``lifecycle``.
 
     The caller owns the coordinator (the collector, strategy, weight syncer and
     training-state access it schedules); this only picks the phase discipline.
-
-    ``algorithm_tolerates_off_policy_staleness`` is the algorithm's soundness
-    capability (a plain bool, not the algorithm object, so the rollout layer
-    stays free of any ``vrl.algorithms`` import). The algorithm declares whether
-    its objective supports bounded policy-version lag. Its name or use of an
-    importance-sampling ratio alone cannot establish that capability. The
-    continuous schedule checks this declaration; the producer/consumer implement
-    the algorithm-independent staleness mechanism.
+    Whether the algorithm is sound under the chosen schedule was settled when
+    ``TrainerConfig`` was resolved.
     """
 
     mode = RolloutScheduleMode(config.schedule_mode)
@@ -137,7 +130,6 @@ def build_rollout_schedule(
         return ContinuousRolloutSchedule.from_config(
             config.continuous,
             lifecycle=lifecycle,
-            algorithm_tolerates_off_policy_staleness=algorithm_tolerates_off_policy_staleness,
             versioned_weight_sync=versioned_weight_sync,
         )
     raise AssertionError(f"unreachable rollout schedule mode: {mode}")

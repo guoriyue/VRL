@@ -2,17 +2,63 @@
 
 import os
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+from torch import nn
 
 from tests.trainers._strategy_policies import free_port
-from tests.trainers.online.test_fsdp_streaming_equivalence import _Policy
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.online.ema import EMAWeights
 from vrl.trainers.strategy import FSDPStrategy, TrainingMemoryState
+
+
+class _MixedBlock(nn.Module):
+    """A frozen BF16 base beside a trainable FP32 adapter, like a LoRA layer."""
+
+    def __init__(self):
+        super().__init__()
+        self.base = nn.Linear(4, 4, bias=False, dtype=torch.bfloat16)
+        self.base.requires_grad_(False)
+        self.adapter = nn.Linear(4, 4, bias=False)
+        with torch.no_grad():
+            self.base.weight.fill_(0.125)
+            self.adapter.weight.fill_(0.25)
+
+    def forward(self, values):
+        return self.base(values.bfloat16()).float() + self.adapter(values)
+
+
+class _Transformer(nn.Module):
+    _no_split_modules: ClassVar[list[str]] = ["_MixedBlock"]
+
+    def __init__(self):
+        super().__init__()
+        self.block = _MixedBlock()
+
+    def forward(self, values):
+        return self.block(values)
+
+
+class _Policy(nn.Module):
+    """The smallest policy with the trainable-root contract ``prepare_model`` reads."""
+
+    def __init__(self):
+        super().__init__()
+        self.transformer = _Transformer()
+
+    @property
+    def trainable_modules(self):
+        return {"transformer": self.transformer}
+
+    def set_module_root(self, name, module):
+        setattr(self, name, module)
+
+    def forward(self, rewards):
+        return self.transformer(rewards[:, None].expand(-1, 4)).mean(dim=1)
 
 
 def _owned_tensors(memory):

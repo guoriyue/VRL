@@ -62,34 +62,43 @@ class AlgorithmEvaluatorPair:
             # evaluator. dance_grpo reuses FlowGRPO unchanged (its delta is the
             # trainer's random timestep selection + multi-reward); flow_dppo /
             # grpo_guard are trust-region variants whose loss reads the rollout
-            # proposal mean, checked against the recipe below.
+            # proposal mean (config rules require it to be stored).
             from vrl.algorithms.grpo.continuous import GRPO, FlashGRPO, FlowDPPO, GRPOGuard
 
             is_chunk_autoregressive = (
                 family_entry.policy_semantics.generation_regime == "chunk_autoregressive"
             )
-            if is_chunk_autoregressive and float(getattr(algorithm_config, "sft_weight", 0.0)) > 0:
-                raise ValueError(
-                    f"{family_entry.family} grouped causal-chunk replay does not "
-                    "implement the full-sequence scheduler target required by "
-                    "algorithm.sft_weight; set sft_weight=0",
-                )
             advantage_estimator = algorithm_config.build_estimator(
                 component_weights=reward.weights,
             )
-            if kind == "flow_dppo":
-                algorithm_type = FlowDPPO
-            elif kind == "grpo_guard":
-                algorithm_type = GRPOGuard
-            elif kind == "flash_grpo":
-                algorithm_type = FlashGRPO
+            trainer_config = built.trainer
+            correction = None if trainer_config is None else trainer_config.precision_correction
+            denoise = collector_config.denoise or DenoiseRequestOptions()
+            if kind == "flash_grpo":
+                # The rectification weight is defined over the rollout SDE the
+                # replay evaluator integrates: same scheduler, same noise.
+                algorithm = FlashGRPO(
+                    algorithm_config,
+                    scheduler=scheduler,
+                    noise_level=denoise.noise_level,
+                    sde_type=denoise.sde_type or "flow_grpo",
+                    advantage_estimator=advantage_estimator,
+                    precision_correction=correction,
+                )
             else:
-                algorithm_type = GRPO
-            algorithm = algorithm_type(
-                algorithm_config,
-                advantage_estimator=advantage_estimator,
-            )
+                algorithm_type = {"flow_dppo": FlowDPPO, "grpo_guard": GRPOGuard}.get(kind, GRPO)
+                algorithm = algorithm_type(
+                    algorithm_config,
+                    advantage_estimator=advantage_estimator,
+                    precision_correction=correction,
+                )
             if is_chunk_autoregressive:
+                if algorithm.sft_weight > 0:
+                    raise ValueError(
+                        f"{family_entry.family} grouped causal-chunk replay does not "
+                        "implement the full-sequence scheduler target required by "
+                        "algorithm.sft_weight; set sft_weight=0",
+                    )
                 if precision.denoise_math != "fp32":
                     raise ValueError(
                         f"{family_entry.family} uses an exact fp32 Gaussian re-noise "
@@ -118,13 +127,6 @@ class AlgorithmEvaluatorPair:
                 )
 
             math_dtype = resolve_torch_dtype(precision.denoise_math)
-            denoise = collector_config.denoise or DenoiseRequestOptions()
-            if algorithm.requires_active_trust_region and not denoise.return_prev_sample_mean:
-                raise ValueError(
-                    f"algorithm.kind={kind!r} measures the current-vs-rollout proposal "
-                    "drift, which needs the rollout mean stored at generation; set "
-                    "rollout.return_prev_sample_mean=true",
-                )
             from vrl.rollouts.evaluators.denoise.sde_logprob import (
                 DenoiseSDELogProbEvaluator,
             )

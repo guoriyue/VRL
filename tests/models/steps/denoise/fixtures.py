@@ -643,8 +643,14 @@ def build_tiny_minimax_h3_tokenizer() -> Any:
     )
 
 
-def build_tiny_minimax_h3_text_encoder(tokenizer: Any, *, seed: int = 0) -> Any:
-    """Tiny real ``Qwen3VLForConditionalGeneration`` (2 decoder layers, ~30K params)."""
+def build_tiny_minimax_h3_text_encoder(
+    tokenizer: Any, *, seed: int = 0, num_hidden_layers: int = 2
+) -> Any:
+    """Tiny real ``Qwen3VLForConditionalGeneration`` (2 decoder layers, ~30K params).
+
+    ``num_hidden_layers`` deepens it for the real load path, which conditions
+    on the released layer index rather than the tiny components' override.
+    """
 
     from transformers import Qwen3VLConfig, Qwen3VLForConditionalGeneration
 
@@ -653,7 +659,7 @@ def build_tiny_minimax_h3_text_encoder(tokenizer: Any, *, seed: int = 0) -> Any:
         text_config={
             "hidden_size": TINY_MINIMAX_H3_TEXT_DIM,
             "intermediate_size": 32,
-            "num_hidden_layers": 2,
+            "num_hidden_layers": num_hidden_layers,
             "num_attention_heads": 2,
             "num_key_value_heads": 1,
             "vocab_size": len(tokenizer),
@@ -810,6 +816,45 @@ def build_tiny_minimax_h3_components(
     )
 
 
+def write_tiny_minimax_h3_snapshot(path: Any, *, seed: int = 0) -> Any:
+    """A loadable local MiniMax-H3 modular-pipeline snapshot of the tiny components.
+
+    Saved through diffusers' own ``MiniMaxH3ModularPipeline.save_pretrained``,
+    so ``ModularPipeline.from_pretrained`` reads it exactly as it reads the
+    released repo. The video scheduler is saved as the released
+    ``MiniMaxH3Scheduler``; the family installs its flow subclass on load.
+    """
+
+    from pathlib import Path
+
+    from diffusers import MiniMaxH3ModularPipeline, MiniMaxH3Scheduler
+
+    from vrl.models.families.minimax_h3.model import MiniMaxH3Components
+
+    components = build_tiny_minimax_h3_components(seed=seed)
+    # A loaded snapshot conditions on the released hidden-state index (diffusers
+    # and the family both fix it), so the conditioner must be deeper than it.
+    text_encoder = build_tiny_minimax_h3_text_encoder(
+        components.tokenizer,
+        seed=seed,
+        num_hidden_layers=MiniMaxH3Components.text_encoder_layer + 1,
+    )
+    pipeline = MiniMaxH3ModularPipeline()
+    pipeline.update_components(
+        transformer=components.transformer,
+        vae=components.vae,
+        audio_vae=components.audio_vae,
+        text_encoder=text_encoder,
+        tokenizer=components.tokenizer,
+        processor=components.processor,
+        scheduler=MiniMaxH3Scheduler(shift=12.0),
+        audio_scheduler=components.audio_scheduler,
+    )
+    path = Path(path)
+    pipeline.save_pretrained(str(path))
+    return path
+
+
 # ---- VDN-H3 (vendored third_party/vdn-minimax-h3) -------------------------------
 # The transform config of the released 8-NFE artifact
 # (stage-dmd-step-250/model_spec.json), with only ``linear_head_dim`` scaled to
@@ -853,3 +898,58 @@ def build_tiny_vdn_h3_model(*, seed: int = 0, softmax_backend: str = "ref") -> A
     vendor.apply_hybrid_attention_transform(model.transformer, TINY_VDN_H3_TRANSFORM_CONFIG)
     vendor.set_softmax_backend(model.transformer, softmax_backend)
     return model
+
+
+def write_tiny_vdn_h3_checkpoint(path: Any, *, seed: int = 0) -> Any:
+    """A loadable VDN artifact for the tiny MiniMax-H3 snapshot.
+
+    Written through upstream's own ``ModelSpec`` and ``save_checkpoint``: the
+    spec declares ``TINY_VDN_H3_TRANSFORM_CONFIG`` as the one hybrid transform,
+    and the weights are the linear-branch parameters the transform adds to the
+    tiny transformer (the backbone stays the snapshot's). ``install_hybrid_attention``
+    reads it exactly as it reads a released ``ckpts/<name>`` artifact.
+    """
+
+    from pathlib import Path
+
+    from src.checkpoints.schema import CheckpointArtifact
+    from src.checkpoints.writer import save_checkpoint
+    from src.models.model_spec import (
+        BaseSpec,
+        ModelSpec,
+        hybrid_transform_spec,
+        validate_spec,
+    )
+
+    hybrid = build_tiny_vdn_h3_model(seed=seed).transformer
+    backbone = set(build_tiny_minimax_h3_transformer(seed=seed).state_dict())
+    branch = {
+        name: value.detach().clone()
+        for name, value in hybrid.state_dict().items()
+        if name.replace(".attn.orig.", ".attn.") not in backbone
+    }
+    config = dict(hybrid.config)
+    spec = validate_spec(
+        ModelSpec(
+            format_version=2,
+            base=BaseSpec(
+                library="diffusers",
+                class_name=type(hybrid).__name__,
+                source="tiny-minimax-h3",
+                subfolder="transformer",
+                revision=None,
+                resolved_config={
+                    key: config[key]
+                    for key in ("num_layers", "num_attention_heads", "attention_head_dim")
+                    if key in config
+                },
+            ),
+            transforms=[hybrid_transform_spec(TINY_VDN_H3_TRANSFORM_CONFIG)],
+        )
+    )
+    path = Path(path)
+    save_checkpoint(
+        CheckpointArtifact(kind="weights", model_spec=spec.to_dict(), weights=branch),
+        str(path),
+    )
+    return path

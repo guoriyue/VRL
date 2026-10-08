@@ -57,5 +57,5 @@ def test_flow_sde_training_skips_the_last_step_and_other_evaluators_keep_it() ->
         evaluator=DenoiseSDELogProbEvaluator(scheduler=_scheduler(20), sde_type="ddim")
     )
     assert ddim._train_replay_indices(batch, 1.0, "strided") == list(range(20))
-    other = bare_trainer(evaluator=object())
+    other = bare_trainer(evaluator=None)
     assert other._train_replay_indices(batch, 1.0, "strided") == list(range(20))

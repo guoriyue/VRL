@@ -496,17 +496,11 @@ class OnlineTrainer:
         # RuntimeBundle stamps the selected role policy on the model so trainer
         # process settings cannot be paired with a different build.
         self.precision = model_precision(model)
-        # Precision correction (TIS) is a trainer-level precision-drift concern, not
-        # an algorithm hyperparameter; inject it into algorithms that apply it
-        # (importance-ratio algorithms hold a `precision_correction` slot).
-        if hasattr(algorithm, "precision_correction"):
-            algorithm.precision_correction = config.precision_correction
-            self._validate_recompute_old_logprob(config)
         # The KL term needs the reference replay; decide it here, once, instead
         # of discovering a missing ref_log_prob inside the loss.
-        if algorithm.uses_evaluator and self._kl_coef > 0 and ref_model is None:
+        if algorithm.uses_evaluator and algorithm.kl_coef > 0 and ref_model is None:
             raise ValueError(
-                f"{type(algorithm).__name__} has kl_coef={self._kl_coef} > 0 but "
+                f"{type(algorithm).__name__} has kl_coef={algorithm.kl_coef} > 0 but "
                 "OnlineTrainer received no ref_model; the KL term compares against "
                 "the reference replay",
             )
@@ -568,14 +562,9 @@ class OnlineTrainer:
         self.rollout_schedule = build_rollout_schedule(
             self.config.rollout_orchestration,
             self._rollout_runtime,
-            # Likelihood-free objectives (DiffusionNFT) opt out, which makes a
-            # continuous max_stale>0 config fail fast as unsound.
-            algorithm_tolerates_off_policy_staleness=(
-                self.algorithm.tolerates_off_policy_staleness
-            ),
             versioned_weight_sync=self.config.versioned_weight_sync,
         )
-        cp_groups = getattr(self._strategy, "context_parallel_groups", None)
+        cp_groups = self._strategy.context_parallel_groups
         if cp_groups is not None:
             from vrl.rollouts.orchestration.context_parallel import (
                 ContextParallelRolloutSchedule,
@@ -584,86 +573,10 @@ class OnlineTrainer:
             self.rollout_schedule = ContextParallelRolloutSchedule(
                 self.rollout_schedule, groups=cp_groups
             )
-        self._validate_trust_region_engages()
 
         # The backend setting is process-global, so every trainer construction
         # projects both the IEEE and TF32 paths instead of inheriting stale state.
         apply_float32_precision(self.precision.float32_precision)
-
-    @staticmethod
-    def _validate_recompute_old_logprob(config: Any) -> None:
-        """``recompute_old_logprob=on`` needs behavior policy == pre-update target.
-
-        The replay forward that provides the recomputed "old" is the loss forward
-        itself, which holds only on the single pass over a freshly collected
-        rollout: later PPO epochs would need the epoch-1 values, and continuous
-        staleness makes the recorded log-prob a real off-policy correction that
-        recomputation would erase.
-        """
-
-        correction = config.precision_correction
-        if correction is None or correction.recompute_old_logprob != "on":
-            return
-        orchestration = config.rollout_orchestration
-        max_stale = (
-            int(orchestration.continuous.max_stale_policy_versions)
-            if orchestration.schedule_mode == "continuous"
-            else 0
-        )
-        optimizer_steps = int(
-            getattr(getattr(config, "batch_plan", None), "optimizer_steps_per_batch", 1)
-        )
-        if int(config.ppo_epochs) > 1 or optimizer_steps > 1 or max_stale > 0:
-            raise ValueError(
-                "precision_correction.recompute_old_logprob='on' replaces the rollout "
-                "log-prob with the trainer's pre-update replay log-prob, which is only "
-                "the behavior policy under actor.ppo_epochs=1, one optimizer step per "
-                f"batch and no continuous staleness; got ppo_epochs={int(config.ppo_epochs)}, "
-                f"optimizer_steps_per_batch={optimizer_steps}, "
-                f"max_stale_policy_versions={max_stale}. Use 'off' (bypass) with the "
-                "TIS/RS for off-policy replay.",
-            )
-
-    def _validate_trust_region_engages(self) -> None:
-        """Refuse configs where a trust-region algorithm's ratio term is inert.
-
-        Flow-DPPO / GRPO-Guard are *defined* by a clipped/guarded importance ratio
-        ``r = pi_new / pi_old``. With ``strict_on_policy`` + ``ppo_epochs == 1`` the
-        behavior and target policy are identical on the single replay pass, so
-        ``r == 1``, the trust-region term is identically zero, and the run is
-        byte-equivalent to plain GRPO — the documented flat-curve root cause. Fail
-        fast instead of silently training a no-op mechanism.
-
-        Continuous always permits a bounded behavior-policy lag; its typed
-        configuration rejects a zero-version window because that execution is
-        the ``strict_on_policy`` schedule.
-        """
-        if not self.algorithm.requires_active_trust_region:
-            return
-        cfg = self.config
-        orchestration = cfg.rollout_orchestration
-        schedule_mode = orchestration.schedule_mode
-        max_stale = (
-            int(orchestration.continuous.max_stale_policy_versions)
-            if schedule_mode == "continuous"
-            else 0
-        )
-        if (
-            int(cfg.ppo_epochs) <= 1
-            and int(cfg.batch_plan.optimizer_steps_per_batch) <= 1
-            and max_stale <= 0
-        ):
-            raise ValueError(
-                f"{type(self.algorithm).__name__} is defined by its importance-ratio "
-                "trust region, but the rollout schedule permits no behavior-policy "
-                "staleness and actor.ppo_epochs=1 makes the ratio identically 1 (behavior == "
-                "target on the single replay pass), so the clip/guard term is a no-op "
-                "and the run is equivalent to plain GRPO. Set actor.ppo_epochs>1 — which "
-                "needs the full-batch path (actor.prompts_per_collection=0, since "
-                "streaming releases each collection and cannot replay it across "
-                "epochs) — or use schedule_mode='continuous' "
-                "with continuous.max_stale_policy_versions>0 for an off-policy ratio."
-            )
 
     # ------------------------------------------------------------------
     # Lazy init
@@ -783,7 +696,7 @@ class OnlineTrainer:
         signals = self._evaluate_signals(
             group_batch,
             timestep_index,
-            need_ref=self._kl_coef > 0,
+            need_ref=self.algorithm.kl_coef > 0,
         )
         with profile_range("trainer.loss"):
             loss, metrics = self.algorithm.compute_loss(
@@ -992,7 +905,7 @@ class OnlineTrainer:
         _adv_abs = advantages_all.detach().abs()
         _total = max(advantages_all.numel(), 1)
         adv_zero_rate = float((_adv_abs < 1e-6).sum().item()) / _total
-        _clip_max = getattr(self.algorithm.config, "adv_clip_max", None)
+        _clip_max = self.algorithm.config.adv_clip_max
         adv_saturation = (
             float((_adv_abs >= _clip_max - 1e-6).sum().item()) / _total
             if _clip_max is not None
@@ -1111,7 +1024,8 @@ class OnlineTrainer:
         temporal chunk or denoise transition.
         """
 
-        granularity = getattr(self.evaluator, "replay_granularity", "step")
+        # Evaluator-less objectives replay one step per call like step evaluators.
+        granularity = "step" if self.evaluator is None else self.evaluator.replay_granularity
         if granularity == "trajectory":
             return [0]
         if granularity != "step":
@@ -1316,14 +1230,9 @@ class OnlineTrainer:
         # (Flash-GRPO's rectification) fixes its denominator here, from the
         # recorded timesteps of every sample it is about to train on, before
         # the first replay forward.
-        prepare_update = getattr(self.algorithm, "prepare_update", None)
-        if callable(prepare_update):
-            prepare_update(
-                self._update_timesteps(batches, train_indices, cfg.timestep_selection),
-                scheduler=self.evaluator.scheduler,
-                noise_level=getattr(self.evaluator, "noise_level", 1.0),
-                sde_type=getattr(self.evaluator, "sde_type", "flow_grpo"),
-            )
+        self.algorithm.prepare_update(
+            lambda: self._update_timesteps(batches, train_indices, cfg.timestep_selection),
+        )
         sample_batches = _TrainingMicrobatch.plan_balanced(
             batches,
             advantages,
@@ -1451,9 +1360,7 @@ class OnlineTrainer:
             return
         self._update_had_training_work = True
         uses_evaluator = self.algorithm.uses_evaluator
-        defer = uses_evaluator and bool(
-            getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),
-        )
+        defer = uses_evaluator and self.evaluator.supports_deferred_replay_tensor_move
         train_indices = self._train_replay_indices(
             batch.batches[0],
             cfg.timestep_fraction,
@@ -1504,9 +1411,7 @@ class OnlineTrainer:
                 grad_norm, stepped = self._clip_and_step(optimizer)
             agg.grad_norms.append(grad_norm)
             if stepped:
-                after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
-                if callable(after_optimizer_step):
-                    after_optimizer_step(self.model, self.state.global_step)
+                self.algorithm.after_optimizer_step(self.state.global_step)
                 self._ema_after_optimizer_step(self._update_ema)
             self.state.global_step += 1
             if stepped:
@@ -1632,8 +1537,8 @@ class OnlineTrainer:
                 phase_times=self._step_stats(iteration, timer).as_metrics_dict(),
             )
 
-        defer_replay_tensor_move = uses_evaluator and bool(
-            getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),
+        defer_replay_tensor_move = (
+            uses_evaluator and self.evaluator.supports_deferred_replay_tensor_move
         )
 
         # Replay schedule — step evaluators use the configured denoise subset;
@@ -1688,9 +1593,7 @@ class OnlineTrainer:
                 # do not fold a non-update into EMA or the algorithm adapter.
                 if _stepped:
                     policy_updated = True
-                    after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
-                    if callable(after_optimizer_step):
-                        after_optimizer_step(self.model, self.state.global_step)
+                    self.algorithm.after_optimizer_step(self.state.global_step)
                     self._ema_after_optimizer_step(ema)
 
                 self.state.global_step += 1
@@ -1731,8 +1634,7 @@ class OnlineTrainer:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(
-                    json.dumps({"step": int(metric_step), **phase_times}, sort_keys=True)
-                    + "\n"
+                    json.dumps({"step": int(metric_step), **phase_times}, sort_keys=True) + "\n"
                 )
             self._write_phase_events(timer, step=metric_step)
 
@@ -1802,7 +1704,7 @@ class OnlineTrainer:
         execute the same collective sequence on every rank.
         """
 
-        if self._sft_weight <= 0:
+        if self.algorithm.sft_weight <= 0:
             return
         if total_groups <= 0:
             raise ValueError("sft regularizer total_groups must be positive")
@@ -1858,8 +1760,10 @@ class OnlineTrainer:
         if not has_measurements:
             return resolved
 
-        correction = getattr(self.algorithm, "precision_correction", None)
-        intentional_correction = correction is not None and (
+        # Reached only for evaluator-branch objectives, which apply exactly the
+        # trainer's configured correction.
+        correction = cfg.precision_correction
+        intentional_correction = (
             correction.tis_mode != "off"
             or correction.rs_mode != "off"
             or correction.recompute_old_logprob != "off"
@@ -1911,18 +1815,6 @@ class OnlineTrainer:
         self._replay_parity_passed = True
         return resolved
 
-    @property
-    def _kl_coef(self) -> float:
-        """The objective's KL weight; zero for objectives without the knob."""
-
-        return float(getattr(self.algorithm.config, "kl_coef", 0.0) or 0.0)
-
-    @property
-    def _sft_weight(self) -> float:
-        """Read the regularizer weight from its algorithm-config source of truth."""
-
-        return float(getattr(self.algorithm.config, "sft_weight", 0.0) or 0.0)
-
     def _sft_regularizer_loss(self, group_batch: Any) -> torch.Tensor:
         """Weighted diffusion pretraining loss on clean fine-tuning latents.
 
@@ -1950,13 +1842,9 @@ class OnlineTrainer:
                 f"data.sft_latents has no entry for clean target {target_key!r}; "
                 "re-encode the shard over the full training manifest",
             )
-        scheduler = getattr(self.evaluator, "scheduler", None)
-        if scheduler is None:
-            raise ValueError(
-                "algorithm.sft_weight > 0 needs the diffusion SDE evaluator "
-                "(its scheduler owns the noising domain); this evaluator has "
-                "no scheduler",
-            )
+        # Only GRPO-family objectives carry an SFT term, and the factory pairs
+        # them with the SDE evaluator, whose scheduler owns the noising domain.
+        scheduler = self.evaluator.scheduler
 
         reader = TrajectoryReader.from_batch(group_batch)
         primary_segment = reader.primary_trainable_segment_name()
@@ -1995,7 +1883,7 @@ class OnlineTrainer:
         noisy, target = diffusion_pretraining_pair(scheduler, x0, noise, t)
         values = self.model.replay_forward_with_latents(group_batch, step_idx, noisy)
         model_pred = self.model.diffusion_pretraining_prediction(values)
-        return self._sft_weight * F.mse_loss(model_pred.float(), target.float())
+        return self.algorithm.sft_weight * F.mse_loss(model_pred.float(), target.float())
 
     def _shared_sft_step_index(self, num_steps: int) -> int:
         """Draw one denoise step index that every training rank agrees on.

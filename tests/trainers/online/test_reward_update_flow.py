@@ -1,951 +1,435 @@
-"""OnlineTrainer rollout consume + update loop: prompt-kwarg forwarding, batching, gradient accumulation, loss scaling, zero-advantage rebatching, and batch-op field preservation."""
+"""OnlineTrainer rollout consume + update loop: prompt-kwarg forwarding, batching, gradient
+accumulation, loss scaling, streaming release, and batch-op field preservation.
+
+The trainer-driving tests run the online recipe's own wiring on the tiny SANA
+stack (``real_trainer``): real GRPO, the real denoise SDE evaluator, the real
+collector and in-process rollout runtime. Observation goes through wrappers
+around the real methods, never through substituted behaviour.
+"""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+import asyncio
+import gc
+import random
+import weakref
+from typing import Any
 
-from tests.rollouts.collector._helpers import PromptCollectionFake
-from tests.trainers.online._helpers import (
-    _algorithm_inputs,
-    _diffusion_rollout_batch,
-    _EvaluatorAlgorithmFake,
-    _stamp_model_precision,
-    _trajectory_signals,
-)
-from vrl.rollouts.evaluators.base import Evaluator
+import pytest
+import torch
+
+from tests.trainers.online._helpers import TrainerBench, real_trainer
+from vrl.rollouts.batch import RolloutBatch
+from vrl.scripts.common.online import _run_streaming_optimizer_update
+from vrl.trainers.data.prompts import PromptExample
 from vrl.trainers.online.config import OnlineBatchPlan
 
+# One replay epoch and per-group std keep the streaming and full-batch paths
+# comparable: streaming refuses multi-epoch updates, and a global std would
+# normalize over a different sample set per microbatch.
+_ONE_EPOCH = ("actor.ppo_epochs=1", "algorithm.global_std=false")
+# Three sampling steps with the full timestep fraction train two denoise
+# transitions per group (the SDE window covers the first two).
+_TWO_TRAIN_TIMESTEPS = ("sampling.num_steps=3", "actor.timestep_fraction=1.0")
+_STREAM_FOUR = ("rollout.prompts_per_batch=4", "actor.prompts_per_collection=1")
 
-class TestRewardUpdateFlow:
-    """Groups tests for reward update flow."""
 
-    def test_cea_step_forwards_prompt_example_kwargs(self) -> None:
-        """PromptExample fields should be forwarded as kwargs to collector.generate_rollout()."""
-        import asyncio
+def _stream(bench: TrainerBench, prompts: list[Any], **kwargs: Any) -> Any:
+    return asyncio.run(
+        _run_streaming_optimizer_update(
+            bench.trainer,
+            prompts,
+            batch_plan=bench.trainer.config.batch_plan,
+            **kwargs,
+        ),
+    )
 
-        import torch
 
-        from vrl.algorithms.types import TrainStepMetrics
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.data.prompts import PromptExample
-        from vrl.trainers.online.config import TrainerConfig
-        from vrl.trainers.online.trainer import OnlineTrainer
+def _requested_prompts(bench: TrainerBench) -> list[list[str]]:
+    return [list(request.prompts) for request in bench.collector.trace.requests]
 
-        captured_kwargs: list[dict] = []
-        captured_inputs: list = []
 
-        class _Algorithm(_EvaluatorAlgorithmFake):
-            class _Config:
-                global_std = False
-                eps = 1e-8
-                adv_clip_max = 5.0
-                kl_coef = 0.0
+def _pushes(bench: TrainerBench) -> list[tuple[Any, int]]:
+    return [args for event, args in bench.collector.trace.calls if event == "update_weights"]
 
-            config = _Config()
 
-            def compute_advantages_from_tensors(self, rewards, group_ids):
-                advantages = torch.zeros_like(rewards)
-                for gid in torch.unique(group_ids):
-                    mask = group_ids == gid
-                    gr = rewards[mask]
-                    if gr.numel() <= 1:
-                        continue
-                    mean = gr.mean()
-                    std = gr.std().clamp(min=1e-8)
-                    advantages[mask] = (gr - mean) / std
-                return advantages
+def _record_evaluations(monkeypatch, bench: TrainerBench) -> list[tuple[int, list[int], int]]:
+    """(batch size, group ids, timestep index) of every real evaluator replay."""
 
-            def compute_loss(self, inputs):
-                signals, _advantages, _old_log_probs = _algorithm_inputs(inputs)
-                loss = signals.log_prob.mean()
-                return loss, TrainStepMetrics(
-                    loss=loss.item(),
-                    policy_loss=loss.item(),
-                )
+    calls: list[tuple[int, list[int], int]] = []
+    real = bench.trainer.evaluator.evaluate
 
-        class _CapturingCollector(PromptCollectionFake):
-            async def evaluate_rollout(self, pendings):
-                return list(pendings)
+    def evaluate(model, batch, timestep_idx, **kwargs):
+        calls.append((int(batch.rewards.shape[0]), batch.group_ids.tolist(), int(timestep_idx)))
+        return real(model, batch, timestep_idx, **kwargs)
 
-            async def generate_rollout(self, request):
-                inputs = request.inputs
-                kwargs = request.options
-                captured_inputs.extend(inputs)
-                captured_kwargs.append(dict(kwargs))
-                group_size = int(kwargs["group_size"])
-                return _diffusion_rollout_batch(
-                    rewards=torch.ones(group_size, dtype=torch.float32),
-                    group_ids=torch.zeros(group_size, dtype=torch.long),
-                    num_steps=2,
-                )
+    monkeypatch.setattr(bench.trainer.evaluator, "evaluate", evaluate)
+    return calls
 
-        class _Evaluator(Evaluator):
-            def evaluate(self, model, batch, timestep_idx, **kw):
-                batch_size = batch.rewards.shape[0]
-                return _trajectory_signals(
-                    batch, model.weight.view(1).expand(batch_size), timestep_idx
-                )
 
-        import torch.nn as nn
+def _record_loss_scales(monkeypatch, bench: TrainerBench) -> list[float]:
+    """d(backpropagated loss) / d(replay loss) for every backward.
 
-        model = nn.Linear(1, 1, bias=False)
-        _stamp_model_precision(model)
-        with torch.no_grad():
-            model.weight.fill_(1.0)
+    The trainer backpropagates ``replay_loss * loss_weight / loss_scale``; the
+    derivative is that factor exactly, even when the replay loss itself is 0.
+    """
 
-        trainer = OnlineTrainer(
-            algorithm=_Algorithm(),
-            collector=_CapturingCollector(),
-            evaluator=_Evaluator(),
-            model=model,
-            config=TrainerConfig(
-                batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
-                timestep_fraction=1.0,
-                drop_zero_advantage=False,
-                output_dir="outputs/",
-                optim=OptimConfig(lr=0.01),
-                ema=EMAConfig(),
-                debug=DebugConfig(),
-            ),
-            device="cpu",
+    scales: list[float] = []
+    last: dict[str, torch.Tensor] = {}
+    trainer = bench.trainer
+    real_loss = trainer._compute_replay_loss
+    real_backward = trainer._backward
+
+    def compute_replay_loss(*args, **kwargs):
+        result = real_loss(*args, **kwargs)
+        last["loss"] = result[0]
+        return result
+
+    def backward(loss):
+        (factor,) = torch.autograd.grad(loss, last["loss"], retain_graph=True)
+        scales.append(float(factor))
+        return real_backward(loss)
+
+    monkeypatch.setattr(trainer, "_compute_replay_loss", compute_replay_loss)
+    monkeypatch.setattr(trainer, "_backward", backward)
+    return scales
+
+
+def _record_optimizer_steps(monkeypatch, bench: TrainerBench) -> list[dict[str, torch.Tensor]]:
+    """The accumulated gradient at every real optimizer step."""
+
+    grads: list[dict[str, torch.Tensor]] = []
+    real = bench.trainer._clip_and_step
+
+    def clip_and_step(optimizer):
+        grads.append(
+            {
+                name: parameter.grad.detach().clone()
+                for name, parameter in bench.trainable_parameters().items()
+                if parameter.grad is not None
+            }
         )
+        return real(optimizer)
 
-        example = PromptExample(
-            prompt="sign says HELLO",
-            target_text="HELLO",
-            reference_images=["/tmp/reference.png"],
-            task_type="text_to_video",
-            metadata={"difficulty": "easy"},
-        )
-        asyncio.run(trainer.step([example]))
+    monkeypatch.setattr(bench.trainer, "_clip_and_step", clip_and_step)
+    return grads
 
-        # Conditioning uses GenerationInput; reward targets use group metadata.
-        assert len(captured_kwargs) == 1
-        kw = captured_kwargs[0]
-        assert kw["group_size"] == 2
-        assert kw["metadata"]["target_text"] == "HELLO"
-        assert kw["metadata"]["difficulty"] == "easy"
-        assert len(captured_inputs) == 1
-        assert captured_inputs[0].reference_images == ["/tmp/reference.png"]
-        assert captured_inputs[0].task_type == "text_to_video"
 
-    def test_cea_batches_plain_prompts_for_rollout_but_splits_training(self) -> None:
-        """Plain prompts should collect together, then train as group-local batches."""
-        import asyncio
+def test_step_forwards_prompt_example_fields(monkeypatch, tmp_path) -> None:
+    """PromptExample conditioning reaches the generation input; its reward targets reach
+    the reward samples as group metadata."""
 
-        import torch
-        import torch.nn as nn
+    bench = real_trainer(monkeypatch, tmp_path, overrides=("actor.ppo_epochs=1",))
+    example = PromptExample(
+        prompt="sign says HELLO",
+        target_text="HELLO",
+        reference_images=["/tmp/reference.png"],
+        task_type="text_to_video",
+        metadata={"difficulty": "easy"},
+    )
 
-        from vrl.algorithms.types import TrainStepMetrics
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online.config import TrainerConfig
-        from vrl.trainers.online.trainer import OnlineTrainer
+    asyncio.run(bench.trainer.step([example]))
 
-        collect_calls: list[list[str]] = []
-        evaluate_batch_sizes: list[int] = []
-        evaluate_group_ids: list[list[int]] = []
+    (request,) = bench.collector.trace.requests
+    assert request.samples_per_prompt == 2
+    assert len(request.inputs) == 1
+    assert request.inputs[0].reference_images == ["/tmp/reference.png"]
+    assert request.inputs[0].task_type == "text_to_video"
+    metadata = bench.collector.reward.calls[0]["metadata"]
+    assert all(row["target_text"] == "HELLO" for row in metadata)
+    assert all(row["difficulty"] == "easy" for row in metadata)
 
-        class _Algorithm(_EvaluatorAlgorithmFake):
-            class _Config:
-                global_std = False
-                eps = 1e-8
-                adv_clip_max = 5.0
-                kl_coef = 0.0
 
-            config = _Config()
+def test_plain_prompts_collect_together_but_train_group_locally(monkeypatch, tmp_path) -> None:
+    """Plain prompts share one rollout request, then every replay sees exactly one group."""
 
-            def compute_advantages_from_tensors(self, rewards, group_ids):
-                advantages = torch.zeros_like(rewards)
-                for gid in torch.unique(group_ids):
-                    mask = group_ids == gid
-                    gr = rewards[mask]
-                    advantages[mask] = gr - gr.mean()
-                return advantages
+    bench = real_trainer(
+        monkeypatch,
+        tmp_path,
+        overrides=(*_ONE_EPOCH, *_TWO_TRAIN_TIMESTEPS, "rollout.prompts_per_batch=2"),
+    )
+    evaluations = _record_evaluations(monkeypatch, bench)
 
-            def compute_loss(self, inputs):
-                signals, advantages, _old_log_probs = _algorithm_inputs(inputs)
-                loss = signals.log_prob.mean() + advantages.mean() * 0.0
-                return loss, TrainStepMetrics(
-                    loss=loss.item(),
-                    policy_loss=loss.item(),
-                )
+    asyncio.run(bench.trainer.step(["prompt-a", "prompt-b"]))
 
-        class _Collector(PromptCollectionFake):
-            async def evaluate_rollout(self, pendings):
-                return list(pendings)
+    assert _requested_prompts(bench) == [["prompt-a", "prompt-b"]]
+    assert [(size, groups) for size, groups, _ in evaluations] == [
+        (2, [0, 0]),
+        (2, [0, 0]),
+        (2, [1, 1]),
+        (2, [1, 1]),
+    ]
+    assert [timestep for _, _, timestep in evaluations] == [0, 1, 0, 1]
 
-            async def generate_rollout(self, request):
-                prompts = request.inputs
-                kwargs = request.options
-                prompts = [getattr(item, "prompt", item) for item in prompts]
-                collect_calls.append(prompts)
-                group_size = int(kwargs["group_size"])
-                batch_size = len(prompts) * group_size
-                group_ids = torch.tensor(
-                    [prompt_idx for prompt_idx in range(len(prompts)) for _ in range(group_size)],
-                    dtype=torch.long,
-                )
-                rewards = torch.tensor(
-                    [float(i % group_size) for i in range(batch_size)],
-                    dtype=torch.float32,
-                )
-                return _diffusion_rollout_batch(
-                    rewards=rewards,
-                    group_ids=group_ids,
-                    num_steps=2,
-                )
 
-        class _Evaluator(Evaluator):
-            def evaluate(self, model, batch, timestep_idx, **kw):
-                del kw
-                evaluate_batch_sizes.append(int(batch.rewards.shape[0]))
-                evaluate_group_ids.append(
-                    [int(x) for x in batch.group_ids.detach().cpu().tolist()]
-                )
-                return _trajectory_signals(
-                    batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx
-                )
+def test_streaming_accumulation_runs_one_optimizer_step(monkeypatch, tmp_path) -> None:
+    """prompts_per_collection>0 streams collection batches into ONE optimizer update."""
 
-        model = nn.Linear(1, 1, bias=False)
-        _stamp_model_precision(model)
-        with torch.no_grad():
-            model.weight.fill_(1.0)
+    bench = real_trainer(monkeypatch, tmp_path, overrides=(*_ONE_EPOCH, *_STREAM_FOUR))
+    steps = _record_optimizer_steps(monkeypatch, bench)
+    bench.collector.trace.watch(
+        bench.trainer.rollout_schedule, "after_train_step", "after_train_step"
+    )
 
-        trainer = OnlineTrainer(
-            algorithm=_Algorithm(),
-            collector=_Collector(),
-            evaluator=_Evaluator(),
-            model=model,
-            config=TrainerConfig(
-                batch_plan=OnlineBatchPlan(
-                    prompts_per_batch=1,
-                    n_samples_per_prompt=2,
-                    training_microbatch_size=0,
-                ),
-                timestep_fraction=1.0,
-                drop_zero_advantage=False,
-                output_dir="outputs/",
-                optim=OptimConfig(lr=0.01),
-                ema=EMAConfig(),
-                debug=DebugConfig(),
-            ),
-            device="cpu",
-        )
+    metrics = _stream(bench, ["prompt-a", "prompt-b", "prompt-c", "prompt-d"])
 
-        asyncio.run(trainer.step(["prompt-a", "prompt-b"]))
+    # 4 microbatches of 1 prompt each, collected/trained/released separately...
+    assert _requested_prompts(bench) == [["prompt-a"], ["prompt-b"], ["prompt-c"], ["prompt-d"]]
+    # ...but ONE optimizer update, published once after the train half.
+    assert len(steps) == 1
+    assert bench.trainer.state.step == 1
+    assert bench.trainer.state.global_step == 1
+    assert [version for _, version in _pushes(bench)] == [1, 2]
+    # The post-train sync's own phases reach the update's metrics.
+    (sync_stats,) = bench.collector.trace.results["after_train_step"]
+    assert sync_stats.phase_seconds
+    assert set(sync_stats.phase_seconds) <= set(metrics.phase_times)
 
-        assert collect_calls == [["prompt-a", "prompt-b"]]
-        assert evaluate_batch_sizes == [2, 2, 2, 2]
-        assert evaluate_group_ids == [[0, 0], [0, 0], [1, 1], [1, 1]]
 
-    def test_streaming_accumulation_runs_one_optimizer_step(self) -> None:
-        """prompts_per_collection>0 streams collection batches into ONE optimizer update."""
-        import asyncio
+def test_streaming_releases_microbatch_before_next_collect(monkeypatch, tmp_path) -> None:
+    """Streaming must not retain the previous rollout batch while collecting the next."""
 
-        import torch
-        import torch.nn as nn
+    bench = real_trainer(
+        monkeypatch,
+        tmp_path,
+        overrides=(*_ONE_EPOCH, "rollout.prompts_per_batch=2", "actor.prompts_per_collection=1"),
+    )
+    released_before_collect: list[bool] = []
+    batch_refs: list[weakref.ref] = []
+    real = bench.trainer.collect_training_batch
 
-        from vrl.algorithms.types import TrainStepMetrics
-        from vrl.scripts.common.online import _run_streaming_optimizer_update
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online.config import TrainerConfig
-        from vrl.trainers.online.trainer import OnlineTrainer
+    async def collect_training_batch(prompts, *, next_prompts=None):
+        if batch_refs:
+            gc.collect()
+            released_before_collect.append(batch_refs[-1]() is None)
+        batch = await real(prompts, next_prompts=next_prompts)
+        batch_refs.extend(weakref.ref(rollout) for rollout in batch.batches)
+        return batch
 
-        collect_calls: list[list[str]] = []
-        after_step_calls: list[int] = []
+    monkeypatch.setattr(bench.trainer, "collect_training_batch", collect_training_batch)
 
-        class _Algorithm(_EvaluatorAlgorithmFake):
-            class _Config:
-                global_std = False
-                eps = 1e-8
-                adv_clip_max = 5.0
-                kl_coef = 0.0
+    _stream(bench, ["prompt-a", "prompt-b"])
+    gc.collect()
 
-            config = _Config()
+    assert released_before_collect == [True]
+    assert all(ref() is None for ref in batch_refs)
 
-            def compute_advantages_from_tensors(self, rewards, group_ids):
-                del group_ids
-                return rewards - rewards.mean()
 
-            def compute_loss(self, inputs):
-                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
-                del advantages, old_log_probs
-                loss = signals.log_prob.mean()
-                return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
+def test_streaming_stats_sum_phases_and_keep_peak_gauges(monkeypatch, tmp_path) -> None:
+    """Microbatch stats retain summed durations and the peak continuous state."""
 
-            def after_optimizer_step(self, model, global_step):
-                del model
-                after_step_calls.append(global_step)
+    monkeypatch.setenv("VRL_PROFILE", "1")
+    bench = real_trainer(
+        monkeypatch,
+        tmp_path,
+        overrides=(
+            *_ONE_EPOCH,
+            "rollout.prompts_per_batch=2",
+            "actor.prompts_per_collection=1",
+            "/base/rollout/orchestration=continuous",
+        ),
+    )
+    microbatch_stats: list[Any] = []
+    real = bench.trainer._step_stats
 
-        class _Collector(PromptCollectionFake):
-            async def evaluate_rollout(self, pendings):
-                return list(pendings)
+    def step_stats(iteration, timer):
+        stats = real(iteration, timer)
+        microbatch_stats.append(stats)
+        return stats
 
-            async def generate_rollout(self, request):
-                prompts = request.inputs
-                kwargs = request.options
-                prompts = [getattr(item, "prompt", item) for item in prompts]
-                collect_calls.append(list(prompts))
-                group_size = int(kwargs["group_size"])
-                batch_size = len(prompts) * group_size
-                group_ids = torch.tensor(
-                    [prompt_idx for prompt_idx in range(len(prompts)) for _ in range(group_size)],
-                    dtype=torch.long,
-                )
-                return _diffusion_rollout_batch(
-                    rewards=torch.tensor(
-                        [float(i % group_size) for i in range(batch_size)],
-                        dtype=torch.float32,
-                    ),
-                    group_ids=group_ids,
-                    num_steps=1,
-                )
+    monkeypatch.setattr(bench.trainer, "_step_stats", step_stats)
 
-        class _Evaluator(Evaluator):
-            def evaluate(self, model, batch, timestep_idx, **kw):
-                del kw
-                return _trajectory_signals(
-                    batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx
-                )
-
-        model = nn.Linear(1, 1, bias=False)
-        _stamp_model_precision(model)
-        with torch.no_grad():
-            model.weight.fill_(1.0)
-
-        trainer = OnlineTrainer(
-            algorithm=_Algorithm(),
-            collector=_Collector(),
-            evaluator=_Evaluator(),
-            model=model,
-            config=TrainerConfig(
-                batch_plan=OnlineBatchPlan(
-                    prompts_per_batch=4,
-                    n_samples_per_prompt=2,
-                    prompts_per_collection=1,
-                ),
-                timestep_fraction=1.0,
-                drop_zero_advantage=False,
-                output_dir="outputs/",
-                optim=OptimConfig(lr=0.01),
-                ema=EMAConfig(),
-                debug=DebugConfig(),
-            ),
-            device="cpu",
-        )
-
-        async def _sync_phases():
-            from vrl.rollouts.stats import RolloutStats
-
-            stats = RolloutStats()
-            stats.add_phase("continuous.weight_sync_pause_s", 0.25)
-            stats.observe_gauge("continuous.weight_sync_barrier_mode", 1.0)
-            return stats
-
-        trainer.rollout_schedule.after_train_step = _sync_phases  # type: ignore[method-assign]
-        metrics = asyncio.run(
-            _run_streaming_optimizer_update(
-                trainer,
-                ["prompt-a", "prompt-b", "prompt-c", "prompt-d"],
-                batch_plan=trainer.config.batch_plan,
-            ),
-        )
-
-        # 4 microbatches of 1 prompt each, collected/trained/released separately.
-        assert collect_calls == [["prompt-a"], ["prompt-b"], ["prompt-c"], ["prompt-d"]]
-        # ...but ONE optimizer update: step/global_step advance once, NFT sync once.
-        assert trainer.state.step == 1
-        assert trainer.state.global_step == 1
-        assert after_step_calls == [0]
-        assert metrics.phase_times["continuous.weight_sync_pause_s"] == 0.25
-        assert metrics.phase_times["continuous.weight_sync_barrier_mode"] == 1.0
-
-    def test_streaming_releases_microbatch_before_next_collect(self) -> None:
-        """Streaming should not retain the previous rollout batch while collecting the next."""
-        import asyncio
-        import gc
-        import weakref
-
-        from vrl.rollouts.stats import RolloutStats
-        from vrl.scripts.common.online import _run_streaming_optimizer_update
-
-        class _Batch:
-            __slots__ = (
-                "__weakref__",
-                "adv_saturation",
-                "adv_zero_rate",
-                "group_size",
-                "iteration",
-                "pre_filter_adv_mean",
-                "pre_filter_reward_mean",
-                "pre_filter_reward_std",
-                "timer",
-                "trained_prompt_num",
-            )
-
-            def __init__(self) -> None:
-                self.iteration = object()
-                self.timer = object()
-                self.pre_filter_reward_mean = 1.0
-                self.pre_filter_reward_std = 0.0
-                self.pre_filter_adv_mean = 0.0
-                self.adv_zero_rate = 0.0
-                self.adv_saturation = 0.0
-                self.trained_prompt_num = 1
-                self.group_size = 2
-
-        class _Trainer:
-            algorithm = SimpleNamespace(config=SimpleNamespace(global_std=False))
-
-            def __init__(self) -> None:
-                self.batch_refs = []
-
-            def begin_optimizer_update(self):
-                pass
-
-            async def collect_training_batch(self, prompts, *, next_prompts=None):
-                del prompts, next_prompts
-                if self.batch_refs:
-                    gc.collect()
-                    assert self.batch_refs[-1]() is None
-                batch = _Batch()
-                self.batch_refs.append(weakref.ref(batch))
-                return batch
-
-            def backward_on_training_batch(self, batch, *, total_groups):
-                del batch, total_groups
-
-            def _step_stats(self, iteration, timer):
-                del iteration, timer
-                return RolloutStats()
-
-            async def finish_optimizer_update(self, **kwargs):
-                return kwargs
-
-        trainer = _Trainer()
-        asyncio.run(
-            _run_streaming_optimizer_update(
-                trainer,
+    async def run_two_updates():
+        try:
+            await _run_streaming_optimizer_update(
+                bench.trainer,
                 ["prompt-a", "prompt-b"],
-                batch_plan=OnlineBatchPlan(
-                    prompts_per_batch=2,
-                    n_samples_per_prompt=2,
-                    prompts_per_collection=1,
-                ),
-            ),
-        )
-        gc.collect()
-        assert trainer.batch_refs[-1]() is None
-
-    def test_streaming_stats_sum_phases_and_keep_peak_gauges(self) -> None:
-        """Microbatch stats retain durations and peak continuous state separately."""
-        import asyncio
-
-        from vrl.rollouts.stats import RolloutStats
-        from vrl.scripts.common.online import _run_streaming_optimizer_update
-
-        class _Batch:
-            def __init__(self) -> None:
-                self.iteration = object()
-                self.timer = object()
-                self.pre_filter_reward_mean = 1.0
-                self.pre_filter_reward_std = 0.0
-                self.pre_filter_adv_mean = 0.0
-                self.adv_zero_rate = 0.0
-                self.adv_saturation = 0.0
-                self.trained_prompt_num = 1
-                self.group_size = 2
-
-        class _Trainer:
-            algorithm = SimpleNamespace(config=SimpleNamespace(global_std=False))
-
-            def __init__(self) -> None:
-                self.stats_index = 0
-
-            def begin_optimizer_update(self):
-                pass
-
-            async def collect_training_batch(self, prompts, *, next_prompts=None):
-                del prompts, next_prompts
-                return _Batch()
-
-            def backward_on_training_batch(self, batch, *, total_groups):
-                del batch, total_groups
-
-            def _step_stats(self, iteration, timer):
-                del iteration, timer
-                stats = RolloutStats()
-                stats.add_phase("collect.engine_generate", self.stats_index + 1)
-                stats.observe_gauge(
-                    "continuous.stale_policy_versions",
-                    (1, 0)[self.stats_index],
-                )
-                stats.observe_gauge(
-                    "continuous.producer_completed",
-                    (2, 2)[self.stats_index],
-                )
-                self.stats_index += 1
-                return stats
-
-            async def finish_optimizer_update(self, **kwargs):
-                return kwargs["stats"].as_metrics_dict()
-
-        phases = asyncio.run(
-            _run_streaming_optimizer_update(
-                _Trainer(),
-                ["prompt-a", "prompt-b"],
-                batch_plan=OnlineBatchPlan(
-                    prompts_per_batch=2,
-                    n_samples_per_prompt=2,
-                    prompts_per_collection=1,
-                ),
-            ),
-        )
-
-        assert phases["collect.engine_generate"] == 3.0
-        assert phases["continuous.stale_policy_versions"] == 1.0
-        assert phases["continuous.producer_completed"] == 2.0
-
-    def test_streaming_announces_the_next_prompt_batch_before_backward(self) -> None:
-        """Each collect announces the prompt batch that runs during its backward."""
-        import asyncio
-
-        from vrl.rollouts.stats import RolloutStats
-        from vrl.scripts.common.online import _run_streaming_optimizer_update
-
-        class _Batch:
-            def __init__(self) -> None:
-                self.iteration = object()
-                self.timer = object()
-                self.pre_filter_reward_mean = 1.0
-                self.pre_filter_reward_std = 0.0
-                self.pre_filter_adv_mean = 0.0
-                self.adv_zero_rate = 0.0
-                self.adv_saturation = 0.0
-                self.trained_prompt_num = 1
-                self.group_size = 2
-
-        class _Trainer:
-            algorithm = SimpleNamespace(config=SimpleNamespace(global_std=False))
-
-            def __init__(self) -> None:
-                self.requests: list[tuple[list[str], list[str] | None]] = []
-
-            def begin_optimizer_update(self):
-                pass
-
-            async def collect_training_batch(self, prompts, *, next_prompts=None):
-                self.requests.append((list(prompts), next_prompts))
-                return _Batch()
-
-            def backward_on_training_batch(self, batch, *, total_groups):
-                del batch, total_groups
-
-            def _step_stats(self, iteration, timer):
-                del iteration, timer
-                return RolloutStats()
-
-            async def finish_optimizer_update(self, **kwargs):
-                return kwargs
-
-        trainer = _Trainer()
-        asyncio.run(
-            _run_streaming_optimizer_update(
-                trainer,
-                ["prompt-a", "prompt-b"],
-                batch_plan=OnlineBatchPlan(
-                    prompts_per_batch=2,
-                    n_samples_per_prompt=2,
-                    prompts_per_collection=1,
-                ),
+                batch_plan=bench.trainer.config.batch_plan,
                 next_example_batch=["prompt-c", "prompt-d"],
-            ),
-        )
-
-        assert trainer.requests == [
-            (["prompt-a"], ["prompt-b"]),
-            (["prompt-b"], ["prompt-c"]),
-        ]
-
-    def test_flow_grpo_loss_scaling_includes_timesteps(self) -> None:
-        """Flow-GRPO accumulation scales loss by microbatches * train timesteps."""
-        import asyncio
-
-        import pytest
-        import torch
-        import torch.nn as nn
-
-        from vrl.algorithms.types import TrainStepMetrics
-        from vrl.scripts.common.online import _run_streaming_optimizer_update
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online.config import TrainerConfig
-        from vrl.trainers.online.trainer import OnlineTrainer
-
-        recorded_grads: list[float] = []
-
-        class _Algorithm(_EvaluatorAlgorithmFake):
-            class _Config:
-                global_std = False
-                eps = 1e-8
-                adv_clip_max = 5.0
-                kl_coef = 0.0
-
-            config = _Config()
-
-            def compute_advantages_from_tensors(self, rewards, group_ids):
-                del group_ids
-                return rewards - rewards.mean()
-
-            def compute_loss(self, inputs):
-                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
-                del advantages, old_log_probs
-                loss = signals.log_prob.mean()
-                return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
-
-        class _Collector(PromptCollectionFake):
-            async def evaluate_rollout(self, pendings):
-                return list(pendings)
-
-            async def generate_rollout(self, request):
-                prompts = request.inputs
-                kwargs = request.options
-                prompts = [getattr(item, "prompt", item) for item in prompts]
-                group_size = int(kwargs["group_size"])
-                batch_size = len(prompts) * group_size
-                group_ids = torch.tensor(
-                    [prompt_idx for prompt_idx in range(len(prompts)) for _ in range(group_size)],
-                    dtype=torch.long,
-                )
-                return _diffusion_rollout_batch(
-                    rewards=torch.tensor(
-                        [float(i % group_size) for i in range(batch_size)],
-                        dtype=torch.float32,
-                    ),
-                    group_ids=group_ids,
-                    num_steps=3,
-                )
-
-        class _Evaluator(Evaluator):
-            def evaluate(self, model, batch, timestep_idx, **kw):
-                del kw
-                return _trajectory_signals(
-                    batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx
-                )
-
-        model = nn.Linear(1, 1, bias=False)
-        _stamp_model_precision(model)
-        with torch.no_grad():
-            model.weight.fill_(1.0)
-
-        trainer = OnlineTrainer(
-            algorithm=_Algorithm(),
-            collector=_Collector(),
-            evaluator=_Evaluator(),
-            model=model,
-            config=TrainerConfig(
-                batch_plan=OnlineBatchPlan(
-                    prompts_per_batch=4,
-                    n_samples_per_prompt=2,
-                    prompts_per_collection=1,
-                ),
-                timestep_fraction=1.0,
-                drop_zero_advantage=False,
-                output_dir="outputs/",
-                optim=OptimConfig(lr=0.1, weight_decay=0.0),
-                ema=EMAConfig(),
-                debug=DebugConfig(),
-            ),
-            device="cpu",
-        )
-
-        original_step = trainer._clip_and_step
-
-        def _recording_step(optimizer):
-            assert model.weight.grad is not None
-            recorded_grads.append(float(model.weight.grad.detach().item()))
-            return original_step(optimizer)
-
-        trainer._clip_and_step = _recording_step  # type: ignore[method-assign]
-
-        asyncio.run(
-            _run_streaming_optimizer_update(
-                trainer,
-                ["prompt-a", "prompt-b", "prompt-c", "prompt-d"],
-                batch_plan=trainer.config.batch_plan,
-            ),
-        )
-
-        # One optimizer update over 4 microbatches (1 group each) * 3 timesteps:
-        # loss_scale = total_groups(4) * train_timesteps(3) = 12, so the single
-        # accumulated gradient is 1.0 (not 3.0 without timestep scaling, not 12.0).
-        assert recorded_grads == pytest.approx([1.0])
-        assert trainer.state.global_step == 1
-
-    def test_streaming_matches_full_batch_gradient(self) -> None:
-        """Streaming microbatch path is gradient-equivalent to the full-batch path."""
-        import asyncio
-
-        import torch
-        import torch.nn as nn
-
-        from vrl.algorithms.types import TrainStepMetrics
-        from vrl.scripts.common.online import _run_streaming_optimizer_update
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-        from vrl.trainers.online.config import TrainerConfig
-        from vrl.trainers.online.trainer import OnlineTrainer
-
-        class _Algorithm(_EvaluatorAlgorithmFake):
-            class _Config:
-                global_std = False
-                eps = 1e-8
-                adv_clip_max = 5.0
-                kl_coef = 0.0
-
-            config = _Config()
-
-            def compute_advantages_from_tensors(self, rewards, group_ids):
-                del group_ids
-                return rewards - rewards.mean()
-
-            def compute_loss(self, inputs):
-                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
-                del advantages, old_log_probs
-                loss = signals.log_prob.mean()
-                return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
-
-        class _Collector(PromptCollectionFake):
-            async def evaluate_rollout(self, pendings):
-                return list(pendings)
-
-            async def generate_rollout(self, request):
-                prompts = request.inputs
-                kwargs = request.options
-                prompts = [getattr(item, "prompt", item) for item in prompts]
-                group_size = int(kwargs["group_size"])
-                batch_size = len(prompts) * group_size
-                group_ids = torch.tensor(
-                    [i for i in range(len(prompts)) for _ in range(group_size)],
-                    dtype=torch.long,
-                )
-                return _diffusion_rollout_batch(
-                    rewards=torch.arange(batch_size, dtype=torch.float32),
-                    group_ids=group_ids,
-                    num_steps=2,
-                )
-
-        class _Evaluator(Evaluator):
-            def evaluate(self, model, batch, timestep_idx, **kw):
-                del kw
-                return _trajectory_signals(
-                    batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx
-                )
-
-        def _make_trainer(gas: int) -> OnlineTrainer:
-            model = nn.Linear(1, 1, bias=False)
-            _stamp_model_precision(model)
-            with torch.no_grad():
-                model.weight.fill_(1.0)
-            return OnlineTrainer(
-                algorithm=_Algorithm(),
-                collector=_Collector(),
-                evaluator=_Evaluator(),
-                model=model,
-                config=TrainerConfig(
-                    batch_plan=OnlineBatchPlan(
-                        prompts_per_batch=4,
-                        n_samples_per_prompt=2,
-                        prompts_per_collection=(4 // gas) if gas else 0,
-                    ),
-                    timestep_fraction=1.0,
-                    drop_zero_advantage=False,
-                    output_dir="outputs/",
-                    optim=OptimConfig(lr=0.1),
-                    ema=EMAConfig(),
-                    debug=DebugConfig(),
-                ),
-                device="cpu",
             )
+            microbatch_stats.clear()
+            # The second update consumes groups produced before the first
+            # update's weight sync, so one microbatch is a version stale.
+            return await _run_streaming_optimizer_update(
+                bench.trainer,
+                ["prompt-c", "prompt-d"],
+                batch_plan=bench.trainer.config.batch_plan,
+            )
+        finally:
+            await bench.trainer.rollout_schedule.shutdown()
 
-        prompts = ["p0", "p1", "p2", "p3"]
-        trainer_full = _make_trainer(gas=0)
-        asyncio.run(trainer_full.step(list(prompts)))
+    metrics = asyncio.run(run_two_updates())
 
-        trainer_stream = _make_trainer(gas=4)
-        asyncio.run(
-            _run_streaming_optimizer_update(
-                trainer_stream,
-                list(prompts),
-                batch_plan=trainer_stream.config.batch_plan,
-            ),
+    assert len(microbatch_stats) == 2
+    collect_phases = {
+        name
+        for stats in microbatch_stats
+        for name in stats.phase_seconds
+        if name.startswith("collect.")
+    }
+    assert "collect.engine_generate" in collect_phases
+    for name in collect_phases:
+        assert metrics.phase_times[name] == pytest.approx(
+            sum(stats.phase_seconds.get(name, 0.0) for stats in microbatch_stats)
         )
-
-        assert trainer_full.state.global_step == 1
-        assert trainer_stream.state.global_step == 1
-        # Same accumulated gradient + one SGD step from identical init weights.
-        assert torch.allclose(
-            trainer_full.model.weight,
-            trainer_stream.model.weight,
-            atol=1e-6,
+    gauges = {name for stats in microbatch_stats for name in stats.gauges}
+    assert "continuous.stale_policy_versions" in gauges
+    for name in gauges:
+        assert metrics.phase_times[name] == max(
+            stats.gauges[name] for stats in microbatch_stats if name in stats.gauges
         )
+    staleness = [stats.gauges["continuous.stale_policy_versions"] for stats in microbatch_stats]
+    assert max(staleness) > min(staleness)
 
 
-def test_training_microbatch_size_splits_backward_and_preserves_gradient(monkeypatch) -> None:
+def test_streaming_announces_the_next_prompt_batch_before_backward(monkeypatch, tmp_path) -> None:
+    """Each collect announces the prompt batch that runs during its backward."""
+
+    bench = real_trainer(
+        monkeypatch,
+        tmp_path,
+        overrides=(*_ONE_EPOCH, "rollout.prompts_per_batch=2", "actor.prompts_per_collection=1"),
+    )
+    announced: list[tuple[list[str], list[str] | None]] = []
+    real = bench.trainer.collect_training_batch
+
+    async def collect_training_batch(prompts, *, next_prompts=None):
+        announced.append((list(prompts), next_prompts))
+        return await real(prompts, next_prompts=next_prompts)
+
+    monkeypatch.setattr(bench.trainer, "collect_training_batch", collect_training_batch)
+
+    _stream(bench, ["prompt-a", "prompt-b"], next_example_batch=["prompt-c", "prompt-d"])
+
+    assert announced == [
+        (["prompt-a"], ["prompt-b"]),
+        (["prompt-b"], ["prompt-c"]),
+    ]
+
+
+def test_flow_grpo_loss_scaling_includes_timesteps(monkeypatch, tmp_path) -> None:
+    """Streaming accumulation scales every backward by 1 / (groups * train timesteps)."""
+
+    bench = real_trainer(
+        monkeypatch,
+        tmp_path,
+        overrides=(*_ONE_EPOCH, *_TWO_TRAIN_TIMESTEPS, *_STREAM_FOUR),
+    )
+    scales = _record_loss_scales(monkeypatch, bench)
+    steps = _record_optimizer_steps(monkeypatch, bench)
+
+    _stream(bench, ["prompt-a", "prompt-b", "prompt-c", "prompt-d"])
+
+    # 4 microbatches (1 group each) * 2 train timesteps, one optimizer update:
+    # each backward carries 1 / (4 * 2), so the accumulated gradient is the
+    # mean over every trained (group, timestep), not 2x or 8x it.
+    assert len(scales) == 8
+    assert scales == pytest.approx([1 / 8] * 8)
+    assert len(steps) == 1
+    assert bench.trainer.state.global_step == 1
+
+
+def test_streaming_matches_full_batch_gradient(monkeypatch, tmp_path) -> None:
+    """Streaming microbatches accumulate exactly the full-batch gradient.
+
+    Both trainers start from the same snapshot weights and draw the same
+    request seeds (one request per PromptExample either way), so both see the
+    same real rollouts; only the update's batching differs.
+    """
+
+    prompts = [PromptExample(prompt=text) for text in ("p0", "p1", "p2", "p3")]
+    full = real_trainer(
+        monkeypatch,
+        tmp_path / "full",
+        overrides=(*_ONE_EPOCH, "rollout.prompts_per_batch=4"),
+    )
+    # Each stack serves one snapshot: load the first policy before the second
+    # stack installs its pipeline.
+    asyncio.run(full.collector.collector.activate_generation_runtime())
+    streaming = real_trainer(
+        monkeypatch,
+        tmp_path / "streaming",
+        overrides=(*_ONE_EPOCH, *_STREAM_FOUR),
+    )
+    full_steps = _record_optimizer_steps(monkeypatch, full)
+    streaming_steps = _record_optimizer_steps(monkeypatch, streaming)
+    initial = full.trainable_parameters()
+    assert all(
+        torch.equal(initial[name], value)
+        for name, value in streaming.trainable_parameters().items()
+    )
+
+    random.seed(0)
+    asyncio.run(full.trainer.step(list(prompts)))
+    random.seed(0)
+    _stream(streaming, list(prompts))
+
+    assert [r.sampling["seed"] for r in full.collector.trace.requests] == [
+        r.sampling["seed"] for r in streaming.collector.trace.requests
+    ]
+    assert len(full_steps) == len(streaming_steps) == 1
+    assert full.trainer.state.global_step == streaming.trainer.state.global_step == 1
+    full_grad, streaming_grad = full_steps[0], streaming_steps[0]
+    assert full_grad.keys() == streaming_grad.keys()
+    assert any(bool(grad.abs().sum() > 0) for grad in full_grad.values())
+    for name, grad in full_grad.items():
+        torch.testing.assert_close(streaming_grad[name], grad, rtol=1e-6, atol=1e-7)
+
+
+def test_training_microbatch_size_splits_backward_and_preserves_gradient(
+    monkeypatch, tmp_path
+) -> None:
     """The replay-only batch integer changes call shape without changing gradients."""
-    import asyncio
-
-    import pytest
-    import torch
-    import torch.nn as nn
-
-    from vrl.algorithms.types import TrainStepMetrics
-    from vrl.rollouts.batch import RolloutBatch
-    from vrl.scripts.common.online import _run_streaming_optimizer_update
-    from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-    from vrl.trainers.online.config import TrainerConfig
-    from vrl.trainers.online.trainer import OnlineTrainer
 
     device_move_sizes: list[int] = []
     original_to_device = RolloutBatch.to_device
 
-    def _recording_to_device(batch, *args, **kwargs):
+    def recording_to_device(batch, *args, **kwargs):
         device_move_sizes.append(int(batch.rewards.shape[0]))
         return original_to_device(batch, *args, **kwargs)
 
-    monkeypatch.setattr(RolloutBatch, "to_device", _recording_to_device)
+    monkeypatch.setattr(RolloutBatch, "to_device", recording_to_device)
 
-    class _Algorithm(_EvaluatorAlgorithmFake):
-        class _Config:
-            global_std = False
-            eps = 1e-8
-            adv_clip_max = 5.0
-            kl_coef = 0.0
-
-        config = _Config()
-
-        def compute_advantages_from_tensors(self, rewards, group_ids):
-            del group_ids
-            return torch.ones_like(rewards)
-
-        def compute_loss(self, inputs):
-            signals, _advantages, _old_log_probs = _algorithm_inputs(inputs)
-            loss = signals.log_prob.mean()
-            return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
-
-    class _Collector(PromptCollectionFake):
-        async def evaluate_rollout(self, pendings):
-            return list(pendings)
-
-        async def generate_rollout(self, request):
-            prompts = request.inputs
-            kwargs = request.options
-            prompts = [getattr(item, "prompt", item) for item in prompts]
-            group_size = int(kwargs["group_size"])
-            batch_size = len(prompts) * group_size
-            return _diffusion_rollout_batch(
-                rewards=torch.arange(batch_size, dtype=torch.float32),
-                group_ids=torch.zeros(batch_size, dtype=torch.long),
-                num_steps=1,
-            )
-
-    class _Evaluator(Evaluator):
-        def __init__(self, calls: list[int]) -> None:
-            self.calls = calls
-
-        def evaluate(self, model, batch, timestep_idx, **kw):
-            del kw
-            self.calls.append(int(batch.rewards.shape[0]))
-            log_prob = model.weight.reshape(()) * batch.rewards
-            return _trajectory_signals(batch, log_prob, timestep_idx)
-
-    def _make_trainer(
-        training_microbatch_size: int,
-        *,
-        streaming: bool,
-    ) -> tuple[OnlineTrainer, list[int]]:
-        replay_calls: list[int] = []
-        model = nn.Linear(1, 1, bias=False)
-        _stamp_model_precision(model)
-        with torch.no_grad():
-            model.weight.fill_(1.0)
-        trainer = OnlineTrainer(
-            algorithm=_Algorithm(),
-            collector=_Collector(),
-            evaluator=_Evaluator(replay_calls),
-            model=model,
-            config=TrainerConfig(
-                batch_plan=OnlineBatchPlan(
-                    prompts_per_batch=1,
-                    n_samples_per_prompt=4,
-                    prompts_per_collection=1 if streaming else 0,
-                    training_microbatch_size=training_microbatch_size,
-                ),
-                timestep_fraction=1.0,
-                drop_zero_advantage=False,
-                output_dir="outputs/",
-                optim=OptimConfig(lr=0.0),
-                ema=EMAConfig(),
-                debug=DebugConfig(),
-            ),
-            device="cpu",
+    def run(name: str, microbatch: int, *, streaming: bool, activate_after: bool):
+        overrides = (
+            *_ONE_EPOCH,
+            "rollout.n_samples_per_prompt=4",
+            "rollout.samples_per_generation_batch=4",
+            f"actor.training_microbatch_size={microbatch}",
         )
-        return trainer, replay_calls
-
-    def _run(
-        training_microbatch_size: int,
-        *,
-        streaming: bool,
-    ) -> tuple[float, list[int], list[int]]:
-        device_move_sizes.clear()
-        trainer, replay_calls = _make_trainer(
-            training_microbatch_size,
-            streaming=streaming,
-        )
-        recorded_grads: list[float] = []
-        original_step = trainer._clip_and_step
-
-        def _recording_step(optimizer):
-            assert trainer.model.weight.grad is not None
-            recorded_grads.append(float(trainer.model.weight.grad.detach().item()))
-            return original_step(optimizer)
-
-        trainer._clip_and_step = _recording_step  # type: ignore[method-assign]
-
         if streaming:
-            asyncio.run(
-                _run_streaming_optimizer_update(
-                    trainer,
-                    ["prompt"],
-                    batch_plan=trainer.config.batch_plan,
-                ),
-            )
+            overrides += ("actor.prompts_per_collection=1",)
+        bench = real_trainer(monkeypatch, tmp_path / name, overrides=overrides)
+        evaluations = _record_evaluations(monkeypatch, bench)
+        steps = _record_optimizer_steps(monkeypatch, bench)
+        device_move_sizes.clear()
+        random.seed(0)
+        if streaming:
+            _stream(bench, [PromptExample(prompt="prompt")])
         else:
-            asyncio.run(trainer.step(["prompt"]))
+            asyncio.run(bench.trainer.step([PromptExample(prompt="prompt")]))
+        if activate_after:
+            # Load this stack's policy before the next stack installs its pipeline.
+            asyncio.run(bench.collector.collector.activate_generation_runtime())
+        assert len(steps) == 1
+        return steps[0], [size for size, _, _ in evaluations], list(device_move_sizes)
 
-        assert len(recorded_grads) == 1
-        return recorded_grads[0], replay_calls, list(device_move_sizes)
-
-    full_grad, full_calls, full_device_moves = _run(
-        training_microbatch_size=0,
-        streaming=False,
-    )
-    legacy_split_grad, legacy_split_calls, legacy_split_device_moves = _run(
-        training_microbatch_size=2,
-        streaming=False,
-    )
-    streaming_split_grad, streaming_split_calls, streaming_split_device_moves = _run(
-        training_microbatch_size=2,
-        streaming=True,
+    full_grad, full_calls, full_moves = run("full", 0, streaming=False, activate_after=True)
+    split_grad, split_calls, split_moves = run("split", 2, streaming=False, activate_after=True)
+    stream_grad, stream_calls, stream_moves = run(
+        "stream", 2, streaming=True, activate_after=False
     )
 
     assert full_calls == [4]
-    assert 4 in full_device_moves
-    assert legacy_split_calls == [2, 2]
-    assert streaming_split_calls == [2, 2]
-    assert max(legacy_split_device_moves) == 2
-    assert max(streaming_split_device_moves) == 2
-    assert full_grad == pytest.approx(1.5)
-    assert legacy_split_grad == pytest.approx(full_grad)
-    assert streaming_split_grad == pytest.approx(full_grad)
+    assert 4 in full_moves
+    assert split_calls == [2, 2]
+    assert stream_calls == [2, 2]
+    assert max(split_moves) == 2
+    assert max(stream_moves) == 2
+    assert any(bool(grad.abs().sum() > 0) for grad in full_grad.values())
+    for name, grad in full_grad.items():
+        torch.testing.assert_close(split_grad[name], grad, rtol=1e-5, atol=1e-7)
+        torch.testing.assert_close(stream_grad[name], grad, rtol=1e-5, atol=1e-7)
 
 
 def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:

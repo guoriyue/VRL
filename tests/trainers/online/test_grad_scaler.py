@@ -1,9 +1,9 @@
 """FP16 GradScaler acceptance gates for OnlineTrainer (SPRINT_fp16_training_gradscaler).
 
 G1 enable matrix, G2 unscale-before-clip ordering, G4 skipped-step propagation
-(the scaler-skipped step must not update EMA, the algorithm adapter, or rollout
-weights). G3
-(checkpoint round-trip) lives in test_state_restore.py.
+(the scaler-skipped step must not update EMA or publish rollout weights; it runs
+on the real GRPO trainer, whose algorithm has no ``after_optimizer_step``
+adapter hook). G3 (checkpoint round-trip) lives in test_state_restore.py.
 """
 
 from __future__ import annotations
@@ -15,20 +15,10 @@ import pytest
 import torch
 import torch.nn as nn
 
-from tests.rollouts.collector._helpers import PromptCollectionFake
-from tests.trainers.online._helpers import (
-    _algorithm_inputs,
-    _diffusion_rollout_batch,
-    _EvaluatorAlgorithmFake,
-    _stamp_model_precision,
-    _trajectory_signals,
-    bare_trainer,
-)
-from vrl.algorithms.types import TrainStepMetrics
+from tests.rollouts.collector._helpers import Trace
+from tests.trainers.online._helpers import TrainerBench, bare_trainer, real_trainer
 from vrl.config.precision import RolePrecision
-from vrl.rollouts.evaluators.base import Evaluator
-from vrl.trainers.core.types import EMAConfig, OptimConfig
-from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+from vrl.trainers.online.ema import EMAWeights
 from vrl.trainers.online.trainer import OnlineTrainer
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer
 from vrl.trainers.strategy import SingleProcessStrategy
@@ -59,13 +49,11 @@ def test_create_grad_scaler_matrix(
     expected,
 ) -> None:
     model = nn.Linear(1, 1, bias=False).to(dtype=parameter_dtype)
-    _stamp_model_precision(
-        model,
-        precision=RolePrecision(
-            dtype=dtype,
-            float32_precision="ieee",
-            outer_autocast=outer_autocast,
-        ),
+    # The role precision a RuntimeBundle stamps on its model.
+    model.precision = RolePrecision(
+        dtype=dtype,
+        float32_precision="ieee",
+        outer_autocast=outer_autocast,
     )
     sentinel = object()
     monkeypatch.setattr(torch.amp, "GradScaler", lambda _device: sentinel)
@@ -90,7 +78,7 @@ def _scaler_trainer(*, growth_interval: int = 2000, max_norm: float = 1.0):
     )
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
     scaler.scale(model.weight.sum()).backward()  # grad now carries the 1024 scale
-    trainer = SimpleNamespace(
+    trainer = bare_trainer(
         config=SimpleNamespace(max_norm=max_norm),
         model=model,
         _grad_scaler=scaler,
@@ -130,7 +118,7 @@ def test_clip_and_step_prepares_fp32_master_before_standard_unscale() -> None:
     )
     scaler = torch.amp.GradScaler("cpu", init_scale=128.0)
     scaler.scale(model.weight.float().sum()).backward()
-    trainer = SimpleNamespace(
+    trainer = bare_trainer(
         config=SimpleNamespace(max_norm=1.0),
         model=model,
         _grad_scaler=scaler,
@@ -144,24 +132,23 @@ def test_clip_and_step_prepares_fp32_master_before_standard_unscale() -> None:
     assert model.weight.item() == pytest.approx(0.89990234375)
 
 
-def test_clip_and_step_refuses_nonfinite_gradient_without_scaler() -> None:
-    model = nn.Linear(1, 1, bias=False)
-    with torch.no_grad():
-        model.weight.fill_(1.0)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
-    model.weight.grad = torch.full_like(model.weight, float("nan"))
-    trainer = SimpleNamespace(
-        config=SimpleNamespace(max_norm=1.0),
-        model=model,
-        _grad_scaler=None,
-        _strategy=SingleProcessStrategy(),
-    )
+def test_clip_and_step_refuses_nonfinite_gradient_without_scaler(monkeypatch, tmp_path) -> None:
+    """Without a GradScaler (CPU, BF16, FP32) a non-finite norm is never committed."""
+
+    tb = real_trainer(monkeypatch, tmp_path)
+    assert tb.trainer._grad_scaler is None
+    optimizer = tb.trainer._ensure_optimizer()
+    parameters = tb.trainable_parameters()
+    before = {name: value.detach().clone() for name, value in parameters.items()}
+    for value in parameters.values():
+        value.grad = torch.full_like(value, float("nan"))
 
     with pytest.raises(FloatingPointError, match="non-finite gradient norm"):
-        OnlineTrainer._clip_and_step(trainer, optimizer)
+        tb.trainer._clip_and_step(optimizer)
 
-    assert model.weight.item() == pytest.approx(1.0)
-    assert model.weight.grad is None
+    for name, value in parameters.items():
+        assert torch.equal(value.detach(), before[name])
+        assert value.grad is None
 
 
 def test_clip_and_step_lets_scaler_skip_nonfinite_gradient() -> None:
@@ -183,32 +170,30 @@ def test_clip_and_step_lets_scaler_skip_nonfinite_gradient() -> None:
     assert trainer._grad_scaler.get_scale() < scale_before  # real backoff happened
 
 
-def test_low_precision_trainables_derive_master_optimizer_without_config_knob() -> None:
-    trainer = bare_trainer(
-        model=nn.Linear(1, 1, bias=False).half(),
-        config=SimpleNamespace(optim=OptimConfig(lr=1.0e-5)),
-        _optimizer=None,
-    )
+def test_low_precision_trainables_derive_master_optimizer_without_config_knob(
+    monkeypatch, tmp_path
+) -> None:
+    tb = real_trainer(monkeypatch, tmp_path, overrides=("precision.training.dtype=fp16",))
+    trainable = next(iter(tb.trainable_parameters().values()))
 
-    optimizer = trainer._ensure_optimizer()
+    optimizer = tb.trainer._ensure_optimizer()
 
     assert isinstance(optimizer, FP32MasterWeightOptimizer)
     assert next(optimizer.parameters()).dtype is torch.float32
-    assert trainer.model.weight.dtype is torch.float16
+    assert trainable.dtype is torch.float16
 
 
-def test_fp32_trainables_use_direct_optimizer_without_duplicate_master() -> None:
-    trainer = bare_trainer(
-        model=nn.Linear(1, 1, bias=False).float(),
-        config=SimpleNamespace(optim=OptimConfig(lr=1.0e-5)),
-        _optimizer=None,
-    )
+def test_fp32_trainables_use_direct_optimizer_without_duplicate_master(
+    monkeypatch, tmp_path
+) -> None:
+    tb = real_trainer(monkeypatch, tmp_path)
+    trainables = list(tb.trainable_parameters().values())
 
-    optimizer = trainer._ensure_optimizer()
+    optimizer = tb.trainer._ensure_optimizer()
 
     assert not isinstance(optimizer, FP32MasterWeightOptimizer)
-    assert optimizer.param_groups[0]["params"][0] is trainer.model.weight
-    assert trainer.model.weight.dtype is torch.float32
+    assert optimizer.param_groups[0]["params"][0] is trainables[0]
+    assert all(value.dtype is torch.float32 for value in trainables)
 
 
 # --------------------------------------------------------------------------
@@ -240,126 +225,55 @@ def test_clip_and_step_reports_skipped(
 # --------------------------------------------------------------------------
 # G4 (integration) — a skipped step must not fire EMA or after_optimizer_step
 # --------------------------------------------------------------------------
-class _Algorithm(_EvaluatorAlgorithmFake):
-    class _Config:
-        global_std = False
-        eps = 1e-8
-        adv_clip_max = 5.0
-        kl_coef = 0.0
+# The only producer of a skipped step is the CUDA fp16 GradScaler's backoff; a
+# CPU trainer has no scaler. The skip is therefore the scaler's outcome applied
+# to the real trainer: no optimizer.step, gradients cleared, stepped=False.
+def _scaler_skips_every_step(monkeypatch, tb: TrainerBench) -> None:
+    def skipped(optimizer):
+        optimizer.zero_grad()
+        return float("inf"), False
 
-    config = _Config()
-
-    def __init__(self):
-        self.after_step_calls: list[int] = []
-
-    def compute_advantages_from_tensors(self, rewards, group_ids):
-        del group_ids
-        return rewards - rewards.mean()
-
-    def compute_loss(self, inputs):
-        signals, _adv, _old = _algorithm_inputs(inputs)
-        loss = signals.log_prob.mean()
-        return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
-
-    def after_optimizer_step(self, model, global_step) -> None:
-        del model
-        self.after_step_calls.append(global_step)
+    monkeypatch.setattr(tb.trainer, "_clip_and_step", skipped)
 
 
-class _Collector(PromptCollectionFake):
-    async def evaluate_rollout(self, pendings):
-        return list(pendings)
-
-    async def generate_rollout(self, request):
-        kwargs = request.options
-        group_size = int(kwargs["group_size"])
-        return _diffusion_rollout_batch(
-            rewards=torch.arange(group_size, dtype=torch.float32),
-            group_ids=torch.zeros(group_size, dtype=torch.long),
-            num_steps=2,
-        )
-
-
-class _Evaluator(Evaluator):
-    def evaluate(self, model, batch, timestep_idx, **kw):
-        del kw
-        return _trajectory_signals(
-            batch,
-            model.weight.view(1).expand(batch.rewards.shape[0]),
-            timestep_idx,
-        )
-
-
-class _SpyEMA:
-    def __init__(self):
-        self.steps: list[int] = []
-
-    def step(self, trainable, global_step):
-        del trainable
-        self.steps.append(global_step)
-
-
-def _build_trainer(tmp_path):
-    algorithm = _Algorithm()
-    model = nn.Linear(1, 1, bias=False)
-    _stamp_model_precision(model)
-    with torch.no_grad():
-        model.weight.fill_(1.0)
-    trainer = OnlineTrainer(
-        algorithm=algorithm,
-        collector=_Collector(),
-        evaluator=_Evaluator(),
-        model=model,
-        config=TrainerConfig(
-            batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
-            timestep_fraction=1.0,
-            drop_zero_advantage=False,
-            optim=OptimConfig(lr=0.01),
-            ema=EMAConfig(enable=True, update_interval=1),
-            output_dir=str(tmp_path),
+def _trainer_with_ema(monkeypatch, tmp_path) -> tuple[TrainerBench, Trace]:
+    tb = real_trainer(
+        monkeypatch,
+        tmp_path,
+        overrides=(
+            "actor.ppo_epochs=1",
+            "actor.drop_zero_advantage=false",
+            "actor.ema.enable=true",
+            "actor.ema.update_interval=1",
         ),
-        device="cpu",
     )
-    spy_ema = _SpyEMA()
-    trainer._ema = spy_ema  # _ensure_ema returns the existing instance
-    return trainer, algorithm, spy_ema
+    shadow = Trace(monkeypatch)
+    shadow.watch(EMAWeights, "step", "ema_step")
+    return tb, shadow
 
 
-def test_skipped_step_does_not_update_ema_or_adapter(tmp_path) -> None:
-    trainer, algorithm, spy_ema = _build_trainer(tmp_path)
-    trainer._clip_and_step = lambda optimizer: (0.0, False)  # type: ignore[method-assign]
-    real_after_train_step = trainer.rollout_schedule.after_train_step
-    sync_calls: list[int] = []
+def test_skipped_step_does_not_update_ema_or_rollout_weights(monkeypatch, tmp_path) -> None:
+    tb, shadow = _trainer_with_ema(monkeypatch, tmp_path)
+    _scaler_skips_every_step(monkeypatch, tb)
+    before = {name: value.detach().clone() for name, value in tb.trainable_parameters().items()}
 
-    async def _record_sync():
-        sync_calls.append(1)
-        return await real_after_train_step()
+    asyncio.run(tb.trainer.step(["p"]))
 
-    trainer.rollout_schedule.after_train_step = _record_sync  # type: ignore[method-assign]
-
-    asyncio.run(trainer.step(["p"]))
-
-    assert algorithm.after_step_calls == []
-    assert spy_ema.steps == []
-    assert sync_calls == []
-    assert trainer.state.global_step == 1  # the step still counts as an iteration
+    assert shadow.events == []
+    # Only the initial policy push: the skipped update is never published.
+    assert tb.collector.trace.events.count("update_weights") == 1
+    assert tb.collector.runtime.current_policy_version == 1
+    for name, value in tb.trainable_parameters().items():
+        assert torch.equal(value.detach(), before[name])
+    assert tb.trainer.state.global_step == 1  # the step still counts as an iteration
 
 
-def test_applied_step_updates_ema_and_adapter(tmp_path) -> None:
-    trainer, algorithm, spy_ema = _build_trainer(tmp_path)
-    trainer._clip_and_step = lambda optimizer: (0.0, True)  # type: ignore[method-assign]
-    real_after_train_step = trainer.rollout_schedule.after_train_step
-    sync_calls: list[int] = []
+def test_applied_step_updates_ema_and_rollout_weights(monkeypatch, tmp_path) -> None:
+    tb, shadow = _trainer_with_ema(monkeypatch, tmp_path)
 
-    async def _record_sync():
-        sync_calls.append(1)
-        return await real_after_train_step()
+    asyncio.run(tb.trainer.step(["p"]))
 
-    trainer.rollout_schedule.after_train_step = _record_sync  # type: ignore[method-assign]
-
-    asyncio.run(trainer.step(["p"]))
-
-    assert algorithm.after_step_calls  # fired
-    assert spy_ema.steps  # fired
-    assert sync_calls == [1]
-    assert trainer.state.global_step == 1
+    assert shadow.events == ["ema_step"]
+    assert tb.collector.trace.events.count("update_weights") == 2
+    assert tb.collector.runtime.current_policy_version == 2
+    assert tb.trainer.state.global_step == 1

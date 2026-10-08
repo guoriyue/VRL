@@ -1,252 +1,282 @@
-"""Tiny VDN native executor/evaluator compose with OnlineTrainer and cold resume.
+"""VDN-H3 online GRPO composes end to end on the real stack, including cold resume.
 
-The collector control and rewards are controlled doubles; model computation,
-sampling, GRPO, optimizer, weight delivery and checkpoint APIs are real.
+The VDN experiment preset is resolved onto a tiny MiniMax-H3 modular snapshot
+(saved through diffusers) and a tiny VDN artifact (saved through upstream's own
+checkpoint writer). From there everything is production code: the family
+loader grafts the hybrid attention onto both the rollout policy and the replay
+model, ``InProcessGenerationRuntime`` runs the rollout worker body, the real
+collector scores through a real reward runtime, the trainer is wired the way
+the online recipe wires it, weights reach the rollout through the real syncer,
+and the checkpoint writer/restorer move the state into a freshly built stack.
 """
 
+from __future__ import annotations
+
 import asyncio
+import json
 import os
-from types import SimpleNamespace
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import pytest
 import torch
 
-from tests.models.steps.denoise.fixtures import build_tiny_vdn_h3_model, stamp_model_precision
-from tests.rollouts.collector._helpers import PromptCollectionFake
-from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
-from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.models.families.vdn_h3.model import VDNH3Model, VDNH3ReplayModel
-from vrl.models.families.vdn_h3.runtime import VDNH3BatchExecutor
-from vrl.models.interfaces.runtime import RuntimeBundle
-from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
-from vrl.trainers.checkpointing import (
-    TrainingCheckpoint,
-    restore_rng_state,
-    restore_training_checkpoint,
-    save_training_checkpoint,
+from tests.models.steps.denoise.fixtures import (
+    write_tiny_minimax_h3_snapshot,
+    write_tiny_vdn_h3_checkpoint,
 )
-from vrl.trainers.core.types import EMAConfig, OptimConfig
-from vrl.trainers.distributed import DistributedTrainingContext
-from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-from vrl.trainers.online.trainer import OnlineTrainer
-from vrl.trainers.strategy import SingleProcessStrategy
-from vrl.trajectory.builders import build_diffusion_trajectory
+from tests.rollouts.collector._helpers import IndexReward, Trace
 
 pytest.importorskip("src.models.hybrid_attention")
 
+_PROMPT = "a wooden block"
 
-class _Collector(PromptCollectionFake):
-    def __init__(self, model):
-        self.model = model
-        self.executor = VDNH3BatchExecutor(model)
-        self.generation_runtime = SimpleNamespace(current_policy_version=0)
-        self.versions = []
-
-    async def evaluate_rollout(self, batches):
-        return list(batches)
-
-    async def generate_rollout(self, prepared, **kwargs):
-        assert prepared.options["group_size"] == 2
-        self.versions.append(prepared.options["policy_version"])
-        request = GenerationRequest(
-            request_id="vdn-online-test",
-            family="vdn_h3",
-            task="t2v",
-            inputs=list(prepared.inputs),
-            samples_per_prompt=2,
-            sampling={
-                "num_steps": 3,
-                "height": 16,
-                "width": 16,
-                "num_frames": 8,
-                "fps": 24,
-                "guidance_scale": 1.0,
-                "max_sequence_length": 8,
-                "seed": 17,
-            },
-        )
-        with torch.no_grad():
-            results = [
-                self.executor.forward_batch(
-                    request,
-                    GenerationSampleBatch(prompt_index=0, sample_start=index, sample_count=1),
-                )
-                for index in range(2)
-            ]
-        self.last_actions = torch.cat([result.actions for result in results]).clone()
-        self.params = self.executor.parse_sampling_params(request)
-        trajectory = build_diffusion_trajectory(
-            request=request,
-            sample_rows=[
-                GenerationSampleRow(
-                    prompt_index=0,
-                    sample_index=index,
-                    prompt=str(prepared.inputs[0]),
-                    sample_id=f"vdn-{index}",
-                )
-                for index in range(2)
-            ],
-            observations=torch.cat([result.observations for result in results]),
-            actions=self.last_actions,
-            old_log_prob=torch.cat([result.log_probs for result in results]),
-            timesteps=torch.cat([result.timesteps for result in results]),
-            replay_tensors={
-                key: torch.cat([result.replay_tensors[key] for result in results])
-                for key in results[0].replay_tensors
-            },
-            context=results[0].context,
-        )
-        return RolloutBatch(
-            rewards=torch.tensor([0.0, 1.0]),
-            group_ids=torch.zeros(2, dtype=torch.long),
-            trajectory=trajectory,
-            context=results[0].context,
-        )
+# The VDN experiment's composition with a CPU, model-free reward in place of
+# the production video reward service.
+_EXPERIMENT = """\
+defaults:
+  - /recipe/online/denoise_grpo
+  - /model/vdn_h3/8nfe
+  - /sampling/video/h3_768p_124f
+  - /sampling/denoise/8_step_no_cfg
+  - /dataset/videophy
+  - /reward/image_sharpness
+"""
 
 
-class _Syncer:
-    def __init__(self, collector):
-        self.collector = collector
-
-    @property
-    def current_policy_version(self):
-        return self.collector.generation_runtime.current_policy_version
-
-    async def push(self, state):
-        parameters = dict(self.collector.model.named_parameters())
-        with torch.no_grad():
-            for name, value in state.items():
-                parameters[name].copy_(value)
-        self.collector.generation_runtime.current_policy_version += 1
+@dataclass
+class _Stack:
+    trainer: Any
+    runtime: Any
+    bundle: Any
+    identity: dict[str, Any]
+    trace: Trace
 
 
-def _build(root, *, device):
-    rollout_components = build_tiny_vdn_h3_model(seed=0).pipeline
-    for name in ("transformer", "text_encoder", "vae", "audio_vae"):
-        getattr(rollout_components, name).to(device)
-    rollout = VDNH3Model(pipeline=rollout_components, device=device)
-    stamp_model_precision(rollout)
-    components = build_tiny_vdn_h3_model(seed=1).pipeline
-    model = VDNH3ReplayModel(
-        transformer=components.transformer.to(device),
-        scheduler=components.scheduler,
-        audio_scheduler=components.audio_scheduler,
-        device=device,
+def _stack(
+    monkeypatch: pytest.MonkeyPatch,
+    root: Path,
+    *,
+    snapshot: Path,
+    artifact: Path,
+    overrides: tuple[str, ...] = (),
+) -> _Stack:
+    """Resolve the tiny VDN run and build its stack the way the online recipe does."""
+
+    from tests.generation._in_process_runtime import InProcessGenerationRuntime
+    from vrl import run
+    from vrl.config.loading import load_config
+    from vrl.rewards.runtime import RewardFunctionRuntime
+    from vrl.rollouts.collector import RolloutCollector
+    from vrl.scripts.common.factory import AlgorithmEvaluatorPair
+    from vrl.trainers.distributed import DistributedTrainingContext
+    from vrl.trainers.online.trainer import OnlineTrainer
+    from vrl.trainers.strategy import build_strategy
+    from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
+
+    root.mkdir(parents=True, exist_ok=True)
+    manifest = root / "prompts.jsonl"
+    manifest.write_text(json.dumps({"prompt": _PROMPT}) + "\n", encoding="utf-8")
+    experiment = root / "vdn_h3_online.yaml"
+    experiment.write_text(_EXPERIMENT, encoding="utf-8")
+    cfg = load_config(
+        str(experiment),
+        overrides=[
+            f"model.path={snapshot}",
+            "model.revision=null",
+            f"model.vdn_checkpoint={artifact}",
+            # Upstream's eager reference: the window softmax that runs on CPU.
+            "model.softmax_backend=ref",
+            "model.lora.rank=2",
+            "model.lora.alpha=2",
+            f"data.manifest={manifest}",
+            f"trainer.output_dir={root / 'run'}",
+            "trainer.total_epochs=1",
+            "precision.training.dtype=fp32",
+            "precision.rollout.dtype=fp32",
+            "sampling.width=16",
+            "sampling.height=16",
+            "sampling.num_frames=8",
+            "sampling.num_steps=3",
+            "sampling.max_sequence_length=8",
+            # One fixed request seed: every collect draws the same rollout noise.
+            "sampling.seed=17",
+            "rollout.sde.window_range=[0,3]",
+            "rollout.n_samples_per_prompt=2",
+            "rollout.prompts_per_batch=1",
+            "rollout.samples_per_generation_batch=1",
+            "actor.training_microbatch_size=1",
+            "actor.timestep_fraction=1.0",
+            "actor.drop_zero_advantage=false",
+            "actor.optim.lr=1e-4",
+            "actor.optim.weight_decay=0.0",
+            "actor.ema.enable=true",
+            "actor.ema.decay=0.9",
+            "actor.ema.update_interval=1",
+            "algorithm.kl_coef=0.0",
+            "distributed.resources.rollout.num_gpus=0",
+            *overrides,
+        ],
     )
-    stamp_model_precision(model)
-    model.transformer.load_state_dict(rollout.transformer.state_dict(), strict=True)
-    model.transformer.requires_grad_(False)
-    model.transformer.transformer_blocks[0].attn.to_out_linear.requires_grad_(True)
-    model.set_num_steps(3)
-    collector = _Collector(rollout)
+    resolved = run.resolve_online_run(cfg)
+    built = resolved.built
+    replay = run.resolve_model(
+        resolved.family,
+        built.root,
+        resolved.device,
+        precision=built.precision,
+        for_rollout=False,
+    )
+    bundle = replay.materialize(context="vdn composition test")
+    runtime = InProcessGenerationRuntime(resolved.ray_launch_inputs(replay))
+    trace = Trace(monkeypatch)
+    trace.watch(runtime, "generate", "generate")
+    trace.watch(runtime, "update_weights", "update_weights")
+    collector = RolloutCollector.from_family(
+        resolved.family,
+        # Scores [0, 1] for the two samples of the one prompt group.
+        reward_runtime=RewardFunctionRuntime(IndexReward()),
+        config=resolved.collector,
+        generation_runtime=runtime,
+    )
+    # The recipe's strategy: built from the run's own training context, so it
+    # places the trainable roots on the trainer device.
+    strategy = build_strategy(
+        built.root, DistributedTrainingContext.from_root(built.root, device=resolved.device)
+    )
+    pair = AlgorithmEvaluatorPair.from_configs(
+        family_entry=resolved.family,
+        built=built,
+        collector_config=resolved.collector,
+        scheduler=getattr(bundle, "scheduler", None),
+    )
     trainer = OnlineTrainer(
-        algorithm=GRPO(GRPOConfig(kl_coef=0.0)),
+        algorithm=pair.algorithm,
         collector=collector,
-        evaluator=DenoiseSDELogProbEvaluator(model.scheduler),
-        model=model,
-        strategy=SingleProcessStrategy(
-            DistributedTrainingContext(
-                strategy="single_process",
-                rank=0,
-                world_size=1,
-                device=device,
-            )
-        ),
-        device=device,
-        weight_syncer=_Syncer(collector),
-        sync_state_getter=lambda: {
-            name: p.detach().cpu().clone()
-            for name, p in model.named_parameters()
-            if p.requires_grad
-        },
-        config=TrainerConfig(
-            batch_plan=OnlineBatchPlan(
-                prompts_per_batch=1, n_samples_per_prompt=2, training_microbatch_size=1
-            ),
-            timestep_fraction=1.0,
-            drop_zero_advantage=False,
-            optim=OptimConfig(lr=1e-4, weight_decay=0.0),
-            ema=EMAConfig(enable=True, decay=0.9, update_interval=1),
-            output_dir=str(root),
-        ),
+        evaluator=pair.evaluator,
+        model=bundle.model,
+        ref_model=None,
+        weight_syncer=RayRuntimeWeightSyncer(runtime),
+        sync_state_getter=lambda: strategy.export_rollout_state(bundle),
+        config=built.trainer,
+        device=resolved.device,
+        strategy=strategy,
     )
-    bundle = RuntimeBundle(
-        model=model,
-        trainable_modules={"transformer": model.transformer},
-        scheduler=model.scheduler,
-        raw_handle=None,
-        precision=model.precision,
+    return _Stack(
+        trainer=trainer, runtime=runtime, bundle=bundle, identity=replay.identity, trace=trace
     )
-    return trainer, collector, bundle
 
 
-def _verify_update_and_resume(tmp_path, *, device):
-    trainer, collector, bundle = _build(tmp_path / "control", device=device)
-    before = {
-        name: p.detach().clone() for name, p in trainer.model.named_parameters() if p.requires_grad
+def _trainable(stack: _Stack) -> dict[str, torch.Tensor]:
+    transformer = stack.bundle.model.trainable_modules["transformer"]
+    return {
+        name: parameter.detach().clone()
+        for name, parameter in transformer.named_parameters()
+        if parameter.requires_grad
     }
-    first = asyncio.run(trainer.step(["a wooden block"]))
-    assert first.grad_norm > 0 and first.initial_replay.finite
-    assert first.initial_replay.logprob_abs_diff_max < 1e-6
-    assert any(
-        not torch.equal(before[name], p)
-        for name, p in trainer.model.named_parameters()
-        if name in before
+
+
+def _verify_update_and_resume(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, overrides: tuple[str, ...] = ()
+) -> None:
+    from vrl.trainers.checkpointing import (
+        TrainingCheckpoint,
+        restore_rng_state,
+        restore_training_checkpoint,
+        save_training_checkpoint,
     )
+
+    snapshot = write_tiny_minimax_h3_snapshot(tmp_path / "minimax-h3")
+    artifact = write_tiny_vdn_h3_checkpoint(tmp_path / "vdn-h3.pt")
+    control = _stack(
+        monkeypatch,
+        tmp_path / "control",
+        snapshot=snapshot,
+        artifact=artifact,
+        overrides=overrides,
+    )
+    before = _trainable(control)
+    assert before, "the VDN LoRA adapters are the trainable parameters"
+
+    first = asyncio.run(control.trainer.step([_PROMPT]))
+
+    assert first.grad_norm > 0 and first.initial_replay.finite
+    # The rollout policy and the replay model are the same grafted weights.
+    assert first.initial_replay.logprob_abs_diff_max < 1e-6
+    after = _trainable(control)
+    assert any(not torch.equal(before[name], after[name]) for name in before)
+
     path = tmp_path / "checkpoint-1"
-    identity = {"schema": "tiny-vdn-grpo-composition/v1"}
     save_training_checkpoint(
         path,
-        trainer=trainer,
-        bundle=bundle,
+        trainer=control.trainer,
+        bundle=control.bundle,
         family="vdn_h3",
-        model_identity=identity,
+        model_identity=control.identity,
         progress={"next_step": 1},
-        strategy=trainer._strategy,
+        strategy=control.trainer._strategy,
     )
-    second = asyncio.run(trainer.step(["a wooden block"]))
+    second = asyncio.run(control.trainer.step([_PROMPT]))
     assert second.grad_norm > 0 and second.initial_replay.logprob_abs_diff_max < 1e-6
-    assert collector.versions == [1, 2]
-    restored, resumed_collector, resumed_bundle = _build(tmp_path / "resumed", device=device)
+    # Each collect ran under the version the syncer published just before it.
+    assert [request.policy_version for request in control.trace.requests] == [1, 2]
+
+    resumed = _stack(
+        monkeypatch,
+        tmp_path / "resumed",
+        snapshot=snapshot,
+        artifact=artifact,
+        overrides=overrides,
+    )
     checkpoint = TrainingCheckpoint.load(path)
     restore_training_checkpoint(
         checkpoint,
-        trainer=restored,
-        bundle=resumed_bundle,
+        trainer=resumed.trainer,
+        bundle=resumed.bundle,
         family="vdn_h3",
-        expected_model_identity=identity,
+        expected_model_identity=resumed.identity,
     )
     restore_rng_state(checkpoint.rng_state, rank=0, world_size=1)
-    resumed = asyncio.run(restored.step(["a wooden block"]))
-    assert resumed.grad_norm == second.grad_norm
-    assert resumed.initial_replay.logprob_abs_diff_max < 1e-6
-    assert trainer.state.step == restored.state.step == 2
+    replayed = asyncio.run(resumed.trainer.step([_PROMPT]))
+
+    # The fresh stack pushes the restored weights before its first collect, so
+    # it reproduces the control's second update exactly.
+    assert replayed.grad_norm == second.grad_norm
+    assert replayed.initial_replay.logprob_abs_diff_max < 1e-6
+    assert control.trainer.state.step == resumed.trainer.state.step == 2
+    control_actions = control.trace.results["generate"][-1].trajectory
+    resumed_actions = resumed.trace.results["generate"][-1].trajectory
     torch.testing.assert_close(
-        collector.last_actions, resumed_collector.last_actions, rtol=0, atol=0
+        control_actions.segments["denoise"].tensors["actions"].value,
+        resumed_actions.segments["denoise"].tensors["actions"].value,
+        rtol=0,
+        atol=0,
     )
     torch.testing.assert_close(
-        trainer.model.state_dict(), restored.model.state_dict(), rtol=0, atol=0
+        control.trainer.model.state_dict(), resumed.trainer.model.state_dict(), rtol=0, atol=0
     )
-    left, right = trainer.state_dict(), restored.state_dict()
+    left, right = control.trainer.state_dict(), resumed.trainer.state_dict()
     torch.testing.assert_close(
         left["optimizer"]["state"], right["optimizer"]["state"], rtol=0, atol=0
     )
     torch.testing.assert_close(left["ema"], right["ema"], rtol=0, atol=0)
 
 
-def test_online_grpo_sync_accumulation_and_checkpoint_resume(tmp_path):
-    _verify_update_and_resume(tmp_path, device=torch.device("cpu"))
+def test_online_grpo_sync_accumulation_and_checkpoint_resume(monkeypatch, tmp_path):
+    _verify_update_and_resume(monkeypatch, tmp_path)
 
 
 @pytest.mark.gpu
 @pytest.mark.skipif(os.environ.get("VRL_VDN_GRPO_CUDA") != "1", reason="Requires one reserved GPU")
-def test_cuda_online_grpo_sync_accumulation_and_checkpoint_resume(tmp_path):
+def test_cuda_online_grpo_sync_accumulation_and_checkpoint_resume(monkeypatch, tmp_path):
     assert torch.cuda.is_available()
     deterministic = torch.are_deterministic_algorithms_enabled()
     torch.use_deterministic_algorithms(True)
     try:
-        _verify_update_and_resume(tmp_path, device=torch.device("cuda:0"))
+        # The same real stack with the trainer and the rollout worker on card 0.
+        _verify_update_and_resume(
+            monkeypatch, tmp_path, overrides=("distributed.resources.rollout.devices=[0]",)
+        )
     finally:
         torch.use_deterministic_algorithms(deterministic)

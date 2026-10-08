@@ -6,51 +6,48 @@ import asyncio
 
 import pytest
 import torch
-import torch.nn as nn
 
-from tests.rollouts.collector._helpers import PromptCollectionFake
-from tests.trainers.online._helpers import (
-    _algorithm_inputs,
-    _diffusion_rollout_batch,
-    _EvaluatorAlgorithmFake,
-    _stamp_model_precision,
-    _trajectory_signals,
-    bare_trainer,
-)
-from vrl.algorithms.types import TrainStepMetrics
+from tests.rollouts.collector._helpers import real_collector
+from tests.trainers.online._helpers import _diffusion_rollout_batch, bare_trainer
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.orchestration.types import RolloutIteration
+from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 from vrl.scripts.common.online import _run_streaming_optimizer_update
-from vrl.trainers.core.types import (
-    DebugConfig,
-    EMAConfig,
-    OptimConfig,
-)
-from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import OnlineTrainer
+from vrl.trainers.strategy import SingleProcessStrategy
+from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 from vrl.trajectory.builders import build_chunk_autoregressive_denoise_trajectory
 from vrl.trajectory.reader import TrajectoryReader
 from vrl.trajectory.types import TrajectoryTensor
 
 
-class _Algorithm(_EvaluatorAlgorithmFake):
-    class _Config:
-        global_std = False
-        eps = 1e-8
-        adv_clip_max = 5.0
-        kl_coef = 0.0
+def _trajectory_signals(
+    batch,
+    log_prob,
+    timestep_idx: int = 0,
+    *,
+    old_log_prob=None,
+):
+    from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 
-    config = _Config()
-
-    def compute_advantages_from_tensors(self, rewards, group_ids):
-        del group_ids
-        return rewards - rewards.mean()
-
-    def compute_loss(self, inputs):
-        signals, advantages, old_log_probs = _algorithm_inputs(inputs)
-        del advantages, old_log_probs
-        loss = signals.log_prob.mean()
-        return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
+    if old_log_prob is None:
+        # An unchanged-policy replay unless the test supplies the behavior value.
+        old_log_prob = log_prob.detach().clone()
+    mask = torch.ones_like(log_prob)
+    return TrajectorySignalBatch(
+        segments={
+            "default": SegmentSignal(
+                name="default",
+                distribution="flow_matching",
+                log_prob=log_prob,
+                old_log_prob=old_log_prob,
+                mask=mask,
+            ),
+        },
+        group_ids=batch.group_ids,
+        primary_segment="default",
+    )
 
 
 def _chunk_denoise_batch(batch_size: int = 2) -> RolloutBatch:
@@ -92,21 +89,19 @@ def _chunk_denoise_batch(batch_size: int = 2) -> RolloutBatch:
     )
 
 
-class _Collector(PromptCollectionFake):
-    async def evaluate_rollout(self, pendings):
-        return list(pendings)
-
-    async def generate_rollout(self, request):
-        prompts = request.inputs
-        kwargs = request.options
-        prompts = [getattr(item, "prompt", item) for item in prompts]
-        group_size = int(kwargs["group_size"])
-        batch_size = len(prompts) * group_size
-        return _chunk_denoise_batch(batch_size)
-
-
 class _TrajectoryEvaluator:
+    """A trajectory-granularity evaluator over the real policy's parameters.
+
+    No family that produces chunk-autoregressive trajectories runs on CPU
+    (CausVid needs flash attention and its pinned source checkout; MAGI-1 has
+    no replayable likelihood), so the evaluator that consumes them is the one
+    double here. It checks it was handed the whole ``[sample, chunk,
+    transition]`` trajectory and returns a log-prob that depends on a real
+    trainable parameter, so GRPO's backward reaches the policy.
+    """
+
     replay_granularity = "trajectory"
+    supports_deferred_replay_tensor_move = False
 
     def __init__(self) -> None:
         self.calls: list[int] = []
@@ -118,50 +113,74 @@ class _TrajectoryEvaluator:
         observations = reader.role_value(segment, "observation")
         assert tuple(observations.shape[1:3]) == (4, 3)
         self.calls.append(int(timestep_idx))
-        log_prob = model.weight.reshape(()).expand(batch.rewards.shape[0])
+        parameter = next(p for p in model.parameters() if p.requires_grad)
+        log_prob = (parameter.reshape(-1)[0] * 0.0).expand(batch.rewards.shape[0])
         return _trajectory_signals(batch, log_prob, timestep_idx)
 
 
-@pytest.mark.parametrize("streaming", [False, True])
-def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(streaming: bool) -> None:
-    evaluator = _TrajectoryEvaluator()
-    model = nn.Linear(1, 1, bias=False)
-    _stamp_model_precision(model)
-    with torch.no_grad():
-        model.weight.zero_()
-    batch_plan = OnlineBatchPlan(
-        prompts_per_batch=1,
-        n_samples_per_prompt=2,
-        prompts_per_collection=1 if streaming else 0,
-        training_microbatch_size=0,
-    )
-    trainer = OnlineTrainer(
-        algorithm=_Algorithm(),
-        collector=_Collector(),
-        evaluator=evaluator,
-        model=model,
-        config=TrainerConfig(
-            batch_plan=batch_plan,
-            timestep_fraction=0.25,
-            drop_zero_advantage=False,
-            output_dir="outputs/",
-            optim=OptimConfig(lr=0.0),
-            ema=EMAConfig(),
-            debug=DebugConfig(),
-        ),
-        device="cpu",
-    )
+def _trainer(
+    monkeypatch, tmp_path, *, streaming: bool
+) -> tuple[OnlineTrainer, _TrajectoryEvaluator]:
+    """The recipe's trainer wiring on tiny SANA with the trajectory evaluator."""
 
-    if streaming:
-        asyncio.run(
-            _run_streaming_optimizer_update(
+    bench = real_collector(
+        monkeypatch,
+        tmp_path,
+        overrides=(
+            "algorithm.kl_coef=0.0",
+            "actor.ppo_epochs=1",
+            "actor.drop_zero_advantage=false",
+            *(("actor.prompts_per_collection=1",) if streaming else ()),
+        ),
+    )
+    stack = bench.stack
+    built = stack.resolved.built
+    bundle = stack.trainer_bundle()
+    strategy = SingleProcessStrategy()
+    algorithm = AlgorithmEvaluatorPair.from_configs(
+        family_entry=stack.family,
+        built=built,
+        collector_config=stack.collector_config(),
+        scheduler=getattr(bundle, "scheduler", None),
+    ).algorithm
+    evaluator = _TrajectoryEvaluator()
+    trainer = OnlineTrainer(
+        algorithm=algorithm,
+        collector=bench.collector,
+        evaluator=evaluator,
+        model=bundle.model,
+        weight_syncer=RayRuntimeWeightSyncer(bench.runtime),
+        sync_state_getter=lambda: strategy.export_rollout_state(bundle),
+        config=built.trainer,
+        device=torch.device("cpu"),
+        strategy=strategy,
+    )
+    return trainer, evaluator
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(
+    monkeypatch, tmp_path, streaming: bool
+) -> None:
+    trainer, evaluator = _trainer(monkeypatch, tmp_path, streaming=streaming)
+    # The chunk trajectory enters through the trainer's pre-collected iteration
+    # seam, the one the global-std streaming recipe uses.
+    iteration = RolloutIteration(batches=[_chunk_denoise_batch()])
+
+    async def update():
+        if streaming:
+            await _run_streaming_optimizer_update(
                 trainer,
                 ["prompt"],
-                batch_plan=batch_plan,
-            ),
-        )
-    else:
-        asyncio.run(trainer.step(["prompt"]))
+                batch_plan=trainer.config.batch_plan,
+                _prepared=iter([(iteration, None, None)]),
+            )
+        else:
+            batch = await trainer.collect_training_batch(["prompt"], _iteration=iteration)
+            await trainer.train_on_rollout_batch(batch)
+        await trainer.rollout_schedule.shutdown()
+
+    asyncio.run(update())
 
     assert evaluator.calls == [0]
 
@@ -179,7 +198,7 @@ def test_unknown_replay_granularity_fails_fast() -> None:
 
 
 def test_step_evaluator_uses_primary_action_axis_for_fractional_selection() -> None:
-    trainer = bare_trainer(evaluator=object())
+    trainer = bare_trainer(evaluator=None)
     batch = _diffusion_rollout_batch(
         rewards=torch.zeros(1),
         group_ids=torch.zeros(1, dtype=torch.long),
@@ -197,7 +216,7 @@ def test_step_evaluator_uses_primary_action_axis_for_fractional_selection() -> N
 
 
 def test_step_replay_rejects_multiple_primary_action_axes() -> None:
-    trainer = bare_trainer(evaluator=object())
+    trainer = bare_trainer(evaluator=None)
 
     with pytest.raises(ValueError, match="exactly one non-sample axis"):
         trainer._train_replay_indices(_chunk_denoise_batch(), 1.0, "strided")

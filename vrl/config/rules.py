@@ -127,5 +127,16 @@ def check_cross_section_rules(root: RootConfig) -> None:
     if contract.needs_sde_rollout and (rollout is None or rollout.sde is None):
         raise ValueError("config missing required field: rollout.sde.type")
 
+    # ── A trust-region loss measures drift against the rollout's proposal mean,
+    # which generation stores only on request.
+    if contract.requires_active_trust_region and (
+        rollout is None or not rollout.return_prev_sample_mean
+    ):
+        raise ValueError(
+            f"algorithm.kind={kind!r} measures the current-vs-rollout proposal "
+            "drift, which needs the rollout mean stored at generation; set "
+            "rollout.return_prev_sample_mean=true",
+        )
+
 
 __all__ = ["check_cross_section_rules"]

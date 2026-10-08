@@ -181,7 +181,7 @@ def test_noise_is_shared_within_a_group_and_fresh_across_groups_and_updates() ->
 def test_after_optimizer_step_advances_the_noise_counter() -> None:
     objective = VGRPO()
 
-    objective.after_optimizer_step(None, global_step=7)
+    objective.after_optimizer_step(7)
 
     assert objective._update_counter == 8
 

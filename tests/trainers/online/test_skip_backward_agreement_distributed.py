@@ -12,32 +12,28 @@ local flags.
 
 from __future__ import annotations
 
+import asyncio
 import os
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
 import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from torch import nn
 
-from tests.rollouts.collector._helpers import PromptCollectionFake
+from tests.rollouts.collector._helpers import Trace, real_collector
 from tests.trainers._strategy_policies import free_port
-from tests.trainers.online._helpers import (
-    _diffusion_rollout_batch,
-    _EvaluatorAlgorithmFake,
-    _stamp_model_precision,
-    _trajectory_signals,
-)
+from tests.trainers.online._helpers import _diffusion_rollout_batch
 from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
 from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
+from vrl.rewards import RewardOutput, RewardSample
+from vrl.rewards.base import RewardFunction
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
 from vrl.trainers.distributed import DistributedTrainingContext, TrainingCollectives
-from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import (
     OnlineTrainer,
-    PhaseTimer,
-    TrainingBatch,
     _distributed_initial_replay_stats,
     _ReplayMetrics,
     _TrainingMicrobatch,
@@ -226,36 +222,6 @@ def test_initial_replay_stats_are_rank_consistent() -> None:
         assert empty_rank_replay == InitialReplayStats()
 
 
-def test_replay_planner_pads_to_global_slot_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        TrainingCollectives,
-        "max_int",
-        lambda self, value: 8,
-    )
-
-    rank0_chunks = _TrainingMicrobatch.plan_balanced(
-        [_rollout_batch(8)],
-        [torch.ones(8)],
-        training_microbatch_size=1,
-        strategy=_rank_strategy(),
-    )
-    rank1_chunks = _TrainingMicrobatch.plan_balanced(
-        [_rollout_batch(3)],
-        [torch.ones(3)],
-        training_microbatch_size=1,
-        strategy=_rank_strategy(),
-    )
-
-    assert len(rank0_chunks) == 8
-    assert len(rank1_chunks) == 8
-    assert sum(batch.is_dummy for batch in rank0_chunks) == 0
-    assert sum(batch.is_dummy for batch in rank1_chunks) == 5
-    assert sum(batch.loss_weight for batch in rank0_chunks) == pytest.approx(1.0)
-    assert sum(batch.loss_weight for batch in rank1_chunks) == pytest.approx(1.0)
-    assert all(batch.loss_weight == 0.0 for batch in rank1_chunks[3:])
-    assert all(torch.count_nonzero(batch.advantages) == 0 for batch in rank1_chunks[3:])
-
-
 def _run_replay_planner_rank(
     rank: int,
     world_size: int,
@@ -274,12 +240,18 @@ def _run_replay_planner_rank(
             training_microbatch_size=1,
             strategy=_rank_strategy(),
         )
+        dummies = [batch for batch in batches if batch.is_dummy]
         q.put(
             (
                 rank,
                 len(batches),
-                sum(batch.is_dummy for batch in batches),
+                len(dummies),
                 sum(batch.loss_weight for batch in batches),
+                # Padding slots carry no weight and no advantage: they exist only
+                # so every rank issues the same number of collectives.
+                all(batch.loss_weight == 0.0 for batch in dummies),
+                all(torch.count_nonzero(batch.advantages) == 0 for batch in dummies),
+                all(not batch.is_dummy for batch in batches[:sample_count]),
             )
         )
     finally:
@@ -298,14 +270,79 @@ def test_replay_planner_slot_count_is_unanimous_under_gloo() -> None:
         p.start()
     results = {}
     for _ in range(2):
-        rank, slot_count, dummy_count, weight_sum = q.get(timeout=50)
-        results[rank] = (slot_count, dummy_count, weight_sum)
+        rank, *result = q.get(timeout=50)
+        results[rank] = tuple(result)
     for p in procs:
         p.join(timeout=10)
         assert p.exitcode == 0
 
-    assert results[0] == pytest.approx((8, 0, 1.0))
-    assert results[1] == pytest.approx((8, 5, 1.0))
+    # Both ranks pad to the global maximum slot count; real work comes first
+    # and the weights still sum to one per rank.
+    assert results[0] == pytest.approx((8, 0, 1.0, True, True, True))
+    assert results[1] == pytest.approx((8, 5, 1.0, True, True, True))
+
+
+class _DistinctReward(RewardFunction):
+    """Scores sample ``i`` of a call as ``i * i``: no score equals the group mean,
+    so no sample's advantage is zero and none is filtered out."""
+
+    async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
+        return RewardOutput(scores=tuple(float(i * i) for i in range(len(samples))))
+
+
+def _rank_trainer(monkeypatch: pytest.MonkeyPatch, root: Path, *, samples: int) -> Any:
+    """The online recipe's trainer wiring on tiny SANA with real cross-rank collectives.
+
+    ``samples`` is this rank's group size, so the two ranks collect unequal
+    batches; one training sample per replay slot. The strategy is the
+    single-process one carrying the rank's real ``TrainingCollectives``: the
+    slot plan and skip decision are reduced over the live gloo group, while the
+    policy itself is not wrapped (SANA replay reads ``transformer.config``,
+    which a DDP-wrapped transformer does not expose).
+    """
+
+    from vrl.scripts.common.factory import AlgorithmEvaluatorPair
+    from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
+
+    bench = real_collector(
+        monkeypatch,
+        root,
+        reward=_DistinctReward(),
+        overrides=(
+            f"rollout.n_samples_per_prompt={samples}",
+            "rollout.samples_per_generation_batch=1",
+            "actor.training_microbatch_size=1",
+        ),
+    )
+    stack = bench.stack
+    built = stack.resolved.built
+    bundle = stack.trainer_bundle()
+    context = DistributedTrainingContext(
+        strategy="ddp",
+        rank=dist.get_rank(),
+        world_size=dist.get_world_size(),
+        device=torch.device("cpu"),
+    )
+    strategy = SingleProcessStrategy(context, collectives=TrainingCollectives(context))
+    pair = AlgorithmEvaluatorPair.from_configs(
+        family_entry=stack.family,
+        built=built,
+        collector_config=stack.collector_config(),
+        scheduler=getattr(bundle, "scheduler", None),
+    )
+    trainer = OnlineTrainer(
+        algorithm=pair.algorithm,
+        collector=bench.collector,
+        evaluator=pair.evaluator,
+        model=bundle.model,
+        ref_model=bundle.model,
+        weight_syncer=RayRuntimeWeightSyncer(bench.runtime),
+        sync_state_getter=lambda: strategy.export_rollout_state(bundle),
+        config=built.trainer,
+        device=torch.device("cpu"),
+        strategy=strategy,
+    )
+    return trainer
 
 
 def _run_replay_loop_rank(
@@ -313,124 +350,72 @@ def _run_replay_loop_rank(
     world_size: int,
     port: int,
     local_counts: list[int],
+    root: str,
     q: mp.Queue,
 ) -> None:
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
+    monkeypatch = pytest.MonkeyPatch()
     try:
-        evaluate_calls: list[int] = []
-        backward_calls: list[float] = []
-
-        class _Algorithm(_EvaluatorAlgorithmFake):
-            class _Config:
-                global_std = False
-                eps = 1e-8
-                adv_clip_max = 5.0
-                kl_coef = 0.0
-
-            config = _Config()
-
-            def compute_loss(self, inputs):
-                signals = inputs.signals.primary
-                loss = signals.log_prob.mean()
-                return loss, TrainStepMetrics(
-                    loss=float(loss.detach().item()),
-                    policy_loss=float(loss.detach().item()),
-                )
-
-        class _Evaluator:
-            def evaluate(self, model, batch, timestep_idx, **kw):
-                del kw
-                evaluate_calls.append(int(batch.rewards.shape[0]))
-                log_prob = model.weight.reshape(()) * batch.rewards
-                return _trajectory_signals(batch, log_prob, timestep_idx)
-
-        model = nn.Linear(1, 1, bias=False)
-        _stamp_model_precision(model)
-        with torch.no_grad():
-            model.weight.fill_(1.0)
-        strategy = _rank_strategy()
-        # This test records replay/backward calls on a tiny model; keep real
-        # rank reductions without wrapping that recording fixture in DDP.
-        strategy.prepare_model = lambda model: model
-        trainer = OnlineTrainer(
-            algorithm=_Algorithm(),
-            collector=PromptCollectionFake(),
-            evaluator=_Evaluator(),
-            model=model,
-            config=TrainerConfig(
-                batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=8),
-                timestep_fraction=1.0,
-                drop_zero_advantage=False,
-                output_dir="outputs/",
-                optim=OptimConfig(lr=0.0),
-                ema=EMAConfig(),
-                debug=DebugConfig(),
-            ),
-            device="cpu",
-            strategy=strategy,
+        # A spawned rank escapes the conftest CUDA pin; this test is CPU-only.
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.cuda, "device_count", lambda: 0)
+        trainer = _rank_trainer(
+            monkeypatch, Path(root) / f"rank-{rank}", samples=local_counts[rank]
         )
-
-        def _record_backward(loss: torch.Tensor) -> None:
-            backward_calls.append(float(loss.detach().item()))
-
-        trainer._backward = _record_backward  # type: ignore[method-assign]
+        probe = Trace(monkeypatch)
+        probe.watch(trainer.evaluator, "evaluate", "evaluate")
+        probe.watch(trainer, "_backward", "backward")
+        batch = asyncio.run(trainer.collect_training_batch(["a cat"]))
+        sample_count = sum(int(b.rewards.shape[0]) for b in batch.batches)
         trainer.begin_optimizer_update()
-        sample_count = local_counts[rank]
-        rollout_batch = _rollout_batch(sample_count)
-        rollout_batch.rewards = rollout_batch.rewards + 1.0
-        batch = TrainingBatch(
-            iteration=object(),
-            timer=PhaseTimer(enabled=False),
-            batches=[rollout_batch],
-            advantages=[torch.ones(sample_count)],
-            group_size=float(sample_count),
-            trained_prompt_num=1,
-            adv_zero_rate=0.0,
-            adv_saturation=0.0,
-            pre_filter_reward_mean=0.0,
-            pre_filter_reward_std=0.0,
-            pre_filter_adv_mean=1.0,
-            reward_components={},
-        )
         trainer.backward_on_training_batch(batch, total_groups=1)
+        backward_losses = [
+            float(args[0].detach()) for event, args in probe.calls if event == "backward"
+        ]
         q.put(
             (
                 rank,
-                len(evaluate_calls),
-                len(backward_calls),
+                sample_count,
+                probe.events.count("evaluate"),
+                len(backward_losses),
                 len(trainer._update_agg_metrics.losses),
-                sum(1 for value in backward_calls if value == 0.0),
+                sum(1 for value in backward_losses if value == 0.0),
             )
         )
+        asyncio.run(trainer.rollout_schedule.shutdown())
     finally:
+        monkeypatch.undo()
         dist.destroy_process_group()
 
 
-def test_replay_loop_balances_evaluate_and_backward_counts_under_gloo() -> None:
+def test_replay_loop_balances_evaluate_and_backward_counts_under_gloo(tmp_path) -> None:
     ctx = mp.get_context("spawn")
     q: mp.Queue = ctx.Queue()
     port = free_port()
     procs = [
-        ctx.Process(target=_run_replay_loop_rank, args=(r, 2, port, [8, 3], q)) for r in range(2)
+        ctx.Process(target=_run_replay_loop_rank, args=(r, 2, port, [8, 3], str(tmp_path), q))
+        for r in range(2)
     ]
     for p in procs:
         p.start()
     results = {}
     for _ in range(2):
-        rank, evaluate_count, backward_count, metric_count, zero_backward_count = q.get(
-            timeout=50,
-        )
-        results[rank] = (
-            evaluate_count,
-            backward_count,
-            metric_count,
-            zero_backward_count,
-        )
+        rank, *result = q.get(timeout=120)
+        results[rank] = tuple(result)
     for p in procs:
-        p.join(timeout=10)
+        p.join(timeout=30)
         assert p.exitcode == 0
 
-    assert results[0] == (8, 8, 8, 0)
-    assert results[1] == (8, 8, 3, 5)
+    samples_0, evaluate_0, backward_0, metrics_0, zero_0 = results[0]
+    samples_1, evaluate_1, backward_1, metrics_1, zero_1 = results[1]
+    assert (samples_0, samples_1) == (8, 3)
+    # Both ranks replay the same number of slots (the larger rank's), each slot
+    # over the same trained denoise steps.
+    steps = evaluate_0 // 8
+    assert steps >= 1
+    assert evaluate_0 == evaluate_1 == backward_0 == backward_1 == 8 * steps
+    # Only real samples report metrics; the padding slots backpropagate zero.
+    assert (metrics_0, zero_0) == (8 * steps, 0)
+    assert (metrics_1, zero_1) == (3 * steps, 5 * steps)

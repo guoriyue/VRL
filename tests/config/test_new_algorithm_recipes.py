@@ -44,7 +44,16 @@ def test_dance_grpo_recipe_resolves_with_random_timestep_selection() -> None:
 def test_trust_region_recipes_resolve_and_enable_proposal_mean_storage(
     preset: str, kind: str, config_cls: type
 ) -> None:
-    cfg = _load(preset)
+    # A trust-region objective needs a moving behavior policy: a second epoch
+    # over the full batch (config resolution refuses one strict epoch).
+    cfg = load_config(
+        _BASE,
+        overrides=[
+            f"/recipe/online={preset}",
+            "actor.ppo_epochs=2",
+            "actor.prompts_per_collection=0",
+        ],
+    )
     assert cfg.algorithm.kind == kind
     assert isinstance(build_configs(cfg).algorithm, config_cls)
     # Required for the trust-region loss; without it generation never stores the

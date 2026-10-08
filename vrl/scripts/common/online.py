@@ -399,19 +399,18 @@ def _log_global_std_streaming_scope(
     )
 
 
-def _load_sft_latents_from_config(built: BuiltConfigs, family: str) -> dict[str, Any] | None:
-    """Load the clean-latents shard when the diffusion-loss regularizer is on.
+def _load_sft_latents_from_config(
+    built: BuiltConfigs, family: str, *, sft_weight: float
+) -> dict[str, Any] | None:
+    """Load the clean-latents shard when the objective's SFT regularizer is on.
 
-    ``vrl/config/rules.py`` already rejected sft_weight>0 without
-    data.sft_latents, so this only turns the configured path into tensors (and
-    fails loud on a family-mismatched or malformed shard).
+    ``sft_weight`` is the built objective's declared weight. ``vrl/config/rules.py``
+    already rejected sft_weight>0 without data.sft_latents, so this only turns
+    the configured path into tensors (and fails loud on a family-mismatched or
+    malformed shard).
     """
 
-    # sft_weight is defined only on GRPOConfig (grpo/dance_grpo); every other
-    # algorithm config legitimately omits it, so read the typed field off the
-    # resolved bundle with a default instead of assuming presence.
-    weight = float(getattr(built.algorithm, "sft_weight", 0.0) or 0.0)
-    if weight <= 0:
+    if sft_weight <= 0:
         return None
     from vrl.trainers.data.sft_latents import load_sft_latents
 
@@ -608,7 +607,7 @@ async def _run_streaming_optimizer_update(
     ]
     total_groups = batch_plan.prompts_per_batch if _total_groups is None else _total_groups
 
-    if _prepared is None and bool(getattr(trainer.algorithm.config, "global_std", False)):
+    if _prepared is None and trainer.algorithm.config.global_std:
         return await _run_global_std_streaming_update(
             trainer, example_batch, batch_plan=batch_plan, next_example_batch=next_example_batch
         )
@@ -955,11 +954,9 @@ async def run_online_recipe(cfg: DictConfig) -> None:
         # objectives that read a reference ask for one.
         ref_model = None
         contract = built.root.algorithm.hyperparameters.config_contract
-        if algorithm_and_evaluator.evaluator is not None:
-            # Algorithm configs without evaluator KL legitimately omit kl_coef.
-            kl_coef = float(getattr(built.algorithm, "kl_coef", 0.0) or 0.0)
-            if kl_coef > 0:
-                ref_model = bundle.model
+        algorithm = algorithm_and_evaluator.algorithm
+        if algorithm.uses_evaluator and algorithm.kl_coef > 0:
+            ref_model = bundle.model
         if contract.requires_reference_policy:
             ref_model = bundle.model
         # The strategy built during preflight is the single owner of trainable-state
@@ -982,6 +979,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             sft_latents=_load_sft_latents_from_config(
                 built,
                 family_entry.family,
+                sft_weight=algorithm.sft_weight,
             ),
         )
         lifecycle.rollout_schedule = trainer.rollout_schedule

@@ -185,8 +185,9 @@ class TrainerConfig:
     debug: DebugConfig = field(default_factory=DebugConfig)
     replay_parity: ReplayParityConfig = field(default_factory=ReplayParityConfig)
     # Rollout/replay drift correction: truncated importance sampling and
-    # rejection knobs, injected into the algorithm so they live at the trainer
-    # (precision) level rather than in any algorithm's hyperparameters.
+    # rejection knobs. They live at the trainer (precision) level rather than
+    # in any algorithm's hyperparameters; the recipe factory hands them to the
+    # importance-ratio objectives at construction.
     precision_correction: PrecisionCorrectionConfig = field(
         default_factory=PrecisionCorrectionConfig,
     )
@@ -306,7 +307,33 @@ class TrainerConfig:
             if "precision_correction" not in explicit:
                 payload["precision_correction"] = build_precision_split_safety_configs()
 
-        return cls(**payload)
+        config = cls(**payload)
+        algorithm = root.algorithm
+        if algorithm is not None:
+            contract = algorithm.hyperparameters.config_contract
+            if (
+                config.rollout_orchestration.schedule_mode == "continuous"
+                and not contract.tolerates_off_policy_staleness
+            ):
+                raise ValueError(
+                    "trainer.rollout_orchestration.schedule_mode='continuous' trains on "
+                    f"samples up to max_stale_policy_versions old, which algorithm.kind="
+                    f"{algorithm.kind!r} does not tolerate. Use schedule_mode="
+                    "'strict_on_policy'.",
+                )
+            if contract.requires_active_trust_region and not config.replays_off_policy:
+                raise ValueError(
+                    f"algorithm.kind={algorithm.kind!r} is defined by its importance-ratio "
+                    "trust region, but the rollout schedule permits no behavior-policy "
+                    "staleness and actor.ppo_epochs=1 makes the ratio identically 1 "
+                    "(behavior == target on the single replay pass), so the clip/guard "
+                    "term is a no-op and the run is equivalent to plain GRPO. Set "
+                    "actor.ppo_epochs>1 (which needs the full-batch path, "
+                    "actor.prompts_per_collection=0, since streaming releases each "
+                    "collection and cannot replay it across epochs) or use "
+                    "schedule_mode='continuous' for an off-policy ratio.",
+                )
+        return config
 
     def __post_init__(self) -> None:
         if self.timestep_selection == "sde_window" and float(self.timestep_fraction) != 1.0:
@@ -330,6 +357,32 @@ class TrainerConfig:
                 "released microbatch cannot be replayed across epochs "
                 f"(got ppo_epochs={self.ppo_epochs})",
             )
+        if self.precision_correction.recompute_old_logprob == "on" and self.replays_off_policy:
+            raise ValueError(
+                "precision_correction.recompute_old_logprob='on' replaces the rollout "
+                "log-prob with the trainer's pre-update replay log-prob, which is only "
+                "the behavior policy under actor.ppo_epochs=1, one optimizer step per "
+                f"batch and no continuous staleness; got ppo_epochs={self.ppo_epochs}, "
+                "optimizer_steps_per_batch="
+                f"{self.batch_plan.optimizer_steps_per_batch}, "
+                f"schedule_mode={self.rollout_orchestration.schedule_mode!r}. Use 'off' "
+                "(bypass) with the TIS/RS for off-policy replay.",
+            )
+
+    @property
+    def replays_off_policy(self) -> bool:
+        """Whether some replay trains weights newer than its behavior policy.
+
+        A later PPO epoch, a later optimizer step over the same batch, and a
+        continuous-schedule sample (whose window is at least one version) all
+        replay under weights the rollout did not use.
+        """
+
+        return (
+            int(self.ppo_epochs) > 1
+            or int(self.batch_plan.optimizer_steps_per_batch) > 1
+            or self.rollout_orchestration.schedule_mode == "continuous"
+        )
 
 
 __all__ = ["OnlineBatchPlan", "TrainerConfig"]

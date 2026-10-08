@@ -47,7 +47,6 @@ class ContinuousRolloutSchedule:
         config: ContinuousRolloutConfig,
         *,
         lifecycle: RolloutRuntimeCoordinator,
-        algorithm_tolerates_off_policy_staleness: bool,
         versioned_weight_sync: bool,
     ) -> ContinuousRolloutSchedule:
         """Translate ``rollout_orchestration.continuous`` config into the schedule.
@@ -64,17 +63,6 @@ class ContinuousRolloutSchedule:
             fail_fast_errors=config.fail_fast_errors,
             versioned_weight_sync=versioned_weight_sync,
         )
-
-        # The algorithm owns the reason it cannot consume stale samples; this
-        # boundary checks only its declared capability. Zero staleness belongs
-        # to strict_on_policy rather than a continuous submode.
-        if not algorithm_tolerates_off_policy_staleness:
-            raise ValueError(
-                "rollout_orchestration.continuous.max_stale_policy_versions="
-                f"{settings.max_stale_policy_versions} is unsupported by this algorithm: "
-                "it declares tolerates_off_policy_staleness=False. "
-                "Use schedule_mode='strict_on_policy'.",
-            )
 
         logger.info(
             "continuous async prefetch ENABLED: max_stale_policy_versions=%d, max_inflight_groups=%d",

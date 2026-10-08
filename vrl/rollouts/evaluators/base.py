@@ -18,13 +18,19 @@ class Evaluator(Protocol):
     extracts trajectory-native signals (log_prob, KL, masks, etc.). The
     selected role precision is stamped on the model at RuntimeBundle assembly.
 
-    Evaluators may publish ``replay_granularity='trajectory'`` when causal
-    state requires one ordered replay over every policy action. The default is
-    step replay for evaluators that recompute one denoise transition per call.
+    ``replay_granularity`` is ``'step'`` for evaluators that recompute one
+    denoise transition per call and ``'trajectory'`` when causal state requires
+    one ordered replay over every policy action.
+    ``supports_deferred_replay_tensor_move`` says the evaluator moves the replay
+    tensors it reads to the device itself, so the trainer can skip the eager
+    whole-batch move.
 
     Replay ownership lives on the model. Evaluators must not route train-time
     replay through collectors.
     """
+
+    replay_granularity: str
+    supports_deferred_replay_tensor_move: bool
 
     def evaluate(
         self,
@@ -52,6 +58,9 @@ class ReplayEvaluatorBase(ABC):
     fails at construction instead of resolving to a Protocol stub that returns
     ``None``.
     """
+
+    replay_granularity = "step"
+    supports_deferred_replay_tensor_move = False
 
     @abstractmethod
     def evaluate(

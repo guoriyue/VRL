@@ -208,10 +208,9 @@ class VGRPO(PreviousPolicyObjective):
 
     # -- lifecycle ------------------------------------------------------------
 
-    def after_optimizer_step(self, model: Any, global_step: int) -> None:
+    def after_optimizer_step(self, global_step: int) -> None:
         # Advance the group-noise counter so the shared noise changes across
         # updates while staying fixed within one.
-        del model
         self._update_counter = int(global_step) + 1
 
 

@@ -1,69 +1,27 @@
-"""``precision_correction.recompute_old_logprob=on`` is only sound when the
-replay forward IS the behavior policy: one PPO epoch over a fresh rollout."""
+"""``precision_correction.recompute_old_logprob`` reaches the objective.
+
+Each case resolves a real tiny SANA run and builds the trainer the way the
+online recipe does; the factory hands the configured correction to GRPO.
+Config resolution refuses ``on`` under off-policy replay
+(tests/config/test_algorithm_schedule_soundness.py).
+"""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from tests.trainers.online._helpers import real_trainer
 
-import pytest
-
-from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
-from vrl.trainers.online.trainer import OnlineTrainer
+_RECOMPUTE = 'trainer.precision_correction.recompute_old_logprob="on"'
 
 
-def _config(
-    *,
-    ppo_epochs: int,
-    schedule_mode: str,
-    max_stale: int,
-    mode: str = "on",
-    optimizer_steps_per_batch: int = 1,
-):
-    return SimpleNamespace(
-        precision_correction=PrecisionCorrectionConfig(recompute_old_logprob=mode),
-        ppo_epochs=ppo_epochs,
-        batch_plan=SimpleNamespace(optimizer_steps_per_batch=optimizer_steps_per_batch),
-        rollout_orchestration=SimpleNamespace(
-            schedule_mode=schedule_mode,
-            continuous=SimpleNamespace(max_stale_policy_versions=max_stale),
-        ),
-    )
+def test_strict_single_epoch_is_accepted(monkeypatch, tmp_path) -> None:
+    tb = real_trainer(monkeypatch, tmp_path, overrides=(_RECOMPUTE, "actor.ppo_epochs=1"))
+
+    assert tb.trainer.algorithm.precision_correction.recompute_old_logprob == "on"
 
 
-def test_strict_single_epoch_is_accepted() -> None:
-    OnlineTrainer._validate_recompute_old_logprob(
-        _config(ppo_epochs=1, schedule_mode="strict_on_policy", max_stale=0)
-    )
+def test_off_mode_ignores_the_schedule(monkeypatch, tmp_path) -> None:
+    # The tiny recipe trains four PPO epochs; with recomputation off that is fine.
+    tb = real_trainer(monkeypatch, tmp_path)
 
-
-def test_multiple_ppo_epochs_are_refused() -> None:
-    with pytest.raises(ValueError, match="ppo_epochs=2"):
-        OnlineTrainer._validate_recompute_old_logprob(
-            _config(ppo_epochs=2, schedule_mode="strict_on_policy", max_stale=0)
-        )
-
-
-def test_several_optimizer_steps_per_batch_are_refused() -> None:
-    """The second update of a batch replays under weights the first one moved."""
-    with pytest.raises(ValueError, match="optimizer_steps_per_batch=2"):
-        OnlineTrainer._validate_recompute_old_logprob(
-            _config(
-                ppo_epochs=1,
-                schedule_mode="strict_on_policy",
-                max_stale=0,
-                optimizer_steps_per_batch=2,
-            )
-        )
-
-
-def test_continuous_staleness_is_refused() -> None:
-    with pytest.raises(ValueError, match="max_stale_policy_versions=1"):
-        OnlineTrainer._validate_recompute_old_logprob(
-            _config(ppo_epochs=1, schedule_mode="continuous", max_stale=1)
-        )
-
-
-def test_off_mode_ignores_the_schedule() -> None:
-    OnlineTrainer._validate_recompute_old_logprob(
-        _config(ppo_epochs=4, schedule_mode="continuous", max_stale=2, mode="off")
-    )
+    assert tb.trainer.algorithm.precision_correction.recompute_old_logprob == "off"
+    assert tb.trainer.config.ppo_epochs == 4

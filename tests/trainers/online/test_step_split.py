@@ -1,99 +1,93 @@
-"""P4 collect/train split: the decomposition must not change behavior.
+"""P4 collect/train split over the real trainer: the decomposition must not change behavior.
 
-``OnlineTrainer.step`` now runs ``collect_training_batch`` then
-``train_on_rollout_batch``. These lock that the split reproduces the previous
-single-method behavior: identical metrics and state, the collected batch carries
-the data the train half needs, and rollout weight sync still happens in the train
-half (not the collect half).
+``OnlineTrainer.step`` runs ``collect_training_batch`` then
+``train_on_rollout_batch``. These lock that the split reproduces the single
+call on the real GRPO trainer (tiny SANA, ``real_trainer``): identical metrics
+and weights, the collected batch carries the data the train half needs, and
+rollout weight sync happens in the train half, never in the collect half.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import random
+from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 import torch
-import torch.nn as nn
 
-from tests.rollouts.collector._helpers import PromptCollectionFake
-from tests.trainers.online._helpers import (
-    _algorithm_inputs,
-    _diffusion_rollout_batch,
-    _EvaluatorAlgorithmFake,
-    _stamp_model_precision,
-    _trajectory_signals,
-)
+from tests.rollouts.collector._helpers import IndexReward
+from tests.trainers.online._helpers import TrainerBench, real_trainer
 from vrl.algorithms.types import TrainStepMetrics
-from vrl.rollouts.evaluators.base import Evaluator
-from vrl.rollouts.stats import RolloutStats
-from vrl.trainers.core.types import EMAConfig, OptimConfig
-from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
-from vrl.trainers.online.trainer import OnlineTrainer, TrainingBatch
+from vrl.rewards import RewardOutput, RewardSample
+from vrl.scripts.common.online import _run_streaming_optimizer_update
+from vrl.trainers.online.trainer import TrainingBatch
+
+# Streaming accumulation: one prompt per collection batch, so the released
+# microbatch cannot be replayed across PPO epochs.
+_STREAMING = ("actor.prompts_per_collection=1", "actor.ppo_epochs=1")
 
 
-class _Algorithm(_EvaluatorAlgorithmFake):
-    class _Config:
-        global_std = False
-        eps = 1e-8
-        adv_clip_max = 5.0
-        kl_coef = 0.0
+class _ConstantReward(IndexReward):
+    """Every sample scores the same, so every group's advantage is zero."""
 
-    config = _Config()
-
-    def compute_advantages_from_tensors(self, rewards, group_ids):
-        del group_ids
-        return rewards - rewards.mean()
-
-    def compute_loss(self, inputs):
-        signals, _advantages, _old_log_probs = _algorithm_inputs(inputs)
-        loss = signals.log_prob.mean()
-        return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
+    async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
+        await super().score_batch(samples)
+        return RewardOutput(scores=tuple(1.0 for _ in samples))
 
 
-class _Collector(PromptCollectionFake):
-    async def evaluate_rollout(self, pendings):
-        return list(pendings)
-
-    async def generate_rollout(self, request):
-        kwargs = request.options
-        group_size = int(kwargs["group_size"])
-        return _diffusion_rollout_batch(
-            rewards=torch.arange(group_size, dtype=torch.float32),
-            group_ids=torch.zeros(group_size, dtype=torch.long),
-            num_steps=2,
-        )
+def _seed() -> None:
+    # Request seeds come from Python's RNG, sampling noise from torch's.
+    random.seed(0)
+    torch.manual_seed(0)
 
 
-class _Evaluator(Evaluator):
-    def evaluate(self, model, batch, timestep_idx, **kw):
-        del kw
-        return _trajectory_signals(
-            batch,
-            model.weight.view(1).expand(batch.rewards.shape[0]),
-            timestep_idx,
-        )
+def _snapshot(tb: TrainerBench) -> dict[str, torch.Tensor]:
+    return {name: value.detach().clone() for name, value in tb.trainable_parameters().items()}
 
 
-def _build_trainer(tmp_path) -> OnlineTrainer:
-    model = nn.Linear(1, 1, bias=False)
-    _stamp_model_precision(model)
-    with torch.no_grad():
-        model.weight.fill_(1.0)
-    return OnlineTrainer(
-        algorithm=_Algorithm(),
-        collector=_Collector(),
-        evaluator=_Evaluator(),
-        model=model,
-        config=TrainerConfig(
-            batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
-            timestep_fraction=1.0,
-            drop_zero_advantage=False,
-            optim=OptimConfig(lr=0.01),
-            ema=EMAConfig(),
-            output_dir=str(tmp_path),
-        ),
-        device="cpu",
+def _unchanged(tb: TrainerBench, before: dict[str, torch.Tensor]) -> bool:
+    return all(
+        torch.equal(before[name], value) for name, value in tb.trainable_parameters().items()
     )
+
+
+def _pushes(tb: TrainerBench) -> int:
+    return tb.collector.trace.events.count("update_weights")
+
+
+def _corrupt_weight_sync(monkeypatch: pytest.MonkeyPatch, tb: TrainerBench, scale: float) -> None:
+    """Make the rollout serve weights that differ from the trainer's.
+
+    Each push reaches the real runtime with seeded noise added, the shape of a
+    broken weight transport: generation runs on theta + delta while replay
+    runs on theta, so rollout and replay log-probs disagree for real.
+    """
+
+    runtime = tb.collector.runtime
+    real = runtime.update_weights
+    generator = torch.Generator().manual_seed(1)
+
+    async def update_weights(trainable_state, policy_version):
+        corrupted = {
+            name: value + torch.randn(value.shape, generator=generator) * scale
+            for name, value in trainable_state.items()
+        }
+        return await real(corrupted, policy_version)
+
+    monkeypatch.setattr(runtime, "update_weights", update_weights)
+
+
+def _debug_records(tb: TrainerBench) -> list[dict]:
+    path = Path(tb.trainer.config.output_dir) / "training_debug.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def _jsonl(tb: TrainerBench, name: str) -> list[dict]:
+    path = Path(tb.trainer.config.output_dir) / name
+    return [json.loads(line) for line in path.read_text().splitlines()]
 
 
 def _metric_fields(m: TrainStepMetrics) -> tuple:
@@ -111,297 +105,264 @@ def _metric_fields(m: TrainStepMetrics) -> tuple:
     )
 
 
-def test_step_equals_collect_then_train(tmp_path) -> None:
-    """step() and an explicit collect+train produce identical metrics + state."""
-    mono = _build_trainer(tmp_path / "mono")
-    mono_metrics = asyncio.run(mono.step(["p"]))
+def test_step_equals_collect_then_train(monkeypatch, tmp_path) -> None:
+    """step() and an explicit collect+train produce identical metrics and weights."""
 
-    split = _build_trainer(tmp_path / "split")
+    mono = real_trainer(monkeypatch, tmp_path / "mono")
+    _seed()
+    mono_metrics = asyncio.run(mono.trainer.step(["a cat"]))
+
+    split = real_trainer(monkeypatch, tmp_path / "split")
+    _seed()
 
     async def _run_split() -> TrainStepMetrics:
-        batch = await split.collect_training_batch(["p"])
-        return await split.train_on_rollout_batch(batch)
+        batch = await split.trainer.collect_training_batch(["a cat"])
+        return await split.trainer.train_on_rollout_batch(batch)
 
     split_metrics = asyncio.run(_run_split())
 
     assert _metric_fields(split_metrics) == _metric_fields(mono_metrics)
-    assert split.state.step == mono.state.step
-    assert split.state.global_step == mono.state.global_step
-    assert torch.equal(split.model.weight, mono.model.weight)
+    assert split.trainer.state.step == mono.trainer.state.step == 1
+    assert split.trainer.state.global_step == mono.trainer.state.global_step
+    mono_params = mono.trainable_parameters()
+    for name, value in split.trainable_parameters().items():
+        assert torch.equal(value, mono_params[name]), name
 
 
-def test_collect_returns_training_batch_with_data(tmp_path) -> None:
-    trainer = _build_trainer(tmp_path)
-    batch = asyncio.run(trainer.collect_training_batch(["p"]))
+def test_collect_returns_training_batch_with_data(monkeypatch, tmp_path) -> None:
+    tb = real_trainer(monkeypatch, tmp_path)
+    before = _snapshot(tb)
+
+    batch = asyncio.run(tb.trainer.collect_training_batch(["a cat"]))
 
     assert isinstance(batch, TrainingBatch)
     assert batch.batches and batch.advantages
     assert len(batch.batches) == len(batch.advantages)
-    # collect must not advance training state — that is the train half's job.
-    assert trainer.state.step == 0
-    assert trainer.state.global_step == 0
+    assert batch.batches[0].trajectory is not None
+    # collect must not advance training state; that is the train half's job.
+    assert tb.trainer.state.step == 0
+    assert tb.trainer.state.global_step == 0
+    assert _unchanged(tb, before)
 
 
-def test_weight_sync_happens_in_train_half_not_collect(tmp_path) -> None:
-    """rollout_schedule.after_train_step fires in train, never during collect."""
-    trainer = _build_trainer(tmp_path)
-    calls: list[int] = []
-    real_after = trainer.rollout_schedule.after_train_step
+def test_weight_sync_happens_in_train_half_not_collect(monkeypatch, tmp_path) -> None:
+    """The post-train weight push fires in train, never during collect."""
 
-    async def _counting_after():
-        calls.append(1)
-        await real_after()
-        stats = RolloutStats()
-        stats.add_phase("continuous.weight_sync_pause_s", 0.25)
-        return stats
+    tb = real_trainer(monkeypatch, tmp_path)
 
-    trainer.rollout_schedule.after_train_step = _counting_after  # type: ignore[method-assign]
+    batch = asyncio.run(tb.trainer.collect_training_batch(["a cat"]))
+    # Only the initial push the first rollout needs; no post-train sync yet.
+    assert _pushes(tb) == 1
+    assert tb.collector.runtime.current_policy_version == 1
 
-    batch = asyncio.run(trainer.collect_training_batch(["p"]))
-    assert calls == []  # collect half does not sync
+    metrics = asyncio.run(tb.trainer.train_on_rollout_batch(batch))
 
-    metrics = asyncio.run(trainer.train_on_rollout_batch(batch))
-    assert calls == [1]  # train half syncs exactly once
-    assert metrics.phase_times["continuous.weight_sync_pause_s"] == 0.25
+    assert _pushes(tb) == 2
+    assert tb.collector.runtime.current_policy_version == 2
+    assert metrics.phase_times["rollout.weight_sync_s"] > 0.0
 
 
-def test_next_prompts_reaches_the_rollout_schedule(tmp_path) -> None:
+def test_next_prompts_reaches_the_rollout_schedule(monkeypatch, tmp_path) -> None:
     """The next-batch prefetch input must reach step -> collect -> schedule.
 
     Continuous rollout installs this as the producer's next prompt batch so
-    generation overlaps training. A dropped forward costs that overlap without failing
-    anything observable, and the owner-side tests all drive the schedule
-    directly — this pins the trainer half of the hop. ``None`` must stay
-    ``None`` rather than becoming ``[]``, which the owner rejects outright.
+    generation overlaps training. A dropped forward costs that overlap without
+    failing anything observable, so this pins the trainer half of the hop.
+    ``None`` must stay ``None`` rather than becoming ``[]``, which the owner
+    rejects outright.
     """
-    trainer = _build_trainer(tmp_path)
-    seen: list[tuple[list, list | None]] = []
-    real_next = trainer.rollout_schedule.next_iteration
 
-    async def _recording_next(prompts, **kwargs):
+    tb = real_trainer(monkeypatch, tmp_path)
+    schedule = tb.trainer.rollout_schedule
+    seen: list[tuple[list, list | None]] = []
+    real_next = schedule.next_iteration
+
+    async def recording_next(prompts, **kwargs):
         seen.append((list(prompts), kwargs.get("next_prompts")))
         return await real_next(prompts, **kwargs)
 
-    trainer.rollout_schedule.next_iteration = _recording_next  # type: ignore[method-assign]
+    monkeypatch.setattr(schedule, "next_iteration", recording_next)
 
-    asyncio.run(trainer.step(["p"], next_prompts=["q"]))
-    asyncio.run(trainer.step(["q"]))
+    asyncio.run(tb.trainer.step(["a cat"], next_prompts=["a dog"]))
+    asyncio.run(tb.trainer.step(["a dog"]))
 
-    assert seen == [(["p"], ["q"]), (["q"], None)]
+    assert seen == [(["a cat"], ["a dog"]), (["a dog"], None)]
 
 
-def test_backward_uses_named_profile_range(tmp_path, monkeypatch) -> None:
+def test_backward_uses_named_profile_range(monkeypatch, tmp_path) -> None:
     """The shared backward boundary must remain visible to external profilers."""
+
     import contextlib
 
     from vrl.utils import profiling
 
-    trainer = _build_trainer(tmp_path)
+    tb = real_trainer(monkeypatch, tmp_path)
     events: list[str] = []
 
     @contextlib.contextmanager
-    def _record(name: str):
+    def record(name: str):
         events.append(f"enter:{name}")
         try:
             yield
         finally:
             events.append(f"exit:{name}")
 
-    monkeypatch.setattr(profiling, "profile_range", _record)
-    trainer._backward(trainer.model.weight.sum())
+    monkeypatch.setattr(profiling, "profile_range", record)
+    parameter = next(iter(tb.trainable_parameters().values()))
+    tb.trainer._backward(parameter.sum())
 
     assert events == ["enter:trainer.backward", "exit:trainer.backward"]
+    assert parameter.grad is not None
 
 
-def test_streaming_all_filtered_update_does_not_advance_policy(tmp_path) -> None:
-    """An all-zero streamed batch records a step without publishing new weights."""
-    from vrl.scripts.common.online import _run_streaming_optimizer_update
+def test_streaming_all_filtered_update_does_not_advance_policy(monkeypatch, tmp_path) -> None:
+    """An all-zero-advantage streamed batch records a step without publishing weights."""
 
-    trainer = _build_trainer(tmp_path)
-    trainer.config.drop_zero_advantage = True
-    trainer.algorithm.compute_advantages_from_tensors = (  # type: ignore[method-assign]
-        lambda rewards, group_ids: torch.zeros_like(rewards)
-    )
-    sync_calls: list[int] = []
-
-    async def _unexpected_sync() -> RolloutStats:
-        sync_calls.append(1)
-        return RolloutStats()
-
-    trainer.rollout_schedule.after_train_step = _unexpected_sync  # type: ignore[method-assign]
-    initial_weight = trainer.model.weight.detach().clone()
+    tb = real_trainer(monkeypatch, tmp_path, reward=_ConstantReward(), overrides=_STREAMING)
+    assert tb.trainer.config.drop_zero_advantage is True
+    before = _snapshot(tb)
 
     metrics = asyncio.run(
         _run_streaming_optimizer_update(
-            trainer,
-            ["p"],
-            batch_plan=OnlineBatchPlan(
-                prompts_per_batch=1,
-                n_samples_per_prompt=2,
-                prompts_per_collection=1,
-            ),
+            tb.trainer, ["a cat"], batch_plan=tb.trainer.config.batch_plan
         ),
     )
 
-    assert trainer.state.step == 1
-    assert trainer.state.global_step == 0
-    assert sync_calls == []
+    assert tb.trainer.state.step == 1
+    assert tb.trainer.state.global_step == 0
+    # The initial push only: a filtered update has nothing to publish.
+    assert _pushes(tb) == 1
     assert metrics.grad_norm == 0.0
-    assert torch.equal(trainer.model.weight, initial_weight)
+    assert _unchanged(tb, before)
 
 
 @pytest.mark.parametrize("streaming", [False, True])
-@pytest.mark.parametrize("drift", [0.1, 3.0])
+@pytest.mark.parametrize("scale", [0.05, 0.3], ids=["inside_bound", "beyond_bound"])
 def test_corrected_replay_fails_parity_only_at_the_catastrophic_bound(
+    monkeypatch,
     tmp_path,
     streaming: bool,
-    drift: float,
+    scale: float,
 ) -> None:
     """Correction relaxes the recipe parity threshold, not the ln(10) bound."""
-    import json
 
-    from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
-    from vrl.scripts.common.online import _run_streaming_optimizer_update
     from vrl.trainers.core.types import CORRECTED_REPLAY_MAX_ABS_LOG_RATIO
 
-    trainer = _build_trainer(tmp_path)
-    trainer.algorithm.precision_correction = PrecisionCorrectionConfig(tis_mode="truncate")
-
-    class DriftEvaluator(Evaluator):
-        def evaluate(self, model, batch, timestep_idx, **kw):
-            del kw
-            fresh = model.weight.view(1).expand(batch.rewards.shape[0]) + drift
-            return _trajectory_signals(
-                batch,
-                fresh,
-                timestep_idx,
-                old_log_prob=torch.ones_like(fresh),
-            )
-
-    trainer.evaluator = DriftEvaluator()
-    initial_weight = trainer.model.weight.detach().clone()
+    tb = real_trainer(
+        monkeypatch,
+        tmp_path,
+        overrides=(
+            "trainer.precision_correction.tis_mode=truncate",
+            # One optimizer step per update in both arms.
+            "actor.ppo_epochs=1",
+            *(_STREAMING if streaming else ()),
+        ),
+    )
+    _corrupt_weight_sync(monkeypatch, tb, scale)
+    before = _snapshot(tb)
+    _seed()
 
     async def run_update():
         if streaming:
             return await _run_streaming_optimizer_update(
-                trainer,
-                ["p"],
-                batch_plan=OnlineBatchPlan(
-                    prompts_per_batch=1,
-                    n_samples_per_prompt=2,
-                    prompts_per_collection=1,
-                ),
+                tb.trainer, ["a cat"], batch_plan=tb.trainer.config.batch_plan
             )
-        return await trainer.step(["p"])
+        return await tb.trainer.step(["a cat"])
 
-    assert drift > trainer.config.replay_parity.max_abs_logprob_diff
-    if drift > CORRECTED_REPLAY_MAX_ABS_LOG_RATIO:
-        with pytest.raises(RuntimeError, match="replay parity failed"):
-            asyncio.run(run_update())
-        assert trainer.state.global_step == 0
-        assert torch.equal(trainer.model.weight, initial_weight)
-    else:
+    try:
         asyncio.run(run_update())
-        assert trainer.state.global_step == 1
-        assert not torch.equal(trainer.model.weight, initial_weight)
-    records = [
-        json.loads(line) for line in (tmp_path / "training_debug.jsonl").read_text().splitlines()
-    ]
+        failure = None
+    except RuntimeError as error:
+        failure = error
+
+    records = _debug_records(tb)
     assert [record["event"] for record in records] == ["replay_parity_gate"]
-    assert records[0]["passed"] is False
-    # Beyond the recipe threshold but inside the bound, correction owns the
-    # drift and the gate only records it.
-    assert records[0]["enforced"] is (drift > CORRECTED_REPLAY_MAX_ABS_LOG_RATIO)
+    gate = records[0]
+    drift = gate["max_abs_diff"]
+    beyond_bound = drift > CORRECTED_REPLAY_MAX_ABS_LOG_RATIO
+    # Each scale lands on its intended side of the bound, and both are
+    # beyond the recipe threshold that correction relaxes.
+    assert drift > tb.trainer.config.replay_parity.max_abs_logprob_diff
+    assert beyond_bound is (scale == 0.3)
+    assert gate["passed"] is False
+    assert gate["enforced"] is beyond_bound
+    if beyond_bound:
+        assert failure is not None and "replay parity failed" in str(failure)
+        assert tb.trainer.state.global_step == 0
+        assert _unchanged(tb, before)
+    else:
+        assert failure is None
+        assert tb.trainer.state.global_step == 1
+        assert not _unchanged(tb, before)
 
 
-def test_streaming_scaler_skipped_update_does_not_publish_weights(tmp_path) -> None:
-    """A skipped optimizer attempt counts but cannot publish unchanged weights."""
-    from vrl.scripts.common.online import _run_streaming_optimizer_update
+def test_streaming_scaler_skipped_update_does_not_publish_weights(monkeypatch, tmp_path) -> None:
+    """A skipped optimizer attempt counts but cannot publish unchanged weights.
 
-    trainer = _build_trainer(tmp_path)
-    trainer._clip_and_step = lambda optimizer: (0.0, False)  # type: ignore[method-assign]
-    sync_calls: list[int] = []
+    Production creates the fp16 CUDA ``GradScaler`` from the training precision;
+    the CPU lane has no CUDA, so it installs torch's CPU scaler of the same
+    class. Its huge initial scale overflows the real gradients, so the scaler
+    skips the step and backs off exactly as on a GPU.
+    """
 
-    async def _unexpected_sync() -> RolloutStats:
-        sync_calls.append(1)
-        return RolloutStats()
-
-    trainer.rollout_schedule.after_train_step = _unexpected_sync  # type: ignore[method-assign]
+    tb = real_trainer(monkeypatch, tmp_path, overrides=_STREAMING)
+    init_scale = torch.finfo(torch.float32).max
+    scaler = torch.amp.GradScaler("cpu", init_scale=init_scale)
+    tb.trainer._grad_scaler = scaler
+    before = _snapshot(tb)
+    _seed()
 
     asyncio.run(
         _run_streaming_optimizer_update(
-            trainer,
-            ["p"],
-            batch_plan=OnlineBatchPlan(
-                prompts_per_batch=1,
-                n_samples_per_prompt=2,
-                prompts_per_collection=1,
-            ),
+            tb.trainer, ["a cat"], batch_plan=tb.trainer.config.batch_plan
         ),
     )
 
-    assert trainer.state.step == 1
-    assert trainer.state.global_step == 1
-    assert sync_calls == []
+    # The scaler skipped the overflowed step and backed off.
+    assert scaler.get_scale() < init_scale
+    assert tb.trainer.state.step == 1
+    assert tb.trainer.state.global_step == 1
+    assert _pushes(tb) == 1
+    assert _unchanged(tb, before)
 
 
-def test_phase_events_use_the_metric_step(tmp_path) -> None:
+def test_phase_events_use_the_metric_step(monkeypatch, tmp_path) -> None:
     """JSON phase events and rollout stats use the same zero-based step."""
-    import json
 
-    trainer = _build_trainer(tmp_path)
-    trainer.config.profile = True
+    tb = real_trainer(monkeypatch, tmp_path, overrides=("trainer.profile=true",))
 
-    asyncio.run(trainer.step(["p"]))
+    asyncio.run(tb.trainer.step(["a cat"]))
 
-    event_path = tmp_path / "phase_events.jsonl"
-    events = [json.loads(line) for line in event_path.read_text().splitlines()]
-    stats = [
-        json.loads(line) for line in (tmp_path / "rollout_stats.jsonl").read_text().splitlines()
-    ]
+    events = _jsonl(tb, "phase_events.jsonl")
+    stats = _jsonl(tb, "rollout_stats.jsonl")
     assert events
     assert {event["step"] for event in events} == {0}
     assert [row["step"] for row in stats] == [0]
-    assert trainer.state.step == 1
+    assert tb.trainer.state.step == 1
 
 
-def test_streaming_profiles_training_phases(tmp_path) -> None:
+def test_streaming_profiles_training_phases(monkeypatch, tmp_path) -> None:
     """Streaming metrics and events cover replay, backward, and optimizer work."""
-    import json
 
-    from vrl.scripts.common.online import _run_streaming_optimizer_update
-
-    trainer = _build_trainer(tmp_path)
-    trainer.config.profile = True
+    tb = real_trainer(monkeypatch, tmp_path, overrides=("trainer.profile=true", *_STREAMING))
 
     metrics = asyncio.run(
         _run_streaming_optimizer_update(
-            trainer,
-            ["p"],
-            batch_plan=OnlineBatchPlan(
-                prompts_per_batch=1,
-                n_samples_per_prompt=2,
-                prompts_per_collection=1,
-            ),
+            tb.trainer, ["a cat"], batch_plan=tb.trainer.config.batch_plan
         ),
     )
 
     for phase in ("evaluate", "backward", "optim_step"):
         assert metrics.phase_times[phase] > 0.0
 
-    stats = [
-        json.loads(line) for line in (tmp_path / "rollout_stats.jsonl").read_text().splitlines()
-    ]
+    stats = _jsonl(tb, "rollout_stats.jsonl")
     assert len(stats) == 1
     assert stats[0]["step"] == 0
     assert all(stats[0][phase] > 0.0 for phase in ("evaluate", "backward", "optim_step"))
 
-    events = [
-        json.loads(line) for line in (tmp_path / "phase_events.jsonl").read_text().splitlines()
-    ]
     training_events = {
         event["phase"]: event["step"]
-        for event in events
+        for event in _jsonl(tb, "phase_events.jsonl")
         if event["phase"] in {"evaluate", "backward", "optim_step"}
     }
     assert training_events == {"evaluate": 0, "backward": 0, "optim_step": 0}

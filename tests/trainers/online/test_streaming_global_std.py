@@ -1,175 +1,198 @@
-"""Streaming must retain optimizer-batch normalization before clipping/filtering."""
+"""Streaming must retain optimizer-batch normalization before clipping/filtering.
+
+Both sides are the online recipe's real trainer on tiny SANA (``real_trainer``):
+one takes the full-batch step, the other streams the same prompts through the
+global-std advantage spool. A prompt-keyed ``RewardFunction`` fixes every
+reward, so the two updates see the same rollouts and the same scores.
+"""
+
+from __future__ import annotations
 
 import asyncio
+import random
+from collections import Counter
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
 import pytest
 import torch
 
-from tests.trainers.online._helpers import (
-    _algorithm_inputs,
-    _diffusion_rollout_batch,
-    _trajectory_signals,
-)
-from tests.trainers.online.test_step_split import _Algorithm, _build_trainer
-from vrl.algorithms.advantages import GroupAdvantageEstimator, group_relative_advantages
-from vrl.algorithms.types import TrainStepMetrics
-from vrl.rollouts.orchestration.types import RolloutIteration
+from tests.trainers.online._helpers import TrainerBench, real_trainer
+from vrl.rewards import RewardOutput, RewardSample
+from vrl.rewards.base import RewardFunction
 from vrl.scripts.common.online import _run_streaming_optimizer_update
-from vrl.trainers.online.config import OnlineBatchPlan
+from vrl.trainers.data.prompts import PromptExample
+
+# Prompt "c" has equal rewards, so its group advantage is zero (filtered when
+# drop_zero_advantage), and "b" saturates the 0.5 advantage clip under global std.
+_REWARDS = {"a": [0.0, 1.0], "b": [0.0, 100.0], "c": [3.0, 3.0], "d": [-2.0, 5.0]}
+_GLOBAL_STD = ("actor.ppo_epochs=1", "algorithm.global_std=true", "algorithm.adv_clip_max=0.5")
+_TWO_COMPONENTS = (
+    "reward.components={image_sharpness: 0.3, ocr: 0.7}",
+    "algorithm.advantage_combine=normalized_sum",
+)
 
 
-@pytest.mark.parametrize("drop_zero", [False, True])
-@pytest.mark.parametrize("micro", [1, 2])
-@pytest.mark.parametrize("normalized_components", [False, True])
-def test_streaming_matches_full_batch_advantages_gradients_and_adam(
-    tmp_path, drop_zero, micro, normalized_components
-):
-    rewards = {"a": [0.0, 1.0], "b": [0.0, 100.0], "c": [3.0, 3.0], "d": [-2.0, 5.0]}
+class _PromptReward(RewardFunction):
+    """Scores sample k of prompt p as ``_REWARDS[p][k]``.
 
-    class Algorithm(_Algorithm):
-        class _Config(_Algorithm._Config):
-            global_std = True
-            adv_clip_max = 0.5
+    With ``components`` it also reports the raw component observations the
+    normalized-sum estimator combines: ``ocr`` = r and ``image_sharpness`` = r^2.
+    """
 
-        config = _Config()
+    def __init__(self, *, components: bool) -> None:
+        self.components = components
 
-        def compute_advantages_from_tensors(self, rewards, group_ids):
-            return group_relative_advantages(
-                rewards, group_ids, eps=1e-8, adv_clip_max=0.5, global_std=True
-            )
-
-        def compute_loss(self, inputs):
-            signals, advantages, _old = _algorithm_inputs(inputs)
-            loss = -(signals.log_prob * advantages).mean()
-            return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
-
-    async def run(streaming):
-        trainer = _build_trainer(tmp_path / str(streaming))
-        trainer.algorithm = Algorithm()
-        if normalized_components:
-            estimator = GroupAdvantageEstimator(
-                eps=1e-8,
-                adv_clip_max=0.5,
-                global_std=True,
-                strategy="normalized_sum",
-                component_weights={"ocr": 0.7, "quality": 0.3},
-            )
-            trainer.algorithm.compute_advantages_from_components = (
-                lambda values, components, groups: estimator.compute(
-                    values, groups, component_rewards=components
-                )
-            )
-        trainer.config.drop_zero_advantage = drop_zero
-        plan = OnlineBatchPlan(
-            prompts_per_batch=4,
-            n_samples_per_prompt=2,
-            prompts_per_collection=micro if streaming else 0,
+    async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
+        seen: Counter[str] = Counter()
+        scores = []
+        for sample in samples:
+            scores.append(_REWARDS[sample.prompt][seen[sample.prompt]])
+            seen[sample.prompt] += 1
+        if not self.components:
+            return RewardOutput(scores=tuple(scores))
+        return RewardOutput(
+            scores=tuple(scores),
+            components={
+                "ocr": tuple(scores),
+                "image_sharpness": tuple(value * value for value in scores),
+            },
         )
-        trainer.config.batch_plan = plan
-        seen = []
-        syncs = []
 
-        async def collect(prompts, **kwargs):
-            iteration = RolloutIteration(
-                batches=[
-                    _diffusion_rollout_batch(
-                        rewards=torch.tensor(rewards[prompt]),
-                        group_ids=torch.full((2,), index, dtype=torch.long),
-                        num_steps=2,
-                    )
-                    for index, prompt in enumerate(prompts)
-                ]
-            )
-            if normalized_components:
-                for batch in iteration.batches:
-                    batch.extras["reward_components"] = {
-                        "ocr": batch.rewards.tolist(),
-                        "quality": batch.rewards.square().tolist(),
-                    }
-            return iteration
 
-        def evaluate(model, batch, timestep_idx, **kwargs):
-            return _trajectory_signals(
-                batch,
-                model.weight.reshape(()) * batch.rewards,
-                timestep_idx,
-                old_log_prob=batch.rewards,
-            )
+def _record_advantages(monkeypatch, bench: TrainerBench) -> list[tuple[float, ...]]:
+    """The advantages every real ``compute_loss`` call trains on."""
 
-        original_loss = trainer.algorithm.compute_loss
+    seen: list[tuple[float, ...]] = []
+    real = bench.trainer.algorithm.compute_loss
 
-        def record(inputs):
-            seen.append(inputs.advantages.detach().clone())
-            return original_loss(inputs)
+    def compute_loss(inputs):
+        seen.append(tuple(inputs.advantages.detach().cpu().tolist()))
+        return real(inputs)
 
-        trainer.algorithm.compute_loss = record
-        trainer.rollout_schedule.next_iteration = collect
-        trainer.evaluator.evaluate = evaluate
-        original_sync = trainer.rollout_schedule.after_train_step
+    monkeypatch.setattr(bench.trainer.algorithm, "compute_loss", compute_loss)
+    return seen
 
-        async def sync():
-            syncs.append(trainer.model.weight.detach().clone())
-            return await original_sync()
 
-        trainer.rollout_schedule.after_train_step = sync
-        if streaming:
-            metrics = await _run_streaming_optimizer_update(
-                trainer, list(rewards), batch_plan=plan
-            )
-        else:
-            metrics = await trainer.step(list(rewards))
-        assert not list((tmp_path / str(streaming)).glob(".advantage-spool-*"))
-        return trainer, metrics, seen, syncs
+def _pushes(bench: TrainerBench) -> list[tuple[Any, int]]:
+    return [args for event, args in bench.collector.trace.calls if event == "update_weights"]
 
-    full, fm, fa, fs = asyncio.run(run(False))
-    streamed, sm, sa, ss = asyncio.run(run(True))
-    assert len(fs) == len(ss) == 1
-    torch.testing.assert_close(fs[0], ss[0], rtol=0, atol=0)
-    assert len(fa) == len(sa)
-    for left, right in zip(fa, sa, strict=True):
-        torch.testing.assert_close(left, right, rtol=0, atol=0)
-    assert sm.grad_norm == pytest.approx(fm.grad_norm, rel=1e-6, abs=1e-8)
-    assert sm.reward_std == pytest.approx(fm.reward_std)
-    torch.testing.assert_close(full.model.weight, streamed.model.weight, rtol=0, atol=0)
-    left = full._optimizer.state_dict()
-    right = streamed._optimizer.state_dict()
+
+def _output(bench: TrainerBench) -> Path:
+    return Path(bench.trainer.config.output_dir)
+
+
+# The three axes are independent in production (advantage filter, streaming
+# split width, component combiner): a base row plus one flip per axis.
+@pytest.mark.parametrize(
+    ("drop_zero", "micro", "normalized_components"),
+    [(False, 1, False), (True, 1, False), (False, 2, False), (False, 1, True)],
+)
+def test_streaming_matches_full_batch_advantages_gradients_and_adam(
+    monkeypatch, tmp_path, drop_zero, micro, normalized_components
+):
+    prompts = [PromptExample(prompt=prompt) for prompt in _REWARDS]
+    overrides = (
+        *_GLOBAL_STD,
+        f"actor.drop_zero_advantage={str(drop_zero).lower()}",
+        "rollout.prompts_per_batch=4",
+        *(_TWO_COMPONENTS if normalized_components else ()),
+    )
+    full = real_trainer(
+        monkeypatch,
+        tmp_path / "full",
+        reward=_PromptReward(components=normalized_components),
+        overrides=overrides,
+    )
+    # Each stack serves one snapshot: load the first policy before the second
+    # stack installs its pipeline.
+    asyncio.run(full.collector.collector.activate_generation_runtime())
+    streamed = real_trainer(
+        monkeypatch,
+        tmp_path / "streamed",
+        reward=_PromptReward(components=normalized_components),
+        overrides=(*overrides, f"actor.prompts_per_collection={micro}"),
+    )
+    full_advantages = _record_advantages(monkeypatch, full)
+    streamed_advantages = _record_advantages(monkeypatch, streamed)
+
+    random.seed(0)
+    full_metrics = asyncio.run(full.trainer.step(list(prompts)))
+    random.seed(0)
+    streamed_metrics = asyncio.run(
+        _run_streaming_optimizer_update(
+            streamed.trainer, list(prompts), batch_plan=streamed.trainer.config.batch_plan
+        )
+    )
+
+    # Same request seeds, so both updates train on the same real rollouts.
+    assert [r.sampling["seed"] for r in full.collector.trace.requests] == [
+        r.sampling["seed"] for r in streamed.collector.trace.requests
+    ]
+    # Global normalization over the whole optimizer batch: identical advantages.
+    assert full_advantages
+    assert sorted(full_advantages) == sorted(streamed_advantages)
+    assert streamed_metrics.reward_std == pytest.approx(full_metrics.reward_std)
+    assert full_metrics.grad_norm > 0
+    assert streamed_metrics.grad_norm == pytest.approx(full_metrics.grad_norm, rel=1e-5)
+    # One update each: the initial push plus one post-train push of equal weights.
+    full_pushes, streamed_pushes = _pushes(full), _pushes(streamed)
+    assert [version for _, version in full_pushes] == [1, 2]
+    assert [version for _, version in streamed_pushes] == [1, 2]
+    for name, value in full_pushes[1][0].items():
+        torch.testing.assert_close(streamed_pushes[1][0][name], value, rtol=1e-5, atol=1e-7)
+    full_params, streamed_params = full.trainable_parameters(), streamed.trainable_parameters()
+    for name, value in full_params.items():
+        torch.testing.assert_close(streamed_params[name], value, rtol=1e-5, atol=1e-7)
+    left = full.trainer._optimizer.state_dict()
+    right = streamed.trainer._optimizer.state_dict()
     assert left["param_groups"] == right["param_groups"]
+    assert left["state"].keys() == right["state"].keys()
     for key, state in left["state"].items():
         for name, value in state.items():
-            torch.testing.assert_close(value, right["state"][key][name], rtol=0, atol=0)
-    assert full.state.global_step == streamed.state.global_step == 1
+            torch.testing.assert_close(right["state"][key][name], value, rtol=1e-5, atol=1e-9)
+    assert full.trainer.state.global_step == streamed.trainer.state.global_step == 1
+    for bench in (full, streamed):
+        assert not list(_output(bench).glob(".advantage-spool-*"))
 
 
 @pytest.mark.parametrize("stage", ["collect", "replay"])
-def test_spool_cleanup_on_failure(tmp_path, stage):
-    trainer = _build_trainer(tmp_path)
-    trainer.algorithm.config = type("Config", (), {"global_std": True, "adv_clip_max": 5.0})()
-    plan = OnlineBatchPlan(prompts_per_batch=2, n_samples_per_prompt=2, prompts_per_collection=1)
-    trainer.config.batch_plan = plan
-    calls = []
+def test_spool_cleanup_on_failure(monkeypatch, tmp_path, stage):
+    bench = real_trainer(
+        monkeypatch,
+        tmp_path,
+        overrides=(
+            *_GLOBAL_STD,
+            "rollout.prompts_per_batch=2",
+            "actor.prompts_per_collection=1",
+        ),
+    )
+    trainer = bench.trainer
+    output = _output(bench)
+    calls: list[list[Any]] = []
+    real_next_iteration = trainer.rollout_schedule.next_iteration
 
-    async def collect(prompts, **kwargs):
-        calls.append(prompts)
+    async def next_iteration(prompts, **kwargs):
+        calls.append(list(prompts))
         if len(calls) == 2 and stage == "collect":
-            assert list(tmp_path.glob(".advantage-spool-*/*.pt"))
+            assert list(output.glob(".advantage-spool-*/*.pt"))
             raise RuntimeError("injected collection failure")
-        return RolloutIteration(
-            batches=[
-                _diffusion_rollout_batch(
-                    rewards=torch.tensor([0.0, 1.0]),
-                    group_ids=torch.zeros(2, dtype=torch.long),
-                    num_steps=2,
-                )
-            ]
-        )
+        return await real_next_iteration(prompts, **kwargs)
 
     def backward(*args, **kwargs):
         assert len(calls) == 2
         raise RuntimeError("injected replay failure")
 
-    trainer.rollout_schedule.next_iteration = collect
-    trainer.backward_on_training_batch = backward
+    monkeypatch.setattr(trainer.rollout_schedule, "next_iteration", next_iteration)
+    monkeypatch.setattr(trainer, "backward_on_training_batch", backward)
+
     with pytest.raises(RuntimeError, match="injected"):
-        asyncio.run(_run_streaming_optimizer_update(trainer, ["a", "b"], batch_plan=plan))
-    assert not list(tmp_path.glob(".advantage-spool-*"))
+        asyncio.run(
+            _run_streaming_optimizer_update(
+                trainer, ["a", "b"], batch_plan=trainer.config.batch_plan
+            )
+        )
+
+    assert not list(output.glob(".advantage-spool-*"))
     assert trainer.state.global_step == 0

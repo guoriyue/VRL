@@ -61,6 +61,10 @@ class DiffusionNFT(PreviousPolicyObjective):
         self.config = config or DiffusionNFTConfig()
         self.advantage_estimator = advantage_estimator or self.config.build_estimator()
 
+    @property
+    def kl_coef(self) -> float:
+        return float(self.config.kl_coef)
+
     def compute_advantages_from_tensors(
         self,
         rewards: Any,

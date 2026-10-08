@@ -12,8 +12,7 @@ from __future__ import annotations
 import inspect
 import threading
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
-from types import SimpleNamespace
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -28,9 +27,8 @@ from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.collector.core import RolloutCollector, RolloutGenerationResult
+from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.strategy import SingleProcessStrategy
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 
@@ -263,60 +261,3 @@ async def collect_scored(
         )
     )
     return (collector.assemble_training_batches(await collector.evaluate_rollout([unscored])))[0]
-
-
-class PromptCollectionFake:
-    """Run production prompt collection over fake generation and reward operations.
-
-    Also supplies the lifecycle surface the rollout schedules call on a
-    collector, so trainer and orchestration tests only specialize collection.
-    """
-
-    def assemble_training_batches(self, evaluated):
-        # These scheduling fakes use prebuilt batches as their reward result.
-        return evaluated
-
-    reward_runtime = SimpleNamespace()
-    generation_runtime = SimpleNamespace(current_policy_version=None)
-    # No lifecycle plan: nothing shares a GPU, so no role parks and the reward
-    # counts as isolated.
-    lifecycle = None
-    reward_isolation_verified = True
-
-    async def activate_generation_runtime(self) -> None:
-        return None
-
-    async def offload_generation_runtime_memory(self) -> None:
-        return None
-
-    async def shutdown(self) -> None:
-        return None
-
-    request_builder = SimpleNamespace(
-        build=lambda inputs, group_size, **kwargs: SimpleNamespace(
-            inputs=inputs, options={"group_size": group_size, **kwargs}
-        )
-    )
-    build_generation_requests = RolloutCollector.build_generation_requests
-    prepare_training_batches = RolloutCollector.prepare_training_batches
-
-    def finish_scored_prompt_groups(
-        self,
-        generated_groups: list[RolloutGenerationResult],
-        batches: list[RolloutBatch],
-        stats: RolloutStats,
-    ) -> list[RolloutBatch]:
-        # Scheduling fakes may return a batch directly, without building a
-        # generation request/output. Supply its omitted timing fields here;
-        # production UnscoredRollout always owns both dictionaries.
-        groups = [
-            replace(
-                group,
-                unscored=SimpleNamespace(
-                    phases=getattr(group.unscored, "phases", {}),
-                    reward_timing_ms=getattr(group.unscored, "reward_timing_ms", {}),
-                ),
-            )
-            for group in generated_groups
-        ]
-        return RolloutCollector.finish_scored_prompt_groups(self, groups, batches, stats)

@@ -24,4 +24,13 @@ class AlgorithmConfigContract:
     # default.
     requires_previous_policy: bool = False
     requires_reference_policy: bool = False
+    # Whether the objective stays sound on samples an older policy version
+    # generated (continuous scheduling's bounded lag). An objective whose
+    # behaviour policy is the current weights cannot absorb that lag.
+    tolerates_off_policy_staleness: bool = False
+    # The loss is *defined* by a clipped/guarded ratio against the rollout
+    # policy (Flow-DPPO / GRPO-Guard), so it needs a behaviour policy that
+    # differs from the trained one and the rollout's stored proposal mean.
+    # Plain GRPO's clip is only a safety rail and leaves this False.
+    requires_active_trust_region: bool = False
     consumed_sections: tuple[tuple[str, frozenset[str] | None], ...] | None = None

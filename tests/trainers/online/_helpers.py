@@ -1,46 +1,24 @@
-"""Shared OnlineTrainer test helpers: algorithm-input unpacking and trajectory-signal construction."""
+"""Shared OnlineTrainer test helpers.
+
+``real_trainer`` is the construction trainer tests start from: the online
+recipe's own wiring (algorithm/evaluator pair from config, the run's replay
+bundle as policy and reference, ``SingleProcessStrategy``, the real weight
+syncer and strategy export) over ``real_collector`` on the tiny SANA stack.
+A trainer knob is a config override, never an attribute poke.
+"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
+import pytest
 import torch
 
-from vrl.config.precision import RolePrecision
+from tests.rollouts.collector._helpers import CollectorBench, real_collector
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.builders import build_diffusion_trajectory
-
-DEFAULT_PRECISION = RolePrecision(
-    dtype="fp32",
-    float32_precision="ieee",
-    outer_autocast=False,
-)
-
-
-class _EvaluatorAlgorithmFake:
-    """Common capabilities for test algorithms that consume evaluator signals."""
-
-    uses_evaluator = True
-    tolerates_off_policy_staleness = True
-    requires_active_trust_region = False
-
-
-def _stamp_model_precision(
-    model: Any,
-    *,
-    precision: RolePrecision = DEFAULT_PRECISION,
-) -> None:
-    """Stamp the role precision required by trainer test doubles."""
-
-    model.precision = precision
-
-
-def _algorithm_inputs(inputs):
-    if inputs.signals is None:
-        raise AssertionError("test algorithm requires trajectory signals")
-    signals = inputs.signals.primary
-    return signals, inputs.advantages, signals.old_log_prob
 
 
 def _diffusion_rollout_batch(
@@ -137,35 +115,6 @@ def _diffusion_rollout_batch(
     )
 
 
-def _trajectory_signals(
-    batch,
-    log_prob,
-    timestep_idx: int = 0,
-    *,
-    old_log_prob=None,
-):
-    from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
-
-    if old_log_prob is None:
-        # Most trainer fakes model an unchanged-policy replay. Tests that
-        # deliberately exercise mismatch must provide the behavior value.
-        old_log_prob = log_prob.detach().clone()
-    mask = torch.ones_like(log_prob)
-    return TrajectorySignalBatch(
-        segments={
-            "default": SegmentSignal(
-                name="default",
-                distribution="flow_matching",
-                log_prob=log_prob,
-                old_log_prob=old_log_prob,
-                mask=mask,
-            ),
-        },
-        group_ids=batch.group_ids,
-        primary_segment="default",
-    )
-
-
 def bare_trainer(**attributes):
     """An ``OnlineTrainer`` with only the attributes a single method reads.
 
@@ -181,3 +130,83 @@ def bare_trainer(**attributes):
     for name, value in attributes.items():
         setattr(trainer, name, value)
     return trainer
+
+
+@dataclass
+class TrainerBench:
+    """A real ``OnlineTrainer`` and the stack under it."""
+
+    trainer: Any
+    collector: CollectorBench
+    bundle: Any
+    strategy: Any
+
+    @property
+    def model(self) -> Any:
+        return self.bundle.model
+
+    def trainable_parameters(self) -> dict[str, torch.Tensor]:
+        transformer = self.bundle.model.trainable_modules["transformer"]
+        return {
+            name: parameter
+            for name, parameter in transformer.named_parameters()
+            if parameter.requires_grad
+        }
+
+
+def real_trainer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    *,
+    reward: Any = None,
+    overrides: tuple[str, ...] = (),
+    versioned_slots: bool = False,
+    lifecycle: Any = None,
+    strategy: Any = None,
+) -> TrainerBench:
+    """Build ``OnlineTrainer`` exactly as the online recipe wires it, on tiny SANA.
+
+    ``strategy`` defaults to ``SingleProcessStrategy``; a distributed strategy
+    needs its process group initialized by the caller.
+    """
+
+    from vrl.scripts.common.factory import AlgorithmEvaluatorPair
+    from vrl.trainers.online.trainer import OnlineTrainer
+    from vrl.trainers.strategy import SingleProcessStrategy
+    from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
+
+    bench = real_collector(
+        monkeypatch,
+        tmp_path,
+        reward=reward,
+        lifecycle=lifecycle,
+        versioned_slots=versioned_slots,
+        overrides=overrides,
+    )
+    stack = bench.stack
+    built = stack.resolved.built
+    bundle = stack.trainer_bundle()
+    strategy = strategy if strategy is not None else SingleProcessStrategy()
+    pair = AlgorithmEvaluatorPair.from_configs(
+        family_entry=stack.family,
+        built=built,
+        collector_config=stack.collector_config(),
+        scheduler=getattr(bundle, "scheduler", None),
+    )
+    contract = built.root.algorithm.hyperparameters.config_contract
+    uses_reference = (pair.evaluator is not None and pair.algorithm.kl_coef > 0) or (
+        contract.requires_reference_policy
+    )
+    trainer = OnlineTrainer(
+        algorithm=pair.algorithm,
+        collector=bench.collector,
+        evaluator=pair.evaluator,
+        model=bundle.model,
+        ref_model=bundle.model if uses_reference else None,
+        weight_syncer=RayRuntimeWeightSyncer(bench.runtime),
+        sync_state_getter=lambda: strategy.export_rollout_state(bundle),
+        config=built.trainer,
+        device=torch.device("cpu"),
+        strategy=strategy,
+    )
+    return TrainerBench(trainer=trainer, collector=bench, bundle=bundle, strategy=strategy)

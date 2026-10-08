@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -34,6 +35,7 @@ class GRPOConfig(ClippedPolicyConfig):
     config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
         needs_sde_rollout=True,
         sft_source="latents",
+        tolerates_off_policy_staleness=True,
     )
 
     flow_kl_use_dt: bool = False
@@ -58,31 +60,55 @@ class GRPO:
     """
 
     uses_evaluator = True
-    tolerates_off_policy_staleness = True
-
-    # Plain GRPO's clip is a safety rail, not the objective: at ppo_epochs=1 it
-    # is honest REINFORCE-with-group-baseline (the ratio is ~1 and the clip is
-    # simply inactive). Trust-region subclasses whose loss IS the ratio term flip
-    # this True so the trainer rejects the strict + ppo_epochs=1 no-op config.
-    requires_active_trust_region = False
 
     def __init__(
         self,
         config: GRPOConfig | None = None,
         *,
         advantage_estimator: GroupAdvantageEstimator | None = None,
+        precision_correction: PrecisionCorrectionConfig | None = None,
     ) -> None:
         self.config = config or GRPOConfig()
-        self._initialize_precision_correction()
+        self._initialize_precision_correction(precision_correction)
         self._initialize_advantage_estimator(advantage_estimator)
 
-    def _initialize_precision_correction(self) -> None:
-        """Install the trainer-injected rollout/replay correction capability."""
+    def _initialize_precision_correction(
+        self,
+        precision_correction: PrecisionCorrectionConfig | None,
+    ) -> None:
+        """Install the rollout/replay precision correction (TIS) this loss applies.
 
-        # Rollout->replay precision correction (TIS). Off by default; the trainer
-        # injects trainer.precision_correction here at construction so the knobs
-        # live at the trainer level, not in the algorithm's hyperparameters.
-        self.precision_correction = PrecisionCorrectionConfig()
+        The knobs live at the trainer level (``trainer.precision_correction``),
+        not in the algorithm's hyperparameters; the factory hands them in at
+        construction. Off by default.
+        """
+
+        self.precision_correction = precision_correction or PrecisionCorrectionConfig()
+
+    @property
+    def kl_coef(self) -> float:
+        return float(self.config.kl_coef)
+
+    @property
+    def sft_weight(self) -> float:
+        return float(self.config.sft_weight)
+
+    # -- lifecycle entry points the trainer calls on every objective ---------
+
+    def prepare_update(self, update_timesteps: Callable[[], Any]) -> None:
+        """Called once per optimizer update, before its first replay forward.
+
+        ``update_timesteps`` returns the recorded timestep of every (sample,
+        trained step) the update will put loss on; it is only evaluated by an
+        objective that normalizes over the whole update.
+        """
+
+        del update_timesteps
+
+    def after_optimizer_step(self, global_step: int) -> None:
+        """Called after every applied (not scaler-skipped) optimizer step."""
+
+        del global_step
 
     def _initialize_advantage_estimator(
         self,
@@ -277,6 +303,7 @@ class FlashGRPOConfig(GRPOConfig):
     config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
         needs_sde_rollout=True,
         sft_source="unsupported",
+        tolerates_off_policy_staleness=True,
     )
 
     clip_ratio: float = 1e-3
@@ -325,22 +352,28 @@ class FlashGRPO(GRPO):
         self,
         config: FlashGRPOConfig | None = None,
         *,
-        advantage_estimator: GroupAdvantageEstimator | None = None,
-    ) -> None:
-        super().__init__(config or FlashGRPOConfig(), advantage_estimator=advantage_estimator)
-        self._update_coe_mean: Any | None = None
-
-    def prepare_update(
-        self,
-        timesteps: Any,
-        *,
         scheduler: Any,
         noise_level: float = 1.0,
         sde_type: str = "flow_grpo",
+        advantage_estimator: GroupAdvantageEstimator | None = None,
+        precision_correction: PrecisionCorrectionConfig | None = None,
     ) -> None:
+        super().__init__(
+            config or FlashGRPOConfig(),
+            advantage_estimator=advantage_estimator,
+            precision_correction=precision_correction,
+        )
+        # The rollout SDE the rectification weight is defined over: the same
+        # scheduler and noise the replay evaluator integrates.
+        self._scheduler = scheduler
+        self._noise_level = noise_level
+        self._sde_type = sde_type
+        self._update_coe_mean: Any | None = None
+
+    def prepare_update(self, update_timesteps: Callable[[], Any]) -> None:
         """Fix the update's rectification denominator from its recorded timesteps.
 
-        ``timesteps`` holds one entry per (sample, trained step) of the whole
+        The timesteps hold one entry per (sample, trained step) of the whole
         optimizer update on this rank; the mean of ``1/c`` is reduced across
         ranks so every microbatch of every rank divides by the same number.
         """
@@ -348,10 +381,10 @@ class FlashGRPO(GRPO):
         from vrl.math.denoise.flow_matching import flow_sde_scale_terms
 
         sigma, sqrt_neg_dt, std = flow_sde_scale_terms(
-            scheduler,
-            timesteps,
-            noise_level=noise_level,
-            sde_type=sde_type,
+            self._scheduler,
+            update_timesteps(),
+            noise_level=self._noise_level,
+            sde_type=self._sde_type,
         )
         coe = 1.0 / self._rectification_scale(std.float(), sqrt_neg_dt.float(), sigma.float())
         self._update_coe_mean = self._cross_rank_mean(coe).clamp_min(1e-12)
@@ -412,9 +445,14 @@ class FlashGRPO(GRPO):
 class FlowDPPOConfig(GroupAdvantageConfig):
     """Flow-DPPO: exact-Gaussian-KL trust region instead of the PPO ratio clip."""
 
+    # The KL mask is the objective: at strict + ppo_epochs=1 the rollout and
+    # current proposal means coincide, KL==0, nothing is masked, and the loss
+    # collapses to plain REINFORCE.
     config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
         needs_sde_rollout=True,
         sft_source="unsupported",
+        tolerates_off_policy_staleness=True,
+        requires_active_trust_region=True,
     )
 
     # Per-sample latent KL above which an update that *widens* the gap from the
@@ -434,20 +472,20 @@ class FlowDPPO(GRPO):
     policy are always kept. This is the key difference from PPO's symmetric clip.
     """
 
-    # The KL mask is the objective: at strict + ppo_epochs=1 the rollout and
-    # current proposal means coincide, KL==0, nothing is masked, and the loss
-    # collapses to -advantages * 1 (plain REINFORCE). Require a moving policy.
-    requires_active_trust_region = True
+    # The trust region replaces the KL term, and the variant carries no SFT term.
+    kl_coef = 0.0
+    sft_weight = 0.0
 
     def __init__(
         self,
         config: FlowDPPOConfig | None = None,
         *,
         advantage_estimator: GroupAdvantageEstimator | None = None,
+        precision_correction: PrecisionCorrectionConfig | None = None,
     ) -> None:
         cfg = config or FlowDPPOConfig()
         self.config: FlowDPPOConfig = cfg
-        self._initialize_precision_correction()
+        self._initialize_precision_correction(precision_correction)
         self._initialize_advantage_estimator(advantage_estimator)
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
@@ -547,9 +585,14 @@ class GRPOGuardConfig(GroupAdvantageConfig):
     The guard terms are derived from the per-step diffusion scale.
     """
 
+    # The ratio-mean-bias / step-scale guard is the objective: at strict +
+    # ppo_epochs=1 the current-vs-rollout drift is 0, the guard correction
+    # vanishes, and the loss collapses to plain GRPO.
     config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
         needs_sde_rollout=True,
         sft_source="unsupported",
+        tolerates_off_policy_staleness=True,
+        requires_active_trust_region=True,
     )
 
     clip_ratio: float = 0.2
@@ -564,20 +607,20 @@ class GRPOGuard(GRPO):
     early and late timesteps contribute comparably.
     """
 
-    # The ratio-mean-bias / step-scale guard is the objective: at strict +
-    # ppo_epochs=1 the current-vs-rollout drift is 0, the guard correction
-    # vanishes, and the loss collapses to plain GRPO. Require a moving policy.
-    requires_active_trust_region = True
+    # The trust region replaces the KL term, and the variant carries no SFT term.
+    kl_coef = 0.0
+    sft_weight = 0.0
 
     def __init__(
         self,
         config: GRPOGuardConfig | None = None,
         *,
         advantage_estimator: GroupAdvantageEstimator | None = None,
+        precision_correction: PrecisionCorrectionConfig | None = None,
     ) -> None:
         cfg = config or GRPOGuardConfig()
         self.config: GRPOGuardConfig = cfg
-        self._initialize_precision_correction()
+        self._initialize_precision_correction(precision_correction)
         self._initialize_advantage_estimator(advantage_estimator)
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:

@@ -27,15 +27,27 @@ class PreviousPolicyObjective:
     # These objectives train the forward process from the rollout's clean
     # latents (TrajectoryReader.forward_process_replay) — no reverse-SDE
     # trajectory, no log-probs, no evaluator.
+    # The behaviour policy is the current policy, so their config contracts
+    # leave tolerates_off_policy_staleness False: a superseded policy's
+    # rollout would be scored against the wrong theta_old (and NFT, being
+    # likelihood-free, has no importance ratio to absorb the lag).
     uses_evaluator = False
-    requires_active_trust_region = False
-    # The behaviour policy is the current policy, not the policy that
-    # generated a stale rollout: training on rollouts from a superseded policy
-    # would score them against the wrong theta_old (and NFT, being
-    # likelihood-free, has no importance ratio to absorb the lag at all). So
-    # the continuous-rollout staleness window must be 0;
-    # build_rollout_schedule fails fast on an unsound max_stale>0 config.
-    tolerates_off_policy_staleness = False
+    # Trained on the forward process: no clean-target SFT term, and no KL term
+    # unless the objective defines one.
+    kl_coef = 0.0
+    sft_weight = 0.0
+
+    # -- lifecycle entry points the trainer calls on every objective ---------
+
+    def prepare_update(self, update_timesteps: Any) -> None:
+        """Called once per optimizer update; nothing is normalized over it here."""
+
+        del update_timesteps
+
+    def after_optimizer_step(self, global_step: int) -> None:
+        """Called after every applied optimizer step."""
+
+        del global_step
 
     # -- x0 regression --------------------------------------------------
 
