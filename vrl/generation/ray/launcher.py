@@ -197,12 +197,7 @@ class RayGenerationLauncher:
                 actor_dispatcher=actor_dispatcher,
                 worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
             )
-            return RayGenerationSession(
-                executor,
-                weight_sync=weight_sync,
-                owned_engines=engines,
-                owned_finalizers=finalizer_handles,
-            )
+            return RayGenerationSession(executor, weight_sync)
         except BaseException as error:
             for group in (actor_group, finalizer_group):
                 if group is None:

@@ -101,7 +101,7 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 
 | Protocol | Members | Why it exists |
 |---|---|---|
-| `GenerationRuntime` | `current_policy_version`, `activate/generate/update_weights/offload/shutdown` | The engine's only face toward vrl/rollouts (dual of `RewardRuntime`). isinstance-checked at `rollouts/collector/core.py`. |
+| `GenerationRuntime` | `current_policy_version`, `activate/generate/update_weights/offload/shutdown` | The engine's only face toward vrl/rollouts (dual of `RewardRuntime`); the collector is typed against it, and tests/rollouts/test_runtime_protocol_contract.py pins the Ray runtime to it structurally. |
 | `GenerationBatchExecutor` | `family`, `task`, `forward_batch`, `gather_batches` | The model-family plugin contract; keeps `if family == ...` out of neutral execution code. |
 | `GenerationBatchGatherer` | `gather_batches` | The model-free slice of the executor: reassembly runs driver-side where no model is loaded, so it ships separately in the launch contract. |
 | `BatchPayload = Any` | — | Deliberate: the payload's shape is owned by the binding that produced it (diffusion latents vs AR tokens share nothing useful). |
@@ -184,7 +184,7 @@ engine.
 
 | Module | Classes | Role |
 |---|---|---|
-| `protocols.py` | `RewardRuntime` | The engine's only face toward vrl/rollouts (dual of `GenerationRuntime`): `preflight/activate/score/park_memory/shutdown`. isinstance-checked at `rollouts/collector/core.py`. |
+| `protocols.py` | `RewardRuntime` | The engine's only face toward vrl/rollouts (dual of `GenerationRuntime`): `preflight/activate/score/park_memory/shutdown`; the collector is typed against it. |
 | | `RewardScorer` | The transport seam below `RewardFunction` (dual of the Ray executor layer): `score_batch(request) -> results`, `shutdown`, plus the two capability flags. Runtime-checkable; validated **once, completely** at scorer injection. |
 | | `RemoteReadyScorer` | Optional capability: remote transports expose `ensure_ready()` so a broken service fails at preflight, not after the first generation batch. |
 | | `MemoryParkingScorer` | Optional capability (dual of `BatchSizeProbeExecutor`): `requires_memory_parking`, `activate`, `park_memory` for verified GPU parking. |

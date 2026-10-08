@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
 from typing import Any
 
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
-from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
-from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.dependencies import kill_actors, kill_failures_error, require_ray
 from vrl.utils.deadline import OperationDeadline
 
@@ -31,28 +28,26 @@ class RayGenerationSession:
     """Own one launched engine fleet without owning its public lifecycle.
 
     ``RayGenerationRuntime`` decides when operations are admitted, which failure
-    is terminal, and whether cleanup is graceful or forceful. This object retains
-    only the concrete resources needed to execute and close one launched fleet.
-    Engines are the operation unit (dispatch, weight sync, parking); their rank
-    actors are the lifecycle unit (kill, liveness, graceful release).
+    is terminal, and whether cleanup is graceful or forceful. This object holds
+    the two operation objects of one launched fleet and, read off the executor,
+    the actors to close. Engines are the operation unit (dispatch, weight sync,
+    parking); their rank actors are the lifecycle unit (kill, liveness,
+    graceful release).
     """
 
     def __init__(
         self,
         executor: RayGenerationExecutor,
         weight_sync: RayGenerationWeightSync,
-        owned_engines: list[RayGenerationEngine],
-        *,
-        owned_finalizers: Sequence[RayActorHandle] = (),
     ) -> None:
-        if executor is None:
-            raise ValueError("Ray generation session requires an executor")
         self.executor = executor
         self.weight_sync = weight_sync
-        self.engines = list(owned_engines)
+        # Own copies: shutdown empties them as actors die, which must not
+        # change what the executor dispatches over.
+        self.engines = list(executor.engines)
         self.rank_handles = [rank for engine in self.engines for rank in engine.ranks]
         # Finalizers hold no policy: they are killed with the ranks, never released.
-        self.finalizer_handles = list(owned_finalizers)
+        self.finalizer_handles = list(executor.finalizers)
         self._release_wait_task: asyncio.Task[Any] | None = None
         self._force_close = False
 

@@ -18,6 +18,7 @@ import pytest
 
 from tests.generation.ray._helpers import ray_sana_runtime
 from vrl.generation.ray.engine import RayGenerationEngine
+from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.session import RayGenerationSession
 
 _TWO_ENGINES = ("distributed.resources.rollout.num_engines=2",)
@@ -116,7 +117,13 @@ async def test_session_parking_failure_does_not_translate_or_close_resources(
             "rollout-0",
             [replace(real.engines[0].primary, actor=real.engines[1].primary.actor)],
         )
-        session = RayGenerationSession(real.executor, real.weight_sync, [miswired])
+        miswired_executor = RayGenerationExecutor(
+            [miswired],
+            real.executor.gatherer,
+            actor_dispatcher=real.executor.actor_dispatcher,
+            generation_stall_timeout_s=real.executor.generation_stall_timeout_s,
+        )
+        session = RayGenerationSession(miswired_executor, real.weight_sync)
         calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         _record(monkeypatch, local_ray, "get", calls)
         _record(monkeypatch, local_ray, "kill", calls)
