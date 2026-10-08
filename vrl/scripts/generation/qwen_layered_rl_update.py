@@ -28,6 +28,55 @@ from vrl.scripts.generation.qwen_layered_rl_probe import (
 )
 
 
+def restore_optimizer(optimizer, parameters, directory, *, adapter_sha256, optimizer_sha256):
+    """Restore Adam moments only when their saved policy and parameter order match."""
+    directory = Path(directory)
+    adapter_path = directory / "adapter.pt"
+    optimizer_path = directory / "optimizer.pt"
+    result = json.loads((directory / "result.json").read_text())
+    if (
+        hashlib.sha256(adapter_path.read_bytes()).hexdigest() != adapter_sha256
+        or result["adapter_sha256"] != adapter_sha256
+    ):
+        raise ValueError("Optimizer parent does not match the initial adapter")
+    if hashlib.sha256(optimizer_path.read_bytes()).hexdigest() != optimizer_sha256:
+        raise ValueError("Optimizer checkpoint hash mismatch")
+    saved_parameters = torch.load(adapter_path, map_location="cpu", weights_only=True)
+    if list(saved_parameters) != list(parameters):
+        raise ValueError("Optimizer parameter order differs from the saved adapter")
+    state = torch.load(optimizer_path, map_location="cpu", weights_only=True)
+    current_groups = optimizer.state_dict()["param_groups"]
+    if state["param_groups"] != current_groups:
+        raise ValueError("Optimizer groups or hyperparameters differ from the parent")
+    ids = [index for group in state["param_groups"] for index in group["params"]]
+    if set(state["state"]) - set(ids):
+        raise ValueError("Optimizer state contains unknown parameters")
+    for index, (name, parameter) in zip(ids, parameters.items(), strict=True):
+        if saved_parameters[name].shape != parameter.shape:
+            raise ValueError(f"Saved adapter shape mismatch: {name}")
+        moments = state["state"].get(index)
+        if moments is None:
+            continue  # Unconnected parameters can legitimately have no Adam state.
+        for key in ("exp_avg", "exp_avg_sq"):
+            value = moments[key]
+            if value.shape != parameter.shape or not torch.isfinite(value).all():
+                raise ValueError(f"Invalid optimizer moment: {name}.{key}")
+        step = moments["step"]
+        if step.numel() != 1 or not torch.isfinite(step).all() or step.item() <= 0:
+            raise ValueError(f"Invalid optimizer step: {name}")
+    if not state["state"]:
+        raise ValueError("Optimizer checkpoint has no learned state")
+    optimizer.load_state_dict(state)
+    return {
+        "directory": str(directory.absolute()),
+        "adapter_sha256": adapter_sha256,
+        "optimizer_sha256": optimizer_sha256,
+        "previous_optimizer_updates": result.get(
+            "optimizer_updates_total", result["optimizer_updates"]
+        ),
+    }
+
+
 def run_update(root, config):
     from diffusers import FlowMatchEulerDiscreteScheduler
 
@@ -80,6 +129,15 @@ def run_update(root, config):
         for name, value in parameters.items():
             value.copy_(initial[name])
     optimizer = torch.optim.AdamW(parameters.values(), lr=config["learning_rate"], weight_decay=0)
+    resumed_optimizer = None
+    if resume := config.get("resume_optimizer"):
+        resumed_optimizer = restore_optimizer(
+            optimizer,
+            parameters,
+            root / resume["directory"],
+            adapter_sha256=initial_sha256,
+            optimizer_sha256=resume["sha256"],
+        )
     scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
         plan["base_path"], subfolder="scheduler", local_files_only=True
     )
@@ -282,6 +340,10 @@ def run_update(root, config):
     assert torch.equal(updated_velocity, reloaded_velocity)
     record = {
         "optimizer_updates": epochs,
+        "optimizer_updates_total": epochs
+        + (resumed_optimizer["previous_optimizer_updates"] if resumed_optimizer else 0),
+        "resumed_optimizer": resumed_optimizer,
+        "optimizer_sha256": hashlib.sha256((output / "optimizer.pt").read_bytes()).hexdigest(),
         "rollout_batches": 1,
         "behavior_policy": "initial_adapter.pt; fixed throughout PPO epochs",
         "gradient_norm_before_clip": float(norm),
