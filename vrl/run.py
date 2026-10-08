@@ -4,8 +4,8 @@ Every training entrypoint used to hand-wire the same choreography:
 ``build_configs`` -> family registry lookup -> distributed resource resolution
 -> trainer device (and, for online recipes, run/generation/collector
 projections). That choreography lives here, once. New entrypoints call
-``resolve_run`` (or ``resolve_online_run``) and read fields off the returned
-aggregate -- never re-wire the chain inline.
+``ResolvedRun.from_built`` (or ``resolve_online_run``) and read fields off the
+returned aggregate -- never re-wire the chain inline.
 
 Model materialization is the same story: the hand-wired chain
 ``resolve_model_build`` -> ``resolve_checkpoint_model_identity`` -> bundle
@@ -50,8 +50,6 @@ from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.models import checkpoint_identity
 from vrl.models.dtypes import dtype_to_wire_name
-from vrl.models.families import registry
-from vrl.models.families.names import normalize_model_family
 from vrl.models.families.registry import ModelFamilyEntry
 from vrl.models.interfaces import ModelBuild, RuntimeBundle
 from vrl.ray import resources as ray_resources
@@ -136,19 +134,120 @@ class ResolvedRun:
     resources: ResolvedDistributedResources
     device: torch.device
 
+    @classmethod
+    def from_built(cls, built: BuiltConfigs) -> ResolvedRun:
+        """The configured family, the distributed resource plan, the trainer device."""
+
+        resources = ray_resources.ResolvedDistributedResources.from_root(
+            built.root,
+            reward=built.reward,
+        )
+        return cls(
+            built=built,
+            family=built.family,
+            resources=resources,
+            device=torch.device(resources.trainer_torch_device),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ResolvedReward:
-    """Resolved reward-engine construction inputs.
+    """The reward engine of one run: its config, execution device and parking need.
 
-    The reward twin of ``RayGenerationLaunchInputs``: execution device and the
-    memory-parking requirement are derived here, once, from the resource plan;
-    the factory only constructs the reward function around them.
+    The reward twin of ``RayGenerationLaunchInputs``. Device and parking are
+    read once off the resource plan (``from_plan``); the preflight parking check,
+    the Ray actor placement and the function build all read these fields rather
+    than re-deriving them.
     """
 
     config: RewardRuntimeConfig
     device: str
     memory_parking_required: bool
+
+    @classmethod
+    def from_plan(
+        cls,
+        config: RewardRuntimeConfig,
+        resources: ResolvedDistributedResources,
+        *,
+        trainer_device: torch.device | str | None = None,
+    ) -> ResolvedReward:
+        """Read the execution device and parking need off the resource plan.
+
+        The resource topology is the execution-device source of truth, so no
+        caller-chosen device can contradict it. ``trainer_device`` lets torchrun
+        callers supply their rank-local device for trainer-shared rewards.
+        """
+
+        return cls(
+            config=config,
+            device=resources.reward_torch_device(
+                trainer_device=None if trainer_device is None else str(trainer_device),
+            ),
+            # The plan's reward devices are the reward's own GPU fact: an
+            # all-HTTP reward reserves none (its services own their
+            # accelerators), so the plan never parks it.
+            memory_parking_required=bool(resources.lifecycle.offload_reward),
+        )
+
+    def validate_parking(self) -> None:
+        """Reject a GPU-sharing reward whose components cannot park, before any build."""
+
+        if not self.memory_parking_required:
+            return
+        from vrl.rewards.functions.registry import validate_reward_memory_parking_components
+
+        validate_reward_memory_parking_components(
+            tuple(self.config.weights),
+            device=self.device,
+            reward_kwargs=self.config.kwargs,
+            inference_configs=self.config.inference_configs,
+        )
+
+    def actor_placement(self, owner: Any) -> Any:
+        """Bind the reward's Ray actors to the run's acquired resource ownership.
+
+        A GPU-sharing reward borrows the trainer's physical card; any other
+        reward takes the reservation the run-level placement group made for it.
+        """
+
+        from vrl.rewards.ray import RayRewardPlacement
+
+        if self.device.startswith("cuda") and self.memory_parking_required:
+            import os
+
+            from vrl.ray.dependencies import require_ray
+
+            # CUDA ordinals in a driver mask are not Ray's physical GPU IDs.
+            device_index = torch.device(self.device).index
+            ordinal = torch.cuda.current_device() if device_index is None else device_index
+            mask = os.environ.get("CUDA_VISIBLE_DEVICES")
+            physical_gpu = int(mask.split(",")[ordinal]) if mask else ordinal
+            return RayRewardPlacement(
+                shared_gpu_id=physical_gpu,
+                node_id=str(require_ray().get_runtime_context().get_node_id()),
+            )
+        return RayRewardPlacement(placement=owner.reward_placement)
+
+    def build_function(self, *, ray_placement: Any = None) -> Any:
+        """Build the reward function on this device under this parking policy.
+
+        ``MultiReward.from_dict`` validates the components and constructs. A
+        GPU-sharing reward parks its model memory completely; a dedicated
+        reward stays resident; HTTP components own their deployment.
+        """
+
+        self.config.require_online_training()
+        from vrl.rewards.functions.registry import MultiReward
+
+        return MultiReward.from_dict(
+            self.config.weights,
+            device=self.device,
+            reward_kwargs=self.config.kwargs,
+            memory_parking_required=self.memory_parking_required,
+            inference_configs=self.config.inference_configs,
+            ray_placement=ray_placement,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,11 +270,10 @@ class ResolvedOnlineRun(ResolvedRun):
         resource plan itself.
         """
 
-        return resolve_reward_inputs(
-            self.built,
-            self.resources,
-            trainer_device=trainer_device,
-        )
+        reward = self.built.reward
+        if reward is None:
+            raise ValueError("online recipe requires a reward section")
+        return ResolvedReward.from_plan(reward, self.resources, trainer_device=trainer_device)
 
     def ray_launch_inputs(
         self,
@@ -274,97 +372,26 @@ class ResolvedOnlineRun(ResolvedRun):
         )
 
 
-def resolve_reward_inputs(
-    built: BuiltConfigs,
-    resources: ResolvedDistributedResources,
-    *,
-    trainer_device: torch.device | str | None = None,
-) -> ResolvedReward:
-    """Derive the reward engine's device and parking policy from the plan.
-
-    The single construction site for ``ResolvedReward``; the resource topology
-    is the execution-device source of truth, so no caller-chosen device can
-    contradict it.
-    """
-
-    reward = built.reward
-    if reward is None:
-        raise ValueError("online recipe requires a reward section")
-    device = resources.reward_torch_device(
-        trainer_device=None if trainer_device is None else str(trainer_device),
-    )
-    # HTTP components execute as CPU clients in this process and own no local
-    # GPU memory; run-owned rewards inherit the handoff policy.
-    memory_parking_required = (
-        False if reward.all_external_inference else bool(resources.lifecycle.offload_reward)
-    )
-    return ResolvedReward(
-        config=reward,
-        device=device,
-        memory_parking_required=memory_parking_required,
-    )
-
-
-def _model_family(built: BuiltConfigs) -> ModelFamilyEntry:
-    """Registry entry for the configured model family (canonical name)."""
-
-    if built.root.model is None:
-        raise ValueError("training run requires model configuration")
-    return registry.get_model_family_entry(
-        normalize_model_family(str(built.root.model.family)),
-    )
-
-
-def resolve_run(cfg: DictConfig) -> ResolvedRun:
-    """Resolve the shared training-run core from one merged config."""
-
-    built = builders.build_configs(cfg)
-    family = _model_family(built)
-    resources = ray_resources.ResolvedDistributedResources.from_root(
-        built.root,
-        reward=built.reward,
-    )
-    device = torch.device(resources.trainer_torch_device)
-    return ResolvedRun(
-        built=built,
-        family=family,
-        resources=resources,
-        device=device,
-    )
-
-
 def resolve_online_run(cfg: DictConfig) -> ResolvedOnlineRun:
     """Resolve everything the online recipe reads before heavy construction.
 
-    The composition order mirrors the historical inline order in
-    ``run_online_recipe`` (built -> run -> family -> resources -> generation ->
-    device, collector last) so every fail-fast validation fires in the same
-    relative order it always did.
+    The reward deployment is checked before any resource resolution; the
+    shared core is ``ResolvedRun.from_built``; the online projections (run
+    cadence, Ray generation, collector) are added on top of it.
     """
 
     built = builders.build_configs(cfg)
     if built.reward is not None:
         built.reward.require_online_training()
-    run = OnlineRunConfig.from_root(built.root)
-    family = _model_family(built)
-    resources = ray_resources.ResolvedDistributedResources.from_root(
-        built.root,
-        reward=built.reward,
-    )
-    generation = RayGenerationConfig.from_root(
-        built.root,
-        resources=resources,
-    )
-    device = torch.device(resources.trainer_torch_device)
-    collector = RolloutCollectorConfig.from_root(built.root)
+    core = ResolvedRun.from_built(built)
     return ResolvedOnlineRun(
         built=built,
-        family=family,
-        resources=resources,
-        device=device,
-        run=run,
-        generation=generation,
-        collector=collector,
+        family=core.family,
+        resources=core.resources,
+        device=core.device,
+        run=OnlineRunConfig.from_root(built.root),
+        generation=RayGenerationConfig.from_root(built.root, resources=core.resources),
+        collector=RolloutCollectorConfig.from_root(built.root),
     )
 
 
@@ -435,6 +462,4 @@ __all__ = [
     "ResolvedRun",
     "resolve_model",
     "resolve_online_run",
-    "resolve_reward_inputs",
-    "resolve_run",
 ]

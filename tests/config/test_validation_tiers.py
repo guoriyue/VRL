@@ -2,8 +2,8 @@
 
 Tier 1 (section shapes) is ``schema.py``; tier 2 (cross-section rules) is
 ``rules.check_cross_section_rules``, run by ``RootConfig``'s own validator;
-tier 3 (launch gates) is the ``TRAINING_GATES`` registry in ``validation.py``,
-run by ``require_training_config``. These pin the seams a new check must go
+tier 3 (launch gates) runs in ``require_training_config`` in ``validation.py``.
+These pin the seams a new check must go
 through, so a rule cannot quietly grow back into the pydantic model or a gate
 into ``parse_config``.
 """

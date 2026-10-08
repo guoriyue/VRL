@@ -1122,40 +1122,6 @@ def save_training_checkpoint(
     return published_meta
 
 
-def prepare_model_config_for_training_resume(
-    cfg: DictConfig,
-    root: RootConfig,
-    resume: TrainingResumeConfig,
-) -> bool:
-    """Remove warm-start adapter paths when doing full training resume.
-
-    Full resume restores ``RuntimeBundle.trainable_modules`` from
-    ``checkpoint.pt``. Loading an unrelated ``model.lora.path`` before that can
-    silently alter adapter structure, so the combination is rejected.
-    Runs on the resolved policy rather than a loaded checkpoint so the config
-    build normalizes the model tree before any checkpoint I/O happens. Both
-    sources are cleared — the parsed ``root`` every runtime consumer reads and
-    the merged ``cfg`` that ``save_resolved_config`` persists — so the two
-    cannot disagree. Returns whether a path was cleared.
-    """
-
-    if resume.checkpoint_path is None:
-        return False
-    lora = root.model.lora if root.model is not None else None
-    if lora is None or lora.path is None:
-        return False
-    if str(lora.path).strip():
-        raise ValueError(
-            "trainer.resume_from cannot be combined with model.lora.path; "
-            "checkpoint.pt is the resume source of truth",
-        )
-    from omegaconf import OmegaConf
-
-    lora.path = ""
-    OmegaConf.update(cfg, "model.lora.path", "")
-    return True
-
-
 def restore_training_checkpoint(
     checkpoint: TrainingCheckpoint | None,
     *,
@@ -1191,21 +1157,6 @@ def restore_model_checkpoint(
             family=family,
             expected_model_identity=expected_model_identity,
             strategy=strategy,
-        )
-
-
-def validate_checkpoint_compatibility(
-    checkpoint: TrainingCheckpoint | None,
-    *,
-    family: str,
-    expected_model_identity: dict[str, Any] | None = None,
-) -> None:
-    """Check a selected resume checkpoint before building the runtime."""
-
-    if checkpoint is not None:
-        checkpoint.validate_compatibility(
-            family=family,
-            expected_model_identity=expected_model_identity,
         )
 
 
@@ -1728,14 +1679,12 @@ __all__ = [
     "load_checkpoint_state",
     "load_full_checkpoint_state",
     "load_resolved_run_config",
-    "prepare_model_config_for_training_resume",
     "read_checkpoint_meta",
     "restore_model_checkpoint",
     "restore_rng_state",
     "restore_training_checkpoint",
     "save_resolved_config",
     "save_training_checkpoint",
-    "validate_checkpoint_compatibility",
     "validate_checkpoint_meta_compatibility",
     "validate_rng_state",
     "write_checkpoint_meta",

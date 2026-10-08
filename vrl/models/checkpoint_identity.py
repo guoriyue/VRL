@@ -317,43 +317,35 @@ def _resolve_source(
     field_name: str,
     content_cache: dict[Path, LocalCheckpointContent],
 ) -> tuple[dict[str, Any], bool]:
-    text = str(reference).strip()
-    if not text:
-        raise ValueError(f"checkpoint source field {field_name} must be non-empty")
-    candidate = Path(text).expanduser()
-    if candidate.exists() or candidate.is_symlink():
-        try:
-            canonical = candidate.resolve(strict=True)
-        except OSError as exc:
-            raise RuntimeError(
-                f"cannot resolve local checkpoint source {field_name}={text!r}: {exc}",
-            ) from exc
-        content = content_cache.get(canonical)
-        if content is None:
-            content = LocalCheckpointContent.from_path(candidate)
-            content_cache[canonical] = content
+    # One local-vs-remote classification: a pinned Hugging Face source, or
+    # None for an existing local path.
+    remote = require_remote_checkpoint_source_pin(reference, revision, field_name=field_name)
+    if remote is not None:
+        repo_id, revision_text = remote
         return {
-            "kind": f"local-{content.kind}",
-            "sha256": content.sha256,
-            "bytes": content.bytes,
-            "files": content.files,
-        }, content.kind == "file"
+            "kind": "huggingface",
+            "repo_id": repo_id,
+            "revision": revision_text,
+        }, False
 
-    remote = require_remote_checkpoint_source_pin(
-        text,
-        revision,
-        field_name=field_name,
-    )
-    if remote is None:
+    text = str(reference).strip()
+    candidate = Path(text).expanduser()
+    try:
+        canonical = candidate.resolve(strict=True)
+    except OSError as exc:
         raise RuntimeError(
-            f"checkpoint source {field_name} became local while resolving identity",
-        )
-    repo_id, revision_text = remote
+            f"cannot resolve local checkpoint source {field_name}={text!r}: {exc}",
+        ) from exc
+    content = content_cache.get(canonical)
+    if content is None:
+        content = LocalCheckpointContent.from_path(candidate)
+        content_cache[canonical] = content
     return {
-        "kind": "huggingface",
-        "repo_id": repo_id,
-        "revision": revision_text,
-    }, False
+        "kind": f"local-{content.kind}",
+        "sha256": content.sha256,
+        "bytes": content.bytes,
+        "files": content.files,
+    }, content.kind == "file"
 
 
 def _value_for(

@@ -463,7 +463,6 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     from vrl.run import resolve_model
     from vrl.scripts.eval._device import resolve_eval_device
     from vrl.trainers.checkpointing import CheckpointTarget, validate_checkpoint_meta_compatibility
-    from vrl.trainers.data.artifacts import resolve_prompt_example_references
     from vrl.trainers.data.prompts import load_prompt_dataset_index
 
     if (
@@ -558,7 +557,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         )
     prompts = select_prompts(
         [
-            resolve_prompt_example_references(example, allow_absolute=True)
+            example.with_resolved_references(allow_absolute=True)
             for example in load_prompt_dataset_index(manifest_path)
         ],
         limit=args.limit,

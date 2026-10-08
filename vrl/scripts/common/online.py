@@ -26,6 +26,7 @@ from vrl.ray.resources import (
     format_distributed_resource_plan,
 )
 from vrl.rewards import RewardRuntime
+from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.orchestration import (
@@ -37,11 +38,7 @@ from vrl.run import (
     resolve_model,
     resolve_online_run,
 )
-from vrl.scripts.common.factory import (
-    AlgorithmEvaluatorPair,
-    build_reward_runtime,
-    validate_reward_memory_parking,
-)
+from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 from vrl.trainers.activation_checkpointing import (
     enable_transformer_gradient_checkpointing,
 )
@@ -54,10 +51,8 @@ from vrl.trainers.checkpointing import (
     restore_training_checkpoint,
     save_resolved_config,
     save_training_checkpoint,
-    validate_checkpoint_compatibility,
     validate_rng_state,
 )
-from vrl.trainers.data.artifacts import resolve_prompt_example_references
 from vrl.trainers.data.prompt_sampler import PromptBatchSampler
 from vrl.trainers.data.prompts import load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, run_on_primary_rank
@@ -792,14 +787,13 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     if trainer_config.profile:
         os.environ["VRL_PROFILE"] = "1"
 
-    # build_configs already normalized model.lora.path for resume and resolved the
+    # Config rules already refused model.lora.path beside a resume, and resolved the
     # resume policy, so the recipe only loads the raw checkpoint here. The
     # checkpoint-identity preflight below consumes it directly; the epoch/step/dir
     # fields are derived after the preflight, next to the trainer that reads them.
     resume_config = built.resume
     resume_checkpoint = TrainingCheckpoint.load_for_resume(resume_config)
     validate_rollout_schedule_topology(trainer_config.rollout_orchestration, resources)
-    validate_reward_memory_parking(resources=resources, built=built)
     family_entry.validate_gpus_per_engine(resources.rollout_gpus_per_engine)
     logger.info(format_distributed_resource_plan(resources))
     # Resolve the training process identity (rank/device) and fail-fast on
@@ -822,6 +816,8 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     # maps its reservation to an actor-local GPU; shared actors borrow this
     # trainer's physical device under the topology's parking lease.
     reward_inputs = resolved.reward_inputs(trainer_device=device)
+    # A GPU-sharing reward must be able to park; checked before any model or Ray work.
+    reward_inputs.validate_parking()
     data_config = built.root.data
     if family_entry.task in {"i2v", "v2w"}:
         preprocessing = data_config.preprocessing if data_config is not None else None
@@ -839,12 +835,11 @@ async def run_online_recipe(cfg: DictConfig) -> None:
         for_rollout=False,
     )
     model_identity = resolved_model.identity
-    validate_checkpoint_compatibility(
-        resume_checkpoint,
-        family=family_entry.family,
-        expected_model_identity=model_identity,
-    )
     if resume_checkpoint is not None:
+        resume_checkpoint.validate_compatibility(
+            family=family_entry.family,
+            expected_model_identity=model_identity,
+        )
         # Every process checks every rank before model/Ray construction so a
         # missing peer stream cannot leave other ranks starting expensive work.
         for rank in range(training_context.world_size):
@@ -861,9 +856,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     examples = [
         example
         if callable(getattr(example, "collect", None))
-        else resolve_prompt_example_references(
-            example, data_root=artifact_data_root, allow_absolute=True
-        )
+        else example.with_resolved_references(data_root=artifact_data_root, allow_absolute=True)
         for example in examples
     ]
     if family_entry.task in {"i2v", "v2w"}:
@@ -925,14 +918,10 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             cross_node_preflight(ray, resources)
         placement_owner.create()
         collector_config = resolved.collector
-        from vrl.scripts.common.factory import resolve_reward_actor_placement
-
-        reward_placement = resolve_reward_actor_placement(
-            reward_inputs,
-            placement_owner,
-        )
-        reward_runtime = lifecycle.reward_runtime = build_reward_runtime(
-            reward_inputs, ray_placement=reward_placement
+        reward_runtime = lifecycle.reward_runtime = RewardFunctionRuntime(
+            reward_inputs.build_function(
+                ray_placement=reward_inputs.actor_placement(placement_owner),
+            ),
         )
         algorithm_and_evaluator = AlgorithmEvaluatorPair.from_configs(
             family_entry=family_entry,

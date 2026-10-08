@@ -2,31 +2,24 @@
 
 ``require_training_config`` is the one entry every training launch runs:
 ``parse_config`` (tier 1 shapes + tier 2 cross-section rules, see
-``vrl/config/rules.py``), the precision policy, then ``TRAINING_GATES`` in
-order. A gate is a check that tier 2 cannot afford: it needs the resolved
-precision policy or a runtime module (the compile matrix reads the build-role
-resolver and the checkpointing resolver). Eval and perf tools call
-``parse_config`` alone, so a gate never taxes them. Checks that read the
-filesystem (reward backends) belong to
-``python -m vrl.scripts.rewards.preflight``, which runs the real reward over
-the real rows before training does.
-
-Adding a gate: write ``def gate_<name>(root, precision) -> None`` that raises
-``ValueError`` naming the offending keys, and append it to ``TRAINING_GATES``.
-A check with no such dependency is a tier 2 rule instead.
+``vrl/config/rules.py``), the precision policy, then the launch gates. A gate
+is a check that tier 2 cannot afford: it needs the resolved precision policy
+or a runtime module (the compile matrix reads the build-role resolver and the
+checkpointing resolver). Eval and perf tools call ``parse_config`` alone, so a
+gate never taxes them. Checks that read the filesystem (reward backends)
+belong to ``python -m vrl.scripts.rewards.preflight``, which runs the real
+reward over the real rows before training does. A check with no runtime
+dependency is a tier 2 rule instead.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 
 from omegaconf import DictConfig
 
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig, parse_config
-
-TrainingGate = Callable[[RootConfig, PrecisionPolicy], None]
 
 
 def require_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPolicy]:
@@ -39,8 +32,11 @@ def require_training_config(cfg: DictConfig) -> tuple[RootConfig, PrecisionPolic
 
     root = parse_config(cfg)
     precision = PrecisionPolicy.from_section(root.precision)
-    for gate in TRAINING_GATES:
-        gate(root, precision)
+    conflicts = compile_conflicts(root)
+    if conflicts:
+        joined = "\n  - ".join(conflict.message for conflict in conflicts)
+        raise ValueError(f"model.torch_compile.enable=true cannot combine with:\n  - {joined}")
+    validate_guarded_rollout_drift(root, precision)
     return root, precision
 
 
@@ -185,34 +181,9 @@ def validate_guarded_rollout_drift(root: RootConfig, precision: PrecisionPolicy)
     )
 
 
-# ---- the gate registry --------------------------------------------------------
-
-
-def gate_compile_compatible(root: RootConfig, precision: PrecisionPolicy) -> None:
-    """Refuse a config that enables torch.compile beside an incompatible feature."""
-
-    del precision  # Uniform TrainingGate signature; this gate only reads the root.
-    conflicts = compile_conflicts(root)
-    if not conflicts:
-        return
-    joined = "\n  - ".join(conflict.message for conflict in conflicts)
-    raise ValueError(
-        f"model.torch_compile.enable=true cannot combine with:\n  - {joined}",
-    )
-
-
-TRAINING_GATES: tuple[TrainingGate, ...] = (
-    gate_compile_compatible,
-    validate_guarded_rollout_drift,
-)
-
-
 __all__ = [
-    "TRAINING_GATES",
     "CompileConflict",
-    "TrainingGate",
     "compile_conflicts",
-    "gate_compile_compatible",
     "require_training_config",
     "validate_guarded_rollout_drift",
 ]

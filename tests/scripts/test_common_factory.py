@@ -18,11 +18,8 @@ from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.run import ResolvedReward, resolve_reward_inputs
-from vrl.scripts.common.factory import (
-    AlgorithmEvaluatorPair,
-    build_reward_function,
-)
+from vrl.run import ResolvedReward
+from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 
 
 def _built_reward(
@@ -86,9 +83,15 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
     recipe: str,
     expected_algorithm: type,
 ) -> None:
+    # A trust-region objective needs a second epoch over the full batch to be
+    # a valid run; plain GRPO accepts the same schedule.
     cfg = load_config(
         "experiment/sd3_5/online_grpo_ocr",
-        overrides=[f"/recipe/online={recipe}"],
+        overrides=[
+            f"/recipe/online={recipe}",
+            "actor.ppo_epochs=2",
+            "actor.prompts_per_collection=0",
+        ],
     )
 
     pair = AlgorithmEvaluatorPair.from_configs(
@@ -132,25 +135,6 @@ def test_nft_factory_passes_reward_weights_to_component_advantage_protocol() -> 
     )
 
 
-@pytest.mark.parametrize("recipe", ["flow_matching_dppo", "flow_matching_grpo_guard"])
-def test_trust_region_recipe_must_store_the_rollout_proposal_mean(recipe: str) -> None:
-    """Flow-DPPO / GRPO-Guard score drift against the rollout mean; a recipe that
-    does not store it is refused when the pair is built, not inside the loss."""
-
-    cfg = load_config(
-        "experiment/sd3_5/online_grpo_ocr",
-        overrides=[f"/recipe/online={recipe}", "rollout.return_prev_sample_mean=false"],
-    )
-
-    with pytest.raises(ValueError, match=r"rollout\.return_prev_sample_mean=true"):
-        AlgorithmEvaluatorPair.from_configs(
-            family_entry=get_model_family_entry("sd3_5"),
-            built=build_configs(cfg),
-            collector_config=RolloutCollectorConfig.from_root(parse_config(cfg)),
-            scheduler=object(),
-        )
-
-
 def test_chunk_autoregressive_factory_builds_grouped_grpo_evaluator() -> None:
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
 
@@ -187,9 +171,15 @@ def test_chunk_autoregressive_factory_rejects_undefined_algorithm_semantics(
     recipe: str,
     message: str,
 ) -> None:
+    # A trust-region objective needs a second epoch over the full batch to be
+    # a valid run; plain GRPO accepts the same schedule.
     cfg = load_config(
         "experiment/sd3_5/online_grpo_ocr",
-        overrides=[f"/recipe/online={recipe}"],
+        overrides=[
+            f"/recipe/online={recipe}",
+            "actor.ppo_epochs=2",
+            "actor.prompts_per_collection=0",
+        ],
     )
 
     with pytest.raises(ValueError, match=message):
@@ -234,14 +224,11 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     built = build_configs(cfg)
     from vrl.rewards.ray import RayRewardPlacement
 
-    reward = build_reward_function(
-        resolve_reward_inputs(
-            built,
-            ResolvedDistributedResources.from_root(parse_config(cfg)),
-            trainer_device="cuda:0",
-        ),
-        ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"),
-    )
+    reward = ResolvedReward.from_plan(
+        built.reward,
+        ResolvedDistributedResources.from_root(parse_config(cfg)),
+        trainer_device="cuda:0",
+    ).build_function(ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"))
 
     assert [(name, weight) for name, weight, _ in reward.rewards] == [
         ("aesthetic", 1.0),
@@ -322,14 +309,11 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
 
     assert built.resume.checkpoint_path is None
     assert cfg.model.use_lora is False
-    reward = build_reward_function(
-        resolve_reward_inputs(
-            built,
-            ResolvedDistributedResources.from_root(parse_config(cfg)),
-            trainer_device="cuda:0",
-        ),
-        ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"),
-    )
+    reward = ResolvedReward.from_plan(
+        built.reward,
+        ResolvedDistributedResources.from_root(parse_config(cfg)),
+        trainer_device="cuda:0",
+    ).build_function(ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"))
     aesthetic_config = reward.rewards[0][2].scorer._launch.component_config
     pickscore_config = reward.rewards[1][2].scorer._launch.component_config
     assert aesthetic_config["model_revision"] == cfg.reward.kwargs.aesthetic.model_revision
@@ -369,13 +353,11 @@ def test_sana_direct_tool_override_changes_storage_only() -> None:
 def test_reward_factory_rejects_an_all_zero_objective() -> None:
     """Checks observation-only components cannot replace the training objective."""
     with pytest.raises(ValueError, match="At least one reward component"):
-        build_reward_function(
-            ResolvedReward(
-                config=_built_reward({"pickscore": 0.0}, {}).reward,
-                device="cpu",
-                memory_parking_required=False,
-            ),
-        )
+        ResolvedReward(
+            config=_built_reward({"pickscore": 0.0}, {}).reward,
+            device="cpu",
+            memory_parking_required=False,
+        ).build_function()
 
 
 def _shared_reward_cfg(component: str) -> object:
@@ -393,14 +375,18 @@ def _shared_reward_cfg(component: str) -> object:
     )
 
 
-def test_reward_config_rejects_yaml_lifecycle_override() -> None:
+@pytest.mark.parametrize(
+    "component_kwargs",
+    [{"sleep_offload": True}, {"worker_config": {"sleep_offload": False}}],
+)
+def test_reward_config_rejects_yaml_lifecycle_override(component_kwargs) -> None:
     """Resource topology is the only public reward lifecycle source."""
 
     cfg = OmegaConf.create(
         {
             "reward": {
                 "components": {"aesthetic": 1.0},
-                "kwargs": {"aesthetic": {"sleep_offload": True}},
+                "kwargs": {"aesthetic": component_kwargs},
             },
         },
     )
@@ -412,8 +398,8 @@ def test_reward_config_rejects_yaml_lifecycle_override() -> None:
 def test_reward_inputs_derive_device_from_resource_topology() -> None:
     """The resource plan, not a caller device, is the execution-device source."""
     cfg = _shared_reward_cfg("aesthetic")
-    shared = resolve_reward_inputs(
-        _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
+    shared = ResolvedReward.from_plan(
+        _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}).reward,
         ResolvedDistributedResources.from_root(parse_config(cfg)),
     )
     assert shared.device == "cuda:0"
@@ -424,15 +410,16 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
     rank_local.distributed.resources.visible_devices = [2]
     rank_local.distributed.resources.trainer.devices = [2]
     rank_local.distributed.resources.rollout.devices = [2]
-    rank_local_reward = resolve_reward_inputs(
-        _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}),
+    rank_local_reward = ResolvedReward.from_plan(
+        _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}).reward,
         ResolvedDistributedResources.from_root(parse_config(rank_local)),
         trainer_device="cuda:0",
     )
     assert rank_local_reward.device == "cuda:0"
     assert rank_local_reward.memory_parking_required is True
 
-    # HTTP components own their deployment externally: no local parking policy.
+    # HTTP components own their deployment externally: the plan resolved from
+    # the same config reserves them no local GPU, so nothing parks.
     http_inference = {
         "unified_reward_video": {
             "kind": "http",
@@ -440,12 +427,19 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
             "expected_model": "unified-reward-robotics",
         },
     }
-    http_reward = resolve_reward_inputs(
-        _built_reward({"unified_reward_video": 1.0}, {}, http_inference),
-        ResolvedDistributedResources.from_root(parse_config(rank_local)),
+    http_cfg = _shared_reward_cfg("unified_reward_video")
+    http_cfg.distributed.resources.visible_devices = [2]
+    http_cfg.distributed.resources.trainer.devices = [2]
+    http_cfg.distributed.resources.rollout.devices = [2]
+    http_cfg.reward.kwargs = {}
+    http_cfg.reward.inference = http_inference
+    http_reward = ResolvedReward.from_plan(
+        _built_reward({"unified_reward_video": 1.0}, {}, http_inference).reward,
+        ResolvedDistributedResources.from_root(parse_config(http_cfg)),
         trainer_device="cuda:0",
     )
-    assert http_reward.device == "cuda:0"
+    # The HTTP client runs in this process and reserves no local GPU.
+    assert http_reward.device == "cpu"
     assert http_reward.memory_parking_required is False
 
     cpu_cfg = OmegaConf.create(
@@ -461,8 +455,8 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
         },
     )
     # A CPU-only reward class scores on CPU even when the trainer runs on CUDA.
-    cpu_reward = resolve_reward_inputs(
-        _built_reward({"ocr": 1.0}, {"ocr": {}}),
+    cpu_reward = ResolvedReward.from_plan(
+        _built_reward({"ocr": 1.0}, {"ocr": {}}).reward,
         ResolvedDistributedResources.from_root(parse_config(cpu_cfg)),
         trainer_device="cuda:0",
     )
@@ -496,12 +490,11 @@ def test_ray_rewards_do_not_materialize_transport_files_in_the_run_output(tmp_pa
     )
     cfg.distributed.resources.visible_devices = [0]
     built = build_configs(cfg)
-    resolved = resolve_reward_inputs(
-        built,
+    reward = ResolvedReward.from_plan(
+        built.reward,
         ResolvedDistributedResources.from_root(parse_config(cfg)),
         trainer_device="cuda:0",
-    )
-    reward = build_reward_function(resolved)
+    ).build_function()
     component = reward.rewards[0][2]
     assert isinstance(component.scorer, RayRewardScorer)
     assert isinstance(component.artifact_store, InMemoryRewardArtifactStore)

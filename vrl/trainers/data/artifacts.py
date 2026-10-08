@@ -298,85 +298,6 @@ class DatasetFileReport:
         )
 
 
-def resolve_prompt_example_artifacts(
-    example: PromptExample,
-    *,
-    data_root: str | Path | None = None,
-    allow_absolute: bool = False,
-) -> PromptExample:
-    """Return a copy of a prompt example with artifact paths resolved."""
-
-    resolved = resolve_prompt_example_references(
-        example,
-        data_root=data_root,
-        allow_absolute=allow_absolute,
-    )
-    target_image = (
-        str(
-            resolve_artifact_path(
-                resolved.target_image,
-                data_root=data_root,
-                allow_absolute=allow_absolute,
-            ),
-        )
-        if resolved.target_image
-        else None
-    )
-    target_video = (
-        str(
-            resolve_artifact_path(
-                resolved.target_video,
-                data_root=data_root,
-                allow_absolute=allow_absolute,
-            ),
-        )
-        if resolved.target_video
-        else None
-    )
-    return replace(
-        resolved,
-        target_image=target_image,
-        target_video=target_video,
-        request_overrides=dict(resolved.request_overrides),
-        metadata=dict(resolved.metadata),
-    )
-
-
-def resolve_prompt_example_references(
-    example: PromptExample,
-    *,
-    data_root: str | Path | None = None,
-    allow_absolute: bool = False,
-) -> PromptExample:
-    """Return a copy with reference paths resolved and target identities intact."""
-
-    references = [
-        str(resolve_artifact_path(item, data_root=data_root, allow_absolute=allow_absolute))
-        for item in example.references
-    ]
-    reference_video_text = str(example.reference_video or "").strip()
-    reference_video = (
-        str(
-            resolve_artifact_path(
-                reference_video_text,
-                data_root=data_root,
-                allow_absolute=allow_absolute,
-            ),
-        )
-        if reference_video_text
-        else None
-    )
-    return replace(
-        example,
-        reference_video=reference_video,
-        reference_images=[
-            str(resolve_artifact_path(item, data_root=data_root, allow_absolute=allow_absolute))
-            for item in example.reference_images
-        ],
-        references=references,
-    )
-
-
 def resolve_required_reference_images_(
     examples: Sequence[PromptExample],
     *,
@@ -420,7 +341,5 @@ __all__ = [
     "SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS",
     "DatasetFileReport",
     "ResolvedArtifact",
-    "resolve_prompt_example_artifacts",
-    "resolve_prompt_example_references",
     "resolve_required_reference_images_",
 ]

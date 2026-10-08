@@ -40,7 +40,7 @@ from vrl.config.loading import load_config
 from vrl.generation.types import GenerationInput
 from vrl.models.families.semantics import task_modality
 from vrl.rewards.types import RewardOutput, RewardSample
-from vrl.run import ResolvedReward, _model_family
+from vrl.run import ResolvedReward
 from vrl.scripts.eval._device import resolve_eval_device
 
 logger = logging.getLogger(__name__)
@@ -103,9 +103,9 @@ def preflight_rewards(
         RolloutResourceConfig,
     )
     from vrl.rewards.functions.registry import get_reward
+    from vrl.rewards.runtime import RewardFunctionRuntime
     from vrl.rollouts.collector.config import RolloutCollectorConfig
     from vrl.rollouts.collector.requests import GenerationRequestBuilder
-    from vrl.scripts.common.factory import build_reward_runtime, resolve_reward_actor_placement
     from vrl.scripts.common.online import _RayClusterSession
     from vrl.trainers.data.prompts import load_prompt_examples_from_config
 
@@ -114,7 +114,7 @@ def preflight_rewards(
         raise ValueError("reward preflight needs a reward section")
     if built.root.data is None:
         raise ValueError("reward preflight needs a data section")
-    entry = _model_family(built)
+    entry = built.family
     data = built.root.data
     if use_eval_manifest:
         if not data.eval_manifest:
@@ -196,8 +196,8 @@ def preflight_rewards(
                     local_gpu_ids=selected,
                 )
                 owner.create()
-                placement = resolve_reward_actor_placement(reward, owner)
-            runtime = build_reward_runtime(reward, ray_placement=placement)
+                placement = reward.actor_placement(owner)
+            runtime = RewardFunctionRuntime(reward.build_function(ray_placement=placement))
             await runtime.preflight()
             await runtime.activate()
             return await runtime.score(samples)

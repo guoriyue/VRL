@@ -33,11 +33,8 @@ from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.run import resolve_reward_inputs
-from vrl.scripts.common.factory import (
-    AlgorithmEvaluatorPair,
-    build_reward_function,
-)
+from vrl.run import ResolvedReward
+from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 from vrl.trainers.data.prompts import PromptExample
 from vrl.trainers.diagnostics import trainable_state_digest
 from vrl.trainers.online.trainer import OnlineTrainer
@@ -588,14 +585,15 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         else:
             executor = _build_executor(entry, bundle.model, cfg)
             ray_placement = None
-            reward_inputs = resolve_reward_inputs(built, resources, trainer_device=device)
+            reward_inputs = ResolvedReward.from_plan(
+                built.reward, resources, trainer_device=device
+            )
             if case.use_config_reward and any(
                 inference.kind == "ray" for inference in built.reward.inference_configs.values()
             ):
                 from vrl.generation.ray.config import RayGenerationConfig
                 from vrl.ray.dependencies import require_ray
                 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
-                from vrl.scripts.common.factory import resolve_reward_actor_placement
                 from vrl.scripts.common.online import _RayClusterSession
 
                 reward_placement_owner = GlobalRayPlacementOwner(
@@ -616,14 +614,9 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 if resources.cross_node:
                     cross_node_preflight(ray, resources)
                 reward_placement_owner.create()
-                ray_placement = resolve_reward_actor_placement(
-                    reward_inputs, reward_placement_owner
-                )
+                ray_placement = reward_inputs.actor_placement(reward_placement_owner)
             reward_fn = (
-                build_reward_function(
-                    reward_inputs,
-                    ray_placement=ray_placement,
-                )
+                reward_inputs.build_function(ray_placement=ray_placement)
                 if case.use_config_reward
                 else _IndexReward()
             )

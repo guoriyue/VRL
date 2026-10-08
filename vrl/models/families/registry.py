@@ -358,13 +358,15 @@ class ModelFamilyEntry:
             raise ValueError(
                 f"rollout build family {build.family!r} does not match entry {self.family!r}",
             )
+        from vrl.utils.config import import_from_path
+
         if self.family_build.rollout_runtime_builder is not None:
-            from vrl.utils.config import import_from_path
-
             return import_from_path(self.family_build.rollout_runtime_builder)(build)
-        from vrl.models.steps.denoise.build import build_family_runtime_bundle
+        from vrl.models.steps.denoise.build import build_denoise_runtime_bundle
 
-        return build_family_runtime_bundle(build, entry=self)
+        return build_denoise_runtime_bundle(
+            build, model_cls=import_from_path(self.family_build.model_cls)
+        )
 
     def new_gatherer(self) -> Any:
         """Construct the explicitly bound driver-side gatherer lazily."""

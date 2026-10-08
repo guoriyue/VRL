@@ -32,7 +32,6 @@ from vrl.trainers.checkpointing import (
     restore_model_checkpoint,
     restore_training_checkpoint,
     save_training_checkpoint,
-    validate_checkpoint_compatibility,
     validate_checkpoint_meta_compatibility,
 )
 
@@ -300,8 +299,7 @@ def test_checkpoint_compatibility_preflight_accepts_matching_identity(tmp_path) 
         meta={},
     )
 
-    validate_checkpoint_compatibility(
-        checkpoint,
+    checkpoint.validate_compatibility(
         family="sana",
         expected_model_identity=identity,
     )
@@ -383,8 +381,7 @@ def test_checkpoint_compatibility_preflight_rejects_strict_mismatch(
     )
 
     with pytest.raises(ValueError, match=r"family mismatch|model identity mismatch"):
-        validate_checkpoint_compatibility(
-            checkpoint,
+        checkpoint.validate_compatibility(
             family=family,
             expected_model_identity=identity,
         )

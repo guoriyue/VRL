@@ -115,7 +115,6 @@ def main() -> None:
     from vrl.trainers.checkpointing import (
         TrainingCheckpoint,
         restore_model_checkpoint,
-        validate_checkpoint_compatibility,
     )
 
     checkpoint = TrainingCheckpoint.load(args.checkpoint) if args.checkpoint else None
@@ -153,9 +152,10 @@ def main() -> None:
         for_rollout=True,
     )
     build = resolved.build
-    validate_checkpoint_compatibility(
-        checkpoint, family=entry.family, expected_model_identity=resolved.identity
-    )
+    if checkpoint is not None:
+        checkpoint.validate_compatibility(
+            family=entry.family, expected_model_identity=resolved.identity
+        )
     bundle = resolved.materialize(context="Qwen reference/RGBA probe")
     restore_model_checkpoint(
         checkpoint, bundle=bundle, family=entry.family, expected_model_identity=resolved.identity

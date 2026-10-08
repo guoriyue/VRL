@@ -31,7 +31,7 @@ from vrl.config.schema import RewardConfig, parse_config
 from vrl.config.validation import require_training_config
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.orchestration import validate_rollout_schedule_topology
-from vrl.scripts.common.factory import validate_reward_memory_parking
+from vrl.run import ResolvedReward
 
 
 def _experiment_names() -> list[str]:
@@ -295,10 +295,7 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
                 built.trainer.rollout_orchestration,
                 resources,
             )
-            validate_reward_memory_parking(
-                resources=resources,
-                built=built,
-            )
+            ResolvedReward.from_plan(built.reward, resources).validate_parking()
         except Exception as error:  # report the full active surface in one failure
             failures.append(f"{name}: {type(error).__name__}: {error}")
 
@@ -357,7 +354,7 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
         built.trainer.rollout_orchestration,
         resources,
     )
-    validate_reward_memory_parking(resources=resources, built=built)
+    ResolvedReward.from_plan(built.reward, resources).validate_parking()
 
     assert resources.trainer_devices == (0,)
     assert resources.rollout_devices == (1, 2, 3)
@@ -391,7 +388,7 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
         built.trainer.rollout_orchestration,
         resources,
     )
-    validate_reward_memory_parking(resources=resources, built=built)
+    ResolvedReward.from_plan(built.reward, resources).validate_parking()
 
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_engines == 1
@@ -427,7 +424,7 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
         built.trainer.rollout_orchestration,
         resources,
     )
-    validate_reward_memory_parking(resources=resources, built=built)
+    ResolvedReward.from_plan(built.reward, resources).validate_parking()
 
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_engines == 1
@@ -493,7 +490,7 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
         built.trainer.rollout_orchestration,
         resources,
     )
-    validate_reward_memory_parking(resources=resources, built=built)
+    ResolvedReward.from_plan(built.reward, resources).validate_parking()
 
     orchestration = built.trainer.rollout_orchestration
     assert resources.trainer_devices == (0,)
@@ -520,7 +517,7 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
         built.trainer.rollout_orchestration,
         resources,
     )
-    validate_reward_memory_parking(resources=resources, built=built)
+    ResolvedReward.from_plan(built.reward, resources).validate_parking()
 
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_engines == 1
@@ -544,7 +541,7 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devi
         built.trainer.rollout_orchestration,
         resources,
     )
-    validate_reward_memory_parking(resources=resources, built=built)
+    ResolvedReward.from_plan(built.reward, resources).validate_parking()
 
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.reward_devices == ()
@@ -607,7 +604,7 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> No
         built.trainer.rollout_orchestration,
         resources,
     )
-    validate_reward_memory_parking(resources=resources, built=built)
+    ResolvedReward.from_plan(built.reward, resources).validate_parking()
 
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_engines == 1

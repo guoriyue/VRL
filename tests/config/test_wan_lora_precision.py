@@ -31,6 +31,7 @@ def test_fp32_adapter_requires_preserving_fsdp_policy(
 ) -> None:
     root = SimpleNamespace(
         model=SimpleNamespace(lora=LoraSection(parameter_dtype=dtype)),
+        trainer=None,
         algorithm=None,
         distributed=SimpleNamespace(
             training=SimpleNamespace(

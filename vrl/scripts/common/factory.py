@@ -1,49 +1,16 @@
-"""Factory functions for common online training recipes."""
+"""The online recipe's algorithm/evaluator pairing."""
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from vrl.algorithms.base import Algorithm
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import ModelFamilyEntry
-from vrl.ray.resources import ResolvedDistributedResources
-from vrl.rewards import RewardRuntime
-from vrl.rewards.base import RewardFunction
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.run import ResolvedReward
-
-if TYPE_CHECKING:
-    from vrl.ray.placement import GlobalRayPlacementOwner
-    from vrl.rewards.ray import RayRewardPlacement
-
-
-def resolve_reward_actor_placement(
-    reward: ResolvedReward,
-    owner: GlobalRayPlacementOwner,
-) -> RayRewardPlacement:
-    """Bind a component deployment to the run's acquired resource ownership."""
-    from vrl.rewards.ray import RayRewardPlacement
-
-    if reward.device.startswith("cuda") and reward.memory_parking_required:
-        import torch
-
-        from vrl.ray.dependencies import require_ray
-
-        # CUDA ordinals in a driver mask are not Ray's physical GPU IDs.
-        device_index = torch.device(reward.device).index
-        ordinal = torch.cuda.current_device() if device_index is None else device_index
-        mask = os.environ.get("CUDA_VISIBLE_DEVICES")
-        physical_gpu = int(mask.split(",")[ordinal]) if mask else ordinal
-        return RayRewardPlacement(
-            shared_gpu_id=physical_gpu,
-            node_id=str(require_ray().get_runtime_context().get_node_id()),
-        )
-    return RayRewardPlacement(placement=owner.reward_placement)
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,75 +163,6 @@ class AlgorithmEvaluatorPair:
         raise ValueError(f"unsupported online algorithm.kind: {kind!r}")
 
 
-def build_reward_function(
-    reward: ResolvedReward, *, ray_placement: RayRewardPlacement | None = None
-) -> RewardFunction:
-    """Build the online reward function from the resolved reward inputs.
-
-    Device and parking policy are decided once by ``ResolvedOnlineRun.
-    reward_inputs``; ``MultiReward.from_dict`` validates the components and
-    constructs.
-    In-process GPU ownership decides parking: a shared reward must completely
-    park its model memory after scoring, while a dedicated reward stays resident.
-    HTTP components own their deployment externally and receive no local parking
-    policy. YAML selects transport, not lifecycle behavior.
-    """
-
-    config = reward.config
-    config.require_online_training()
-    from vrl.rewards.functions.registry import MultiReward
-
-    return MultiReward.from_dict(
-        config.weights,
-        device=reward.device,
-        reward_kwargs=config.kwargs,
-        memory_parking_required=reward.memory_parking_required,
-        inference_configs=config.inference_configs,
-        ray_placement=ray_placement,
-    )
-
-
-def build_reward_runtime(
-    reward: ResolvedReward, *, ray_placement: RayRewardPlacement | None = None
-) -> RewardRuntime:
-    """Build the collector-facing runtime around the configured reward function."""
-
-    from vrl.rewards.runtime import RewardFunctionRuntime
-
-    return RewardFunctionRuntime(build_reward_function(reward, ray_placement=ray_placement))
-
-
-def validate_reward_memory_parking(
-    *,
-    resources: ResolvedDistributedResources,
-    built: BuiltConfigs,
-    device: str | None = None,
-) -> None:
-    """Validate shared reward parking without constructing a reward model."""
-
-    if not bool(resources.lifecycle.offload_reward):
-        return
-    reward = built.reward
-    if reward is None or reward.all_external_inference:
-        return
-    names = tuple(reward.weights)
-    if not names:
-        return
-    from vrl.rewards.functions.registry import (
-        validate_reward_memory_parking_components,
-    )
-
-    validate_reward_memory_parking_components(
-        names,
-        device=str(device or resources.reward_torch_device()),
-        reward_kwargs=reward.kwargs,
-        inference_configs=reward.inference_configs,
-    )
-
-
 __all__ = [
     "AlgorithmEvaluatorPair",
-    "build_reward_function",
-    "build_reward_runtime",
-    "validate_reward_memory_parking",
 ]

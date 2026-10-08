@@ -27,17 +27,27 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
-class RoleResourceConfig:
-    """GPU ownership request for one execution role."""
+class _RoleResourceBase:
+    """What every ``distributed.resources.<role>`` block shares: its ``devices``.
+
+    ``devices`` is ``"auto"`` (the role shares the trainer's GPUs) or explicit
+    CUDA ordinals (the role is pinned to them). It is parsed and validated once,
+    at construction, and stored normalized: ``"auto"`` or a tuple of ids.
+    """
 
     # Which ``distributed.resources.<role>`` block this request was parsed from.
     # A ClassVar, not a field: it is fixed by the subclass, and dataclasses.fields
     # (the source of truth for the accepted YAML keys, vrl/config/schema.py) must
     # not start advertising it as a settable key.
-    role: ClassVar[str] = "trainer"
+    role: ClassVar[str]
 
-    num_gpus: int | str | None = "auto"
-    devices: list[int] | str = "auto"
+    devices: tuple[int, ...] | list[int] | str = "auto"
+
+    def __post_init__(self) -> None:
+        parsed = _parse_devices(self.devices)
+        if parsed != "auto":
+            parsed = tuple(_validate_device_ids(parsed, field_name=f"{self.key_prefix}.devices"))
+        object.__setattr__(self, "devices", parsed)
 
     @property
     def key_prefix(self) -> str:
@@ -46,10 +56,25 @@ class RoleResourceConfig:
         return f"distributed.resources.{self.role}"
 
     @property
+    def pinned_devices(self) -> tuple[int, ...] | None:
+        """The explicit CUDA ordinals in ``devices``, or None when unpinned."""
+
+        return None if self.devices == "auto" else self.devices
+
+    @property
     def pins_devices(self) -> bool:
         """Whether ``devices`` names explicit CUDA ordinals (else the role shares)."""
 
-        return _parse_devices(self.devices) != "auto"
+        return self.pinned_devices is not None
+
+
+@dataclass(frozen=True, slots=True)
+class RoleResourceConfig(_RoleResourceBase):
+    """GPU ownership request for one execution role."""
+
+    role: ClassVar[str] = "trainer"
+
+    num_gpus: int | str | None = "auto"
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +185,7 @@ class RolloutResourceConfig(RoleResourceConfig):
 
 
 @dataclass(frozen=True, slots=True)
-class RewardResourceConfig:
+class RewardResourceConfig(_RoleResourceBase):
     """GPU reservation for reward scoring.
 
     Whether the reward needs a GPU at all is the components' own fact (a
@@ -171,18 +196,6 @@ class RewardResourceConfig:
     """
 
     role: ClassVar[str] = "reward"
-
-    devices: list[int] | str = "auto"
-
-    @property
-    def key_prefix(self) -> str:
-        """Public config path of this role's block, for error messages."""
-
-        return f"distributed.resources.{self.role}"
-
-    @property
-    def pins_devices(self) -> bool:
-        return _parse_devices(self.devices) != "auto"
 
 
 @dataclass(frozen=True, slots=True)
@@ -658,8 +671,8 @@ def _resolve_cross_node_visible_devices(
         )
 
     total = _explicit_role_gpu_count(config.trainer) + _explicit_role_gpu_count(config.rollout)
-    pinned_reward = _parse_devices(config.reward.devices)
-    if pinned_reward != "auto":
+    pinned_reward = config.reward.pinned_devices
+    if pinned_reward is not None:
         total += len(pinned_reward)
     return tuple(range(total))
 
@@ -667,9 +680,9 @@ def _resolve_cross_node_visible_devices(
 def _explicit_role_gpu_count(role_config: RoleResourceConfig) -> int:
     """Return an explicit integer GPU count for a role under ``cross_node``."""
 
-    devices = _parse_devices(role_config.devices)
-    if devices != "auto":
-        return len(_validate_device_ids(devices, field_name=f"{role_config.key_prefix}.devices"))
+    devices = role_config.pinned_devices
+    if devices is not None:
+        return len(devices)
 
     num_gpus = _parse_num_gpus(
         role_config.num_gpus,
@@ -701,12 +714,9 @@ def _explicit_role_devices(
     mismatch error here would point at a line the experiment never wrote.
     """
 
-    prefix = role_config.key_prefix
-    explicit_devices = _parse_devices(role_config.devices)
-    if explicit_devices == "auto":
-        return None
-    devices = tuple(_validate_device_ids(explicit_devices, field_name=f"{prefix}.devices"))
-    _validate_subset(devices, visible_devices, field_name=f"{prefix}.devices")
+    devices = role_config.pinned_devices
+    if devices is not None:
+        _validate_subset(devices, visible_devices, field_name=f"{role_config.key_prefix}.devices")
     return devices
 
 
@@ -783,10 +793,9 @@ def _resolve_reward_devices(
     """The pinned reward reservation: () or exactly one visible GPU."""
 
     prefix = reward_config.key_prefix
-    explicit = _parse_devices(reward_config.devices)
-    if explicit == "auto":
+    devices = reward_config.pinned_devices
+    if devices is None:
         return ()
-    devices = tuple(_validate_device_ids(explicit, field_name=f"{prefix}.devices"))
     if len(devices) != 1:
         raise ValueError(
             f"{prefix}.devices reserves exactly one GPU for the reward model, got "

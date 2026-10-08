@@ -8,8 +8,6 @@ stack.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-
 # Deliberately isolated protocol taxonomy. Runtime wiring remains in
 # registry.py; this table owns only stable external names.
 _ALIASES_BY_FAMILY: dict[str, tuple[str, ...]] = {
@@ -58,19 +56,6 @@ def normalize_model_family(family: str) -> str:
     return _FAMILY_BY_ALIAS.get(text, text)
 
 
-def validate_model_family_aliases(canonical_families: Iterable[str]) -> None:
-    """Validate naming-table targets and collisions against a runtime registry."""
-
-    canonical = frozenset(str(family) for family in canonical_families)
-    missing = sorted(set(_ALIASES_BY_FAMILY) - canonical)
-    if missing:
-        raise ValueError(f"model family aliases target unregistered families: {missing}")
-    conflicts = sorted(set(_FAMILY_BY_ALIAS) & canonical)
-    if conflicts:
-        raise ValueError(f"model family aliases collide with canonical names: {conflicts}")
-
-
 __all__ = [
     "normalize_model_family",
-    "validate_model_family_aliases",
 ]

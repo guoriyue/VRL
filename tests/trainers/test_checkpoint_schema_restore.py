@@ -18,7 +18,6 @@ from vrl.trainers.checkpointing import (
     TrainingCheckpoint,
     export_checkpoint_state,
     restore_training_checkpoint,
-    validate_checkpoint_compatibility,
 )
 
 
@@ -35,8 +34,7 @@ def test_checkpoint_compatibility_rejects_schema_v2_without_saved_family(tmp_pat
     )
 
     with pytest.raises(ValueError, match="family"):
-        validate_checkpoint_compatibility(
-            checkpoint,
+        checkpoint.validate_compatibility(
             family="unit",
             expected_model_identity=UNIT_IDENTITY,
         )

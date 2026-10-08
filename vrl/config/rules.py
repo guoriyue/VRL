@@ -49,6 +49,16 @@ def check_cross_section_rules(root: RootConfig) -> None:
                 "distributed.training.fsdp.precision_policy=none to preserve frozen dtypes",
             )
 
+    # A full resume restores trainable state from checkpoint.pt; a warm-start
+    # adapter loaded first could silently change the adapter structure.
+    resume_from = root.trainer.resume_from if root.trainer is not None else None
+    lora = root.model.lora if root.model is not None else None
+    if str(resume_from or "").strip() and lora is not None and str(lora.path or "").strip():
+        raise ValueError(
+            "trainer.resume_from cannot be combined with model.lora.path; "
+            "checkpoint.pt is the resume source of truth",
+        )
+
     algo = root.algorithm
     if algo is None:
         return

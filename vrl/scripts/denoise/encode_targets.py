@@ -120,7 +120,6 @@ def _resolve_clean_targets(
 ) -> list[tuple[str, str, str]]:
     """Resolve and validate stable target identities before loading a model."""
 
-    from vrl.trainers.data.artifacts import resolve_prompt_example_artifacts
     from vrl.trainers.data.sft_latents import CleanTargetRef
 
     targets: list[tuple[str, str, str]] = []
@@ -136,10 +135,7 @@ def _resolve_clean_targets(
                 "the target artifact is the sft shard identity and must be unique",
             )
         seen_target_keys.add(target.key)
-        resolved = resolve_prompt_example_artifacts(
-            example,
-            data_root=data_root,
-        )
+        resolved = example.with_resolved_artifacts(data_root=data_root)
         resolved_target = Path(str(getattr(resolved, target.field)))
         if not resolved_target.is_file():
             raise FileNotFoundError(

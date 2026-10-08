@@ -123,10 +123,11 @@ def _required(value: Any, path: str) -> Any:
 def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     """Run Wan-family Diffusion-DPO training driven by a merged YAML config."""
 
-    from vrl.run import resolve_model, resolve_run
+    from vrl.config import build_configs
+    from vrl.run import ResolvedRun, resolve_model
     from vrl.trainers.offline import OfflineDPOTrainerConfig
 
-    resolved = resolve_run(cfg)
+    resolved = ResolvedRun.from_built(build_configs(cfg))
     built = resolved.built
     family_entry = resolved.family
     resources = resolved.resources
@@ -153,7 +154,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         restore_training_checkpoint,
         save_resolved_config,
         save_training_checkpoint,
-        validate_checkpoint_compatibility,
     )
     from vrl.trainers.data.preferences import PickAPicPreferenceDataset, PreferenceBatch
     from vrl.trainers.metrics_io import MetricsCSV
@@ -194,11 +194,11 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         precision_role="training",
     )
     model_identity = resolved_model.identity
-    validate_checkpoint_compatibility(
-        resume_checkpoint,
-        family=family,
-        expected_model_identity=model_identity,
-    )
+    if resume_checkpoint is not None:
+        resume_checkpoint.validate_compatibility(
+            family=family,
+            expected_model_identity=model_identity,
+        )
     bundle = resolved_model.materialize(context="Wan DPO bundle construction")
     wan_model = bundle.model
     pipeline = bundle.raw_handle

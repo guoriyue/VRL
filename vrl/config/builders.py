@@ -16,6 +16,7 @@ from vrl.config.validation import require_training_config
 
 if TYPE_CHECKING:
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
+    from vrl.models.families.registry import ModelFamilyEntry
     from vrl.trainers.checkpointing import TrainingResumeConfig
     from vrl.trainers.online.config import TrainerConfig
 
@@ -145,6 +146,17 @@ class BuiltConfigs:
     reward: RewardRuntimeConfig | None
     resume: TrainingResumeConfig
 
+    @property
+    def family(self) -> ModelFamilyEntry:
+        """The registry entry of the configured model family (canonical name)."""
+
+        from vrl.models.families.names import normalize_model_family
+        from vrl.models.families.registry import get_model_family_entry
+
+        if self.root.model is None:
+            raise ValueError("training run requires model configuration")
+        return get_model_family_entry(normalize_model_family(str(self.root.model.family)))
+
 
 def build_precision_split_safety_configs() -> PrecisionCorrectionConfig:
     """Build the production correction policy for a precision split.
@@ -166,18 +178,11 @@ def build_precision_split_safety_configs() -> PrecisionCorrectionConfig:
 def build_configs(cfg: DictConfig) -> BuiltConfigs:
     """Bundle typed configs for downstream training scripts."""
 
-    from vrl.trainers.checkpointing import (
-        TrainingResumeConfig,
-        prepare_model_config_for_training_resume,
-    )
+    from vrl.trainers.checkpointing import TrainingResumeConfig
     from vrl.trainers.online.config import TrainerConfig
 
     root, precision = require_training_config(cfg)
     resume = TrainingResumeConfig.from_root(root)
-    # A full checkpoint, not model.lora.path, owns trainable state on resume.
-    # Clear it in both the parsed root and the merged source so persisted
-    # config and all runtime consumers receive one truthful model tree.
-    prepare_model_config_for_training_resume(cfg, root, resume)
     if root.algorithm is None:
         raise ValueError("config missing `algorithm` section")
     algorithm = root.algorithm.hyperparameters

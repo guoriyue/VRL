@@ -6,7 +6,7 @@ import io
 import json
 import random
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +17,7 @@ from torch.utils.data import Dataset
 
 from vrl.config.data import manifest_sources
 from vrl.generation import GenerationInput
+from vrl.utils.artifacts import resolve_artifact_path
 
 
 @dataclass
@@ -74,6 +75,53 @@ class PromptExample:
         if self.target_video is not None:
             metadata["target_video"] = self.target_video
         return metadata
+
+    def with_resolved_references(
+        self,
+        *,
+        data_root: str | Path | None = None,
+        allow_absolute: bool = False,
+    ) -> PromptExample:
+        """A copy with reference paths resolved and target identities intact."""
+
+        def resolve(raw: str) -> str:
+            return str(
+                resolve_artifact_path(raw, data_root=data_root, allow_absolute=allow_absolute)
+            )
+
+        reference_video = str(self.reference_video or "").strip()
+        return replace(
+            self,
+            reference_video=resolve(reference_video) if reference_video else None,
+            reference_images=[resolve(item) for item in self.reference_images],
+            references=[resolve(item) for item in self.references],
+        )
+
+    def with_resolved_artifacts(
+        self,
+        *,
+        data_root: str | Path | None = None,
+        allow_absolute: bool = False,
+    ) -> PromptExample:
+        """A copy with reference and clean-target paths resolved."""
+
+        def resolve(raw: str | None) -> str | None:
+            if not raw:
+                return None
+            return str(
+                resolve_artifact_path(raw, data_root=data_root, allow_absolute=allow_absolute)
+            )
+
+        resolved = self.with_resolved_references(
+            data_root=data_root, allow_absolute=allow_absolute
+        )
+        return replace(
+            resolved,
+            target_image=resolve(resolved.target_image),
+            target_video=resolve(resolved.target_video),
+            request_overrides=dict(resolved.request_overrides),
+            metadata=dict(resolved.metadata),
+        )
 
 
 def load_prompt_dataset_index(path: str | Path) -> list[PromptExample]:

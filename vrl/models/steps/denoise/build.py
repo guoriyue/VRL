@@ -33,6 +33,7 @@ def build_denoise_runtime_bundle(
 ) -> RuntimeBundle:
     """Load one diffusion rollout model and apply the shared runtime policy."""
 
+    logger.info("Building %s runtime bundle", build.family)
     rollout = build.require_rollout()
     # Reject unsupported NVFP4 hardware before checkpoint loading, LoRA wrapping,
     # or any other model mutation.
@@ -120,24 +121,6 @@ def assemble_replay_bundle(
     )
 
 
-def build_family_runtime_bundle(
-    build: ModelBuild,
-    *,
-    entry,
-) -> RuntimeBundle:
-    """Build rollout through a family's declarative diffusion recipe.
-
-    Called only by ``ModelFamilyEntry.build_rollout``, which has already matched
-    ``build.family`` to ``entry``.
-    """
-
-    from vrl.utils.config import import_from_path
-
-    model_cls = import_from_path(entry.family_build.model_cls)
-    logger.info("Building %s runtime bundle (registry descriptor)", entry.family)
-    return build_denoise_runtime_bundle(build, model_cls=model_cls)
-
-
 def build_family_replay_runtime_bundle(
     build: ModelBuild,
     *,
@@ -186,5 +169,4 @@ __all__ = [
     "assemble_replay_bundle",
     "build_denoise_runtime_bundle",
     "build_family_replay_runtime_bundle",
-    "build_family_runtime_bundle",
 ]
