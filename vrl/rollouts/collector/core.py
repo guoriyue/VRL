@@ -142,7 +142,6 @@ class RolloutCollector:
         # shared GPU, so rollout never offloads before reward. Read here instead
         # of asking the runtime, which is now just transport.
         self.lifecycle = lifecycle
-        self._reward_phase_started = False
         self._reward_shutdown_complete = False
 
     @classmethod
@@ -204,14 +203,11 @@ class RolloutCollector:
             await self._require_generation_runtime().offload()
         except BaseException as error:
             errors.append(error)
-        if self._requires_reward_memory_release() and self._reward_phase_started:
-            # Phase-final gate: actively invoke the idempotent park operation.
-            # This retries a first sleep failure from score(); successful return
-            # is the phase-final gate before trainer restore.
+        # Phase-final gate: a reward that shares a GPU must be parked before the
+        # trainer restores; this retries a park that failed after scoring.
+        if self.reward_yields_gpu:
             try:
-                await self.reward_runtime.park_memory(
-                    required=True,
-                )
+                await self.reward_runtime.park_memory()
             except BaseException as error:
                 errors.append(error)
         if len(errors) == 1:
@@ -224,10 +220,6 @@ class RolloutCollector:
 
     async def generate_rollout(self, collector_request: CollectorRequest) -> UnscoredRollout:
         """Execute one prepared generation request without acquiring rewards."""
-
-        # A new generation phase has not activated reward memory yet. This also
-        # prevents a previous iteration's state from authorizing a later handoff.
-        self._reward_phase_started = False
 
         profile = os.environ.get("VRL_PROFILE") == "1"
         phase_t = time.perf_counter() if profile else None
@@ -281,15 +273,29 @@ class RolloutCollector:
 
         profile = any(rollout.profile for rollout in unscored)
         phase_t = time.perf_counter() if profile else None
-        require_reward_release = self._requires_reward_memory_release()
-        self._reward_phase_started = require_reward_release
         reward_samples = [builder.reward_samples() for builder in builders]
         samples = tuple(sample for group_samples in reward_samples for sample in group_samples)
-        with profile_range("collector.reward_score"):
-            score_result = await self.reward_runtime.score(
-                samples,
-                require_memory_release=require_reward_release,
-            )
+        score_error: BaseException | None = None
+        try:
+            with profile_range("collector.reward_score"):
+                score_result = await self.reward_runtime.score(samples)
+        except BaseException as error:
+            score_error = error
+        if self.reward_yields_gpu:
+            # The reward shares a GPU: it yields it as soon as scoring is over,
+            # whether or not scoring succeeded, exactly as rollout yields
+            # before scoring.
+            try:
+                await self.reward_runtime.park_memory()
+            except BaseException as park_error:
+                if score_error is None:
+                    raise
+                raise RewardCleanupError(
+                    "reward scoring and memory parking both failed",
+                    [score_error, park_error],
+                ) from score_error
+        if score_error is not None:
+            raise score_error
         unscored[0].reward_timing_ms.update(score_result.timing_ms)
         reward_score_s = time.perf_counter() - phase_t if phase_t is not None else None
 
@@ -350,12 +356,6 @@ class RolloutCollector:
             unscored[0].phases["collect.batch_build"] = time.perf_counter() - build_t
         return batches
 
-    def _requires_reward_memory_release(self) -> bool:
-        lifecycle = self.lifecycle
-        if lifecycle is None:
-            return False
-        return lifecycle.offload_reward
-
     @property
     def requires_generation_offload_before_reward(self) -> bool:
         """Whether scoring introduces a mid-iteration GPU handoff."""
@@ -367,6 +367,13 @@ class RolloutCollector:
         if lifecycle is None:
             return False
         return lifecycle.park_rollout_for_reward
+
+    @property
+    def reward_yields_gpu(self) -> bool:
+        """Whether the reward shares a GPU and must park after scoring (plan bit)."""
+
+        lifecycle = self.lifecycle
+        return lifecycle is not None and lifecycle.offload_reward
 
     @property
     def reward_isolation_verified(self) -> bool:

@@ -239,7 +239,6 @@ class MultiReward(RewardFunction):
                     set(extra)
                     & {
                         "device",
-                        "sleep_offload",
                         "worker_config",
                     },
                 )
@@ -265,16 +264,11 @@ class MultiReward(RewardFunction):
                 and memory_parking_required is True
                 and component_device.startswith("cuda")
             ):
-                # GPU ownership comes from topology. A shared reward cannot rely
-                # on every preset remembering an independent parking knob. For a
-                # Ray actor the knob travels in its worker_config and its
-                # scorer owns the park/wake lifecycle.
+                # GPU ownership comes from topology: a GPU component of a shared
+                # reward parks. For a Ray actor the knob travels in its
+                # worker_config and its scorer owns the park/wake lifecycle.
+                # Dedicated and CPU components stay resident.
                 extra["sleep_offload"] = True
-            elif memory_parking_required is not None:
-                # A dedicated reward owns its GPU and remains resident even if
-                # an inherited reward preset carried the old shared-phase knob.
-                # CPU-only components also never receive a GPU parking knob.
-                extra.pop("sleep_offload", None)
             component = reward_cls(device=component_device, **extra)
             triples.append((name, weight, component))
         return cls(triples)

@@ -109,7 +109,7 @@ async def test_function_runtime_rejects_empty_and_duplicate_samples() -> None:
 
 
 @pytest.mark.asyncio
-async def test_required_parking_is_atomic_with_scoring() -> None:
+async def test_parking_waits_for_scoring_to_release_the_function() -> None:
     class _BlockingReward(RewardFunction):
         def __init__(self) -> None:
             self.started = asyncio.Event()
@@ -129,18 +129,47 @@ async def test_required_parking_is_atomic_with_scoring() -> None:
 
     reward = _BlockingReward()
     runtime = RewardFunctionRuntime(reward)
-    score_task = asyncio.create_task(
-        runtime.score((_sample(),), require_memory_release=True),
-    )
+    score_task = asyncio.create_task(runtime.score((_sample(),)))
     await reward.started.wait()
-    second_park = asyncio.create_task(runtime.park_memory(required=False))
+    park = asyncio.create_task(runtime.park_memory())
     await asyncio.sleep(0)
 
+    # The park cannot take the device from a function still scoring.
     assert reward.events == ["score_start"]
     reward.release.set()
     await score_task
-    await second_park
-    assert reward.events == ["score_start", "score_end", "park", "park"]
+    await park
+    # A second park finds nothing held and does not reach the function.
+    await runtime.park_memory()
+    assert reward.events == ["score_start", "score_end", "park"]
+
+
+@pytest.mark.asyncio
+async def test_failed_activation_leaves_nothing_to_park() -> None:
+    """The phase-final park after a failed activate is a no-op, so the activation
+    error surfaces alone and the trainer's own cleanup can still run."""
+
+    class _BrokenActivation(RewardFunction):
+        def __init__(self) -> None:
+            self.park_calls = 0
+
+        async def activate(self) -> None:
+            raise RuntimeError("model build failed")
+
+        async def park_memory(self) -> bool:
+            self.park_calls += 1
+            return False
+
+        async def score(self, sample: RewardSample) -> float:
+            return 1.0
+
+    reward = _BrokenActivation()
+    runtime = RewardFunctionRuntime(reward)
+    with pytest.raises(RuntimeError, match="model build failed"):
+        await runtime.activate()
+
+    await runtime.park_memory()
+    assert reward.park_calls == 0
 
 
 @pytest.mark.asyncio
@@ -150,9 +179,10 @@ async def test_required_parking_fails_when_no_owner_parked() -> None:
             return 1.0
 
     runtime = RewardFunctionRuntime(_UnparkableReward())
+    await runtime.score((_sample(),))
 
     with pytest.raises(RuntimeError, match="no active memory-parking owner"):
-        await runtime.score((_sample(),), require_memory_release=True)
+        await runtime.park_memory()
 
 
 @pytest.mark.asyncio

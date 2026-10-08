@@ -33,7 +33,8 @@ class RewardRuntimeConfig:
 
     def __post_init__(self) -> None:
         for name, component_kwargs in self.kwargs.items():
-            if "sleep_offload" in component_kwargs:
+            worker_config = component_kwargs.get("worker_config") or {}
+            if "sleep_offload" in component_kwargs or "sleep_offload" in worker_config:
                 raise ValueError(
                     f"reward.kwargs.{name}.sleep_offload is topology-derived and cannot "
                     "be set in YAML; remove it and select shared or dedicated "

@@ -4,7 +4,7 @@
 implementation of the trainer-side lease operations: parking/restoring
 training state around a shared-GPU phase, preparing weight snapshots on the
 trainer thread (strategy export may run DDP/FSDP collectives) and pushing
-them from any loop, and tracking the policy version across syncs.
+them from any loop, and reading the policy version the runtime publishes.
 """
 
 from __future__ import annotations

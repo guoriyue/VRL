@@ -36,7 +36,7 @@ from vrl.config.reward_inference import (
     RewardInferenceConfig,
 )
 from vrl.models.parking import CumemBroken, CumemPool, ParkingSession
-from vrl.rewards.base import RewardCleanupError, RewardFunction
+from vrl.rewards.base import RewardFunction
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
@@ -70,6 +70,11 @@ class RewardFunctionRuntime:
         if not isinstance(reward_function, RewardFunction):
             raise TypeError("reward_function must be a RewardFunction")
         self._reward_function = reward_function
+        # Whether the function may hold device memory: set when it is woken or
+        # scores, cleared by a successful park. When to park is the scheduler's
+        # decision (the collector reads the placement plan); this runtime only
+        # knows whether there is anything to release.
+        self._holds_memory = False
         self._score_timeout_s = require_timeout(score_timeout_s, name="score_timeout_s")
         self._operation_lock = asyncio.Lock()
         # Same terminal FSM as the generation runtime: RUNNING accepts work,
@@ -89,14 +94,13 @@ class RewardFunctionRuntime:
 
         async with self._operation_lock:
             self.lifecycle.require_running("activate")
+            # Claim memory only once the function holds it: a failed activation
+            # has nothing to park, and the phase-final park must then be a no-op
+            # so the real error surfaces alone and the trainer is restored.
             await self._reward_function.activate()
+            self._holds_memory = True
 
-    async def score(
-        self,
-        samples: Sequence[RewardSample],
-        *,
-        require_memory_release: bool = False,
-    ) -> RewardOutput:
+    async def score(self, samples: Sequence[RewardSample]) -> RewardOutput:
         """Score ordered samples while serializing function and memory ownership."""
 
         async with self._operation_lock:
@@ -109,71 +113,47 @@ class RewardFunctionRuntime:
             sample_ids = [sample.sample_id for sample in normalized]
             if len(set(sample_ids)) != len(sample_ids):
                 raise ValueError("reward runtime sample_id values must be unique")
-            output: RewardOutput | None = None
-            operation_error: BaseException | None = None
+            self._holds_memory = True
+            # The deadline preempts every awaitable transport (HTTP
+            # service round-trips, overlapped async scoring) and raises
+            # the shared terminal OperationTimeout. A component that
+            # blocks the event loop in synchronous model code cannot be
+            # preempted in-process — like a launched CUDA kernel, its
+            # bound is process supervision, not this timer.
+            deadline = OperationDeadline(
+                "reward.score",
+                self._score_timeout_s,
+                context=f"samples={len(normalized)}",
+            )
             try:
-                # The deadline preempts every awaitable transport (HTTP
-                # service round-trips, overlapped async scoring) and raises
-                # the shared terminal OperationTimeout. A component that
-                # blocks the event loop in synchronous model code cannot be
-                # preempted in-process — like a launched CUDA kernel, its
-                # bound is process supervision, not this timer.
-                deadline = OperationDeadline(
-                    "reward.score",
-                    self._score_timeout_s,
-                    context=f"samples={len(normalized)}",
+                output = await asyncio.wait_for(
+                    self._reward_function.score_batch(normalized),
+                    timeout=deadline.remaining_s(),
                 )
-                try:
-                    output = await asyncio.wait_for(
-                        self._reward_function.score_batch(normalized),
-                        timeout=deadline.remaining_s(),
-                    )
-                except TimeoutError as cause:
-                    raise deadline.timeout_error() from cause
-                if not isinstance(output, RewardOutput):
-                    raise TypeError("reward function score_batch() must return RewardOutput")
-            except BaseException as error:
-                operation_error = error
-
-            parking_error: BaseException | None = None
-            if require_memory_release:
-                try:
-                    await self._park_memory_locked(required=True)
-                except BaseException as error:
-                    parking_error = error
-            if operation_error is not None and parking_error is not None:
-                raise RewardCleanupError(
-                    "reward scoring and memory parking both failed",
-                    [operation_error, parking_error],
-                )
-            if operation_error is not None:
-                raise operation_error
-            if parking_error is not None:
-                raise parking_error
-            assert output is not None
+            except TimeoutError as cause:
+                raise deadline.timeout_error() from cause
+            if not isinstance(output, RewardOutput):
+                raise TypeError("reward function score_batch() must return RewardOutput")
             return output
 
-    async def park_memory(
-        self,
-        *,
-        required: bool,
-    ) -> None:
-        """Actively park reward owners and enforce the configured gate."""
+    async def park_memory(self) -> None:
+        """Release the function's device memory; nothing to do if it holds none.
+
+        The collector calls this wherever the placement plan makes the reward
+        yield its GPU: after scoring, and again at the phase-final handoff,
+        where it retries a park that failed after scoring.
+        """
 
         async with self._operation_lock:
             self.lifecycle.require_running("park_memory")
-            await self._park_memory_locked(required=required)
-
-    async def _park_memory_locked(
-        self,
-        *,
-        required: bool,
-    ) -> None:
-        parked = await self._reward_function.park_memory()
-        if not isinstance(parked, bool):
-            raise TypeError("reward function park_memory() must return bool")
-        if required and not parked:
-            raise RuntimeError("reward function has no active memory-parking owner")
+            if not self._holds_memory:
+                return
+            parked = await self._reward_function.park_memory()
+            if not isinstance(parked, bool):
+                raise TypeError("reward function park_memory() must return bool")
+            if not parked:
+                raise RuntimeError("reward function has no active memory-parking owner")
+            self._holds_memory = False
 
     async def shutdown(self) -> None:
         """Release the wrapped function exactly once after successful teardown.

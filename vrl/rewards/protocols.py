@@ -44,21 +44,20 @@ class RewardRuntime(Protocol):
         """
         ...
 
-    async def score(
-        self,
-        samples: Sequence[RewardSample],
-        *,
-        require_memory_release: bool = False,
-    ) -> RewardOutput:
-        """Score one ordered sample collection and return aligned results."""
+    async def score(self, samples: Sequence[RewardSample]) -> RewardOutput:
+        """Score one ordered sample collection and return aligned results.
+
+        Scoring never parks: when a GPU-sharing reward yields its device is the
+        collector's decision, read from the placement plan.
+        """
         ...
 
-    async def park_memory(
-        self,
-        *,
-        required: bool,
-    ) -> None:
-        """Release reward-owned accelerator memory and enforce the parking gate."""
+    async def park_memory(self) -> None:
+        """Release the device memory the runtime holds; a no-op when it holds none.
+
+        The collector calls this after every score and again at the phase-final
+        handoff, wherever the placement plan makes the reward yield its GPU.
+        """
         ...
 
     async def shutdown(self) -> None:

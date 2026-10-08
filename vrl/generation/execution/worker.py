@@ -208,7 +208,7 @@ class GenerationWorkerCore:
         # The single scalar now means "current submit version": it must track the
         # latest installed version even in slot mode. It reaches the producer
         # through this method's ACK (returned below) — the producer stamps NEW requests from
-        # RolloutLifecycle.current_policy_version() -> runtime.current_policy_version
+        # RolloutRuntimeCoordinator.current_policy_version() -> runtime.current_policy_version
         # (attribute), not by reading this worker directly. Per-batch results take
         # their version from request.policy_version, not this field.
         self._policy_version = policy_version

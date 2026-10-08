@@ -102,8 +102,8 @@ class ContinuousRolloutSchedule:
         next_prompts: list[Any] | None = None,
     ) -> RolloutIteration:
         # Strategy/FSDP export and the CPU snapshot happen on the trainer
-        # thread. The coordinator's initialized callback is the source of truth;
-        # it returns None once the persistent runtime owns committed weights.
+        # thread. The coordinator's weights_initialized flag is the source of
+        # truth; this returns None once the runtime owns committed weights.
         initial_weights = self.lifecycle.prepare_initial_weight_sync_state()
         return await self._rollout_thread.next_iteration(
             prompts,

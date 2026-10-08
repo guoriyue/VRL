@@ -265,11 +265,11 @@ async def test_multi_reward_parks_every_child_after_score_failure() -> None:
         ],
     )
 
+    runtime = RewardFunctionRuntime(reward)
     with pytest.raises(RuntimeError, match="score failed:first"):
-        await RewardFunctionRuntime(reward).score(
-            [_make_sample("a")],
-            require_memory_release=True,
-        )
+        await runtime.score([_make_sample("a")])
+    # The scheduler parks a GPU-sharing reward after scoring, failed or not.
+    await runtime.park_memory()
 
     assert events == ["score:first", "park:first", "park:second"]
 
@@ -361,7 +361,6 @@ def test_factory_parking_policy_distinguishes_cpu_and_dedicated_rewards() -> Non
     dedicated_reward = MultiReward.from_dict(
         {"aesthetic": 1.0},
         device="cuda:1",
-        reward_kwargs={"aesthetic": {"sleep_offload": True}},
         memory_parking_required=False,
     )
 
