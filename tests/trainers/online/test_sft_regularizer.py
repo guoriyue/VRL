@@ -69,7 +69,6 @@ def _sft_trainer(
         weight_syncer=base.weight_syncer,
         sync_state_getter=base.sync_state_getter,
         config=base.config,
-        device=torch.device("cpu"),
         strategy=tb.strategy,
         sft_latents=_load_sft_latents_from_config(built, sft_weight=base.algorithm.sft_weight),
     )

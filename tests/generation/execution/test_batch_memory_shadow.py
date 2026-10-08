@@ -77,7 +77,7 @@ class _MemoryExecutor:
 def test_worker_forwards_batch_memory_without_runtime_debug() -> None:
     contract = launch_contract(policy_version=1)
     executor = _MemoryExecutor()
-    core = GenerationWorkerCore("rollout-0", contract, executor)
+    core = GenerationWorkerCore("rollout-0", contract)
     core.executor = executor
     request = GenerationRequest(
         request_id="req-1",

@@ -104,7 +104,7 @@ async def _running_service(
     )
     await service.start()
     host, port = service.address
-    client = HttpRewardScorer(
+    client = HttpRewardScorer.from_config(
         RewardInferenceConfig(
             kind="http",
             endpoint=f"http://{host}:{port}",
@@ -272,7 +272,7 @@ async def test_expected_model_identity_mismatch_fails_before_scoring(
     )
     await service.start()
     host, port = service.address
-    client = HttpRewardScorer(
+    client = HttpRewardScorer.from_config(
         RewardInferenceConfig(
             kind="http",
             endpoint=f"http://{host}:{port}",
@@ -319,7 +319,7 @@ async def test_ensure_ready_fails_fast_on_identity_mismatch(tmp_path) -> None:
     )
     await service.start()
     host, port = service.address
-    client = HttpRewardScorer(
+    client = HttpRewardScorer.from_config(
         RewardInferenceConfig(
             kind="http",
             endpoint=f"http://{host}:{port}",

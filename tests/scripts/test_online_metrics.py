@@ -17,6 +17,16 @@ from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.metrics_io import OnlineMetricsCSV
 
 
+def _run(context: DistributedTrainingContext, output_dir: Path) -> SimpleNamespace:
+    """The slice of OnlineRecipeRun that initialize_metrics reads."""
+
+    return SimpleNamespace(
+        metrics_csv=None,
+        strategy=SimpleNamespace(context=context),
+        trainer=SimpleNamespace(config=SimpleNamespace(output_dir=str(output_dir))),
+    )
+
+
 def _context(*, distributed: bool, primary: bool) -> DistributedTrainingContext:
     return DistributedTrainingContext(
         strategy="ddp" if distributed else "single_process",
@@ -88,12 +98,10 @@ def _run_metrics_preflight_rank(
         try:
             from unittest.mock import patch
 
-            run = SimpleNamespace(metrics_csv=None)
+            run = _run(_context(distributed=True, primary=rank == 0), Path(marker_path).parent)
             with patch("vrl.scripts.common.online.OnlineMetricsCSV", _prepare):
                 OnlineRecipeRun.initialize_metrics(
                     run,
-                    _context(distributed=True, primary=rank == 0),
-                    Path(marker_path).parent,
                     component_names=(),
                     resume_epoch=None,
                 )
@@ -113,9 +121,7 @@ def test_metrics_csv_preflight_preserves_single_process_error(monkeypatch, tmp_p
     monkeypatch.setattr("vrl.scripts.common.online.OnlineMetricsCSV", fail)
     with pytest.raises(ValueError, match="different metrics schema"):
         OnlineRecipeRun.initialize_metrics(
-            SimpleNamespace(metrics_csv=None),
-            _context(distributed=False, primary=True),
-            tmp_path,
+            _run(_context(distributed=False, primary=True), tmp_path),
             component_names=(),
             resume_epoch=None,
         )

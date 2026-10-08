@@ -572,7 +572,7 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
     host, port = service.address
 
     def _client() -> HttpRewardScorer:
-        return HttpRewardScorer(
+        return HttpRewardScorer.from_config(
             RewardInferenceConfig(
                 kind="http",
                 endpoint=f"http://{host}:{port}",

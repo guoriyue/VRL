@@ -95,7 +95,7 @@ def _core(
 ) -> GenerationWorkerCore:
     contract = launch_contract(policy_version=1, versioned_weight_sync=versioned_weight_sync)
     executor = _Executor(model)
-    core = GenerationWorkerCore("rollout-0", contract, executor)
+    core = GenerationWorkerCore("rollout-0", contract)
     core.executor = executor  # bypass load_policy() build
     return core
 

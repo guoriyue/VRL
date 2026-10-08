@@ -44,7 +44,7 @@ def _launch_inputs(
 
 
 def _worker(inputs: RayGenerationLaunchInputs) -> GenerationWorkerCore:
-    return GenerationWorkerCore("rollout-0", inputs.launch_contract, inputs.gatherer)
+    return GenerationWorkerCore("rollout-0", inputs.launch_contract)
 
 
 def test_worker_accepts_matching_identity_before_and_after_model_build(

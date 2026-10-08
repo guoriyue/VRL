@@ -709,8 +709,6 @@ class OnlineRecipeRun:
 
     def initialize_metrics(
         self,
-        training_context: DistributedTrainingContext,
-        output_dir: Path,
         *,
         component_names: Sequence[str],
         resume_epoch: int | None,
@@ -719,13 +717,13 @@ class OnlineRecipeRun:
 
         def initialize() -> None:
             self.metrics_csv = OnlineMetricsCSV(
-                output_dir,
+                Path(self.trainer.config.output_dir),
                 component_names=component_names,
                 resume_epoch=resume_epoch,
             )
 
         run_on_primary_rank(
-            training_context,
+            self.strategy.context,
             initialize,
             description="metrics CSV preflight",
         )
@@ -962,7 +960,6 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             # bind the strategy export lazily instead of snapshotting once.
             sync_state_getter=lambda: strategy.export_rollout_state(bundle),
             config=trainer_config,
-            device=device,
             strategy=strategy,
             sft_latents=_load_sft_latents_from_config(built, sft_weight=algorithm.sft_weight),
         )
@@ -1049,8 +1046,6 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             model_identity=model_identity,
         )
         run.initialize_metrics(
-            training_context,
-            output_dir,
             component_names=component_names,
             resume_epoch=resume_epoch,
         )

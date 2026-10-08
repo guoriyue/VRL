@@ -60,7 +60,6 @@ def test_weight_sync_requires_explicit_trainable_state_getter(monkeypatch, tmp_p
             model=bench.model,
             weight_syncer=RayRuntimeWeightSyncer(bench.collector.runtime),
             config=trainer.config,
-            device="cpu",
             strategy=bench.strategy,
         )
 

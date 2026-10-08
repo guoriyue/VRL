@@ -38,7 +38,6 @@ class RayGenerationWorker:
         self.core = GenerationWorkerCore(
             worker_id,
             launch_inputs.launch_contract,
-            launch_inputs.gatherer,
             rank_group=launch_inputs.rank_group,
         )
 

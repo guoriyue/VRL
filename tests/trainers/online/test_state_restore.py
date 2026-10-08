@@ -219,7 +219,6 @@ class TestOnlineTrainerResumeState:
                 weight_syncer=trainer.weight_syncer,
                 sync_state_getter=trainer.sync_state_getter,
                 config=trainer.config,
-                device=torch.device("cpu"),
                 strategy=strategy,
             )
 
@@ -287,8 +286,9 @@ def _cuda_fp16_trainer(monkeypatch, tmp_path) -> OnlineTrainer:
         weight_syncer=trainer.weight_syncer,
         sync_state_getter=trainer.sync_state_getter,
         config=trainer.config,
-        device=torch.device("cuda"),
-        strategy=SingleProcessStrategy(),
+        strategy=SingleProcessStrategy(
+            DistributedTrainingContext("single_process", 0, 1, torch.device("cuda"))
+        ),
     )
 
 

@@ -472,7 +472,6 @@ class OnlineTrainer:
         config: TrainerConfig,
         weight_syncer: RayRuntimeWeightSyncer | None = None,
         sync_state_getter: TrainableStateGetter | None = None,
-        device: torch.device | str = "cuda",
         strategy: Strategy | None = None,
         sft_latents: Mapping[str, Any] | None = None,
     ) -> None:
@@ -502,12 +501,12 @@ class OnlineTrainer:
         # diffusion-loss regularizer; the recipe loads data.sft_latents, which
         # vrl/config/rules.py requires whenever sft_weight > 0.
         self._sft_latents = dict(sft_latents) if sft_latents else None
-        self.device = torch.device(device) if isinstance(device, str) else device
         self.state = TrainState()
         # How a step runs on the hardware (backward / clip / state export). The
         # default keeps current single-GPU behavior; FSDP2 swaps this in later
         # without the trainer loop changing. See vrl/trainers/strategy.py.
         self._strategy: Strategy = strategy or SingleProcessStrategy()
+        self.device = self._strategy.context.device
         self.admission_ledger = AdmissionLedger(
             self.config.output_dir, rank=self._strategy.context.rank
         )

@@ -46,7 +46,7 @@ class InProcessGenerationRuntime:
         worker_id: str = "rollout-0",
     ) -> None:
         contract = launch_inputs.launch_contract
-        self._core = GenerationWorkerCore(worker_id, contract, launch_inputs.gatherer)
+        self._core = GenerationWorkerCore(worker_id, contract)
         self._gatherer = launch_inputs.gatherer
         self.current_policy_version: int = contract.policy_version
         self._parked = False

@@ -583,7 +583,7 @@ def build_reward_scorer(
         )
     from vrl.rewards.service.client import HttpRewardScorer
 
-    return HttpRewardScorer(deployment)
+    return HttpRewardScorer.from_config(deployment)
 
 
 __all__ = [

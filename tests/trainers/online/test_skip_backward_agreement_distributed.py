@@ -337,7 +337,6 @@ def _rank_trainer(monkeypatch: pytest.MonkeyPatch, root: Path, *, samples: int) 
         weight_syncer=RayRuntimeWeightSyncer(bench.runtime),
         sync_state_getter=lambda: strategy.export_rollout_state(bundle),
         config=built.trainer,
-        device=torch.device("cpu"),
         strategy=strategy,
     )
     return trainer

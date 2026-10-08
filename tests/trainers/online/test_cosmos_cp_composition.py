@@ -193,7 +193,6 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
             weight_syncer=RayRuntimeWeightSyncer(runtime),
             sync_state_getter=lambda: strategy.export_rollout_state(bundle),
             config=built.trainer,
-            device=torch.device("cpu"),
             strategy=strategy,
         )
         # Only the CP leader owns rollout; the other rank receives the spool.
@@ -580,7 +579,6 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
             evaluator=DenoiseSDELogProbEvaluator(scheduler, noise_level=0.7, sde_type="cps"),
             model=model,
             strategy=strategy,
-            device=device,
             weight_syncer=syncer,
             sync_state_getter=lambda: {
                 name: p.detach().cpu().clone()

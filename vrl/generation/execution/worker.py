@@ -27,7 +27,6 @@ from vrl.generation.execution.types import (
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import (
     GenerationBatchExecutor,
-    GenerationBatchGatherer,
 )
 from vrl.generation.types import GenerationRequest
 from vrl.models.interfaces import require_runtime_model
@@ -48,7 +47,6 @@ class GenerationWorkerCore:
         self,
         worker_id: str,
         launch_contract: GenerationRuntimeLaunchContract,
-        gatherer: GenerationBatchGatherer,
         rank_group: RankGroupSpec | None = None,
     ) -> None:
         self.worker_id = worker_id
@@ -57,7 +55,6 @@ class GenerationWorkerCore:
         self.rank_group_spec = rank_group
         self._rank_process_group: ProcessGroup | None = None
         self.launch_contract = launch_contract
-        self.gatherer = gatherer
         from vrl.models.families.registry import get_model_family_entry
 
         self.family_entry = get_model_family_entry(launch_contract.family)
@@ -549,15 +546,9 @@ class GenerationWorkerCore:
         if self.rank_group_spec is not None:
             self._install_sequence_parallel(model)
         executor_cls = import_from_path(self.family_entry.executor_cls)
-        built = executor_cls(model, **launch_contract.executor_kwargs, gatherer=self.gatherer)
-        if not callable(getattr(built, "forward_batch", None)) or not callable(
-            getattr(built, "merge_generation_batches", None)
-        ):
-            raise TypeError(
-                f"{type(built).__name__} does not implement "
-                "forward_batch(...) and merge_generation_batches(...)",
-            )
-        return built
+        # Ranks only produce batches; merging runs driver-side on the registry
+        # gatherer, so the rank's executor is built without one.
+        return executor_cls(model, **launch_contract.executor_kwargs)
 
 
 __all__ = ["GenerationWorkerCore"]

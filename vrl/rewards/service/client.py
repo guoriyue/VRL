@@ -55,62 +55,41 @@ class HttpRewardScorer:
 
     def __init__(
         self,
-        service: str | RewardInferenceConfig,
+        service_url: str,
         *,
-        timeout_s: float | None = None,
-        expected_model: str | None = None,
-        expected_model_version: str | None = None,
+        timeout_s: float = 1800.0,
+        expected_model: str = "",
+        expected_model_version: str = "",
     ) -> None:
-        from vrl.config.reward_inference import (
-            RewardInferenceConfig,
-            require_http_origin,
-        )
+        from vrl.config.reward_inference import require_http_origin
 
-        if isinstance(service, RewardInferenceConfig):
-            if service.kind != "http":
-                raise ValueError(
-                    "HttpRewardScorer requires inference.kind=http",
-                )
-            if not service.endpoint:
-                raise ValueError(
-                    "HttpRewardScorer requires an operator-owned HTTP endpoint",
-                )
-            if (
-                timeout_s is not None
-                or expected_model is not None
-                or expected_model_version is not None
-            ):
-                raise ValueError(
-                    "timeout_s/expected_model/expected_model_version are owned by the "
-                    "RewardInferenceConfig; do not also pass them as keyword arguments",
-                )
-            # Validated and normalized by the config's own __post_init__.
-            service_url = service.endpoint
-            timeout_s = service.timeout_s
-            expected_model = service.expected_model
-            expected_model_version = service.expected_model_version
-        else:
-            service_url = require_http_origin(
-                str(service),
-                context="reward service endpoint",
-            )
-            timeout_s = 1800.0 if timeout_s is None else timeout_s
-            expected_model = "" if expected_model is None else expected_model
-            expected_model_version = (
-                "" if expected_model_version is None else expected_model_version
-            )
-            timeout_s = require_timeout(timeout_s, name="reward service timeout_s")
-
+        service_url = require_http_origin(service_url, context="reward service endpoint")
+        timeout_s = require_timeout(timeout_s, name="reward service timeout_s")
         self._base_url = service_url
         self._timeout = aiohttp.ClientTimeout(total=timeout_s)
-        self._expected_model = str(expected_model).strip()
-        self._expected_model_version = str(expected_model_version).strip()
+        self._expected_model = expected_model.strip()
+        self._expected_model_version = expected_model_version.strip()
         self._session: aiohttp.ClientSession | None = None
         self._session_loop: asyncio.AbstractEventLoop | None = None
         self._session_lock = asyncio.Lock()
         self._identity_lock = asyncio.Lock()
         self._identity_checked = False
         self._closed = False
+
+    @classmethod
+    def from_config(cls, service: RewardInferenceConfig) -> HttpRewardScorer:
+        """Connect to the operator-owned service a ``kind=http`` section names.
+
+        The section's own ``__post_init__`` already normalized the origin and
+        required ``expected_model``.
+        """
+
+        return cls(
+            service.endpoint,
+            timeout_s=service.timeout_s,
+            expected_model=service.expected_model,
+            expected_model_version=service.expected_model_version,
+        )
 
     async def score_batch(
         self,

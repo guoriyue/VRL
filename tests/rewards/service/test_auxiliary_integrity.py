@@ -48,7 +48,7 @@ async def test_cached_reward_rejects_changed_or_outside_target(tmp_path, monkeyp
     service = RewardService.from_yaml(config)
     await service.start()
     host, port = service.address
-    client = HttpRewardScorer(
+    client = HttpRewardScorer.from_config(
         RewardInferenceConfig(
             kind="http",
             endpoint=f"http://{host}:{port}",

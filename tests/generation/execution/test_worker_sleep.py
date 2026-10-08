@@ -182,11 +182,7 @@ def _core(
         policy_version=1,
         sleep_offload=sleep_offload,
     )
-    core = GenerationWorkerCore(
-        "rollout-0",
-        contract,
-        _Executor(model, family=family),
-    )
+    core = GenerationWorkerCore("rollout-0", contract)
     core.executor = (
         _Executor(model, family=family, task=core.family_entry.task) if model is not None else None
     )

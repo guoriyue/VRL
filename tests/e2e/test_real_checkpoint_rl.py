@@ -37,7 +37,9 @@ from vrl.run import ResolvedReward
 from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 from vrl.trainers.data.prompts import PromptExample
 from vrl.trainers.diagnostics import trainable_state_digest
+from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.online.trainer import OnlineTrainer
+from vrl.trainers.strategy import SingleProcessStrategy
 from vrl.utils.config import import_from_path
 
 RUN_REAL_ENV = "WM_RUN_REAL_MODEL_TESTS"
@@ -646,7 +648,9 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             weight_syncer=None,
             sync_state_getter=None,
             config=trainer_config,
-            device=device,
+            strategy=SingleProcessStrategy(
+                DistributedTrainingContext("single_process", 0, 1, device)
+            ),
         )
 
         before = trainable_state_digest(bundle.model)
