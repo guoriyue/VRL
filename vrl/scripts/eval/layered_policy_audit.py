@@ -183,7 +183,10 @@ def audit_likelihood(root):
                     "mean_element_gaussian_kl": kl,
                     "clipped_policy_loss_change": policy_loss_change,
                     "regularized_loss_change": policy_loss_change + config["kl_coef"] * kl,
-                    "ratio_clip_active": bool((ratio != clipped_ratio).any()),
+                    "ratio_outside_clip_range": bool((ratio != clipped_ratio).any()),
+                    "ratio_clip_active": bool(
+                        (-advantage * clipped_ratio > -advantage * ratio).any()
+                    ),
                 }
                 rows.append(row)
                 (root / "update01/policy_audit_partial.json").write_text(

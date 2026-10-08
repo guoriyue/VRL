@@ -115,3 +115,9 @@ def test_temporal_weight_changes_policy_only(tmp_path, monkeypatch):
     assert row["policy_log_ratio"] == pytest.approx(log_ratio)
     assert scaled["mean_clipped_policy_loss_change"] == pytest.approx(expected_policy)
     assert scaled["mean_gaussian_kl"] == pytest.approx(kl)
+
+    # Outside-band ratios do not necessarily activate the clipped loss branch:
+    # a positive-advantage sample with falling likelihood must retain its gradient.
+    assert row["ratio_outside_clip_range"] == (ratio < 0.8 or ratio > 1.2)
+    assert row["ratio_clip_active"] == (ratio > 1.2)
+    assert ratio < 0.8 and not row["ratio_clip_active"]
