@@ -190,7 +190,7 @@ class EvaluationPlan:
         )
         initial = batch.observations[:, 0].detach().cpu().contiguous()
         latent_hash = hashlib.sha256(initial.float().numpy().tobytes()).hexdigest()
-        generated = executor.merge_generation_batches(request, request.sample_rows(), [batch])
+        generated = executor.merge_generation_batches(request, [batch])
         return [to_pil_image(generated.output[0])], latent_hash
 
     def blind_orders(self) -> dict[int, list[str]]:

@@ -22,7 +22,6 @@ from vrl.generation.protocols import BatchPayload
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
-    GenerationSampleRow,
 )
 from vrl.trajectory.builders import build_diffusion_trajectory
 
@@ -36,12 +35,10 @@ class DenoiseBatchGatherer:
     def merge_generation_batches(
         self,
         request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
         batches: Sequence[BatchPayload],
     ) -> GenerationOutput:
         ordered_batches = sort_and_validate_batch_coverage(
             request,
-            sample_rows,
             cast("Sequence[DenoiseBatchResult]", batches),
             # Decoded media or boxed references are validated separately below.
             row_fields=("latents", "log_probs", "timesteps"),
@@ -77,7 +74,7 @@ class DenoiseBatchGatherer:
         if not rollout_context:
             raise ValueError("DenoiseBatchResult.context must be non-empty")
 
-        rows = list(sample_rows)
+        rows = request.sample_rows()
         trajectory = build_diffusion_trajectory(
             request=request,
             sample_rows=rows,

@@ -45,7 +45,7 @@ def test_merge_fetches_references_gathers_in_plan_order_and_boxes_media(monkeypa
     request = _request(4)
 
     output = RayGenerationFinalizer("finalize-0", DenoiseBatchGatherer()).merge_request(
-        request, request.sample_rows(), ["ref-a", "ref-b"]
+        request, ["ref-a", "ref-b"]
     )
 
     assert isinstance(output, GenerationOutput)
@@ -59,9 +59,7 @@ def test_merge_fetches_references_gathers_in_plan_order_and_boxes_media(monkeypa
 def test_merge_rejects_an_empty_reference_list() -> None:
     request = _request()
     with pytest.raises(ValueError, match="no batch references"):
-        RayGenerationFinalizer("finalize-0", DenoiseBatchGatherer()).merge_request(
-            request, request.sample_rows(), []
-        )
+        RayGenerationFinalizer("finalize-0", DenoiseBatchGatherer()).merge_request(request, [])
 
 
 @pytest.mark.slow_test
@@ -76,7 +74,7 @@ def test_real_ray_finalizer_merges_staged_batches(local_ray) -> None:
         request = _request(4)
         refs = [ray.put(_batch(0, 2)), ray.put(_batch(2, 2))]
         output = ray.get(
-            finalizer.merge_request.remote(request, request.sample_rows(), refs),
+            finalizer.merge_request.remote(request, refs),
             timeout=60,
         )
         assert isinstance(output, GenerationOutput)

@@ -80,9 +80,7 @@ def test_gather_orders_refs_without_resolving_or_materializing(monkeypatch):
     first, second = _batch(0), _batch(2)
     first.video = [MediaReference("first", i) for i in range(2)]
     second.video = [MediaReference("second", i) for i in range(2)]
-    output = DenoiseBatchGatherer().merge_generation_batches(
-        request, request.sample_rows(), [second, first]
-    )
+    output = DenoiseBatchGatherer().merge_generation_batches(request, [second, first])
     assert output.output == first.video + second.video
 
 

@@ -36,8 +36,8 @@ class _RealChunkExecutor(BatchExecutorBase):
         x = torch.randn(batch.sample_count, 8, generator=g, device=self.device) + 1.0
         return x @ torch.ones(8, 8, device=self.device)
 
-    def merge_generation_batches(self, request, sample_rows, batches):
-        del request, sample_rows
+    def merge_generation_batches(self, request, batches):
+        del request
         return SimpleNamespace(output=list(batches))
 
 
@@ -52,11 +52,6 @@ def _request(num_samples: int) -> GenerationRequest:
     )
 
 
-def _plan(request, sample_rows):
-    del sample_rows
-    return EnginePlan.from_request(request)
-
-
 @pytest.mark.real_cover(
     "tests/generation/execution/test_sample_batches_pipelined_cuda.py",
     why=(
@@ -69,12 +64,11 @@ def test_forward_plan_pipelined_matches_serial_forward_plan() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ex = _RealChunkExecutor(device)
     request = _request(6)
-    sample_rows = request.sample_rows()
-    plan = _plan(request, sample_rows)
+    plan = EnginePlan.from_request(request)
     assert len(plan.sample_batches) >= 2
 
-    serial = DenoiseBatchExecutorBase.forward_plan(ex, request, sample_rows, plan)
-    pipelined = DenoiseBatchExecutorBase.forward_plan_pipelined(ex, request, sample_rows, plan)
+    serial = DenoiseBatchExecutorBase.forward_plan(ex, request, plan)
+    pipelined = DenoiseBatchExecutorBase.forward_plan_pipelined(ex, request, plan)
 
     assert len(pipelined.output) == len(serial.output)
     for idx, (s, p) in enumerate(zip(serial.output, pipelined.output, strict=True)):

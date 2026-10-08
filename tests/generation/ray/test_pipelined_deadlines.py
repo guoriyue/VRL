@@ -36,10 +36,10 @@ _SLOW_S = SlowGenerationWorker.HOLD_S
 class _SlowMergeFinalizer(RayGenerationFinalizer):
     """The real finalizer; a ``"slow"`` request holds the finalizer for ``_SLOW_S``."""
 
-    def merge_request(self, request: Any, sample_rows: Any, batch_refs: Any) -> Any:
+    def merge_request(self, request: Any, batch_refs: Any) -> Any:
         if request.prompts == ["slow"]:
             time.sleep(_SLOW_S)
-        return super().merge_request(request, sample_rows, batch_refs)
+        return super().merge_request(request, batch_refs)
 
 
 def _record_deadlines(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, float, float]]:

@@ -16,7 +16,6 @@ from vrl.generation.protocols import BatchPayload
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
-    GenerationSampleRow,
 )
 from vrl.trajectory.builders import (
     build_chunk_autoregressive_denoise_trajectory,
@@ -35,16 +34,14 @@ class ChunkAutoregressiveDenoiseGatherer:
     def merge_generation_batches(
         self,
         request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
         batches: Sequence[BatchPayload],
     ) -> GenerationOutput:
         ordered = self._order_and_validate_batches(
             request,
-            sample_rows,
             cast("Sequence[ChunkAutoregressiveDenoiseResult]", batches),
         )
         output = gather_batch_media(ordered)
-        rows = list(sample_rows)
+        rows = request.sample_rows()
         context = gather_batch_context([batch.context for batch in ordered])
 
         if ordered[0].has_trainable_trajectory:
@@ -91,12 +88,10 @@ class ChunkAutoregressiveDenoiseGatherer:
     @staticmethod
     def _order_and_validate_batches(
         request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
         batches: Sequence[ChunkAutoregressiveDenoiseResult],
     ) -> list[ChunkAutoregressiveDenoiseResult]:
         ordered = sort_and_validate_batch_coverage(
             request,
-            sample_rows,
             batches,
             row_fields=(),
         )

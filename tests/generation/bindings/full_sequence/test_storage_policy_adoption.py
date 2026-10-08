@@ -33,7 +33,6 @@ def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
     )
     output = DenoiseBatchGatherer().merge_generation_batches(
         request,
-        request.sample_rows(),
         [_chunk()],
     )
 

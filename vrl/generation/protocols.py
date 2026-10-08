@@ -37,7 +37,6 @@ if TYPE_CHECKING:
     from vrl.generation.types import (
         GenerationOutput,
         GenerationRequest,
-        GenerationSampleRow,
     )
 
 
@@ -51,7 +50,6 @@ class GenerationBatchGatherer(Protocol):
     def merge_generation_batches(
         self,
         request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
         batches: Sequence[BatchPayload],
     ) -> GenerationOutput: ...
 
@@ -120,7 +118,6 @@ class GenerationBatchExecutor(Protocol):
     def merge_generation_batches(
         self,
         request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
         batches: Sequence[BatchPayload],
     ) -> GenerationOutput: ...
 

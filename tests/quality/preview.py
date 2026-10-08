@@ -144,10 +144,9 @@ def generate_rollout_preview(
         seed = _PREVIEW_BASE_SEED + index
         request = build_preview_request(request_builder, example, seed=seed)
         request.request_id = f"{entry.family}-rollout-preview-{index}"
-        rows = request.sample_rows()
         plan = EnginePlan.from_request(request)
         with torch.inference_mode():
-            output = executor.forward_plan(request, rows, plan)
+            output = executor.forward_plan(request, plan)
 
         file_name = f"{index:03d}.png"
         write_preview_image(

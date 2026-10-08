@@ -25,7 +25,7 @@ from vrl.generation.execution.types import (
 )
 from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
 from vrl.generation.ray.engine import RayGenerationEngine
-from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
+from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_group import RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
@@ -120,7 +120,6 @@ class RayGenerationExecutor:
         from vrl.utils.profiling import profile_range
 
         _gen_start = time.perf_counter()
-        sample_rows = request.sample_rows()
         with profile_range("engine.plan"):
             engine_plan = EnginePlan.from_request(request)
         pipelined_oom: RequestBatchOutOfMemory | None = None
@@ -128,7 +127,6 @@ class RayGenerationExecutor:
             pipelined_result = await self._execute_request_batches(
                 request,
                 engine_plan,
-                sample_rows,
             )
             if isinstance(pipelined_result, GenerationOutput):
                 logger.info(
@@ -210,7 +208,7 @@ class RayGenerationExecutor:
                 )
             batch_outputs.append(result.output)
 
-        output = self.gatherer.merge_generation_batches(request, sample_rows, batch_outputs)
+        output = self.gatherer.merge_generation_batches(request, batch_outputs)
         # Log each batch's measured memory peaks.
         for result in results:
             reading = result.memory
@@ -295,7 +293,6 @@ class RayGenerationExecutor:
         self,
         request: GenerationRequest,
         engine_plan: EnginePlan,
-        sample_rows: list[GenerationSampleRow],
     ) -> GenerationOutput | RequestBatchOutOfMemory:
         """Per-request path (opt-in, ``pipelined=True``).
 
@@ -361,7 +358,7 @@ class RayGenerationExecutor:
                 )
             refs_by_key.update(zip(result.batch_keys, result.batch_refs, strict=True))
         ordered_refs = [refs_by_key[batch.batch_key] for batch in engine_plan.sample_batches]
-        return await self._finalize_request(request, sample_rows, ordered_refs)
+        return await self._finalize_request(request, ordered_refs)
 
     def _engine_batch_subsets(
         self,
@@ -379,7 +376,6 @@ class RayGenerationExecutor:
     async def _finalize_request(
         self,
         request: GenerationRequest,
-        sample_rows: list[GenerationSampleRow],
         batch_refs: list[Any],
     ) -> GenerationOutput:
         """Merge staged batch references on whichever finalizer is free.
@@ -401,10 +397,7 @@ class RayGenerationExecutor:
                     worker_id=None,
                     remote_method=None,
                     payload=request,
-                    keyword_args={
-                        "sample_rows": list(sample_rows),
-                        "batch_refs": list(batch_refs),
-                    },
+                    keyword_args={"batch_refs": list(batch_refs)},
                 ),
             ],
             operation="rollout.generation.finalize",

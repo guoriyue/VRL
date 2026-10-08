@@ -56,9 +56,7 @@ def test_decoded_fp32_latent_survives_lower_precision_path_buffer_and_gather() -
         batch=GenerationSampleBatch(0, 0, 2), config=config, denoise_result=loop
     )
     request = GenerationRequest("clean-replay", "test", "t2i", ["edit"], 2)
-    output = DenoiseBatchGatherer().merge_generation_batches(
-        request, request.sample_rows(), [batch]
-    )
+    output = DenoiseBatchGatherer().merge_generation_batches(request, [batch])
     reader = TrajectoryReader(output.trajectory)
     replay = reader.forward_process_replay("denoise", 0)
     torch.testing.assert_close(replay.latents_clean, model.decoded_latent, rtol=0, atol=0)

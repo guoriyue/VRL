@@ -59,7 +59,6 @@ class _ListGatherer:
     def merge_generation_batches(
         self,
         request: GenerationRequest,
-        sample_rows: Any,
         batches: list[Any],
     ) -> GenerationOutput:
         return GenerationOutput(
@@ -68,7 +67,7 @@ class _ListGatherer:
                 request_id=request.request_id,
                 family=request.family,
                 task=request.task,
-                sample_rows=list(sample_rows),
+                sample_rows=request.sample_rows(),
                 axes={},
                 segments={},
             ),

@@ -17,7 +17,7 @@ from typing import Any
 from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.ray.reward_media import reference_reward_media
 from vrl.generation.ray.tensor_wire import register_tensor_wire_serializer
-from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
+from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.dependencies import current_node_ip
 
 
@@ -48,7 +48,6 @@ class RayGenerationFinalizer:
     def merge_request(
         self,
         request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
         batch_refs: Sequence[Any],
     ) -> GenerationOutput:
         """Fetch the staged batch payloads and assemble the request's output.
@@ -65,7 +64,7 @@ class RayGenerationFinalizer:
                 f"for request {request.request_id!r}",
             )
         payloads = ray.get(list(batch_refs))
-        output = self.gatherer.merge_generation_batches(request, list(sample_rows), payloads)
+        output = self.gatherer.merge_generation_batches(request, payloads)
         if not isinstance(output, GenerationOutput):
             raise TypeError(
                 f"{type(self.gatherer).__name__}.merge_generation_batches returned "

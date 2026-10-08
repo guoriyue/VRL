@@ -80,7 +80,6 @@ class InProcessGenerationRuntime:
         return await self._call(self._generate, request)
 
     def _generate(self, request: GenerationRequest) -> GenerationOutput:
-        sample_rows = request.sample_rows()
         plan = EnginePlan.from_request(request)
         payloads = []
         for batch in plan.sample_batches:
@@ -94,7 +93,7 @@ class InProcessGenerationRuntime:
                     f"in-process generation batch {batch.batch_key} failed: {result.error}",
                 )
             payloads.append(result.output)
-        return self._gatherer.merge_generation_batches(request, sample_rows, payloads)
+        return self._gatherer.merge_generation_batches(request, payloads)
 
     async def update_weights(self, trainable_state: Any, policy_version: int) -> None:
         self.current_policy_version = await self._call(

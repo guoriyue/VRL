@@ -264,7 +264,7 @@ def main() -> None:
                 request, GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1)
             )
             # Exercise driver gather as well as worker encode/prepare/denoise/decode.
-            generated = executor.merge_generation_batches(request, request.sample_rows(), [batch])
+            generated = executor.merge_generation_batches(request, [batch])
             image = generated.output[0]
             write_png(image, out / f"{name}.png")
             output_sha256 = sha256_file(out / f"{name}.png")

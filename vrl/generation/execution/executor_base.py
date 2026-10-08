@@ -14,7 +14,6 @@ from vrl.generation.protocols import BatchPayload, GenerationBatchGatherer
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
-    GenerationSampleRow,
 )
 
 
@@ -51,14 +50,13 @@ class BatchExecutorBase:
     def forward_plan(
         self,
         request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
         plan: EnginePlan,
     ) -> GenerationOutput:
         batches = execute_generation_batches(
             plan.sample_batches,
             lambda batch: self.forward_batch(request, batch),
         )
-        return self.merge_generation_batches(request, list(sample_rows), batches)
+        return self.merge_generation_batches(request, batches)
 
     def execute_request_batches(
         self,
@@ -106,7 +104,6 @@ class BatchExecutorBase:
     def merge_generation_batches(
         self,
         request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
         batches: Sequence[BatchPayload],
     ) -> GenerationOutput:
         if self._gatherer is None:
@@ -114,7 +111,7 @@ class BatchExecutorBase:
                 f"{type(self).__name__} requires an injected batch gatherer "
                 "for request-level execution",
             )
-        return self._gatherer.merge_generation_batches(request, sample_rows, batches)
+        return self._gatherer.merge_generation_batches(request, batches)
 
 
 __all__ = ["BatchExecutorBase"]

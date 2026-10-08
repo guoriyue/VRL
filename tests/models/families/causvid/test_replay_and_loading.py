@@ -654,9 +654,8 @@ def test_generation_executor_builds_trainable_chunk_trajectory() -> None:
             "seed": 123,
         },
     )
-    rows = request.sample_rows()
 
-    output = executor.forward_plan(request, rows, EnginePlan.from_request(request))
+    output = executor.forward_plan(request, EnginePlan.from_request(request))
 
     assert output.output.shape == (
         1,

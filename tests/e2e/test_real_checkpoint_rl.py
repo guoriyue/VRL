@@ -420,9 +420,8 @@ class _DirectExecutorGenerationRuntime:
         self._move_frozen(self.device)
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
-        rows = request.sample_rows()
         with torch.no_grad():
-            return self.executor.forward_plan(request, rows, EnginePlan.from_request(request))
+            return self.executor.forward_plan(request, EnginePlan.from_request(request))
 
     async def offload(self) -> None:
         self._move_frozen(torch.device("cpu"))

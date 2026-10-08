@@ -20,7 +20,7 @@ from vrl.utils.cuda_memory import empty_cuda_cache, is_cuda_out_of_memory
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
-    from vrl.generation.types import GenerationRequest, GenerationSampleRow
+    from vrl.generation.types import GenerationRequest
 
 # The generation facade reaches this module while parsing config. Tensor-only
 # helpers import torch at call time so config resolution remains torch-free.
@@ -229,12 +229,11 @@ class BatchResultWithIdentity(Protocol):
 
 def sort_and_validate_batch_coverage[TBatch: BatchResultWithIdentity](
     request: GenerationRequest,
-    sample_rows: Sequence[GenerationSampleRow],
     batches: Sequence[TBatch],
     *,
     row_fields: Sequence[str] = (),
 ) -> list[TBatch]:
-    """Sort prompt-major batches and check they exactly cover ``sample_rows``.
+    """Sort prompt-major batches and check they exactly cover the request's rows.
 
     The sort + coverage skeleton every batch gatherer shares: prompt-major sort,
     per-batch range validation, optional row-count checks on ``row_fields``, and
@@ -251,7 +250,7 @@ def sort_and_validate_batch_coverage[TBatch: BatchResultWithIdentity](
             result.batch.sample_start,
         ),
     )
-    expected = [(row.prompt_index, row.sample_index) for row in sample_rows]
+    expected = [(row.prompt_index, row.sample_index) for row in request.sample_rows()]
     actual: list[tuple[int, int]] = []
     for result in ordered:
         batch = result.batch

@@ -93,9 +93,7 @@ def test_edit_executor_encodes_rgba_references_once_per_batch_and_preserves_outp
         },
     )
     with torch.no_grad():
-        output = executor.forward_plan(
-            request, request.sample_rows(), EnginePlan.from_request(request)
-        )
+        output = executor.forward_plan(request, EnginePlan.from_request(request))
     # Each reference is VAE-encoded only once for the two-sample batch.
     assert len(encoded_images) == 2
     assert encoded_images[0].shape == (1, 4, 1, 64, 64)
@@ -110,9 +108,7 @@ def test_edit_executor_encodes_rgba_references_once_per_batch_and_preserves_outp
     request.sampling["output_mode"] = "rgb"
     request.sampling["width"] = 64
     with torch.no_grad():
-        plain = executor.forward_plan(
-            request, request.sample_rows(), EnginePlan.from_request(request)
-        )
+        plain = executor.forward_plan(request, EnginePlan.from_request(request))
     assert plain.output.shape == (2, 3, 64, 64)
     assert (plain.output == 255).all()
     assert prompt_images[-1] is None
@@ -121,5 +117,5 @@ def test_edit_executor_encodes_rgba_references_once_per_batch_and_preserves_outp
     pipe.processor.image_processor.size["shortest_edge"] = 65536
     request.inputs = [GenerationInput(prompt="edit", reference_images=[str(source)])]
     with pytest.raises(ValueError, match="checkpoint vision processor's pixel limits"):
-        executor.forward_plan(request, request.sample_rows(), EnginePlan.from_request(request))
+        executor.forward_plan(request, EnginePlan.from_request(request))
     assert len(encoded_images) == 2

@@ -33,7 +33,6 @@ from vrl.generation.types import (
     DenoiseRequest,
     GenerationOutput,
     GenerationRequest,
-    GenerationSampleRow,
 )
 from vrl.trajectory.storage import (
     TrajectoryStoragePolicy,
@@ -235,7 +234,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
     def forward_plan_pipelined(
         self,
         request: GenerationRequest,
-        sample_rows: list[GenerationSampleRow],
         plan: EnginePlan,
     ) -> GenerationOutput:
         """Local execution and merge with a CPU handoff after each generation batch.
@@ -250,7 +248,7 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         """
 
         batches = self.execute_request_batches(request, plan.sample_batches)
-        return self.merge_generation_batches(request, sample_rows, batches)
+        return self.merge_generation_batches(request, batches)
 
     def forward_batch(
         self,

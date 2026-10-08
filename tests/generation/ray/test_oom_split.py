@@ -169,9 +169,9 @@ class _CountingFinalizer(RayGenerationFinalizer):
         super().__init__(finalizer_id, gatherer)
         self.merged: list[int] = []
 
-    def merge_request(self, request: Any, sample_rows: Any, batch_refs: Any) -> Any:
+    def merge_request(self, request: Any, batch_refs: Any) -> Any:
         self.merged.append(len(batch_refs))
-        return super().merge_request(request, sample_rows, batch_refs)
+        return super().merge_request(request, batch_refs)
 
     def merges(self) -> list[int]:
         return list(self.merged)
