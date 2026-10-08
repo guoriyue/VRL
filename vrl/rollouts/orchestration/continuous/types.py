@@ -74,7 +74,9 @@ class PromptBatch:
 
     Each prompt owns one result slot. Completion order cannot change prompt
     order, and retries keep the installed policy version and collection settings.
-    The consumer releases the results before the producer installs another batch.
+    The producer is the only writer: it fills the slots, and its
+    ``release_results`` empties them and marks the batch consumed once the
+    trainer has taken the iteration, before another batch can be installed.
     """
 
     batch_id: int
@@ -87,6 +89,7 @@ class PromptBatch:
     pending_since: dict[int, float]
     results: list[ScoredRollout | None]
     failure_counts: dict[int, int] = field(default_factory=dict)
+    consumed: bool = False
 
 
 @dataclass(slots=True)

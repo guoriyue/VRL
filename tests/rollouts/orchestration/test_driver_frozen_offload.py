@@ -38,7 +38,7 @@ class _FakeDriverModel:
 def _coordinator(model: _FakeDriverModel) -> RolloutRuntimeCoordinator:
     # A collector whose topology parks the trainer for generation; cuda-typed
     # device so should_offload_driver_model_for_rollout() is True on a CPU box.
-    runtime = SimpleNamespace(current_policy_version=None)
+    runtime = SimpleNamespace(current_policy_version=0)
     strategy = SingleProcessStrategy()
     state = TrainingMemoryState(
         model=model,  # type: ignore[arg-type]
@@ -70,8 +70,7 @@ def _coordinator(model: _FakeDriverModel) -> RolloutRuntimeCoordinator:
         training_state_getter=lambda: state,
         weight_syncer=None,
         sync_state_getter=None,
-        weights_initialized=lambda: True,
-        set_weights_initialized=lambda _v: None,
+        weights_initialized=True,
     )
 
 

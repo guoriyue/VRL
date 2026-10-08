@@ -14,7 +14,6 @@ import concurrent.futures
 import logging
 import threading
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import Any
 
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
@@ -32,31 +31,24 @@ _OWNER_START_TIMEOUT_S = 10.0
 _OWNER_STOP_TIMEOUT_S = 30.0
 
 
-@dataclass(frozen=True, slots=True)
-class _SubmittedPromptBatch:
-    """Owner-side identity of one producer batch awaiting trainer consumption."""
+def _same_prompts(submitted_prompts: tuple[Any, ...], presented_prompts: list[Any]) -> bool:
+    """Fail closed when a prompt type has non-scalar or invalid equality."""
 
-    prompts: tuple[Any, ...]
-    group_size: int
-
-    def matches_presented_prompts(self, presented_prompts: list[Any]) -> bool:
-        """Fail closed when a prompt type has non-scalar or invalid equality."""
-
-        if len(self.prompts) != len(presented_prompts):
-            return False
-        for submitted_prompt, presented_prompt in zip(
-            self.prompts,
-            presented_prompts,
-            strict=True,
-        ):
-            if submitted_prompt is presented_prompt:
-                continue
-            try:
-                if not bool(submitted_prompt == presented_prompt):
-                    return False
-            except (TypeError, ValueError, RuntimeError):
+    if len(submitted_prompts) != len(presented_prompts):
+        return False
+    for submitted_prompt, presented_prompt in zip(
+        submitted_prompts,
+        presented_prompts,
+        strict=True,
+    ):
+        if submitted_prompt is presented_prompt:
+            continue
+        try:
+            if not bool(submitted_prompt == presented_prompt):
                 return False
-        return True
+        except (TypeError, ValueError, RuntimeError):
+            return False
+    return True
 
 
 class _ContinuousRolloutController:
@@ -77,7 +69,6 @@ class _ContinuousRolloutController:
 
         self.consumer: ContinuousRolloutConsumer | None = None
         self.producer: ContinuousRolloutProducer | None = None
-        self._submitted_prompt_batch: _SubmittedPromptBatch | None = None
 
         self._command_lock = asyncio.Lock()
         self._active_commands: set[asyncio.Task[Any]] = set()
@@ -114,22 +105,22 @@ class _ContinuousRolloutController:
                     initial_weights=initial_weights,
                     stats=startup_stats,
                 )
-            elif self._submitted_prompt_batch is None:
+            elif self.producer.prompt_batch is None or self.producer.prompt_batch.consumed:
                 self._set_prompt_batch(
                     prompts,
                     group_size=group_size,
                     runtime_debug=runtime_debug,
                 )
-            elif not self._submitted_prompt_batch.matches_presented_prompts(prompts):
+            elif not _same_prompts(self.producer.prompt_batch.prompts, prompts):
                 raise RuntimeError(
                     "continuous prefetch prompt batch does not match the next prompts "
                     "presented by the trainer",
                 )
-            elif self._submitted_prompt_batch.group_size != group_size:
+            elif self.producer.prompt_batch.group_size != group_size:
                 raise RuntimeError(
                     "continuous prefetch group size does not match the batch "
                     "presented by the trainer: "
-                    f"expected={self._submitted_prompt_batch.group_size}, "
+                    f"expected={self.producer.prompt_batch.group_size}, "
                     f"requested={group_size}",
                 )
             assert self.consumer is not None
@@ -144,7 +135,7 @@ class _ContinuousRolloutController:
                 poll_interval_s=self.settings.queue_poll_interval_s,
                 producer_state=self.producer.state,
             )
-            self._submitted_prompt_batch = None
+            self.producer.release_results()
             if next_prompts is not None:
                 # Debug metadata belongs to generation time. This prefetch runs
                 # during the current training step, even when the trainer consumes
@@ -179,10 +170,6 @@ class _ContinuousRolloutController:
             list(prompts),
             group_size=group_size,
             runtime_debug=runtime_debug,
-        )
-        self._submitted_prompt_batch = _SubmittedPromptBatch(
-            prompts=tuple(prompts),
-            group_size=group_size,
         )
         self.producer.admit_now()
 
@@ -350,10 +337,6 @@ class _ContinuousRolloutController:
             group_size=group_size,
             runtime_debug=runtime_debug,
         )
-        self._submitted_prompt_batch = _SubmittedPromptBatch(
-            prompts=tuple(prompts),
-            group_size=group_size,
-        )
         await self.producer.start()
         self.producer.admit_now()
 
@@ -361,12 +344,10 @@ class _ContinuousRolloutController:
         producer = self.producer
         if producer is not None:
             await producer.stop(wait_timeout_s=_OWNER_STOP_TIMEOUT_S)
-            if producer.prompt_batch is not None:
-                producer.prompt_batch.results.clear()
+            producer.release_results()
         # Retain owners until cleanup succeeds so shutdown can retry a failure.
         self.producer = None
         self.consumer = None
-        self._submitted_prompt_batch = None
 
     def _attach_producer_metrics(self, iteration: RolloutIteration) -> None:
         if self.producer is None:

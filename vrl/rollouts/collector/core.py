@@ -20,7 +20,7 @@ import os
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import torch
 
@@ -98,6 +98,7 @@ class RolloutGenerationResult:
     completed_at: float
 
 
+@runtime_checkable
 class OwnedCollection(Protocol):
     """A prompt item that runs its own generation plan through the collector.
 
@@ -415,7 +416,7 @@ class RolloutCollector:
             return request, indices
 
         for prompt_idx, item in enumerate(prompts):
-            if callable(getattr(item, "collect", None)):
+            if isinstance(item, OwnedCollection):
                 raise ValueError(
                     "an owned collection is collected through prepare_training_batches"
                 )
@@ -469,7 +470,7 @@ class RolloutCollector:
 
         if not prompts:
             return []
-        owned = [callable(getattr(item, "collect", None)) for item in prompts]
+        owned = [isinstance(item, OwnedCollection) for item in prompts]
         if any(owned):
             if not all(owned):
                 raise ValueError("owned collections and one-shot prompts cannot share a call")

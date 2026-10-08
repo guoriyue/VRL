@@ -29,6 +29,7 @@ from vrl.rewards import RewardRuntime
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import RolloutCollector
+from vrl.rollouts.collector.core import OwnedCollection
 from vrl.rollouts.orchestration import (
     RolloutSchedule,
     validate_rollout_schedule_topology,
@@ -855,7 +856,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     # An owned collection (see ``OwnedCollection``) resolved its own paths.
     examples = [
         example
-        if callable(getattr(example, "collect", None))
+        if isinstance(example, OwnedCollection)
         else example.with_resolved_references(data_root=artifact_data_root, allow_absolute=True)
         for example in examples
     ]

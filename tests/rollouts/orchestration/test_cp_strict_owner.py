@@ -1,15 +1,24 @@
-"""Actual strict schedule/coordinator with only CP leaders owning collectors."""
+"""Actual strict schedule/coordinator with only CP leaders owning collectors.
+
+Every rank runs the real coordinator stack: the CP leaders own a real
+collector over the tiny SANA in-process runtime and a real trainer side; the
+other ranks own nothing and must observe no transition.
+"""
 
 import asyncio
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from tests.rollouts.orchestration.test_strict_failure_path import _Collector, _schedule, _Strategy
+from tests.rollouts.collector._helpers import Trace, real_collector, trainer_side
 from vrl.ray.resources import RayLifecyclePlan
-from vrl.rollouts.orchestration.strict_on_policy import ContextParallelStrictRolloutSchedule
+from vrl.rollouts.orchestration.strict_on_policy import (
+    ContextParallelStrictRolloutSchedule,
+    StrictOnPolicyRolloutSchedule,
+)
 from vrl.trainers.distributed import create_context_parallel_groups
 
 
@@ -17,15 +26,20 @@ def _worker(rank, rendezvous, spool):
     dist.init_process_group(
         "gloo", init_method=rendezvous, rank=rank, world_size=4, timeout=timedelta(seconds=90)
     )
+    monkeypatch = pytest.MonkeyPatch()
     try:
         groups = create_context_parallel_groups(2)
-        calls = []
-        collector = _Collector(calls, collect_raises=False, trainer_shares_gpu=False)
-        owner = (
-            _schedule(collector, _Strategy(calls), calls=calls, with_syncer=True)
-            if groups.cp_rank == 0
-            else None
-        )
+        phase = Trace(monkeypatch)
+        bench = None
+        owner = None
+        if groups.cp_rank == 0:
+            bench = real_collector(monkeypatch, Path(spool) / f"rank{rank}")
+            trainer = trainer_side(bench, initialized=True)
+            phase.watch(bench.collector, "activate_generation_runtime", "activate_rollout")
+            phase.watch(bench.collector, "offload_generation_runtime_memory", "offload_rollout")
+            phase.watch(bench.collector, "shutdown", "collector_shutdown")
+            phase.watch(bench.runtime, "update_weights", "sync_weights_after_train")
+            owner = StrictOnPolicyRolloutSchedule(lifecycle=trainer.coordinator(bench))
         schedule = ContextParallelStrictRolloutSchedule(
             owner=owner, groups=groups, spool_dir=spool
         )
@@ -34,24 +48,26 @@ def _worker(rank, rendezvous, spool):
         asyncio.run(schedule.after_train_step())
         schedule.reset()
         if owner is not None:
-            assert calls == ["activate_rollout", "offload_rollout", "sync_weights_after_train"]
+            assert phase.events == [
+                "activate_rollout",
+                "offload_rollout",
+                "sync_weights_after_train",
+            ]
         else:
-            assert calls == []
-        if owner is not None and groups.dp_rank == 0:
-            collector.lifecycle = RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=())
+            assert phase.events == []
+        if bench is not None and groups.dp_rank == 0:
+            bench.collector.lifecycle = RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=())
         with pytest.raises(RuntimeError, match="disjoint"):
             asyncio.run(schedule.next_iteration([], group_size=2))
 
-        async def fail_push(_state):
-            raise RuntimeError("owner weight publication failed")
-
-        if owner is not None and groups.dp_rank == 0:
-            owner.lifecycle.weight_syncer.push = fail_push
+        if bench is not None and groups.dp_rank == 0:
+            phase.fail("sync_weights_after_train", "owner weight publication failed")
         with pytest.raises(RuntimeError, match="owner weight publication failed"):
             asyncio.run(schedule.after_train_step())
         asyncio.run(schedule.shutdown())
-        assert calls.count("collector_shutdown") == (1 if owner is not None else 0)
+        assert phase.events.count("collector_shutdown") == (1 if owner is not None else 0)
     finally:
+        monkeypatch.undo()
         dist.destroy_process_group()
 
 

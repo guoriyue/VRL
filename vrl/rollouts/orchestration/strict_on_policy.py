@@ -33,11 +33,9 @@ class StrictOnPolicyRolloutSchedule:
         # One accumulator for the whole iteration: schedule-level phases (weight
         # init / driver offload / activate / collect / sync) and the per-request
         # collect stats land in the same typed object.
+        # Whether the strategy can park at all was checked before launch, and
+        # its park re-checks; the schedule does not ask again each iteration.
         stats = RolloutStats()
-        # Capability validation happens before weight export or collection so a
-        # distributed strategy cannot enter a shared-GPU phase by pretending the
-        # single-process parking implementation applies to it.
-        self.lifecycle.validate_training_state_parking()
         await self.lifecycle.ensure_initial_weights(stats)
         policy_version = self.lifecycle.current_policy_version()
 

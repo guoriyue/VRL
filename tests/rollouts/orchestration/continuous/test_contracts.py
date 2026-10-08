@@ -7,6 +7,12 @@ These pin the behaviors the trainer relies on:
 - the consumer honors the staleness bound and aggregates per-item
   collect phase timings into the iteration.
 
+The producer runs over the real stack: ``RolloutRuntimeCoordinator`` on the
+real collector with the tiny SANA in-process runtime and a real trainer side,
+so a "version bump" is a real weight push and every stored item is a real
+scored batch. Generation and scoring are held at explicit gates ahead of the
+real work so a test controls their timing.
+
 Some cases use ``StalenessPolicy(0)`` to pin the mechanism's exact boundary.
 That value is intentionally unreachable from production continuous config,
 which requires at least one stale policy version; zero-staleness execution uses
@@ -16,16 +22,24 @@ the strict-on-policy schedule.
 from __future__ import annotations
 
 import asyncio
-from collections import deque
+from collections import Counter, deque
+from collections.abc import Sequence
 from dataclasses import FrozenInstanceError, dataclass
 from typing import Any
 
 import pytest
 import torch
 
-from tests.rollouts.collector._helpers import PromptCollectionFake
+from tests.rollouts.collector._helpers import (
+    CollectorBench,
+    IndexReward,
+    TrainerSide,
+    real_collector,
+    trainer_side,
+)
 from tests.rollouts.orchestration.continuous._helpers import _wait_until
 from vrl.ray.operation_deadline import RayOperationTimeout
+from vrl.rewards import RewardOutput, RewardSample
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.core import PromptCollectionCleanupError
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
@@ -36,68 +50,90 @@ from vrl.rollouts.orchestration.continuous.types import (
     PromptBatch,
     ScoredRollout,
 )
+from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.stats import RolloutStats
 from vrl.utils.lifecycle import RuntimeLifecycle
 
 
-def _batch(prompt: str, samples: int = 2) -> RolloutBatch:
-    return RolloutBatch(
-        rewards=torch.arange(samples, dtype=torch.float32),
-        group_ids=torch.zeros(samples, dtype=torch.long),
-    )
-
-
+# A LoRA policy under continuous scheduling keeps versioned weight slots, so a
+# request stamped with an older version still runs after a newer push: the
+# shape the mid-flight version-bump cases need.
 @dataclass
-class _Unscored:
-    batch: RolloutBatch
-    phases: dict[str, float]
+class _Stack:
+    bench: CollectorBench
+    trainer: TrainerSide
+    coordinator: RolloutRuntimeCoordinator
+
+    async def bump_version(self) -> int:
+        """The trainer's weight push: the real export under the next version."""
+
+        await self.coordinator.push_prepared_weights(
+            self.coordinator.prepare_weight_sync_state(), RolloutStats()
+        )
+        return self.bench.runtime.current_policy_version
 
 
-class _GatedCollector(PromptCollectionFake):
-    """Collector whose generation/reward phases block on explicit gates."""
+async def _stack(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    *,
+    reward: IndexReward | None = None,
+    versioned: bool = False,
+) -> _Stack:
+    bench = real_collector(monkeypatch, tmp_path, reward=reward, versioned_slots=versioned)
+    trainer = trainer_side(bench, initialized=True)
+    stack = _Stack(bench, trainer, trainer.coordinator(bench))
+    # The initial push every run starts with: the runtime serves policy version 1.
+    await stack.bump_version()
+    return stack
+
+
+class _GatedReward(IndexReward):
+    """Scoring that waits at ``allow_score`` and records its completion."""
 
     def __init__(self) -> None:
-        self.allow_generate = asyncio.Event()
-        self.allow_generate.set()
+        super().__init__()
         self.allow_score = asyncio.Event()
         self.allow_score.set()
-        self.generation_started = asyncio.Event()
         self.events: list[str] = []
 
-    async def generate_rollout(self, request) -> _Unscored:
-        prompts = request.inputs
-        kwargs = request.options
-        self.generation_started.set()
-        self.events.append("generate_start")
-        await self.allow_generate.wait()
-        self.events.append("generate_end")
-        return _Unscored(
-            batch=_batch(str(prompts[0]), int(kwargs["group_size"])),
-            phases={"collect.engine_generate": 1.0},
-        )
-
-    async def evaluate_rollout(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
+    async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
         await self.allow_score.wait()
         self.events.append("score_end")
-        pendings[0].phases["collect.reward_score"] = 0.5
-        return [pending.batch for pending in pendings]
+        return await super().score_batch(samples)
 
 
-class _Lifecycle:
-    """Minimal RolloutLifecycle stand-in for producer-level tests."""
+class _GenerationGate:
+    """Hold each real generation at ``allow``; record start/end on ``events``.
 
-    def __init__(self, collector: Any, version: int = 1) -> None:
-        self.collector = collector
-        self.version = version
+    The await sits where a Ray runtime awaits dispatch, ahead of the worker body.
+    """
 
-    def current_policy_version(self) -> int | None:
-        return self.version
+    def __init__(
+        self, monkeypatch: pytest.MonkeyPatch, bench: CollectorBench, events: list[str]
+    ) -> None:
+        self.allow = asyncio.Event()
+        self.allow.set()
+        self.started = asyncio.Event()
+        real = bench.runtime.generate
 
-    async def ensure_initial_weights(self, stats: RolloutStats) -> None:
-        del stats
+        async def generate(request: Any) -> Any:
+            self.started.set()
+            events.append("generate_start")
+            await self.allow.wait()
+            output = await real(request)
+            events.append("generate_end")
+            return output
 
-    async def activate_rollout_runtime(self, stats: RolloutStats) -> None:
-        del stats
+        monkeypatch.setattr(bench.runtime, "generate", generate)
+
+
+async def _gated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, *, versioned: bool = False
+) -> tuple[_Stack, _GatedReward, _GenerationGate]:
+    reward = _GatedReward()
+    stack = await _stack(monkeypatch, tmp_path, reward=reward, versioned=versioned)
+    return stack, reward, _GenerationGate(monkeypatch, stack.bench, reward.events)
 
 
 def _settings(
@@ -116,13 +152,14 @@ def _settings(
         wait_timeout_s=5.0,
         queue_poll_interval_s=poll_interval_s,
         fail_fast_errors=fail_fast_errors,
+        # Only the owner thread's weight sync reads this; the producer never does.
+        versioned_weight_sync=False,
     )
 
 
 def _producer(
-    collector: Any,
+    lifecycle: RolloutRuntimeCoordinator,
     *,
-    lifecycle: _Lifecycle | None = None,
     max_stale: int = 0,
     prompts: list[str] | None = None,
     group_size: int = 2,
@@ -133,7 +170,7 @@ def _producer(
 ) -> ContinuousRolloutProducer:
     prompt_list = ["p0"] if prompts is None else list(prompts)
     producer = ContinuousRolloutProducer(
-        lifecycle=lifecycle or _Lifecycle(collector),
+        lifecycle=lifecycle,
         staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
         settings=_settings(
             max_inflight=max_inflight,
@@ -149,93 +186,59 @@ def _producer(
     return producer
 
 
-class _FiniteCollector(PromptCollectionFake):
-    """Records prompt-batch inputs and optionally fails one attempt per prompt."""
+def _ready(results: list[ScoredRollout | None]) -> int:
+    return sum(item is not None for item in results)
 
-    def __init__(self, *, fail_once: set[str] | None = None) -> None:
-        self.fail_once = set(fail_once or ())
-        self.attempts: dict[str, int] = {}
-        self.active: dict[str, int] = {}
-        self.max_active: dict[str, int] = {}
-        self.calls: list[tuple[str, int | None, int, bool]] = []
 
-    async def generate_rollout(self, request) -> _Unscored:
-        prompts = request.inputs
-        kwargs = request.options
-        prompt = str(getattr(prompts[0], "prompt", prompts[0]))
-        attempt = self.attempts.get(prompt, 0) + 1
-        self.attempts[prompt] = attempt
-        self.active[prompt] = self.active.get(prompt, 0) + 1
-        self.max_active[prompt] = max(
-            self.max_active.get(prompt, 0),
-            self.active[prompt],
-        )
-        self.calls.append(
-            (
-                prompt,
-                kwargs.get("policy_version"),
-                int(kwargs["group_size"]),
-                bool(kwargs["runtime_debug"]),
-            ),
-        )
-        try:
-            await asyncio.sleep(0)
-            if prompt in self.fail_once and attempt == 1:
-                raise RuntimeError(f"transient failure for {prompt}")
-            return _Unscored(
-                batch=_batch(prompt, int(kwargs["group_size"])),
-                phases={},
-            )
-        finally:
-            self.active[prompt] -= 1
+def _attempts(bench: CollectorBench) -> dict[str, int]:
+    """Generation attempts per prompt, failed ones included."""
 
-    async def evaluate_rollout(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
-        return [pending.batch for pending in pendings]
+    return dict(Counter(request.prompts[0] for request in bench.trace.requests))
 
 
 # ------------------------------------------------------------- batch results
 
 
 @pytest.mark.asyncio
-async def test_result_slot_is_filled_only_after_reward_scoring() -> None:
+async def test_result_slot_is_filled_only_after_reward_scoring(monkeypatch, tmp_path) -> None:
     """A generated-but-unscored group must never appear in the batch results."""
-    collector = _GatedCollector()
-    collector.allow_score.clear()
-    producer = _producer(collector)
+
+    monkeypatch.setenv("VRL_PROFILE", "1")
+    stack, reward, _gate = await _gated(monkeypatch, tmp_path)
+    reward.allow_score.clear()
+    producer = _producer(stack.coordinator)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
 
     await producer.start()
     try:
-        await asyncio.wait_for(collector.generation_started.wait(), 5.0)
+        await _wait_until(lambda: "generate_end" in reward.events)
         await asyncio.sleep(0.05)
         # Generation finished, reward still pending: nothing trainer-visible.
-        assert sum(item is not None for item in results) == 0
+        assert _ready(results) == 0
 
-        collector.allow_score.set()
-        await _wait_until(lambda: sum(item is not None for item in results) >= 1)
+        reward.allow_score.set()
+        await _wait_until(lambda: _ready(results) >= 1)
         item = results[0]
         # The queued item is a complete, reward-scored, trainer-ready batch.
         assert item.batch.rewards is not None
         assert item.batch.rewards.numel() == 2
+        assert item.batch.trajectory is not None
         # Collect phase timings rode along on the item, not on shared state.
-        assert item.stats.as_metrics_dict()["collect.engine_generate"] == 1.0
-        assert item.stats.as_metrics_dict()["collect.reward_score"] == 0.5
+        assert item.stats.as_metrics_dict()["collect.engine_generate"] > 0.0
+        assert item.stats.as_metrics_dict()["collect.reward_score"] > 0.0
     finally:
         await producer.stop()
 
 
 @pytest.mark.asyncio
-async def test_failed_reward_scoring_leaves_result_slot_empty() -> None:
+async def test_failed_reward_scoring_leaves_result_slot_empty(monkeypatch, tmp_path) -> None:
     """Reward failures surface as producer errors, not as scored results."""
 
-    class _RewardBoom(_GatedCollector):
-        async def evaluate_rollout(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
-            raise RuntimeError("reward model exploded")
-
-    collector = _RewardBoom()
-    producer = _producer(collector)
+    stack = await _stack(monkeypatch, tmp_path)
+    stack.bench.trace.fail("score", "reward model exploded", times=3)
+    producer = _producer(stack.coordinator)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
@@ -243,7 +246,7 @@ async def test_failed_reward_scoring_leaves_result_slot_empty() -> None:
     await producer.start()
     try:
         await _wait_until(lambda: producer.state.error_count >= 2)
-        assert sum(item is not None for item in results) == 0
+        assert _ready(results) == 0
         assert "reward model exploded" in str(producer.state.last_error)
         assert producer.state.completed_count == 0
     finally:
@@ -251,9 +254,11 @@ async def test_failed_reward_scoring_leaves_result_slot_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_control_loop_failure_reaches_consumer_without_timeout() -> None:
-    collector = _GatedCollector()
-    producer = _producer(collector)
+async def test_control_loop_failure_reaches_consumer_without_timeout(
+    monkeypatch, tmp_path
+) -> None:
+    stack = await _stack(monkeypatch, tmp_path)
+    producer = _producer(stack.coordinator)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
 
@@ -282,21 +287,15 @@ async def test_control_loop_failure_reaches_consumer_without_timeout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_terminal_generation_error_is_not_retried_or_wrapped() -> None:
+async def test_terminal_generation_error_is_not_retried_or_wrapped(monkeypatch, tmp_path) -> None:
     error = RayOperationTimeout(
         "rollout.generation.batch",
         1.0,
         context="request_id=req-terminal",
     )
-
-    class _TerminalCollector(_GatedCollector):
-        async def generate_rollout(self, request) -> _Unscored:
-            prompts = request.inputs
-            kwargs = request.options
-            del prompts, kwargs
-            raise error
-
-    producer = _producer(_TerminalCollector())
+    stack = await _stack(monkeypatch, tmp_path)
+    stack.bench.trace.fail("generate", error)
+    producer = _producer(stack.coordinator)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
@@ -319,35 +318,33 @@ async def test_terminal_generation_error_is_not_retried_or_wrapped() -> None:
         assert producer.state.fatal_error is error
         assert producer.state.submitted_count == 1
         assert producer.inflight_count == 0
-        assert sum(item is not None for item in results) == 0
+        assert _ready(results) == 0
     finally:
         await producer.stop()
 
 
 @pytest.mark.asyncio
-async def test_idle_sibling_failure_makes_next_collect_fatal_without_slot_retry() -> None:
+async def test_idle_sibling_failure_makes_next_collect_fatal_without_slot_retry(
+    monkeypatch, tmp_path
+) -> None:
     """A terminal failure between requests must poison the next slot immediately."""
 
     lifecycle = RuntimeLifecycle()
     sibling_failure = RayOperationTimeout("rollout.generation.batch", 0.5)
     lifecycle.fail(sibling_failure)
+    stack = await _stack(monkeypatch, tmp_path)
+    attempts = 0
 
-    class _ClosedRuntimeCollector(_GatedCollector):
-        def __init__(self) -> None:
-            super().__init__()
-            self.attempts = 0
+    # The admission gate a Ray runtime holds ahead of every generate: a closed
+    # lifecycle rejects the request before any worker is reached.
+    async def closed_generate(request: Any) -> Any:
+        nonlocal attempts
+        attempts += 1
+        lifecycle.require_running("generate")
+        raise AssertionError("closed runtime accepted generation")
 
-        async def generate_rollout(
-            self,
-            request: Any,
-        ) -> _Unscored:
-            del request
-            self.attempts += 1
-            lifecycle.require_running("generate")
-            raise AssertionError("closed runtime accepted generation")
-
-    collector = _ClosedRuntimeCollector()
-    producer = _producer(collector)
+    monkeypatch.setattr(stack.bench.runtime, "generate", closed_generate)
+    producer = _producer(stack.coordinator)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
@@ -367,17 +364,17 @@ async def test_idle_sibling_failure_makes_next_collect_fatal_without_slot_retry(
             )
 
         assert caught.value.__cause__ is sibling_failure
-        assert collector.attempts == 1
+        assert attempts == 1
         assert producer.state.submitted_count == 1
         assert producer.state.error_count == 1
         assert producer.inflight_count == 0
-        assert sum(item is not None for item in results) == 0
+        assert _ready(results) == 0
     finally:
         await producer.stop()
 
 
 @pytest.mark.asyncio
-async def test_cleanup_wrapper_around_terminal_error_is_not_retried() -> None:
+async def test_cleanup_wrapper_around_terminal_error_is_not_retried(monkeypatch, tmp_path) -> None:
     timeout = RayOperationTimeout(
         "rollout.generation.batch",
         1.0,
@@ -387,15 +384,9 @@ async def test_cleanup_wrapper_around_terminal_error_is_not_retried() -> None:
         timeout,
         [RuntimeError("reward cleanup failed")],
     )
-
-    class _TerminalCollector(_GatedCollector):
-        async def generate_rollout(self, request) -> _Unscored:
-            prompts = request.inputs
-            kwargs = request.options
-            del prompts, kwargs
-            raise wrapped
-
-    producer = _producer(_TerminalCollector())
+    stack = await _stack(monkeypatch, tmp_path)
+    stack.bench.trace.fail("generate", wrapped)
+    producer = _producer(stack.coordinator)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
@@ -419,19 +410,17 @@ async def test_cleanup_wrapper_around_terminal_error_is_not_retried() -> None:
         assert producer.state.fatal_error is wrapped
         assert producer.state.submitted_count == 1
         assert producer.inflight_count == 0
-        assert sum(item is not None for item in results) == 0
+        assert _ready(results) == 0
     finally:
         await producer.stop()
 
 
 @pytest.mark.asyncio
-async def test_finite_prompt_batch_completes_each_slot_once_then_idles() -> None:
-    collector = _FiniteCollector()
-    producer = _producer(
-        collector,
-        prompts=["p0", "p1", "p2"],
-        max_inflight=2,
-    )
+async def test_finite_prompt_batch_completes_each_slot_once_then_idles(
+    monkeypatch, tmp_path
+) -> None:
+    stack = await _stack(monkeypatch, tmp_path)
+    producer = _producer(stack.coordinator, prompts=["p0", "p1", "p2"], max_inflight=2)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
@@ -442,30 +431,27 @@ async def test_finite_prompt_batch_completes_each_slot_once_then_idles() -> None
         # The drain must admit p2 even though pause caught the batch with only
         # the first two slots live.
         await producer.drain_prompt_batch(wait_timeout_s=5.0)
-        assert {item.group_slot for item in results if item is not None} == {
-            0,
-            1,
-            2,
-        }
-        assert collector.attempts == {"p0": 1, "p1": 1, "p2": 1}
+        assert {item.group_slot for item in results if item is not None} == {0, 1, 2}
+        assert _attempts(stack.bench) == {"p0": 1, "p1": 1, "p2": 1}
         assert producer.state.submitted_count == 3
         assert producer.state.completed_count == 3
 
         producer.resume_admission()
         await asyncio.sleep(0.02)
-        assert collector.attempts == {"p0": 1, "p1": 1, "p2": 1}
+        assert _attempts(stack.bench) == {"p0": 1, "p1": 1, "p2": 1}
         assert producer.inflight_count == 0
     finally:
         await producer.stop()
 
 
 @pytest.mark.asyncio
-async def test_prompt_batch_freezes_version_and_options_across_serial_retry() -> None:
-    collector = _FiniteCollector(fail_once={"p0"})
-    lifecycle = _Lifecycle(collector, version=7)
+async def test_prompt_batch_freezes_version_and_options_across_serial_retry(
+    monkeypatch, tmp_path
+) -> None:
+    stack = await _stack(monkeypatch, tmp_path, versioned=True)
+    stack.bench.trace.fail("generate", "transient failure for p0")
     producer = _producer(
-        collector,
-        lifecycle=lifecycle,
+        stack.coordinator,
         max_stale=1,
         prompts=["p0", "p1"],
         group_size=3,
@@ -475,17 +461,18 @@ async def test_prompt_batch_freezes_version_and_options_across_serial_retry() ->
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
-    lifecycle.version = 8
+    # The trainer advances after the batch was installed at version 1.
+    assert await stack.bump_version() == 2
 
     await producer.start()
     try:
         await producer.drain_prompt_batch(wait_timeout_s=5.0)
 
-        assert collector.attempts == {"p0": 2, "p1": 1}
-        assert collector.max_active == {"p0": 1, "p1": 1}
-        assert {version for _, version, _, _ in collector.calls} == {7}
-        assert {group_size for _, _, group_size, _ in collector.calls} == {3}
-        assert {debug for _, _, _, debug in collector.calls} == {True}
+        requests = stack.bench.trace.requests
+        assert _attempts(stack.bench) == {"p0": 2, "p1": 1}
+        assert {request.policy_version for request in requests} == {1}
+        assert {request.samples_per_prompt for request in requests} == {3}
+        assert {request.runtime_debug for request in requests} == {True}
         assert producer.state.error_count == 1
         assert producer.state.submitted_count == 3
         assert producer.state.completed_count == 2
@@ -503,15 +490,15 @@ async def test_prompt_batch_freezes_version_and_options_across_serial_retry() ->
 
 
 @pytest.mark.asyncio
-async def test_prompt_batch_rejects_replacing_incomplete_work() -> None:
-    collector = _GatedCollector()
-    collector.allow_generate.clear()
-    producer = _producer(collector)
+async def test_prompt_batch_rejects_replacing_incomplete_work(monkeypatch, tmp_path) -> None:
+    stack, _reward, gate = await _gated(monkeypatch, tmp_path)
+    gate.allow.clear()
+    producer = _producer(stack.coordinator)
 
     await producer.start()
     producer.admit_now()
     try:
-        await asyncio.wait_for(collector.generation_started.wait(), 5.0)
+        await asyncio.wait_for(gate.started.wait(), 5.0)
         with pytest.raises(RuntimeError, match="cannot replace an incomplete"):
             producer.set_prompt_batch(
                 ["p1"],
@@ -519,13 +506,14 @@ async def test_prompt_batch_rejects_replacing_incomplete_work() -> None:
                 runtime_debug=False,
             )
     finally:
-        collector.allow_generate.set()
+        gate.allow.set()
         await producer.stop()
 
 
 @pytest.mark.asyncio
-async def test_prompt_batch_rejects_replacing_unconsumed_ready_work() -> None:
-    producer = _producer(_FiniteCollector())
+async def test_prompt_batch_rejects_replacing_unconsumed_ready_work(monkeypatch, tmp_path) -> None:
+    stack = await _stack(monkeypatch, tmp_path)
+    producer = _producer(stack.coordinator)
 
     await producer.start()
     try:
@@ -541,20 +529,12 @@ async def test_prompt_batch_rejects_replacing_unconsumed_ready_work() -> None:
 
 
 @pytest.mark.asyncio
-async def test_finite_prompt_batch_fails_after_one_slot_exhausts_retry_budget() -> None:
-    class _AlwaysFailCollector(_FiniteCollector):
-        async def generate_rollout(self, request) -> _Unscored:
-            prompts = request.inputs
-            prompt = str(getattr(prompts[0], "prompt", prompts[0]))
-            self.attempts[prompt] = self.attempts.get(prompt, 0) + 1
-            raise RuntimeError(f"deterministic failure for {prompt}")
-
-    collector = _AlwaysFailCollector()
-    producer = _producer(
-        collector,
-        poll_interval_s=0.001,
-        fail_fast_errors=2,
-    )
+async def test_finite_prompt_batch_fails_after_one_slot_exhausts_retry_budget(
+    monkeypatch, tmp_path
+) -> None:
+    stack = await _stack(monkeypatch, tmp_path)
+    stack.bench.trace.fail("generate", "deterministic failure for p0", times=2)
+    producer = _producer(stack.coordinator, poll_interval_s=0.001, fail_fast_errors=2)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
@@ -565,21 +545,19 @@ async def test_finite_prompt_batch_fails_after_one_slot_exhausts_retry_budget() 
         with pytest.raises(RuntimeError, match="slot exceeded the failure budget") as caught:
             await producer.drain_prompt_batch(wait_timeout_s=5.0)
         assert "deterministic failure for p0" in str(caught.value.__cause__)
-        assert collector.attempts == {"p0": 2}
-        assert sum(item is not None for item in results) == 0
+        assert _attempts(stack.bench) == {"p0": 2}
+        assert _ready(results) == 0
     finally:
         await producer.stop()
 
 
 @pytest.mark.asyncio
-async def test_prompt_batch_drain_times_out_when_collect_never_returns() -> None:
-    collector = _GatedCollector()
-    collector.allow_generate.clear()
-    producer = _producer(
-        collector,
-        poll_interval_s=0.001,
-        fail_fast_errors=0,
-    )
+async def test_prompt_batch_drain_times_out_when_collect_never_returns(
+    monkeypatch, tmp_path
+) -> None:
+    stack, _reward, gate = await _gated(monkeypatch, tmp_path)
+    gate.allow.clear()
+    producer = _producer(stack.coordinator, poll_interval_s=0.001, fail_fast_errors=0)
 
     await producer.start()
     producer.pause_admission()
@@ -587,20 +565,15 @@ async def test_prompt_batch_drain_times_out_when_collect_never_returns() -> None
         with pytest.raises(TimeoutError, match="weight-sync barrier timed out"):
             await producer.drain_prompt_batch(wait_timeout_s=0.02)
     finally:
-        collector.allow_generate.set()
+        gate.allow.set()
         await producer.stop()
 
 
 @pytest.mark.asyncio
-async def test_active_prompt_batch_fails_when_collect_is_cancelled() -> None:
-    class _CancelledCollector(_FiniteCollector):
-        async def generate_rollout(self, request) -> _Unscored:
-            prompts = request.inputs
-            kwargs = request.options
-            del prompts, kwargs
-            raise asyncio.CancelledError
-
-    producer = _producer(_CancelledCollector())
+async def test_active_prompt_batch_fails_when_collect_is_cancelled(monkeypatch, tmp_path) -> None:
+    stack = await _stack(monkeypatch, tmp_path)
+    stack.bench.trace.fail("generate", asyncio.CancelledError())
+    producer = _producer(stack.coordinator)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
@@ -611,7 +584,7 @@ async def test_active_prompt_batch_fails_when_collect_is_cancelled() -> None:
         with pytest.raises(RuntimeError, match="prompt-batch collect was cancelled"):
             await producer.drain_prompt_batch(wait_timeout_s=5.0)
         assert producer.state.error_count == 1
-        assert sum(item is not None for item in results) == 0
+        assert _ready(results) == 0
     finally:
         await producer.stop()
 
@@ -620,77 +593,84 @@ async def test_active_prompt_batch_fails_when_collect_is_cancelled() -> None:
 @pytest.mark.parametrize("timeout_s", [0.0, -1.0, float("nan"), float("inf")])
 @pytest.mark.parametrize("operation", ["stop", "drain_prompt_batch"])
 async def test_invalid_producer_timeout_preserves_running_work(
-    timeout_s: float,
-    operation: str,
+    monkeypatch, tmp_path, timeout_s: float, operation: str
 ) -> None:
-    collector = _GatedCollector()
-    collector.allow_generate.clear()
-    producer = _producer(collector)
+    stack, reward, gate = await _gated(monkeypatch, tmp_path)
+    gate.allow.clear()
+    producer = _producer(stack.coordinator)
     await producer.start()
     producer.admit_now()
-    await asyncio.wait_for(collector.generation_started.wait(), 5.0)
+    await asyncio.wait_for(gate.started.wait(), 5.0)
     try:
         with pytest.raises(ValueError, match="wait_timeout_s must be finite and > 0"):
             await getattr(producer, operation)(wait_timeout_s=timeout_s)
         await asyncio.sleep(0)
         assert producer.state.running
         assert producer.inflight_count == 1
-        collector.allow_generate.set()
+        gate.allow.set()
         await producer.drain_prompt_batch(wait_timeout_s=5.0)
-        assert "score_end" in collector.events
+        assert "score_end" in reward.events
     finally:
         await producer.stop()
 
 
 @pytest.mark.asyncio
-async def test_producer_stop_does_not_wait_forever_for_cancel_suppression() -> None:
-    class _CancellationResistantCollector(_FiniteCollector):
-        def __init__(self) -> None:
-            super().__init__()
-            self.started = asyncio.Event()
-            self.cancelled = asyncio.Event()
-            self.release = asyncio.Event()
+async def test_producer_stop_does_not_wait_forever_for_cancel_suppression(
+    monkeypatch, tmp_path
+) -> None:
+    stack = await _stack(monkeypatch, tmp_path)
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    real_generate = stack.bench.runtime.generate
 
-        async def generate_rollout(self, request) -> _Unscored:
-            self.started.set()
-            while not self.release.is_set():
-                try:
-                    await self.release.wait()
-                except asyncio.CancelledError:
-                    self.cancelled.set()
-            return await super().generate_rollout(request)
+    async def resistant_generate(request: Any) -> Any:
+        started.set()
+        while not release.is_set():
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+        try:
+            return await real_generate(request)
+        finally:
+            finished.set()
 
-    collector = _CancellationResistantCollector()
-    producer = _producer(collector)
+    monkeypatch.setattr(stack.bench.runtime, "generate", resistant_generate)
+    producer = _producer(stack.coordinator)
 
     await producer.start()
     producer.admit_now()
-    await asyncio.wait_for(collector.started.wait(), 5.0)
+    await asyncio.wait_for(started.wait(), 5.0)
     await asyncio.wait_for(producer.stop(wait_timeout_s=0.02), 1.0)
 
-    assert collector.cancelled.is_set()
+    assert cancelled.is_set()
     assert producer.inflight_count == 0
-    collector.release.set()
-    await asyncio.sleep(0)
+    release.set()
+    # The abandoned collect still finishes on its own; let it, so the worker
+    # thread is idle when the test ends.
+    await asyncio.wait_for(finished.wait(), 5.0)
 
 
 # ------------------------------------------------------- weight-sync drain
 
 
 @pytest.mark.asyncio
-async def test_drain_prompt_batch_waits_for_generation_and_reward() -> None:
+async def test_drain_prompt_batch_waits_for_generation_and_reward(monkeypatch, tmp_path) -> None:
     """The barrier drain returns only after gen + reward of in-flight work."""
-    collector = _GatedCollector()
-    collector.allow_generate.clear()
-    collector.allow_score.clear()
-    producer = _producer(collector)
+
+    stack, reward, gate = await _gated(monkeypatch, tmp_path)
+    gate.allow.clear()
+    reward.allow_score.clear()
+    producer = _producer(stack.coordinator)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
 
     await producer.start()
     try:
-        await asyncio.wait_for(collector.generation_started.wait(), 5.0)
+        await asyncio.wait_for(gate.started.wait(), 5.0)
         producer.pause_admission()
         barrier: list[str] = []
 
@@ -702,54 +682,54 @@ async def test_drain_prompt_batch_waits_for_generation_and_reward() -> None:
         await asyncio.sleep(0.05)
         assert not barrier  # generation still running
 
-        collector.allow_generate.set()
+        gate.allow.set()
+        await _wait_until(lambda: "generate_end" in reward.events)
         await asyncio.sleep(0.05)
         assert not barrier  # reward still running
 
-        collector.allow_score.set()
+        reward.allow_score.set()
         await asyncio.wait_for(drain_task, 5.0)
         # Sync strictly after the full collect, and the drained group was
         # harvested into the batch results (drained, never dropped).
-        assert collector.events == ["generate_start", "generate_end", "score_end"]
+        assert reward.events == ["generate_start", "generate_end", "score_end"]
         assert barrier == ["sync"]
-        assert sum(item is not None for item in results) == 1
+        assert _ready(results) == 1
     finally:
         producer.resume_admission()
         await producer.stop()
 
 
 @pytest.mark.asyncio
-async def test_late_reward_finishes_before_version_bump_under_draining() -> None:
+async def test_late_reward_finishes_before_version_bump_under_draining(
+    monkeypatch, tmp_path
+) -> None:
     """OFF-POLICY INVARIANT, draining branch.
 
     A reward that completes *after* generation but is still in-flight at the
     weight-sync barrier must finish before the policy-version bump, so the group
     is never trained off-policy. This is the reward-late timing variant of
     ``test_drain_prompt_batch_waits_for_generation_and_reward``: here generation is
-    already done and only ``evaluate_rollout`` is outstanding when the barrier
-    starts. ``schedule.after_train_step`` (non_draining=False) runs
+    already done and only scoring is outstanding when the barrier starts.
+    ``schedule.after_train_step`` (non_draining=False) runs
     ``drain_prompt_batch`` -> ``sync_weights_after_train``, so reward(N) must
     complete strictly before the version advances to N+1.
     """
-    collector = _GatedCollector()
+
+    stack, reward, _gate = await _gated(monkeypatch, tmp_path)
     # Generation finishes immediately; reward is the late phase still running
     # when the barrier opens.
-    collector.allow_score.clear()
-    lifecycle = _Lifecycle(collector, version=1)
-    producer = _producer(collector, lifecycle=lifecycle, max_stale=0)
+    reward.allow_score.clear()
+    producer = _producer(stack.coordinator, max_stale=0)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
 
     await producer.start()
     try:
-        # Generation has completed; the group is parked in evaluate_rollout.
-        await asyncio.wait_for(collector.generation_started.wait(), 5.0)
-        await _wait_until(lambda: "generate_end" in collector.events)
-        assert "score_end" not in collector.events  # reward still in flight
-        assert (
-            sum(item is not None for item in results) == 0
-        )  # unscored work is never trainer-visible
+        # Generation has completed; the group is parked in reward scoring.
+        await _wait_until(lambda: "generate_end" in reward.events)
+        assert "score_end" not in reward.events  # reward still in flight
+        assert _ready(results) == 0  # unscored work is never trainer-visible
 
         producer.pause_admission()
         order: list[str] = []
@@ -759,25 +739,26 @@ async def test_late_reward_finishes_before_version_bump_under_draining() -> None
             # drain in-flight (gen + reward) BEFORE syncing/bumping the version.
             await producer.drain_prompt_batch(wait_timeout_s=5.0)
             order.append("drain_done")
-            lifecycle.version = 2  # the weight-sync version bump
+            await stack.bump_version()  # the weight-sync push
             order.append("version_bumped")
 
         drain_task = asyncio.create_task(_drain_then_bump())
         await asyncio.sleep(0.05)
         # The reward is what is holding the barrier open: no bump yet.
         assert order == []
-        assert "score_end" not in collector.events
-        assert lifecycle.version == 1
+        assert "score_end" not in reward.events
+        assert stack.bench.runtime.current_policy_version == 1
 
-        collector.allow_score.set()
+        reward.allow_score.set()
         await asyncio.wait_for(drain_task, 5.0)
 
         # Reward finished strictly before the version bump.
-        assert collector.events == ["generate_start", "generate_end", "score_end"]
+        assert reward.events == ["generate_start", "generate_end", "score_end"]
         assert order == ["drain_done", "version_bumped"]
+        assert stack.bench.runtime.current_policy_version == 2
         # The fully-scored group is stored in its slot, stamped at the pre-bump
         # version it was generated under -- so it is on-policy for v1.
-        assert sum(item is not None for item in results) == 1
+        assert _ready(results) == 1
         item = results[0]
         assert item.rollout_policy_version == 1
         assert item.batch.rewards is not None
@@ -794,29 +775,30 @@ async def test_late_reward_finishes_before_version_bump_under_draining() -> None
 
 
 @pytest.mark.asyncio
-async def test_items_carry_policy_version_captured_at_submission() -> None:
+async def test_items_carry_policy_version_captured_at_submission(monkeypatch, tmp_path) -> None:
     """A version bump mid-flight must not relabel an already-submitted group."""
-    collector = _GatedCollector()
-    collector.allow_generate.clear()
-    lifecycle = _Lifecycle(collector, version=1)
+
+    stack, _reward, gate = await _gated(monkeypatch, tmp_path, versioned=True)
+    gate.allow.clear()
     # max_stale=1 so the mid-flight bump to v2 keeps the group inside the
     # freshness window (staleness 1 <= 1); this test pins version *stamping*,
     # not the freshness gate, so the group must survive to be inspected.
-    producer = _producer(collector, lifecycle=lifecycle, max_stale=1)
+    producer = _producer(stack.coordinator, max_stale=1)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
 
     await producer.start()
     try:
-        await asyncio.wait_for(collector.generation_started.wait(), 5.0)
+        await asyncio.wait_for(gate.started.wait(), 5.0)
         producer.pause_admission()
-        lifecycle.version = 2  # trainer syncs while the group is in flight
-        collector.allow_generate.set()
+        assert await stack.bump_version() == 2  # trainer syncs while the group is in flight
+        gate.allow.set()
         await producer.drain_prompt_batch(wait_timeout_s=5.0)
 
-        assert sum(item is not None for item in results) == 1
+        assert _ready(results) == 1
         assert results[0].rollout_policy_version == 1
+        assert stack.bench.trace.requests[0].policy_version == 1
     finally:
         producer.resume_admission()
         await producer.stop()
@@ -826,27 +808,27 @@ async def test_items_carry_policy_version_captured_at_submission() -> None:
 
 
 @pytest.mark.asyncio
-async def test_prompt_batch_fails_when_group_is_stale_at_receipt() -> None:
+async def test_prompt_batch_fails_when_group_is_stale_at_receipt(monkeypatch, tmp_path) -> None:
     """An active prompt batch cannot recover after its fixed version expires."""
-    collector = _GatedCollector()
-    collector.allow_generate.clear()
-    lifecycle = _Lifecycle(collector, version=1)
-    producer = _producer(collector, lifecycle=lifecycle, max_stale=0)
+
+    stack, _reward, gate = await _gated(monkeypatch, tmp_path, versioned=True)
+    gate.allow.clear()
+    producer = _producer(stack.coordinator, max_stale=0)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
 
     await producer.start()
     try:
-        await asyncio.wait_for(collector.generation_started.wait(), 5.0)
+        await asyncio.wait_for(gate.started.wait(), 5.0)
         producer.pause_admission()
-        lifecycle.version = 2  # trainer advanced while the group was in flight
-        collector.allow_generate.set()
+        assert await stack.bump_version() == 2  # trainer advanced while the group was in flight
+        gate.allow.set()
         with pytest.raises(RuntimeError, match="became stale before completion"):
             await producer.drain_prompt_batch(wait_timeout_s=5.0)
 
         # Generation completed, but the v1 group is stale=1 > 0 at receipt.
-        assert sum(item is not None for item in results) == 0
+        assert _ready(results) == 0
         assert producer.state.completed_count == 1
     finally:
         producer.resume_admission()
@@ -854,27 +836,28 @@ async def test_prompt_batch_fails_when_group_is_stale_at_receipt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_prompt_batch_fails_when_group_is_past_stale_window() -> None:
+async def test_prompt_batch_fails_when_group_is_past_stale_window(monkeypatch, tmp_path) -> None:
     """The gate respects the configured window, not any version change: with
     max_stale=1 a two-version-old group is still dropped."""
-    collector = _GatedCollector()
-    collector.allow_generate.clear()
-    lifecycle = _Lifecycle(collector, version=1)
-    producer = _producer(collector, lifecycle=lifecycle, max_stale=1)
+
+    stack, _reward, gate = await _gated(monkeypatch, tmp_path, versioned=True)
+    gate.allow.clear()
+    producer = _producer(stack.coordinator, max_stale=1)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     results = prompt_batch.results
 
     await producer.start()
     try:
-        await asyncio.wait_for(collector.generation_started.wait(), 5.0)
+        await asyncio.wait_for(gate.started.wait(), 5.0)
         producer.pause_admission()
-        lifecycle.version = 3  # two versions ahead: staleness 2 > 1
-        collector.allow_generate.set()
+        await stack.bump_version()
+        assert await stack.bump_version() == 3  # two versions ahead: staleness 2 > 1
+        gate.allow.set()
         with pytest.raises(RuntimeError, match="became stale before completion"):
             await producer.drain_prompt_batch(wait_timeout_s=5.0)
 
-        assert sum(item is not None for item in results) == 0
+        assert _ready(results) == 0
     finally:
         producer.resume_admission()
         await producer.stop()
@@ -883,9 +866,16 @@ async def test_prompt_batch_fails_when_group_is_past_stale_window() -> None:
 # ------------------------------------------------------------- consumer
 
 
+def _batch(samples: int = 2) -> RolloutBatch:
+    return RolloutBatch(
+        rewards=torch.arange(samples, dtype=torch.float32),
+        group_ids=torch.zeros(samples, dtype=torch.long),
+    )
+
+
 def _item(
     group_slot: int,
-    version: int | None,
+    version: int,
     phase_times: dict[str, float] | None = None,
     *,
     batch_id: int = 0,
@@ -894,7 +884,7 @@ def _item(
         batch_id=batch_id,
         group_slot=group_slot,
         rollout_policy_version=version,
-        batch=_batch(f"p{group_slot}"),
+        batch=_batch(),
         stats=RolloutStats(phase_seconds=dict(phase_times or {})),
     )
 
@@ -910,7 +900,7 @@ def _prompt_batch(
     results: list[ScoredRollout | None],
     *,
     batch_id: int = 0,
-    version: int | None = 1,
+    version: int = 1,
 ) -> PromptBatch:
     return PromptBatch(
         batch_id=batch_id,
@@ -942,7 +932,7 @@ async def _collect_iteration(
     consumer: ContinuousRolloutConsumer,
     prompt_batch: PromptBatch,
     *,
-    current_policy_version: int | None,
+    current_policy_version: int,
     timeout_s: float = 1.0,
 ):
     return await consumer.collect_iteration(
@@ -985,8 +975,12 @@ async def test_consumer_timeout_identifies_incomplete_batch(ready_count) -> None
 
 @pytest.mark.asyncio
 async def test_consumer_consumes_stale_items_within_bound() -> None:
-    """max_stale=1 lets the trainer consume one-version-old groups."""
-    prompt_batch = _prompt_batch([_item(group_slot=slot, version=1) for slot in range(2)])
+    """max_stale=1 lets the trainer consume one-version-old groups.
+
+    The consumer only reads the slots; releasing them is the producer's.
+    """
+    items = [_item(group_slot=slot, version=1) for slot in range(2)]
+    prompt_batch = _prompt_batch(list(items))
     iteration = await _collect_iteration(
         _consumer(max_stale=1), prompt_batch, current_policy_version=2
     )
@@ -995,7 +989,7 @@ async def test_consumer_consumes_stale_items_within_bound() -> None:
     assert phases["continuous.rollout_policy_version"] == 1.0
     assert phases["continuous.stale_policy_versions"] == 1.0
     assert phases["continuous.consume_policy_version"] == 2.0
-    assert prompt_batch.results == [None, None]
+    assert prompt_batch.results == items
 
 
 @pytest.mark.asyncio
@@ -1037,16 +1031,6 @@ async def test_consumer_rejects_future_policy_version() -> None:
 
 
 @pytest.mark.asyncio
-async def test_consumer_accepts_batch_when_policy_versions_are_absent() -> None:
-    prompt_batch = _prompt_batch([_item(group_slot=0, version=None)], version=None)
-    iteration = await _collect_iteration(
-        _consumer(max_stale=1), prompt_batch, current_policy_version=None
-    )
-    assert len(iteration.batches) == 1
-    assert iteration.stats.gauges["continuous.stale_policy_versions"] == 0
-
-
-@pytest.mark.asyncio
 async def test_late_reward_batch_fails_under_non_draining_max_stale_0() -> None:
     """The non-draining barrier must reject results older than its policy window."""
     prompt_batch = _prompt_batch([None])
@@ -1082,42 +1066,50 @@ async def test_consumer_aggregates_item_phase_times() -> None:
 
 
 @pytest.mark.asyncio
-async def test_consumer_waits_for_every_slot_and_preserves_prompt_order() -> None:
-    class _OutOfOrderCollector(_FiniteCollector):
-        def __init__(self) -> None:
-            super().__init__()
-            self.gates = {prompt: asyncio.Event() for prompt in ("p0", "p1", "next")}
-            self.started: set[str] = set()
+async def test_consumer_waits_for_every_slot_and_preserves_prompt_order(
+    monkeypatch, tmp_path
+) -> None:
+    stack = await _stack(monkeypatch, tmp_path, versioned=True)
+    gates = {prompt: asyncio.Event() for prompt in ("p0", "p1", "next")}
+    started: set[str] = set()
+    real_generate = stack.bench.runtime.generate
 
-        async def generate_rollout(self, request) -> _Unscored:
-            prompt = str(getattr(request.inputs[0], "prompt", request.inputs[0]))
-            self.started.add(prompt)
-            await self.gates[prompt].wait()
-            unscored = await super().generate_rollout(request)
-            unscored.batch.context["fixture_prompt"] = prompt
-            return unscored
+    async def gated_generate(request: Any) -> Any:
+        prompt = request.prompts[0]
+        started.add(prompt)
+        await gates[prompt].wait()
+        return await real_generate(request)
 
-    collector = _OutOfOrderCollector()
-    producer = _producer(collector, prompts=["p0", "p1"], max_inflight=2, max_stale=1)
+    monkeypatch.setattr(stack.bench.runtime, "generate", gated_generate)
+    producer = _producer(stack.coordinator, prompts=["p0", "p1"], max_inflight=2, max_stale=1)
     prompt_batch = producer.prompt_batch
     assert prompt_batch is not None
     await producer.start()
+    # The trainer is one version ahead of the installed batch, inside the window.
+    assert await stack.bump_version() == 2
     demand = asyncio.create_task(
         _collect_iteration(_consumer(max_stale=1), prompt_batch, current_policy_version=2)
     )
     try:
-        await _wait_until(lambda: len(collector.started) == 2)
+        await _wait_until(lambda: len(started) == 2)
         # Finish slot 1 first; slot 0 must still be awaited and retain first place.
-        collector.gates["p1"].set()
+        gates["p1"].set()
         await _wait_until(lambda: prompt_batch.results[1] is not None)
         assert prompt_batch.results[0] is None
         assert not demand.done()
-        collector.gates["p0"].set()
+        gates["p0"].set()
         iteration = await asyncio.wait_for(demand, 5.0)
-        assert [batch.context["fixture_prompt"] for batch in iteration.batches] == ["p0", "p1"]
+        assert [batch.trajectory.sample_rows[0].prompt for batch in iteration.batches] == [
+            "p0",
+            "p1",
+        ]
         assert [int(batch.group_ids[0]) for batch in iteration.batches] == [0, 1]
         assert iteration.stats.gauges["continuous.ready_groups_at_demand"] == 0
+        # The owner releases the taken slots through the producer, which alone
+        # writes them; only then can the next batch be installed.
+        producer.release_results()
         assert prompt_batch.results == [None, None]
+        assert prompt_batch.consumed is True
         producer.set_prompt_batch(["next"], group_size=2, runtime_debug=False)
         assert producer.prompt_batch.results == [None]
     finally:

@@ -1,114 +1,37 @@
-"""Integration tests for the continuous rollout schedule."""
+"""The continuous rollout schedule over the real coordinator, collector and runtime.
+
+Every schedule here is ``build_rollout_schedule`` on the real
+``RolloutCollector`` (tiny SANA family, ``InProcessGenerationRuntime``), the
+real trainer side (replay bundle, ``SingleProcessStrategy``) and the real
+``RayRuntimeWeightSyncer``. Versioned slots (non-draining weight sync) come
+from the run's own launch contract: a LoRA continuous run on this family.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import threading
-import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
-import torch.nn as nn
 
-from tests.rollouts.collector._helpers import PromptCollectionFake
-from tests.rollouts.orchestration.continuous._helpers import owner_snapshot
-from vrl.generation.execution.types import StaleSlotDiscard
-from vrl.models.parking import TrainingMemoryState
-from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.orchestration import (
-    ContinuousRolloutSchedule,
-    build_rollout_schedule,
+from tests.rollouts.collector._helpers import (
+    CollectorBench,
+    IndexReward,
+    real_collector,
+    trainer_side,
 )
+from tests.rollouts.orchestration.continuous._helpers import (
+    owner_snapshot,
+    wait_for_owner_progress,
+)
+from vrl.generation.execution.types import StaleSlotDiscard
+from vrl.rewards import RewardOutput, RewardSample
+from vrl.rollouts.orchestration import ContinuousRolloutSchedule, build_rollout_schedule
 from vrl.trainers.data.prompts import PromptExample
-from vrl.trainers.strategy import SingleProcessStrategy
-
-
-def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
-    batch_size = len(prompts) * group_size
-    group_ids = torch.tensor(
-        [idx for idx in range(len(prompts)) for _ in range(group_size)],
-        dtype=torch.long,
-    )
-    return RolloutBatch(
-        rewards=torch.arange(batch_size, dtype=torch.float32),
-        group_ids=group_ids,
-        # Test-fake provenance used only to verify finite prefetch ordering.
-        context={"fixture_prompts": tuple(prompts)},
-    )
-
-
-class _Runtime:
-    def __init__(self) -> None:
-        self.current_policy_version = 0
-        # Default False keeps every existing test on the draining barrier; the
-        # non-draining tests flip it True to exercise the slot-backed path.
-        self.supports_non_draining_weight_sync = False
-
-
-class _Syncer:
-    def __init__(self, runtime: _Runtime) -> None:
-        self.runtime = runtime
-        self.calls: list[dict[str, Any]] = []
-
-    async def push(self, state_dict: dict[str, Any]) -> None:
-        self.calls.append(dict(state_dict))
-        self.runtime.current_policy_version += 1
-
-    async def pull(self) -> dict[str, Any]:
-        return dict(self.calls[-1])
-
-    @property
-    def current_policy_version(self) -> int | None:
-        # Mirrors RayRuntimeWeightSyncer's concrete version property.
-        return self.runtime.current_policy_version
-
-
-class _FailingPostTrainSyncer(_Syncer):
-    def __init__(self, runtime: _Runtime) -> None:
-        super().__init__(runtime)
-        self.push_attempts = 0
-
-    async def push(self, state_dict: dict[str, Any]) -> None:
-        self.push_attempts += 1
-        if self.push_attempts == 2:
-            raise RuntimeError("worker install ACK mismatch")
-        await super().push(state_dict)
-
-
-class _Collector(PromptCollectionFake):
-    def __init__(self, runtime: _Runtime) -> None:
-        self.generation_runtime = runtime
-        self.lifecycle = None
-        self.reward_isolation_verified = True
-        self.calls: list[dict[str, Any]] = []
-        self.activation_calls = 0
-        self.offload_calls = 0
-        self.shutdown_calls = 0
-        self.shutdown_failures = 0
-
-    async def generate_rollout(self, request) -> RolloutBatch:
-        inputs = request.inputs
-        kwargs = request.options
-        prompts = [getattr(item, "prompt", item) for item in inputs]
-        self.calls.append({"prompts": prompts, **dict(kwargs)})
-        return _batch(prompts, int(kwargs["group_size"]))
-
-    async def evaluate_rollout(self, pendings: Any) -> list[RolloutBatch]:
-        return list(pendings)
-
-    async def activate_generation_runtime(self) -> None:
-        self.activation_calls += 1
-
-    async def offload_generation_runtime_memory(self) -> None:
-        self.offload_calls += 1
-
-    async def shutdown(self) -> None:
-        self.shutdown_calls += 1
-        if self.shutdown_calls <= self.shutdown_failures:
-            raise RuntimeError("collector cleanup failed")
 
 
 def _continuous_config(**continuous: Any) -> SimpleNamespace:
@@ -126,38 +49,48 @@ def _iteration_stat(iteration: Any, name: str) -> float:
     return iteration.stats.as_metrics_dict()[name]
 
 
+def _bench(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    *,
+    non_draining: bool = False,
+    reward: Any = None,
+) -> CollectorBench:
+    bench = real_collector(monkeypatch, tmp_path, reward=reward, versioned_slots=non_draining)
+    bench.trace.watch(bench.collector, "shutdown", "collector_shutdown")
+    return bench
+
+
 def _build(
     config: SimpleNamespace,
-    collector: _Collector,
-    syncer: _Syncer | None,
+    bench: CollectorBench,
     *,
-    algorithm_tolerates_off_policy_staleness: bool = True,
     initially_initialized: bool = False,
-):
-    initialized = {"value": initially_initialized}
-
-    def _set(value: bool) -> None:
-        initialized["value"] = bool(value)
-
-    model = nn.Linear(1, 1)
+) -> ContinuousRolloutSchedule:
+    trainer = trainer_side(bench, initialized=initially_initialized)
     return build_rollout_schedule(
         config,
-        collector=collector,
-        strategy=SingleProcessStrategy(),
-        training_state_getter=lambda: TrainingMemoryState(
-            model=model,
-            ref_model=None,
-            optimizer=None,
-            ema=None,
-            grad_scaler=None,
-            device=torch.device("cpu"),
-        ),
-        weight_syncer=syncer,
-        sync_state_getter=(lambda: {"w": 1}) if syncer is not None else None,
-        weights_initialized=lambda: initialized["value"],
-        set_weights_initialized=_set,
-        algorithm_tolerates_off_policy_staleness=(algorithm_tolerates_off_policy_staleness),
+        trainer.coordinator(bench),
+        versioned_weight_sync=bench.stack.resolved.built.trainer.versioned_weight_sync,
     )
+
+
+def _delay_generation(
+    monkeypatch: pytest.MonkeyPatch, bench: CollectorBench, seconds: float
+) -> None:
+    """Add dispatch latency ahead of each real generation, like a remote engine."""
+
+    real = bench.runtime.generate
+
+    async def generate(request: Any) -> Any:
+        await asyncio.sleep(seconds)
+        return await real(request)
+
+    monkeypatch.setattr(bench.runtime, "generate", generate)
+
+
+def _pushes(bench: CollectorBench) -> int:
+    return bench.trace.events.count("update_weights")
 
 
 async def _snapshot_when(
@@ -178,14 +111,9 @@ async def _snapshot_when(
 
 
 @pytest.mark.asyncio
-async def test_shutdown_joins_owner_and_is_idempotent() -> None:
-    runtime = _Runtime()
-    collector = _Collector(runtime)
-    schedule = _build(
-        _continuous_config(),
-        collector,
-        _Syncer(runtime),
-    )
+async def test_shutdown_joins_owner_and_is_idempotent(monkeypatch, tmp_path) -> None:
+    bench = _bench(monkeypatch, tmp_path)
+    schedule = _build(_continuous_config(), bench)
 
     await schedule.next_iteration(["p0"], group_size=1)
     running = await owner_snapshot(schedule._rollout_thread)
@@ -195,18 +123,19 @@ async def test_shutdown_joins_owner_and_is_idempotent() -> None:
     await asyncio.gather(schedule.shutdown(), schedule.shutdown())
     await schedule.shutdown()
 
-    assert collector.shutdown_calls == 1
+    assert bench.trace.events.count("collector_shutdown") == 1
     assert schedule._rollout_thread._stopped.is_set()
     thread = schedule._rollout_thread._thread
     assert thread is not None and not thread.is_alive()
 
 
 @pytest.mark.asyncio
-async def test_shutdown_failure_retries_cleanup_before_closing_owner() -> None:
-    runtime = _Runtime()
-    collector = _Collector(runtime)
-    collector.shutdown_failures = 1
-    schedule = _build(_continuous_config(), collector, _Syncer(runtime))
+async def test_shutdown_failure_retries_cleanup_before_closing_owner(
+    monkeypatch, tmp_path
+) -> None:
+    bench = _bench(monkeypatch, tmp_path)
+    bench.trace.fail("collector_shutdown", "collector cleanup failed")
+    schedule = _build(_continuous_config(), bench)
 
     await schedule.next_iteration(["p0"], group_size=1)
 
@@ -214,29 +143,25 @@ async def test_shutdown_failure_retries_cleanup_before_closing_owner() -> None:
         await schedule.shutdown()
 
     thread = schedule._rollout_thread._thread
-    assert collector.shutdown_calls == 1
+    assert bench.trace.events.count("collector_shutdown") == 1
     assert schedule._rollout_thread._closed is False
     assert thread is not None and thread.is_alive()
 
     await schedule.shutdown()
     await schedule.shutdown()
 
-    assert collector.shutdown_calls == 2
+    assert bench.trace.events.count("collector_shutdown") == 2
     assert schedule._rollout_thread._closed is True
     assert thread is not None and not thread.is_alive()
 
 
-class _SlowCollector(_Collector):
-    async def generate_rollout(self, request) -> RolloutBatch:
-        await asyncio.sleep(0.02)
-        return await super().generate_rollout(request)
-
-
 @pytest.mark.asyncio
-async def test_owner_production_advances_while_trainer_loop_is_blocked() -> None:
-    runtime = _Runtime()
-    collector = _SlowCollector(runtime)
-    schedule = _build(_continuous_config(), collector, _Syncer(runtime))
+async def test_owner_production_advances_while_trainer_loop_is_blocked(
+    monkeypatch, tmp_path
+) -> None:
+    bench = _bench(monkeypatch, tmp_path)
+    _delay_generation(monkeypatch, bench, 0.02)
+    schedule = _build(_continuous_config(), bench)
 
     try:
         await schedule.next_iteration(
@@ -248,10 +173,12 @@ async def test_owner_production_advances_while_trainer_loop_is_blocked() -> None
         assert before.producer_state is not None
         assert before.producer_state.submitted_count == 2
 
-        # This blocks the trainer asyncio loop exactly like synchronous backward.
-        time.sleep(0.12)
-
-        after = await owner_snapshot(schedule._rollout_thread)
+        # Blocks the trainer asyncio loop exactly like synchronous backward,
+        # until the owner has completed one more item on its own thread.
+        after = wait_for_owner_progress(
+            schedule._rollout_thread,
+            completed_above=before.producer_state.completed_count,
+        )
         assert after.producer_state is not None
         assert after.producer_state.tick_count > before.producer_state.tick_count
         assert after.producer_state.submitted_count == before.producer_state.submitted_count
@@ -261,84 +188,74 @@ async def test_owner_production_advances_while_trainer_loop_is_blocked() -> None
 
 
 @pytest.mark.asyncio
-async def test_initialized_runtime_does_not_receive_redundant_initial_push() -> None:
-    runtime = _Runtime()
-    runtime.current_policy_version = 7
-    collector = _Collector(runtime)
-    syncer = _Syncer(runtime)
-    schedule = _build(
+async def test_initialized_runtime_does_not_receive_redundant_initial_push(
+    monkeypatch, tmp_path
+) -> None:
+    """A resumed run: the rollout already serves the checkpoint's version and the
+    trainer knows its weights are out, so the first iteration pushes nothing."""
+
+    bench = _bench(monkeypatch, tmp_path)
+    trainer = trainer_side(bench, initialized=True)
+    await bench.runtime.update_weights(trainer.export(), 7)
+    pushes_before = _pushes(bench)
+    schedule = build_rollout_schedule(
         _continuous_config(),
-        collector,
-        syncer,
-        initially_initialized=True,
+        trainer.coordinator(bench),
+        versioned_weight_sync=bench.stack.resolved.built.trainer.versioned_weight_sync,
     )
 
     try:
         iteration = await schedule.next_iteration(["p0"], group_size=1)
 
         assert _iteration_stat(iteration, "continuous.rollout_policy_version") == 7.0
-        assert runtime.current_policy_version == 7
-        assert syncer.calls == []
+        assert bench.runtime.current_policy_version == 7
+        assert _pushes(bench) == pushes_before
     finally:
         await schedule.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_reset_reuses_committed_runtime_weights_without_version_bump() -> None:
-    runtime = _Runtime()
-    collector = _Collector(runtime)
-    syncer = _Syncer(runtime)
-    schedule = _build(_continuous_config(), collector, syncer)
+async def test_reset_reuses_committed_runtime_weights_without_version_bump(
+    monkeypatch, tmp_path
+) -> None:
+    bench = _bench(monkeypatch, tmp_path)
+    schedule = _build(_continuous_config(), bench)
 
     try:
         first = await schedule.next_iteration(["p0"], group_size=1)
         assert _iteration_stat(first, "continuous.rollout_policy_version") == 1.0
-        assert len(syncer.calls) == 1
+        assert _pushes(bench) == 1
 
         schedule.reset()
         second = await schedule.next_iteration(["p0"], group_size=1)
 
         assert _iteration_stat(second, "continuous.rollout_policy_version") == 1.0
-        assert len(syncer.calls) == 1
-        assert collector.shutdown_calls == 0
+        assert _pushes(bench) == 1
+        assert "collector_shutdown" not in bench.trace.events
     finally:
         await schedule.shutdown()
 
 
-def test_continuous_rejects_stale_window_for_intolerant_algorithm() -> None:
-    """Reject a stale window based on capability, without inferring the objective."""
-    runtime = _Runtime()
-    with pytest.raises(ValueError, match="tolerates_off_policy_staleness=False"):
-        _build(
-            _continuous_config(max_stale_policy_versions=1),
-            _Collector(runtime),
-            _Syncer(runtime),
-            algorithm_tolerates_off_policy_staleness=False,
-        )
-
-
-def test_continuous_rejects_zero_window_before_algorithm_gate() -> None:
+def test_continuous_rejects_zero_window(monkeypatch, tmp_path) -> None:
     """Zero-window execution belongs to strict_on_policy, not continuous."""
-    runtime = _Runtime()
+
+    bench = _bench(monkeypatch, tmp_path)
     with pytest.raises(ValueError, match=r"max_stale_policy_versions.*>= 1"):
         _build(
             _continuous_config(max_stale_policy_versions=0),
-            _Collector(runtime),
-            _Syncer(runtime),
-            algorithm_tolerates_off_policy_staleness=False,
+            bench,
         )
 
 
 @pytest.mark.asyncio
-async def test_continuous_drains_full_homogeneous_iteration() -> None:
+async def test_continuous_drains_full_homogeneous_iteration(monkeypatch, tmp_path) -> None:
     """A homogeneous continuous iteration drains the full set: one policy version for rollout and
     consume, zero staleness, distinct group ids, and the item-age / ready-groups / queue-wait
     phases all reported.
     """
-    runtime = _Runtime()
-    collector = _Collector(runtime)
-    syncer = _Syncer(runtime)
-    schedule = _build(_continuous_config(), collector, syncer)
+
+    bench = _bench(monkeypatch, tmp_path)
+    schedule = _build(_continuous_config(), bench)
 
     try:
         iteration = await schedule.next_iteration(["p0", "p1"], group_size=2)
@@ -360,28 +277,27 @@ async def test_continuous_drains_full_homogeneous_iteration() -> None:
 
 
 @pytest.mark.asyncio
-async def test_weight_sync_barrier_advances_version_and_resumes() -> None:
+async def test_weight_sync_barrier_advances_version_and_resumes(monkeypatch, tmp_path) -> None:
     """``after_train_step`` performs exactly one weight sync, bumps the runtime policy version and
     unpauses admission; the next iteration is produced and consumed at the new version with
     zero staleness.
     """
-    runtime = _Runtime()
-    collector = _Collector(runtime)
-    syncer = _Syncer(runtime)
-    schedule = _build(_continuous_config(), collector, syncer)
+
+    bench = _bench(monkeypatch, tmp_path)
+    schedule = _build(_continuous_config(), bench)
 
     try:
         first = await schedule.next_iteration(["p0", "p1"], group_size=2)
         assert _iteration_stat(first, "continuous.rollout_policy_version") == 1.0
 
-        sync_calls_before = len(syncer.calls)
+        pushes_before = _pushes(bench)
         await schedule.after_train_step()
         # Barrier performed exactly one post-train sync and resumed admission.
-        assert len(syncer.calls) == sync_calls_before + 1
+        assert _pushes(bench) == pushes_before + 1
         snapshot = await owner_snapshot(schedule._rollout_thread)
         assert snapshot.producer_state is not None
         assert snapshot.producer_state.paused_for_weight_sync is False
-        assert runtime.current_policy_version == 2
+        assert bench.runtime.current_policy_version == 2
 
         second = await schedule.next_iteration(["p0", "p1"], group_size=2)
         assert _iteration_stat(second, "continuous.rollout_policy_version") == 2.0
@@ -392,27 +308,26 @@ async def test_weight_sync_barrier_advances_version_and_resumes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_partial_commit_failure_closes_admission_and_runtime() -> None:
-    runtime = _Runtime()
-    collector = _Collector(runtime)
-    syncer = _FailingPostTrainSyncer(runtime)
-    schedule = _build(_continuous_config(), collector, syncer)
+async def test_partial_commit_failure_closes_admission_and_runtime(monkeypatch, tmp_path) -> None:
+    bench = _bench(monkeypatch, tmp_path)
+    schedule = _build(_continuous_config(), bench)
 
     try:
         await schedule.next_iteration(["p0"], group_size=1)
 
+        bench.trace.fail("update_weights", "worker install ACK mismatch")
         with pytest.raises(RuntimeError, match="worker install ACK mismatch"):
             await schedule.after_train_step()
 
-        calls_after_failure = len(collector.calls)
+        requests_after_failure = len(bench.trace.requests)
         failed = await owner_snapshot(schedule._rollout_thread)
         assert failed.producer_state is None
         assert failed.batch_stats == {}
         assert "worker install ACK mismatch" in str(failed.terminal_error)
-        assert collector.shutdown_calls == 1
+        assert bench.trace.events.count("collector_shutdown") == 1
 
         await asyncio.sleep(0.02)
-        assert len(collector.calls) == calls_after_failure
+        assert len(bench.trace.requests) == requests_after_failure
         with pytest.raises(RuntimeError, match="owner has failed"):
             await schedule.next_iteration(["p0"], group_size=1)
     finally:
@@ -420,16 +335,13 @@ async def test_partial_commit_failure_closes_admission_and_runtime() -> None:
 
 
 @pytest.mark.asyncio
-async def test_draining_sync_finishes_the_active_prompt_batch_before_commit() -> None:
+async def test_draining_sync_finishes_the_active_prompt_batch_before_commit(
+    monkeypatch, tmp_path
+) -> None:
     """A draining backend completes every finite prefetch slot at one version."""
-    runtime = _Runtime()
-    collector = _Collector(runtime)
-    syncer = _Syncer(runtime)
-    schedule = _build(
-        _continuous_config(max_stale_policy_versions=1),
-        collector,
-        syncer,
-    )
+
+    bench = _bench(monkeypatch, tmp_path)
+    schedule = _build(_continuous_config(max_stale_policy_versions=1), bench)
 
     try:
         first = await schedule.next_iteration(
@@ -439,7 +351,7 @@ async def test_draining_sync_finishes_the_active_prompt_batch_before_commit() ->
         )
         assert _iteration_stat(first, "continuous.rollout_policy_version") == 1.0
         await schedule.after_train_step()
-        assert runtime.current_policy_version == 2
+        assert bench.runtime.current_policy_version == 2
         after = await owner_snapshot(schedule._rollout_thread)
         assert after.batch_stats["ready_items"] == 2
 
@@ -451,12 +363,11 @@ async def test_draining_sync_finishes_the_active_prompt_batch_before_commit() ->
 
 
 @pytest.mark.asyncio
-async def test_result_slots_fit_the_finite_prompt_batch() -> None:
+async def test_result_slots_fit_the_finite_prompt_batch(monkeypatch, tmp_path) -> None:
     """Every prompt group must reach the iteration even with serial admission."""
-    runtime = _Runtime()
-    collector = _Collector(runtime)
-    syncer = _Syncer(runtime)
-    schedule = _build(_continuous_config(), collector, syncer)
+
+    bench = _bench(monkeypatch, tmp_path)
+    schedule = _build(_continuous_config(), bench)
 
     try:
         iteration = await schedule.next_iteration(["a", "b", "c"], group_size=2)
@@ -467,36 +378,15 @@ async def test_result_slots_fit_the_finite_prompt_batch() -> None:
         await schedule.shutdown()
 
 
-def test_rejects_a_reward_sharing_a_training_gpu() -> None:
-    runtime = _Runtime()
-    collector = _Collector(runtime)
-    collector.reward_isolation_verified = False
-
-    with pytest.raises(RuntimeError, match="reward GPU disjoint from both trainer and rollout"):
-        _build(_continuous_config(), collector, _Syncer(runtime))
-
-
-class _FailingCollector(_Collector):
-    def __init__(self, runtime: _Runtime, message: str = "boom") -> None:
-        super().__init__(runtime)
-        self.message = message
-
-    async def generate_rollout(self, request) -> RolloutBatch:
-        raise RuntimeError(self.message)
-
-
 @pytest.mark.asyncio
-async def test_persistent_producer_failure_fails_fast_with_root_cause() -> None:
+async def test_persistent_producer_failure_fails_fast_with_root_cause(
+    monkeypatch, tmp_path
+) -> None:
     # Every generation fails. The consumer must surface the producer's root
     # cause well before the (long) wait timeout, not an opaque timeout.
-    runtime = _Runtime()
-    collector = _FailingCollector(runtime, message="reward model OOM")
-    syncer = _Syncer(runtime)
-    schedule = _build(
-        _continuous_config(wait_timeout_s=30.0, fail_fast_errors=2),
-        collector,
-        syncer,
-    )
+    bench = _bench(monkeypatch, tmp_path)
+    bench.trace.fail("generate", "reward model OOM", times=50)
+    schedule = _build(_continuous_config(wait_timeout_s=30.0, fail_fast_errors=2), bench)
 
     try:
         with pytest.raises(RuntimeError, match="reward model OOM") as excinfo:
@@ -506,25 +396,13 @@ async def test_persistent_producer_failure_fails_fast_with_root_cause() -> None:
         await schedule.shutdown()
 
 
-class _RewardFailingCollector(_Collector):
-    """Generation succeeds; reward scoring always fails."""
-
-    async def evaluate_rollout(self, pendings: Any) -> list[RolloutBatch]:
-        raise RuntimeError("reward model exploded")
-
-
 @pytest.mark.asyncio
-async def test_reward_failure_fails_fast_and_never_reaches_queue() -> None:
+async def test_reward_failure_fails_fast_and_never_reaches_queue(monkeypatch, tmp_path) -> None:
     # Reward scoring (not generation) fails persistently: the consumer must
     # surface that root cause and the result slots must stay empty.
-    runtime = _Runtime()
-    collector = _RewardFailingCollector(runtime)
-    syncer = _Syncer(runtime)
-    schedule = _build(
-        _continuous_config(wait_timeout_s=30.0, fail_fast_errors=2),
-        collector,
-        syncer,
-    )
+    bench = _bench(monkeypatch, tmp_path)
+    bench.trace.fail("score", "reward model exploded", times=50)
+    schedule = _build(_continuous_config(wait_timeout_s=30.0, fail_fast_errors=2), bench)
 
     try:
         with pytest.raises(RuntimeError, match="reward model exploded"):
@@ -534,72 +412,73 @@ async def test_reward_failure_fails_fast_and_never_reaches_queue() -> None:
         await schedule.shutdown()
 
 
-class _GatedScoreCollector(_Collector):
-    """Reward scoring blocks until the test opens the gate."""
+class _GatedReward(IndexReward):
+    """Scoring that blocks, after a number of calls, until the test opens the gate."""
 
-    def __init__(self, runtime: _Runtime) -> None:
-        super().__init__(runtime)
+    def __init__(self) -> None:
+        super().__init__()
         self.allow_score = threading.Event()
         self.allow_score.set()
         self.score_blocked = threading.Event()
         self.block_after_scores = 0
         self.score_calls = 0
 
-    async def evaluate_rollout(self, pendings: Any) -> list[RolloutBatch]:
+    async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
         self.score_calls += 1
         if self.score_calls > self.block_after_scores and not self.allow_score.is_set():
             self.score_blocked.set()
             await asyncio.to_thread(self.allow_score.wait)
-        return await super().evaluate_rollout(pendings)
+        return await super().score_batch(samples)
 
 
 @pytest.mark.asyncio
-async def test_weight_sync_waits_for_inflight_reward() -> None:
-    # after_train_step must drain in-flight generation+reward before pushing
-    # weights; syncing earlier would mix two policies inside one request.
-    """Checks weight sync waits for in-flight reward scoring."""
-    runtime = _Runtime()
-    collector = _GatedScoreCollector(runtime)
-    syncer = _Syncer(runtime)
-    schedule = _build(_continuous_config(), collector, syncer)
+async def test_weight_sync_waits_for_inflight_reward(monkeypatch, tmp_path) -> None:
+    """after_train_step must drain in-flight generation+reward before pushing
+    weights; syncing earlier would mix two policies inside one request."""
+
+    reward = _GatedReward()
+    bench = _bench(monkeypatch, tmp_path, reward=reward)
+    schedule = _build(_continuous_config(), bench)
 
     try:
-        collector.block_after_scores = 2
-        collector.score_blocked.clear()
-        collector.allow_score.clear()
+        reward.block_after_scores = 2
+        reward.score_blocked.clear()
+        reward.allow_score.clear()
         await schedule.next_iteration(
             ["p0", "p1"],
             group_size=2,
             next_prompts=["p2", "p3"],
         )
-        assert await asyncio.to_thread(collector.score_blocked.wait, 5.0)
+        assert await asyncio.to_thread(reward.score_blocked.wait, 5.0)
 
-        sync_calls_before = len(syncer.calls)
+        pushes_before = _pushes(bench)
         barrier = asyncio.create_task(schedule.after_train_step())
         await asyncio.sleep(0.05)
         # Reward still in flight: admission paused, sync not yet performed.
         blocked = await owner_snapshot(schedule._rollout_thread)
         assert blocked.producer_state is not None
         assert blocked.producer_state.paused_for_weight_sync is True
-        assert len(syncer.calls) == sync_calls_before
+        assert _pushes(bench) == pushes_before
         assert not barrier.done()
 
-        collector.allow_score.set()
+        reward.allow_score.set()
         await asyncio.wait_for(barrier, 5.0)
-        assert len(syncer.calls) == sync_calls_before + 1
+        assert _pushes(bench) == pushes_before + 1
         resumed = await owner_snapshot(schedule._rollout_thread)
         assert resumed.producer_state is not None
         assert resumed.producer_state.paused_for_weight_sync is False
     finally:
-        collector.allow_score.set()
+        reward.allow_score.set()
         await schedule.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_draining_barrier_reports_mode_zero() -> None:
-    """Default (no versioned slots): the barrier mode metric is 0 (draining)."""
-    runtime = _Runtime()
-    schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
+async def test_draining_barrier_reports_mode_zero(monkeypatch, tmp_path) -> None:
+    """A full-finetune run has no versioned slots: the barrier mode metric is 0 (draining)."""
+
+    bench = _bench(monkeypatch, tmp_path)
+    assert bench.stack.resolved.built.trainer.versioned_weight_sync is False
+    schedule = _build(_continuous_config(), bench)
 
     try:
         await schedule.next_iteration(["p0", "p1"], group_size=2)
@@ -610,57 +489,53 @@ async def test_draining_barrier_reports_mode_zero() -> None:
 
 
 @pytest.mark.asyncio
-async def test_non_draining_sync_skips_inflight_wait() -> None:
-    # The whole point of versioned slots: when the runtime advertises non-draining
-    # support, after_train_step must NOT wait for in-flight generation/reward — it
-    # syncs and returns while the gated reward is still blocked (the in-flight
-    # request keeps its own version's slot and finishes concurrently).
-    """Checks non-draining sync does not drain in-flight work."""
-    runtime = _Runtime()
-    runtime.supports_non_draining_weight_sync = True
-    collector = _GatedScoreCollector(runtime)
-    syncer = _Syncer(runtime)
-    schedule = _build(_continuous_config(), collector, syncer)
+async def test_non_draining_sync_skips_inflight_wait(monkeypatch, tmp_path) -> None:
+    """The whole point of versioned slots: when the launch contract allows
+    non-draining sync, after_train_step must NOT wait for in-flight
+    generation/reward. It syncs and returns while the gated reward is still
+    blocked; the in-flight request keeps its own version's slot."""
+
+    reward = _GatedReward()
+    bench = _bench(monkeypatch, tmp_path, non_draining=True, reward=reward)
+    assert bench.stack.resolved.built.trainer.versioned_weight_sync is True
+    schedule = _build(_continuous_config(), bench)
 
     try:
-        collector.block_after_scores = 2
-        collector.score_blocked.clear()
-        collector.allow_score.clear()
+        reward.block_after_scores = 2
+        reward.score_blocked.clear()
+        reward.allow_score.clear()
         await schedule.next_iteration(
             ["p0", "p1"],
             group_size=2,
             next_prompts=["p2", "p3"],
         )
-        assert await asyncio.to_thread(collector.score_blocked.wait, 5.0)
+        assert await asyncio.to_thread(reward.score_blocked.wait, 5.0)
 
-        sync_calls_before = len(syncer.calls)
+        pushes_before = _pushes(bench)
         # Must complete WITHOUT opening the reward gate (contrast with the draining
         # canary test, where this would block until allow_score.set()).
         phases = await asyncio.wait_for(schedule.after_train_step(), 5.0)
 
         assert phases.as_metrics_dict()["continuous.weight_sync_barrier_mode"] == 1.0
-        assert len(syncer.calls) == sync_calls_before + 1
+        assert _pushes(bench) == pushes_before + 1
         snapshot = await owner_snapshot(schedule._rollout_thread)
         assert snapshot.producer_state is not None
         assert snapshot.producer_state.paused_for_weight_sync is False
     finally:
-        collector.allow_score.set()
+        reward.allow_score.set()
         await schedule.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence() -> None:
+async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence(
+    monkeypatch, tmp_path
+) -> None:
     """Three GAS2 updates consume each announced prompt batch once within stale bound."""
-    runtime = _Runtime()
-    runtime.supports_non_draining_weight_sync = True
-    collector = _Collector(runtime)
+
+    bench = _bench(monkeypatch, tmp_path, non_draining=True)
     schedule = _build(
-        _continuous_config(
-            max_inflight_groups=6,
-            max_stale_policy_versions=1,
-        ),
-        collector,
-        _Syncer(runtime),
+        _continuous_config(max_inflight_groups=6, max_stale_policy_versions=1),
+        bench,
     )
     prompts = [[f"update-{update}-micro-{micro}"] for update in range(3) for micro in range(2)]
     iterations = []
@@ -680,7 +555,7 @@ async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence() -> No
                 sync_stats.append(await schedule.after_train_step())
 
         assert [
-            [batch.context["fixture_prompts"][0] for batch in iteration.batches]
+            [batch.trajectory.sample_rows[0].prompt for batch in iteration.batches]
             for iteration in iterations
         ] == prompts
         assert [
@@ -690,32 +565,18 @@ async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence() -> No
         assert [
             _iteration_stat(iteration, "continuous.consume_policy_version")
             for iteration in iterations
-        ] == [
-            1,
-            1,
-            2,
-            2,
-            3,
-            3,
-        ]
+        ] == [1, 1, 2, 2, 3, 3]
         assert [
             _iteration_stat(iteration, "continuous.stale_policy_versions")
             for iteration in iterations
-        ] == [
-            0,
-            0,
-            1,
-            0,
-            1,
-            0,
-        ]
+        ] == [0, 0, 1, 0, 1, 0]
         assert [
             iteration.stats.as_metrics_dict()["continuous.lookahead_requested"]
             for iteration in iterations
         ] == [1.0, 1.0, 1.0, 1.0, 1.0, 0.0]
         assert [
-            (call["prompts"], call["group_size"], call["policy_version"])
-            for call in collector.calls
+            (request.prompts, request.samples_per_prompt, request.policy_version)
+            for request in bench.trace.requests
         ] == [
             (current_prompts, 4, rollout_version)
             for current_prompts, rollout_version in zip(
@@ -727,7 +588,7 @@ async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence() -> No
         assert [
             stats.as_metrics_dict()["continuous.weight_sync_barrier_mode"] for stats in sync_stats
         ] == [1.0, 1.0, 1.0]
-        assert runtime.current_policy_version == 4
+        assert bench.runtime.current_policy_version == 4
 
         snapshot = await owner_snapshot(schedule._rollout_thread)
         assert snapshot.producer_state is not None
@@ -736,29 +597,24 @@ async def test_three_gas2_updates_consume_exact_finite_prefetch_sequence() -> No
         await schedule.shutdown()
 
 
-class _StaleSlotCollector(_Collector):
-    """Generation always hits an evicted trainable-state slot (non-draining sync).
+@pytest.mark.asyncio
+async def test_stale_slot_discard_fails_the_fixed_version_prompt_batch(
+    monkeypatch, tmp_path
+) -> None:
+    """A prompt batch cannot replace one slot without violating version identity.
 
-    Mirrors what the Ray executor raises when a request outlives its worker's slot
-    window: a typed StaleSlotDiscard, NOT a generation failure.
+    The worker raises a typed StaleSlotDiscard when a request outlives its
+    trainable-state slot window under non-draining sync: not a generation
+    failure, and the finite batch's fixed version cannot be preserved.
     """
 
-    async def generate_rollout(self, request) -> RolloutBatch:
-        raise StaleSlotDiscard("trainable-state slot evicted for policy_version=1")
-
-
-@pytest.mark.asyncio
-async def test_stale_slot_discard_fails_the_fixed_version_prompt_batch() -> None:
-    """A prompt batch cannot replace one slot without violating version identity."""
-    runtime = _Runtime()
-    runtime.supports_non_draining_weight_sync = True
-    collector = _StaleSlotCollector(runtime)
-    syncer = _Syncer(runtime)
-    schedule = _build(
-        _continuous_config(wait_timeout_s=30.0, fail_fast_errors=2),
-        collector,
-        syncer,
+    bench = _bench(monkeypatch, tmp_path, non_draining=True)
+    bench.trace.fail(
+        "generate",
+        StaleSlotDiscard("trainable-state slot evicted for policy_version=1"),
+        times=50,
     )
+    schedule = _build(_continuous_config(wait_timeout_s=30.0, fail_fast_errors=2), bench)
 
     try:
         with pytest.raises(RuntimeError, match="producer control loop failed") as exc_info:
@@ -770,10 +626,11 @@ async def test_stale_slot_discard_fails_the_fixed_version_prompt_batch() -> None
 
 
 @pytest.mark.asyncio
-async def test_prefetch_installs_the_next_prompt_batch() -> None:
+async def test_prefetch_installs_the_next_prompt_batch(monkeypatch, tmp_path) -> None:
     """The producer advances to exactly the prompt batch announced as prefetch."""
-    runtime = _Runtime()
-    schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
+
+    bench = _bench(monkeypatch, tmp_path)
+    schedule = _build(_continuous_config(), bench)
 
     try:
         await schedule.next_iteration(
@@ -788,10 +645,9 @@ async def test_prefetch_installs_the_next_prompt_batch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_prefetch_freezes_runtime_debug_at_generation_time() -> None:
-    runtime = _Runtime()
-    collector = _Collector(runtime)
-    schedule = _build(_continuous_config(), collector, _Syncer(runtime))
+async def test_prefetch_freezes_runtime_debug_at_generation_time(monkeypatch, tmp_path) -> None:
+    bench = _bench(monkeypatch, tmp_path)
+    schedule = _build(_continuous_config(), bench)
 
     try:
         await schedule.next_iteration(
@@ -805,23 +661,25 @@ async def test_prefetch_freezes_runtime_debug_at_generation_time() -> None:
             group_size=1,
             runtime_debug=False,
         )
-        assert [call["runtime_debug"] for call in collector.calls] == [True, True]
+        assert [request.runtime_debug for request in bench.trace.requests] == [True, True]
     finally:
         await schedule.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_prefetch_mismatch_fails_instead_of_training_the_wrong_prompt_batch() -> None:
+async def test_prefetch_mismatch_fails_instead_of_training_the_wrong_prompt_batch(
+    monkeypatch, tmp_path
+) -> None:
     """The trainer must consume the exact prompt batch it announced as prefetch."""
-    runtime = _Runtime()
+
+    bench = _bench(monkeypatch, tmp_path)
     schedule = _build(
         _continuous_config(
             max_stale_policy_versions=1,
             max_inflight_groups=2,
             wait_timeout_s=1.0,
         ),
-        _Collector(runtime),
-        _Syncer(runtime),
+        bench,
     )
 
     try:
@@ -837,9 +695,11 @@ async def test_prefetch_mismatch_fails_instead_of_training_the_wrong_prompt_batc
 
 
 @pytest.mark.asyncio
-async def test_prefetch_group_size_mismatch_fails_before_consumption() -> None:
-    runtime = _Runtime()
-    schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
+async def test_prefetch_group_size_mismatch_fails_before_consumption(
+    monkeypatch, tmp_path
+) -> None:
+    bench = _bench(monkeypatch, tmp_path)
+    schedule = _build(_continuous_config(), bench)
 
     try:
         await schedule.next_iteration(
@@ -854,10 +714,13 @@ async def test_prefetch_group_size_mismatch_fails_before_consumption() -> None:
 
 
 @pytest.mark.asyncio
-async def test_prefetch_accepts_identical_prompt_with_non_scalar_metadata() -> None:
+async def test_prefetch_accepts_identical_prompt_with_non_scalar_metadata(
+    monkeypatch, tmp_path
+) -> None:
     """The sampler may present the same object whose structural equality is invalid."""
-    runtime = _Runtime()
-    schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
+
+    bench = _bench(monkeypatch, tmp_path)
+    schedule = _build(_continuous_config(), bench)
     prompt = PromptExample(
         prompt="p1",
         metadata={"embedding": torch.tensor([1.0, 2.0])},
@@ -875,9 +738,11 @@ async def test_prefetch_accepts_identical_prompt_with_non_scalar_metadata() -> N
 
 
 @pytest.mark.asyncio
-async def test_prefetch_fails_closed_when_prompt_equality_is_non_scalar() -> None:
-    runtime = _Runtime()
-    schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
+async def test_prefetch_fails_closed_when_prompt_equality_is_non_scalar(
+    monkeypatch, tmp_path
+) -> None:
+    bench = _bench(monkeypatch, tmp_path)
+    schedule = _build(_continuous_config(), bench)
     installed = PromptExample(
         prompt="p1",
         metadata={"embedding": torch.tensor([1.0, 2.0])},
@@ -900,14 +765,10 @@ async def test_prefetch_fails_closed_when_prompt_equality_is_non_scalar() -> Non
 
 
 @pytest.mark.parametrize("window", [1.5, "1", True])
-def test_continuous_schedule_does_not_coerce_policy_window(window) -> None:
-    runtime = _Runtime()
+def test_continuous_schedule_does_not_coerce_policy_window(monkeypatch, tmp_path, window) -> None:
+    bench = _bench(monkeypatch, tmp_path)
     with pytest.raises(ValueError, match="max_stale_policy_versions"):
-        _build(
-            _continuous_config(max_stale_policy_versions=window),
-            _Collector(runtime),
-            _Syncer(runtime),
-        )
+        _build(_continuous_config(max_stale_policy_versions=window), bench)
 
 
 @pytest.mark.parametrize("name", ["wait_timeout_s", "queue_poll_interval_s"])

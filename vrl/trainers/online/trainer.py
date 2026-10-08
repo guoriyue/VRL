@@ -35,6 +35,7 @@ from vrl.rollouts.admission import AdmissionLedger
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.orchestration import build_rollout_schedule
+from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.core.types import CORRECTED_REPLAY_MAX_ABS_LOG_RATIO, TrainState
 from vrl.trainers.diagnostics import (
@@ -553,20 +554,20 @@ class OnlineTrainer:
 
         self._optimizer: torch.optim.Optimizer | None = None
         self._ema: EMAWeights | None = None
-        self._rollout_weights_initialized = False
         # Recheck rollout/replay parity in each process; a checkpoint's previous
         # pass does not cover changes to kernels, compilation, or batch geometry.
         self._replay_parity_passed = False
         self._update_phase_timers: list[PhaseTimer] = []
-        self.rollout_schedule = build_rollout_schedule(
-            self.config.rollout_orchestration,
+        self._rollout_runtime = RolloutRuntimeCoordinator(
             collector=self.collector,
             strategy=self._strategy,
             training_state_getter=self._training_memory_state,
             weight_syncer=self.weight_syncer,
             sync_state_getter=self.sync_state_getter,
-            weights_initialized=lambda: self._rollout_weights_initialized,
-            set_weights_initialized=self._set_rollout_weights_initialized,
+        )
+        self.rollout_schedule = build_rollout_schedule(
+            self.config.rollout_orchestration,
+            self._rollout_runtime,
             # Likelihood-free objectives (DiffusionNFT) opt out, which makes a
             # continuous max_stale>0 config fail fast as unsound.
             algorithm_tolerates_off_policy_staleness=(
@@ -700,9 +701,6 @@ class OnlineTrainer:
                 device=self.device,
             )
         return self._ema
-
-    def _set_rollout_weights_initialized(self, value: bool) -> None:
-        self._rollout_weights_initialized = bool(value)
 
     def _training_memory_state(self) -> TrainingMemoryState:
         """Resolve the trainer-owned objects live at the rollout phase boundary."""
@@ -2137,7 +2135,7 @@ class OnlineTrainer:
         self.rollout_schedule.reset()
         self.state.step = step
         self.state.global_step = global_step
-        self._rollout_weights_initialized = False
+        self._rollout_runtime.require_weight_resync()
         self._replay_parity_passed = False
 
     def _optimizer_parameter_manifest(self) -> list[dict[str, Any]]:

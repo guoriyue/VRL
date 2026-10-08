@@ -46,16 +46,18 @@ class RolloutRuntimeCoordinator:
         training_state_getter: Callable[[], Any],
         weight_syncer: Any | None,
         sync_state_getter: Callable[[], dict[str, Any]] | None,
-        weights_initialized: Callable[[], bool],
-        set_weights_initialized: Callable[[bool], None],
+        weights_initialized: bool = False,
     ) -> None:
         self.collector = collector
         self.strategy = strategy
         self.training_state_getter = training_state_getter
         self.weight_syncer = weight_syncer
         self.sync_state_getter = sync_state_getter
-        self._weights_initialized = weights_initialized
-        self._set_weights_initialized = set_weights_initialized
+        # Whether the rollout runtime holds the trainer's current weights. Only
+        # this coordinator changes it: a successful push sets it, and
+        # ``require_weight_resync`` clears it after the trainer's weights are
+        # replaced underneath the runtime (a checkpoint restore).
+        self.weights_initialized = weights_initialized
 
     async def ensure_initial_weights(self, stats: RolloutStats) -> None:
         prepared = self.prepare_initial_weight_sync_state()
@@ -103,7 +105,7 @@ class RolloutRuntimeCoordinator:
     def prepare_initial_weight_sync_state(self) -> dict[str, Any] | None:
         """Prepare first-policy weights only when the runtime still needs them."""
 
-        if self._weights_initialized() or self.weight_syncer is None:
+        if self.weights_initialized or self.weight_syncer is None:
             return None
         return self.prepare_weight_sync_state()
 
@@ -207,7 +209,6 @@ class RolloutRuntimeCoordinator:
         released.
         """
 
-        self.validate_training_state_parking()
         # Shutdown reports no timings, but parking stays unconditional; a
         # throwaway accumulator keeps the recording sites branch-free.
         self.park_training_state_for_rollout(RolloutStats())

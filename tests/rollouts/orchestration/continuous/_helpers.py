@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -32,6 +33,33 @@ class OwnerSnapshot:
     terminal_error: str | None
 
 
+async def _snapshot(runtime: Any) -> OwnerSnapshot:
+    """Copy the owner runtime's producer and batch state; runs on the owner loop."""
+
+    producer = runtime.producer
+    active_prompt_batch = None if producer is None else producer.prompt_batch
+    ready = (
+        []
+        if active_prompt_batch is None
+        else [item for item in active_prompt_batch.results if item is not None]
+    )
+    return OwnerSnapshot(
+        producer_state=(None if producer is None else replace(producer.state)),
+        batch_stats=(
+            {}
+            if active_prompt_batch is None
+            else {
+                "ready_items": float(len(ready)),
+                "oldest_item_age_s": max((item.age_s for item in ready), default=0.0),
+            }
+        ),
+        prompts=(() if active_prompt_batch is None else active_prompt_batch.prompts),
+        terminal_error=(
+            None if runtime._terminal_error is None else repr(runtime._terminal_error)
+        ),
+    )
+
+
 async def owner_snapshot(owner: ContinuousRolloutThread) -> OwnerSnapshot:
     """Copy producer and batch state off the owner loop without racing it.
 
@@ -43,30 +71,26 @@ async def owner_snapshot(owner: ContinuousRolloutThread) -> OwnerSnapshot:
     """
 
     runtime, loop = owner._ensure_thread()
-
-    async def _copy() -> OwnerSnapshot:
-        producer = runtime.producer
-        active_prompt_batch = None if producer is None else producer.prompt_batch
-        ready = (
-            []
-            if active_prompt_batch is None
-            else [item for item in active_prompt_batch.results if item is not None]
-        )
-        return OwnerSnapshot(
-            producer_state=(None if producer is None else replace(producer.state)),
-            batch_stats=(
-                {}
-                if active_prompt_batch is None
-                else {
-                    "ready_items": float(len(ready)),
-                    "oldest_item_age_s": max((item.age_s for item in ready), default=0.0),
-                }
-            ),
-            prompts=(() if active_prompt_batch is None else active_prompt_batch.prompts),
-            terminal_error=(
-                None if runtime._terminal_error is None else repr(runtime._terminal_error)
-            ),
-        )
-
-    future = asyncio.run_coroutine_threadsafe(_copy(), loop)
+    future = asyncio.run_coroutine_threadsafe(_snapshot(runtime), loop)
     return await owner._await_command(future)
+
+
+def wait_for_owner_progress(
+    owner: ContinuousRolloutThread,
+    *,
+    completed_above: int,
+    timeout_s: float = 5.0,
+) -> OwnerSnapshot:
+    """Block the calling thread, like synchronous backward does, until the owner
+    has completed more than ``completed_above`` items; return that snapshot."""
+
+    runtime, loop = owner._ensure_thread()
+    deadline = time.monotonic() + timeout_s
+    while True:
+        snapshot = asyncio.run_coroutine_threadsafe(_snapshot(runtime), loop).result(timeout_s)
+        state = snapshot.producer_state
+        if state is not None and state.completed_count > completed_above:
+            return snapshot
+        if time.monotonic() >= deadline:
+            raise AssertionError("owner made no progress while the trainer thread was blocked")
+        time.sleep(0.005)

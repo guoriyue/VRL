@@ -77,3 +77,40 @@ def test_continuous_trainer_reward_overlap_is_rejected() -> None:
         SimpleNamespace(schedule_mode="continuous"),
         _resources(colocated=False),
     )
+
+
+def test_continuous_rejects_a_reward_sharing_the_trainer_gpu() -> None:
+    """A GPU reward with no reservation of its own follows the trainer's card in
+    the real resolved plan, so scoring would need the trainer to yield its GPU;
+    continuous scheduling overlaps backward with scoring and cannot."""
+
+    from omegaconf import OmegaConf
+
+    from vrl.config.schema import parse_config
+    from vrl.ray.resources import ResolvedDistributedResources
+    from vrl.trainers.core.types import RolloutOrchestrationConfig
+
+    resources = ResolvedDistributedResources.from_root(
+        parse_config(
+            OmegaConf.create(
+                {
+                    "distributed": {
+                        "resources": {
+                            "visible_devices": [0, 1],
+                            "trainer": {"devices": [0]},
+                            "rollout": {"devices": [1]},
+                        },
+                    },
+                    "reward": {"components": {"aesthetic": 1.0}, "kwargs": {"aesthetic": {}}},
+                },
+            ),
+        ),
+    )
+    assert resources.reward_follows_trainer
+    assert resources.lifecycle.park_trainer_for_reward
+
+    with pytest.raises(ValueError, match="reward scoring on the trainer GPU"):
+        validate_rollout_schedule_topology(
+            RolloutOrchestrationConfig(schedule_mode="continuous"),
+            resources,
+        )

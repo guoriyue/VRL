@@ -35,19 +35,10 @@ class ContinuousRolloutSchedule:
         # No defaults: the typed config remains the single source of defaults.
         # ``settings`` already validated ``max_stale_policy_versions >= 1`` at
         # construction, and validate_rollout_schedule_topology rejected shared
-        # or parked GPU topologies before launch.
+        # or parked GPU topologies, a GPU-sharing reward included, before launch.
         settings: ContinuousRolloutSettings,
     ) -> None:
         self.lifecycle = lifecycle
-        if not lifecycle.collector.reward_isolation_verified:
-            # A single collect task still overlaps the trainer in continuous
-            # mode, so limiting group concurrency cannot make a shared reward
-            # GPU safe.
-            raise RuntimeError(
-                "continuous rollout requires a reward GPU disjoint from both trainer "
-                "and rollout GPUs; pin distributed.resources.reward.devices to a spare "
-                "card, or use strict_on_policy scheduling",
-            )
         self._rollout_thread = ContinuousRolloutThread(lifecycle=lifecycle, settings=settings)
 
     @classmethod

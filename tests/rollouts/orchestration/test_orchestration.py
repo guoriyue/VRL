@@ -1,489 +1,195 @@
-"""Tests for RL rollout orchestration schedules."""
+"""The strict on-policy schedule over the real coordinator, collector and trainer strategy."""
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
+import torch
 
-from tests.rollouts.collector._helpers import PromptCollectionFake
+from tests.rollouts.collector._helpers import Trace, real_collector, trainer_side
 from vrl.ray.resources import RayLifecyclePlan
-
-
-def _schedule_config(mode: str):
-    from vrl.trainers.core.types import RolloutOrchestrationConfig
-
-    return RolloutOrchestrationConfig(schedule_mode=mode)
-
-
-def _batch(prompts: list[str], group_size: int):
-    import torch
-
-    from vrl.rollouts.batch import RolloutBatch
-
-    batch_size = len(prompts) * group_size
-    group_ids = torch.tensor(
-        [prompt_idx for prompt_idx in range(len(prompts)) for _ in range(group_size)],
-        dtype=torch.long,
-    )
-    return RolloutBatch(
-        rewards=torch.arange(batch_size, dtype=torch.float32),
-        group_ids=group_ids,
-    )
-
-
-class _Runtime:
-    def __init__(self) -> None:
-        self.current_policy_version = 0
-
-
-class _Syncer:
-    def __init__(self, runtime: _Runtime) -> None:
-        self.runtime = runtime
-        self.calls: list[dict[str, Any]] = []
-
-    async def push(self, state_dict: dict[str, Any]) -> None:
-        self.calls.append(dict(state_dict))
-        self.runtime.current_policy_version += 1
-
-    async def pull(self) -> dict[str, Any]:
-        return dict(self.calls[-1])
-
-    @property
-    def current_policy_version(self) -> int | None:
-        # Mirrors RayRuntimeWeightSyncer's concrete version property.
-        return self.runtime.current_policy_version
-
-
-class _Collector(PromptCollectionFake):
-    def __init__(self, runtime: _Runtime) -> None:
-        self.generation_runtime = runtime
-        self.lifecycle = None
-        self.calls: list[dict[str, Any]] = []
-        self.activation_calls = 0
-        self.offload_calls = 0
-
-    async def generate_rollout(self, request):
-        inputs = request.inputs
-        kwargs = request.options
-        prompts = [getattr(item, "prompt", item) for item in inputs]
-        self.calls.append({"prompts": prompts, **dict(kwargs)})
-        return _batch(prompts, int(kwargs["group_size"]))
-
-    async def evaluate_rollout(self, pendings):
-        return list(pendings)
-
-    async def activate_generation_runtime(self) -> None:
-        self.activation_calls += 1
-
-    async def offload_generation_runtime_memory(self) -> None:
-        self.offload_calls += 1
-
-    async def shutdown(self) -> None:
-        return None
+from vrl.rollouts.orchestration import build_rollout_schedule
+from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
+from vrl.rollouts.stats import RolloutStats
+from vrl.trainers.core.types import RolloutOrchestrationConfig
+from vrl.trainers.weight_sync import flatten_trainable_module_state
 
 
 @pytest.mark.asyncio
-async def test_strict_schedule_collects_and_syncs() -> None:
-    """Checks strict schedule collects and syncs one trainer-ready iteration."""
-    import torch
-    import torch.nn as nn
+async def test_strict_schedule_collects_and_syncs(monkeypatch, tmp_path) -> None:
+    """One trainer-ready iteration: initial weights pushed, prompts collected under
+    that version, weights pushed again after the train step."""
 
-    from vrl.models.parking import TrainingMemoryState
-    from vrl.rollouts.orchestration import build_rollout_schedule
-    from vrl.trainers.strategy import SingleProcessStrategy
-
-    runtime = _Runtime()
-    collector = _Collector(runtime)
-    syncer = _Syncer(runtime)
-    initialized = False
-
-    def _set_initialized(value: bool) -> None:
-        nonlocal initialized
-        initialized = bool(value)
-
-    model = nn.Linear(1, 1)
-    strategy = SingleProcessStrategy()
+    bench = real_collector(monkeypatch, tmp_path)
+    trainer = trainer_side(bench)
     schedule = build_rollout_schedule(
-        _schedule_config("strict_on_policy"),
-        algorithm_tolerates_off_policy_staleness=True,
-        collector=collector,
-        strategy=strategy,
-        training_state_getter=lambda: TrainingMemoryState(
-            model=model,
-            ref_model=None,
-            optimizer=None,
-            ema=None,
-            grad_scaler=None,
-            device=torch.device("cpu"),
-        ),
-        weight_syncer=syncer,
-        sync_state_getter=lambda: {"w": 1},
-        weights_initialized=lambda: initialized,
-        set_weights_initialized=_set_initialized,
+        RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
+        trainer.coordinator(bench),
+        versioned_weight_sync=False,
     )
 
-    iteration = await schedule.next_iteration(
-        ["p0", "p1"],
-        group_size=2,
-        runtime_debug=True,
-    )
+    iteration = await schedule.next_iteration(["p0", "p1"], group_size=2, runtime_debug=True)
     await schedule.after_train_step()
 
-    collect_call = collector.calls[0]
-    assert collect_call["prompts"] == ["p0", "p1"]
-    assert collect_call["policy_version"] == 1
-    assert collect_call["runtime_debug"] is True
+    request = bench.trace.requests[0]
+    assert request.prompts == ["p0", "p1"]
+    assert request.policy_version == 1
+    assert request.runtime_debug is True
     assert len(iteration.batches) == 2
     assert sum(batch.rewards.numel() for batch in iteration.batches) == 4
-    assert len(syncer.calls) == 2
-    assert runtime.current_policy_version == 2
-    assert collector.activation_calls == 1
-    assert collector.offload_calls == 1
+    assert bench.trace.events.count("update_weights") == 2
+    assert bench.runtime.current_policy_version == 2
+    assert bench.trace.events.count("activate") == 1
+    assert bench.trace.events.count("offload") == 1
 
 
-class _ParkingStrategy:
-    def __init__(self, events: list[str], *, fail_restore: bool = False) -> None:
-        self.events = events
-        self.fail_restore = fail_restore
+def _phase_trace(monkeypatch, bench, trainer) -> Trace:
+    """Order of the trainer- and rollout-side transitions the coordinator drives."""
 
-    def validate_training_state_parking(self) -> None:
-        self.events.append("trainer.validate")
-
-    def park_training_state(self, _state: object) -> None:
-        self.events.append("trainer.park")
-
-    def restore_training_state(self, _state: object) -> None:
-        self.events.append("trainer.restore")
-        if self.fail_restore:
-            raise RuntimeError("restore failed")
-
-
-class _FailingPhaseCollector(_Collector):
-    def __init__(
-        self,
-        runtime: _Runtime,
-        events: list[str],
-        *,
-        fail_collect: bool = False,
-        fail_offload: bool = False,
-    ) -> None:
-        super().__init__(runtime)
-        self.events = events
-        self.fail_collect = fail_collect
-        self.fail_offload = fail_offload
-
-    async def activate_generation_runtime(self) -> None:
-        self.events.append("rollout.activate")
-
-    async def generate_rollout(self, request):
-        self.events.append("rollout.collect")
-        if self.fail_collect:
-            raise RuntimeError("collect failed")
-        return await super().generate_rollout(request)
-
-    async def offload_generation_runtime_memory(self) -> None:
-        self.events.append("rollout.offload")
-        if self.fail_offload:
-            raise RuntimeError("offload failed")
-
-    async def shutdown(self) -> None:
-        self.events.append("collector.shutdown")
+    phase = Trace(monkeypatch)
+    phase.watch(trainer.strategy, "validate_training_state_parking", "trainer.validate")
+    phase.watch(trainer, "training_state", "trainer.get_live_state")
+    phase.watch(trainer.strategy, "park_training_state", "trainer.park")
+    phase.watch(trainer.strategy, "restore_training_state", "trainer.restore")
+    phase.watch(bench.collector, "activate_generation_runtime", "rollout.activate")
+    phase.watch(bench.collector, "generate_rollout", "rollout.collect")
+    phase.watch(bench.collector, "offload_generation_runtime_memory", "rollout.offload")
+    phase.watch(bench.collector, "shutdown", "collector.shutdown")
+    return phase
 
 
 def _parking_schedule(
-    *,
-    fail_collect: bool = False,
-    fail_offload: bool = False,
-    fail_restore: bool = False,
-    reward_uses_trainer: bool = False,
-):
-    from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-    from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
-
-    events: list[str] = []
-    runtime = _Runtime()
-    collector = _FailingPhaseCollector(
-        runtime,
-        events,
-        fail_collect=fail_collect,
-        fail_offload=fail_offload,
-    )
+    monkeypatch, tmp_path, *, reward_uses_trainer: bool = False
+) -> tuple[StrictOnPolicyRolloutSchedule, Trace]:
     # Either the rollout or the reward sits on the trainer GPU; both shapes park
     # the trainer at phase entry.
-    collector.lifecycle = (
+    lifecycle = (
         RayLifecyclePlan(trainer=(0,), rollout=(1,), reward=(0,))
         if reward_uses_trainer
         else RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=(2,))
     )
-    strategy = _ParkingStrategy(events, fail_restore=fail_restore)
+    bench = real_collector(monkeypatch, tmp_path, lifecycle=lifecycle)
+    trainer = trainer_side(bench, initialized=True)
+    phase = _phase_trace(monkeypatch, bench, trainer)
+    coordinator = trainer.coordinator(bench, syncer=False)
+    return StrictOnPolicyRolloutSchedule(lifecycle=coordinator), phase
 
-    def _state() -> object:
-        events.append("trainer.get_live_state")
-        return object()
 
-    lifecycle = RolloutRuntimeCoordinator(
-        collector=collector,
-        strategy=strategy,
-        training_state_getter=_state,
-        weight_syncer=None,
-        sync_state_getter=None,
-        weights_initialized=lambda: True,
-        set_weights_initialized=lambda _value: None,
-    )
-    return StrictOnPolicyRolloutSchedule(lifecycle=lifecycle), events
+# The strategy validates inside its own park; the schedule does not re-ask.
+_SHARED_PHASE = [
+    "trainer.get_live_state",
+    "trainer.park",
+    "trainer.validate",
+    "rollout.activate",
+    "rollout.collect",
+    "rollout.offload",
+    "trainer.get_live_state",
+    "trainer.restore",
+]
 
 
 @pytest.mark.asyncio
-async def test_strict_shared_phase_keeps_handoff_order_in_next_iteration() -> None:
-    schedule, events = _parking_schedule()
+async def test_strict_shared_phase_keeps_handoff_order_in_next_iteration(
+    monkeypatch, tmp_path
+) -> None:
+    schedule, phase = _parking_schedule(monkeypatch, tmp_path)
 
     await schedule.next_iteration(["p0"], group_size=1)
 
-    assert events == [
-        "trainer.validate",
-        "trainer.get_live_state",
-        "trainer.park",
-        "rollout.activate",
-        "rollout.collect",
-        "rollout.offload",
-        "trainer.get_live_state",
-        "trainer.restore",
-    ]
+    assert phase.events == _SHARED_PHASE
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("failure", "message", "expect_restore"),
+    ("failing_event", "message", "expect_restore"),
     [
-        ({"fail_collect": True}, "collect failed", True),
-        ({"fail_offload": True}, "offload failed", False),
-        ({"fail_restore": True}, "restore failed", True),
+        ("rollout.collect", "collect failed", True),
+        ("rollout.offload", "offload failed", False),
+        ("trainer.restore", "restore failed", True),
     ],
 )
 async def test_strict_shared_phase_restores_only_after_rollout_offload(
-    failure: dict[str, bool],
-    message: str,
-    expect_restore: bool,
+    monkeypatch, tmp_path, failing_event: str, message: str, expect_restore: bool
 ) -> None:
-    schedule, events = _parking_schedule(**failure)
+    schedule, phase = _parking_schedule(monkeypatch, tmp_path)
+    phase.fail(failing_event, message)
 
     with pytest.raises(RuntimeError, match=message):
         await schedule.next_iteration(["p0"], group_size=1)
 
-    assert ("trainer.restore" in events) is expect_restore
+    assert ("trainer.restore" in phase.events) is expect_restore
     if expect_restore:
-        assert events.index("trainer.restore") > events.index("rollout.offload")
+        assert phase.events.index("trainer.restore") > phase.events.index("rollout.offload")
 
 
 @pytest.mark.asyncio
-async def test_strict_parks_trainer_when_only_reward_shares_its_gpu() -> None:
-    schedule, events = _parking_schedule(reward_uses_trainer=True)
+async def test_strict_parks_trainer_when_only_reward_shares_its_gpu(monkeypatch, tmp_path) -> None:
+    schedule, phase = _parking_schedule(monkeypatch, tmp_path, reward_uses_trainer=True)
 
     await schedule.next_iteration(["p0"], group_size=1)
 
-    assert events == [
-        "trainer.validate",
-        "trainer.get_live_state",
-        "trainer.park",
-        "rollout.activate",
-        "rollout.collect",
-        "rollout.offload",
-        "trainer.get_live_state",
-        "trainer.restore",
-    ]
+    assert phase.events == _SHARED_PHASE
 
 
 @pytest.mark.asyncio
-async def test_strict_terminal_shutdown_parks_before_shared_pipeline_cleanup() -> None:
-    schedule, events = _parking_schedule(reward_uses_trainer=True)
+async def test_strict_terminal_shutdown_parks_before_shared_pipeline_cleanup(
+    monkeypatch, tmp_path
+) -> None:
+    schedule, phase = _parking_schedule(monkeypatch, tmp_path, reward_uses_trainer=True)
 
     await schedule.shutdown()
 
-    assert events == [
-        "trainer.validate",
+    assert phase.events == [
         "trainer.get_live_state",
         "trainer.park",
+        "trainer.validate",
         "collector.shutdown",
     ]
 
 
 @pytest.mark.asyncio
-async def test_prepared_weight_push_never_reenters_live_getter() -> None:
-    import torch
+async def test_prepared_weight_push_never_reenters_live_getter(monkeypatch, tmp_path) -> None:
+    """The snapshot taken at prepare time is what the rollout receives, however
+    the live policy changes in between, and preparing again exports nothing."""
 
-    from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-    from vrl.rollouts.stats import RolloutStats
+    bench = real_collector(monkeypatch, tmp_path)
+    trainer = trainer_side(bench)
+    exports = Trace(monkeypatch)
+    exports.watch(trainer, "export", "trainer.export")
+    coordinator = trainer.coordinator(bench)
 
-    runtime = _Runtime()
-    syncer = _Syncer(runtime)
-    live = torch.tensor([1.0], requires_grad=True)
-    getter_calls = 0
-    initialized = False
-
-    def _getter() -> dict[str, Any]:
-        nonlocal getter_calls
-        getter_calls += 1
-        return {"weight": live.detach().to("cpu", copy=True)}
-
-    def _set_initialized(value: bool) -> None:
-        nonlocal initialized
-        initialized = bool(value)
-
-    lifecycle = RolloutRuntimeCoordinator(
-        collector=_Collector(runtime),
-        strategy=_ParkingStrategy([]),
-        training_state_getter=lambda: object(),
-        weight_syncer=syncer,
-        sync_state_getter=_getter,
-        weights_initialized=lambda: initialized,
-        set_weights_initialized=_set_initialized,
-    )
-
-    prepared = lifecycle.prepare_initial_weight_sync_state()
+    prepared = coordinator.prepare_initial_weight_sync_state()
     assert prepared is not None
+    key = next(iter(prepared))
+    live = dict(trainer.bundle.model.trainable_modules["transformer"].named_parameters())[
+        key.removeprefix("transformer.")
+    ]
     with torch.no_grad():
         live.fill_(9.0)
-    await lifecycle.push_prepared_weights(prepared, RolloutStats())
+    await coordinator.push_prepared_weights(prepared, RolloutStats())
 
-    assert getter_calls == 1
-    assert initialized is True
-    assert torch.equal(syncer.calls[0]["weight"], torch.tensor([1.0]))
-    assert lifecycle.prepare_initial_weight_sync_state() is None
-    assert getter_calls == 1
+    assert exports.events == ["trainer.export"]
+    assert coordinator.weights_initialized is True
+    installed = flatten_trainable_module_state(
+        bench.runtime.worker.executor.model.trainable_modules
+    )[key]
+    assert torch.equal(installed, prepared[key])
+    assert not torch.equal(installed, live.detach())
+    assert coordinator.prepare_initial_weight_sync_state() is None
+    assert exports.events == ["trainer.export"]
 
 
 @pytest.mark.asyncio
-async def test_failed_prepared_weight_push_does_not_publish_initialized_state() -> None:
-    import torch
-
-    from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-    from vrl.rollouts.stats import RolloutStats
-
-    runtime = _Runtime()
-    initialized = False
-
-    class _FailingSyncer(_Syncer):
-        async def push(self, state_dict: dict[str, Any]) -> None:
-            del state_dict
-            raise RuntimeError("push failed")
-
-    def _set_initialized(value: bool) -> None:
-        nonlocal initialized
-        initialized = bool(value)
-
-    lifecycle = RolloutRuntimeCoordinator(
-        collector=_Collector(runtime),
-        strategy=_ParkingStrategy([]),
-        training_state_getter=lambda: object(),
-        weight_syncer=_FailingSyncer(runtime),
-        sync_state_getter=lambda: {"weight": torch.ones(1)},
-        weights_initialized=lambda: initialized,
-        set_weights_initialized=_set_initialized,
-    )
-    prepared = lifecycle.prepare_initial_weight_sync_state()
+async def test_failed_prepared_weight_push_does_not_publish_initialized_state(
+    monkeypatch, tmp_path
+) -> None:
+    bench = real_collector(monkeypatch, tmp_path)
+    trainer = trainer_side(bench)
+    coordinator = trainer.coordinator(bench)
+    bench.trace.fail("update_weights", "push failed")
+    prepared = coordinator.prepare_initial_weight_sync_state()
 
     with pytest.raises(RuntimeError, match="push failed"):
-        await lifecycle.push_prepared_weights(prepared, RolloutStats())
+        await coordinator.push_prepared_weights(prepared, RolloutStats())
 
-    assert initialized is False
-    assert runtime.current_policy_version == 0
-
-
-@pytest.mark.asyncio
-async def test_coordinator_does_not_invent_versions_for_unversioned_pushes():
-    from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-    from vrl.rollouts.stats import RolloutStats
-
-    class UnversionedSyncer:
-        current_policy_version = None
-
-        async def push(self, state_dict):
-            pass
-
-    runtime = _Runtime()
-    runtime.current_policy_version = None
-    lifecycle = RolloutRuntimeCoordinator(
-        collector=_Collector(runtime),
-        strategy=None,
-        training_state_getter=lambda: None,
-        weight_syncer=UnversionedSyncer(),
-        sync_state_getter=lambda: {},
-        weights_initialized=lambda: False,
-        set_weights_initialized=lambda value: None,
-    )
-    assert lifecycle.current_policy_version() is None
-    await lifecycle.push_prepared_weights({}, RolloutStats())
-    await lifecycle.push_prepared_weights({}, RolloutStats())
-    assert lifecycle.current_policy_version() is None
-    runtime.current_policy_version = 17
-    assert lifecycle.current_policy_version() == 17
-    runtime.current_policy_version = None
-    assert lifecycle.current_policy_version() is None
-
-
-def test_coordinator_reads_syncer_version_until_collector_runtime_is_attached():
-    from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-
-    class UnattachedCollector:
-        generation_runtime = None
-
-    runtime = _Runtime()
-    runtime.current_policy_version = 23
-    lifecycle = RolloutRuntimeCoordinator(
-        collector=UnattachedCollector(),
-        strategy=None,
-        training_state_getter=lambda: None,
-        weight_syncer=_Syncer(runtime),
-        sync_state_getter=None,
-        weights_initialized=lambda: True,
-        set_weights_initialized=lambda value: None,
-    )
-    assert lifecycle.current_policy_version() == 23
-    lifecycle.collector = _Collector(runtime)
-    runtime.current_policy_version = 29
-    assert lifecycle.current_policy_version() == 29
-
-
-def test_coordinator_does_not_hide_runtime_provider_errors():
-    from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-
-    class BrokenCollector:
-        @property
-        def generation_runtime(self):
-            raise RuntimeError("provider failed")
-
-    lifecycle = RolloutRuntimeCoordinator(
-        collector=BrokenCollector(),
-        strategy=None,
-        training_state_getter=lambda: None,
-        weight_syncer=_Syncer(_Runtime()),
-        sync_state_getter=None,
-        weights_initialized=lambda: True,
-        set_weights_initialized=lambda value: None,
-    )
-    with pytest.raises(RuntimeError, match="provider failed"):
-        lifecycle.current_policy_version()
-
-
-@pytest.mark.parametrize("source", ["runtime", "syncer"])
-@pytest.mark.parametrize("version", [True, 1.9, "1", -1, float("nan"), float("inf")])
-def test_coordinator_rejects_invalid_published_versions(source, version):
-    from types import SimpleNamespace
-
-    from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-
-    provider = SimpleNamespace(current_policy_version=version)
-    lifecycle = RolloutRuntimeCoordinator(
-        collector=SimpleNamespace(generation_runtime=provider if source == "runtime" else None),
-        strategy=None,
-        training_state_getter=lambda: None,
-        weight_syncer=provider
-        if source == "syncer"
-        else SimpleNamespace(current_policy_version=1),
-        sync_state_getter=None,
-        weights_initialized=lambda: True,
-        set_weights_initialized=lambda value: None,
-    )
-    with pytest.raises(ValueError, match="current_policy_version"):
-        lifecycle.current_policy_version()
+    assert coordinator.weights_initialized is False
+    assert bench.runtime.current_policy_version == 0

@@ -144,6 +144,15 @@ class ContinuousRolloutProducer:
         )
         self._next_batch_id += 1
 
+    def release_results(self) -> None:
+        """Empty the installed batch's result slots once the trainer took them."""
+
+        prompt_batch = self.prompt_batch
+        if prompt_batch is None:
+            return
+        prompt_batch.results[:] = [None] * len(prompt_batch.prompts)
+        prompt_batch.consumed = True
+
     async def stop(self, *, wait_timeout_s: float = 30.0) -> None:
         """Cancel producer tasks and bound cooperative teardown.
 

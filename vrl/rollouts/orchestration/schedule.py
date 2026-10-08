@@ -111,18 +111,15 @@ class RolloutSchedule(Protocol):
 
 def build_rollout_schedule(
     config: RolloutOrchestrationConfig,
+    lifecycle: RolloutRuntimeCoordinator,
     *,
-    collector: Any,
-    strategy: Any,
-    training_state_getter: Callable[[], Any],
-    weight_syncer: Any | None,
-    sync_state_getter: Callable[[], dict[str, Any]] | None,
-    weights_initialized: Callable[[], bool],
-    set_weights_initialized: Callable[[bool], None],
     algorithm_tolerates_off_policy_staleness: bool,
     versioned_weight_sync: bool,
 ) -> RolloutSchedule:
-    """Build the RL rollout schedule selected by trainer config.
+    """Select the RL rollout schedule the trainer config names, over ``lifecycle``.
+
+    The caller owns the coordinator (the collector, strategy, weight syncer and
+    training-state access it schedules); this only picks the phase discipline.
 
     ``algorithm_tolerates_off_policy_staleness`` is the algorithm's soundness
     capability (a plain bool, not the algorithm object, so the rollout layer
@@ -134,17 +131,6 @@ def build_rollout_schedule(
     """
 
     mode = RolloutScheduleMode(config.schedule_mode)
-
-    lifecycle = RolloutRuntimeCoordinator(
-        collector=collector,
-        strategy=strategy,
-        training_state_getter=training_state_getter,
-        weight_syncer=weight_syncer,
-        sync_state_getter=sync_state_getter,
-        weights_initialized=weights_initialized,
-        set_weights_initialized=set_weights_initialized,
-    )
-
     if mode is RolloutScheduleMode.STRICT_ON_POLICY:
         return StrictOnPolicyRolloutSchedule(lifecycle=lifecycle)
     if mode is RolloutScheduleMode.CONTINUOUS:
@@ -164,8 +150,9 @@ def validate_rollout_schedule_topology(
     """Reject a schedule whose phase semantics contradict resolved GPU ownership.
 
     The online entrypoint calls this after resource resolution and before model or
-    Ray construction. It is the only topology check; ``ContinuousRolloutSchedule``
-    checks only the reward isolation a connected runtime advertises.
+    Ray construction. It is the only topology check, including reward isolation:
+    a reward sharing the trainer's or the rollout's GPU is exactly the plan's
+    ``park_trainer_for_reward`` / ``park_rollout_for_reward``.
     """
 
     mode = RolloutScheduleMode(config.schedule_mode)

@@ -79,7 +79,6 @@ class ContinuousRolloutConsumer:
             )
             items = [item for item in prompt_batch.results if item is not None]
             if len(items) == len(prompt_batch.prompts):
-                prompt_batch.results[:] = [None] * len(prompt_batch.prompts)
                 wait_s = time.perf_counter() - wait_start
                 return self._build_iteration(
                     items=items,
