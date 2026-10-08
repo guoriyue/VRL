@@ -120,6 +120,7 @@ def build_rollout_schedule(
     weights_initialized: Callable[[], bool],
     set_weights_initialized: Callable[[bool], None],
     algorithm_tolerates_off_policy_staleness: bool,
+    versioned_weight_sync: bool,
 ) -> RolloutSchedule:
     """Build the RL rollout schedule selected by trainer config.
 
@@ -151,6 +152,7 @@ def build_rollout_schedule(
             config.continuous,
             lifecycle=lifecycle,
             algorithm_tolerates_off_policy_staleness=algorithm_tolerates_off_policy_staleness,
+            versioned_weight_sync=versioned_weight_sync,
         )
     raise AssertionError(f"unreachable rollout schedule mode: {mode}")
 

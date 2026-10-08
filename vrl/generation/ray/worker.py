@@ -62,9 +62,6 @@ class RayGenerationWorker:
     def update_weights(self, trainable_state: Any, policy_version: int) -> int:
         return self.core.update_weights(trainable_state, policy_version)
 
-    def supports_versioned_trainable_state(self) -> bool:
-        return self.core.supports_versioned_trainable_state()
-
     def worker_metadata(self) -> dict[str, Any]:
         """Return Ray placement metadata used during actor-group startup."""
 

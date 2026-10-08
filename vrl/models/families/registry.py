@@ -185,25 +185,22 @@ class ModelFamilyEntry:
             )
 
     def executor_kwargs(self, root: RootConfig) -> dict[str, Any]:
-        """Return this family's executor arguments from a validated root."""
+        """Return this family's complete serializable executor arguments.
+
+        The generic full-sequence executor serves many families, so it also
+        receives the family identity and task here; only the live gatherer is
+        added where the executor is constructed.
+        """
 
         from vrl.utils.config import plain_mapping
 
         if root.model is None:
             raise ValueError("validated root is missing model configuration")
-        executor_config = root.model.executor
-
-        kwargs: dict[str, Any] = {}
-        if (
-            self.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
-            and executor_config is not None
-        ):
-            kwargs.update(
-                plain_mapping(
-                    executor_config,
-                    field_name="model.executor",
-                ),
-            )
+        if self.executor_cls != GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
+            return {}
+        kwargs: dict[str, Any] = {"family": self.family, "task": self.task}
+        if root.model.executor is not None:
+            kwargs.update(plain_mapping(root.model.executor, field_name="model.executor"))
         return kwargs
 
     def resolve_model_build(
@@ -272,6 +269,9 @@ class ModelFamilyEntry:
         if for_rollout:
             rollout = RolloutBuildOptions(
                 prompt_encoder_dtype=precision.prompt_encoder_dtype,
+                # Full-finetune sync replaces base parameters; LoRA sync only
+                # sends adapters, so only the former needs retained masters.
+                base_weight_sync=not root.model.use_lora,
             )
             model_memory = root.model.memory
             if model_memory is not None and model_memory.model_fields_set:

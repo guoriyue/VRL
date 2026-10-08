@@ -1,238 +1,157 @@
-"""Pipelined generation deadlines: admission first, then a budget per batch."""
+"""Pipelined generation deadlines: admission first, then a budget per batch.
+
+Every fleet is real: the real launcher starts ``RayGenerationWorker`` and
+``RayGenerationFinalizer`` actors over the tiny SANA snapshot, and requests go
+through ``RayGenerationRuntime.generate``. To make admission observable the
+launcher starts subclasses of the real actors that take longer on a request
+whose prompt is ``"slow"``; every other call runs unchanged. A spy around the
+real ``RayCallDeadline`` records when each deadline starts.
+"""
 
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
+import contextlib
+import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
 
+import vrl.generation.ray.launcher as launcher_module
 import vrl.ray.actor_pool as actor_pool_module
-from tests.generation.ray._helpers import GatedRef, ResolvedRef
-from vrl.generation.execution.planner import EnginePlan
-from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.generation.execution.types import (
-    RequestBatchOutOfMemory,
+from tests.generation.ray._helpers import (
+    RaySanaRuntime,
+    SlowGenerationWorker,
+    install_slow_workers,
+    ray_sana_runtime,
 )
-from vrl.generation.ray.engine import RayGenerationEngine
-from vrl.generation.ray.executor import RayGenerationExecutor
-from vrl.ray.actor_group import RayActorHandle
-from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
+from vrl.generation.ray.finalizer import RayGenerationFinalizer
+
+pytestmark = pytest.mark.slow_test
+
+_SLOW_S = SlowGenerationWorker.HOLD_S
 
 
-def _executor(*, timeout_s: float = 1.0) -> RayGenerationExecutor:
-    return RayGenerationExecutor(
-        engines=[
-            RayGenerationEngine(
-                "w0",
-                [RayActorHandle(worker_id="w0", actor=object())],
-            ),
-        ],
-        gatherer=object(),
-        actor_dispatcher=RayActorDispatcher(("w0",)),
-        generation_stall_timeout_s=timeout_s,
-        pipelined=True,
-        finalizers=[RayActorHandle(worker_id="finalize-0", actor=object())],
-    )
+class _SlowMergeFinalizer(RayGenerationFinalizer):
+    """The real finalizer; a ``"slow"`` request holds the finalizer for ``_SLOW_S``."""
+
+    def merge_request(self, request: Any, sample_rows: Any, batch_refs: Any) -> Any:
+        if request.prompts == ["slow"]:
+            time.sleep(_SLOW_S)
+        return super().merge_request(request, sample_rows, batch_refs)
 
 
-def _batches(count: int) -> tuple[GenerationSampleBatch, ...]:
-    return tuple(GenerationSampleBatch(0, index, 1) for index in range(count))
+def _record_deadlines(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, float, float]]:
+    """(operation, budget, start time) of every real call deadline, in start order."""
+
+    started: list[tuple[str, float, float]] = []
+    real_deadline = actor_pool_module.RayCallDeadline
+
+    def recording_deadline(operation: str, timeout_s: float, **kwargs: Any) -> Any:
+        started.append((operation, float(timeout_s), time.perf_counter()))
+        return real_deadline(operation, timeout_s, **kwargs)
+
+    monkeypatch.setattr(actor_pool_module, "RayCallDeadline", recording_deadline)
+    return started
+
+
+@contextlib.asynccontextmanager
+async def _pipelined_fleet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, snapshot: Any, *, stall_timeout_s: float
+) -> AsyncIterator[RaySanaRuntime]:
+    install_slow_workers(monkeypatch)
+    monkeypatch.setattr(launcher_module, "RayGenerationFinalizer", _SlowMergeFinalizer)
+    async with ray_sana_runtime(
+        monkeypatch,
+        tmp_path,
+        snapshot,
+        overrides=(
+            "distributed.rollout.pipelined=true",
+            f"distributed.rollout.generation_stall_timeout_s={stall_timeout_s}",
+            "rollout.samples_per_generation_batch=2",
+        ),
+    ) as run:
+        await run.runtime.activate()
+        yield run
+
+
+def _operations(started: list[tuple[str, float, float]]) -> list[str]:
+    return [operation for operation, _, _ in started]
+
+
+async def _wait_for(condition, timeout_s: float = 10.0) -> None:
+    deadline = time.perf_counter() + timeout_s
+    while not condition():
+        assert time.perf_counter() < deadline, "condition not reached"
+        await asyncio.sleep(0.01)
 
 
 @pytest.mark.asyncio
 async def test_pipelined_call_budget_is_the_stall_timeout_per_batch(
-    monkeypatch: pytest.MonkeyPatch,
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
     """One RPC produces every batch of the engine's share, so its budget covers each."""
 
-    executor = _executor(timeout_s=2.0)
-    budgets: list[tuple[str, float]] = []
-    real_deadline = actor_pool_module.RayCallDeadline
+    async with _pipelined_fleet(
+        monkeypatch, tmp_path, ray_sana_snapshot, stall_timeout_s=2.0
+    ) as run:
+        started = _record_deadlines(monkeypatch)
 
-    def recording_deadline(operation: str, timeout_s: float, **kwargs: Any) -> Any:
-        budgets.append((operation, timeout_s))
-        return real_deadline(operation, timeout_s, **kwargs)
+        output = await run.runtime.generate(run.request(["p"], group_size=6))
 
-    class _PipelineMethod:
-        @staticmethod
-        def remote(request: Any, **_kwargs: Any) -> ResolvedRef:
-            return ResolvedRef(
-                RequestBatchOutOfMemory(
-                    request_id=request.request_id,
-                    worker_id="w0",
-                    error="expected fallback",
-                ),
-            )
-
-    monkeypatch.setattr(actor_pool_module, "RayCallDeadline", recording_deadline)
-    executor.engines[0] = RayGenerationEngine(
-        "w0",
-        [
-            RayActorHandle(
-                worker_id="w0",
-                actor=SimpleNamespace(execute_request_batches=_PipelineMethod()),
-            ),
-        ],
-    )
-
-    result = await executor._execute_request_batches(
-        SimpleNamespace(request_id="req-budget"),
-        EnginePlan(sample_batches=_batches(3)),
-        [],
-    )
-
-    assert isinstance(result, RequestBatchOutOfMemory)
-    assert budgets == [("rollout.generation.pipelined", 6.0)]
+        assert output.output.shape[0] == 6
+        pipelined = [(op, budget) for op, budget, _ in started if op.endswith(".pipelined")]
+        assert pipelined == [("rollout.generation.pipelined", 6.0)]
 
 
 @pytest.mark.asyncio
 async def test_pipelined_submission_gets_deadline_only_after_fleet_admission(
-    monkeypatch: pytest.MonkeyPatch,
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
-    executor = _executor(timeout_s=0.01)
-    gate = asyncio.Event()
-    first_submitted = asyncio.Event()
-    pipeline_calls: list[str] = []
-    deadlines: list[str] = []
-    real_deadline = actor_pool_module.RayCallDeadline
+    async with _pipelined_fleet(
+        monkeypatch, tmp_path, ray_sana_snapshot, stall_timeout_s=_SLOW_S * 3
+    ) as run:
+        started = _record_deadlines(monkeypatch)
+        # A one-batch request takes the per-batch path and holds the one engine.
+        first = asyncio.create_task(run.runtime.generate(run.request(["slow"], group_size=2)))
+        await _wait_for(lambda: "rollout.generation.batch" in _operations(started))
 
-    def recording_deadline(operation: str, *args: Any, **kwargs: Any) -> Any:
-        deadlines.append(operation)
-        return real_deadline(operation, *args, **kwargs)
+        pipelined = asyncio.create_task(run.runtime.generate(run.request(["p"], group_size=4)))
+        await asyncio.sleep(_SLOW_S / 2)
 
-    def submit_first(_payload: Any) -> GatedRef:
-        first_submitted.set()
-        return GatedRef(gate, "first")
+        # Waiting for the engine is not on the clock: its deadline starts at admission.
+        assert not pipelined.done()
+        assert "rollout.generation.pipelined" not in _operations(started)
 
-    class _PipelineMethod:
-        @staticmethod
-        def remote(request: Any, **_kwargs: Any) -> ResolvedRef:
-            pipeline_calls.append(request.request_id)
-            return ResolvedRef(
-                RequestBatchOutOfMemory(
-                    request_id=request.request_id,
-                    worker_id="w0",
-                    error="expected fallback",
-                ),
-            )
-
-    monkeypatch.setattr(actor_pool_module, "RayCallDeadline", recording_deadline)
-    executor.engines[0] = RayGenerationEngine(
-        "w0",
-        [
-            RayActorHandle(
-                worker_id="w0",
-                actor=SimpleNamespace(execute_request_batches=_PipelineMethod()),
-            ),
-        ],
-    )
-    first = asyncio.create_task(
-        executor.actor_dispatcher.run(
-            [RayActorJob(0, "w0", submit_first, None)],
-            operation="rollout.generation.batch",
-            call_timeout_s=30.0,
-        ),
-    )
-    await first_submitted.wait()
-
-    pipelined = asyncio.create_task(
-        executor._execute_request_batches(
-            SimpleNamespace(request_id="req-admission"),
-            EnginePlan(sample_batches=_batches(2)),
-            [],
-        ),
-    )
-    await asyncio.sleep(0.03)
-
-    assert not pipelined.done()
-    assert pipeline_calls == []
-    assert deadlines == ["rollout.generation.batch"]
-
-    gate.set()
-    assert await first == [(0, "first")]
-    result = await pipelined
-    assert isinstance(result, RequestBatchOutOfMemory)
-    assert pipeline_calls == ["req-admission"]
-    assert deadlines == [
-        "rollout.generation.batch",
-        "rollout.generation.pipelined",
-    ]
+        assert (await first).output.shape[0] == 2
+        assert (await pipelined).output.shape[0] == 4
+        operations = _operations(started)
+        assert operations.index("rollout.generation.batch") < operations.index(
+            "rollout.generation.pipelined"
+        )
 
 
 @pytest.mark.asyncio
 async def test_finalize_gets_its_deadline_only_after_a_finalizer_slot(
-    monkeypatch: pytest.MonkeyPatch,
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
     """A request whose merge queues behind a slow one does not burn its budget
     waiting: the finalizer has one slot, FIFO waiters, and the deadline starts
     at admission, exactly like the engines."""
 
-    import time
+    async with _pipelined_fleet(
+        monkeypatch, tmp_path, ray_sana_snapshot, stall_timeout_s=5.0
+    ) as run:
+        started = _record_deadlines(monkeypatch)
 
-    from vrl.generation.types import GenerationOutput
-    from vrl.trajectory.types import TrajectoryBatch
+        slow = asyncio.create_task(run.runtime.generate(run.request(["slow"], group_size=4)))
+        queued = asyncio.create_task(run.runtime.generate(run.request(["queued"], group_size=4)))
+        slow_output, queued_output = await asyncio.gather(slow, queued)
 
-    executor = _executor(timeout_s=5.0)
-    first_gate = asyncio.Event()
-    merges: list[str] = []
-    deadline_starts: list[float] = []
-    real_deadline = actor_pool_module.RayCallDeadline
-
-    def recording_deadline(operation: str, *args: Any, **kwargs: Any) -> Any:
-        assert operation == "rollout.generation.finalize"
-        deadline_starts.append(time.perf_counter())
-        return real_deadline(operation, *args, **kwargs)
-
-    def _output(request: Any) -> GenerationOutput:
-        return GenerationOutput(
-            output=[],
-            trajectory=TrajectoryBatch(
-                request_id=request.request_id,
-                family="test",
-                task="t2i",
-                sample_rows=[],
-                axes={},
-                segments={},
-            ),
-        )
-
-    class _MergeMethod:
-        @staticmethod
-        def remote(request: Any, **_kwargs: Any) -> Any:
-            merges.append(request.request_id)
-            if request.request_id == "slow":
-                return GatedRef(first_gate, _output(request))
-            return ResolvedRef(_output(request))
-
-    monkeypatch.setattr(actor_pool_module, "RayCallDeadline", recording_deadline)
-    executor.finalizers = (
-        RayActorHandle(
-            worker_id="finalize-0", actor=SimpleNamespace(merge_request=_MergeMethod())
-        ),
-    )
-    executor._finalizer_dispatcher = RayActorDispatcher(("finalize-0",))
-
-    slow = asyncio.create_task(
-        executor._finalize_request(SimpleNamespace(request_id="slow"), [], ["ref-a"]),
-    )
-    await asyncio.sleep(0)
-    queued = asyncio.create_task(
-        executor._finalize_request(SimpleNamespace(request_id="queued"), [], ["ref-b"]),
-    )
-    await asyncio.sleep(0.05)
-
-    # The queued merge is neither submitted nor on the clock while the slow
-    # one holds the finalizer's slot.
-    assert merges == ["slow"]
-    assert len(deadline_starts) == 1
-    assert not queued.done()
-
-    released_at = time.perf_counter()
-    first_gate.set()
-    assert (await slow).request_id == "slow"
-    assert (await queued).request_id == "queued"
-    assert merges == ["slow", "queued"]
-    assert len(deadline_starts) == 2
-    assert deadline_starts[1] >= released_at
+        assert slow_output.output.shape[0] == queued_output.output.shape[0] == 4
+        finalize_starts = [at for op, _, at in started if op == "rollout.generation.finalize"]
+        assert len(finalize_starts) == 2
+        # The queued merge went on the clock only once the slow merge released
+        # the finalizer's one slot.
+        assert finalize_starts[1] - finalize_starts[0] >= _SLOW_S * 0.9

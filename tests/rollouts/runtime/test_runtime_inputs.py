@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pickle
 import threading
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -178,7 +179,12 @@ def test_rollout_profiler_is_resolved_before_launch_contract_serialization() -> 
     profiler = inputs.launch_contract.torch_profiler
     assert profiler["enabled"] is True
     assert profiler["activities"] == ("cuda",)
-    assert profiler["output_dir"] == str(cfg.trainer.output_dir)
+    # An unset trace directory follows the trainer's rule: under the run output.
+    assert profiler["output_dir"] == str(Path(cfg.trainer.output_dir) / "torch_profiler")
+
+    cfg.rollout.torch_profiler.output_dir = "/traces/rollout"
+    inputs, _ = _capture_launch_inputs(cfg, get_model_family_entry("sd3_5"))
+    assert inputs.launch_contract.torch_profiler["output_dir"] == "/traces/rollout"
 
 
 def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> None:
@@ -387,6 +393,8 @@ def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
     )
 
     assert get_model_family_entry("flux").executor_kwargs(cfg) == {
+        "family": "flux",
+        "task": get_model_family_entry("flux").task,
         "num_frames": 17,
         "max_sequence_length": 256,
         "fps": 24,

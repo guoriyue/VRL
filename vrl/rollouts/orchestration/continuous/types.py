@@ -29,6 +29,9 @@ class ContinuousRolloutSettings:
     wait_timeout_s: float
     queue_poll_interval_s: float
     fail_fast_errors: int
+    # The run's decision (TrainerConfig.versioned_weight_sync): the rollout
+    # workers keep each version's weights, so a sync need not drain the batch.
+    versioned_weight_sync: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +50,7 @@ class ScoredRollout:
     # consumer selects the demanded batch by this key.
     batch_id: int
     group_slot: int
-    rollout_policy_version: int | None
+    rollout_policy_version: int
     batch: RolloutBatch
     # display/provenance-only: receipt time on this process's monotonic clock
     # (never wall time), exported as a result-age gauge. Computing age
@@ -75,7 +78,7 @@ class PromptBatch:
     """
 
     batch_id: int
-    policy_version: int | None
+    policy_version: int
     prompts: tuple[Any, ...]
     group_size: int
     runtime_debug: bool

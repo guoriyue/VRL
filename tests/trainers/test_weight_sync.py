@@ -183,17 +183,3 @@ def test_flatten_reads_live_weights_rather_than_an_earlier_snapshot() -> None:
     with torch.no_grad():
         modules["adapter"].weight.fill_(7.0)
     assert flatten_trainable_module_state(modules)["adapter.weight"].eq(7.0).all()
-
-
-@pytest.mark.parametrize("source", ["explicit", "runtime"])
-@pytest.mark.parametrize("version", [True, 1.5, "2", -1])
-def test_weight_syncer_rejects_invalid_initial_policy_identity(source, version) -> None:
-    runtime = _RuntimeWithSync()
-    kwargs = {}
-    if source == "explicit":
-        kwargs["initial_policy_version"] = version
-    else:
-        runtime.current_policy_version = version
-    with pytest.raises(ValueError, match="initial_policy_version"):
-        RayRuntimeWeightSyncer(runtime, **kwargs)
-    assert runtime.calls == []

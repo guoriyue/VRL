@@ -21,20 +21,13 @@ class StalenessPolicy:
 
     max_stale_policy_versions: int = 0
 
-    def staleness(
-        self,
-        item_version: int | None,
-        current_version: int | None,
-    ) -> int | None:
-        """Versions behind the trainer, or ``None`` when versions are absent."""
+    def staleness(self, item_version: int, current_version: int) -> int:
+        """Versions the item trails the trainer by."""
 
-        if item_version is None or current_version is None:
-            return None
         return current_version - item_version
 
-    def too_stale(self, item_version: int | None, current_version: int | None) -> bool:
-        staleness = self.staleness(item_version, current_version)
-        return staleness is not None and staleness > self.max_stale_policy_versions
+    def too_stale(self, item_version: int, current_version: int) -> bool:
+        return self.staleness(item_version, current_version) > self.max_stale_policy_versions
 
 
 __all__ = ["StalenessPolicy"]

@@ -236,8 +236,6 @@ def normalize_magi_1_model_build(build: ModelBuild) -> ModelBuild:
 class Magi1SubprocessModel(torch.nn.Module):
     """RuntimeModel facade over the official generation-only MAGI-1 CLI."""
 
-    supports_versioned_trainable_state = False
-
     def __init__(
         self,
         config: Magi1SubprocessConfig,

@@ -11,46 +11,21 @@ import torch
 from vrl.models.interfaces import RuntimeBundle
 from vrl.models.weight_utils import unwrap_compile_and_ddp
 from vrl.trajectory.device import map_tensor_tree
-from vrl.utils.validation import require_int
 
 TrainableStateGetter = Callable[[], dict[str, Any]]
 
 
 class RayRuntimeWeightSyncer:
-    """Bridge ``OnlineTrainer`` weight pushes to a Ray rollout runtime."""
+    """Bridge ``OnlineTrainer`` weight pushes to a ``GenerationRuntime``.
 
-    @classmethod
-    def if_supported(
-        cls,
-        runtime: Any,
-        *,
-        initial_policy_version: int | None = None,
-    ) -> RayRuntimeWeightSyncer | None:
-        """Wrap the runtime only when it declares weight-sync support.
+    Every runtime installs weights through ``update_weights``. The runtime is
+    the one owner of the policy version: each push carries the version after
+    the one the runtime currently publishes, so no second counter can drift
+    from it.
+    """
 
-        Optional recipe wiring requires the ``update_weights`` method; a
-        runtime without one (an in-process generator) gets no syncer.
-        """
-
-        if not callable(getattr(runtime, "update_weights", None)):
-            return None
-        return cls(runtime, initial_policy_version=initial_policy_version)
-
-    def __init__(
-        self,
-        runtime: Any,
-        *,
-        initial_policy_version: int | None = None,
-    ) -> None:
+    def __init__(self, runtime: Any) -> None:
         self.runtime = runtime
-        # This adapter allocates versions; the coordinator only reads the
-        # version published by the runtime after accepting the push.
-        current = initial_policy_version
-        if current is None:
-            current = getattr(runtime, "current_policy_version", None)
-        if current is not None:
-            require_int(current, path="initial_policy_version", minimum=0)
-        self._next_policy_version = 1 if current is None else current + 1
         self._push_lock = asyncio.Lock()
 
     async def push(self, state_dict: dict[str, Any]) -> None:
@@ -67,16 +42,11 @@ class RayRuntimeWeightSyncer:
             # later" case its docstring describes, so the copy is required.
             state = to_cpu_snapshot(state_dict)
         async with self._push_lock:
-            policy_version = self._next_policy_version
             with profile_range("weight_sync.push"):
-                await self.runtime.update_weights(state, policy_version)
-            self._next_policy_version = policy_version + 1
-
-    @property
-    def current_policy_version(self) -> int | None:
-        """The runtime's published version; ``None`` until it tracks one."""
-
-        return self.runtime.current_policy_version
+                await self.runtime.update_weights(
+                    state,
+                    self.runtime.current_policy_version + 1,
+                )
 
 
 def require_trainable_modules(bundle: RuntimeBundle) -> Mapping[str, Any]:

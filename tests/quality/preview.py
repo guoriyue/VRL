@@ -80,7 +80,6 @@ def generate_rollout_preview(
     from vrl.config.validation import require_training_config
     from vrl.models.dtypes import dtype_to_wire_name
     from vrl.models.families.registry import (
-        GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
         get_model_family_entry,
     )
     from vrl.models.interfaces.replay import require_runtime_model
@@ -133,12 +132,8 @@ def generate_rollout_preview(
     # builder's optimization pass already fails loud on a zero-match swap.
     model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
 
-    executor_kwargs = entry.executor_kwargs(root)
-    executor_kwargs["gatherer"] = entry.new_gatherer()
-    if entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
-        executor_kwargs.update(family=entry.family, task=entry.task)
     executor_cls = import_from_path(entry.executor_cls)
-    executor = executor_cls(model, **executor_kwargs)
+    executor = executor_cls(model, **entry.executor_kwargs(root), gatherer=entry.new_gatherer())
 
     request_builder = GenerationRequestBuilder(
         entry=entry,

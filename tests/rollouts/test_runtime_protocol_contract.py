@@ -6,12 +6,9 @@ instead of probing nested runtime internals.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
-from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 
 
 def _runtime(
@@ -47,15 +44,3 @@ def test_concrete_runtimes_satisfy_generation_runtime_structurally() -> None:
     deferred = _runtime(deferred=True)
     assert isinstance(persistent, GenerationRuntime)
     assert isinstance(deferred, GenerationRuntime)
-
-
-def test_weight_syncer_reports_its_runtime_version() -> None:
-    async def _update_weights(state, version):  # pragma: no cover - signature only
-        del state, version
-
-    runtime = SimpleNamespace(
-        update_weights=_update_weights,
-        current_policy_version=7,
-    )
-    syncer = RayRuntimeWeightSyncer(runtime)
-    assert syncer.current_policy_version == 7

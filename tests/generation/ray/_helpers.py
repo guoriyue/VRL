@@ -1,126 +1,137 @@
-"""Shared fakes for the Ray generation tests.
+"""Shared helpers for the Ray generation tests.
 
-These three were character-identical copies across the session/lease/fsm/
-weight-sync test modules; the parking snapshot keeps the superset signature
-(the fixed-value copy is the ``residual_bytes=0`` default).
+``ray_sana_runtime`` is the construction these tests start from: a real
+``RayGenerationRuntime`` launched by the real launcher into a real placement
+group on the package's local cluster, its ``RayGenerationWorker`` actors
+serving the tiny SANA snapshot (see ``conftest.py``).
 """
 
 from __future__ import annotations
 
-import asyncio
+import contextlib
+import time
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
-from vrl.generation.ray.engine import RayGenerationEngine
-from vrl.ray.actor_group import RayActorHandle
+import pytest
+
+from vrl.generation.ray.worker import RayGenerationWorker
+from vrl.utils.lifecycle import RuntimePhase
 
 
-def engine(worker_id: str, actor: Any) -> RayGenerationEngine:
-    return RayGenerationEngine(
-        worker_id,
-        [RayActorHandle(worker_id=worker_id, actor=actor)],
-    )
+class SlowGenerationWorker(RayGenerationWorker):
+    """The real worker; a ``"slow"`` prompt holds the engine for ``HOLD_S`` first.
 
-
-class ResolvedRef:
-    """Awaitable that resolves to a value or raises it (a fake ObjectRef).
-
-    An exception value is raised unless ``returned`` says the actor method
-    returned it; real Ray hands a returned exception instance back as a value.
+    A fixed hold inside the actor gives tests that race a second call against
+    an in-flight generation a lower bound that does not depend on how fast the
+    host finishes a tiny-SANA request.
     """
 
-    def __init__(self, value: Any, *, returned: bool = False) -> None:
-        self.value = value
-        self.returned = returned
+    HOLD_S = 1.0
 
-    def __await__(self):
-        async def resolve() -> Any:
-            if isinstance(self.value, BaseException) and not self.returned:
-                raise self.value
-            return self.value
-
-        return resolve().__await__()
+    def execute_batch(self, envelope: Any) -> Any:
+        if envelope.request.prompts == ["slow"]:
+            time.sleep(self.HOLD_S)
+        return super().execute_batch(envelope)
 
 
-class NeverRef:
-    """A fake ObjectRef for a call that never completes."""
+def install_slow_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the next ``ray_sana_runtime`` launch ``SlowGenerationWorker`` actors."""
 
-    def __await__(self):
-        async def wait_forever() -> None:
-            await asyncio.Event().wait()
+    from vrl.generation.ray import launcher as launcher_module
 
-        return wait_forever().__await__()
+    monkeypatch.setattr(launcher_module, "RayGenerationWorker", SlowGenerationWorker)
 
 
-class GatedRef:
-    """A fake ObjectRef that completes only once ``gate`` is set.
+@dataclass
+class RaySanaRuntime:
+    """A launched real Ray generation runtime and what it was launched from."""
 
-    Resolves to ``value``, or raises it when it is an exception, which is the
-    same convention ``ResolvedRef`` uses.
-    """
+    runtime: Any
+    resolved: Any
+    placement_owner: Any
+    pipeline: Any
 
-    def __init__(self, gate: asyncio.Event, value: Any) -> None:
-        self.gate = gate
-        self.value = value
+    def request(self, prompts: list[str], *, group_size: int = 2, **kwargs: Any) -> Any:
+        """A real generation request for ``prompts``, built by the collector's builder."""
 
-    def __await__(self):
-        async def wait() -> Any:
-            await self.gate.wait()
-            if isinstance(self.value, BaseException):
-                raise self.value
-            return self.value
+        from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
-        return wait().__await__()
+        builder = GenerationRequestBuilder(
+            entry=self.resolved.family, config=self.resolved.collector
+        )
+        return builder.build(prompts, group_size, **kwargs).request
 
+    def trainable_state(self) -> dict[str, Any]:
+        """The trainer's real weight-sync payload for this run's policy."""
 
-class _FakeRemoteMethod:
-    """One synchronous method wearing Ray's ``.remote()`` submission face."""
+        from vrl import run
+        from vrl.trainers.strategy import SingleProcessStrategy
 
-    def __init__(self, call: Any) -> None:
-        self._call = call
-
-    def remote(self, *args: Any, **kwargs: Any) -> ResolvedRef:
-        # A real ObjectRef surfaces the worker's exception on await, not on
-        # submit, so a raising double must behave the same way here.
-        try:
-            return ResolvedRef(self._call(*args, **kwargs), returned=True)
-        except BaseException as error:  # re-raised when the ref is awaited
-            return ResolvedRef(error)
-
-
-class FakeRayActor:
-    """A synchronous test worker wearing the Ray actor method face.
-
-    Production submits every engine call as ``actor.<method>.remote(...)`` and
-    awaits the returned ref. A plain object has no such face, which is what the
-    executor's per-dispatch-site "else: call it directly" branches used to
-    accommodate -- a production branch that only test doubles could reach.
-    Wearing the face here instead keeps the production path single. Attributes
-    that are not part of the face fall through to the worker, so tests keep
-    asserting on the state it records.
-    """
-
-    def __init__(self, worker: Any, *methods: str) -> None:
-        self._worker = worker
-        self._remote = {name: _FakeRemoteMethod(getattr(worker, name)) for name in methods}
-
-    def __getattr__(self, name: str) -> Any:
-        remote = self.__dict__["_remote"]
-        if name in remote:
-            return remote[name]
-        return getattr(self.__dict__["_worker"], name)
+        replay = run.resolve_model(
+            self.resolved.family,
+            self.resolved.built.root,
+            self.resolved.device,
+            precision=self.resolved.built.precision,
+            for_rollout=False,
+        )
+        bundle = replay.materialize(context="ray test weight payload")
+        return SingleProcessStrategy().export_rollout_state(bundle)
 
 
-def parking_snapshot(
-    worker_id: str = "rollout-0",
+@contextlib.asynccontextmanager
+async def ray_sana_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    snapshot: Path,
     *,
-    residual_bytes: int = 0,
-) -> WorkerMemoryParkingSnapshot:
-    return WorkerMemoryParkingSnapshot(
-        worker_id=worker_id,
-        backend="cpu_offload",
-        baseline_gpu_used_bytes=0,
-        loaded_gpu_used_bytes=1024,
-        residual_gpu_used_bytes=residual_bytes,
-        residual_bytes_limit=0,
+    overrides: tuple[str, ...] = (),
+) -> AsyncIterator[RaySanaRuntime]:
+    """Launch a real Ray generation runtime over ``snapshot`` and release it after.
+
+    Uses the online recipe's own path: resolve the tiny SANA run, create the
+    run-level placement group, launch with ``RayGenerationLauncher``. On exit
+    the runtime is shut down (its actors killed) and the placement released.
+    """
+
+    from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
+    from vrl import run
+    from vrl.generation.ray.launcher import RayGenerationLauncher
+    from vrl.ray.placement import GlobalRayPlacementOwner
+
+    cfg = tiny_sana_online_config(
+        tmp_path,
+        snapshot=snapshot,
+        overrides=("distributed.rollout.cpus_per_worker=0.5", *overrides),
     )
+    pipeline = TinySanaPipeline()
+    pipeline.install(monkeypatch, snapshot)
+    resolved = run.resolve_online_run(cfg)
+    replay = run.resolve_model(
+        resolved.family,
+        resolved.built.root,
+        resolved.device,
+        precision=resolved.built.precision,
+        for_rollout=False,
+    )
+    owner = GlobalRayPlacementOwner(resolved.resources, resolved.generation.worker)
+    owner.create()
+    try:
+        runtime = RayGenerationLauncher().create_runtime(
+            resolved.generation,
+            resolved.ray_launch_inputs(replay),
+            placement=owner.rollout_placement,
+        )
+        try:
+            yield RaySanaRuntime(
+                runtime=runtime, resolved=resolved, placement_owner=owner, pipeline=pipeline
+            )
+        finally:
+            # A test that already drove the runtime to TERMINATED has nothing
+            # left to release; otherwise a failing shutdown is a real failure.
+            if runtime.lifecycle.phase is not RuntimePhase.TERMINATED:
+                await runtime.shutdown()
+    finally:
+        owner.shutdown()

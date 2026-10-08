@@ -196,7 +196,7 @@ class _ContinuousRolloutController:
                 await self.lifecycle.push_prepared_weights(prepared_weights, stats)
                 return stats
 
-            non_draining = self.lifecycle.supports_non_draining_weight_sync()
+            non_draining = self.settings.versioned_weight_sync
             with stats.phase("continuous.weight_sync_pause_s"):
                 producer.pause_admission()
                 # There is deliberately no finally-resume here.  A partial worker

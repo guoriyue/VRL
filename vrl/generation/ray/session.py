@@ -43,7 +43,6 @@ class RayGenerationSession:
         weight_sync: RayGenerationWeightSync,
         owned_engines: list[RayGenerationEngine],
         *,
-        supports_non_draining_weight_sync: bool = False,
         owned_finalizers: Sequence[RayActorHandle] = (),
     ) -> None:
         if executor is None:
@@ -54,9 +53,6 @@ class RayGenerationSession:
         self.rank_handles = [rank for engine in self.engines for rank in engine.ranks]
         # Finalizers hold no policy: they are killed with the ranks, never released.
         self.finalizer_handles = list(owned_finalizers)
-        self.supports_non_draining_weight_sync = bool(
-            supports_non_draining_weight_sync,
-        )
         self._release_wait_task: asyncio.Task[Any] | None = None
         self._force_close = False
 

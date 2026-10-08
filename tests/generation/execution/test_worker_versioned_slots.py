@@ -29,7 +29,6 @@ class _SlotModel:
     """RuntimeModel that supports versioned slots and records protocol calls."""
 
     device = "cpu"
-    supports_versioned_trainable_state = True
 
     def __init__(self) -> None:
         self.slots: dict[int, Any] = {}
@@ -58,7 +57,7 @@ class _SlotModel:
 
 
 class _PlainModel:
-    """RuntimeModel without versioned-slot support (draining-barrier path)."""
+    """RuntimeModel without slot methods; its family launches an in-place contract."""
 
     device = "cpu"
 
@@ -136,7 +135,7 @@ def test_update_weights_installs_versioned_slots_without_overwrite() -> None:
 
 def test_update_weights_plain_model_loads_in_place() -> None:
     model = _PlainModel()
-    core = _core(model)
+    core = _core(model, versioned_weight_sync=False)
 
     assert core.update_weights({"transformer.w": "v1"}, 1) == 1
 
@@ -158,7 +157,6 @@ def test_strict_sync_overwrites_slot_capable_model_without_retaining_payloads() 
     assert core._uses_versioned_slots is False
     assert model.slots == {}
     assert model.load_calls == [first, second]
-    assert core.supports_versioned_trainable_state() is False
 
 
 # -- execute_batch ------------------------------------------------------------
@@ -196,7 +194,7 @@ def test_execute_batch_activates_request_version_slot() -> None:
 
 def test_plain_model_keeps_global_version_mismatch() -> None:
     model = _PlainModel()
-    core = _core(model)
+    core = _core(model, versioned_weight_sync=False)
     core.update_weights({"transformer.w": "v1"}, 1)
 
     # Non-slot model: a request for a different version is the classic mismatch.
@@ -211,7 +209,7 @@ def test_plain_model_keeps_global_version_mismatch() -> None:
 def test_cold_reload_serves_bootstrap_version_until_weights_are_reinstalled(
     monkeypatch, model_type
 ) -> None:
-    core = _core(model_type())
+    core = _core(model_type(), versioned_weight_sync=model_type is _SlotModel)
     core.update_weights({"transformer.w": "v2"}, 2)
     core.release_policy()
     monkeypatch.setattr(core, "_build_executor", lambda: _Executor(model_type()))

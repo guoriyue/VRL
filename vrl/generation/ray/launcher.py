@@ -7,7 +7,6 @@ import logging
 from collections.abc import Sequence
 from dataclasses import replace
 from functools import partial
-from typing import Any
 
 from vrl.generation.execution.rank_group import RankGroupSpec
 from vrl.generation.ray.config import RayGenerationConfig
@@ -21,8 +20,7 @@ from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_group import RayActorGroup, RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
-from vrl.ray.dependencies import current_node_ip, require_ray
-from vrl.ray.operation_deadline import get_ray_refs
+from vrl.ray.dependencies import current_node_ip
 from vrl.ray.placement import RolePlacement, require_actor_gpu_ids
 
 logger = logging.getLogger(__name__)
@@ -72,34 +70,6 @@ class RayGenerationLauncher:
             driver_node_ip=driver_node_ip,
         )
 
-    @staticmethod
-    def _all_ranks_support_versioned_slots(
-        ray: Any,
-        ranks: Sequence[RayActorHandle],
-        *,
-        worker_rpc_timeout_s: float,
-    ) -> bool:
-        """Return whether every rank supports versioned trainable-state slots.
-
-        Non-draining weight sync needs slots on all ranks because a batch stamped
-        with an older policy version can be placed on any engine. An empty fleet
-        keeps the safe draining barrier. A query failure means the candidate
-        fleet is broken, not merely unsupported, and therefore propagates to
-        launcher-owned actor cleanup.
-        """
-
-        actors = [rank.actor for rank in ranks]
-        if not actors:
-            return False
-        results = get_ray_refs(
-            ray,
-            [actor.supports_versioned_trainable_state.remote() for actor in actors],
-            operation="rollout.startup.versioned_slots",
-            timeout_s=worker_rpc_timeout_s,
-            context=f"ranks={len(actors)}",
-        )
-        return bool(results) and all(bool(result) for result in results)
-
     def _launch_session(
         self,
         config: RayGenerationConfig,
@@ -125,7 +95,6 @@ class RayGenerationLauncher:
         # about where an engine's ranks live.
         gpus_per_engine = config.resources.rollout_gpus_per_engine
         engine_count = len(placement.engine_bundle_groups(gpus_per_engine))
-        ray = require_ray()
 
         placement_group = placement.placement_group
         expected_gpu_ids = placement.expected_gpu_ids
@@ -228,16 +197,10 @@ class RayGenerationLauncher:
                 actor_dispatcher=actor_dispatcher,
                 worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
             )
-            supports_non_draining_weight_sync = self._all_ranks_support_versioned_slots(
-                ray,
-                [rank for engine in engines for rank in engine.ranks],
-                worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
-            )
             return RayGenerationSession(
                 executor,
                 weight_sync=weight_sync,
                 owned_engines=engines,
-                supports_non_draining_weight_sync=supports_non_draining_weight_sync,
                 owned_finalizers=finalizer_handles,
             )
         except BaseException as error:
@@ -294,17 +257,7 @@ class RayGenerationLauncher:
                 "distributed.resources.rollout.* (num_gpus/devices) and that the "
                 "placement group was created before launch.",
             )
-        resources = config.resources
-        deferred = resources.lifecycle.rollout_mode == "on_demand"
-        if deferred and resources.rollout_devices:
-            launch_inputs = replace(
-                launch_inputs,
-                launch_contract=replace(
-                    launch_inputs.launch_contract,
-                    sleep_offload=True,
-                ),
-            )
-
+        deferred = config.resources.lifecycle.rollout_mode == "on_demand"
         session = None
         session_factory = None
         if deferred:

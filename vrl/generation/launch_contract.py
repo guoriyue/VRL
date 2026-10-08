@@ -35,7 +35,8 @@ class GenerationRuntimeLaunchContract:
     model_build: dict[str, Any]
     expected_model_identity: dict[str, Any]
     executor_kwargs: dict[str, Any] = field(default_factory=dict)
-    policy_version: int | None = None
+    # The version the launch checkpoint serves; every runtime starts from it.
+    policy_version: int = 0
     torch_profiler: dict[str, Any] = field(default_factory=dict)
     sleep_offload: bool = False
     # Continuous rollout may sync while older requests remain in flight, so its
@@ -79,8 +80,7 @@ class GenerationRuntimeLaunchContract:
             raise TypeError(
                 f"sleep_offload must be a bool, got {type(self.sleep_offload).__name__}",
             )
-        if self.policy_version is not None:
-            require_int(self.policy_version, path="policy_version", minimum=0)
+        require_int(self.policy_version, path="policy_version", minimum=0)
         if not isinstance(self.versioned_weight_sync, bool):
             raise TypeError("versioned_weight_sync must be a bool")
 

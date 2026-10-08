@@ -35,7 +35,7 @@ checkpoint file I/O, not config resolution -- it stays in the recipes.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 import torch
@@ -304,29 +304,6 @@ class ResolvedOnlineRun(ResolvedRun):
             runtime_device,
             precision=self.built.precision,
         )
-        if build.rollout is not None:
-            build.rollout = replace(
-                build.rollout,
-                # Full-finetune sync replaces base parameters; LoRA sync only sends
-                # adapters, so only the former needs retained base-weight masters.
-                base_weight_sync=not build.use_lora,
-            )
-        # Family capability is role-agnostic, so read the raw enable bit rather
-        # than the rollout build's scope-resolved property: a replay-scoped
-        # compile on an unsupporting family must fail here too, not slip through
-        # because this happens to be the rollout launch path.
-        from vrl.models.interfaces.runtime import TORCH_COMPILE_MODEL_KEY
-
-        compile_block = (build.model_config or {}).get(TORCH_COMPILE_MODEL_KEY) or {}
-        if (
-            bool(compile_block.get("enable"))
-            and not self.family.runtime_capabilities.supports_torch_compile
-        ):
-            raise ValueError(
-                f"{self.family.family} does not support torch compile but "
-                "model.torch_compile.enable is set",
-            )
-
         rollout_model_identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
         if rollout_model_identity != replay_model.identity:
             raise ValueError(
@@ -362,10 +339,12 @@ class ResolvedOnlineRun(ResolvedRun):
                 torch_profiler={}
                 if generation.torch_profiler is None
                 else asdict(generation.torch_profiler),
-                # The typed trainer schedule is the source of truth for whether a
-                # worker may retain an older LoRA slot across non-draining sync.
-                versioned_weight_sync=(
-                    trainer.rollout_orchestration.schedule_mode == "continuous" and build.use_lora
+                versioned_weight_sync=trainer.versioned_weight_sync,
+                # A rollout that hands its GPUs to another role between phases
+                # parks its workers' memory at the handoff (CuMem sleep).
+                sleep_offload=(
+                    self.resources.lifecycle.rollout_mode == "on_demand"
+                    and bool(self.resources.rollout_devices)
                 ),
             ),
             gatherer=self.family.new_gatherer(),

@@ -869,12 +869,11 @@ async def run_online_recipe(cfg: DictConfig) -> None:
                 data_config.preprocessing.reference_image if data_config.preprocessing else None
             ),
         )
-    # Derive the per-rank resume verdict the trainer/weight-syncer read below. Kept
+    # Derive the per-rank resume verdict the trainer reads below. Kept
     # after the checkpoint-identity preflight so an incompatible checkpoint fails
     # fast before we start reading its epoch/step/dir fields.
     resumed = resume_checkpoint is not None
     resume_epoch = resume_checkpoint.next_epoch if resume_checkpoint is not None else None
-    resume_step = resume_checkpoint.next_step if resume_checkpoint is not None else None
     resume_dir = resume_checkpoint.checkpoint_dir if resume_checkpoint is not None else None
 
     _host_memory.log("before_trainer_bundle_build")
@@ -972,10 +971,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             evaluator=algorithm_and_evaluator.evaluator,
             model=model,
             ref_model=ref_model,
-            weight_syncer=RayRuntimeWeightSyncer.if_supported(
-                collector.generation_runtime,
-                initial_policy_version=resume_step,
-            ),
+            weight_syncer=RayRuntimeWeightSyncer(collector.generation_runtime),
             # Rollout weight sync re-reads live trainable state on every push, so
             # bind the strategy export lazily instead of snapshotting once.
             sync_state_getter=lambda: strategy.export_rollout_state(bundle),

@@ -5,15 +5,13 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from tests.generation.ray._helpers import ray_sana_runtime
 from vrl.generation.bindings.full_sequence import (
     DenoiseBatchGatherer,
     DenoiseBatchResult,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.generation.execution.types import GenerationBatchEnvelope, GenerationBatchResult
-from vrl.generation.ray.finalizer import RayGenerationFinalizer
 from vrl.generation.ray.reward_media import reference_reward_media
-from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.generation.types import GenerationRequest
 from vrl.utils.media_reference import MediaReference
 
@@ -34,35 +32,31 @@ def _batch(start=0, count=2):
     )
 
 
-def _worker(rank=None):
-    worker = object.__new__(RayGenerationWorker)
-    worker.core = SimpleNamespace(
-        rank_group_spec=None if rank is None else SimpleNamespace(group_rank=rank)
-    )
-    return worker
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_ray_worker_puts_one_batch_and_returns_boxed_sample_views(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+):
+    """The real rank stages one object per generation batch; the driver gets
+    per-sample boxed views of it and never the pixels."""
 
+    async with ray_sana_runtime(
+        monkeypatch,
+        tmp_path,
+        ray_sana_snapshot,
+        overrides=("rollout.samples_per_generation_batch=2",),
+    ) as ray_run:
+        await ray_run.runtime.activate()
+        output = await ray_run.runtime.generate(
+            ray_run.request(["p"], group_size=4, reward_media_refs=True)
+        )
 
-@pytest.mark.parametrize("rank", [None, 0])
-def test_ray_worker_puts_one_batch_and_returns_boxed_sample_views(monkeypatch, rank):
-    stored = []
-
-    def put(media):
-        stored.append(media)
-        return "object-ref"
-
-    monkeypatch.setattr("ray.put", put)
-    worker = _worker(rank)
-    batch = _batch()
-    original = batch.video
-    result = GenerationBatchResult("r", "w", batch.batch, batch)
-    worker.core.execute_batch = lambda envelope: result
-    request = _request()
-
-    returned = worker.execute_batch(GenerationBatchEnvelope(request, batch.batch))
-
-    assert returned is result
-    assert len(stored) == 1 and stored[0] is original
-    assert batch.video == [MediaReference("object-ref", i, nbytes=48) for i in range(2)]
+    refs = output.output
+    assert [ref.sample_index for ref in refs] == [0, 1, 0, 1]
+    assert all(isinstance(ref.object_ref, local_ray.ObjectRef) for ref in refs)
+    # One object per generation batch, shared by that batch's samples.
+    assert refs[0].object_ref == refs[1].object_ref != refs[2].object_ref == refs[3].object_ref
+    assert {ref.nbytes for ref in refs} == {3 * 32 * 32}
 
 
 @pytest.mark.parametrize("references,rank", [(False, None), (False, 0), (True, 1)])
@@ -92,24 +86,30 @@ def test_gather_orders_refs_without_resolving_or_materializing(monkeypatch):
     assert output.output == first.video + second.video
 
 
-def test_finalized_pipelined_output_uses_same_reference_adapter(monkeypatch):
-    """The finalizer boxes the merged media exactly as the per-batch rank does."""
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_finalized_pipelined_output_uses_same_reference_adapter(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+):
+    """The real finalizer boxes the merged media exactly as the per-batch rank does:
+    one object for the merged request, per-sample views of it."""
 
-    request = _request()
-    batch = _batch()
-    stored = []
+    async with ray_sana_runtime(
+        monkeypatch,
+        tmp_path,
+        ray_sana_snapshot,
+        overrides=("distributed.rollout.pipelined=true", "rollout.samples_per_generation_batch=1"),
+    ) as ray_run:
+        await ray_run.runtime.activate()
+        output = await ray_run.runtime.generate(
+            ray_run.request(["p"], group_size=2, reward_media_refs=True)
+        )
 
-    def put(media):
-        stored.append(media)
-        return "pipelined-ref"
-
-    monkeypatch.setattr("ray.put", put)
-    monkeypatch.setattr("ray.get", lambda refs: list(refs))
-    output = RayGenerationFinalizer("finalize-0", DenoiseBatchGatherer()).merge_request(
-        request, request.sample_rows(), [batch]
-    )
-    assert len(stored) == 1
-    assert output.output == [MediaReference("pipelined-ref", i, nbytes=48) for i in range(2)]
+    refs = output.output
+    assert [ref.sample_index for ref in refs] == [0, 1]
+    assert refs[0].object_ref == refs[1].object_ref
+    assert all(isinstance(ref, MediaReference) for ref in refs)
+    assert {ref.nbytes for ref in refs} == {3 * 32 * 32}
 
 
 def test_media_reference_payload_counts_toward_pending_budget_without_resolving(monkeypatch):
@@ -124,40 +124,36 @@ def test_media_reference_payload_counts_toward_pending_budget_without_resolving(
 
 
 @pytest.mark.slow_test
-def test_real_ray_boxed_media_is_consumed_in_receiver(local_ray):
-    """Keep the generation owner alive throughout pending reward consumption."""
+@pytest.mark.asyncio
+async def test_real_ray_boxed_media_is_consumed_in_receiver(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+):
+    """The generation worker owns the media while another actor consumes it."""
 
     ray = local_ray
 
-    @ray.remote(num_cpus=1)
-    class Producer:
-        def generate(self):
-            output = SimpleNamespace(reward_media=torch.full((2, 3, 4, 4), 128, dtype=torch.uint8))
-            reference_reward_media(output, _request(), primary=True)
-            return output.reward_media
-
-        def ping(self):
-            return True
-
-    @ray.remote(num_cpus=1)
+    @ray.remote(num_cpus=0)
     class Consumer:
         def score(self, samples):
             # Nested ObjectRefs remain boxed on arrival, not auto-dereferenced.
             assert all(isinstance(sample, MediaReference) for sample in samples)
             cache = {}
-            values = [sample.resolve(cache).mean().item() for sample in samples]
-            return values, len(cache)
+            shapes = [tuple(sample.resolve(cache).shape) for sample in samples]
+            return shapes, len(cache)
 
-    producer, consumer = Producer.remote(), Consumer.remote()
+    consumer = Consumer.remote()
     try:
-        refs = ray.get(producer.generate.remote(), timeout=30)
-        assert all(isinstance(sample.object_ref, ray.ObjectRef) for sample in refs)
-        assert sum(sample.nbytes for sample in refs) == 96
-        values, cache_size = ray.get(consumer.score.remote(refs), timeout=30)
-        assert values == pytest.approx([128 / 255, 128 / 255])
+        async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
+            await ray_run.runtime.activate()
+            output = await ray_run.runtime.generate(
+                ray_run.request(["p"], group_size=2, reward_media_refs=True)
+            )
+            refs = output.output
+            assert sum(sample.nbytes for sample in refs) == 2 * 3 * 32 * 32
+            shapes, cache_size = ray.get(consumer.score.remote(refs), timeout=30)
+        assert shapes == [(3, 32, 32), (3, 32, 32)]
         assert cache_size == 1
     finally:
-        ray.kill(producer, no_restart=True)
         ray.kill(consumer, no_restart=True)
 
 

@@ -46,7 +46,7 @@ class RayGenerationRuntime:
         *,
         session: RayGenerationSession | None,
         session_factory: _RaySessionFactory | None = None,
-        initial_policy_version: int | None = None,
+        initial_policy_version: int = 0,
     ) -> None:
         if session is None and session_factory is None:
             raise ValueError(
@@ -69,13 +69,6 @@ class RayGenerationRuntime:
         # Concurrent terminal failures each call shutdown; the lock lets the
         # first release the fleet while the rest observe the terminated phase.
         self._shutdown_lock = asyncio.Lock()
-
-    @property
-    def supports_non_draining_weight_sync(self) -> bool:
-        """Whether the currently published session can sync without draining."""
-
-        session = self._session
-        return bool(session and session.supports_non_draining_weight_sync)
 
     async def _admit_operation(self, operation: str) -> None:
         """Reject closed admission and retry cleanup a failed shutdown left pending."""
@@ -108,7 +101,7 @@ class RayGenerationRuntime:
                     "generate requires an active rollout runtime; "
                     "the rollout schedule must await activate() first",
                 )
-            if request.policy_version is None and self.current_policy_version is not None:
+            if request.policy_version is None:
                 request = replace(
                     request,
                     policy_version=self.current_policy_version,

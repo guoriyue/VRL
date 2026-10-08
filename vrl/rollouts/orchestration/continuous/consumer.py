@@ -45,7 +45,7 @@ class ContinuousRolloutConsumer:
         self,
         *,
         prompt_batch: PromptBatch,
-        current_policy_version: int | None,
+        current_policy_version: int,
         wait_timeout_s: float,
         poll_interval_s: float,
         producer_state: ContinuousRolloutProducerState | None = None,
@@ -160,7 +160,7 @@ class ContinuousRolloutConsumer:
         self,
         *,
         prompt_batch: PromptBatch,
-        current_policy_version: int | None,
+        current_policy_version: int,
     ) -> None:
         """Fail when a ready item falls outside the trainable version window."""
 
@@ -169,8 +169,6 @@ class ContinuousRolloutConsumer:
                 continue
             version = item.rollout_policy_version
             version_lag = self.staleness.staleness(version, current_policy_version)
-            if version_lag is None:
-                continue
             if version_lag < 0:
                 raise RuntimeError(
                     "continuous scored result is newer than the trainer policy "
@@ -187,7 +185,7 @@ class ContinuousRolloutConsumer:
         self,
         *,
         items: list[ScoredRollout],
-        current_policy_version: int | None,
+        current_policy_version: int,
         queue_wait_s: float,
         ready_groups_at_demand: int,
     ) -> RolloutIteration:
@@ -212,11 +210,9 @@ class ContinuousRolloutConsumer:
             stats.merge(item.stats)
         stats.observe_gauges(
             {
-                "continuous.consume_policy_version": float(
-                    0 if current_policy_version is None else current_policy_version
-                ),
-                "continuous.rollout_policy_version": float(0 if version is None else version),
-                "continuous.stale_policy_versions": float(0 if staleness is None else staleness),
+                "continuous.consume_policy_version": float(current_policy_version),
+                "continuous.rollout_policy_version": float(version),
+                "continuous.stale_policy_versions": float(staleness),
                 "continuous.item_age_s": float(item_age_s),
                 "continuous.ready_groups_at_demand": float(ready_groups_at_demand),
                 # Report the same batch identity used to select this iteration.

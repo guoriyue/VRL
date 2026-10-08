@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -74,11 +75,16 @@ class RayGenerationConfig:
         distributed = root.distributed
         rollout_runtime = distributed.rollout if distributed is not None else None
         profiler_section = root.rollout.torch_profiler if root.rollout is not None else None
-        torch_profiler = None if profiler_section is None else replace(profiler_section)
-        if torch_profiler is not None:
-            output_dir = root.trainer.output_dir if root.trainer is not None else None
-            if output_dir is not None:
-                torch_profiler.output_dir = str(output_dir)
+        torch_profiler = profiler_section
+        run_output_dir = root.trainer.output_dir if root.trainer is not None else None
+        if profiler_section is not None and not profiler_section.output_dir:
+            # The trainer's rule: an unset trace directory lands under the run's
+            # output directory (``outputs`` for a trainer-less root). Resolved
+            # here once so workers read a final path.
+            torch_profiler = replace(
+                profiler_section,
+                output_dir=str(Path(run_output_dir or "outputs") / "torch_profiler"),
+            )
 
         return cls(
             resources=resources,

@@ -101,7 +101,7 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 
 | Protocol | Members | Why it exists |
 |---|---|---|
-| `GenerationRuntime` | `current_policy_version`, `activate/generate/offload/shutdown` | The engine's only face toward vrl/rollouts (dual of `RewardRuntime`). isinstance-checked at `rollouts/collector/core.py`. |
+| `GenerationRuntime` | `current_policy_version`, `activate/generate/update_weights/offload/shutdown` | The engine's only face toward vrl/rollouts (dual of `RewardRuntime`). isinstance-checked at `rollouts/collector/core.py`. |
 | `GenerationBatchExecutor` | `family`, `task`, `forward_batch`, `gather_batches` | The model-family plugin contract; keeps `if family == ...` out of neutral execution code. |
 | `GenerationBatchGatherer` | `gather_batches` | The model-free slice of the executor: reassembly runs driver-side where no model is loaded, so it ships separately in the launch contract. |
 | `BatchPayload = Any` | — | Deliberate: the payload's shape is owned by the binding that produced it (diffusion latents vs AR tokens share nothing useful). |

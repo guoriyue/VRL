@@ -1,52 +1,59 @@
-"""Batch OOM degradation: split-on-OOM in the Ray generation executor."""
+"""Batch OOM degradation and dispatch routing in the Ray generation executor.
+
+Every fleet here is real: the real launcher starts real ``RayGenerationWorker``
+actors over the tiny SANA snapshot into a real placement group, and the real
+executor, engines, dispatcher and finalizers drive them. A CPU worker cannot
+run out of CUDA memory, so the launcher starts a subclass of the real worker
+(``_fault_worker``) whose real SANA executor raises torch's own CUDA OOM error
+above a sample capacity -- the worker's recovery, the typed results and the
+driver's split-and-retry all run unchanged. The same subclass records which
+batches each actor was asked to run and, where a theorem is about a
+malformed reply, corrupts its real result.
+"""
 
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass, field, replace
-from types import SimpleNamespace
+import contextlib
+from collections.abc import AsyncIterator, Mapping
+from dataclasses import replace
 from typing import Any
 
 import pytest
 import torch
 
-from tests.generation.ray._helpers import FakeRayActor
+import vrl.generation.ray.launcher as launcher_module
+from tests.generation.ray._helpers import RaySanaRuntime, ray_sana_runtime
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.generation.execution.types import (
-    BatchMemoryReading,
-    GenerationBatchEnvelope,
-    GenerationBatchResult,
-    RequestBatchOutOfMemory,
-    StagedBatchRefs,
-    StaleSlotDiscard,
-)
+from vrl.generation.execution.types import BatchMemoryReading, StaleSlotDiscard
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
-from vrl.generation.types import GenerationOutput, GenerationRequest
-from vrl.ray.actor_group import RayActorHandle
+from vrl.generation.ray.finalizer import RayGenerationFinalizer
+from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_pool import RayActorDispatcher
-from vrl.trajectory.types import TrajectoryBatch
 from vrl.utils.cuda_memory import is_cuda_out_of_memory
 from vrl.utils.media_reference import MediaReference
-
-from ._helpers import ResolvedRef
 
 # torch's allocator wire format, pinned against the real allocator by
 # test_oom_matcher_accepts_the_real_torch_allocator_message below.
 _OOM_PREFIX = "CUDA out of memory. Tried to allocate "
 _OOM_MESSAGE = f"{_OOM_PREFIX}4.00 GiB"
 
-# `_CapacityWorker` stands in for a Ray worker, not for torch; only the message
-# FORMAT it hand-copies needs the gpu-lane twin, so the two tests that depend on
-# that format carry the label and the rest do not.
+# The injected OOM is torch's real error type carrying a hand-copied allocator
+# message; the gpu-lane twin pins that the format is still torch's.
 _OOM_WIRE_FORMAT = pytest.mark.real_cover(
     "tests/generation/ray/test_oom_split.py"
     "::test_oom_matcher_accepts_the_real_torch_allocator_message",
     why=(
-        "a Ray worker that OOMs on exactly the batch sizes these tests need cannot be "
-        "produced in-process, so the worker itself stays a fake; what it hand-copies from "
-        "torch is the allocator message format, and the gpu-lane twin pins that"
+        "a CPU Ray worker cannot exhaust CUDA memory, so the real worker raises torch's "
+        "CUDA OOM error above a sample capacity; the gpu-lane twin pins its message format"
     ),
+)
+
+# A continuous LoRA run keeps versioned trainable-state slots.
+_VERSIONED = (
+    "model.use_lora=true",
+    "trainer.rollout_orchestration.schedule_mode=continuous",
+    "trainer.rollout_orchestration.continuous.max_stale_policy_versions=1",
 )
 
 
@@ -56,137 +63,174 @@ def _key(start: int, count: int) -> str:
     return GenerationSampleBatch(prompt_index=0, sample_start=start, sample_count=count).batch_key
 
 
-@dataclass
-class _CapacityWorker:
-    """Synchronous worker that OOMs on batches above ``max_samples``."""
-
-    worker_id: str
-    max_samples: int
-    executed: list[str] = field(default_factory=list)
-    fail_message: str = _OOM_MESSAGE
-    request_id_override: str | None = None
-
-    def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
-        batch = envelope.batch
-        self.executed.append(batch.batch_key)
-        request_id = (
-            envelope.request.request_id
-            if self.request_id_override is None
-            else self.request_id_override
-        )
-        if batch.sample_count > self.max_samples:
-            return GenerationBatchResult(
-                request_id=request_id,
-                worker_id=self.worker_id,
-                batch=batch,
-                output=None,
-                error=self.fail_message,
-            )
-        return GenerationBatchResult(
-            request_id=request_id,
-            worker_id=self.worker_id,
-            batch=batch,
-            output={"batch_key": batch.batch_key, "samples": batch.sample_count},
-        )
-
-    def executed_batches(self) -> list[str]:
-        """Read actor-side dispatch history in the real Ray regression."""
-        return list(self.executed)
-
-
-class _CoverageGatherer:
-    """Assert sample coverage by batch metadata, using the shared coverage validator."""
-
-    def merge_generation_batches(
-        self,
-        request: GenerationRequest,
-        sample_rows: Any,
-        batches: list[dict[str, Any]],
-    ) -> GenerationOutput:
-        return GenerationOutput(
-            output=list(batches),
-            trajectory=TrajectoryBatch(
-                request_id=request.request_id,
-                family=request.family,
-                task=request.task,
-                sample_rows=list(sample_rows),
-                axes={},
-                segments={},
-            ),
-        )
-
-
-def _request(
-    num_samples: int,
+def _fault_worker(
     *,
-    samples_per_generation_batch: int | None = None,
-    runtime_debug: bool = False,
-) -> GenerationRequest:
-    return GenerationRequest(
-        request_id="req-oom",
-        family="test",
-        task="t2i",
-        inputs=["p"],
-        samples_per_prompt=num_samples,
-        samples_per_generation_batch=samples_per_generation_batch,
-        runtime_debug=runtime_debug,
-    )
+    capacity: int | Mapping[str, int] | None = None,
+    failure: str = _OOM_MESSAGE,
+    request_path_oom: frozenset[str] = frozenset(),
+    corrupt: frozenset[str] = frozenset(),
+    evict_on_first_oom: bool = False,
+    memory_reading: BatchMemoryReading | None = None,
+) -> type[RayGenerationWorker]:
+    """The real Ray generation worker with faults injected into its real executor.
 
+    ``capacity`` (per worker id when a mapping) is the largest batch the
+    executor's forward accepts; a larger one raises torch's CUDA OOM error, or
+    ``ValueError(failure)`` for a non-allocator failure. Workers named in
+    ``request_path_oom`` run out of memory only inside the per-request loop.
+    ``evict_on_first_oom`` installs eight newer weight versions before the
+    first OOM, which evicts the request's own slot from the real retention
+    window. ``corrupt`` names reply fields the worker returns wrong.
+    """
 
-def _executor(
-    workers: list[_CapacityWorker],
-) -> tuple[RayGenerationExecutor, list[RayActorHandle]]:
-    engines = [
-        RayGenerationEngine(
-            worker.worker_id,
-            [
-                RayActorHandle(
-                    worker_id=worker.worker_id,
-                    actor=FakeRayActor(worker, "execute_batch"),
-                ),
-            ],
-        )
-        for worker in workers
-    ]
-    executor = RayGenerationExecutor(
-        engines=engines,
-        gatherer=_CoverageGatherer(),
-        actor_dispatcher=RayActorDispatcher(
-            tuple(engine.engine_id for engine in engines),
-        ),
-        generation_stall_timeout_s=30.0,
-    )
-    return executor, engines
+    class _FaultWorker(RayGenerationWorker):
+        def __init__(self, worker_id: str, launch_inputs: Any) -> None:
+            super().__init__(worker_id, launch_inputs)
+            self.batch_calls: list[str] = []
+            self.request_calls: list[str] = []
+            self.request_batches: list[list[str]] = []
+            self._in_request = False
+            self._installed: tuple[Any, int] | None = None
+            self._evicted = False
 
+        def load_policy(self) -> None:
+            super().load_policy()
+            executor = self.core.executor
+            if "forward_batch" in vars(executor):
+                return
+            real_forward = executor.forward_batch
+            worker_id = self.core.worker_id
+            limit = capacity.get(worker_id) if isinstance(capacity, Mapping) else capacity
 
-@pytest.mark.asyncio
-async def test_failed_gather_rejects_misaligned_media_references() -> None:
-    from vrl.generation.bindings.full_sequence import (
-        DenoiseBatchGatherer,
-        DenoiseBatchResult,
-    )
+            def forward_batch(request: Any, batch: GenerationSampleBatch) -> Any:
+                if self._in_request and worker_id in request_path_oom:
+                    raise torch.cuda.OutOfMemoryError(_OOM_MESSAGE)
+                if limit is not None and batch.sample_count > limit:
+                    if evict_on_first_oom and not self._evicted:
+                        self._evict_installed_slot()
+                    if failure == _OOM_MESSAGE:
+                        raise torch.cuda.OutOfMemoryError(failure)
+                    raise ValueError(failure)
+                return real_forward(request, batch)
 
-    class MalformedMediaWorker(_CapacityWorker):
-        def execute_batch(self, envelope):
-            # Boxed references must obey the same sample-count contract as tensors.
-            media = [MediaReference("batch-ref", i) for i in range(2)]
+            executor.forward_batch = forward_batch
+
+        def update_weights(self, trainable_state: Any, policy_version: int) -> int:
+            self._installed = (trainable_state, policy_version)
+            return super().update_weights(trainable_state, policy_version)
+
+        def _evict_installed_slot(self) -> None:
+            assert self._installed is not None
+            state, version = self._installed
+            for newer in range(version + 1, version + 9):
+                self.core.update_weights(state, newer)
+            self._evicted = True
+
+        def execute_batch(self, envelope: Any) -> Any:
+            self.batch_calls.append(envelope.batch.batch_key)
             result = super().execute_batch(envelope)
-            result.output = DenoiseBatchResult(
-                batch=envelope.batch,
-                latents=torch.ones(1, 3, 3),
-                log_probs=torch.zeros(1, 2),
-                timesteps=torch.ones(1, 2),
-                video=media,
-                replay_tensors={},
-                context={"model_family": "sd3_5"},
-            )
+            if "request_id" in corrupt:
+                result = replace(result, request_id="wrong-request")
+            if "media" in corrupt and result.output is not None:
+                # Boxed references must obey the same sample-count contract as tensors.
+                result.output.video = [MediaReference("batch-ref", i) for i in range(2)]
+            if memory_reading is not None:
+                result = replace(result, memory=memory_reading)
             return result
 
-    executor, _ = _executor([MalformedMediaWorker("w0", 1)])
-    executor.gatherer = DenoiseBatchGatherer()
-    request = replace(_request(1), reward_media_refs=True)
-    with pytest.raises(ValueError, match="has 2 rows, expected 1"):
-        await executor.execute(request)
+        def execute_request_batches(self, request: Any, engine_plan: Any) -> Any:
+            self.request_calls.append(request.request_id)
+            self.request_batches.append([batch.batch_key for batch in engine_plan.sample_batches])
+            self._in_request = True
+            try:
+                result = super().execute_request_batches(request, engine_plan)
+            finally:
+                self._in_request = False
+            if "pipeline_request_id" in corrupt:
+                result = replace(result, request_id="wrong-request")
+            if "pipeline_worker_id" in corrupt:
+                result = replace(result, worker_id="wrong-worker")
+            return result
+
+        def history(self) -> dict[str, list[Any]]:
+            return {
+                "batch_calls": list(self.batch_calls),
+                "request_calls": list(self.request_calls),
+                "request_batches": list(self.request_batches),
+            }
+
+    return _FaultWorker
+
+
+class _CountingFinalizer(RayGenerationFinalizer):
+    """The real finalizer, recording how many staged references each merge received."""
+
+    def __init__(self, finalizer_id: str, gatherer: Any) -> None:
+        super().__init__(finalizer_id, gatherer)
+        self.merged: list[int] = []
+
+    def merge_request(self, request: Any, sample_rows: Any, batch_refs: Any) -> Any:
+        self.merged.append(len(batch_refs))
+        return super().merge_request(request, sample_rows, batch_refs)
+
+    def merges(self) -> list[int]:
+        return list(self.merged)
+
+
+@contextlib.asynccontextmanager
+async def _fleet(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    snapshot: Any,
+    worker: type[RayGenerationWorker],
+    *,
+    batch: int,
+    engines: int = 1,
+    pipelined: bool = False,
+    versioned: bool = False,
+) -> AsyncIterator[RaySanaRuntime]:
+    """Launch the real fleet with ``worker`` as its rank actor class, activated."""
+
+    monkeypatch.setattr(launcher_module, "RayGenerationWorker", worker)
+    monkeypatch.setattr(launcher_module, "RayGenerationFinalizer", _CountingFinalizer)
+    overrides = (
+        f"rollout.samples_per_generation_batch={batch}",
+        f"distributed.resources.rollout.num_engines={engines}",
+        f"distributed.rollout.pipelined={str(pipelined).lower()}",
+        *(_VERSIONED if versioned else ()),
+    )
+    async with ray_sana_runtime(monkeypatch, tmp_path, snapshot, overrides=overrides) as run:
+        await run.runtime.activate()
+        yield run
+
+
+def _histories(ray: Any, run: RaySanaRuntime) -> list[dict[str, list[Any]]]:
+    engines = run.runtime._session.executor.engines
+    return ray.get([engine.primary.actor.history.remote() for engine in engines])
+
+
+def _merges(ray: Any, run: RaySanaRuntime) -> list[int]:
+    handles = run.runtime._session.finalizer_handles
+    return [
+        count for merged in ray.get([h.actor.merges.remote() for h in handles]) for count in merged
+    ]
+
+
+def _one_engine_of_every_rank(run: RaySanaRuntime) -> RayGenerationExecutor:
+    """Assemble the launched single-rank engines into ONE multi-rank engine.
+
+    A CPU fleet cannot group ranks (gloo rank groups need a GPU fleet), so each
+    real actor stands for one rank of the engine the executor drives.
+    """
+
+    session = run.runtime._session
+    engine = RayGenerationEngine("engine", [e.primary for e in session.executor.engines])
+    return RayGenerationExecutor(
+        engines=[engine],
+        gatherer=run.resolved.family.new_gatherer(),
+        actor_dispatcher=RayActorDispatcher(("engine",)),
+        generation_stall_timeout_s=30.0,
+    )
 
 
 @pytest.mark.gpu
@@ -204,193 +248,145 @@ def test_oom_matcher_accepts_the_real_torch_allocator_message() -> None:
     assert is_cuda_out_of_memory(_OOM_MESSAGE) is True
 
 
+@pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_nonprimary_oom_retries_whole_engine_and_reports_every_rank() -> None:
-    workers = [_CapacityWorker("r0", max_samples=4), _CapacityWorker("r1", max_samples=2)]
-
-    class RemoteBatch:
-        def __init__(self, worker: _CapacityWorker, peak: int) -> None:
-            self.worker = worker
-            self.peak = peak
-
-        def remote(self, envelope: GenerationBatchEnvelope) -> ResolvedRef:
-            result = self.worker.execute_batch(envelope)
-            result.rank_metrics = {result.worker_id: {"peak_memory_mb": self.peak}}
-            return ResolvedRef(result)
-
-    ranks = [
-        RayActorHandle(
-            worker_id=worker.worker_id,
-            actor=SimpleNamespace(execute_batch=RemoteBatch(worker, 10 + index)),
-            gpu_ids=(index,),
-        )
-        for index, worker in enumerate(workers)
-    ]
-    engine = RayGenerationEngine("engine", ranks)
-    executor = RayGenerationExecutor(
-        engines=[engine],
-        gatherer=_CoverageGatherer(),
-        actor_dispatcher=RayActorDispatcher(("engine",)),
-        generation_stall_timeout_s=30.0,
-    )
-    output = await executor.execute(_request(4, runtime_debug=True))
-    assert workers[0].executed == workers[1].executed == [_key(0, 4), _key(0, 2), _key(2, 2)]
-    assert sum(batch["samples"] for batch in output.output) == 4
-    rows = output.runtime_debug["ray_chunks"]
-    assert len(rows) == 4
-    assert {(row["worker_id"], tuple(row["gpu_ids"]), row["peak_memory_mb"]) for row in rows} == {
-        ("r0", (0,), 10),
-        ("r1", (1,), 11),
-    }
+async def test_failed_gather_rejects_misaligned_media_references(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    worker = _fault_worker(corrupt=frozenset({"media"}))
+    async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=1) as run:
+        with pytest.raises(ValueError, match="has 2 rows, expected 1"):
+            await run.runtime.generate(run.request(["p"], group_size=1, reward_media_refs=True))
 
 
 @_OOM_WIRE_FORMAT
+@pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_oom_chunk_splits_until_it_fits() -> None:
+async def test_nonprimary_oom_retries_whole_engine_and_reports_every_rank(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    worker = _fault_worker(capacity={"rollout-0": 4, "rollout-1": 2})
+    async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=4, engines=2) as run:
+        executor = _one_engine_of_every_rank(run)
+
+        output = await executor.execute(run.request(["p"], group_size=4, runtime_debug=True))
+
+        histories = _histories(local_ray, run)
+        assert [h["batch_calls"] for h in histories] == [[_key(0, 4), _key(0, 2), _key(2, 2)]] * 2
+        assert output.output.shape[0] == 4
+        rows = output.runtime_debug["ray_chunks"]
+        assert {row["worker_id"] for row in rows} == {"rollout-0", "rollout-1"}
+        assert {row["batch_key"] for row in rows} == {_key(0, 2), _key(2, 2)}
+
+
+@_OOM_WIRE_FORMAT
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_oom_chunk_splits_until_it_fits(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
     """An 8-sample batch on a 2-sample worker degrades to four 2-sample batches."""
 
-    worker = _CapacityWorker(worker_id="w0", max_samples=2)
-    executor, _ = _executor([worker])
+    async with _fleet(
+        monkeypatch, tmp_path, ray_sana_snapshot, _fault_worker(capacity=2), batch=8
+    ) as run:
+        output = await run.runtime.generate(run.request(["p"], group_size=8, runtime_debug=True))
 
-    output = await executor.execute(_request(8, runtime_debug=True))
-
-    covered = sorted((entry["batch_key"], entry["samples"]) for entry in output.output)
-    assert covered == [
-        (_key(0, 2), 2),
-        (_key(2, 2), 2),
-        (_key(4, 2), 2),
-        (_key(6, 2), 2),
-    ]
-    assert output.runtime_debug is not None
-    splits = output.runtime_debug["batch_oom_splits"]
-    # Recursion order: 8 -> [0:4] + [4:8] -> 2-sample leaves.
-    assert [row["batch_key"] for row in splits] == [_key(0, 8), _key(0, 4), _key(4, 4)]
-    assert all(row["worker_id"] == "w0" for row in splits)
-
-
-@_OOM_WIRE_FORMAT
-@pytest.mark.asyncio
-async def test_single_sample_oom_still_raises() -> None:
-    """A batch that OOMs at one sample is a hard failure, not an infinite loop."""
-
-    worker = _CapacityWorker(worker_id="w0", max_samples=0)
-    executor, _ = _executor([worker])
-
-    with pytest.raises(RuntimeError, match="out of memory"):
-        await executor.execute(_request(4))
-
-
-@pytest.mark.asyncio
-async def test_non_oom_error_is_not_retried() -> None:
-    """Only allocator failures degrade; other worker errors fail fast."""
-
-    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=4)
-    worker = _CapacityWorker(
-        worker_id="w0",
-        max_samples=2,
-        fail_message="ValueError: bad scheduler state",
-    )
-    executor, _ = _executor([worker])
-
-    with pytest.raises(RuntimeError, match="bad scheduler state"):
-        await executor.execute(_request(4))
-    assert worker.executed == [batch.batch_key]
-
-
-@pytest.mark.asyncio
-async def test_healthy_chunks_skip_degradation_path() -> None:
-    """No OOM: results and telemetry are exactly the pre-split behavior."""
-
-    worker = _CapacityWorker(worker_id="w0", max_samples=2)
-    executor, _ = _executor([worker])
-
-    output = await executor.execute(_request(4, samples_per_generation_batch=2))
-
-    assert len(output.output) == 2
-    assert output.runtime_debug is None
-
-
-@pytest.mark.asyncio
-async def test_result_request_id_must_match_submitted_envelope() -> None:
-    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=2)
-    worker = _CapacityWorker(
-        worker_id="w0",
-        max_samples=2,
-        request_id_override="wrong-request",
-    )
-    executor, _ = _executor([worker])
-
-    with pytest.raises(RuntimeError, match="request_id mismatch"):
-        await executor.execute(_request(2))
-
-    assert worker.executed == [batch.batch_key]
-
-
-@dataclass
-class _StaleSlotWorker:
-    """Worker that returns a typed stale-slot result (evicted version slot)."""
-
-    worker_id: str
-    executed: list[str] = field(default_factory=list)
-
-    def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
-        batch = envelope.batch
-        self.executed.append(batch.batch_key)
-        version = envelope.request.policy_version
-        return GenerationBatchResult(
-            request_id=envelope.request.request_id,
-            worker_id=self.worker_id,
-            batch=batch,
-            output=None,
-            # Slot mode stamps the REQUEST's version, so the version assert would
-            # pass — only the stale_slot flag distinguishes this from success.
-            policy_version=version,
-            error=f"trainable-state slot evicted for policy_version={version}",
-            stale_slot=True,
+        assert output.output.shape[0] == 8
+        assert [row.sample_index for row in output.sample_rows] == list(range(8))
+        splits = output.runtime_debug["batch_oom_splits"]
+        # Recursion order: 8 -> [0:4] + [4:8] -> 2-sample leaves.
+        assert [row["batch_key"] for row in splits] == [_key(0, 8), _key(0, 4), _key(4, 4)]
+        assert all(row["worker_id"] == "rollout-0" for row in splits)
+        (history,) = _histories(local_ray, run)
+        assert sorted(history["batch_calls"][3:]) == sorted(
+            [_key(0, 2), _key(2, 2), _key(4, 2), _key(6, 2)]
         )
 
 
-def _versioned_request(num_samples: int, version: int) -> GenerationRequest:
-    return GenerationRequest(
-        request_id="req-stale",
-        family="test",
-        task="t2i",
-        inputs=["p"],
-        samples_per_prompt=num_samples,
-        policy_version=version,
-    )
-
-
+@_OOM_WIRE_FORMAT
+@pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_stale_slot_routes_to_graceful_discard_not_failure() -> None:
-    """A stale-slot batch raises StaleSlotDiscard (a typed discard), NOT a generic
-    RuntimeError, so the producer counts it as a stale discard, not a collect error.
-    It must also skip OOM-split retries entirely (no second execute on the batch)."""
+async def test_single_sample_oom_still_raises(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    """A batch that OOMs at one sample is a hard failure, not an infinite loop."""
 
-    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=2)
-    worker = _StaleSlotWorker(worker_id="w0")
-    executor = RayGenerationExecutor(
-        engines=[
-            RayGenerationEngine(
-                worker.worker_id,
-                [
-                    RayActorHandle(
-                        worker_id=worker.worker_id,
-                        actor=FakeRayActor(worker, "execute_batch"),
-                    ),
-                ],
-            ),
-        ],
-        gatherer=_CoverageGatherer(),
-        actor_dispatcher=RayActorDispatcher(("w0",)),
-        generation_stall_timeout_s=30.0,
-    )
+    async with _fleet(
+        monkeypatch, tmp_path, ray_sana_snapshot, _fault_worker(capacity=0), batch=4
+    ) as run:
+        with pytest.raises(RuntimeError, match="out of memory"):
+            await run.runtime.generate(run.request(["p"], group_size=4))
 
-    with pytest.raises(StaleSlotDiscard, match="policy_version=7"):
-        await executor.execute(_versioned_request(2, version=7))
 
-    # Routed before scheduling any OOM retry, so the batch ran exactly once.
-    assert worker.executed == [batch.batch_key]
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_non_oom_error_is_not_retried(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    """Only allocator failures degrade; other worker errors fail fast."""
+
+    worker = _fault_worker(capacity=2, failure="bad scheduler state")
+    async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=4) as run:
+        with pytest.raises(RuntimeError, match="bad scheduler state"):
+            await run.runtime.generate(run.request(["p"], group_size=4))
+
+        (history,) = _histories(local_ray, run)
+        assert history["batch_calls"] == [_key(0, 4)]
+
+
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_healthy_chunks_skip_degradation_path(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    """No OOM: results and telemetry are exactly the pre-split behavior."""
+
+    async with _fleet(
+        monkeypatch, tmp_path, ray_sana_snapshot, _fault_worker(capacity=2), batch=2
+    ) as run:
+        output = await run.runtime.generate(run.request(["p"], group_size=4))
+
+        assert output.output.shape[0] == 4
+        assert output.runtime_debug is None
+        (history,) = _histories(local_ray, run)
+        assert history["batch_calls"] == [_key(0, 2), _key(2, 2)]
+
+
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_result_request_id_must_match_submitted_envelope(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    worker = _fault_worker(corrupt=frozenset({"request_id"}))
+    async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=2) as run:
+        with pytest.raises(RuntimeError, match="request_id mismatch"):
+            await run.runtime.generate(run.request(["p"], group_size=2))
+
+        (history,) = _histories(local_ray, run)
+        assert history["batch_calls"] == [_key(0, 2)]
+
+
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_stale_slot_routes_to_graceful_discard_not_failure(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    """A request whose version slot the worker does not hold raises StaleSlotDiscard (a
+    typed discard), NOT a generic RuntimeError, so the producer counts it as a stale
+    discard, not a collect error. It skips OOM-split retries entirely."""
+
+    async with _fleet(
+        monkeypatch, tmp_path, ray_sana_snapshot, _fault_worker(), batch=2, versioned=True
+    ) as run:
+        await run.runtime.update_weights(run.trainable_state(), 1)
+
+        with pytest.raises(StaleSlotDiscard, match="policy_version=7"):
+            await run.runtime.generate(run.request(["p"], group_size=2, policy_version=7))
+
+        # Routed before scheduling any OOM retry, so the batch ran exactly once.
+        (history,) = _histories(local_ray, run)
+        assert history["batch_calls"] == [_key(0, 2)]
 
 
 def test_stale_slot_discard_is_not_runtime_error() -> None:
@@ -401,30 +397,26 @@ def test_stale_slot_discard_is_not_runtime_error() -> None:
     assert issubclass(StaleSlotDiscard, Exception)
 
 
+@_OOM_WIRE_FORMAT
+@pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_slot_evicted_during_oom_retry_discards_request() -> None:
-    class EvictedAfterOOMWorker(_StaleSlotWorker):
-        def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
-            if not self.executed:
-                self.executed.append(envelope.batch_key)
-                return GenerationBatchResult(
-                    request_id=envelope.request.request_id,
-                    worker_id=self.worker_id,
-                    batch=envelope.batch,
-                    output=None,
-                    error=_OOM_MESSAGE,
-                    policy_version=envelope.request.policy_version,
-                )
-            return super().execute_batch(envelope)
+async def test_slot_evicted_during_oom_retry_discards_request(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    """Eight newer installs land between the OOM and its retry; the request's own
+    version leaves the retention window, so the retry is a typed discard."""
 
-    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=4)
-    worker = EvictedAfterOOMWorker(worker_id="w0")
-    executor, _ = _executor([worker])
+    worker = _fault_worker(capacity=2, evict_on_first_oom=True)
+    async with _fleet(
+        monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=4, versioned=True
+    ) as run:
+        await run.runtime.update_weights(run.trainable_state(), 1)
 
-    with pytest.raises(StaleSlotDiscard, match="policy_version=7"):
-        await executor.execute(_versioned_request(4, version=7))
+        with pytest.raises(StaleSlotDiscard, match="policy_version=1"):
+            await run.runtime.generate(run.request(["p"], group_size=4, policy_version=1))
 
-    assert worker.executed == [batch.batch_key, _key(0, 2), _key(2, 2)]
+        (history,) = _histories(local_ray, run)
+        assert history["batch_calls"] == [_key(0, 4), _key(0, 2), _key(2, 2)]
 
 
 def test_is_oom_error_classifier() -> None:
@@ -433,337 +425,255 @@ def test_is_oom_error_classifier() -> None:
     assert not is_cuda_out_of_memory("ValueError: shape mismatch")
 
 
-@dataclass
-class _RoutingWorker:
-    """Records whether execute() took the per-request pipelined path or the
-    per-batch path."""
-
-    worker_id: str
-    batch_calls: list[str] = field(default_factory=list)
-    request_calls: list[str] = field(default_factory=list)
-    max_samples: int | None = None
-    pipeline_oom: bool = False
-    pipeline_request_id_override: str | None = None
-    pipeline_worker_id_override: str | None = None
-    pipeline_stale: bool = False
-    request_batches: list[list[str]] = field(default_factory=list)
-
-    def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
-        self.batch_calls.append(envelope.batch.batch_key)
-        if self.max_samples is not None and envelope.batch.sample_count > self.max_samples:
-            return GenerationBatchResult(
-                request_id=envelope.request.request_id,
-                worker_id=self.worker_id,
-                batch=envelope.batch,
-                output=None,
-                error=_OOM_MESSAGE,
-            )
-        return GenerationBatchResult(
-            request_id=envelope.request.request_id,
-            worker_id=self.worker_id,
-            batch=envelope.batch,
-            output={"batch_key": envelope.batch.batch_key, "samples": envelope.batch.sample_count},
-        )
-
-    def execute_request_batches(
-        self,
-        request,
-        engine_plan,
-    ) -> StagedBatchRefs | RequestBatchOutOfMemory | StaleSlotDiscard:
-        self.request_calls.append(request.request_id)
-        self.request_batches.append([batch.batch_key for batch in engine_plan.sample_batches])
-        if self.pipeline_stale:
-            return StaleSlotDiscard(f"trainable-state slot evicted for {request.request_id}")
-        request_id = self.pipeline_request_id_override or request.request_id
-        if self.pipeline_oom:
-            return RequestBatchOutOfMemory(
-                request_id=request_id,
-                worker_id=self.pipeline_worker_id_override or self.worker_id,
-                error=_OOM_MESSAGE,
-            )
-        keys = tuple(batch.batch_key for batch in engine_plan.sample_batches)
-        return StagedBatchRefs(
-            request_id=request_id,
-            worker_id=self.pipeline_worker_id_override or self.worker_id,
-            batch_keys=keys,
-            batch_refs=tuple(f"ref:{self.worker_id}:{key}" for key in keys),
-        )
-
-
-@dataclass
-class _RoutingFinalizer:
-    """Records the staged references it is asked to merge."""
-
-    merges: list[list[str]] = field(default_factory=list)
-
-    def merge_request(self, request, sample_rows, batch_refs) -> GenerationOutput:
-        self.merges.append(list(batch_refs))
-        return GenerationOutput(
-            output=[{"pipelined": True, "refs": list(batch_refs)}],
-            trajectory=TrajectoryBatch(
-                request_id=request.request_id,
-                family=request.family,
-                task=request.task,
-                sample_rows=list(sample_rows),
-                axes={},
-                segments={},
-            ),
-        )
-
-
-def _routing_executor(workers, *, pipelined, finalizer=None):
-    engines = [
-        RayGenerationEngine(
-            w.worker_id,
-            [
-                RayActorHandle(
-                    worker_id=w.worker_id,
-                    actor=FakeRayActor(
-                        w,
-                        "execute_batch",
-                        "execute_request_batches",
-                    ),
-                ),
-            ],
-        )
-        for w in workers
-    ]
-    finalizers = []
-    if pipelined:
-        finalizer = finalizer or _RoutingFinalizer()
-        finalizers = [
-            RayActorHandle(
-                worker_id="finalize-0",
-                actor=FakeRayActor(finalizer, "merge_request"),
-            ),
-        ]
-    return RayGenerationExecutor(
-        engines=engines,
-        gatherer=_CoverageGatherer(),
-        actor_dispatcher=RayActorDispatcher(
-            tuple(engine.engine_id for engine in engines),
-        ),
-        generation_stall_timeout_s=30.0,
-        pipelined=pipelined,
-        finalizers=finalizers,
-    )
-
-
+@pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_pipelined_routes_single_worker_to_per_request_path() -> None:
-    """pipelined=True + one worker => the whole request runs via the per-request
-    path (execute_request_batches) and its staged references are merged by
+async def test_pipelined_routes_single_worker_to_per_request_path(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    """pipelined=True + one engine => the whole request runs via the per-request
+    path (execute_request_batches) and its staged references are merged once by
     the finalizer, NOT per-batch dispatch and NOT a driver-side gather."""
 
-    worker = _RoutingWorker(worker_id="w0")
-    finalizer = _RoutingFinalizer()
-    executor = _routing_executor([worker], pipelined=True, finalizer=finalizer)
+    async with _fleet(
+        monkeypatch, tmp_path, ray_sana_snapshot, _fault_worker(), batch=2, pipelined=True
+    ) as run:
+        output = await run.runtime.generate(run.request(["p"], group_size=4))
 
-    output = await executor.execute(_request(4, samples_per_generation_batch=2))
+        (history,) = _histories(local_ray, run)
+        assert len(history["request_calls"]) == 1
+        assert history["request_batches"] == [[_key(0, 2), _key(2, 2)]]
+        assert history["batch_calls"] == []
+        assert _merges(local_ray, run) == [2]
+        assert output.output.shape[0] == 4
+        assert [row.sample_index for row in output.sample_rows] == [0, 1, 2, 3]
 
-    assert worker.request_calls == ["req-oom"]
-    assert worker.batch_calls == []
-    expected_refs = [f"ref:w0:{_key(0, 2)}", f"ref:w0:{_key(2, 2)}"]
-    assert finalizer.merges == [expected_refs]
-    assert output.output == [{"pipelined": True, "refs": expected_refs}]
 
-
+@pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_pipelined_splits_batches_over_engines_and_merges_once() -> None:
-    """Every engine runs its round-robin share in one call; the finalizer
-    receives the references in plan order regardless of which engine staged them."""
+async def test_pipelined_splits_batches_over_engines_and_merges_once(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    """Every engine runs its round-robin share in one call; one finalizer merges
+    all the references in plan order regardless of which engine staged them."""
 
-    workers = [_RoutingWorker(worker_id=f"w{i}") for i in range(2)]
-    finalizer = _RoutingFinalizer()
-    executor = _routing_executor(workers, pipelined=True, finalizer=finalizer)
+    async with _fleet(
+        monkeypatch,
+        tmp_path,
+        ray_sana_snapshot,
+        _fault_worker(),
+        batch=2,
+        engines=2,
+        pipelined=True,
+    ) as run:
+        output = await run.runtime.generate(run.request(["p"], group_size=8))
 
-    output = await executor.execute(_request(8, samples_per_generation_batch=2))
-
-    assert workers[0].request_batches == [[_key(0, 2), _key(4, 2)]]
-    assert workers[1].request_batches == [[_key(2, 2), _key(6, 2)]]
-    assert all(worker.batch_calls == [] for worker in workers)
-    assert finalizer.merges == [
-        [
-            f"ref:w0:{_key(0, 2)}",
-            f"ref:w1:{_key(2, 2)}",
-            f"ref:w0:{_key(4, 2)}",
-            f"ref:w1:{_key(6, 2)}",
-        ],
-    ]
-    assert output.request_id == "req-oom"
+        histories = _histories(local_ray, run)
+        assert histories[0]["request_batches"] == [[_key(0, 2), _key(4, 2)]]
+        assert histories[1]["request_batches"] == [[_key(2, 2), _key(6, 2)]]
+        assert all(history["batch_calls"] == [] for history in histories)
+        assert _merges(local_ray, run) == [4]
+        assert [row.sample_index for row in output.sample_rows] == list(range(8))
 
 
+@_OOM_WIRE_FORMAT
+@pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_pipelined_oom_on_one_engine_retries_the_request_per_batch() -> None:
-    batches = [
-        GenerationSampleBatch(prompt_index=0, sample_start=i * 2, sample_count=2) for i in range(4)
-    ]
-    workers = [_RoutingWorker(worker_id="w0"), _RoutingWorker(worker_id="w1", pipeline_oom=True)]
-    finalizer = _RoutingFinalizer()
-    executor = _routing_executor(workers, pipelined=True, finalizer=finalizer)
+async def test_pipelined_oom_on_one_engine_retries_the_request_per_batch(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    worker = _fault_worker(request_path_oom=frozenset({"rollout-1"}))
+    async with _fleet(
+        monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=2, engines=2, pipelined=True
+    ) as run:
+        output = await run.runtime.generate(run.request(["p"], group_size=8))
 
-    output = await executor.execute(_request(8, samples_per_generation_batch=2))
-
-    assert [worker.request_calls for worker in workers] == [["req-oom"], ["req-oom"]]
-    assert finalizer.merges == []
-    assert sorted(workers[0].batch_calls + workers[1].batch_calls) == sorted(
-        batch.batch_key for batch in batches
-    )
-    assert len(output.output) == 4
-
-
-def test_pipelined_requires_a_finalizer_at_executor_construction() -> None:
-    worker = _RoutingWorker(worker_id="w0")
-    engine = RayGenerationEngine(
-        "w0",
-        [RayActorHandle(worker_id="w0", actor=FakeRayActor(worker, "execute_batch"))],
-    )
-    with pytest.raises(ValueError, match="requires at least one finalizer"):
-        RayGenerationExecutor(
-            engines=[engine],
-            gatherer=_CoverageGatherer(),
-            actor_dispatcher=RayActorDispatcher(("w0",)),
-            generation_stall_timeout_s=30.0,
-            pipelined=True,
+        histories = _histories(local_ray, run)
+        assert [len(history["request_calls"]) for history in histories] == [1, 1]
+        assert _merges(local_ray, run) == []
+        assert sorted(histories[0]["batch_calls"] + histories[1]["batch_calls"]) == sorted(
+            _key(start, 2) for start in (0, 2, 4, 6)
         )
+        assert output.output.shape[0] == 8
 
 
+@pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_pipelined_stale_slot_is_a_graceful_discard_that_frees_the_engine() -> None:
-    worker = _RoutingWorker(worker_id="w0", pipeline_stale=True)
-    executor = _routing_executor([worker], pipelined=True)
+async def test_pipelined_requires_a_finalizer_at_executor_construction(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, _fault_worker(), batch=2) as run:
+        engines = run.runtime._session.executor.engines
 
-    with pytest.raises(StaleSlotDiscard, match="slot evicted"):
-        await executor.execute(_request(4, samples_per_generation_batch=2))
+        with pytest.raises(ValueError, match="requires at least one finalizer"):
+            RayGenerationExecutor(
+                engines=list(engines),
+                gatherer=run.resolved.family.new_gatherer(),
+                actor_dispatcher=RayActorDispatcher(tuple(e.engine_id for e in engines)),
+                generation_stall_timeout_s=30.0,
+                pipelined=True,
+            )
 
-    worker.pipeline_stale = False
-    output = await executor.execute(_request(4, samples_per_generation_batch=2))
-    assert output.output[0]["pipelined"] is True
-    assert worker.request_calls == ["req-oom", "req-oom"]
 
-
+@pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_pipelined_uses_per_chunk_path_for_one_chunk() -> None:
+async def test_pipelined_stale_slot_is_a_graceful_discard_that_frees_the_engine(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    async with _fleet(
+        monkeypatch,
+        tmp_path,
+        ray_sana_snapshot,
+        _fault_worker(),
+        batch=2,
+        pipelined=True,
+        versioned=True,
+    ) as run:
+        await run.runtime.update_weights(run.trainable_state(), 1)
+
+        with pytest.raises(StaleSlotDiscard, match="slot evicted"):
+            await run.runtime.generate(run.request(["p"], group_size=4, policy_version=7))
+
+        output = await run.runtime.generate(run.request(["p"], group_size=4, policy_version=1))
+        assert output.output.shape[0] == 4
+        (history,) = _histories(local_ray, run)
+        assert len(history["request_calls"]) == 2
+
+
+@_OOM_WIRE_FORMAT
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_pipelined_uses_per_chunk_path_for_one_chunk(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
     """A one-batch request has nothing to overlap and keeps OOM admission."""
 
-    worker = _RoutingWorker(worker_id="w0", max_samples=2)
-    executor = _routing_executor([worker], pipelined=True)
+    async with _fleet(
+        monkeypatch,
+        tmp_path,
+        ray_sana_snapshot,
+        _fault_worker(capacity=2),
+        batch=4,
+        pipelined=True,
+    ) as run:
+        output = await run.runtime.generate(run.request(["p"], group_size=4))
 
-    output = await executor.execute(_request(4))
-
-    assert worker.request_calls == []
-    assert worker.batch_calls == [_key(0, 4), _key(0, 2), _key(2, 2)]
-    assert sorted((row["batch_key"], row["samples"]) for row in output.output) == [
-        (_key(0, 2), 2),
-        (_key(2, 2), 2),
-    ]
+        (history,) = _histories(local_ray, run)
+        assert history["request_calls"] == []
+        assert history["batch_calls"] == [_key(0, 4), _key(0, 2), _key(2, 2)]
+        assert output.output.shape[0] == 4
 
 
+@_OOM_WIRE_FORMAT
+@pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_pipelined_oom_retries_through_per_chunk_split_admission() -> None:
-    worker = _RoutingWorker(
-        worker_id="w0",
-        max_samples=2,
-        pipeline_oom=True,
+async def test_pipelined_oom_retries_through_per_chunk_split_admission(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    async with _fleet(
+        monkeypatch,
+        tmp_path,
+        ray_sana_snapshot,
+        _fault_worker(capacity=2),
+        batch=4,
+        pipelined=True,
+    ) as run:
+        output = await run.runtime.generate(run.request(["p"], group_size=8))
+
+        (history,) = _histories(local_ray, run)
+        assert len(history["request_calls"]) == 1
+        assert history["batch_calls"][:2] == [_key(0, 4), _key(4, 4)]
+        assert sorted(history["batch_calls"][2:]) == sorted(
+            _key(start, 2) for start in (0, 2, 4, 6)
+        )
+        assert _merges(local_ray, run) == []
+        assert output.output.shape[0] == 8
+
+
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_pipelined_result_request_id_must_match_request(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    worker = _fault_worker(corrupt=frozenset({"pipeline_request_id"}))
+    async with _fleet(
+        monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=2, pipelined=True
+    ) as run:
+        with pytest.raises(RuntimeError, match="request_id mismatch"):
+            await run.runtime.generate(run.request(["p"], group_size=4))
+
+        (history,) = _histories(local_ray, run)
+        assert len(history["request_calls"]) == 1
+        assert history["batch_calls"] == []
+
+
+@pytest.mark.slow_test
+@pytest.mark.asyncio
+async def test_pipelined_oom_worker_id_must_match_actor(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    worker = _fault_worker(
+        request_path_oom=frozenset({"rollout-0"}),
+        corrupt=frozenset({"pipeline_worker_id"}),
     )
-    executor = _routing_executor([worker], pipelined=True)
+    async with _fleet(
+        monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=2, pipelined=True
+    ) as run:
+        with pytest.raises(RuntimeError, match="rank mismatch"):
+            await run.runtime.generate(run.request(["p"], group_size=4))
 
-    output = await executor.execute(_request(8, samples_per_generation_batch=4))
-
-    assert worker.request_calls == ["req-oom"]
-    assert worker.batch_calls == [
-        _key(0, 4),
-        _key(4, 4),
-        _key(0, 2),
-        _key(2, 2),
-        _key(4, 2),
-        _key(6, 2),
-    ]
-    assert sorted((row["batch_key"], row["samples"]) for row in output.output) == [
-        (_key(0, 2), 2),
-        (_key(2, 2), 2),
-        (_key(4, 2), 2),
-        (_key(6, 2), 2),
-    ]
+        (history,) = _histories(local_ray, run)
+        assert len(history["request_calls"]) == 1
+        assert history["batch_calls"] == []
 
 
+@pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_pipelined_result_request_id_must_match_request() -> None:
-    worker = _RoutingWorker(
-        worker_id="w0",
-        pipeline_request_id_override="wrong-request",
-    )
-    executor = _routing_executor([worker], pipelined=True)
-
-    with pytest.raises(RuntimeError, match="request_id mismatch"):
-        await executor.execute(_request(4, samples_per_generation_batch=2))
-
-    assert worker.request_calls == ["req-oom"]
-    assert worker.batch_calls == []
-
-
-@pytest.mark.asyncio
-async def test_pipelined_oom_worker_id_must_match_actor() -> None:
-    worker = _RoutingWorker(
-        worker_id="w0",
-        pipeline_oom=True,
-        pipeline_worker_id_override="wrong-worker",
-    )
-    executor = _routing_executor([worker], pipelined=True)
-
-    with pytest.raises(RuntimeError, match="rank mismatch"):
-        await executor.execute(_request(4, samples_per_generation_batch=2))
-
-    assert worker.request_calls == ["req-oom"]
-    assert worker.batch_calls == []
-
-
-@pytest.mark.asyncio
-async def test_default_uses_per_chunk_path() -> None:
+async def test_default_uses_per_chunk_path(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
     """Default (pipelined=False) is the unchanged per-batch dispatch."""
 
-    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=4)
-    worker = _RoutingWorker(worker_id="w0")
-    executor = _routing_executor([worker], pipelined=False)
+    async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, _fault_worker(), batch=4) as run:
+        await run.runtime.generate(run.request(["p"], group_size=4))
 
-    await executor.execute(_request(4))
-
-    assert worker.request_calls == []
-    assert worker.batch_calls == [batch.batch_key]
+        (history,) = _histories(local_ray, run)
+        assert history["request_calls"] == []
+        assert history["batch_calls"] == [_key(0, 4)]
 
 
+@pytest.mark.slow_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("with_reading", [True, False])
-async def test_executor_logs_measured_batch_memory(with_reading, caplog, monkeypatch):
-    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1)
-    worker = _CapacityWorker(worker_id="w0", max_samples=1)
-    execute = worker.execute_batch
+async def test_executor_logs_measured_batch_memory(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path, caplog, with_reading
+):
+    # A CPU worker measures no CUDA memory; the reading a CUDA worker reports
+    # is attached to its real result.
+    mib = 2**20
+    reading = (
+        BatchMemoryReading(
+            sample_count=1,
+            baseline_allocated_bytes=10 * mib,
+            denoise_peak_bytes=18 * mib,
+            decode_peak_bytes=14 * mib,
+            reserved_start_bytes=11 * mib,
+            free_start_bytes=18 * mib,
+            total_bytes=32 * mib,
+        )
+        if with_reading
+        else None
+    )
+    worker = _fault_worker(memory_reading=reading)
+    async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=1) as run:
+        with caplog.at_level("INFO", logger="vrl.generation.ray.executor"):
+            await run.runtime.generate(run.request(["p"], group_size=1))
 
-    def execute_with_memory(envelope):
-        result = execute(envelope)
-        if with_reading:
-            mib = 2**20
-            result.memory = BatchMemoryReading(
-                sample_count=1,
-                baseline_allocated_bytes=10 * mib,
-                denoise_peak_bytes=18 * mib,
-                decode_peak_bytes=14 * mib,
-                reserved_start_bytes=11 * mib,
-                free_start_bytes=18 * mib,
-                total_bytes=32 * mib,
-            )
-        return result
-
-    monkeypatch.setattr(worker, "execute_batch", execute_with_memory)
-    executor, _ = _executor([worker])
-    with caplog.at_level("INFO", logger="vrl.generation.ray.executor"):
-        await executor.execute(_request(1))
     messages = [
         r.getMessage() for r in caplog.records if r.getMessage().startswith("batch memory:")
     ]
     assert messages == (
         [
-            f"batch memory: batch={batch.batch_key} n=1 peak=18MB "
+            f"batch memory: batch={_key(0, 1)} n=1 peak=18MB "
             "(denoise=18MB decode=14MB baseline=10MB) budget=29MB non_torch=3MB"
         ]
         if with_reading
@@ -786,45 +696,26 @@ def test_local_and_remote_oom_classification_agree(message, expected):
 
 
 @pytest.mark.slow_test
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [_OOM_MESSAGE, "decode failed"])
-def test_real_multirank_nonprimary_failure_reaches_driver(local_ray, failure):
-    actor_cls = local_ray.remote(num_cpus=0)(_CapacityWorker)
-    actors = [
-        actor_cls.remote(worker_id="r0", max_samples=8),
-        actor_cls.remote(worker_id="r1", max_samples=2, fail_message=failure),
-    ]
-    engine = RayGenerationEngine(
-        "engine",
-        [RayActorHandle(worker_id=f"r{index}", actor=actor) for index, actor in enumerate(actors)],
-    )
-    executor = RayGenerationExecutor(
-        engines=[engine],
-        gatherer=_CoverageGatherer(),
-        actor_dispatcher=RayActorDispatcher(("engine",)),
-        generation_stall_timeout_s=30.0,
-    )
-    try:
+async def test_real_multirank_nonprimary_failure_reaches_driver(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path, failure
+):
+    worker = _fault_worker(capacity={"rollout-0": 8, "rollout-1": 2}, failure=failure)
+    async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=8, engines=2) as run:
+        executor = _one_engine_of_every_rank(run)
+        request = run.request(["p"], group_size=8, runtime_debug=True)
+
         if failure == _OOM_MESSAGE:
-            output = asyncio.run(executor.execute(_request(8, runtime_debug=True)))
-            assert sorted(entry["batch_key"] for entry in output.output) == [
-                _key(0, 2),
-                _key(2, 2),
-                _key(4, 2),
-                _key(6, 2),
-            ]
+            output = await executor.execute(request)
+            assert output.output.shape[0] == 8
             assert all(
-                row["worker_id"] == "r1" for row in output.runtime_debug["batch_oom_splits"]
+                row["worker_id"] == "rollout-1" for row in output.runtime_debug["batch_oom_splits"]
             )
-            histories = local_ray.get([actor.executed_batches.remote() for actor in actors])
-            assert histories[0] == histories[1]
-            assert len(histories[0]) == 7
+            histories = _histories(local_ray, run)
+            assert histories[0]["batch_calls"] == histories[1]["batch_calls"]
+            assert len(histories[0]["batch_calls"]) == 7
         else:
             with pytest.raises(RuntimeError, match="decode failed"):
-                asyncio.run(executor.execute(_request(8)))
-            assert local_ray.get([actor.executed_batches.remote() for actor in actors]) == [
-                [_key(0, 8)],
-                [_key(0, 8)],
-            ]
-    finally:
-        for actor in actors:
-            local_ray.kill(actor, no_restart=True)
+                await executor.execute(request)
+            assert [h["batch_calls"] for h in _histories(local_ray, run)] == [[_key(0, 8)]] * 2

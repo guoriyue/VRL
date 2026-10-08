@@ -572,6 +572,7 @@ class OnlineTrainer:
             algorithm_tolerates_off_policy_staleness=(
                 self.algorithm.tolerates_off_policy_staleness
             ),
+            versioned_weight_sync=self.config.versioned_weight_sync,
         )
         cp_groups = getattr(self._strategy, "context_parallel_groups", None)
         if cp_groups is not None:

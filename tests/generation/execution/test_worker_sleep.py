@@ -559,8 +559,6 @@ def test_partial_slot_activation_failure_is_not_returned_as_retryable_result() -
     from vrl.generation.types import GenerationRequest
 
     class _BrokenActivationModel(_PipelineOffloadModel):
-        supports_versioned_trainable_state = True
-
         def has_trainable_state(self, _version: int) -> bool:
             return True
 

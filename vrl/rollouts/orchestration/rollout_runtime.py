@@ -16,7 +16,6 @@ from typing import Any
 import torch
 
 from vrl.rollouts.stats import RolloutStats
-from vrl.utils.validation import require_int
 
 
 class RolloutPhaseCleanupError(RuntimeError):
@@ -121,36 +120,23 @@ class RolloutRuntimeCoordinator:
             raise ValueError("weight sync requires a prepared state snapshot")
         with stats.phase("rollout.weight_sync_s"):
             await self.weight_syncer.push(prepared)
-        self._set_weights_initialized(True)
+        self.weights_initialized = True
 
-    def current_policy_version(self) -> int | None:
-        """Read a provider's published version; never infer one from push count."""
-        for provider in (self.collector.generation_runtime, self.weight_syncer):
-            if provider is None:
-                continue
-            value = provider.current_policy_version
-            if value is not None:
-                return require_int(value, path="current_policy_version", minimum=0)
-        return None
+    def require_weight_resync(self) -> None:
+        """The trainer's weights changed outside a sync; push before the next rollout."""
+
+        self.weights_initialized = False
+
+    def current_policy_version(self) -> int:
+        """The version the rollout runtime publishes; never inferred from push count."""
+
+        return self.collector.generation_runtime.current_policy_version
 
     def requires_training_state_parking(self) -> bool:
         """Whether rollout or reward borrows the trainer's GPU (the plan's ``offload_train``)."""
 
         plan = self.collector.lifecycle
         return plan is not None and bool(plan.offload_train)
-
-    def supports_non_draining_weight_sync(self) -> bool:
-        # True only when every rollout worker retains versioned trainable-state
-        # slots, so the weight-sync barrier can skip draining in-flight generation
-        # (old requests keep their slot). getattr-with-default keeps any runtime
-        # that does not advertise the capability on the safe draining barrier.
-        runtime = self.collector.generation_runtime
-        return bool(getattr(runtime, "supports_non_draining_weight_sync", False))
-
-    def validate_training_state_parking(self) -> None:
-        if not self.requires_training_state_parking():
-            return
-        self.strategy.validate_training_state_parking()
 
     def park_training_state_for_rollout(self, stats: RolloutStats) -> bool:
         if not self.requires_training_state_parking():

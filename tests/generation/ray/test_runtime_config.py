@@ -1,81 +1,45 @@
-"""Tests for rollout runtime factory fail-fast behavior."""
+"""Tests for the Ray generation runtime's configuration, launch contract and launch.
+
+Launch-contract projections resolve a real tiny run -- the SANA online recipe
+on its tiny snapshot, or the tiny Wan snapshot for Wan-only knobs -- and read
+the contract the recipe would ship to its workers. Launch-shape and topology
+tests launch a real fleet on the package cluster (``ray_sana_runtime``).
+Contract-validation and config-projection tests construct the production
+values directly.
+"""
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
-from collections.abc import Iterator
-from dataclasses import replace
-from types import SimpleNamespace
+import json
+from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
 
 import pytest
-import torch
 from omegaconf import OmegaConf
 
-from vrl.config.builders import BuiltConfigs
-from vrl.config.precision import PrecisionPolicy
+from tests.generation.ray._helpers import ray_sana_runtime
+from tests.scripts.eval.fixtures import tiny_sana_online_config, write_tiny_wan_snapshot
+from vrl import run
+from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
+from vrl.config.validation import compile_conflicts
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.generation.ray.launcher import (
-    RayGenerationLauncher,
-)
-from vrl.generation.ray.runtime import RayGenerationRuntime
-from vrl.generation.ray.session import RayGenerationSession
-from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
-from vrl.ray.actor_group import RayActorHandle
-from vrl.ray.placement import GlobalRayPlacementOwner, RolePlacement
+from vrl.generation.ray.launcher import RayGenerationLauncher
+from vrl.ray.actor_group import RayActorGroup
+from vrl.ray.placement import RolePlacement
 from vrl.ray.resources import ResolvedDistributedResources
-from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.run import (
-    OnlineRunConfig,
-    ResolvedModel,
-    ResolvedOnlineRun,
-)
-from vrl.trainers.checkpointing import TrainingResumeConfig
+from vrl.utils.lifecycle import RuntimePhase
 
 _TEST_MODEL_IDENTITY = {"schema": "test"}
-_TEST_RPC_TIMEOUT_S = 30.0
+_CONTINUOUS = (
+    "/base/rollout/orchestration=continuous",
+    "trainer.rollout_orchestration.continuous.max_stale_policy_versions=1",
+)
 
 
-def _runtime(
-    executor: Any,
-    *,
-    weight_sync: Any | None = None,
-    workers: list[RayActorHandle] | None = None,
-) -> RayGenerationRuntime:
-    return RayGenerationRuntime(
-        session=RayGenerationSession(
-            executor,
-            weight_sync,
-            list(workers or []),
-        ),
-    )
-
-
-def test_launch_contract_accepts_primitive_config_leaves() -> None:
-    contract = GenerationRuntimeLaunchContract(
-        family="unit",
-        model_build={
-            "model_name_or_path": "unit-test",
-            "model_config": {
-                "text": "value",
-                "integer": 1,
-                "number": 1.5,
-                "enabled": True,
-                "optional": None,
-            },
-        },
-        expected_model_identity=_TEST_MODEL_IDENTITY,
-    )
-
-    model_config = contract.model_build["model_config"]
-    assert model_config["enabled"] is True
-    assert model_config["optional"] is None
-    assert contract.expected_model_identity == _TEST_MODEL_IDENTITY
+# ------------------------------------------------------- launch contract values
 
 
 @pytest.mark.parametrize("family", ["", None, True, 123, ["unit"], {"name": "unit"}])
@@ -97,51 +61,31 @@ def test_launch_contract_rejects_empty_model_identity() -> None:
         )
 
 
-def _cfg(
-    *,
-    num_engines: int = 1,
-    overlap: bool = False,
-):
-    rollout_devices = [0] if overlap else [1]
-    visible_devices = [0] if overlap else [0, 1]
-    distributed = {
-        "resources": {
-            "visible_devices": visible_devices,
-            "trainer": {"devices": [0]},
-            "rollout": {
-                "devices": rollout_devices,
-                "num_engines": num_engines,
-            },
-        },
-        # Release scheduling is derived from topology; nothing to spell here.
-        "rollout": {},
-    }
-    return OmegaConf.create(
-        {
-            "distributed": distributed,
-        },
-    )
+@pytest.mark.parametrize("policy_version", [True, 1.9, "1", -1])
+def test_launch_contract_rejects_invalid_policy_version(policy_version) -> None:
+    with pytest.raises(ValueError, match="policy_version must be"):
+        GenerationRuntimeLaunchContract(
+            family="unit",
+            model_build={},
+            expected_model_identity=_TEST_MODEL_IDENTITY,
+            policy_version=policy_version,
+        )
 
 
-def _resource_cfg(
-    *,
-    trainer_devices: list[int],
-    rollout_devices: list[int],
-):
-    rollout_runtime: dict[str, Any] = {"cpus_per_worker": 1}
-    rollout_resource: dict[str, Any] = {
-        "devices": rollout_devices,
-        "num_engines": len(rollout_devices),
-    }
+# ------------------------------------------------------- worker config projection
+
+
+def _cfg() -> Any:
     return OmegaConf.create(
         {
             "distributed": {
                 "resources": {
-                    "visible_devices": sorted(set(trainer_devices) | set(rollout_devices)),
-                    "trainer": {"devices": trainer_devices},
-                    "rollout": rollout_resource,
+                    "visible_devices": [0, 1],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1], "num_engines": 1},
                 },
-                "rollout": rollout_runtime,
+                # Release scheduling is derived from topology; nothing to spell here.
+                "rollout": {},
             },
         },
     )
@@ -154,284 +98,7 @@ def _ray_config(cfg: Any) -> RayGenerationConfig:
     )
 
 
-def _launch_cfg(
-    *,
-    model_torch_compile: dict[str, Any] | None = None,
-) -> Any:
-    model_config = {
-        "family": "sd3_5",
-        "path": "unit-test",
-        "revision": "driver-config",
-        "use_lora": False,
-        "torch_compile": model_torch_compile
-        or {
-            "enable": False,
-            "mode": "default",
-        },
-    }
-    cfg: dict[str, Any] = {
-        "distributed": {
-            "resources": {
-                "visible_devices": [],
-                "trainer": {
-                    "num_gpus": 0,
-                    "devices": [],
-                },
-                "rollout": {
-                    "num_gpus": 0,
-                    "devices": [],
-                    "num_engines": 1,
-                },
-            },
-        },
-        "model": model_config,
-        "precision": {
-            "float32_precision": "tf32",
-            "training": {"dtype": "bf16", "outer_autocast": True},
-            # Deliberately differs from training and prompt encoding so this
-            # fixture proves role-specific values survive the Ray projection.
-            "rollout": {
-                "dtype": "fp32",
-                "outer_autocast": True,
-                "prompt_encoders": {"dtype": "fp16"},
-            },
-        },
-        "rollout": {},
-    }
-    return OmegaConf.create(cfg)
-
-
-def _capture_launch_inputs(
-    cfg: Any,
-    entry: ModelFamilyEntry,
-    *,
-    rollout_model_identity: dict[str, Any] | None = None,
-) -> RayGenerationLaunchInputs:
-    """Resolve the public Ray worker boundary without starting actors."""
-
-    config = _ray_config(cfg)
-    root = parse_config(cfg)
-    precision = PrecisionPolicy.from_section(root.precision)
-    schedule_mode = str(
-        OmegaConf.select(
-            cfg,
-            "trainer.rollout_orchestration.schedule_mode",
-            default="strict_on_policy",
-        ),
-    )
-    run = ResolvedOnlineRun(
-        built=BuiltConfigs(
-            root=root,
-            algorithm=None,
-            precision=precision,
-            trainer=SimpleNamespace(
-                rollout_orchestration=SimpleNamespace(schedule_mode=schedule_mode),
-            ),
-            reward=None,
-            resume=TrainingResumeConfig(),
-        ),
-        family=entry,
-        resources=config.resources,
-        device=torch.device("cpu"),
-        run=OnlineRunConfig(total_epochs=0),
-        generation=config,
-        collector=RolloutCollectorConfig(),
-    )
-    replay_model = ResolvedModel(
-        entry=entry,
-        build=entry.resolve_model_build(
-            root,
-            torch.device("cpu"),
-            precision=precision,
-            for_rollout=False,
-        ),
-        identity=_TEST_MODEL_IDENTITY,
-    )
-
-    with (
-        patch(
-            "vrl.models.checkpoint_identity.resolve_checkpoint_model_identity",
-            return_value=rollout_model_identity or _TEST_MODEL_IDENTITY,
-        ) as resolve_identity,
-    ):
-        result = run.ray_launch_inputs(replay_model)
-
-    resolve_identity.assert_called_once()
-    return result
-
-
-class _SlotWorker:
-    """Real Ray actor exposing the versioned-slot capability query;
-    ``supports=None`` raises like a dead/broken worker."""
-
-    def __init__(self, supports: bool | None) -> None:
-        self._supports = supports
-
-    def supports_versioned_trainable_state(self) -> bool:
-        if self._supports is None:
-            raise RuntimeError("actor dead")
-        return self._supports
-
-
-@contextlib.contextmanager
-def _slot_handles(ray: Any, *supports: bool | None) -> Iterator[list[RayActorHandle]]:
-    """Real ``_SlotWorker`` actors, killed on exit.
-
-    The cluster is shared across this package, so a fleet left running would keep
-    holding actors for every later test. See ``real_local_ray``'s docstring.
-    """
-
-    actor_cls = ray.remote(num_cpus=0)(_SlotWorker)
-    handles = [
-        RayActorHandle(
-            worker_id=f"w{index}",
-            actor=actor_cls.remote(value),
-        )
-        for index, value in enumerate(supports)
-    ]
-    try:
-        yield handles
-    finally:
-        for handle in handles:
-            ray.kill(handle.actor, no_restart=True)
-
-
-@pytest.mark.slow_test
-def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
-    """supports_non_draining_weight_sync derives as the AND of every worker's
-    supports_versioned_trainable_state(): all True -> True; any False -> False."""
-
-    with _slot_handles(local_ray, True, True) as handles:
-        assert (
-            RayGenerationLauncher._all_ranks_support_versioned_slots(
-                local_ray,
-                handles,
-                worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
-            )
-            is True
-        )
-    with _slot_handles(local_ray, True, False) as handles:
-        assert (
-            RayGenerationLauncher._all_ranks_support_versioned_slots(
-                local_ray,
-                handles,
-                worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
-            )
-            is False
-        )
-
-
-@pytest.mark.slow_test
-def test_runtime_capability_false_without_workers(local_ray) -> None:
-    """No workers -> safe draining barrier (False), never a silent True."""
-    assert (
-        RayGenerationLauncher._all_ranks_support_versioned_slots(
-            local_ray,
-            [],
-            worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
-        )
-        is False
-    )
-
-
-@pytest.mark.slow_test
-def test_runtime_capability_worker_query_failure_propagates(local_ray) -> None:
-    """A failed capability RPC means the candidate worker is broken."""
-    with (
-        _slot_handles(local_ray, True, None) as handles,
-        pytest.raises(local_ray.exceptions.RayTaskError, match="actor dead"),
-    ):
-        RayGenerationLauncher._all_ranks_support_versioned_slots(
-            local_ray,
-            handles,
-            worker_rpc_timeout_s=_TEST_RPC_TIMEOUT_S,
-        )
-
-
-def test_launcher_capability_failure_kills_candidate_actor_group(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import vrl.generation.ray.launcher as launcher_module
-
-    query_error = RuntimeError("versioned-slot capability query failed")
-    capability_ref = object()
-
-    class _CapabilityMethod:
-        @staticmethod
-        def remote() -> object:
-            return capability_ref
-
-    class _GetTimeoutError(TimeoutError):
-        pass
-
-    class _RayApi:
-        exceptions = SimpleNamespace(GetTimeoutError=_GetTimeoutError)
-
-        @staticmethod
-        def get(refs: list[object], *, timeout: float) -> None:
-            assert refs == [capability_ref]
-            assert timeout > 0
-            raise query_error
-
-    class _ActorGroup:
-        def __init__(self) -> None:
-            self.handles = [
-                SimpleNamespace(
-                    worker_id="rollout-0",
-                    node_ip="node",
-                    gpu_ids=(),
-                    actor=SimpleNamespace(
-                        supports_versioned_trainable_state=_CapabilityMethod(),
-                    ),
-                ),
-            ]
-            self.shutdown_calls = 0
-
-        def shutdown(self) -> None:
-            self.shutdown_calls += 1
-
-    actor_group = _ActorGroup()
-    monkeypatch.setattr(launcher_module, "require_ray", lambda: _RayApi)
-    monkeypatch.setattr(
-        launcher_module.RayActorGroup,
-        "launch",
-        staticmethod(lambda **_kwargs: actor_group),
-    )
-
-    cfg = _launch_cfg()
-    config = _ray_config(cfg)
-    entry = get_model_family_entry("sd3_5")
-    inputs = RayGenerationLaunchInputs(
-        launch_contract=GenerationRuntimeLaunchContract(
-            family=entry.family,
-            model_build={},
-            expected_model_identity=_TEST_MODEL_IDENTITY,
-        ),
-        gatherer=entry.new_gatherer(),
-    )
-
-    with pytest.raises(RuntimeError, match="capability query failed") as caught:
-        RayGenerationLauncher()._launch_session(
-            config,
-            inputs,
-            placement=RolePlacement(
-                placement_group=object(),
-                bundle_indices=(0,),
-                expected_gpu_ids=(),
-            ),
-        )
-
-    assert caught.value is query_error
-    assert actor_group.shutdown_calls == 1
-
-
-def test_worker_defaults_and_explicit_override_project_from_public_schema() -> None:
-    default = _ray_config(_cfg()).worker
-    assert default.cpus_per_worker == 1.0
-    assert default.worker_rpc_timeout_s == 600.0
-    assert default.generation_stall_timeout_s == 3600.0
-    assert default.pipelined is False
-
+def test_worker_override_projects_from_public_schema() -> None:
     cfg = _cfg()
     cfg.distributed.rollout.cpus_per_worker = 2.5
     cfg.distributed.rollout.worker_rpc_timeout_s = 3600.0
@@ -445,177 +112,144 @@ def test_worker_defaults_and_explicit_override_project_from_public_schema() -> N
     assert override.pipelined is True
 
 
-def test_placement_and_launcher_consume_the_same_worker_snapshot(monkeypatch) -> None:
-    import vrl.generation.ray.launcher as launcher_module
-
-    cfg = _launch_cfg()
-    cfg.distributed.rollout = {
-        "cpus_per_worker": 2.5,
-    }
-    config = _ray_config(cfg)
-    owner = GlobalRayPlacementOwner(config.resources, config.worker)
-    assert owner.rollout_worker is config.worker
-    assert owner._bundle_requirements() == [{"CPU": 2.5}]
-
-    launch_kwargs: dict[str, Any] = {}
-
-    class _ActorGroup:
-        def __init__(self) -> None:
-            self.handles = [
-                SimpleNamespace(
-                    worker_id="rollout-0",
-                    node_ip="node",
-                    gpu_ids=(),
-                    actor=object(),
-                ),
-            ]
-
-        @staticmethod
-        def shutdown() -> None:
-            return None
-
-    def capture_actor_launch(**kwargs: Any) -> _ActorGroup:
-        launch_kwargs.update(kwargs)
-        return _ActorGroup()
-
-    monkeypatch.setattr(launcher_module, "require_ray", lambda: object())
-    monkeypatch.setattr(
-        launcher_module.RayActorGroup,
-        "launch",
-        staticmethod(capture_actor_launch),
-    )
-    monkeypatch.setattr(
-        RayGenerationLauncher,
-        "_all_ranks_support_versioned_slots",
-        lambda *_args, **_kwargs: False,
-    )
-    entry = get_model_family_entry("sd3_5")
-    session = RayGenerationLauncher()._launch_session(
-        config,
-        RayGenerationLaunchInputs(
-            launch_contract=GenerationRuntimeLaunchContract(
-                family=entry.family,
-                model_build={},
-                expected_model_identity=_TEST_MODEL_IDENTITY,
-            ),
-            gatherer=entry.new_gatherer(),
-        ),
-        placement=RolePlacement(
-            placement_group=object(),
-            bundle_indices=(0,),
-            expected_gpu_ids=(),
-        ),
-    )
-
-    assert launch_kwargs["num_cpus"] == owner.rollout_worker.cpus_per_worker == 2.5
-    assert launch_kwargs["rpc_timeout_s"] == config.worker.worker_rpc_timeout_s
-    assert launch_kwargs["operation_prefix"] == "rollout"
-    assert session.executor.generation_stall_timeout_s == config.worker.generation_stall_timeout_s
-    assert session.weight_sync is not None
-    assert session.executor.actor_dispatcher is session.weight_sync.actor_dispatcher
-
-
 def test_pipelined_accepts_multiple_resolved_engines() -> None:
-    cfg = _resource_cfg(trainer_devices=[0], rollout_devices=[1, 2])
-    cfg.distributed.rollout.pipelined = True
-
-    config = RayGenerationConfig.from_root(
-        parse_config(cfg),
-        resources=ResolvedDistributedResources.from_root(parse_config(cfg)),
+    cfg = OmegaConf.create(
+        {
+            "distributed": {
+                "resources": {
+                    "visible_devices": [0, 1, 2],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1, 2], "num_engines": 2},
+                },
+                "rollout": {"cpus_per_worker": 1, "pipelined": True},
+            },
+        },
     )
+
+    config = _ray_config(cfg)
 
     assert config.worker.pipelined is True
     assert config.resources.rollout_num_engines == 2
 
 
-def test_pipelined_launch_adds_one_finalizer_per_engine(monkeypatch) -> None:
+# ------------------------------------------------------- real launch shape
+
+
+def _capture_launches(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Record the keyword arguments of every real actor-group launch."""
+
+    launches: list[dict[str, Any]] = []
+    real_launch = RayActorGroup.launch
+
+    def launch(**kwargs: Any) -> RayActorGroup:
+        launches.append(kwargs)
+        return real_launch(**kwargs)
+
+    monkeypatch.setattr(RayActorGroup, "launch", staticmethod(launch))
+    return launches
+
+
+@pytest.mark.asyncio
+async def test_placement_and_launcher_consume_the_same_worker_snapshot(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    launches = _capture_launches(monkeypatch)
+
+    async with ray_sana_runtime(
+        monkeypatch,
+        tmp_path,
+        ray_sana_snapshot,
+        overrides=("distributed.rollout.cpus_per_worker=1.5",),
+    ) as ray_run:
+        worker = ray_run.resolved.generation.worker
+        owner = ray_run.placement_owner
+        session = ray_run.runtime._session
+
+        assert owner.rollout_worker is worker
+        assert owner._bundle_requirements() == [{"CPU": 1.5}]
+        (launch,) = launches
+        assert launch["num_cpus"] == worker.cpus_per_worker == 1.5
+        assert launch["rpc_timeout_s"] == worker.worker_rpc_timeout_s
+        assert launch["operation_prefix"] == "rollout"
+        assert session.executor.generation_stall_timeout_s == worker.generation_stall_timeout_s
+        assert session.executor.actor_dispatcher is session.weight_sync.actor_dispatcher
+
+
+@pytest.mark.asyncio
+async def test_pipelined_launch_adds_one_finalizer_per_engine(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
     """The per-request path launches a CPU finalizer beside every engine,
     pinned to the engine's primary bundle and reserving no CPU or GPU."""
 
-    import vrl.generation.ray.launcher as launcher_module
+    launches = _capture_launches(monkeypatch)
 
-    cfg = _launch_cfg()
-    cfg.distributed.rollout = {
-        "pipelined": True,
-    }
-    config = RayGenerationConfig.from_root(
-        parse_config(cfg),
-        resources=ResolvedDistributedResources.from_root(parse_config(cfg)),
-    )
-    entry = get_model_family_entry("sd3_5")
-    launch_inputs = RayGenerationLaunchInputs(
-        launch_contract=GenerationRuntimeLaunchContract(
-            family=entry.family,
-            model_build={},
-            expected_model_identity=_TEST_MODEL_IDENTITY,
+    async with ray_sana_runtime(
+        monkeypatch,
+        tmp_path,
+        ray_sana_snapshot,
+        overrides=(
+            "distributed.rollout.pipelined=true",
+            "distributed.resources.rollout.num_engines=2",
         ),
-        gatherer=entry.new_gatherer(),
+    ) as ray_run:
+        session = ray_run.runtime._session
+
+        ranks, finalize = launches
+        assert ranks["worker_cls"].__name__ == "RayGenerationWorker"
+        assert finalize["worker_cls"].__name__ == "RayGenerationFinalizer"
+        assert finalize["worker_ids"] == ["rollout-0.finalize", "rollout-1.finalize"]
+        assert finalize["num_cpus"] == 0
+        assert finalize["num_gpus"] == 0
+        # One rank per engine here, so each engine's primary bundle is its only one.
+        assert finalize["bundle_indices"] == list(ranks["bundle_indices"])
+        assert finalize["operation_prefix"] == "rollout.finalize"
+        assert "startup_method" not in finalize
+        assert [handle.worker_id for handle in session.finalizer_handles] == finalize["worker_ids"]
+        assert session.executor.finalizers == tuple(session.finalizer_handles)
+        # The finalizers really merge: a request runs end to end on the path.
+        output = await ray_run.runtime.generate(ray_run.request(["a cat"]))
+        assert output.output.shape[0] == 2
+
+
+# ------------------------------------------------------- launch contract projection
+
+
+def _sana_launch(tmp_path: Path, *overrides: str) -> tuple[RayGenerationLaunchInputs, Any]:
+    """The launch inputs the recipe would ship for a tiny SANA run, and its replay model."""
+
+    resolved = run.resolve_online_run(tiny_sana_online_config(tmp_path, overrides=overrides))
+    replay = run.resolve_model(
+        resolved.family,
+        resolved.built.root,
+        resolved.device,
+        precision=resolved.built.precision,
+        for_rollout=False,
     )
-    launches: list[dict[str, Any]] = []
-
-    class _Group:
-        def __init__(self, worker_ids: list[str]) -> None:
-            self.handles = [
-                SimpleNamespace(worker_id=worker_id, node_ip="node", gpu_ids=(), actor=object())
-                for worker_id in worker_ids
-            ]
-
-        @staticmethod
-        def shutdown() -> None:
-            return None
-
-    def capture_launch(**kwargs: Any) -> _Group:
-        launches.append(kwargs)
-        return _Group(list(kwargs["worker_ids"]))
-
-    monkeypatch.setattr(launcher_module, "require_ray", lambda: object())
-    monkeypatch.setattr(launcher_module.RayActorGroup, "launch", staticmethod(capture_launch))
-    monkeypatch.setattr(
-        RayGenerationLauncher,
-        "_all_ranks_support_versioned_slots",
-        lambda *_args, **_kwargs: False,
-    )
-
-    session = RayGenerationLauncher()._launch_session(
-        config,
-        launch_inputs,
-        placement=RolePlacement(
-            placement_group=object(),
-            bundle_indices=(3, 5),
-            expected_gpu_ids=(),
-        ),
-    )
-
-    assert [launch["worker_cls"].__name__ for launch in launches] == [
-        "RayGenerationWorker",
-        "RayGenerationFinalizer",
-    ]
-    finalize = launches[1]
-    assert finalize["worker_ids"] == ["rollout-0.finalize", "rollout-1.finalize"]
-    assert finalize["num_cpus"] == 0
-    assert finalize["num_gpus"] == 0
-    assert finalize["bundle_indices"] == [3, 5]
-    assert finalize["operation_prefix"] == "rollout.finalize"
-    assert "startup_method" not in finalize
-    assert [handle.worker_id for handle in session.finalizer_handles] == finalize["worker_ids"]
-    assert session.executor.finalizers == tuple(session.finalizer_handles)
+    return resolved.ray_launch_inputs(replay), replay
 
 
-def test_generation_launch_inputs_project_model_compile_and_precision() -> None:
+def test_generation_launch_inputs_project_model_compile_and_precision(tmp_path) -> None:
     """The public launch path projects model config and dtype wire values once."""
-    launch_inputs = _capture_launch_inputs(
-        _launch_cfg(
-            model_torch_compile={
-                "enable": True,
-                "mode": "default",
-            },
-        ),
-        get_model_family_entry("sd3_5"),
+
+    launch_inputs, replay = _sana_launch(
+        tmp_path,
+        "model.revision=driver-config",
+        "model.torch_compile.enable=true",
+        "actor.gradient_checkpointing=false",
+        "precision.float32_precision=tf32",
+        # Training differs from rollout and prompt encoding, so the contract
+        # must carry the rollout role's own values.
+        "precision.training.dtype=bf16",
+        "precision.rollout.dtype=fp32",
+        "precision.rollout.outer_autocast=true",
+        "precision.rollout.prompt_encoders.dtype=fp16",
     )
 
-    model_build = launch_inputs.launch_contract.model_build
-    assert launch_inputs.launch_contract.family == "sd3_5"
-    assert launch_inputs.launch_contract.expected_model_identity == _TEST_MODEL_IDENTITY
+    contract = launch_inputs.launch_contract
+    model_build = contract.model_build
+    assert contract.family == "sana"
+    assert contract.expected_model_identity == replay.identity
     assert "family" not in model_build
     assert model_build["device"] == "cpu"
     assert model_build["parameter_dtype"] == "float32"
@@ -628,335 +262,268 @@ def test_generation_launch_inputs_project_model_compile_and_precision() -> None:
     assert model_build["rollout"]["prompt_encoder_dtype"] == "float16"
     assert model_build["revision"] == "driver-config"
     assert "revision" not in model_build["model_config"]
-    assert model_build["model_config"]["torch_compile"] == {
-        "enable": True,
-        "mode": "default",
-    }
+    assert model_build["model_config"]["torch_compile"] == {"enable": True, "mode": "default"}
 
 
-def test_generation_launch_inputs_project_resolved_generation_memory() -> None:
+def test_generation_launch_inputs_project_resolved_generation_memory(tmp_path) -> None:
     """The launch contract carries typed memory values, not raw model config."""
-    cfg = _launch_cfg()
-    cfg.model.memory = {
-        "vae_decode": {
-            "tiling": True,
-            "slicing": False,
-        },
-    }
 
-    launch_inputs = _capture_launch_inputs(
-        cfg,
-        get_model_family_entry("sd3_5"),
+    launch_inputs, _ = _sana_launch(
+        tmp_path,
+        "model.memory.vae_decode.tiling=true",
+        "model.memory.vae_decode.slicing=false",
     )
 
     model_build = launch_inputs.launch_contract.model_build
     assert model_build["generation_memory"] == {
-        "vae_decode": {
-            "tiling": True,
-            "slicing": False,
-        },
+        "vae_decode": {"tiling": True, "slicing": False},
         "cpu_resident": (),
     }
     assert "memory" not in model_build["model_config"]
 
 
-def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(monkeypatch) -> None:
-    from diffusers import DiffusionPipeline
+def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(tmp_path) -> None:
+    """A Wan run's public ``model.offload_mode`` becomes the rollout build's
+    pipeline residency, resolved from a real Wan snapshot on disk."""
 
-    monkeypatch.setattr(
-        DiffusionPipeline,
-        "load_config",
-        staticmethod(lambda *a, **k: {"boundary_ratio": None}),
+    snapshot = write_tiny_wan_snapshot(tmp_path / "wan-snapshot")
+    manifest = tmp_path / "prompts.jsonl"
+    manifest.write_text(json.dumps({"prompt": "a cat"}) + "\n", encoding="utf-8")
+    cfg = load_config(
+        "experiment/wan_2_1/online_grpo_hpsv3_4x_l40s",
+        overrides=[
+            f"model.path={snapshot}",
+            "model.revision=null",
+            "model.offload_mode=sequential",
+            f"data.manifest={manifest}",
+            f"trainer.output_dir={tmp_path / 'run'}",
+            "distributed.training.strategy=single_process",
+            "distributed.resources.trainer.num_gpus=0",
+            "distributed.resources.rollout.num_gpus=0",
+        ],
     )
-    cfg = _launch_cfg()
-    cfg.model.family = "wan_2_1_i2v"
-    cfg.model.revision = "a" * 40
-    cfg.model.offload_mode = "sequential"
-
-    launch_inputs = _capture_launch_inputs(
-        cfg,
-        get_model_family_entry("wan_2_1_i2v"),
+    resolved = run.resolve_online_run(cfg)
+    replay = run.resolve_model(
+        resolved.family,
+        resolved.built.root,
+        resolved.device,
+        precision=resolved.built.precision,
+        for_rollout=False,
     )
 
-    model_build = launch_inputs.launch_contract.model_build
+    model_build = resolved.ray_launch_inputs(replay).launch_contract.model_build
+
     assert model_build["rollout"]["pipeline_offload_mode"] == "sequential"
     assert "offload_mode" not in model_build["model_config"]
 
 
-def test_generation_launch_inputs_reject_rollout_identity_mismatch() -> None:
-    cfg = _launch_cfg()
+def test_generation_launch_inputs_reject_rollout_identity_mismatch(tmp_path) -> None:
+    """The checkpoint changing between the driver's replay resolution and the
+    worker launch is refused before any actor starts."""
+
+    resolved = run.resolve_online_run(tiny_sana_online_config(tmp_path))
+    replay = run.resolve_model(
+        resolved.family,
+        resolved.built.root,
+        resolved.device,
+        precision=resolved.built.precision,
+        for_rollout=False,
+    )
+    (tmp_path / "sana-snapshot" / "extra-weights.bin").write_bytes(b"drift")
 
     with pytest.raises(
         ValueError,
         match="rollout model identity does not match the driver replay model identity",
     ):
-        _capture_launch_inputs(
-            cfg,
-            get_model_family_entry("sd3_5"),
-            rollout_model_identity={"schema": "different"},
-        )
+        resolved.ray_launch_inputs(replay)
 
 
-def test_generation_launch_inputs_preserve_disabled_model_compile_config() -> None:
+def test_generation_launch_inputs_preserve_disabled_model_compile_config(tmp_path) -> None:
     """Checks disabled model.torch_compile is preserved as ordinary model config."""
-    launch_inputs = _capture_launch_inputs(
-        _launch_cfg(),
-        get_model_family_entry("sd3_5"),
-    )
+
+    launch_inputs, _ = _sana_launch(tmp_path, "model.revision=driver-config")
 
     model_build = launch_inputs.launch_contract.model_build
     assert model_build["revision"] == "driver-config"
     model_config = model_build["model_config"]
     assert "revision" not in model_config
-    assert model_config["torch_compile"] == {
-        "enable": False,
-        "mode": "default",
-    }
+    assert model_config["torch_compile"] == {"enable": False, "mode": "default"}
 
 
-def test_generation_launch_inputs_derive_versioned_sync_from_schedule() -> None:
-    strict = _capture_launch_inputs(
-        _launch_cfg(),
-        get_model_family_entry("sd3_5"),
-    )
+def test_generation_launch_inputs_derive_versioned_sync_from_schedule(tmp_path) -> None:
+    strict, _ = _sana_launch(tmp_path / "strict")
+    continuous_fullparam, _ = _sana_launch(tmp_path / "fullparam", *_CONTINUOUS)
+    continuous_lora, _ = _sana_launch(tmp_path / "lora", "model.use_lora=true", *_CONTINUOUS)
+
     assert strict.launch_contract.versioned_weight_sync is False
-
-    continuous_fullparam_cfg = _launch_cfg()
-    continuous_fullparam_cfg.trainer = {
-        "rollout_orchestration": {"schedule_mode": "continuous"},
-    }
-    continuous_fullparam = _capture_launch_inputs(
-        continuous_fullparam_cfg,
-        get_model_family_entry("sd3_5"),
-    )
     assert continuous_fullparam.launch_contract.versioned_weight_sync is False
-
-    continuous_lora_cfg = _launch_cfg()
-    continuous_lora_cfg.model.use_lora = True
-    continuous_lora_cfg.trainer = {
-        "rollout_orchestration": {"schedule_mode": "continuous"},
-    }
-    continuous_lora = _capture_launch_inputs(
-        continuous_lora_cfg,
-        get_model_family_entry("sd3_5"),
-    )
     assert continuous_lora.launch_contract.versioned_weight_sync is True
 
 
-def test_generation_launch_inputs_thread_resolved_base_weight_sync() -> None:
+def test_generation_launch_inputs_thread_resolved_base_weight_sync(tmp_path) -> None:
     """Master-weight retention follows the sync payload: a full-parameter sync
-    replaces base weights, so the worker retains masters; a LoRA sync does not."""
-    cfg = _launch_cfg()
+    replaces base weights, so the worker retains masters."""
 
-    launch_inputs = _capture_launch_inputs(
-        cfg,
-        get_model_family_entry("sd3_5"),
-    )
+    launch_inputs, _ = _sana_launch(tmp_path)
 
-    rollout = launch_inputs.launch_contract.model_build["rollout"]
-    assert rollout["base_weight_sync"] is not launch_inputs.launch_contract.model_build[
-        "model_config"
-    ].get("use_lora", False)
+    model_build = launch_inputs.launch_contract.model_build
+    assert model_build["model_config"].get("use_lora", False) is False
+    assert model_build["rollout"]["base_weight_sync"] is True
 
 
-def test_generation_launch_inputs_mark_lora_as_adapter_only_sync() -> None:
+def test_generation_launch_inputs_mark_lora_as_adapter_only_sync(tmp_path) -> None:
     """LoRA sync never needs retained base-precision masters on the rollout."""
-    cfg = _launch_cfg()
-    cfg.model.use_lora = True
 
-    launch_inputs = _capture_launch_inputs(
-        cfg,
-        get_model_family_entry("sd3_5"),
-    )
+    launch_inputs, _ = _sana_launch(tmp_path, "model.use_lora=true")
 
-    rollout = launch_inputs.launch_contract.model_build["rollout"]
-    assert rollout["base_weight_sync"] is False
+    assert launch_inputs.launch_contract.model_build["rollout"]["base_weight_sync"] is False
 
 
-def test_generation_launch_inputs_reject_model_compile_for_uncompilable_family() -> None:
-    """Checks model.torch_compile fails fast on rollout families that cannot compile."""
-    cfg = _launch_cfg(
-        model_torch_compile={
-            "enable": True,
-            "mode": "default",
+def test_compile_on_an_uncompilable_family_is_a_config_conflict() -> None:
+    """model.torch_compile on a family whose runtime cannot compile fails at
+    config load, with the rest of the compile compatibility matrix.
+
+    MAGI-1 is the only family without compile support.
+    """
+
+    cfg = OmegaConf.create(
+        {
+            "distributed": {
+                "resources": {
+                    "visible_devices": [],
+                    "trainer": {"num_gpus": 0, "devices": []},
+                    "rollout": {"num_gpus": 0, "devices": [], "num_engines": 1},
+                },
+            },
+            "model": {
+                "family": "magi_1",
+                "path": "unit-test",
+                "use_lora": False,
+                "torch_compile": {"enable": True, "mode": "default"},
+            },
+            "precision": {
+                "float32_precision": "tf32",
+                "training": {"dtype": "bf16"},
+                "rollout": {"dtype": "fp32"},
+            },
+            "rollout": {},
         },
     )
-    cfg.model.family = "magi_1"
+    conflicts = compile_conflicts(parse_config(cfg))
 
-    with pytest.raises(ValueError, match="does not support torch compile"):
-        _capture_launch_inputs(cfg, get_model_family_entry("magi_1"))
-
-
-def _runtime_factory_inputs(
-    *,
-    rollout_mode: str = "resident",
-) -> tuple[RayGenerationConfig, RayGenerationLaunchInputs, RolePlacement]:
-    config = _ray_config(_launch_cfg())
-    if rollout_mode == "on_demand":
-        config = replace(
-            config,
-            resources=replace(
-                config.resources,
-                lifecycle=replace(
-                    config.resources.lifecycle,
-                    trainer=(0,),
-                    rollout=(0,),
-                ),
-            ),
-        )
-    elif rollout_mode != "resident":
-        raise ValueError(f"unknown rollout mode: {rollout_mode}")
-    entry = get_model_family_entry("sd3_5")
-    return (
-        config,
-        RayGenerationLaunchInputs(
-            launch_contract=GenerationRuntimeLaunchContract(
-                family=entry.family,
-                model_build={},
-                expected_model_identity=_TEST_MODEL_IDENTITY,
-            ),
-            gatherer=entry.new_gatherer(),
-        ),
-        RolePlacement(
-            placement_group=object(),
-            bundle_indices=(),
-            expected_gpu_ids=(),
-        ),
-    )
+    assert "family" in [conflict.feature for conflict in conflicts]
 
 
-class _FactorySession:
-    def __init__(self) -> None:
-        self.workers: list[Any] = []
-        self.weight_sync = object()
-        self.supports_non_draining_weight_sync = False
-        self.close = AsyncMock()
-        self.force_close_calls = 0
-        self.kill_engines_calls = 0
-
-    def force_close(self) -> None:
-        self.force_close_calls += 1
-
-    def kill_engines(self) -> None:
-        self.kill_engines_calls += 1
-
-
-def test_create_runtime_launches_resident_topology() -> None:
-    config, launch_inputs, placement = _runtime_factory_inputs()
-    launcher = RayGenerationLauncher()
-    expected_session = _FactorySession()
-
-    with patch.object(
-        RayGenerationLauncher,
-        "_launch_session",
-        autospec=True,
-        return_value=expected_session,
-    ) as launch:
-        runtime = launcher.create_runtime(
-            config,
-            launch_inputs,
-            placement=placement,
-        )
-
-    assert runtime._session is expected_session
-    assert runtime._session_factory is None
-    launch.assert_called_once_with(
-        launcher,
-        config,
-        launch_inputs,
-        placement=placement,
-    )
-    asyncio.run(runtime.shutdown())
-
-
-def test_create_runtime_defers_on_demand_topology_launch() -> None:
-    config, launch_inputs, placement = _runtime_factory_inputs(
-        rollout_mode="on_demand",
-    )
-    launcher = RayGenerationLauncher()
-
-    with patch.object(
-        RayGenerationLauncher,
-        "_launch_session",
-        autospec=True,
-    ) as launch:
-        runtime = launcher.create_runtime(
-            config,
-            launch_inputs,
-            placement=placement,
-        )
-
-    assert runtime._session is None
-    assert runtime._session_factory is not None
-    launch.assert_not_called()
-    asyncio.run(runtime.shutdown())
+# ------------------------------------------------------- runtime topology
 
 
 @pytest.mark.asyncio
-async def test_deferred_activation_reuses_factory_launcher() -> None:
-    config, launch_inputs, placement = _runtime_factory_inputs(
-        rollout_mode="on_demand",
-    )
-    # A GPU-owning fleet (non-empty rollout devices) selects the deferred
-    # activation path under test.
-    config = replace(
-        config,
-        resources=replace(
-            config.resources,
-            rollout_devices=(0,),
-        ),
-    )
-    expected_launch_inputs = replace(
-        launch_inputs,
-        launch_contract=replace(
-            launch_inputs.launch_contract,
-            sleep_offload=True,
-        ),
-    )
-    launcher = RayGenerationLauncher()
-    candidate = _FactorySession()
+async def test_create_runtime_launches_resident_topology(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
+        runtime = ray_run.runtime
 
-    with patch.object(
-        RayGenerationLauncher,
-        "_launch_session_async",
-        autospec=True,
-        return_value=candidate,
-    ) as launch_async:
-        runtime = launcher.create_runtime(
-            config,
-            launch_inputs,
-            placement=placement,
-        )
+        assert ray_run.resolved.resources.lifecycle.rollout_mode == "resident"
+        assert runtime._session is not None
+        assert runtime._session_factory is None
+        assert [rank.worker_id for rank in runtime._session.rank_handles] == ["rollout-0"]
+
+
+def _on_demand_launch(tmp_path: Path) -> tuple[Any, RayGenerationLaunchInputs, RolePlacement]:
+    """A tiny SANA run whose rollout shares the trainer's one GPU, resolved for real.
+
+    The rollout bundle is a plain placement value: creating the real GPU
+    placement group would probe the card from a Ray actor, which a test
+    outside the gpu lane must not do, and a deferred runtime binds the
+    placement without using it until activation.
+    """
+
+    resolved = run.resolve_online_run(
+        tiny_sana_online_config(tmp_path, overrides=("distributed.resources.rollout.num_gpus=1",))
+    )
+    replay = run.resolve_model(
+        resolved.family,
+        resolved.built.root,
+        resolved.device,
+        precision=resolved.built.precision,
+        for_rollout=False,
+    )
+    placement = RolePlacement(
+        placement_group=None,
+        bundle_indices=(0,),
+        expected_gpu_ids=tuple(resolved.resources.rollout_devices),
+    )
+    return resolved, resolved.ray_launch_inputs(replay), placement
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_defers_on_demand_topology_launch(
+    monkeypatch, tmp_path, cuda_devices
+) -> None:
+    """A rollout sharing the trainer's GPU gets a deferred session: nothing
+    launches until the schedule activates it."""
+
+    cuda_devices(1)
+    resolved, launch_inputs, placement = _on_demand_launch(tmp_path)
+    launched: list[Any] = []
+    real_launch = RayGenerationLauncher._launch_session
+
+    def launch(self: RayGenerationLauncher, *args: Any, **kwargs: Any) -> Any:
+        launched.append(args)
+        return real_launch(self, *args, **kwargs)
+
+    monkeypatch.setattr(RayGenerationLauncher, "_launch_session", launch)
+
+    runtime = RayGenerationLauncher().create_runtime(
+        resolved.generation, launch_inputs, placement=placement
+    )
+
+    assert resolved.resources.lifecycle.rollout_mode == "on_demand"
+    assert runtime._session is None
+    assert runtime._session_factory is not None
+    assert launched == []
+    await runtime.shutdown()
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_deferred_activation_reuses_factory_launcher(
+    monkeypatch, tmp_path, cuda_devices
+) -> None:
+    """Activation launches through the launcher's own async path, passing on
+    unchanged the shared-GPU sleep-offload contract the resolved on-demand
+    topology already carries.
+
+    The launch itself is stopped at that boundary: it would place a GPU actor,
+    which a test outside the gpu lane must not do.
+    """
+
+    cuda_devices(1)
+    resolved, launch_inputs, placement = _on_demand_launch(tmp_path)
+    calls: list[tuple[Any, RayGenerationLaunchInputs, Any]] = []
+
+    async def launch_async(
+        self: RayGenerationLauncher,
+        config: Any,
+        launch_inputs: RayGenerationLaunchInputs,
+        *,
+        placement: Any,
+    ) -> Any:
+        calls.append((config, launch_inputs, placement))
+        raise RuntimeError("deferred launch stopped at the GPU boundary")
+
+    monkeypatch.setattr(RayGenerationLauncher, "_launch_session_async", launch_async)
+    runtime = RayGenerationLauncher().create_runtime(
+        resolved.generation, launch_inputs, placement=placement
+    )
+
+    with pytest.raises(RuntimeError, match="deferred launch stopped"):
         await runtime.activate()
 
-    launch_async.assert_awaited_once_with(
-        launcher,
-        config,
-        expected_launch_inputs,
-        placement=placement,
-    )
-    await runtime.shutdown()
-    candidate.close.assert_awaited_once_with(force=False)
-
-
-@pytest.mark.parametrize("policy_version", [True, 1.9, "1", -1])
-def test_launch_contract_rejects_invalid_policy_version(policy_version) -> None:
-    with pytest.raises(ValueError, match="policy_version must be"):
-        GenerationRuntimeLaunchContract(
-            family="unit",
-            model_build={},
-            expected_model_identity=_TEST_MODEL_IDENTITY,
-            policy_version=policy_version,
-        )
-
-
-@pytest.mark.parametrize("policy_version", [None, 0, 7])
-def test_launch_contract_preserves_policy_version(policy_version) -> None:
-    contract = GenerationRuntimeLaunchContract(
-        family="unit",
-        model_build={},
-        expected_model_identity=_TEST_MODEL_IDENTITY,
-        policy_version=policy_version,
-    )
-    assert contract.policy_version == policy_version
-    assert type(contract.policy_version) is type(policy_version)
+    ((config, launched_inputs, launched_placement),) = calls
+    assert config is resolved.generation
+    assert launch_inputs.launch_contract.sleep_offload is True
+    assert launched_inputs is launch_inputs
+    assert launched_placement is placement
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED

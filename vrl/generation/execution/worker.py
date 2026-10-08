@@ -70,16 +70,16 @@ class GenerationWorkerCore:
             worker_id,
             launch_contract,
         )
-        self._policy_version: int | None = self.launch_contract.policy_version
-        # Flipped on once a model that supports versioned trainable-state slots
-        # receives its first weight install; from then on execute_batch activates
-        # the slot for each request's stamped version instead of comparing against
+        self._policy_version: int = self.launch_contract.policy_version
+        # Flipped on by the first weight install of a run whose launch contract
+        # chose versioned_weight_sync; from then on execute_batch activates the
+        # slot for each request's stamped version instead of comparing against
         # one global version (which is what makes a non-draining sync safe).
+        # Before that install only the launch weights exist, served unversioned.
         self._uses_versioned_slots = False
         self._profiler_config = TorchProfilerConfig(
             **dict(self.launch_contract.torch_profiler),
         )
-        self._profiler_output_dir = self._profiler_config.output_dir or "outputs/"
         self._profiler_step = 0
 
     def load_policy(self) -> None:
@@ -173,7 +173,7 @@ class GenerationWorkerCore:
     def update_weights(self, trainable_state: Any, policy_version: int) -> int:
         """Install weights and return the policy version as the commit ACK.
 
-        When the model supports versioned trainable-state slots, install the new
+        When the launch contract chose ``versioned_weight_sync``, install the new
         version as a retained slot WITHOUT overwriting the slots older in-flight
         requests still depend on (the non-draining-sync path); ``execute_batch``
         then activates the right slot per request. Otherwise keep the single
@@ -187,9 +187,7 @@ class GenerationWorkerCore:
         )
         self.load_policy()
         policy_obj = getattr(self.executor, "model", None)
-        versioned = self.launch_contract.versioned_weight_sync and bool(
-            getattr(policy_obj, "supports_versioned_trainable_state", False)
-        )
+        versioned = self.launch_contract.versioned_weight_sync
         try:
             if versioned:
                 model = require_runtime_model(
@@ -215,20 +213,6 @@ class GenerationWorkerCore:
         # their version from request.policy_version, not this field.
         self._policy_version = policy_version
         return self._policy_version
-
-    def supports_versioned_trainable_state(self) -> bool:
-        """Whether the loaded model can retain versioned trainable-state slots.
-
-        Drives the runtime's non-draining-weight-sync capability. Requires the
-        model to be built, so callers query it after at least one weight sync.
-        """
-
-        self.load_policy()
-        model = getattr(self.executor, "model", None)
-        return bool(
-            self.launch_contract.versioned_weight_sync
-            and getattr(model, "supports_versioned_trainable_state", False)
-        )
 
     def execute_batch(self, envelope: GenerationBatchEnvelope) -> GenerationBatchResult:
         self._memory_parking.require_active(
@@ -411,7 +395,7 @@ class GenerationWorkerCore:
             with (
                 capture_torch_trace(
                     self._profiler_config,
-                    output_dir=self._profiler_output_dir,
+                    output_dir=self._profiler_config.output_dir,
                     step=step,
                     device=device,
                     worker_name=worker_name,
@@ -581,17 +565,8 @@ class GenerationWorkerCore:
         # failure it guarded against is now structurally unreachable.
         if self.rank_group_spec is not None:
             self._install_sequence_parallel(model)
-        executor_kwargs = dict(launch_contract.executor_kwargs)
-        executor_kwargs["gatherer"] = self.gatherer
-        from vrl.models.families.registry import GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
-
         executor_cls = import_from_path(self.family_entry.executor_cls)
-        if self.family_entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
-            executor_kwargs.update(
-                family=self.family_entry.family,
-                task=self.family_entry.task,
-            )
-        built = executor_cls(model, **executor_kwargs)
+        built = executor_cls(model, **launch_contract.executor_kwargs, gatherer=self.gatherer)
         if not callable(getattr(built, "forward_batch", None)) or not callable(
             getattr(built, "merge_generation_batches", None)
         ):

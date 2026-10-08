@@ -1,185 +1,259 @@
 """Multi-rank fan-out/aggregate semantics of the driver-side engine.
 
-These tests drive RayGenerationEngine over recording fake rank actors at N=2/3:
-broadcast order, rank-0 result selection,
-uniform-echo validation, fail-closed on any rank failure (with sibling
-cancellation), and parking-snapshot aggregation.
+Each engine here is assembled from real ``RayGenerationWorker`` actors that the
+real launcher started over the tiny SANA snapshot: a CPU fleet cannot group
+ranks (rank groups need GPUs), so each launched single-rank engine's actor
+stands for one rank of the N=2/3 engine under test. The launcher starts a
+subclass of the real worker (``_rank_worker``) that turns one named rank into
+the failure a theorem needs -- a real executor error, torch's CUDA OOM error,
+or a reply whose identity disagrees -- and otherwise runs unchanged.
 """
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import AsyncIterator
+from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import torch
 
-from tests.generation.ray._helpers import ResolvedRef
+import vrl.generation.ray.launcher as launcher_module
+from tests.generation.ray._helpers import RaySanaRuntime, ray_sana_runtime
+from tests.rollouts.collector._helpers import Trace
+from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.generation.execution.types import GenerationBatchResult, WorkerMemoryParkingSnapshot
+from vrl.generation.execution.types import (
+    GenerationBatchEnvelope,
+    GenerationBatchResult,
+    RequestBatchOutOfMemory,
+    WorkerMemoryParkingSnapshot,
+)
 from vrl.generation.ray.engine import EngineCallRef, RayGenerationEngine
+from vrl.generation.ray.executor import RayGenerationExecutor
+from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_group import RayActorHandle
 
+pytestmark = pytest.mark.slow_test
 
-class _Method:
-    """Recording remote method: returns scripted refs in submission order."""
-
-    def __init__(
-        self, calls: list[tuple[str, tuple, dict]], rank_id: str, ref: ResolvedRef
-    ) -> None:
-        self._calls = calls
-        self._rank_id = rank_id
-        self._ref = ref
-
-    def remote(self, *args: Any, **kwargs: Any) -> ResolvedRef:
-        self._calls.append((self._rank_id, args, kwargs))
-        return self._ref
+_OOM_MESSAGE = "CUDA out of memory. Tried to allocate 4.00 GiB"
+_VERSIONED = (
+    "model.use_lora=true",
+    "trainer.rollout_orchestration.schedule_mode=continuous",
+    "trainer.rollout_orchestration.continuous.max_stale_policy_versions=1",
+)
 
 
-def _engine(
-    calls: list[tuple[str, tuple, dict]],
-    refs: dict[str, ResolvedRef],
+def _rank_worker(
+    *, faulty: str = "rollout-1", fault: str | None = None
+) -> type[RayGenerationWorker]:
+    """The real worker; the rank named ``faulty`` turns ``fault`` on.
+
+    ``decode`` / ``oom``: its executor's forward raises a real error / torch's
+    CUDA OOM error; ``request_oom``: only inside the per-request loop;
+    ``request_id`` / ``policy_version``: its batch reply disagrees on that
+    field; ``snapshot``: its parking report names another worker.
+    """
+
+    class _RankWorker(RayGenerationWorker):
+        def load_policy(self) -> None:
+            super().load_policy()
+            executor = self.core.executor
+            if self.core.worker_id != faulty or "forward_batch" in vars(executor):
+                return
+            real_forward = executor.forward_batch
+
+            def forward_batch(request: Any, batch: Any) -> Any:
+                if fault == "decode":
+                    raise ValueError("decode failed")
+                if fault == "oom" or (fault == "request_oom" and self._in_request):
+                    raise torch.cuda.OutOfMemoryError(_OOM_MESSAGE)
+                return real_forward(request, batch)
+
+            executor.forward_batch = forward_batch
+
+        _in_request = False
+
+        def execute_batch(self, envelope: Any) -> Any:
+            result = super().execute_batch(envelope)
+            if self.core.worker_id == faulty and fault == "request_id":
+                result = replace(result, request_id="wrong")
+            if self.core.worker_id == faulty and fault == "policy_version":
+                result = replace(result, policy_version=8)
+            return result
+
+        def execute_request_batches(self, request: Any, engine_plan: Any) -> Any:
+            self._in_request = True
+            try:
+                return super().execute_request_batches(request, engine_plan)
+            finally:
+                self._in_request = False
+
+        def sleep(self) -> WorkerMemoryParkingSnapshot:
+            snapshot = super().sleep()
+            if self.core.worker_id == faulty and fault == "snapshot":
+                snapshot = replace(snapshot, worker_id="someone-else")
+            return snapshot
+
+    return _RankWorker
+
+
+@contextlib.asynccontextmanager
+async def _ranks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    snapshot: Any,
+    count: int,
     *,
-    method: str = "execute_batch",
-) -> RayGenerationEngine:
-    ranks = []
-    for rank_id, ref in refs.items():
-        actor = type("_Actor", (), {method: _Method(calls, rank_id, ref)})()
-        ranks.append(RayActorHandle(worker_id=rank_id, actor=actor))
-    return RayGenerationEngine("engine-0", ranks)
+    fault: str | None = None,
+    overrides: tuple[str, ...] = (),
+) -> AsyncIterator[tuple[RaySanaRuntime, list[RayActorHandle]]]:
+    """Launch ``count`` real rank actors; yields the run and their handles."""
+
+    monkeypatch.setattr(launcher_module, "RayGenerationWorker", _rank_worker(fault=fault))
+    async with ray_sana_runtime(
+        monkeypatch,
+        tmp_path,
+        snapshot,
+        overrides=(f"distributed.resources.rollout.num_engines={count}", *overrides),
+    ) as run:
+        await run.runtime.activate()
+        yield run, [engine.primary for engine in run.runtime._session.executor.engines]
+
+
+def _envelope(run: RaySanaRuntime, *, samples: int = 2, **request: Any) -> GenerationBatchEnvelope:
+    generation_request = run.request(["p"], group_size=samples, **request)
+    if generation_request.policy_version is None:
+        generation_request = replace(generation_request, policy_version=0)
+    batch = GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=samples)
+    return GenerationBatchEnvelope(request=generation_request, batch=batch)
+
+
+class _FailingSubmission:
+    """The real actor handle, except that submitting ``method`` raises ``error``.
+
+    A Ray handle builds a fresh method object per attribute read, so the fault
+    sits on a thin proxy; every other call reaches the real actor.
+    """
+
+    def __init__(self, actor: Any, method: str, error: BaseException) -> None:
+        self._actor = actor
+        self._method = method
+        self._error = error
+
+    def __getattr__(self, name: str) -> Any:
+        if name == self._method:
+
+            def remote(*args: Any, **kwargs: Any) -> Any:
+                raise self._error
+
+            return SimpleNamespace(remote=remote)
+        return getattr(self._actor, name)
 
 
 @pytest.mark.asyncio
-async def test_broadcast_submits_to_every_rank_in_order_and_returns_rank0() -> None:
-    calls: list[tuple[str, tuple, dict]] = []
-    engine = _engine(
-        calls,
-        {
-            "r0": ResolvedRef("rank0-result"),
-            "r1": ResolvedRef("rank1-result"),
-            "r2": ResolvedRef("rank2-result"),
-        },
-        method="health",
-    )
+async def test_broadcast_submits_to_every_rank_and_returns_rank0(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    async with _ranks(monkeypatch, tmp_path, ray_sana_snapshot, 3) as (_run, handles):
+        engine = RayGenerationEngine("engine-0", handles)
 
-    ref = engine.remote("health")("payload", flag=True)
-    assert isinstance(ref, EngineCallRef)
-    result = await ref
+        ref = engine.remote("worker_metadata")()
+        assert isinstance(ref, EngineCallRef)
+        result = await ref
 
-    assert result == "rank0-result"
-    assert calls == [
-        ("r0", ("payload",), {"flag": True}),
-        ("r1", ("payload",), {"flag": True}),
-        ("r2", ("payload",), {"flag": True}),
-    ]
+        assert result["worker_id"] == "rollout-0"
 
 
 @pytest.mark.asyncio
-async def test_single_rank_returns_the_raw_rank_ref() -> None:
-    calls: list[tuple[str, tuple, dict]] = []
-    raw = ResolvedRef("only")
-    engine = _engine(calls, {"r0": raw})
+async def test_single_rank_returns_the_raw_rank_ref(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    async with _ranks(monkeypatch, tmp_path, ray_sana_snapshot, 1) as (run, handles):
+        engine = RayGenerationEngine("engine-0", handles)
 
-    ref = engine.execute_batch()("payload")
+        ref = engine.execute_batch()(_envelope(run))
 
-    # No aggregate wrapper for the degenerate case: identical to pre-engine
-    # behavior byte-for-byte (completion/cancellation timing included).
-    assert ref is raw
+        # No aggregate wrapper for the degenerate case: the rank's own ObjectRef,
+        # so completion and cancellation timing are the rank's.
+        assert isinstance(ref, local_ray.ObjectRef)
+        result = await ref
+        assert result.error is None
+        assert result.worker_id == "rollout-0"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("method", ["execute_batch", "sleep", "wake"])
+# execute_batch submits through remote(); sleep (like wake) gathers directly.
+@pytest.mark.parametrize("method", ["execute_batch", "sleep"])
 @pytest.mark.parametrize("failed_rank", [0, 1])
 async def test_partial_submission_cancels_owned_refs_and_reports_terminal_failure(
-    monkeypatch, method, failed_rank
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path, method, failed_rank
 ) -> None:
+    import vrl.generation.ray.engine as engine_module
     from vrl.runtime_errors import TerminalRuntimeError
 
-    calls = []
-    refs = {"r0": ResolvedRef(None), "r1": ResolvedRef(None), "r2": ResolvedRef(None)}
-    engine = _engine(calls, refs, method=method)
-    failure = RuntimeError("rank submission failed")
-    cancelled = []
+    async with _ranks(monkeypatch, tmp_path, ray_sana_snapshot, 3) as (run, handles):
+        failure = RuntimeError("rank submission failed")
+        handles[failed_rank] = replace(
+            handles[failed_rank],
+            actor=_FailingSubmission(handles[failed_rank].actor, method, failure),
+        )
+        engine = RayGenerationEngine("engine-0", handles)
+        cancels = Trace(monkeypatch)
+        cancels.watch(engine_module, "cancel_ray_refs", "cancel")
 
-    def fail(*args, **kwargs):
-        raise failure
+        with pytest.raises(RuntimeError) as caught:
+            if method == "execute_batch":
+                engine.remote(method)(_envelope(run))
+            else:
+                await getattr(engine, method)()
 
-    def cancel(_ray, submitted, *, root_error):
-        cancelled.extend(submitted)
-        return ()
-
-    monkeypatch.setattr(getattr(engine.ranks[failed_rank].actor, method), "remote", fail)
-    monkeypatch.setattr("vrl.generation.ray.engine.cancel_ray_refs", cancel)
-    with pytest.raises(RuntimeError) as caught:
-        if method == "execute_batch":
-            engine.remote(method)("payload")
+        if failed_rank:
+            assert isinstance(caught.value, TerminalRuntimeError)
+            assert caught.value.__cause__ is failure
+            ((_ray, submitted), *_rest) = [args for _, args in cancels.calls]
+            assert len(submitted) == 1
         else:
-            await getattr(engine, method)()
-
-    if failed_rank:
-        assert isinstance(caught.value, TerminalRuntimeError)
-        assert caught.value.__cause__ is failure
-        assert cancelled == [refs["r0"]]
-    else:
-        assert caught.value is failure
-        assert cancelled == []
-    assert len(calls) == failed_rank
+            assert caught.value is failure
+            assert cancels.events == []
 
 
 @pytest.mark.asyncio
-async def test_any_rank_failure_fails_the_engine_call_and_cancels_siblings() -> None:
-    calls: list[tuple[str, tuple, dict]] = []
-    cancelled: list[Any] = []
+async def test_any_rank_failure_fails_the_engine_call_and_cancels_siblings(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
     import vrl.generation.ray.engine as engine_module
 
-    boom = RuntimeError("rank r1 died")
-    engine = _engine(
-        calls, {"r0": ResolvedRef("ok"), "r1": ResolvedRef(boom), "r2": ResolvedRef("ok")}
-    )
+    async with _ranks(monkeypatch, tmp_path, ray_sana_snapshot, 3) as (run, handles):
+        cancels = Trace(monkeypatch)
+        cancels.watch(engine_module, "cancel_ray_refs", "cancel")
+        local_ray.kill(handles[1].actor, no_restart=True)
+        engine = RayGenerationEngine("engine-0", handles)
 
-    def _record_cancel(_ray: Any, refs: Any, *, root_error: Any) -> tuple:
-        cancelled.extend(refs)
-        return ()
+        with pytest.raises(local_ray.exceptions.RayActorError):
+            await engine.execute_batch()(_envelope(run))
 
-    original = engine_module.cancel_ray_refs
-    engine_module.cancel_ray_refs = _record_cancel
-    try:
-        with pytest.raises(RuntimeError, match="rank r1 died"):
-            await engine.execute_batch()("payload")
-    finally:
-        engine_module.cancel_ray_refs = original
-
-    # Waiting only on rank 0 would have HUNG here once ranks run collectives;
-    # the aggregate surfaces the failure and cancels every sibling ref.
-    assert len(cancelled) == 3
+        # Waiting only on rank 0 would HANG once ranks run collectives; the
+        # aggregate surfaces the dead rank and cancels every sibling ref.
+        ((_ray, refs),) = [args for _, args in cancels.calls]
+        assert len(refs) == 3
 
 
 @pytest.mark.asyncio
-async def test_sleep_validates_and_aggregates_per_rank_snapshots() -> None:
-    def snapshot(rank_id: str) -> WorkerMemoryParkingSnapshot:
-        return WorkerMemoryParkingSnapshot(
-            worker_id=rank_id,
-            backend="cumem",
-            baseline_gpu_used_bytes=0,
-            loaded_gpu_used_bytes=1,
-            residual_gpu_used_bytes=0,
-            residual_bytes_limit=1,
-        )
+async def test_sleep_validates_and_aggregates_per_rank_snapshots(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    async with _ranks(monkeypatch, tmp_path, ray_sana_snapshot, 2) as (_run, handles):
+        snapshots = await RayGenerationEngine("engine-0", handles).sleep()
+        assert [snap.worker_id for snap in snapshots] == ["rollout-0", "rollout-1"]
 
-    calls: list[tuple[str, tuple, dict]] = []
-    engine = _engine(
-        calls,
-        {"r0": ResolvedRef(snapshot("r0")), "r1": ResolvedRef(snapshot("r1"))},
-        method="sleep",
-    )
-    snapshots = await engine.sleep()
-    assert [snap.worker_id for snap in snapshots] == ["r0", "r1"]
-
-    mismatched = _engine(
-        calls,
-        {"r0": ResolvedRef(snapshot("someone-else"))},
-        method="sleep",
-    )
-    with pytest.raises(RuntimeError, match="mismatched rank memory-parking report"):
-        await mismatched.sleep()
+    async with _ranks(
+        monkeypatch, tmp_path / "mismatched", ray_sana_snapshot, 2, fault="snapshot"
+    ) as (_run, handles):
+        with pytest.raises(RuntimeError, match="mismatched rank memory-parking report"):
+            await RayGenerationEngine("engine-0", handles).sleep()
 
 
 def test_engine_requires_at_least_one_rank() -> None:
@@ -188,24 +262,36 @@ def test_engine_requires_at_least_one_rank() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["decode failed", "CUDA out of memory", "stale"])
-async def test_generation_combiner_retains_nonprimary_error_payload(failure):
-    from vrl.generation.execution.sample_batches import GenerationSampleBatch
-    from vrl.generation.execution.types import GenerationBatchResult
+@pytest.mark.parametrize("failure", ["decode", "oom", "stale"])
+async def test_generation_combiner_retains_nonprimary_error_payload(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path, failure
+):
+    """A failing non-primary rank's result wins over the primary's success."""
 
-    good = GenerationBatchResult("request", "r0", GenerationSampleBatch(0, 0, 2), output={})
-    bad = GenerationBatchResult(
-        "request", "r1", good.batch, output=None, error=failure, stale_slot=failure == "stale"
-    )
-    engine = _engine([], {"r0": ResolvedRef(good), "r1": ResolvedRef(bad)})
-    result = await engine.execute_batch()("payload")
-    assert result is bad
+    fault = None if failure == "stale" else failure
+    overrides = _VERSIONED if failure == "stale" else ()
+    async with _ranks(
+        monkeypatch, tmp_path, ray_sana_snapshot, 2, fault=fault, overrides=overrides
+    ) as (run, handles):
+        if failure == "stale":
+            # Only the primary installs version 1: the other rank holds no slot for it.
+            await handles[0].actor.update_weights.remote(run.trainable_state(), 1)
+            await handles[1].actor.update_weights.remote(run.trainable_state(), 2)
+        envelope = _envelope(run, policy_version=1 if failure == "stale" else None)
+
+        result = await RayGenerationEngine("engine-0", handles).execute_batch()(envelope)
+
+        assert result.worker_id == "rollout-1"
+        assert result.output is None
+        if failure == "decode":
+            assert "decode failed" in result.error
+        elif failure == "oom":
+            assert "out of memory" in result.error
+        else:
+            assert result.stale_slot is True
 
 
 def test_generation_combiner_prioritizes_terminal_errors_over_retry_and_discard():
-    from vrl.generation.execution.sample_batches import GenerationSampleBatch
-    from vrl.generation.execution.types import GenerationBatchResult
-
     batch = GenerationSampleBatch(0, 0, 2)
     oom = GenerationBatchResult("r", "r0", batch, None, error="CUDA out of memory")
     stale = GenerationBatchResult("r", "r1", batch, None, error="evicted", stale_slot=True)
@@ -215,28 +301,30 @@ def test_generation_combiner_prioritizes_terminal_errors_over_retry_and_discard(
 
 
 @pytest.mark.asyncio
-async def test_pipeline_combiner_retains_nonprimary_oom_payload():
-    from vrl.generation.execution.types import RequestBatchOutOfMemory, StagedBatchRefs
-    from vrl.generation.ray.executor import RayGenerationExecutor
+async def test_pipeline_combiner_retains_nonprimary_oom_payload(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+):
+    async with _ranks(monkeypatch, tmp_path, ray_sana_snapshot, 2, fault="request_oom") as (
+        run,
+        handles,
+    ):
+        engine = RayGenerationEngine("engine-0", handles)
+        request = replace(run.request(["p"], group_size=4), policy_version=0)
+        plan = EnginePlan(
+            sample_batches=(GenerationSampleBatch(0, 0, 2), GenerationSampleBatch(0, 2, 2))
+        )
 
-    good = StagedBatchRefs("r", "r0", ("b0",), ("ref-0",))
-    bad = RequestBatchOutOfMemory("r", "r1", "CUDA out of memory")
-    engine = _engine(
-        [], {"r0": ResolvedRef(good), "r1": ResolvedRef(bad)}, method="execute_request_batches"
-    )
-    result = await engine.remote(
-        "execute_request_batches", combine=RayGenerationExecutor._select_request_rank_result
-    )("payload")
-    assert result is bad
+        result = await engine.remote(
+            "execute_request_batches",
+            combine=RayGenerationExecutor._select_request_rank_result,
+        )(request, plan)
+
+        assert isinstance(result, RequestBatchOutOfMemory)
+        assert result.worker_id == "rollout-1"
 
 
 @pytest.mark.parametrize("field", ["request_id", "batch", "policy_version"])
 def test_generation_combiner_rejects_rank_identity_disagreement(field):
-    from dataclasses import replace
-
-    from vrl.generation.execution.sample_batches import GenerationSampleBatch
-    from vrl.generation.execution.types import GenerationBatchResult
-
     good = GenerationBatchResult("r", "r0", GenerationSampleBatch(0, 0, 1), {}, policy_version=1)
     values = {"request_id": "other", "batch": GenerationSampleBatch(0, 1, 1), "policy_version": 2}
     other = replace(good, worker_id="r1", **{field: values[field]})
@@ -251,43 +339,28 @@ def test_generation_combiner_rejects_rank_identity_disagreement(field):
     assert good.rank_metrics == {"r0": {"peak_memory_mb": 10}}
 
 
-def _batch_result(worker_id: str, **kwargs: Any) -> GenerationBatchResult:
-    return GenerationBatchResult(
-        request_id="request",
-        worker_id=worker_id,
-        batch=GenerationSampleBatch(prompt_index=0, sample_start=0, sample_count=1),
-        output=None,
-        policy_version=7,
-        **kwargs,
-    )
+@pytest.mark.asyncio
+async def test_batch_combines_metrics_from_every_rank_without_mutating_primary(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    async with _ranks(monkeypatch, tmp_path, ray_sana_snapshot, 2) as (run, handles):
+        primary_ref = handles[0].actor.execute_batch.remote(_envelope(run, runtime_debug=True))
+        primary = await primary_ref
+
+        result = await RayGenerationEngine("engine-0", handles).execute_batch()(
+            _envelope(run, runtime_debug=True)
+        )
+
+        assert set(result.rank_metrics) == {"rollout-0", "rollout-1"}
+        assert result.worker_id == "rollout-0"
+        assert set(primary.rank_metrics) == {"rollout-0"}
 
 
 @pytest.mark.asyncio
-async def test_batch_combines_metrics_from_every_rank_without_mutating_primary() -> None:
-    first = _batch_result("r0", rank_metrics={"r0": {"peak_memory_mb": 10}})
-    second = _batch_result("r1", rank_metrics={"r1": {"peak_memory_mb": 20}})
-    engine = _engine([], {"r0": ResolvedRef(first), "r1": ResolvedRef(second)})
-    result = await engine.execute_batch()("payload")
-    assert result.rank_metrics == {"r0": {"peak_memory_mb": 10}, "r1": {"peak_memory_mb": 20}}
-    assert first.rank_metrics == {"r0": {"peak_memory_mb": 10}}
-    assert result.worker_id == "r0"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [{"error": "CUDA out of memory"}, {"stale_slot": True}])
-async def test_nonprimary_batch_failure_is_not_hidden(failure: dict) -> None:
-    first = _batch_result("r0")
-    second = _batch_result("r1", **failure)
-    engine = _engine([], {"r0": ResolvedRef(first), "r1": ResolvedRef(second)})
-    assert await engine.execute_batch()("payload") is second
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("field,value", [("request_id", "wrong"), ("policy_version", 8)])
-async def test_batch_rejects_inconsistent_rank_identity(field: str, value: Any) -> None:
-    first = _batch_result("r0")
-    second = _batch_result("r1")
-    setattr(second, field, value)
-    engine = _engine([], {"r0": ResolvedRef(first), "r1": ResolvedRef(second)})
-    with pytest.raises(RuntimeError, match="engine ranks returned different"):
-        await engine.execute_batch()("payload")
+@pytest.mark.parametrize("field", ["request_id", "policy_version"])
+async def test_batch_rejects_inconsistent_rank_identity(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path, field: str
+) -> None:
+    async with _ranks(monkeypatch, tmp_path, ray_sana_snapshot, 2, fault=field) as (run, handles):
+        with pytest.raises(RuntimeError, match="engine ranks returned different"):
+            await RayGenerationEngine("engine-0", handles).execute_batch()(_envelope(run))

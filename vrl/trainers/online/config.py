@@ -165,8 +165,8 @@ class TrainerConfig:
 
     Every field is a projection of the public ``actor`` / ``trainer`` section
     of the same name (``vrl.config.schema.ActorSection`` / ``TrainerSection``
-    own the YAML keys and types), except ``batch_plan``, which :meth:`from_root`
-    computes.
+    own the YAML keys and types), except ``batch_plan`` and
+    ``versioned_weight_sync``, which :meth:`from_root` computes.
     """
 
     # --- required: experiment-semantic decisions ---
@@ -215,6 +215,13 @@ class TrainerConfig:
     # --- profiling ---
     profile: bool = False
 
+    # Whether a weight sync may proceed while the current prompt batch is still
+    # generating against the previous version: continuous scheduling over LoRA
+    # adapters, which every trainable family's runtime retains per version.
+    # Full-parameter fleets and strict scheduling overwrite in place and drain.
+    # Decided here once; the schedule and the rollout workers both read it.
+    versioned_weight_sync: bool = False
+
     @classmethod
     def from_root(
         cls,
@@ -238,7 +245,7 @@ class TrainerConfig:
             "actor": ActorSection.model_fields,
             "trainer": TrainerSection.model_fields,
         }
-        bridged = {"batch_plan"}
+        bridged = {"batch_plan", "versioned_weight_sync"}
 
         hints = get_type_hints(cls)
         payload: dict[str, Any] = {}
@@ -284,6 +291,10 @@ class TrainerConfig:
         if precision is None:
             precision = PrecisionPolicy.from_section(root.precision)
         payload.update(batch_plan=OnlineBatchPlan.from_root(root))
+        orchestration = payload.get("rollout_orchestration") or RolloutOrchestrationConfig()
+        payload["versioned_weight_sync"] = orchestration.schedule_mode == "continuous" and bool(
+            root.model is not None and root.model.use_lora
+        )
         # On a rollout/train precision split, the correction mechanism is an
         # implementation detail the user should not have to spell out: default to
         # TIS/RS correction (the replay-parity gate still fails on catastrophic

@@ -58,8 +58,12 @@ class GenerationBatchGatherer(Protocol):
 
 @runtime_checkable
 class GenerationRuntime(Protocol):
-    """Generation runtime consumed by rollout collectors.
+    """The generation engine as a set of run-time commands plus its policy version.
 
+    Three callers drive it: the rollout coordinator issues the phase commands
+    (``activate`` / ``offload`` / ``shutdown``), the collector calls
+    ``generate``, and the trainer's weight syncer calls ``update_weights``.
+    Everything fixed before launch lives in the launch contract instead.
     The runtime is a transport boundary: schedules explicitly activate it before
     generation and offload it at a shared-GPU handoff. Whether the trainer parks
     for generation, or generation offloads before reward scoring, is not the
@@ -67,13 +71,24 @@ class GenerationRuntime(Protocol):
     ``RayLifecyclePlan`` and read by the collector (see vrl/ray/resources.py).
     """
 
-    current_policy_version: int | None
+    # The version of the weights serving new requests: the launch checkpoint's
+    # (0) until the trainer's first push, then whatever push was last accepted.
+    current_policy_version: int
 
     async def activate(self) -> None:
         """Make generation ready and complete any policy install staged while inactive."""
         ...
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput: ...
+
+    async def update_weights(self, trainable_state: Any, policy_version: int) -> None:
+        """Install the trainer's trainable state as ``policy_version``.
+
+        The runtime is the one owner of the version: it publishes the accepted
+        value through ``current_policy_version``, and the trainer's weight
+        syncer asks for the next one by adding one to it.
+        """
+        ...
 
     async def offload(self) -> None:
         """Yield GPU memory after the schedule has drained generation.

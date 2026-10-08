@@ -57,6 +57,7 @@ class ContinuousRolloutSchedule:
         *,
         lifecycle: RolloutRuntimeCoordinator,
         algorithm_tolerates_off_policy_staleness: bool,
+        versioned_weight_sync: bool,
     ) -> ContinuousRolloutSchedule:
         """Translate ``rollout_orchestration.continuous`` config into the schedule.
 
@@ -70,6 +71,7 @@ class ContinuousRolloutSchedule:
             wait_timeout_s=config.wait_timeout_s,
             queue_poll_interval_s=config.queue_poll_interval_s,
             fail_fast_errors=config.fail_fast_errors,
+            versioned_weight_sync=versioned_weight_sync,
         )
 
         # The algorithm owns the reason it cannot consume stale samples; this

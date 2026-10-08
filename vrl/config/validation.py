@@ -81,6 +81,20 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
 
     conflicts: list[CompileConflict] = []
 
+    # The family's runtime either compiles or it does not, whichever role the
+    # scope selects, so this reads the raw enable bit.
+    from vrl.models.families.names import normalize_model_family
+    from vrl.models.families.registry import get_model_family_entry
+
+    family = normalize_model_family(str(root.model.family))
+    if not get_model_family_entry(family).runtime_capabilities.supports_torch_compile:
+        conflicts.append(
+            CompileConflict(
+                "family",
+                f"model.family={family}: this family's runtime does not support torch.compile.",
+            )
+        )
+
     # torch.compile traces torch.utils.checkpoint into an InternalTorchDynamoError
     # (measured for full and selective alike), and inductor's min-cut partitioner
     # already does automatic selective recompute.

@@ -1,24 +1,15 @@
 """One real Ray cluster for the whole ``tests/generation/ray`` package.
 
 The package-scoped shell below overrides the function-scoped ``local_ray`` in
-``tests/conftest.py``, so every ``slow_test`` here pays one cluster start/stop
-between them instead of one each (the directory's slow lane went from ~42s to
-~15s over 3 runs each, while growing from 8 tests to 12).
+``tests/conftest.py``, so every test here pays one cluster start/stop between
+them instead of one each.
 
-The cluster carries the launcher's ``worker_process_setup_hook`` because it has
-to: file order puts ``test_rollout_launcher`` between two other ``local_ray``
-consumers, so a launcher-owned cluster would tear the shared one down mid-package
-and leave the later tests holding a dead handle. Hanging the hook on the shared
-cluster is also the simpler contract — it is test scaffolding (it publishes a
-tiny executor on an importable production module), not behaviour under test, and
-it is inert for everything else here. The hook body runs only in worker
-processes, and no other actor in this package reads ``FAMILY_REGISTRY``,
-``build_rollout`` or the checkpoint identity resolver. (``test_ray_resident_session``
-rewrites those same three symbols, which looks like a conflict and is not: it
-starts no actors at all and does its rewriting driver-side through
-``monkeypatch``, so the two never meet.) The alternative — teaching the fixture
-to re-init after somebody else shuts its cluster down — buys nothing and adds an
-implicit ordering dependency.
+The cluster's workers serve the tiny SANA snapshot: a Ray worker is a separate
+process, so the test's own loader patch never reaches it, and
+``tiny_sana_ray_cluster`` installs the same ``TinySanaPipeline`` loader
+double at worker start (the Hub load is the one model double). Everything else
+a worker runs -- the family registry, ``build_rollout``, the SANA executor,
+the checkpoint identity -- is production code over real tiny weights.
 
 Read ``real_local_ray``'s docstring before adding a test here: a shared cluster
 has no per-test actor namespace, so every test must kill the actors it creates.
@@ -32,100 +23,17 @@ from typing import Any
 
 import pytest
 
-from tests.conftest import real_local_ray
-
-_REPO_ROOT = str(Path(__file__).resolve().parents[3])
-
-
-def _worker_setup_hook(repo_root: str) -> Any:
-    """Return a by-value hook that installs a tiny canonical family in workers."""
-
-    def install() -> None:
-        import contextlib
-        import sys
-        from dataclasses import replace
-
-        # Ray workers do not inherit pytest's cwd-based import path. Put this
-        # checkout first so the actor cannot accidentally load another editable
-        # VRL checkout from the developer environment.
-        sys.path.insert(0, repo_root)
-
-        import vrl.models.checkpoint_identity as checkpoint_identity
-        import vrl.models.families.registry as registry
-        from vrl.models.interfaces import RuntimeBundle
-
-        class TinyRuntimeModel:
-            device = "cpu"
-
-            def to(self, device: Any) -> TinyRuntimeModel:
-                self.device = str(device)
-                return self
-
-            def replay_forward(self, batch: Any, timestep_idx: int = 0, **kwargs: Any) -> Any:
-                raise NotImplementedError("Ray launcher test never calls replay_forward")
-
-            def reference_policy(self) -> contextlib.AbstractContextManager[None]:
-                return contextlib.nullcontext()
-
-            def load_trainable_state(self, state_dict: dict[str, Any]) -> None:
-                self.loaded_state = dict(state_dict)
-
-        from vrl.generation.execution.executor_base import BatchExecutorBase
-
-        class TinyChunkExecutor(BatchExecutorBase):
-            """Model-free executor: a batch's payload is its own coordinates.
-
-            Enough to drive the real dispatch paths (per-batch and per-request
-            with staged references) through real actors without a model.
-            """
-
-            family = "sd3_5"
-            task = "t2i"
-
-            def __init__(
-                self,
-                model: TinyRuntimeModel,
-                *,
-                gatherer: Any | None = None,
-            ) -> None:
-                super().__init__(gatherer=gatherer)
-                self.model = model
-
-            def forward_batch(self, request: Any, batch: Any) -> Any:
-                return {
-                    "request_id": request.request_id,
-                    "batch_key": batch.batch_key,
-                    "samples": batch.sample_count,
-                }
-
-        def build_tiny_rollout(_entry: Any, build: Any) -> RuntimeBundle:
-            assert str(build.device) == "cpu"
-            return RuntimeBundle(
-                model=TinyRuntimeModel(),
-                trainable_modules={},
-                scheduler=None,
-                raw_handle=None,
-                precision=build.precision,
-            )
-
-        # The hook executes before worker imports the launch contract. Publishing
-        # the test executor on an importable production module lets canonical
-        # registry dispatch stay intact without any compatibility fields.
-        registry._RayLauncherTestExecutor = TinyChunkExecutor
-        entry = registry.FAMILY_REGISTRY["sd3_5"]
-        registry.FAMILY_REGISTRY["sd3_5"] = replace(
-            entry,
-            executor_cls="vrl.models.families.registry:_RayLauncherTestExecutor",
-        )
-        registry.ModelFamilyEntry.build_rollout = build_tiny_rollout
-        checkpoint_identity.resolve_checkpoint_model_identity = lambda _build: {"schema": "test"}
-
-    return install
+from tests.scripts.eval.fixtures import tiny_sana_ray_cluster, write_tiny_sana_snapshot
 
 
 @pytest.fixture(scope="package")
-def local_ray() -> Iterator[Any]:
-    with real_local_ray(
-        runtime_env={"worker_process_setup_hook": _worker_setup_hook(_REPO_ROOT)},
-    ) as ray:
+def ray_sana_snapshot(tmp_path_factory) -> Path:
+    """The one tiny SANA snapshot every Ray worker in this package serves."""
+
+    return write_tiny_sana_snapshot(tmp_path_factory.mktemp("ray-sana") / "sana-snapshot")
+
+
+@pytest.fixture(scope="package")
+def local_ray(ray_sana_snapshot) -> Iterator[Any]:
+    with tiny_sana_ray_cluster(ray_sana_snapshot) as ray:
         yield ray

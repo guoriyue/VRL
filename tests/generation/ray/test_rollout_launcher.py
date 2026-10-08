@@ -1,69 +1,27 @@
-"""Ray generation launcher integration tests."""
+"""Ray generation launcher integration tests.
+
+Every launch is the online recipe's own: the tiny SANA run resolved from its
+config, the run-level placement group, ``RayGenerationLauncher.create_runtime``
+starting real ``RayGenerationWorker`` actors over the package's tiny snapshot.
+"""
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Sequence
+import contextlib
+from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from typing import Any
 
 import pytest
 
-from vrl.config.schema import parse_config
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import BatchPayload
-from vrl.generation.ray.config import RayGenerationConfig, RolloutWorkerConfig
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from tests.generation.ray._helpers import ray_sana_runtime
+from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.runtime import RayGenerationRuntime
-from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
-from vrl.trajectory.types import TrajectoryBatch
+from vrl.generation.types import GenerationOutput
 
 # These build real Ray workers on the package cluster — slow by nature, nightly.
 pytestmark = pytest.mark.slow_test
-
-
-class _Gatherer:
-    def merge_generation_batches(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        batches: Sequence[BatchPayload],
-    ) -> GenerationOutput:
-        return GenerationOutput(
-            output=list(batches),
-            trajectory=TrajectoryBatch(
-                request_id=request.request_id,
-                family=request.family,
-                task=request.task,
-                sample_rows=list(sample_rows),
-                axes={},
-                segments={},
-            ),
-        )
-
-
-def _launch_inputs() -> RayGenerationLaunchInputs:
-    return RayGenerationLaunchInputs(
-        launch_contract=GenerationRuntimeLaunchContract(
-            family="sd3_5",
-            model_build={
-                "model_name_or_path": "unit-test",
-                "revision": None,
-                "device": "cpu",
-                "parameter_dtype": "float32",
-                "precision": {
-                    "dtype": "fp32",
-                    "float32_precision": "tf32",
-                    "quantization": None,
-                    "outer_autocast": False,
-                },
-            },
-            expected_model_identity={"schema": "test"},
-            policy_version=7,
-        ),
-        gatherer=_Gatherer(),
-    )
 
 
 @pytest.mark.parametrize("section", [False, 0, "", []])
@@ -80,280 +38,216 @@ def test_worker_section_defaults_only_for_absent_or_empty_mapping() -> None:
     ) == RolloutWorkerConfig.from_public_section({})
 
 
-def _worker_config(**overrides: Any) -> RolloutWorkerConfig:
-    values = {
-        "cpus_per_worker": 0.5,
-        "worker_rpc_timeout_s": 30.0,
-        "generation_stall_timeout_s": 30.0,
-        "pipelined": False,
-    }
-    values.update(overrides)
-    return RolloutWorkerConfig(**values)
+@contextlib.asynccontextmanager
+async def _launched(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    snapshot: Any,
+    *,
+    generation: Callable[[Any], Any] = lambda config: config,
+    overrides: tuple[str, ...] = (),
+) -> AsyncIterator[tuple[RayGenerationRuntime, Any, Any]]:
+    """Launch exactly as the recipe does, with ``generation`` applied to the
+    resolved generation config first; yields (runtime, placement owner, resolved)."""
 
+    from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
+    from vrl import run
+    from vrl.ray.placement import GlobalRayPlacementOwner
 
-def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(local_ray) -> None:
-    """Launcher builds real workers into the owner's placement group."""
-    ray = local_ray
-    import vrl.generation.ray.launcher as launcher_mod
-
-    worker = _worker_config()
-    owner = _cpu_rollout_owner(ray, worker=worker)
+    cfg = tiny_sana_online_config(
+        tmp_path,
+        snapshot=snapshot,
+        overrides=("distributed.rollout.cpus_per_worker=0.5", *overrides),
+    )
+    TinySanaPipeline().install(monkeypatch, snapshot)
+    resolved = run.resolve_online_run(cfg)
+    replay = run.resolve_model(
+        resolved.family,
+        resolved.built.root,
+        resolved.device,
+        precision=resolved.built.precision,
+        for_rollout=False,
+    )
+    owner = GlobalRayPlacementOwner(resolved.resources, resolved.generation.worker)
+    owner.create()
     runtime: RayGenerationRuntime | None = None
     try:
-        runtime = launcher_mod.RayGenerationLauncher().create_runtime(
-            RayGenerationConfig(
-                resources=owner.resources,
-                worker=worker,
-            ),
-            _launch_inputs(),
+        runtime = RayGenerationLauncher().create_runtime(
+            generation(resolved.generation),
+            resolved.ray_launch_inputs(replay),
             placement=owner.rollout_placement,
         )
+        yield runtime, owner, resolved
+    finally:
+        # The cluster is shared with the rest of this package: release the
+        # workers and the placement group, never the cluster.
+        if runtime is not None:
+            await runtime.shutdown()
+        owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
+    """Launcher builds real workers into the owner's placement group."""
+
+    async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
+        runtime = ray_run.runtime
 
         assert isinstance(runtime, RayGenerationRuntime)
-        assert runtime.current_policy_version == 7
+        # The launch contract's version: the checkpoint the run starts from.
+        assert runtime.current_policy_version == 0
         session = runtime._session
         assert session is not None
         assert session.weight_sync is not None
         engines = session.executor.engines
         assert [engine.engine_id for engine in engines] == ["rollout-0"]
-        assert engines[0].primary.actor is not None
-        metadata = ray.get(engines[0].primary.actor.worker_metadata.remote())
+        metadata = local_ray.get(engines[0].primary.actor.worker_metadata.remote())
         assert metadata["worker_id"] == "rollout-0"
+        assert metadata["gpu_ids"] == []
         assert "policy_version" not in metadata
-    finally:
-        # The cluster is shared with the rest of this package: release the
-        # workers and the placement group, never the cluster.
-        if runtime is not None:
-            asyncio.run(runtime.shutdown())
-        owner.shutdown()
 
 
-def test_pipelined_runtime_stages_batches_and_merges_on_the_finalizer(local_ray) -> None:
+@pytest.mark.asyncio
+async def test_pipelined_runtime_stages_batches_and_merges_on_the_finalizer(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
     """Per-request path end to end on real actors: the rank stages each batch in
     the object store, the finalizer merges the references, and the driver gets
     the gathered output in plan order."""
-    import vrl.generation.ray.launcher as launcher_mod
 
-    worker = _worker_config(pipelined=True)
-    owner = _cpu_rollout_owner(local_ray, worker=worker)
-    runtime: RayGenerationRuntime | None = None
-    try:
-        runtime = launcher_mod.RayGenerationLauncher().create_runtime(
-            RayGenerationConfig(
-                resources=owner.resources,
-                worker=worker,
-            ),
-            _launch_inputs(),
-            placement=owner.rollout_placement,
-        )
+    async with ray_sana_runtime(
+        monkeypatch,
+        tmp_path,
+        ray_sana_snapshot,
+        overrides=("distributed.rollout.pipelined=true", "rollout.samples_per_generation_batch=2"),
+    ) as ray_run:
+        runtime = ray_run.runtime
         session = runtime._session
         assert session is not None
         assert [handle.worker_id for handle in session.finalizer_handles] == [
             "rollout-0.finalize",
         ]
         assert session.executor.finalizers == tuple(session.finalizer_handles)
-        request = GenerationRequest(
-            request_id="req-pipelined",
-            family="sd3_5",
-            task="t2i",
-            inputs=["p"],
-            samples_per_prompt=4,
-            samples_per_generation_batch=2,
-            policy_version=7,
-        )
+        request = ray_run.request(["p"], group_size=4)
 
-        async def run() -> GenerationOutput:
-            await runtime.activate()
-            return await runtime.generate(request)
-
-        output = asyncio.run(run())
+        await runtime.activate()
+        output = await runtime.generate(request)
 
         assert isinstance(output, GenerationOutput)
-        assert output.request_id == "req-pipelined"
-        assert output.output == [
-            {"request_id": "req-pipelined", "batch_key": "prompt:0:samples:0:2", "samples": 2},
-            {"request_id": "req-pipelined", "batch_key": "prompt:0:samples:2:4", "samples": 2},
-        ]
+        assert output.request_id == request.request_id
+        assert output.output.shape[0] == 4
         assert [row.sample_index for row in output.sample_rows] == [0, 1, 2, 3]
-    finally:
-        if runtime is not None:
-            asyncio.run(runtime.shutdown())
-        owner.shutdown()
+        assert output.trajectory.request_id == request.request_id
 
 
-def test_create_runtime_rejects_missing_rollout_placement() -> None:
+def test_create_runtime_rejects_missing_rollout_placement(monkeypatch, tmp_path) -> None:
     """placement=None fails fast with the config knob, not an AttributeError."""
-    from omegaconf import OmegaConf
 
-    import vrl.generation.ray.launcher as launcher_mod
-    from vrl.ray.resources import ResolvedDistributedResources
+    from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
+    from vrl import run
 
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            OmegaConf.create(
-                {
-                    "distributed": {
-                        "resources": {
-                            "visible_devices": [],
-                            "trainer": {"num_gpus": 0},
-                            "rollout": {"num_gpus": 0, "num_engines": 1},
-                        },
-                        "rollout": {},
-                    },
-                },
-            )
-        ),
+    cfg = tiny_sana_online_config(tmp_path)
+    TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
+    resolved = run.resolve_online_run(cfg)
+    replay = run.resolve_model(
+        resolved.family,
+        resolved.built.root,
+        resolved.device,
+        precision=resolved.built.precision,
+        for_rollout=False,
     )
     with pytest.raises(ValueError, match="rollout placement"):
-        launcher_mod.RayGenerationLauncher().create_runtime(
-            RayGenerationConfig(resources=resolved, worker=_worker_config()),
-            _launch_inputs(),
+        RayGenerationLauncher().create_runtime(
+            resolved.generation,
+            resolved.ray_launch_inputs(replay),
             placement=None,
         )
 
 
-def _cpu_rollout_owner(
-    ray: Any,
-    *,
-    worker: RolloutWorkerConfig | None = None,
-) -> Any:
-    """Build a GlobalRayPlacementOwner with a single CPU rollout bundle."""
-    from omegaconf import OmegaConf
-
-    from vrl.ray.placement import GlobalRayPlacementOwner
-    from vrl.ray.resources import ResolvedDistributedResources
-
-    resolved = ResolvedDistributedResources.from_root(
-        parse_config(
-            OmegaConf.create(
-                {
-                    "distributed": {
-                        "resources": {
-                            "visible_devices": [],
-                            "trainer": {"num_gpus": 0},
-                            "rollout": {"num_gpus": 0, "num_engines": 1},
-                        },
-                        "rollout": {},
-                    },
-                },
-            )
-        ),
-    )
-    owner = GlobalRayPlacementOwner(resolved, worker or _worker_config())
-    owner.create()
-    return owner
-
-
-def test_owner_placement_runtime_does_not_own_placement_group(local_ray) -> None:
+@pytest.mark.asyncio
+async def test_owner_placement_runtime_does_not_own_placement_group(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
     """Persistent runtime built on owner placement must not own/remove the PG."""
-    import vrl.generation.ray.launcher as launcher_mod
 
-    owner = _cpu_rollout_owner(local_ray)
-    runtime: RayGenerationRuntime | None = None
-    try:
-        runtime = launcher_mod.RayGenerationLauncher().create_runtime(
-            RayGenerationConfig(
-                resources=owner.resources,
-                worker=owner.rollout_worker,
-            ),
-            _launch_inputs(),
-            placement=owner.rollout_placement,
-        )
-
+    async with _launched(monkeypatch, tmp_path, ray_sana_snapshot) as (runtime, owner, _):
         session = runtime._session
         assert session is not None
         assert [e.engine_id for e in session.executor.engines] == ["rollout-0"]
 
         # Tearing down the runtime kills workers but leaves the owner's PG alive.
-        asyncio.run(runtime.shutdown())
-        runtime = None
+        await runtime.shutdown()
         assert owner._placement_group is not None
-    finally:
-        if runtime is not None:
-            asyncio.run(runtime.shutdown())
-        owner.shutdown()
 
 
-def test_launcher_uses_resolved_colocation_protocol_signal(local_ray) -> None:
-    """Launcher derives the runtime colocation signal from resolved topology."""
-    import vrl.generation.ray.launcher as launcher_mod
-
-    owner = _cpu_rollout_owner(local_ray)
-    runtime: RayGenerationRuntime | None = None
-    try:
-        runtime = launcher_mod.RayGenerationLauncher().create_runtime(
-            RayGenerationConfig(
-                resources=owner.resources,
-                worker=owner.rollout_worker,
-            ),
-            _launch_inputs(),
-            placement=owner.rollout_placement,
-        )
-    finally:
-        if runtime is not None:
-            asyncio.run(runtime.shutdown())
-        owner.shutdown()
-
-
-def test_phase_handoff_keeps_actor_and_owner_placement(local_ray) -> None:
+@pytest.mark.asyncio
+async def test_phase_handoff_keeps_actor_and_owner_placement(
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
+) -> None:
     """A shared-GPU handoff parks its actor without dropping the owner PG."""
-    owner = _cpu_rollout_owner(local_ray)
-    on_demand_resources = replace(
-        owner.resources,
-        lifecycle=replace(
-            owner.resources.lifecycle,
-            # A CPU owner has no trainer GPU; pin both roles to one card to force the lease.
-            trainer=(0,),
-            rollout=(0,),
-        ),
-    )
-    runtime = RayGenerationLauncher().create_runtime(
-        RayGenerationConfig(
-            resources=on_demand_resources,
-            worker=owner.rollout_worker,
-        ),
-        _launch_inputs(),
-        placement=owner.rollout_placement,
-    )
-    try:
+
+    def shared_gpu(generation: Any) -> Any:
+        # A CPU host has no trainer GPU; pin both roles to one card to force the lease.
+        resources = generation.resources
+        return replace(
+            generation,
+            resources=replace(
+                resources,
+                lifecycle=replace(resources.lifecycle, trainer=(0,), rollout=(0,)),
+            ),
+        )
+
+    async with _launched(monkeypatch, tmp_path, ray_sana_snapshot, generation=shared_gpu) as (
+        runtime,
+        owner,
+        _,
+    ):
         # Explicit activation launches workers; offload parks them in place.
-        asyncio.run(runtime.activate())
+        await runtime.activate()
         session = runtime._session
         assert session is not None
         first_actor = session.executor.engines[0].primary.actor
-        asyncio.run(runtime.offload())
+        await runtime.offload()
         assert runtime._session is session
         assert runtime._session_parked is True
         # The owner's placement group is untouched and activation wakes in place.
         assert owner._placement_group is not None
-        asyncio.run(runtime.activate())
+        await runtime.activate()
         reacquired = runtime._session
-        assert reacquired is not None
-        assert [e.engine_id for e in reacquired.executor.engines] == ["rollout-0"]
         assert reacquired is session
+        assert [e.engine_id for e in reacquired.executor.engines] == ["rollout-0"]
         assert reacquired.executor.engines[0].primary.actor is first_actor
-    finally:
-        asyncio.run(runtime.shutdown())
-        owner.shutdown()
 
 
 @pytest.mark.parametrize("query", ["current_node_ip", "current_gpu_ids"])
-def test_worker_metadata_preserves_placement_query_failure(monkeypatch, query) -> None:
-    from types import SimpleNamespace
+def test_worker_metadata_preserves_placement_query_failure(monkeypatch, tmp_path, query) -> None:
+    """A failed placement query surfaces as itself from the real worker."""
 
+    from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
+    from vrl import run
     from vrl.generation.ray import worker
 
+    cfg = tiny_sana_online_config(tmp_path)
+    TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
+    resolved = run.resolve_online_run(cfg)
+    replay = run.resolve_model(
+        resolved.family,
+        resolved.built.root,
+        resolved.device,
+        precision=resolved.built.precision,
+        for_rollout=False,
+    )
+    actor = worker.RayGenerationWorker("rollout-0", resolved.ray_launch_inputs(replay))
     failure = RuntimeError("placement query failed")
 
     def fail():
         raise failure
 
-    monkeypatch.setattr(worker, "current_node_ip", lambda: "10.0.0.2")
-    monkeypatch.setattr(worker, "current_gpu_ids", lambda: [0])
     monkeypatch.setattr(worker, query, fail)
-    actor = SimpleNamespace(core=SimpleNamespace(worker_id="rollout-0"))
     with pytest.raises(RuntimeError, match="placement query failed") as caught:
-        worker.RayGenerationWorker.worker_metadata(actor)
+        actor.worker_metadata()
     assert caught.value is failure
 
 

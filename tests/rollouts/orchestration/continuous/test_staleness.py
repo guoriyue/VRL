@@ -7,12 +7,9 @@ import pytest
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 
 
-def test_staleness_difference_and_none() -> None:
-    """``staleness`` is ``current - produced`` and ``None`` whenever either version is unknown."""
+def test_staleness_is_versions_behind_the_trainer() -> None:
     policy = StalenessPolicy(max_stale_policy_versions=1)
     assert policy.staleness(3, 5) == 2
-    assert policy.staleness(None, 5) is None
-    assert policy.staleness(3, None) is None
 
 
 def test_too_stale() -> None:
