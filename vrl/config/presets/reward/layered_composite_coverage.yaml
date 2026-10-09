@@ -1,0 +1,10 @@
+# Known-layer decomposition axis (layered_composite_coverage): fraction of the truth's opaque pixels the candidate composite covers opaquely.
+# Metadata layered_reference.layers names the truth layer directory (relative
+# to data_root); inferable_mask / unknowable_mask are optional PNGs. Not
+# qualified for a training key yet; run the reward qualification gates first.
+reward:
+  components:
+    layered_composite_coverage: 1.0
+  kwargs:
+    layered_composite_coverage:
+      data_root: data/external

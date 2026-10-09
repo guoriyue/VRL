@@ -1,0 +1,10 @@
+# Known-layer decomposition axis (layered_unknowable_plausibility): matched-layer continuation and color continuity on unknowable hidden pixels; no truth pixels consulted.
+# Metadata layered_reference.layers names the truth layer directory (relative
+# to data_root); inferable_mask / unknowable_mask are optional PNGs. Not
+# qualified for a training key yet; run the reward qualification gates first.
+reward:
+  components:
+    layered_unknowable_plausibility: 0.5
+  kwargs:
+    layered_unknowable_plausibility:
+      data_root: data/external

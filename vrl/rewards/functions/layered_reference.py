@@ -51,10 +51,28 @@ class LayeredEditHolesReward(LayeredReferenceReward):
     default_score_key = "layered_edit_holes"
 
 
+class LayeredCompositeCoverageReward(LayeredReferenceReward):
+    name = "layered_composite_coverage"
+    default_score_key = "layered_composite_coverage"
+
+
+class LayeredInferableCompletionReward(LayeredReferenceReward):
+    name = "layered_inferable_completion"
+    default_score_key = "layered_inferable_completion"
+
+
+class LayeredUnknowablePlausibilityReward(LayeredReferenceReward):
+    name = "layered_unknowable_plausibility"
+    default_score_key = "layered_unknowable_plausibility"
+
+
 __all__ = [
+    "LayeredCompositeCoverageReward",
     "LayeredEditHolesReward",
     "LayeredHiddenCompletionReward",
+    "LayeredInferableCompletionReward",
     "LayeredObjectMatchReward",
     "LayeredReferenceReward",
+    "LayeredUnknowablePlausibilityReward",
     "LayeredVisibleRetentionReward",
 ]

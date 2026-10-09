@@ -1,0 +1,10 @@
+# Known-layer decomposition axis (layered_inferable_completion): one minus the premultiplied RGBA error on hidden pixels the inferable_mask marks as deducible.
+# Metadata layered_reference.layers names the truth layer directory (relative
+# to data_root); inferable_mask / unknowable_mask are optional PNGs. Not
+# qualified for a training key yet; run the reward qualification gates first.
+reward:
+  components:
+    layered_inferable_completion: 1.0
+  kwargs:
+    layered_inferable_completion:
+      data_root: data/external

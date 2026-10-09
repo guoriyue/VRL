@@ -89,6 +89,60 @@ def test_candidate_geometry_and_metadata_are_validated(tmp_path) -> None:
         )
 
 
+def test_region_axes_separate_deducible_from_unknowable_hidden_pixels(tmp_path) -> None:
+    """Erasing the box's hidden half scores low on the inferable axis when the
+    mask says it is deducible, while the unknowable axis rewards only that the
+    layer continues with its own colors and never consults truth pixels."""
+    truth = _truth()
+    _write(tmp_path / "truth", truth)
+    hidden = (truth[1, ..., 3] > 0.5) & (truth[2, ..., 3] > 0.5)  # box behind the bar
+    half = np.zeros_like(hidden)
+    half[:, :16] = True
+    Image.fromarray(((hidden & half) * 255).astype(np.uint8), mode="L").save(
+        tmp_path / "inferable.png"
+    )
+    Image.fromarray(((hidden & ~half) * 255).astype(np.uint8), mode="L").save(
+        tmp_path / "unknowable.png"
+    )
+    meta = {
+        "layered_reference": {
+            "layers": str(tmp_path / "truth"),
+            "inferable_mask": str(tmp_path / "inferable.png"),
+            "unknowable_mask": str(tmp_path / "unknowable.png"),
+        }
+    }
+    model = LayeredReferenceRewardModel({})
+
+    def score(stack):
+        return model(
+            RewardInferenceArtifact(
+                "a", "a", "", media=torch.from_numpy(stack).permute(0, 3, 1, 2), metadata=meta
+            )
+        )
+
+    exact = score(truth)
+    assert exact["layered_inferable_completion"] == pytest.approx(1.0)
+    assert exact["layered_unknowable_plausibility"] == pytest.approx(1.0)
+    assert exact["layered_composite_coverage"] == pytest.approx(1.0)
+
+    erased = truth.copy()
+    erased[1][hidden] = 0.0
+    gone = score(erased)
+    assert gone["layered_inferable_completion"] < 0.5
+    assert gone["layered_unknowable_plausibility"] == pytest.approx(0.0)
+
+    # A different but continuous color in the unknowable region is as good as truth there.
+    recolored = truth.copy()
+    recolored[1][hidden & ~half, :3] = truth[1, 10, 10, :3]
+    assert score(recolored)["layered_unknowable_plausibility"] == pytest.approx(1.0)
+    recolored[1][hidden & ~half, :3] = (1.0, 1.0, 1.0)
+    assert score(recolored)["layered_unknowable_plausibility"] < 0.5
+
+    holey = truth.copy()
+    holey[0, :8, :8, 3] = 0.0  # background hole uncovered by any object
+    assert score(holey)["layered_composite_coverage"] < 1.0
+
+
 @pytest.mark.asyncio
 async def test_components_are_separately_weighted_rewards(tmp_path) -> None:
     truth = _truth()

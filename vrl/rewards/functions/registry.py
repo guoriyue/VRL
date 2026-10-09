@@ -57,10 +57,13 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.image_sharpness import ImageSharpnessReward
     from vrl.rewards.functions.kling_video_reward import KlingVideoReward
     from vrl.rewards.functions.layered_reference import (
+        LayeredCompositeCoverageReward,
         LayeredEditHolesReward,
         LayeredHiddenCompletionReward,
+        LayeredInferableCompletionReward,
         LayeredObjectMatchReward,
         LayeredReferenceReward,
+        LayeredUnknowablePlausibilityReward,
         LayeredVisibleRetentionReward,
     )
     from vrl.rewards.functions.local_edit import LocalEditReward
@@ -87,6 +90,9 @@ def _register_builtins() -> None:
             "layered_object_match": LayeredObjectMatchReward,
             "layered_visible_retention": LayeredVisibleRetentionReward,
             "layered_edit_holes": LayeredEditHolesReward,
+            "layered_composite_coverage": LayeredCompositeCoverageReward,
+            "layered_inferable_completion": LayeredInferableCompletionReward,
+            "layered_unknowable_plausibility": LayeredUnknowablePlausibilityReward,
             "geneval_owl": GenEvalOwlReward,
             "nsfw_safety": NSFWSafetyReward,
             "ocr": OCRReward,
