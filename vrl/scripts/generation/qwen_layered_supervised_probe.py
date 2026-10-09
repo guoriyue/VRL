@@ -30,9 +30,26 @@ def velocity_loss(prediction, target, *, spatial_weights=None):
     return error.mean() if spatial_weights is None else (error * spatial_weights).mean()
 
 
-def run_probe(root, target_path, output, *, steps, learning_rate, seed, weights_path=None):
+def run_probe(
+    root,
+    target_path,
+    output,
+    *,
+    steps,
+    learning_rate,
+    seed,
+    weights_path=None,
+    schedule_indices=None,
+    checkpoint_every=0,
+):
+    """``schedule_indices`` is the half-open ``[low, high)`` range of schedule
+    positions a training step may draw its noise level from; the default keeps
+    the historical ``[1, steps)``. ``checkpoint_every`` > 0 also saves
+    ``adapter_<step>.pt`` snapshots at that cadence."""
     if steps < 1 or not np.isfinite(learning_rate) or learning_rate <= 0:
         raise ValueError("Positive update count and finite positive learning rate required")
+    if checkpoint_every < 0:
+        raise ValueError("checkpoint_every must be >= 0")
     plan = json.loads((root / "plan.json").read_text())
     cases = [case for case in plan["cases"] if case["split"] == "train"]
     if len(cases) != 1:
@@ -62,12 +79,17 @@ def run_probe(root, target_path, output, *, steps, learning_rate, seed, weights_
     upstream_path = Path(plan["upstream"])
     assert hashlib.sha256(upstream_path.read_bytes()).hexdigest() == plan["upstream_sha256"]
     output.mkdir(parents=True, exist_ok=False)
+    low, high = (1, plan["steps"]) if schedule_indices is None else schedule_indices
+    if not 0 <= low < high <= plan["steps"]:
+        raise ValueError(f"schedule_indices must satisfy 0 <= low < high <= {plan['steps']}")
     config = {
         "kind": "supervised_flow_matching_support_probe",
         "rl_updates": 0,
         "steps": steps,
         "learning_rate": learning_rate,
         "seed": seed,
+        "schedule_indices": [low, high],
+        "checkpoint_every": checkpoint_every,
         "spatial_weights_sha256": None
         if weights_path is None
         else hashlib.sha256(weights_path.read_bytes()).hexdigest(),
@@ -128,7 +150,7 @@ def run_probe(root, target_path, output, *, steps, learning_rate, seed, weights_
     logs = []
     for step in range(steps):
         optimizer.zero_grad(set_to_none=True)
-        index = int(torch.randint(1, plan["steps"], (1,), generator=generator, device="cuda"))
+        index = int(torch.randint(low, high, (1,), generator=generator, device="cuda"))
         timestep = scheduler.timesteps[index]
         noise = torch.randn(clean.shape, generator=generator, device="cuda")
         noisy, velocity_target = diffusion_pretraining_pair(
@@ -159,6 +181,11 @@ def run_probe(root, target_path, output, *, steps, learning_rate, seed, weights_
         (output / "training.json").write_text(json.dumps(logs, indent=2) + "\n")
         print(json.dumps(logs[-1]), flush=True)
         del prediction, loss
+        if checkpoint_every and (step + 1) % checkpoint_every == 0 and step + 1 < steps:
+            torch.save(
+                {name: value.detach().cpu().clone() for name, value in parameters.items()},
+                output / f"adapter_{step + 1}.pt",
+            )
     saved = {name: value.detach().cpu().clone() for name, value in parameters.items()}
     assert all(torch.isfinite(value).all() for value in saved.values())
     differences = {
@@ -210,6 +237,14 @@ def main():
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=20261008)
     parser.add_argument("--spatial-weights", type=Path)
+    parser.add_argument(
+        "--schedule-indices",
+        type=int,
+        nargs=2,
+        metavar=("LOW", "HIGH"),
+        help="half-open schedule index range to draw training noise levels from",
+    )
+    parser.add_argument("--checkpoint-every", type=int, default=0)
     args = parser.parse_args()
     with Path("/tmp/vrl-preservation-gpu0.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -221,6 +256,10 @@ def main():
             learning_rate=args.learning_rate,
             seed=args.seed,
             weights_path=args.spatial_weights,
+            schedule_indices=None
+            if args.schedule_indices is None
+            else tuple(args.schedule_indices),
+            checkpoint_every=args.checkpoint_every,
         )
 
 

@@ -18,6 +18,9 @@ from vrl.nn.quantization.targeting import (
     LinearTargetProfile,
 )
 
+# ``peft.get_peft_model`` names the wrapped model ``base_model.model``.
+_PEFT_WRAPPER_PREFIX = "base_model.model."
+
 
 class QuantizedLinear(nn.Module):
     """Base for a low-precision drop-in ``nn.Linear`` replacement.
@@ -88,9 +91,14 @@ class QuantizedLinear(nn.Module):
                 if not isinstance(child, nn.Linear):
                     continue
                 path = f"{parent_path}.{child_name}" if parent_path else child_name
-                if any(token in path for token in exclude):
+                # PEFT's get_peft_model wrapper prefixes every path with
+                # ``base_model.model.``; that is container naming, not model
+                # structure, and ``base_model`` would otherwise trip the
+                # ``_mod`` modulation exclude on every linear.
+                structural = path.removeprefix(_PEFT_WRAPPER_PREFIX)
+                if any(token in structural for token in exclude):
                     continue
-                if not profile.matches(path):
+                if not profile.matches(structural):
                     continue
                 if child.in_features < min_features or child.out_features < min_features:
                     continue

@@ -3,8 +3,6 @@
 # layers. LoRA targets follow the layered release's training recipe.
 model:
   family: qwen_image_layered
-  executor:
-    max_sequence_length: 1024
   path: Qwen/Qwen-Image-Layered
   revision: 8f0ca708dfff6ba1dd5f2d85d78f8c108a040bcf
 

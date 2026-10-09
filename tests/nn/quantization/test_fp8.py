@@ -143,6 +143,25 @@ def test_exclude_substring_is_respected():
     assert any("to_k" in p for p in swapped)  # to_k still swapped
 
 
+def test_swap_sees_through_the_peft_wrapper_prefix():
+    # get_peft_model wraps the policy as ``base_model.model``; the exclude list
+    # must read the structural path, or ``base_model`` matches ``_mod`` and the
+    # rollout quantization silently swaps nothing on every LoRA family.
+    class _Wrapped(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.base_model = nn.Module()
+            self.base_model.model = _DiT(dim=1024, heads=8, depth=1)
+
+    wrapped = _Wrapped()
+    swapped = Fp8Linear.swap_linears(wrapped, min_features=1024)
+
+    assert swapped, "no linear quantized under the PEFT wrapper prefix"
+    assert all(path.startswith("base_model.model.blocks.0.") for path in swapped)
+    assert isinstance(wrapped.base_model.model.blocks[0].attn.to_q, Fp8Linear)
+    assert not isinstance(wrapped.base_model.model.proj_out, Fp8Linear)
+
+
 def test_swap_excludes_qwen_modulation_and_text_input():
     # qwen-image names AdaLN modulation `img_mod`/`txt_mod` and the text-
     # conditioning input `txt_in`; none contain "norm", so without explicit
