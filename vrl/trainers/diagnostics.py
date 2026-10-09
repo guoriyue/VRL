@@ -30,6 +30,7 @@ def trainable_state_digest(module: Any) -> dict[str, Any]:
     """
 
     import torch
+    from torch.distributed.tensor import DTensor
 
     tensors = [
         (name, parameter)
@@ -51,8 +52,20 @@ def trainable_state_digest(module: Any) -> dict[str, Any]:
         if not isinstance(tensor, torch.Tensor):
             continue
         detached = tensor.detach()
-        local, is_dtensor = _local_diagnostic_tensor(detached)
-        has_local_dtensors = has_local_dtensors or is_dtensor
+        local = detached
+        if isinstance(detached, DTensor):
+            if any(placement.is_partial() for placement in detached.placements):
+                raise ValueError(
+                    "trainable_state_digest cannot summarize a DTensor with a Partial "
+                    "placement; a rank-local partial contribution is not a stable "
+                    "parameter value",
+                )
+            # no_grad makes to_local return the already-owned shard directly
+            # instead of installing an autograd conversion node. No
+            # communication is performed.
+            with torch.no_grad():
+                local = detached.to_local().detach()
+            has_local_dtensors = True
         dtype = str(local.dtype)
         device = str(local.device)
         dtype_counts[dtype] = dtype_counts.get(dtype, 0) + 1
@@ -83,27 +96,6 @@ def trainable_state_digest(module: Any) -> dict[str, Any]:
         "devices": device_counts,
         "scope": "rank_local_dtensor_values" if has_local_dtensors else "full_tensors",
     }
-
-
-def _local_diagnostic_tensor(tensor: Any) -> tuple[Any, bool]:
-    """Return a plain local tensor without materializing a DTensor globally."""
-
-    from torch.distributed.tensor import DTensor
-
-    if not isinstance(tensor, DTensor):
-        return tensor, False
-    if any(placement.is_partial() for placement in tensor.placements):
-        raise ValueError(
-            "trainable_state_digest cannot summarize a DTensor with a Partial "
-            "placement; a rank-local partial contribution is not a stable "
-            "parameter value",
-        )
-    # no_grad makes to_local return the already-owned shard directly instead of
-    # installing an autograd conversion node. No communication is performed.
-    import torch
-
-    with torch.no_grad():
-        return tensor.to_local().detach(), True
 
 
 def parameter_state_summary(module: Any) -> dict[str, Any]:

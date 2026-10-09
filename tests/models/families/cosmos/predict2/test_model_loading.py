@@ -245,9 +245,24 @@ def test_cosmos_load_preserves_caller_grad_mode(monkeypatch, family, grad_enable
     )
     skip_encoder = family == "predict2_5_without_encoder"
     if skip_encoder:
+        # The text-encoder-free path loads the parts and assembles the pipeline
+        # itself; the first part's loader is where grad mode changes / fails.
+        for component in (
+            "CosmosTransformer3DModel",
+            "AutoencoderKLWan",
+            "UniPCMultistepScheduler",
+        ):
+            monkeypatch.setattr(
+                diffusers,
+                component,
+                types.SimpleNamespace(from_pretrained=load),
+                raising=False,
+            )
         monkeypatch.setattr(
-            "vrl.models.families.cosmos.predict2_5.model._load_pipeline_without_text_encoder",
-            load,
+            diffusers,
+            pipeline_name,
+            lambda **components: _FakePipeline(),
+            raising=False,
         )
     build = ModelBuild(
         model_config={"skip_text_encoder": skip_encoder},

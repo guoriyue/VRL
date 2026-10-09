@@ -283,7 +283,7 @@ def capture_torch_trace(
     root = Path(config.output_dir)
     trace_dir = root / trace_subdir if trace_subdir else root
     trace_dir.mkdir(parents=True, exist_ok=True)
-    safe_worker_name = _safe_worker_name(worker_name, step)
+    safe_worker_name = f"{_safe_label(socket.gethostname())}_{_safe_label(worker_name)}_step{step}"
     logger.info(
         "Starting torch profiler for step=%d (activities=%s); traces -> %s",
         step,
@@ -312,7 +312,30 @@ def capture_torch_trace(
     finally:
         summary_path = trace_dir / f"{safe_worker_name}.summary.txt"
         if prof is not None:
-            _write_summary(prof, summary_path, selection.effective)
+            sections = [
+                "PyTorch profiler summary",
+                "",
+                "NOTE: nested ranges (torch record_function / NVTX) are attribution aids,",
+                "not additive wall-time percentages. A kernel inside two nested ranges is",
+                "counted under both; do not sum nested-range percentages to a wall fraction.",
+                "",
+                "Top CPU ops",
+                _table(prof, sort_by="cpu_time_total"),
+            ]
+            if "cuda" in selection.effective:
+                sections.extend(
+                    ["", "Top CUDA ops", _table(prof, sort_by="cuda_time_total")],
+                )
+            summary_path.write_text("\n".join(sections), encoding="utf-8")
+        # The TensorBoard handler names trace files
+        # ``{worker_name}.{ts}.pt.trace.json[.gz]``; an empty list means the
+        # trace did not materialise and downstream smoke/tests must fail rather
+        # than trust the summary alone.
+        trace_files = sorted(
+            path.name
+            for path in trace_dir.glob(f"{safe_worker_name}.*.pt.trace.json*")
+            if path.name.endswith((".pt.trace.json", ".pt.trace.json.gz")) and path.is_file()
+        )
         _write_manifest(
             trace_dir,
             config=config,
@@ -320,17 +343,11 @@ def capture_torch_trace(
             step=step,
             worker_name=safe_worker_name,
             trace_subdir=trace_subdir,
-            trace_files=_discover_trace_files(trace_dir, safe_worker_name),
+            trace_files=trace_files,
             summary_file=summary_path.name if prof is not None else None,
             device=device,
         )
     logger.info("Finished torch profiler for step=%d", step)
-
-
-def _safe_worker_name(worker_name: str, step: int) -> str:
-    host = _safe_label(socket.gethostname())
-    name = _safe_label(worker_name)
-    return f"{host}_{name}_step{step}"
 
 
 def _safe_label(value: str) -> str:
@@ -341,37 +358,6 @@ def _safe_label(value: str) -> str:
         else:
             safe.append("_")
     return "".join(safe).strip("_") or "unknown"
-
-
-def _discover_trace_files(trace_dir: Path, safe_worker_name: str) -> list[str]:
-    """Trace files the TensorBoard handler wrote for this worker.
-
-    The handler names files ``{worker_name}.{ts}.pt.trace.json[.gz]``; an empty
-    result means the trace did not materialise and downstream smoke/tests must
-    fail rather than trust the summary alone.
-    """
-
-    return sorted(
-        path.name
-        for path in trace_dir.glob(f"{safe_worker_name}.*.pt.trace.json*")
-        if path.name.endswith((".pt.trace.json", ".pt.trace.json.gz")) and path.is_file()
-    )
-
-
-def _write_summary(prof: Any, path: Path, effective: tuple[str, ...]) -> None:
-    sections = [
-        "PyTorch profiler summary",
-        "",
-        "NOTE: nested ranges (torch record_function / NVTX) are attribution aids,",
-        "not additive wall-time percentages. A kernel inside two nested ranges is",
-        "counted under both; do not sum nested-range percentages to a wall fraction.",
-        "",
-        "Top CPU ops",
-        _table(prof, sort_by="cpu_time_total"),
-    ]
-    if "cuda" in effective:
-        sections.extend(["", "Top CUDA ops", _table(prof, sort_by="cuda_time_total")])
-    path.write_text("\n".join(sections), encoding="utf-8")
 
 
 def _table(prof: Any, *, sort_by: str) -> str:

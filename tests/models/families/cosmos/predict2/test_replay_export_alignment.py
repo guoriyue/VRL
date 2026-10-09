@@ -15,8 +15,8 @@ tensor must leave the model sample-aligned.
 
 Wan-I2V is deliberately excluded — its ``condition`` comes from
 ``pipe.prepare_latents(..., batch_size, ...)`` already sample-batched and its
-``image_embeds`` are forced via ``_align_optional_batch`` (raises if it cannot
-align), so it never had predict2's leading-1 silent-drop risk; its roundtrip is
+``image_embeds`` are forced to the batch in ``prepare_sampling`` (raises if it
+cannot align), so it never had predict2's leading-1 silent-drop risk; its roundtrip is
 covered by ``wan_2_1/test_backbone_parity.py``.
 """
 

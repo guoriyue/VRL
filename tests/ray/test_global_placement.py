@@ -494,13 +494,13 @@ def test_probe_partial_actor_construction_cleans_created_handles(local_ray, monk
     """Probe fan-out is all-or-nothing: when actor 2 of 2 fails to construct,
     actor 1 must be killed rather than left holding a bundle."""
 
+    from ray.util.placement_group import placement_group
+
     from vrl.ray import placement as placement_module
 
     ray = local_ray
     owner = _two_gpu_owner()
-    pg = placement_module._create_raw_placement_group(
-        owner._bundle_requirements(), strategy="PACK"
-    )
+    pg = placement_group(owner._bundle_requirements(), strategy="PACK")
     real_strategy = placement_module.actor_scheduling_strategy
     real_kill = placement_module.kill_actors
     strategies = 0

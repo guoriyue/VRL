@@ -34,19 +34,16 @@ _ALIASES_BY_FAMILY: dict[str, tuple[str, ...]] = {
 }
 
 
-def _index_aliases() -> dict[str, str]:
-    indexed: dict[str, str] = {}
-    for family, aliases in _ALIASES_BY_FAMILY.items():
-        for alias in aliases:
-            if alias in indexed:
-                raise ValueError(
-                    f"duplicate model family alias {alias!r}: {indexed[alias]!r} and {family!r}",
-                )
-            indexed[alias] = family
-    return indexed
-
-
-_FAMILY_BY_ALIAS = _index_aliases()
+_FAMILY_BY_ALIAS: dict[str, str] = {}
+for _family, _aliases in _ALIASES_BY_FAMILY.items():
+    for _alias in _aliases:
+        if _alias in _FAMILY_BY_ALIAS:
+            raise ValueError(
+                f"duplicate model family alias {_alias!r}: "
+                f"{_FAMILY_BY_ALIAS[_alias]!r} and {_family!r}",
+            )
+        _FAMILY_BY_ALIAS[_alias] = _family
+del _family, _aliases, _alias
 
 
 def normalize_model_family(family: str) -> str:

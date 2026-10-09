@@ -102,7 +102,8 @@ class RayGenerationWorker:
             staged = self.core.execute_request_batches(
                 request,
                 engine_plan,
-                stage_batch_result=ray.put if primary else _discard_payload,
+                # Non-primary ranks keep nothing: the engine result is the primary's.
+                stage_batch_result=ray.put if primary else (lambda payload: None),
             )
         except StaleSlotDiscard as discard:
             return discard
@@ -126,13 +127,6 @@ class RayGenerationWorker:
             batch_keys=tuple(batch.batch_key for batch in engine_plan.sample_batches),
             batch_refs=tuple(staged),
         )
-
-
-def _discard_payload(payload: Any) -> None:
-    """Non-primary ranks keep nothing: the engine result is the primary's."""
-
-    del payload
-    return None
 
 
 __all__ = ["RayGenerationWorker"]

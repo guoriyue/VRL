@@ -535,9 +535,72 @@ def load_full_optimizer_state_dict(
     from vrl.trainers.optimizer import FP32MasterWeightOptimizer
 
     if isinstance(optimizer, FP32MasterWeightOptimizer):
-        optimizer.load_state_dict(
-            _distribute_fp32_master_optimizer_state(optimizer, state),
-        )
+        # ``FP32MasterWeightOptimizer.state_dict`` uses ordinary optimizer
+        # parameter ids plus an ordered master list. Checkpoint validation
+        # separately proves the source-parameter FQN order, so only tensor
+        # layout is owned here: full CPU moment/master tensors become DTensors
+        # with the same mesh/placements as the corresponding live FP32 master.
+        # Scalar step counters remain ordinary tensors on the master's local
+        # device.
+        from torch.distributed.tensor import DTensor, distribute_tensor
+
+        if "state" not in state or "param_groups" not in state:
+            raise ValueError("distributed FP32-master optimizer state is incomplete")
+
+        masters = tuple(optimizer.parameters())
+        current_groups = optimizer.state_dict().get("param_groups")
+        saved_groups = state.get("param_groups")
+        if not isinstance(current_groups, list) or not isinstance(saved_groups, list):
+            raise ValueError("distributed optimizer param_groups must be lists")
+        current_ids = [item for group in current_groups for item in group.get("params", [])]
+        saved_ids = [item for group in saved_groups for item in group.get("params", [])]
+        if len(current_ids) != len(masters) or len(saved_ids) != len(masters):
+            raise ValueError(
+                "distributed FP32-master checkpoint parameter count does not match runtime",
+            )
+        master_by_saved_id = dict(zip(saved_ids, masters, strict=True))
+
+        def distribute_like(value: Any, master: torch.Tensor) -> Any:
+            if isinstance(value, Mapping):
+                return {key: distribute_like(inner, master) for key, inner in value.items()}
+            if isinstance(value, list):
+                return [distribute_like(inner, master) for inner in value]
+            if isinstance(value, tuple):
+                return tuple(distribute_like(inner, master) for inner in value)
+            if not isinstance(value, torch.Tensor):
+                return value
+            if isinstance(master, DTensor) and tuple(value.shape) == tuple(master.shape):
+                full = value.to(device=master.device, dtype=value.dtype)
+                return distribute_tensor(
+                    full,
+                    device_mesh=master.device_mesh,
+                    placements=master.placements,
+                    src_data_rank=0,
+                )
+            return value.to(device=master.device)
+
+        saved_entries = state.get("state")
+        if not isinstance(saved_entries, Mapping):
+            raise ValueError("distributed optimizer state entries must be a mapping")
+        master_state = state.get("fp32_master_weights")
+        if not isinstance(master_state, Mapping):
+            raise ValueError("optimizer checkpoint is missing fp32_master_weights")
+        saved_masters = master_state.get("parameters")
+        if not isinstance(saved_masters, list) or len(saved_masters) != len(masters):
+            raise ValueError("distributed FP32-master checkpoint master list is invalid")
+        local = dict(state)
+        local["state"] = {
+            saved_id: distribute_like(entry, master_by_saved_id[saved_id])
+            for saved_id, entry in saved_entries.items()
+        }
+        local["fp32_master_weights"] = {
+            **master_state,
+            "parameters": [
+                None if value is None else distribute_like(value, master)
+                for value, master in zip(saved_masters, masters, strict=True)
+            ],
+        }
+        optimizer.load_state_dict(local)
         return
 
     from torch.distributed.checkpoint.state_dict import (
@@ -552,86 +615,6 @@ def load_full_optimizer_state_dict(
         state,
         options=StateDictOptions(full_state_dict=True, broadcast_from_rank0=True),
     )
-
-
-def _distribute_fp32_master_optimizer_state(
-    optimizer: Any,
-    state: Mapping[str, Any],
-) -> dict[str, Any]:
-    """Restore full positional optimizer tensors onto the masters' DTensor shards.
-
-    ``FP32MasterWeightOptimizer.state_dict`` uses ordinary optimizer parameter
-    ids plus an ordered master list. Checkpoint validation separately proves the
-    source-parameter FQN order, so this function only owns tensor layout: full
-    CPU moment/master tensors become DTensors with the same mesh/placements as
-    the corresponding live FP32 master. Scalar step counters remain ordinary
-    tensors on the master's local device.
-    """
-
-    from torch.distributed.tensor import DTensor, distribute_tensor
-
-    if not isinstance(state, Mapping):
-        raise TypeError("distributed FP32-master optimizer state must be a mapping")
-    if "state" not in state or "param_groups" not in state:
-        raise ValueError("distributed FP32-master optimizer state is incomplete")
-
-    masters = tuple(optimizer.parameters())
-    current = optimizer.state_dict()
-    current_groups = current.get("param_groups")
-    saved_groups = state.get("param_groups")
-    if not isinstance(current_groups, list) or not isinstance(saved_groups, list):
-        raise ValueError("distributed optimizer param_groups must be lists")
-    current_ids = [item for group in current_groups for item in group.get("params", [])]
-    saved_ids = [item for group in saved_groups for item in group.get("params", [])]
-    if len(current_ids) != len(masters) or len(saved_ids) != len(masters):
-        raise ValueError(
-            "distributed FP32-master checkpoint parameter count does not match runtime",
-        )
-    master_by_saved_id = dict(zip(saved_ids, masters, strict=True))
-
-    def distribute_like(value: Any, master: torch.Tensor) -> Any:
-        if isinstance(value, Mapping):
-            return {key: distribute_like(inner, master) for key, inner in value.items()}
-        if isinstance(value, list):
-            return [distribute_like(inner, master) for inner in value]
-        if isinstance(value, tuple):
-            return tuple(distribute_like(inner, master) for inner in value)
-        if not isinstance(value, torch.Tensor):
-            return value
-        if isinstance(master, DTensor) and tuple(value.shape) == tuple(master.shape):
-            full = value.to(device=master.device, dtype=value.dtype)
-            return distribute_tensor(
-                full,
-                device_mesh=master.device_mesh,
-                placements=master.placements,
-                src_data_rank=0,
-            )
-        return value.to(device=master.device)
-
-    saved_entries = state.get("state")
-    if not isinstance(saved_entries, Mapping):
-        raise ValueError("distributed optimizer state entries must be a mapping")
-    local_entries = {
-        saved_id: distribute_like(entry, master_by_saved_id[saved_id])
-        for saved_id, entry in saved_entries.items()
-    }
-
-    master_state = state.get("fp32_master_weights")
-    if not isinstance(master_state, Mapping):
-        raise ValueError("optimizer checkpoint is missing fp32_master_weights")
-    saved_masters = master_state.get("parameters")
-    if not isinstance(saved_masters, list) or len(saved_masters) != len(masters):
-        raise ValueError("distributed FP32-master checkpoint master list is invalid")
-    local_master_state = dict(master_state)
-    local_master_state["parameters"] = [
-        None if value is None else distribute_like(value, master)
-        for value, master in zip(saved_masters, masters, strict=True)
-    ]
-
-    local = dict(state)
-    local["state"] = local_entries
-    local["fp32_master_weights"] = local_master_state
-    return local
 
 
 def normalize_fsdp_parameter_dtype(

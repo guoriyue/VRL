@@ -48,6 +48,23 @@ def pack_batched_cfg(
         cond.encoder_hidden_states,
         uncond.encoder_hidden_states,
     )
+    if cond.extra_kwargs.keys() != uncond.extra_kwargs.keys():
+        raise ValueError(
+            "cond/uncond extra kwargs must have identical keys for batched CFG: "
+            f"cond={sorted(cond.extra_kwargs)}, uncond={sorted(uncond.extra_kwargs)}",
+        )
+    packed: dict[str, Any] = {}
+    for key, cond_value in cond.extra_kwargs.items():
+        uncond_value = uncond.extra_kwargs[key]
+        if isinstance(cond_value, torch.Tensor) and isinstance(uncond_value, torch.Tensor):
+            _validate_pair(key, cond_value, uncond_value)
+            packed[key] = torch.cat([uncond_value, cond_value], dim=0)
+        elif cond_value is uncond_value or cond_value == uncond_value:
+            packed[key] = cond_value
+        else:
+            raise ValueError(
+                f"extra kwarg {key!r} cannot be batched because branch values differ",
+            )
     return DenoiseBranch(
         hidden_states=torch.cat([uncond.hidden_states, cond.hidden_states], dim=0),
         timestep=torch.cat([uncond.timestep, cond.timestep], dim=0),
@@ -55,7 +72,7 @@ def pack_batched_cfg(
             [uncond.encoder_hidden_states, cond.encoder_hidden_states],
             dim=0,
         ),
-        extra_kwargs=_pack_extra_kwargs(cond.extra_kwargs, uncond.extra_kwargs),
+        extra_kwargs=packed,
     )
 
 
@@ -111,28 +128,3 @@ def _validate_pair(name: str, cond: torch.Tensor, uncond: torch.Tensor) -> None:
             f"{name} branch shapes must match including batch dim: "
             f"cond={tuple(cond.shape)}, uncond={tuple(uncond.shape)}",
         )
-
-
-def _pack_extra_kwargs(
-    cond: dict[str, Any],
-    uncond: dict[str, Any],
-) -> dict[str, Any]:
-    if cond.keys() != uncond.keys():
-        raise ValueError(
-            "cond/uncond extra kwargs must have identical keys for batched CFG: "
-            f"cond={sorted(cond)}, uncond={sorted(uncond)}",
-        )
-    packed: dict[str, Any] = {}
-    for key in cond:
-        cond_value = cond[key]
-        uncond_value = uncond[key]
-        if isinstance(cond_value, torch.Tensor) and isinstance(uncond_value, torch.Tensor):
-            _validate_pair(key, cond_value, uncond_value)
-            packed[key] = torch.cat([uncond_value, cond_value], dim=0)
-        elif cond_value is uncond_value or cond_value == uncond_value:
-            packed[key] = cond_value
-        else:
-            raise ValueError(
-                f"extra kwarg {key!r} cannot be batched because branch values differ",
-            )
-    return packed

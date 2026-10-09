@@ -134,24 +134,6 @@ def _field_metadata(field: Any, *, schema_name: str, field_name: str) -> dict[st
     return result
 
 
-def _hash_regular_file(digest: Any, path: Path, relative: str) -> int:
-    total_bytes = 0
-    try:
-        with path.open("rb") as handle:
-            digest.update(b"file\0")
-            digest.update(relative.encode("utf-8"))
-            digest.update(b"\0")
-            digest.update(str(os.fstat(handle.fileno()).st_size).encode("ascii"))
-            digest.update(b"\0")
-            while payload := handle.read(1024 * 1024):
-                digest.update(payload)
-                total_bytes += len(payload)
-            digest.update(b"\0")
-    except OSError as exc:
-        raise RuntimeError(f"cannot read local checkpoint source file {path}: {exc}") from exc
-    return total_bytes
-
-
 def _hash_local_node(
     digest: Any,
     path: Path,
@@ -165,7 +147,22 @@ def _hash_local_node(
 
     mode = target.st_mode
     if stat.S_ISREG(mode):
-        total_bytes = _hash_regular_file(digest, path, relative)
+        total_bytes = 0
+        try:
+            with path.open("rb") as handle:
+                digest.update(b"file\0")
+                digest.update(relative.encode("utf-8"))
+                digest.update(b"\0")
+                digest.update(str(os.fstat(handle.fileno()).st_size).encode("ascii"))
+                digest.update(b"\0")
+                while payload := handle.read(1024 * 1024):
+                    digest.update(payload)
+                    total_bytes += len(payload)
+                digest.update(b"\0")
+        except OSError as exc:
+            raise RuntimeError(
+                f"cannot read local checkpoint source file {path}: {exc}",
+            ) from exc
         total_files = 1
     elif stat.S_ISDIR(mode):
         identity = (target.st_dev, target.st_ino)
@@ -310,44 +307,6 @@ def require_remote_checkpoint_source_pin(
     return text, revision_text
 
 
-def _resolve_source(
-    reference: Any,
-    revision: Any,
-    *,
-    field_name: str,
-    content_cache: dict[Path, LocalCheckpointContent],
-) -> tuple[dict[str, Any], bool]:
-    # One local-vs-remote classification: a pinned Hugging Face source, or
-    # None for an existing local path.
-    remote = require_remote_checkpoint_source_pin(reference, revision, field_name=field_name)
-    if remote is not None:
-        repo_id, revision_text = remote
-        return {
-            "kind": "huggingface",
-            "repo_id": repo_id,
-            "revision": revision_text,
-        }, False
-
-    text = str(reference).strip()
-    candidate = Path(text).expanduser()
-    try:
-        canonical = candidate.resolve(strict=True)
-    except OSError as exc:
-        raise RuntimeError(
-            f"cannot resolve local checkpoint source {field_name}={text!r}: {exc}",
-        ) from exc
-    content = content_cache.get(canonical)
-    if content is None:
-        content = LocalCheckpointContent.from_path(candidate)
-        content_cache[canonical] = content
-    return {
-        "kind": f"local-{content.kind}",
-        "sha256": content.sha256,
-        "bytes": content.bytes,
-        "files": content.files,
-    }, content.kind == "file"
-
-
 def _value_for(
     field_name: str,
     field: Any,
@@ -414,14 +373,41 @@ def resolve_checkpoint_model_identity(build: ModelBuild) -> dict[str, Any]:
             continue
         revision_field = metadata.get("revision_field")
         revision = values.get(revision_field) if revision_field is not None else None
-        source, is_file = _resolve_source(
+        # One local-vs-remote classification: a pinned Hugging Face source, or
+        # None for an existing local path.
+        remote = require_remote_checkpoint_source_pin(
             value,
             revision,
             field_name=f"model.{field_name}",
-            content_cache=content_cache,
         )
-        sources[source_name] = source
-        source_is_file[source_name] = is_file
+        if remote is not None:
+            repo_id, revision_text = remote
+            sources[source_name] = {
+                "kind": "huggingface",
+                "repo_id": repo_id,
+                "revision": revision_text,
+            }
+            source_is_file[source_name] = False
+            continue
+        text = str(value).strip()
+        candidate = Path(text).expanduser()
+        try:
+            canonical = candidate.resolve(strict=True)
+        except OSError as exc:
+            raise RuntimeError(
+                f"cannot resolve local checkpoint source model.{field_name}={text!r}: {exc}",
+            ) from exc
+        content = content_cache.get(canonical)
+        if content is None:
+            content = LocalCheckpointContent.from_path(candidate)
+            content_cache[canonical] = content
+        sources[source_name] = {
+            "kind": f"local-{content.kind}",
+            "sha256": content.sha256,
+            "bytes": content.bytes,
+            "files": content.files,
+        }
+        source_is_file[source_name] = content.kind == "file"
 
     build_values: dict[str, Any] = {}
     for source_name, members in active_members.items():

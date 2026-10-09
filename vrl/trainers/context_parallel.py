@@ -71,26 +71,6 @@ def enable_context_parallel(
     )
 
 
-def _common_attention_dtype(query: Any, key: Any, value: Any) -> Any | None:
-    """The dtype the three projections should share, or None when they already do.
-
-    Under an outer autocast the norms that feed q/k run in fp32 while the v
-    projection stays in the autocast dtype; the autocast dtype is the intended
-    compute dtype. Without autocast, the lowest-precision operand wins, which
-    is what the fused kernels would have done.
-    """
-
-    import torch
-
-    dtypes = {query.dtype, key.dtype, value.dtype}
-    if len(dtypes) == 1:
-        return None
-    device_type = query.device.type
-    if torch.is_autocast_enabled(device_type):
-        return torch.get_autocast_dtype(device_type)
-    return min(dtypes, key=lambda dtype: torch.finfo(dtype).bits)
-
-
 def autocast_safe_attention_forward_op(original: Any) -> Any:
     """Wrap a diffusers attention forward op so its saved q/k/v share one dtype.
 
@@ -102,14 +82,26 @@ def autocast_safe_attention_forward_op(original: Any) -> Any:
     keeps forward numerics identical and makes the backward see what the
     forward saw. Gradients flow back in the cast dtype; autograd restores each
     input's own dtype.
+
+    Under an outer autocast the norms that feed q/k run in fp32 while the v
+    projection stays in the autocast dtype; the autocast dtype is the intended
+    compute dtype. Without autocast, the lowest-precision operand wins, which
+    is what the fused kernels would have done.
     """
 
     import functools
 
+    import torch
+
     @functools.wraps(original)
     def wrapped(ctx: Any, query: Any, key: Any, value: Any, *args: Any, **kwargs: Any) -> Any:
-        target = _common_attention_dtype(query, key, value)
-        if target is not None:
+        dtypes = {query.dtype, key.dtype, value.dtype}
+        if len(dtypes) > 1:
+            device_type = query.device.type
+            if torch.is_autocast_enabled(device_type):
+                target = torch.get_autocast_dtype(device_type)
+            else:
+                target = min(dtypes, key=lambda dtype: torch.finfo(dtype).bits)
             query, key, value = (x.to(target) for x in (query, key, value))
         return original(ctx, query, key, value, *args, **kwargs)
 

@@ -973,38 +973,34 @@ def _resolve_configured_path(value: str) -> Path:
     return repo_relative if repo_relative.exists() else path
 
 
-def _git_revision(path: Path) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(path), "rev-parse", "HEAD"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    revision = result.stdout.strip()
-    if result.returncode or len(revision) != 40:
-        raise ValueError(
-            f"cannot verify immutable CausVid source revision at {path}: "
-            f"{result.stderr.strip() or 'not a Git checkout'}",
-        )
-    status = subprocess.run(
-        ["git", "-C", str(path), "status", "--porcelain", "--untracked-files=no"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if status.returncode or status.stdout.strip():
-        detail = status.stdout.strip() or status.stderr.strip()
-        raise ValueError(
-            f"CausVid source checkout at {path} has tracked modifications: {detail}",
-        )
-    return revision
-
-
 def _verified_source_revision(path: Path) -> str:
     """Verify a checkout locally or its exact executable subset in a Ray archive."""
 
     if (path / ".git").exists():
-        return _git_revision(path)
+        result = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        revision = result.stdout.strip()
+        if result.returncode or len(revision) != 40:
+            raise ValueError(
+                f"cannot verify immutable CausVid source revision at {path}: "
+                f"{result.stderr.strip() or 'not a Git checkout'}",
+            )
+        status = subprocess.run(
+            ["git", "-C", str(path), "status", "--porcelain", "--untracked-files=no"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if status.returncode or status.stdout.strip():
+            detail = status.stdout.strip() or status.stderr.strip()
+            raise ValueError(
+                f"CausVid source checkout at {path} has tracked modifications: {detail}",
+            )
+        return revision
 
     actual_digest = runtime_source_tree_sha256(
         path,

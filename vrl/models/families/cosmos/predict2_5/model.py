@@ -97,43 +97,6 @@ class CosmosPredict25DenoiseBackboneRunner(DenoiseBackboneRunnerBase):
         return hidden_states, timestep, gt_velocity
 
 
-def _load_pipeline_without_text_encoder(
-    pipeline_cls: Any,
-    build: ModelBuild,
-    *,
-    revision: str | None,
-) -> Any:
-    from diffusers import AutoencoderKLWan, CosmosTransformer3DModel, UniPCMultistepScheduler
-
-    load_kwargs: dict[str, Any] = {"revision": revision} if revision else {}
-
-    transformer = CosmosTransformer3DModel.from_pretrained(
-        build.model_name_or_path,
-        subfolder="transformer",
-        torch_dtype=build.parameter_dtype,
-        **load_kwargs,
-    )
-    vae = AutoencoderKLWan.from_pretrained(
-        build.model_name_or_path,
-        subfolder="vae",
-        torch_dtype=torch.float32,
-        **load_kwargs,
-    )
-    scheduler = UniPCMultistepScheduler.from_pretrained(
-        build.model_name_or_path,
-        subfolder="scheduler",
-        **load_kwargs,
-    )
-    return pipeline_cls(
-        text_encoder=None,
-        tokenizer=None,
-        transformer=transformer,
-        vae=vae,
-        scheduler=scheduler,
-        safety_checker=NoOpCosmosSafetyChecker(),
-    )
-
-
 @dataclass
 class CosmosPredict25SamplingState(GuidedDenoiseSamplingStateBase):
     prompt_embeds: torch.Tensor
@@ -172,10 +135,37 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         skip_text_encoder = bool((build.model_config or {}).get("skip_text_encoder", False))
         with torch.set_grad_enabled(torch.is_grad_enabled()):
             if skip_text_encoder:
-                pipeline = _load_pipeline_without_text_encoder(
-                    Cosmos2_5_PredictBasePipeline,
-                    build,
-                    revision=revision,
+                from diffusers import (
+                    AutoencoderKLWan,
+                    CosmosTransformer3DModel,
+                    UniPCMultistepScheduler,
+                )
+
+                load_kwargs: dict[str, Any] = {"revision": revision} if revision else {}
+                transformer = CosmosTransformer3DModel.from_pretrained(
+                    build.model_name_or_path,
+                    subfolder="transformer",
+                    torch_dtype=build.parameter_dtype,
+                    **load_kwargs,
+                )
+                vae = AutoencoderKLWan.from_pretrained(
+                    build.model_name_or_path,
+                    subfolder="vae",
+                    torch_dtype=torch.float32,
+                    **load_kwargs,
+                )
+                scheduler = UniPCMultistepScheduler.from_pretrained(
+                    build.model_name_or_path,
+                    subfolder="scheduler",
+                    **load_kwargs,
+                )
+                pipeline = Cosmos2_5_PredictBasePipeline(
+                    text_encoder=None,
+                    tokenizer=None,
+                    transformer=transformer,
+                    vae=vae,
+                    scheduler=scheduler,
+                    safety_checker=NoOpCosmosSafetyChecker(),
                 )
             else:
                 with no_safety_checker(_predict_mod):

@@ -81,7 +81,12 @@ def build_diffusion_trajectory(
     for name, value in replay_tensors.items():
         if name in tensors:
             continue
-        if not _sample_aligned(value, batch_size):
+        shape = getattr(value, "shape", None)
+        if shape is not None:
+            sample_aligned = len(shape) >= 1 and int(shape[0]) == batch_size
+        else:
+            sample_aligned = isinstance(value, (list, tuple)) and len(value) == batch_size
+        if not sample_aligned:
             dropped.append(name)
             continue
         tensors[name] = TrajectoryTensor(name, value, ("sample",), "replay_input")
@@ -159,7 +164,22 @@ def build_chunk_autoregressive_denoise_trajectory(
     """
 
     batch_size = len(sample_rows)
-    chunk_count, transition_count = _chunk_denoise_shape(old_log_prob, batch_size)
+    shape = getattr(old_log_prob, "shape", None)
+    if shape is None or len(shape) < 3:
+        raise ValueError(
+            "old_log_prob must have leading [sample, temporal_chunk, "
+            "denoise_transition] dimensions",
+        )
+    if int(shape[0]) != batch_size:
+        raise ValueError(
+            f"old_log_prob has {shape[0]} rows, expected {batch_size}",
+        )
+    chunk_count = int(shape[1])
+    transition_count = int(shape[2])
+    if chunk_count < 1 or transition_count < 1:
+        raise ValueError(
+            "old_log_prob temporal_chunk and denoise_transition dimensions must be >= 1",
+        )
     for name, value in (
         ("observations", observations),
         ("actions", actions),
@@ -292,7 +312,13 @@ def build_chunk_autoregressive_generation_trajectory(
     batch_size = len(sample_rows)
     if temporal_chunk_count < 1:
         raise ValueError("temporal_chunk_count must be >= 1")
-    output_rows = _leading_length(output)
+    shape = getattr(output, "shape", None)
+    if shape is not None and len(shape) > 0:
+        output_rows = int(shape[0])
+    elif isinstance(output, (list, tuple)):
+        output_rows = len(output)
+    else:
+        output_rows = None
     if output_rows is not None and output_rows != batch_size:
         raise ValueError(
             f"output has {output_rows} rows, expected {batch_size}",
@@ -326,42 +352,6 @@ def build_chunk_autoregressive_generation_trajectory(
         context=_serializable_context(context),
     )
     return TrajectoryValidator(trajectory).validate_batch()
-
-
-def _chunk_denoise_shape(value: Any, batch_size: int) -> tuple[int, int]:
-    shape = getattr(value, "shape", None)
-    if shape is None or len(shape) < 3:
-        raise ValueError(
-            "old_log_prob must have leading [sample, temporal_chunk, "
-            "denoise_transition] dimensions",
-        )
-    if int(shape[0]) != batch_size:
-        raise ValueError(
-            f"old_log_prob has {shape[0]} rows, expected {batch_size}",
-        )
-    chunk_count = int(shape[1])
-    transition_count = int(shape[2])
-    if chunk_count < 1 or transition_count < 1:
-        raise ValueError(
-            "old_log_prob temporal_chunk and denoise_transition dimensions must be >= 1",
-        )
-    return chunk_count, transition_count
-
-
-def _leading_length(value: Any) -> int | None:
-    shape = getattr(value, "shape", None)
-    if shape is not None and len(shape) > 0:
-        return int(shape[0])
-    if isinstance(value, (list, tuple)):
-        return len(value)
-    return None
-
-
-def _sample_aligned(value: Any, batch_size: int) -> bool:
-    shape = getattr(value, "shape", None)
-    if shape is not None:
-        return len(shape) >= 1 and int(shape[0]) == batch_size
-    return isinstance(value, (list, tuple)) and len(value) == batch_size
 
 
 def _serializable_context(value: dict[str, Any]) -> dict[str, Any]:

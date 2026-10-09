@@ -66,31 +66,6 @@ def list_bundled_configs(prefix: str = "") -> tuple[str, ...]:
     return tuple(names)
 
 
-def _apply_default_override(entry: str | dict, default_overrides: dict[str, str]) -> str | dict:
-    """Swap a defaults entry's option when a ``/group=option`` override names its group."""
-
-    if isinstance(entry, dict):
-        if len(entry) != 1:
-            raise ValueError(f"defaults dict must have exactly one key: {entry}")
-        group = str(next(iter(entry.keys()))).strip().lstrip("/") or None
-    else:
-        text = str(entry).strip().lstrip("/")
-        if not text or text == _SELF_:
-            group = None
-        else:
-            if text.endswith((".yaml", ".yml")):
-                text = text.rsplit(".", 1)[0]
-            parts = text.split("/")
-            group = "/".join(parts[:-1]) if len(parts) >= 2 else None
-
-    if group is None or group not in default_overrides:
-        return entry
-    option = default_overrides[group].strip().lstrip("/")
-    if not option:
-        raise ValueError(f"defaults override for {group!r} cannot be empty")
-    return f"{group}/{option}"
-
-
 def _load_one(
     path: ConfigSource,
     root: ConfigSource,
@@ -130,7 +105,23 @@ def _load_one(
                 merged = OmegaConf.merge(merged, raw)
                 self_seen = True
                 continue
-            entry_val = _apply_default_override(entry_val, default_overrides)
+            # Swap the entry's option when a ``/group=option`` override names
+            # its group.
+            if isinstance(entry_val, dict):
+                if len(entry_val) != 1:
+                    raise ValueError(f"defaults dict must have exactly one key: {entry_val}")
+                group = str(next(iter(entry_val.keys()))).strip().lstrip("/") or None
+            else:
+                text = str(entry_val).strip().lstrip("/")
+                if text.endswith((".yaml", ".yml")):
+                    text = text.rsplit(".", 1)[0]
+                parts = text.split("/")
+                group = "/".join(parts[:-1]) if len(parts) >= 2 else None
+            if group is not None and group in default_overrides:
+                option = default_overrides[group].strip().lstrip("/")
+                if not option:
+                    raise ValueError(f"defaults override for {group!r} cannot be empty")
+                entry_val = f"{group}/{option}"
             if isinstance(entry_val, dict):
                 key, value = next(iter(entry_val.items()))
                 entry_val = f"{key}/{value}"

@@ -63,64 +63,6 @@ class _LoraAdapterTopology:
         )
 
 
-def _validate_supported_lora_semantics(config: Any, *, adapter_path: str) -> None:
-    from peft import LoraConfig
-
-    defaults = LoraConfig()
-    # This is a deliberate PEFT compatibility table, not a copy of LoraConfig:
-    # these fields change adapter/base-model semantics but have no wm-infra
-    # public configuration contract. Their dependency defaults are derived
-    # directly so a PEFT default change cannot leave stale values here.
-    unsupported_semantic_fields = (
-        "exclude_modules",
-        "fan_in_fan_out",
-        "bias",
-        "use_rslora",
-        "modules_to_save",
-        "layers_to_transform",
-        "layers_pattern",
-        "rank_pattern",
-        "alpha_pattern",
-        "megatron_config",
-        "megatron_core",
-        "trainable_token_indices",
-        "loftq_config",
-        "eva_config",
-        "corda_config",
-        "use_dora",
-        "alora_invocation_tokens",
-        "use_qalora",
-        "qalora_group_size",
-        "layer_replication",
-        "runtime_config",
-        "lora_bias",
-        "target_parameters",
-        "arrow_config",
-        "ensure_weight_tying",
-    )
-    changed = []
-    for field_name in unsupported_semantic_fields:
-        actual = getattr(config, field_name, _MISSING)
-        default = getattr(defaults, field_name, _MISSING)
-        # PEFT is declared with a lower-bound rather than one exact version.
-        # Fields absent from both installed config types carry no semantics to
-        # validate; future saved fields still fail while parsing above.
-        if actual is _MISSING and default is _MISSING:
-            continue
-        if actual != default:
-            changed.append(field_name)
-
-    init = config.init_lora_weights
-    if isinstance(init, str) and init.lower() not in {"gaussian", "orthogonal"}:
-        changed.append("init_lora_weights")
-
-    if changed:
-        raise ValueError(
-            f"LoRA adapter {adapter_path!r} uses unsupported semantic field(s): "
-            f"{', '.join(changed)}",
-        )
-
-
 def load_trainable_lora_adapter(
     base: Any,
     adapter_path: str,
@@ -181,7 +123,57 @@ def load_trainable_lora_adapter(
         raise ValueError(
             f"adapter {adapter_path!r} is {type(config).__name__}, not a PEFT LoRA adapter",
         )
-    _validate_supported_lora_semantics(config, adapter_path=adapter_path)
+    defaults = LoraConfig()
+    # This is a deliberate PEFT compatibility table, not a copy of LoraConfig:
+    # these fields change adapter/base-model semantics but have no wm-infra
+    # public configuration contract. Their dependency defaults are derived
+    # directly so a PEFT default change cannot leave stale values here.
+    unsupported_semantic_fields = (
+        "exclude_modules",
+        "fan_in_fan_out",
+        "bias",
+        "use_rslora",
+        "modules_to_save",
+        "layers_to_transform",
+        "layers_pattern",
+        "rank_pattern",
+        "alpha_pattern",
+        "megatron_config",
+        "megatron_core",
+        "trainable_token_indices",
+        "loftq_config",
+        "eva_config",
+        "corda_config",
+        "use_dora",
+        "alora_invocation_tokens",
+        "use_qalora",
+        "qalora_group_size",
+        "layer_replication",
+        "runtime_config",
+        "lora_bias",
+        "target_parameters",
+        "arrow_config",
+        "ensure_weight_tying",
+    )
+    changed = []
+    for field_name in unsupported_semantic_fields:
+        saved = getattr(config, field_name, _MISSING)
+        default = getattr(defaults, field_name, _MISSING)
+        # PEFT is declared with a lower-bound rather than one exact version.
+        # Fields absent from both installed config types carry no semantics to
+        # validate; future saved fields still fail while parsing above.
+        if saved is _MISSING and default is _MISSING:
+            continue
+        if saved != default:
+            changed.append(field_name)
+    init = config.init_lora_weights
+    if isinstance(init, str) and init.lower() not in {"gaussian", "orthogonal"}:
+        changed.append("init_lora_weights")
+    if changed:
+        raise ValueError(
+            f"LoRA adapter {adapter_path!r} uses unsupported semantic field(s): "
+            f"{', '.join(changed)}",
+        )
     actual = _LoraAdapterTopology.from_values(
         rank=config.r,
         alpha=config.lora_alpha,
@@ -269,7 +261,16 @@ def temporarily_disable_lora(module: Any) -> contextlib.AbstractContextManager[N
 
         @contextlib.contextmanager
         def _disabled() -> Iterator[None]:
-            disabled_before = _plural_adapter_disable_flags(host)
+            # Per-layer disable flags of the PEFT tuner layers, when exposed.
+            disabled_before: list[bool] = []
+            named_modules = getattr(host, "named_modules", None)
+            if callable(named_modules):
+                for _name, child in named_modules():
+                    disabled = getattr(child, "disable_adapters", None)
+                    if not isinstance(disabled, bool):
+                        disabled = getattr(child, "_disable_adapters", None)
+                    if isinstance(disabled, bool):
+                        disabled_before.append(disabled)
             restore_enabled = (
                 any(not disabled for disabled in disabled_before) if disabled_before else True
             )
@@ -293,24 +294,6 @@ def _has_plural_adapter_loaded(module: Any) -> bool:
         return False
     peft_config = getattr(module, "peft_config", None)
     return not (isinstance(peft_config, Mapping) and not peft_config)
-
-
-def _plural_adapter_disable_flags(module: Any) -> tuple[bool, ...]:
-    """Return per-layer disable flags for PEFT tuner layers when exposed."""
-
-    named_modules = getattr(module, "named_modules", None)
-    if not callable(named_modules):
-        return ()
-    flags: list[bool] = []
-    for _name, child in named_modules():
-        disabled = getattr(child, "disable_adapters", None)
-        if isinstance(disabled, bool):
-            flags.append(disabled)
-            continue
-        disabled = getattr(child, "_disable_adapters", None)
-        if isinstance(disabled, bool):
-            flags.append(disabled)
-    return tuple(flags)
 
 
 def has_lora_adapter(module: Any) -> bool:

@@ -20,22 +20,6 @@ from pydantic import ValidationError
 from vrl.config.base import _extract_error_message
 
 
-def _without_mandatory_values(cfg: DictConfig) -> tuple[Any, set[str]]:
-    """Replace every ``???`` leaf with ``None`` and return the affected paths."""
-
-    missing = set(OmegaConf.missing_keys(cfg))
-    plain = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False)
-
-    def strip(node: Any) -> Any:
-        if isinstance(node, dict):
-            return {key: (None if value == "???" else strip(value)) for key, value in node.items()}
-        if isinstance(node, list):
-            return [strip(value) for value in node]
-        return node
-
-    return strip(plain), missing
-
-
 def experiment_parse_error(cfg: DictConfig) -> str | None:
     """The parse error for one composed config, or ``None`` when it parses.
 
@@ -45,7 +29,17 @@ def experiment_parse_error(cfg: DictConfig) -> str | None:
 
     from vrl.config.schema import RootConfig
 
-    plain, missing = _without_mandatory_values(cfg)
+    # Replace every ``???`` leaf with ``None``; ``missing`` remembers their paths.
+    missing = set(OmegaConf.missing_keys(cfg))
+
+    def strip(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {key: (None if value == "???" else strip(value)) for key, value in node.items()}
+        if isinstance(node, list):
+            return [strip(value) for value in node]
+        return node
+
+    plain = strip(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False))
     try:
         RootConfig.model_validate(plain)
     except ValidationError as error:

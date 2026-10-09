@@ -19,7 +19,6 @@ from vrl.utils.profiling import (
     TimeIntervals,
     TorchProfilerConfig,
     _safe_label,
-    _safe_worker_name,
     capture_torch_trace,
     profile_range,
 )
@@ -111,11 +110,6 @@ def test_profile_range_nvtx_follows_env(monkeypatch: pytest.MonkeyPatch) -> None
 )
 def test_safe_label_stable(raw: str, expected: str) -> None:
     assert _safe_label(raw) == expected
-
-
-def test_safe_worker_name_includes_step() -> None:
-    name = _safe_worker_name("trainer", 3)
-    assert name.endswith("_trainer_step3")
 
 
 # ---------------------------------------------------------------------------
@@ -242,25 +236,45 @@ def test_capture_manifest_does_not_include_another_step_trace(tmp_path: Path) ->
     manifest_path = tmp_path / "torch_profiler" / "trainer" / "profile_manifest.json"
     manifest = json.loads(manifest_path.read_text())
     assert manifest["step"] == 1
+    assert manifest["worker_name"].endswith("_trainer_step1")
     assert manifest["trace_files"]
     assert all("_step1." in name for name in manifest["trace_files"])
 
 
-def test_trace_discovery_excludes_temporary_and_backup_files(tmp_path: Path) -> None:
-    from vrl.utils.profiling import _discover_trace_files
+def test_capture_manifest_excludes_temporary_and_backup_files(tmp_path: Path) -> None:
+    cfg = TorchProfilerConfig(
+        enabled=True, activities=("cpu",), max_steps=0, output_dir=str(tmp_path / "torch_profiler")
+    )
+    with capture_torch_trace(cfg, step=1, device="cpu", worker_name="worker"):
+        torch.ones(2).sum()
+    trace_dir = tmp_path / "torch_profiler" / "trainer"
+    manifest = json.loads((trace_dir / "profile_manifest.json").read_text())
+    [trace_file] = manifest["trace_files"]
+    worker_name = manifest["worker_name"]
+    assert trace_file.startswith(f"{worker_name}.")
+    assert trace_file.endswith(".pt.trace.json")
 
-    names = [
-        "worker.1.pt.trace.json",
-        "worker.2.pt.trace.json.gz",
-        "worker.3.pt.trace.json.tmp",
-        "worker.4.pt.trace.json.bak",
-        "worker.5.pt.trace.json.gz.tmp",
-        "another.1.pt.trace.json",
-    ]
-    for name in names:
-        (tmp_path / name).touch()
-    (tmp_path / "worker.6.pt.trace.json").mkdir()
-    assert _discover_trace_files(tmp_path, "worker") == names[:2]
+    # Leftovers beside the real trace: partial writes, backups, another
+    # worker's trace and a directory wearing the trace suffix.
+    for name in (
+        f"{worker_name}.3.pt.trace.json.tmp",
+        f"{worker_name}.4.pt.trace.json.bak",
+        f"{worker_name}.5.pt.trace.json.gz.tmp",
+        f"another_{worker_name}.1.pt.trace.json",
+    ):
+        (trace_dir / name).touch()
+    (trace_dir / f"{worker_name}.6.pt.trace.json").mkdir()
+    (trace_dir / f"{worker_name}.2.pt.trace.json.gz").touch()
+
+    with capture_torch_trace(cfg, step=1, device="cpu", worker_name="worker"):
+        torch.ones(2).sum()
+    manifest = json.loads((trace_dir / "profile_manifest.json").read_text())
+    assert trace_file in manifest["trace_files"]
+    assert f"{worker_name}.2.pt.trace.json.gz" in manifest["trace_files"]
+    assert len(manifest["trace_files"]) == 3
+    assert not any(name.endswith((".tmp", ".bak")) for name in manifest["trace_files"])
+    assert not any(name.startswith("another_") for name in manifest["trace_files"])
+    assert f"{worker_name}.6.pt.trace.json" not in manifest["trace_files"]
 
 
 @pytest.mark.parametrize(

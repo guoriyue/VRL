@@ -165,20 +165,6 @@ class _RolloutCPUConfig(Protocol):
     def cpus_per_worker(self) -> float: ...
 
 
-def _create_raw_placement_group(
-    bundles: Sequence[Mapping[str, float]],
-    *,
-    strategy: str,
-) -> Any:
-    """Lazy Ray adapter that returns an unready placement-group handle."""
-
-    if not bundles:
-        raise ValueError("Ray placement group requires at least one bundle")
-    from ray.util.placement_group import placement_group
-
-    return placement_group([dict(bundle) for bundle in bundles], strategy=str(strategy))
-
-
 def actor_scheduling_strategy(
     placement_group: Any,
     *,
@@ -243,11 +229,31 @@ def require_actor_gpu_ids(
     """
 
     if cross_node:
-        return _validate_cross_node_actor_gpu_ids(
-            metadata,
-            role=role,
-            driver_node_ip=driver_node_ip,
-        )
+        seen_pairs: set[tuple[str, int]] = set()
+        gpu_ids: list[int] = []
+        for meta in metadata:
+            worker_id = str(actor_meta_get(meta, "worker_id", "unknown"))
+            node_ip = str(actor_meta_get(meta, "node_ip", ""))
+            worker_gpu_ids = tuple(int(gpu_id) for gpu_id in actor_meta_get(meta, "gpu_ids", ()))
+            if not worker_gpu_ids:
+                raise RuntimeError(f"Ray {role} worker {worker_id} has no assigned GPU ids")
+            if driver_node_ip is not None and node_ip == str(driver_node_ip):
+                raise RuntimeError(
+                    f"Ray {role} worker {worker_id} landed on the driver node "
+                    f"{node_ip}; cross-node rollout must run off the trainer node. "
+                    "Start the head with `ray start --head --num-gpus=0` so the trainer "
+                    "GPU stays out of Ray's scheduling pool.",
+                )
+            for gpu_id in worker_gpu_ids:
+                pair = (node_ip, gpu_id)
+                if pair in seen_pairs:
+                    raise RuntimeError(
+                        f"Ray {role} workers share GPU {gpu_id} on node {node_ip}; "
+                        "each rollout worker must own a distinct physical GPU.",
+                    )
+                seen_pairs.add(pair)
+                gpu_ids.append(gpu_id)
+        return tuple(sorted(gpu_ids))
 
     expected = {int(gpu_id) for gpu_id in expected_gpu_ids}
     if not expected:
@@ -274,41 +280,6 @@ def require_actor_gpu_ids(
             f"actual={sorted(actual)} expected={sorted(expected)}",
         )
     return tuple(sorted(actual))
-
-
-def _validate_cross_node_actor_gpu_ids(
-    metadata: Sequence[_ActorPlacementInput],
-    *,
-    role: str,
-    driver_node_ip: str | None,
-) -> tuple[int, ...]:
-    """Node-aware GPU validation for cross-node rollout actors."""
-
-    seen_pairs: set[tuple[str, int]] = set()
-    gpu_ids: list[int] = []
-    for meta in metadata:
-        worker_id = str(actor_meta_get(meta, "worker_id", "unknown"))
-        node_ip = str(actor_meta_get(meta, "node_ip", ""))
-        worker_gpu_ids = tuple(int(gpu_id) for gpu_id in actor_meta_get(meta, "gpu_ids", ()))
-        if not worker_gpu_ids:
-            raise RuntimeError(f"Ray {role} worker {worker_id} has no assigned GPU ids")
-        if driver_node_ip is not None and node_ip == str(driver_node_ip):
-            raise RuntimeError(
-                f"Ray {role} worker {worker_id} landed on the driver node "
-                f"{node_ip}; cross-node rollout must run off the trainer node. "
-                "Start the head with `ray start --head --num-gpus=0` so the trainer "
-                "GPU stays out of Ray's scheduling pool.",
-            )
-        for gpu_id in worker_gpu_ids:
-            pair = (node_ip, gpu_id)
-            if pair in seen_pairs:
-                raise RuntimeError(
-                    f"Ray {role} workers share GPU {gpu_id} on node {node_ip}; "
-                    "each rollout worker must own a distinct physical GPU.",
-                )
-            seen_pairs.add(pair)
-            gpu_ids.append(gpu_id)
-    return tuple(sorted(gpu_ids))
 
 
 def actor_meta_get(meta: _ActorPlacementInput, key: str, default: Any) -> Any:
@@ -389,10 +360,13 @@ class GlobalRayPlacementOwner:
             return
 
         ray = require_ray()
+        from ray.util.placement_group import placement_group
+
         bundle_requirements = self._bundle_requirements()
-        # Cross-node spreads bundles across nodes; single-node packs them.
+        # Cross-node spreads bundles across nodes; single-node packs them. The
+        # handle is not ready yet.
         strategy = "SPREAD" if self.resources.cross_node else "PACK"
-        pg = _create_raw_placement_group(bundle_requirements, strategy=strategy)
+        pg = placement_group(bundle_requirements, strategy=strategy)
         # Claim the raw handle before waiting for readiness. A ready/probe/assign
         # failure whose removal also fails must leave this exact placement group
         # reachable by terminal shutdown.

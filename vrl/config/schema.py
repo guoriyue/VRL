@@ -400,60 +400,11 @@ def _model_section_class_for_family(family: Any) -> type[ModelSection]:
     return import_from_path(entry.model_section_cls)
 
 
-def _parse_model_section(value: Any) -> ModelSection | None:
-    if value is None:
-        return None
-    if isinstance(value, ModelSection):
-        family = value.family
-        section_cls = _model_section_class_for_family(family)
-        if isinstance(value, section_cls):
-            parsed = value
-            payload = None
-        else:
-            payload = value.model_dump(exclude_unset=True)
-    elif isinstance(value, Mapping):
-        payload = dict(value)
-        section_cls = _model_section_class_for_family(payload.get("family"))
-    else:
-        raise ValueError("model must be a mapping")
-
-    if payload is not None:
-        parsed = section_cls.revalidate(payload, section="model")
-
-    entry = get_model_family_entry(str(parsed.family))
-    entry.validate_model_executor(
-        executor_config=parsed.executor,
-    )
-    return parsed
-
-
 def sampling_section_class_for_family(family: Any) -> type[SamplingSection]:
     if family is None or not str(family).strip():
         raise ValueError("sampling requires model.family")
     entry = get_model_family_entry(str(family))
     return import_from_path(entry.sampling_section_cls)
-
-
-def _parse_sampling_section(
-    value: Any,
-    *,
-    model: ModelSection | None,
-) -> SamplingSection | None:
-    if value is None:
-        return None
-    section_cls = sampling_section_class_for_family(
-        None if model is None else model.family,
-    )
-    if isinstance(value, SamplingSection):
-        if isinstance(value, section_cls):
-            return value
-        payload = value.model_dump(exclude_unset=True)
-    elif isinstance(value, Mapping):
-        payload = dict(value)
-    else:
-        raise ValueError("sampling must be a mapping")
-
-    return section_cls.revalidate(payload, section="sampling")
 
 
 # ── actor / trainer sections ──────────────────────────────────────────────────
@@ -748,7 +699,7 @@ class RootConfig(ConfigBase):
     reward: RewardConfig | None = None
     rollout: RolloutConfig | None = None
     # Family-selected: the ``model.family`` picks the concrete section class
-    # (``_parse_model_section``); sampling follows the model's family.
+    # (``_select_model_section``); sampling follows the model's family.
     model: SerializeAsAny[ModelSection] | None = None
     sampling: SerializeAsAny[SamplingSection] | None = None
     # Evaluation-time overrides of the sections above (currently sampling).
@@ -762,7 +713,29 @@ class RootConfig(ConfigBase):
     @field_validator("model", mode="before")
     @classmethod
     def _select_model_section(cls, value: Any) -> ModelSection | None:
-        return _parse_model_section(value)
+        if value is None:
+            return None
+        if isinstance(value, ModelSection):
+            section_cls = _model_section_class_for_family(value.family)
+            if isinstance(value, section_cls):
+                parsed = value
+                payload = None
+            else:
+                payload = value.model_dump(exclude_unset=True)
+        elif isinstance(value, Mapping):
+            payload = dict(value)
+            section_cls = _model_section_class_for_family(payload.get("family"))
+        else:
+            raise ValueError("model must be a mapping")
+
+        if payload is not None:
+            parsed = section_cls.revalidate(payload, section="model")
+
+        entry = get_model_family_entry(str(parsed.family))
+        entry.validate_model_executor(
+            executor_config=parsed.executor,
+        )
+        return parsed
 
     @field_validator("sampling", mode="before")
     @classmethod
@@ -771,11 +744,22 @@ class RootConfig(ConfigBase):
         value: Any,
         info: ValidationInfo,
     ) -> SamplingSection | None:
+        if value is None:
+            return None
         model = info.data.get("model")
-        return _parse_sampling_section(
-            value,
-            model=model if isinstance(model, ModelSection) else None,
+        section_cls = sampling_section_class_for_family(
+            model.family if isinstance(model, ModelSection) else None,
         )
+        if isinstance(value, SamplingSection):
+            if isinstance(value, section_cls):
+                return value
+            payload = value.model_dump(exclude_unset=True)
+        elif isinstance(value, Mapping):
+            payload = dict(value)
+        else:
+            raise ValueError("sampling must be a mapping")
+
+        return section_cls.revalidate(payload, section="sampling")
 
     @model_validator(mode="after")
     def _cross_section_rules(self) -> RootConfig:

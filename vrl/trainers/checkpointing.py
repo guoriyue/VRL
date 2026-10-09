@@ -490,10 +490,17 @@ class TrainingCheckpoint:
             else export_checkpoint_state(bundle)
         )
         if strategy is None or strategy.context.is_primary:
-            expected_owned_state = _select_owned_checkpoint_state(
-                bundle,
-                resolved_state.state,
-            )
+            # Project the validated full/selective state onto the runtime-owned
+            # key space.
+            expected_owned_state: dict[str, dict[str, Any]] = {}
+            for root_name, wrapped in require_trainable_modules(bundle).items():
+                saved = resolved_state.state.get(root_name)
+                if saved is None:
+                    continue
+                owned_names = checkpoint_owned_state_names(unwrap_compile_and_ddp(wrapped))
+                expected_owned_state[root_name] = {
+                    name: saved[name] for name in sorted(owned_names) if name in saved
+                }
             _require_equal_tensor_tree(
                 expected_owned_state,
                 restored_checkpoint_state,
@@ -540,11 +547,25 @@ class TrainingCheckpoint:
             raw_saved = saved_roots[root_name]
             if not isinstance(raw_saved, dict):
                 raise TypeError(f"checkpoint module {root_name!r} state must be a dict")
-            saved = _normalize_v1_compile_prefix(
-                raw_saved,
-                root_name=root_name,
-                schema_version=self.schema_version,
-            )
+            # Migrate the one wrapper prefix emitted by schema-v1 compiled exports.
+            saved = raw_saved
+            if self.schema_version == _LEGACY_CHECKPOINT_SCHEMA_VERSION and raw_saved:
+                prefix = "_orig_mod."
+                prefixed = [str(name).startswith(prefix) for name in raw_saved]
+                if any(prefixed):
+                    if not all(prefixed):
+                        raise ValueError(
+                            f"schema-v1 checkpoint module {root_name!r} mixes compiled and "
+                            "uncompiled state keys",
+                        )
+                    saved = {
+                        str(name).removeprefix(prefix): value for name, value in raw_saved.items()
+                    }
+                    if len(saved) != len(raw_saved):
+                        raise ValueError(
+                            f"schema-v1 checkpoint module {root_name!r} has colliding compiled "
+                            "state keys",
+                        )
             module = unwrap_compile_and_ddp(wrapped)
             runtime_state = module.state_dict()
             known_names = frozenset(runtime_state)
@@ -582,11 +603,28 @@ class TrainingCheckpoint:
                     for name in sorted(owned_names & saved_names)
                     if name in known_names
                 }
-            _validate_checkpoint_tensor_compatibility(
-                root_name=root_name,
-                saved_state=selected,
-                runtime_state=runtime_state,
-            )
+            # Reject tensor type/shape failures before any checkpoint root is
+            # mutated.
+            for name, saved_value in selected.items():
+                runtime_value = runtime_state[name]
+                if not isinstance(runtime_value, torch.Tensor):
+                    continue
+                field = f"{root_name}.{name}"
+                if not isinstance(saved_value, torch.Tensor):
+                    raise TypeError(
+                        f"checkpoint tensor {field!r} must be a tensor, "
+                        f"got {type(saved_value).__name__}",
+                    )
+                # DTensor.shape is the global logical shape; comparing its local
+                # shard would reject valid FSDP restores. Dtype is intentionally
+                # not checked because load_state_dict supports compatible casts.
+                checkpoint_shape = tuple(saved_value.shape)
+                runtime_shape = tuple(runtime_value.shape)
+                if checkpoint_shape != runtime_shape:
+                    raise ValueError(
+                        f"checkpoint tensor {field!r} shape mismatch: "
+                        f"checkpoint={checkpoint_shape}, runtime={runtime_shape}",
+                    )
             normalized[root_name] = selected
         return _CheckpointStateForRestore(
             state=normalized,
@@ -803,25 +841,6 @@ def _safe_relative_output_path(
     return PurePosixPath(*segments)
 
 
-def _checkpoint_trainable_parameters(bundle: Any) -> list[Any]:
-    """Return EMA parameters in the same order used by the trainer model."""
-
-    ordered = [parameter for parameter in bundle.model.parameters() if parameter.requires_grad]
-
-    root_parameter_ids = {
-        id(parameter)
-        for root in require_trainable_modules(bundle).values()
-        for parameter in unwrap_compile_and_ddp(root).parameters()
-        if parameter.requires_grad
-    }
-    ordered_ids = {id(parameter) for parameter in ordered}
-    if ordered_ids != root_parameter_ids:
-        raise ValueError(
-            "bundle.model trainable parameters disagree with bundle checkpoint roots",
-        )
-    return ordered
-
-
 class _CheckpointSaveTransaction:
     """Own staging files until a complete checkpoint is published."""
 
@@ -1000,7 +1019,20 @@ def save_training_checkpoint(
         trainable_parameters: list[Any] = []
         parameter_failure: BaseException | None = None
         try:
-            trainable_parameters = _checkpoint_trainable_parameters(bundle)
+            # The EMA parameters in the order the trainer model uses them.
+            trainable_parameters = [
+                parameter for parameter in bundle.model.parameters() if parameter.requires_grad
+            ]
+            root_parameter_ids = {
+                id(parameter)
+                for root in require_trainable_modules(bundle).values()
+                for parameter in unwrap_compile_and_ddp(root).parameters()
+                if parameter.requires_grad
+            }
+            if {id(parameter) for parameter in trainable_parameters} != root_parameter_ids:
+                raise ValueError(
+                    "bundle.model trainable parameters disagree with bundle checkpoint roots",
+                )
             if not trainable_parameters:
                 raise ValueError(
                     "export_ema was provided but bundle has no trainable parameters",
@@ -1156,61 +1188,6 @@ def validate_checkpoint_meta_compatibility(
     )
 
 
-def _validate_checkpoint_tensor_compatibility(
-    *,
-    root_name: str,
-    saved_state: Mapping[str, Any],
-    runtime_state: Mapping[str, Any],
-) -> None:
-    """Reject tensor type/shape failures before any checkpoint root is mutated."""
-
-    for name, saved_value in saved_state.items():
-        runtime_value = runtime_state[name]
-        if not isinstance(runtime_value, torch.Tensor):
-            continue
-        field = f"{root_name}.{name}"
-        if not isinstance(saved_value, torch.Tensor):
-            raise TypeError(
-                f"checkpoint tensor {field!r} must be a tensor, got {type(saved_value).__name__}",
-            )
-        # DTensor.shape is the global logical shape; comparing its local shard
-        # would reject valid FSDP restores. Dtype is intentionally not checked
-        # because load_state_dict supports compatible dtype casts.
-        checkpoint_shape = tuple(saved_value.shape)
-        runtime_shape = tuple(runtime_value.shape)
-        if checkpoint_shape != runtime_shape:
-            raise ValueError(
-                f"checkpoint tensor {field!r} shape mismatch: "
-                f"checkpoint={checkpoint_shape}, runtime={runtime_shape}",
-            )
-
-
-def _normalize_v1_compile_prefix(
-    state: dict[str, Any],
-    *,
-    root_name: str,
-    schema_version: int,
-) -> dict[str, Any]:
-    """Migrate the one wrapper prefix emitted by schema-v1 compiled exports."""
-
-    if schema_version != _LEGACY_CHECKPOINT_SCHEMA_VERSION or not state:
-        return state
-    prefix = "_orig_mod."
-    prefixed = [str(name).startswith(prefix) for name in state]
-    if not any(prefixed):
-        return state
-    if not all(prefixed):
-        raise ValueError(
-            f"schema-v1 checkpoint module {root_name!r} mixes compiled and uncompiled state keys",
-        )
-    normalized = {str(name).removeprefix(prefix): value for name, value in state.items()}
-    if len(normalized) != len(state):
-        raise ValueError(
-            f"schema-v1 checkpoint module {root_name!r} has colliding compiled state keys",
-        )
-    return normalized
-
-
 def _require_equal_tensor_tree(expected: Any, actual: Any, *, label: str) -> None:
     """Fail closed unless two checkpoint state trees are tensor-exact."""
 
@@ -1337,24 +1314,6 @@ def load_full_checkpoint_state(
     for name in sorted(validated):
         module, module_state = validated[name]
         module.load_state_dict(module_state, strict=True)
-
-
-def _select_owned_checkpoint_state(
-    bundle: Any,
-    state: Mapping[str, Mapping[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """Project validated full/selective state onto the runtime-owned key space."""
-
-    modules = require_trainable_modules(bundle)
-    selected: dict[str, dict[str, Any]] = {}
-    for root_name, wrapped in modules.items():
-        saved = state.get(root_name)
-        if saved is None:
-            continue
-        module = unwrap_compile_and_ddp(wrapped)
-        owned_names = checkpoint_owned_state_names(module)
-        selected[root_name] = {name: saved[name] for name in sorted(owned_names) if name in saved}
-    return selected
 
 
 def capture_rng_state(**generators: torch.Generator) -> dict[str, Any]:

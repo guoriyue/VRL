@@ -84,7 +84,7 @@ class WanT2VSamplingState(GuidedDenoiseSamplingStateBase):
     boundary_ratio: float | None = None
     num_train_timesteps: int | None = None
     # Host copy of ``timesteps``, filled on first expert routing; see
-    # ``_routing_timestep``.
+    # ``WanT2VDiffusersModel._transformer_for_step``.
     host_timesteps: torch.Tensor | None = field(default=None, init=False, repr=False)
 
 
@@ -101,27 +101,8 @@ class WanI2VSamplingState(GuidedDenoiseSamplingStateBase):
     boundary_ratio: float | None = None
     num_train_timesteps: int | None = None
     # Host copy of ``timesteps``, filled on first expert routing; see
-    # ``_routing_timestep``.
+    # ``WanT2VDiffusersModel._transformer_for_step``.
     host_timesteps: torch.Tensor | None = field(default=None, init=False, repr=False)
-
-
-def _routing_timestep(
-    state: WanT2VSamplingState | WanI2VSamplingState,
-    step_idx: int,
-) -> torch.Tensor:
-    """Return ``state.timesteps[step_idx]`` as a host tensor.
-
-    Choosing the expert is a Python-level decision (which module to call), so
-    the boundary test needs the timestep value on the host. Reading it from the
-    device schedule would synchronise the stream on every forward and stall the
-    launch queue behind the previous step's tail. The schedule is fixed for the
-    life of a sampling state, so it is copied to the host once and indexed
-    from there.
-    """
-
-    if state.host_timesteps is None:
-        state.host_timesteps = state.timesteps.detach().to(device="cpu", dtype=torch.float32)
-    return state.host_timesteps[step_idx]
 
 
 class WanT2VDiffusersModel(
@@ -506,11 +487,28 @@ class WanT2VDiffusersModel(
     ) -> tuple[str, Any, float]:
         if state.boundary_ratio is None:
             return "transformer", self.transformer, state.guidance_scale
-        if _uses_low_noise_transformer(
-            _routing_timestep(state, step_idx),
-            boundary_ratio=state.boundary_ratio,
-            num_train_timesteps=state.num_train_timesteps,
-        ):
+        if state.num_train_timesteps is None:
+            raise ValueError(
+                "Wan dual-stage routing requires scheduler.config.num_train_timesteps",
+            )
+        # Choosing the expert is a Python-level decision (which module to
+        # call), so the boundary test needs the timestep value on the host.
+        # Reading it from the device schedule would synchronise the stream on
+        # every forward and stall the launch queue behind the previous step's
+        # tail. The schedule is fixed for the life of a sampling state, so it
+        # is copied to the host once and indexed from there; the reads below
+        # are free.
+        if state.host_timesteps is None:
+            state.host_timesteps = state.timesteps.detach().to(device="cpu", dtype=torch.float32)
+        boundary_timestep = float(state.boundary_ratio) * int(state.num_train_timesteps)
+        low_noise = state.host_timesteps[step_idx] < boundary_timestep
+        first = bool(low_noise.reshape(-1)[0].item())
+        if bool((low_noise != first).any().item()):
+            raise ValueError(
+                "Wan dual-stage replay batch crosses the transformer boundary within "
+                "one forward_step; batch samples must share the same denoise step",
+            )
+        if first:
             transformer_2 = self.transformer_2
             if transformer_2 is None:
                 raise RuntimeError("Wan dual-stage sampling requires transformer_2")
@@ -530,7 +528,14 @@ class WanT2VDiffusersModel(
             state,
             step_idx,
         )
-        td = _module_dtype(transformer)
+        td = getattr(transformer, "dtype", None)
+        if td is None:
+            try:
+                td = next(transformer.parameters()).dtype
+            except StopIteration as exc:
+                raise RuntimeError(
+                    f"{type(transformer).__name__} has no parameters to infer dtype",
+                ) from exc
         latent_input = state.latents.to(td)
         timestep_batch = expand_batch_timestep(timestep, bsz).to(
             device=latent_input.device,
@@ -1104,7 +1109,13 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         image_embeds = encoded.get("image_embeds")
         if image_embeds is None:
             image_embeds = self._encode_image_embeds(reference_image)
-        image_embeds = _align_optional_batch(image_embeds, batch_size)
+        if image_embeds is not None and image_embeds.shape[:1] != (batch_size,):
+            if image_embeds.shape[:1] != (1,):
+                raise ValueError(
+                    "Wan I2V image_embeds batch dimension is incompatible with rollout "
+                    f"batch_size={batch_size}: {tuple(image_embeds.shape)}",
+                )
+            image_embeds = image_embeds.repeat(batch_size, *([1] * (image_embeds.ndim - 1)))
 
         return WanI2VSamplingState(
             latents=latents,
@@ -1190,7 +1201,23 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         )
 
     def _encode_image_embeds(self, reference_image: Any) -> torch.Tensor | None:
-        if not _wan_i2v_uses_image_embeds(self.transformer):
+        # Only a transformer whose config carries ``image_dim`` consumes image
+        # embeds; a PEFT wrapper keeps that config on its base model.
+        transformer = self.transformer
+        config = getattr(transformer, "config", None)
+        if not (
+            (isinstance(config, dict) and "image_dim" in config)
+            or (config is not None and hasattr(config, "image_dim"))
+        ):
+            base_model = getattr(transformer, "base_model", None)
+            inner_config = getattr(getattr(base_model, "model", base_model), "config", None)
+            if inner_config is not None:
+                config = inner_config
+        if isinstance(config, dict):
+            image_dim = config.get("image_dim")
+        else:
+            image_dim = getattr(config, "image_dim", None)
+        if image_dim is None:
             return None
         with torch.no_grad():
             image_embeds = self.pipeline.encode_image(reference_image, self.device)
@@ -1208,40 +1235,6 @@ class WanI2VReplayModel(WanT2VReplayModel, WanI2VDiffusersModel):
     which the C3 order puts ahead of the T2V versions. Pinned in
     tests/models/steps/denoise/test_family_mro.py.
     """
-
-
-def _align_optional_batch(value: torch.Tensor | None, batch_size: int) -> torch.Tensor | None:
-    if value is None:
-        return None
-    if value.shape[:1] == (batch_size,):
-        return value
-    if value.shape[:1] != (1,):
-        raise ValueError(
-            "Wan I2V image_embeds batch dimension is incompatible with rollout "
-            f"batch_size={batch_size}: {tuple(value.shape)}",
-        )
-    return value.repeat(batch_size, *([1] * (value.ndim - 1)))
-
-
-def _wan_i2v_uses_image_embeds(transformer: Any) -> bool:
-    config = _transformer_config(transformer)
-    if isinstance(config, dict):
-        return config.get("image_dim") is not None
-    return getattr(config, "image_dim", None) is not None
-
-
-def _transformer_config(transformer: Any) -> Any:
-    config = getattr(transformer, "config", None)
-    if isinstance(config, dict) and "image_dim" in config:
-        return config
-    if config is not None and hasattr(config, "image_dim"):
-        return config
-    base_model = getattr(transformer, "base_model", None)
-    inner = getattr(base_model, "model", base_model)
-    config = getattr(inner, "config", None)
-    if config is not None:
-        return config
-    return getattr(transformer, "config", None)
 
 
 def _stage_eager_wan_modules(
@@ -1283,43 +1276,9 @@ def _uses_cfg(guidance_scale: float, guidance_scale_2: float | None) -> bool:
     return guidance_scale > 1.0 or (guidance_scale_2 is not None and guidance_scale_2 > 1.0)
 
 
-def _uses_low_noise_transformer(
-    timestep: torch.Tensor,
-    *,
-    boundary_ratio: float,
-    num_train_timesteps: int | None,
-) -> bool:
-    """Route on a HOST timestep (``_routing_timestep``); the reads below are free there."""
-
-    if num_train_timesteps is None:
-        raise ValueError("Wan dual-stage routing requires scheduler.config.num_train_timesteps")
-    boundary_timestep = float(boundary_ratio) * int(num_train_timesteps)
-    values = torch.as_tensor(timestep).detach().to(dtype=torch.float32)
-    low_noise = values < boundary_timestep
-    first = bool(low_noise.reshape(-1)[0].item())
-    if bool((low_noise != first).any().item()):
-        raise ValueError(
-            "Wan dual-stage replay batch crosses the transformer boundary within "
-            "one forward_step; batch samples must share the same denoise step",
-        )
-    return first
-
-
 def _scheduler_num_train_timesteps(scheduler: Any) -> int | None:
     value = _config_value(getattr(scheduler, "config", None), "num_train_timesteps")
     return None if value is None else int(value)
-
-
-def _module_dtype(module: Any) -> torch.dtype:
-    dtype = getattr(module, "dtype", None)
-    if dtype is not None:
-        return dtype
-    try:
-        return next(module.parameters()).dtype
-    except StopIteration as exc:
-        raise RuntimeError(
-            f"{type(module).__name__} has no parameters to infer dtype",
-        ) from exc
 
 
 def _cuda_parameter_bytes(module: Any) -> int:

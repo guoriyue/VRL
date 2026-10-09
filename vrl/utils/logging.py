@@ -36,19 +36,6 @@ class _StdoutHandler(logging.StreamHandler):
         del value  # base __init__ assigns; always resolve live instead
 
 
-def _ensure_vrl_handler() -> None:
-    global _initialized
-    if _initialized:
-        return
-    root = logging.getLogger(_ROOT_NAME)
-    handler = _StdoutHandler()
-    handler.setFormatter(logging.Formatter(_FORMAT))
-    root.addHandler(handler)
-    root.setLevel(os.environ.get("VRL_LOG_LEVEL", "INFO").upper())
-    root.propagate = False
-    _initialized = True
-
-
 def init_logger(name: str) -> logging.Logger:
     """Return a module logger that is visible in driver and Ray workers alike.
 
@@ -56,7 +43,15 @@ def init_logger(name: str) -> logging.Logger:
     repeated calls in one process install a single handler.
     """
 
-    _ensure_vrl_handler()
+    global _initialized
+    if not _initialized:
+        root = logging.getLogger(_ROOT_NAME)
+        handler = _StdoutHandler()
+        handler.setFormatter(logging.Formatter(_FORMAT))
+        root.addHandler(handler)
+        root.setLevel(os.environ.get("VRL_LOG_LEVEL", "INFO").upper())
+        root.propagate = False
+        _initialized = True
     return logging.getLogger(name)
 
 

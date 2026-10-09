@@ -30,34 +30,6 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 
 
-def _log_parking_diagnostics(model: Any, *, worker_id: str) -> None:
-    """Report tensor residency without replacing the original handoff failure."""
-    try:
-        import torch
-
-        components = getattr(getattr(model, "pipeline", None), "components", None)
-        if not isinstance(components, Mapping):
-            components = {"model": model}
-        residency = {}
-        for name, component in components.items():
-            if isinstance(component, torch.nn.Module):
-                tensors = (*component.parameters(), *component.buffers())
-                residency[name] = sum(
-                    tensor.numel() * tensor.element_size()
-                    for tensor in tensors
-                    if tensor.device.type == "cuda"
-                )
-        logger.error(
-            "parking diagnostics: worker=%s allocated=%d reserved=%d component_cuda_bytes=%s",
-            worker_id,
-            torch.cuda.memory_allocated(),
-            torch.cuda.memory_reserved(),
-            residency,
-        )
-    except Exception:
-        logger.exception("parking diagnostics unavailable: worker=%s", worker_id)
-
-
 def executor_device(executor: Any) -> Any:
     """The model's device, or the process default when the executor has no model."""
 
@@ -67,13 +39,6 @@ def executor_device(executor: Any) -> Any:
     import torch
 
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def _resident_on_cuda(executor: Any) -> bool:
-    """Whether the built executor's model holds its weights on a CUDA device."""
-
-    device = getattr(getattr(executor, "model", None), "device", None)
-    return device is not None and str(device).startswith("cuda")
 
 
 class _ParkingPhase(Enum):
@@ -153,7 +118,10 @@ class GenerationWorkerParking:
                 build_executor,
                 cumem=self._required and not self._pipeline_offload,
                 tag=f"vrl:generation:{self.worker_id}:weights",
-                resident=_resident_on_cuda,
+                # Whether the built executor's model holds its weights on CUDA.
+                resident=lambda executor: str(
+                    getattr(getattr(executor, "model", None), "device", None),
+                ).startswith("cuda"),
             )
         except CumemBroken as error:
             self._session = session
@@ -273,7 +241,32 @@ class GenerationWorkerParking:
             )
             snapshot.validate()
         except BaseException as validation_error:
-            _log_parking_diagnostics(model, worker_id=self.worker_id)
+            # Report tensor residency without replacing the handoff failure.
+            try:
+                import torch
+
+                components = getattr(getattr(model, "pipeline", None), "components", None)
+                if not isinstance(components, Mapping):
+                    components = {"model": model}
+                residency = {}
+                for name, component in components.items():
+                    if isinstance(component, torch.nn.Module):
+                        tensors = (*component.parameters(), *component.buffers())
+                        residency[name] = sum(
+                            tensor.numel() * tensor.element_size()
+                            for tensor in tensors
+                            if tensor.device.type == "cuda"
+                        )
+                logger.error(
+                    "parking diagnostics: worker=%s allocated=%d reserved=%d "
+                    "component_cuda_bytes=%s",
+                    self.worker_id,
+                    torch.cuda.memory_allocated(),
+                    torch.cuda.memory_reserved(),
+                    residency,
+                )
+            except Exception:
+                logger.exception("parking diagnostics unavailable: worker=%s", self.worker_id)
             self._quarantine(
                 "physical GPU parking validation failed after backend "
                 f"{snapshot_backend!r} completed: {validation_error!r}",

@@ -73,13 +73,16 @@ def cpu_checkpoint_func(module, *args):
         return checkpoint(module.__call__, *args, use_reentrant=False)
 
 
-def _normalize_gradient_checkpointing(value: Any) -> str:
-    """Map the actor knob to off | full | full_cpu | selective.
+def resolve_gradient_checkpointing_mode(root: RootConfig) -> str:
+    """The recipe's effective checkpointing mode, including CPU-saved inputs.
 
-    Back-compat: the historical knob was a bool — True -> full, False -> off.
-    Strings off/full/full_cpu/selective select the policy explicitly.
+    The public actor key is the source of truth, mapped to off | full |
+    full_cpu | selective. Absence means off. Back-compat: the historical knob
+    was a bool (True -> full, False -> off); strings select the policy
+    explicitly.
     """
 
+    value = root.actor.gradient_checkpointing if root.actor is not None else None
     if isinstance(value, bool):
         return "full" if value else "off"
     text = str(value).strip().lower()
@@ -95,20 +98,10 @@ def _normalize_gradient_checkpointing(value: Any) -> str:
     )
 
 
-def resolve_gradient_checkpointing_mode(root: RootConfig) -> str:
-    """The recipe's effective checkpointing mode, including CPU-saved inputs.
-
-    The public actor key is the source of truth. Absence means off.
-    """
-
-    enabled = root.actor.gradient_checkpointing if root.actor is not None else None
-    return _normalize_gradient_checkpointing(enabled)
-
-
 def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> None:
     """Enable transformer gradient checkpointing while preserving family policy.
 
-    Mode is off | full | full_cpu | selective (see the normalization helper).
+    Mode is off | full | full_cpu | selective (``resolve_gradient_checkpointing_mode``).
     ``selective`` uses SAC to recompute only the cheap ops; ``full`` recomputes
     every block. If a module's ``enable_gradient_checkpointing`` cannot accept a
     custom func, selective falls back to full for that module with a warning —

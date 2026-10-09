@@ -27,7 +27,29 @@ def build_magi_1_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
         raise ValueError(
             f"MAGI-1 rollout builder received family {build.family!r}",
         )
-    _validate_magi_1_precision(build)
+    # Reject VRL precision knobs the official subprocess cannot honor.
+    import torch
+
+    rollout = build.require_rollout()
+    if build.parameter_dtype != torch.bfloat16 or build.precision.dtype != "bf16":
+        raise ValueError(
+            "MAGI-1 official 4.5B DiT fixes params_dtype=torch.bfloat16; "
+            "precision.rollout.dtype and runtime parameter dtype must both be bf16",
+        )
+    if rollout.prompt_encoder_dtype != torch.float32:
+        raise ValueError(
+            "MAGI-1 official T5 runtime fixes torch_dtype=torch.float32; "
+            "precision.rollout.prompt_encoders.dtype must be fp32",
+        )
+    if build.precision.outer_autocast:
+        raise ValueError(
+            "MAGI-1 runs outside VRL autocast; precision.rollout.outer_autocast must be false",
+        )
+    if build.precision.float32_precision != "ieee":
+        raise ValueError(
+            "MAGI-1 official subprocess does not apply VRL TF32 policy; "
+            "precision.float32_precision must be ieee",
+        )
     memory = build.generation_memory
     if memory is not None and (memory.vae_decode is not None or memory.cpu_resident):
         raise ValueError(
@@ -60,33 +82,6 @@ def build_magi_1_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
         raw_handle=model,
         precision=build.precision,
     )
-
-
-def _validate_magi_1_precision(build: ModelBuild) -> None:
-    """Reject VRL precision knobs the official subprocess cannot honor."""
-
-    import torch
-
-    rollout = build.require_rollout()
-    if build.parameter_dtype != torch.bfloat16 or build.precision.dtype != "bf16":
-        raise ValueError(
-            "MAGI-1 official 4.5B DiT fixes params_dtype=torch.bfloat16; "
-            "precision.rollout.dtype and runtime parameter dtype must both be bf16",
-        )
-    if rollout.prompt_encoder_dtype != torch.float32:
-        raise ValueError(
-            "MAGI-1 official T5 runtime fixes torch_dtype=torch.float32; "
-            "precision.rollout.prompt_encoders.dtype must be fp32",
-        )
-    if build.precision.outer_autocast:
-        raise ValueError(
-            "MAGI-1 runs outside VRL autocast; precision.rollout.outer_autocast must be false",
-        )
-    if build.precision.float32_precision != "ieee":
-        raise ValueError(
-            "MAGI-1 official subprocess does not apply VRL TF32 policy; "
-            "precision.float32_precision must be ieee",
-        )
 
 
 __all__ = [
