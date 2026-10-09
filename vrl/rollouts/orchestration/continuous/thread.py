@@ -30,26 +30,6 @@ _OWNER_START_TIMEOUT_S = 10.0
 _OWNER_STOP_TIMEOUT_S = 30.0
 
 
-def _same_prompts(submitted_prompts: tuple[Any, ...], presented_prompts: list[Any]) -> bool:
-    """Fail closed when a prompt type has non-scalar or invalid equality."""
-
-    if len(submitted_prompts) != len(presented_prompts):
-        return False
-    for submitted_prompt, presented_prompt in zip(
-        submitted_prompts,
-        presented_prompts,
-        strict=True,
-    ):
-        if submitted_prompt is presented_prompt:
-            continue
-        try:
-            if not bool(submitted_prompt == presented_prompt):
-                return False
-        except (TypeError, ValueError, RuntimeError):
-            return False
-    return True
-
-
 class _ContinuousRolloutController:
     """Continuous pipeline state that is touched only by the owner loop."""
 
@@ -107,7 +87,7 @@ class _ContinuousRolloutController:
                     group_size=group_size,
                     runtime_debug=runtime_debug,
                 )
-            elif not _same_prompts(self.producer.prompt_batch.prompts, prompts):
+            elif self.producer.prompt_batch.prompts != tuple(prompts):
                 raise RuntimeError(
                     "continuous prefetch prompt batch does not match the next prompts "
                     "presented by the trainer",

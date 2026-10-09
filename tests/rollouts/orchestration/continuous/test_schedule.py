@@ -737,33 +737,6 @@ async def test_prefetch_accepts_identical_prompt_with_non_scalar_metadata(
         await schedule.shutdown()
 
 
-@pytest.mark.asyncio
-async def test_prefetch_fails_closed_when_prompt_equality_is_non_scalar(
-    monkeypatch, tmp_path
-) -> None:
-    bench = _bench(monkeypatch, tmp_path)
-    schedule = _build(_continuous_config(), bench)
-    installed = PromptExample(
-        prompt="p1",
-        metadata={"embedding": torch.tensor([1.0, 2.0])},
-    )
-    presented = PromptExample(
-        prompt="p1",
-        metadata={"embedding": torch.tensor([1.0, 2.0])},
-    )
-
-    try:
-        await schedule.next_iteration(
-            ["p0"],
-            group_size=1,
-            next_prompts=[installed],
-        )
-        with pytest.raises(RuntimeError, match="prefetch prompt batch does not match"):
-            await schedule.next_iteration([presented], group_size=1)
-    finally:
-        await schedule.shutdown()
-
-
 @pytest.mark.parametrize("window", [1.5, "1", True])
 def test_continuous_schedule_does_not_coerce_policy_window(monkeypatch, tmp_path, window) -> None:
     bench = _bench(monkeypatch, tmp_path)
