@@ -11,7 +11,12 @@
 #             spread siblings by 0.02, so it ranked nothing.
 # The GPT image is the thing to learn from, so the third question asks for
 # closeness to it, not for a winner. Group normalization in GRPO makes the
-# absolute scale irrelevant; only the relative weights matter, and they are equal.
+# absolute scale irrelevant; only the relative weights matter.
+# Probe 2026-10-08 (GPT image vs its own degraded copies; known-defect pairs):
+# like_ref ranks the untouched GPT image top and blur/collage/low-res bottom,
+# but ignores an added signature line, so stray_text returns as a guard; an
+# image with extra paws still out-scored a clean one at equal weights, so
+# correct carries weight 2.
 host: 127.0.0.1
 port: 8318
 model_name: vlm-preference-qwen3vl32b
@@ -38,7 +43,7 @@ worker_config:
   data_root: /mnt/nvme/data/external
   criteria:
     - name: correct
-      weight: 1.0
+      weight: 2.0
       answer: yesno
       absolute: true
       invert: true
@@ -46,6 +51,15 @@ worker_config:
         Look at Image 1 only. Does any person, animal or creature in it have extra,
         missing, duplicated or merged limbs, hands, fingers, legs, heads or eyes, or a
         body part attached in an impossible place? Answer yes if you see any such defect.
+    - name: stray_text
+      weight: 1.0
+      answer: yesno
+      absolute: true
+      invert: true
+      question: >-
+        Look at Image 1 only. Does it contain written text, letters, captions, labels,
+        signatures or watermarks other than text that the description "{prompt}"
+        explicitly asks to be written? Answer yes if there is any such unrequested text.
     - name: accurate
       weight: 1.0
       answer: yesno
