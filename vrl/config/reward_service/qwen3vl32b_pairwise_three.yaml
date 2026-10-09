@@ -1,15 +1,14 @@
-# Three-criterion judge against a GPT reference, as the user framed it on
-# 2026-10-08: correctness (no extra limbs), prompt accuracy, and beauty.
-# Drops the five-level compare scale (asymmetric, awkward tokens) for a
-# symmetric A/B choice and a 1-5 digit score, and drops every criterion that
-# pulled past runs the wrong way (crop detail, "richness" fidelity, "real
-# photo" naturalness, depth-layer composition).
-#   anatomy   absolute defect check on the candidate alone, score 1 - P(yes)
-#   elements  per-item checklist of what the prompt requires, candidate alone
-#   faithful  absolute 1-5: how faithfully the candidate realizes the prompt
-#   beauty    symmetric A/B vs the GPT image, both orders averaged
-#   aesthetic absolute 1-5 beauty of the candidate alone (ranks siblings even
-#             when all lose to GPT)
+# Three-criterion judge, as the user framed it on 2026-10-08: correctness,
+# prompt accuracy, and closeness to the GPT reference. Equal weights; every
+# criterion is one question whose answer lands in [0, 1]:
+#   correct   candidate alone, yes/no defect check, score 1 - P(yes)
+#   accurate  candidate alone, per-item checklist of what the prompt requires,
+#             mean P(yes) over the items
+#   like_ref  candidate beside the GPT image: how close is the candidate to the
+#             reference's quality and look, 1-5 digit expectation, both orders
+# The GPT image is the thing to learn from, so the third question asks for
+# closeness to it, not for a winner. Group normalization in GRPO makes the
+# absolute scale irrelevant; only the relative weights matter, and they are equal.
 host: 127.0.0.1
 port: 8318
 model_name: vlm-preference-qwen3vl32b
@@ -35,8 +34,8 @@ worker_config:
   both_orders: true
   data_root: /mnt/nvme/data/external
   criteria:
-    - name: anatomy
-      weight: 2.0
+    - name: correct
+      weight: 1.0
       answer: yesno
       absolute: true
       invert: true
@@ -44,31 +43,18 @@ worker_config:
         Look at Image 1 only. Does any person, animal or creature in it have extra,
         missing, duplicated or merged limbs, hands, fingers, legs, heads or eyes, or a
         body part attached in an impossible place? Answer yes if you see any such defect.
-    - name: elements
-      weight: 1.5
+    - name: accurate
+      weight: 1.0
       answer: yesno
       checklist: true
       question: >-
         Look at Image 1 only. Does it clearly and recognizably show {item}?
-    - name: faithful
-      weight: 1.5
-      answer: digit
-      absolute: true
-      question: >-
-        Look at Image 1 only. How faithfully does it realize the description "{prompt}":
-        the requested subject, objects, action, setting and style all present and correct,
-        idioms read by their meaning, nothing the description did not ask for?
-    - name: beauty
-      weight: 2.0
-      answer: ab
-      question: >-
-        Both images were made for the description "{prompt}". Which image is the more
-        beautiful, well-made picture overall: better composed, more pleasing to look at,
-        with more convincing form, material and light?
-    - name: aesthetic
+    - name: like_ref
       weight: 1.0
       answer: digit
-      absolute: true
       question: >-
-        Look at Image 1 only. How beautiful and well-made is this picture overall:
-        composition, form, material, color and light?
+        Image 2 is a reference picture for the description "{prompt}". Image 1 was made for
+        the same description. How close does Image 1 come to the reference in overall
+        quality and look: composition and framing, the form and pose of the subject,
+        material and surface quality, color and light? 5 means as good and as well-made
+        as the reference, 1 means far below it.
