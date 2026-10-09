@@ -66,6 +66,11 @@ COMPARE_LEVELS: tuple[tuple[str, float], ...] = (
     ("worse", 0.25),
     ("much", 0.0),
 )
+# Symmetric pairwise choice: P(Image 1) read off the two single-token letters,
+# so neither end of the scale is privileged and the two image orders cancel.
+AB_LEVELS: tuple[tuple[str, float], ...] = (("A", 1.0), ("B", 0.0))
+# Absolute 1-5 score read as the expectation over the digit tokens.
+DIGIT_LEVELS: tuple[tuple[str, float], ...] = tuple((str(i), (i - 1) / 4) for i in range(1, 6))
 ANSWER_SUFFIX = {
     "yesno": "\nAnswer with a single word: yes or no.",
     "rating": "\nAnswer with a single word: excellent, good, fair, poor, or bad.",
@@ -74,6 +79,8 @@ ANSWER_SUFFIX = {
         "better (clearly better), slightly (slightly better), similar, worse (slightly worse), "
         "or much (much worse)."
     ),
+    "ab": "\nImage 1 is A and Image 2 is B. Answer with a single letter: A or B.",
+    "digit": "\nAnswer with a single digit from 1 (worst) to 5 (best).",
 }
 
 # Pairwise mode: the candidate is "Image 1" and the reference "Image 2" (and the
@@ -286,6 +293,8 @@ class VLMPreferenceRewardModel(LazyTorchModule):
             "yesno": [(first_tokens("yes"), 1.0), (first_tokens("no"), 0.0)],
             "rating": [(first_tokens(word), value) for word, value in RATING_LEVELS],
             "compare": [(first_tokens(word), value) for word, value in COMPARE_LEVELS],
+            "ab": [(first_tokens(word), value) for word, value in AB_LEVELS],
+            "digit": [(first_tokens(word), value) for word, value in DIGIT_LEVELS],
         }
         return {"judge": judge, "processor": processor, "answers": answers}
 
@@ -499,9 +508,11 @@ class VLMPreferenceRewardModel(LazyTorchModule):
 
 
 __all__ = [
+    "AB_LEVELS",
     "COMPARE_LEVELS",
     "DEFAULT_CRITERIA",
     "DEFAULT_PAIRWISE_CRITERIA",
+    "DIGIT_LEVELS",
     "RATING_LEVELS",
     "VLMPreferenceRewardModel",
 ]

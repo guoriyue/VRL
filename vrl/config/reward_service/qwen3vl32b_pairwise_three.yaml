@@ -1,0 +1,74 @@
+# Three-criterion judge against a GPT reference, as the user framed it on
+# 2026-10-08: correctness (no extra limbs), prompt accuracy, and beauty.
+# Drops the five-level compare scale (asymmetric, awkward tokens) for a
+# symmetric A/B choice and a 1-5 digit score, and drops every criterion that
+# pulled past runs the wrong way (crop detail, "richness" fidelity, "real
+# photo" naturalness, depth-layer composition).
+#   anatomy   absolute defect check on the candidate alone, score 1 - P(yes)
+#   elements  per-item checklist of what the prompt requires, candidate alone
+#   faithful  absolute 1-5: how faithfully the candidate realizes the prompt
+#   beauty    symmetric A/B vs the GPT image, both orders averaged
+#   aesthetic absolute 1-5 beauty of the candidate alone (ranks siblings even
+#             when all lose to GPT)
+host: 127.0.0.1
+port: 8318
+model_name: vlm-preference-qwen3vl32b
+model_version: Qwen/Qwen3-VL-32B-Instruct-FP8@4bf2c2f3
+artifact_roots:
+  - /mnt/nvme/outputs
+  - /mnt/nvme/data/external
+max_concurrency: 1
+max_pending_requests: 256
+max_cached_requests: 8192
+max_request_bytes: 1073741824
+generation_overlap_safe: true
+worker_config:
+  model_factory: vrl.rewards.models.vlm_preference:VLMPreferenceRewardModel
+  device: cuda:0
+  judge_model: Qwen/Qwen3-VL-32B-Instruct-FP8
+  judge_revision: 4bf2c2f3
+  judge_max_side: 896
+  questions_per_forward: 3
+  local_files_only: true
+  reference_key: judge_reference
+  checklist_key: judge_checklist
+  both_orders: true
+  data_root: /mnt/nvme/data/external
+  criteria:
+    - name: anatomy
+      weight: 2.0
+      answer: yesno
+      absolute: true
+      invert: true
+      question: >-
+        Look at Image 1 only. Does any person, animal or creature in it have extra,
+        missing, duplicated or merged limbs, hands, fingers, legs, heads or eyes, or a
+        body part attached in an impossible place? Answer yes if you see any such defect.
+    - name: elements
+      weight: 1.5
+      answer: yesno
+      checklist: true
+      question: >-
+        Look at Image 1 only. Does it clearly and recognizably show {item}?
+    - name: faithful
+      weight: 1.5
+      answer: digit
+      absolute: true
+      question: >-
+        Look at Image 1 only. How faithfully does it realize the description "{prompt}":
+        the requested subject, objects, action, setting and style all present and correct,
+        idioms read by their meaning, nothing the description did not ask for?
+    - name: beauty
+      weight: 2.0
+      answer: ab
+      question: >-
+        Both images were made for the description "{prompt}". Which image is the more
+        beautiful, well-made picture overall: better composed, more pleasing to look at,
+        with more convincing form, material and light?
+    - name: aesthetic
+      weight: 1.0
+      answer: digit
+      absolute: true
+      question: >-
+        Look at Image 1 only. How beautiful and well-made is this picture overall:
+        composition, form, material, color and light?

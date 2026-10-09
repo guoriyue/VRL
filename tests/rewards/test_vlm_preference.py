@@ -320,3 +320,14 @@ def test_invert_requires_an_absolute_yesno_criterion():
         VLMPreferenceRewardModel(
             {"device": "cpu", "criteria": [{"name": "c", "question": "Q?", "invert": True}]}
         )
+
+
+def test_ab_and_digit_answer_modes_are_accepted_and_carry_their_suffix():
+    criteria = [
+        {"name": "beauty", "question": "Which is better?", "answer": "ab"},
+        {"name": "score", "question": "How good?", "answer": "digit"},
+    ]
+    model = _model([0.8, 0.5], criteria=criteria)
+    scores = model.score(Image.new("RGB", (8, 8)), prompt="x")
+    assert scores["vlm_preference/beauty"] == 0.8 and scores["vlm_preference/score"] == 0.5
+    assert model.asked[0][2] == ["ab", "digit"]  # one batched forward, both modes
