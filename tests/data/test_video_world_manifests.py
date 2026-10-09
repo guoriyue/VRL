@@ -143,7 +143,7 @@ def test_source_backed_video_world_manifest_can_require_target_video(tmp_path: P
         require_target_video=True,
     )
 
-    assert report.artifact_count == 2
+    assert len(report.resolved_artifacts) == 2
 
 
 def test_source_backed_video_world_manifest_rejects_missing_required_target_video(

@@ -77,8 +77,11 @@ def _remove_actor_media_directory(path: str, token: str) -> None:
         raise RuntimeError(f"reward actor media directory still exists after cleanup: {root}")
 
 
-# The reward actor reserves no CPU of its own (bundles are sized for the
-# rank it shares) and gets fixed startup / shutdown budgets.
+# The reward actor asks Ray for no CPU: a shared reward lives in the rollout
+# rank's bundle, a dedicated one in a bundle the placement reserved with a
+# token CPU, and a CPU reward runs wherever the driver node has room. Its GPU
+# comes from the placement (see _actor_options). Startup and shutdown have
+# fixed budgets; scoring uses the caller's timeout.
 _REWARD_ACTOR_CPUS = 0.0
 _STARTUP_TIMEOUT_S = 600.0
 _SHUTDOWN_TIMEOUT_S = 30.0
@@ -210,10 +213,7 @@ class RayRewardScorer:
                 raise ValueError(
                     "a reward scorer requires exactly one rank-local placement bundle"
                 )
-        self._cpus = _REWARD_ACTOR_CPUS
         self._timeout = require_timeout(timeout_s)
-        self._startup_timeout = _STARTUP_TIMEOUT_S
-        self._shutdown_timeout = _SHUTDOWN_TIMEOUT_S
         self.lifecycle = RuntimeLifecycle(owner="Ray reward scorer")
         self._operation_lock = asyncio.Lock()
         self._shutdown_lock = asyncio.Lock()
@@ -230,17 +230,19 @@ class RayRewardScorer:
 
     def _actor_options(self) -> dict[str, Any]:
         options: dict[str, Any] = {
-            "num_cpus": self._cpus,
-            "num_gpus": int(self._cuda),
+            "num_cpus": _REWARD_ACTOR_CPUS,
+            "num_gpus": 0,
             "max_restarts": 0,
             "max_task_retries": 0,
         }
         placement = self._placement
         if placement is None:
-            # Explicitly prevent GPU discovery even when a parent process
-            # disabled Ray's default visibility masking for its own actors.
+            # A CPU reward: explicitly prevent GPU discovery even when a parent
+            # process disabled Ray's default visibility masking for its actors.
             options["runtime_env"] = {"env_vars": {"CUDA_VISIBLE_DEVICES": ""}}
             return options
+        # A dedicated reward GPU is a fraction of its own bundle; a shared one
+        # is pinned below through CUDA_VISIBLE_DEVICES with no Ray GPU claim.
         options["num_gpus"] = placement.gpu_fraction
         if placement.placement is not None:
             role = placement.placement
@@ -280,7 +282,7 @@ class RayRewardScorer:
                 media_directory_token=self._media_directory_token,
             )
         )
-        metadata = await self._call("ready", timeout_s=self._startup_timeout)
+        metadata = await self._call("ready", timeout_s=_STARTUP_TIMEOUT_S)
         self._actor_directory = (metadata["node_id"], metadata["media_directory"])
         placement = self._placement
         if placement is not None:
@@ -374,7 +376,7 @@ class RayRewardScorer:
             # Only attempt graceful cleanup when no operation is in flight.
             if self._active_ref is None and not self._kill_requested:
                 try:
-                    await self._call("shutdown", timeout_s=self._shutdown_timeout)
+                    await self._call("shutdown", timeout_s=_SHUTDOWN_TIMEOUT_S)
                 except RayRewardError:
                     pass  # Hard process teardown below remains authoritative.
                 except (RayRewardTimeout, RayRewardCancelled):
@@ -388,7 +390,7 @@ class RayRewardScorer:
                 try:
                     await asyncio.wait_for(
                         asyncio.wrap_future(ref.future()),
-                        timeout=self._shutdown_timeout,
+                        timeout=_SHUTDOWN_TIMEOUT_S,
                     )
                 except ray.exceptions.ActorDiedError:
                     pass
@@ -429,7 +431,7 @@ class RayRewardScorer:
         try:
             await asyncio.wait_for(
                 asyncio.wrap_future(ref.future()),
-                timeout=self._shutdown_timeout,
+                timeout=_SHUTDOWN_TIMEOUT_S,
             )
         except BaseException as cause:
             error = RayRewardError(

@@ -48,7 +48,7 @@ def test_artifact_manifest_resolves_relative_references_via_data_root(tmp_path: 
 
     assert examples[0].reference_images == ["video_world/references/ref.ppm"]
     assert report.row_count == 1
-    assert report.artifact_count == 1
+    assert len(report.resolved_artifacts) == 1
     assert report.resolved_artifacts[0].resolved_path == reference.resolve()
 
 
@@ -77,7 +77,7 @@ def test_target_artifacts_are_prompt_fields_and_validate(tmp_path: Path) -> None
     )
 
     assert examples[0].target_image == "video_world/targets/target.ppm"
-    assert report.artifact_count == 2
+    assert len(report.resolved_artifacts) == 2
     assert {item.field for item in report.resolved_artifacts} == {
         "reference_images",
         "target_image",
@@ -227,7 +227,7 @@ def test_artifact_field_preserves_path_sequences(tmp_path, container):
         data_root=tmp_path,
         artifact_fields=("attachments",),
     )
-    assert report.artifact_count == 1
+    assert len(report.resolved_artifacts) == 1
     assert report.resolved_artifacts[0].raw_path == "ref.ppm"
 
 

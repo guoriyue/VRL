@@ -60,22 +60,14 @@ class DatasetFileReport:
 
     The report is a payload, not a decision: the CLIs embed ``to_dict()`` under
     ``validation_summary`` and anything that must fail has already raised.
-    ``artifact_count`` is the one field with an outside reader, and it is
-    exactly ``len(resolved_artifacts)``.
     """
 
     manifest_path: Path
     data_root: Path
     row_count: int
-    # display/provenance-only, per the ResolvedArtifact docstring above; grows
-    # with the manifest, so a caller that only wants the count reads that.
+    # display/provenance-only, per the ResolvedArtifact docstring above.
     resolved_artifacts: tuple[ResolvedArtifact, ...] = ()
     warnings: tuple[str, ...] = ()
-
-    @property
-    def artifact_count(self) -> int:
-        return len(self.resolved_artifacts)
-
     source_episodes: tuple[str, ...] = ()
     eval_manifest_path: Path | None = None
     eval_source_episodes: tuple[str, ...] = ()
@@ -122,7 +114,7 @@ class DatasetFileReport:
             "manifest_path": self.manifest_path.as_posix(),
             "data_root": self.data_root.as_posix(),
             "row_count": self.row_count,
-            "artifact_count": self.artifact_count,
+            "artifact_count": len(self.resolved_artifacts),
             "resolved_artifacts": [
                 {
                     "row_index": item.row_index,
