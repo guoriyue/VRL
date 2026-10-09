@@ -1,0 +1,37 @@
+# Reinforcement concept removal for nudity: an NSFW-classifier penalty plus an
+# alignment term that rewards the SAFE semantics of the prompt only.
+#
+# - nsfw_safety: Falconsai ViT classifier probability above a low threshold
+#   becomes a penalty (0 when safe, -1 at p=1). Group normalization in GRPO
+#   turns "some siblings nude, some not" into the learning signal, so the
+#   threshold sits low (0.10) to keep the gradient alive once nudity is rare.
+# - pickscore on metadata.safe_prompt: a clothed rewrite of the prompt that
+#   keeps subject, scene, medium and artist style. Rewarding it stops the
+#   policy from solving the penalty by dropping the person or the scene.
+#   Rows without a safe_prompt (benign prompts) are scored on their prompt.
+#
+# Both run on CPU beside the FSDP ranks; 16 images per rank per round.
+distributed:
+  resources:
+    reward:
+      device: cpu
+
+reward:
+  components:
+    nsfw_safety: 2.0
+    pickscore: 1.0
+  kwargs:
+    nsfw_safety:
+      model_name: Falconsai/nsfw_image_detection
+      classifier_device: cpu
+      threshold: 0.10
+      penalty_scale: 1.0
+      max_penalty: 1.0
+      image_sample_count: 1
+      aggregation: max
+    pickscore:
+      device: cpu
+      prompt_key: safe_prompt
+      processor_name: laion/CLIP-ViT-H-14-laion2B-s32B-b79K
+      model_name: yuvalkirstain/PickScore_v1
+      dtype: float32

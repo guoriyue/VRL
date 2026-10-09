@@ -90,6 +90,11 @@ class TorchRewardModel(LazyTorchModule):
         self.worker_config = cfg
         self.device = str(cfg.get("device", "cuda"))
         self.dtype_str = str(cfg.get("dtype", "float32"))
+        # Score against a metadata text instead of the generation prompt, e.g.
+        # a clothed rewrite of an unsafe prompt so an alignment term rewards
+        # the safe semantics only. Falls back to the prompt when the key is
+        # missing on an artifact.
+        self.prompt_key = str(cfg.get("prompt_key") or "").strip() or None
 
     @property
     def dtype(self) -> Any:
@@ -103,10 +108,12 @@ class TorchRewardModel(LazyTorchModule):
 
     def __call__(self, artifact: RewardInferenceArtifact) -> Mapping[str, float]:
         self.prepare_for_inference()
-        return self.score_media(
-            media=artifact.as_media(),
-            prompt=artifact.prompt,
-        )
+        prompt = artifact.prompt
+        if self.prompt_key:
+            override = artifact.metadata.get(self.prompt_key)
+            if isinstance(override, str) and override.strip():
+                prompt = override
+        return self.score_media(media=artifact.as_media(), prompt=prompt)
 
 
 __all__ = [
