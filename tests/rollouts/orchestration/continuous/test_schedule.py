@@ -1,6 +1,6 @@
 """The continuous rollout schedule over the real coordinator, collector and runtime.
 
-Every schedule here is ``build_rollout_schedule`` on the real
+Every schedule here is ``ContinuousRolloutSchedule.from_config`` on the real
 ``RolloutCollector`` (tiny SANA family, ``InProcessGenerationRuntime``), the
 real trainer side (replay bundle, ``SingleProcessStrategy``) and the real
 ``RayRuntimeWeightSyncer``. Versioned slots (non-draining weight sync) come
@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Callable, Sequence
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -30,19 +29,15 @@ from tests.rollouts.orchestration.continuous._helpers import (
 )
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rewards import RewardOutput, RewardSample
-from vrl.rollouts.orchestration import ContinuousRolloutSchedule, build_rollout_schedule
+from vrl.rollouts.orchestration import ContinuousRolloutSchedule
+from vrl.trainers.core.types import ContinuousRolloutConfig
 from vrl.trainers.data.prompts import PromptExample
 
 
-def _continuous_config(**continuous: Any) -> SimpleNamespace:
-    from vrl.trainers.core.types import ContinuousRolloutConfig
-
+def _continuous_config(**continuous: Any) -> ContinuousRolloutConfig:
     settings = {"wait_timeout_s": 5.0, "queue_poll_interval_s": 0.001}
     settings.update(continuous)
-    return SimpleNamespace(
-        schedule_mode="continuous",
-        continuous=ContinuousRolloutConfig(**settings),
-    )
+    return ContinuousRolloutConfig(**settings)
 
 
 def _iteration_stat(iteration: Any, name: str) -> float:
@@ -62,15 +57,15 @@ def _bench(
 
 
 def _build(
-    config: SimpleNamespace,
+    config: ContinuousRolloutConfig,
     bench: CollectorBench,
     *,
     initially_initialized: bool = False,
 ) -> ContinuousRolloutSchedule:
     trainer = trainer_side(bench, initialized=initially_initialized)
-    return build_rollout_schedule(
+    return ContinuousRolloutSchedule.from_config(
         config,
-        trainer.coordinator(bench),
+        lifecycle=trainer.coordinator(bench),
         versioned_weight_sync=bench.stack.resolved.built.trainer.versioned_weight_sync,
     )
 
@@ -198,9 +193,9 @@ async def test_initialized_runtime_does_not_receive_redundant_initial_push(
     trainer = trainer_side(bench, initialized=True)
     await bench.runtime.update_weights(trainer.export(), 7)
     pushes_before = _pushes(bench)
-    schedule = build_rollout_schedule(
+    schedule = ContinuousRolloutSchedule.from_config(
         _continuous_config(),
-        trainer.coordinator(bench),
+        lifecycle=trainer.coordinator(bench),
         versioned_weight_sync=bench.stack.resolved.built.trainer.versioned_weight_sync,
     )
 

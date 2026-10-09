@@ -34,7 +34,11 @@ from vrl.models.precision import (
 from vrl.rollouts.admission import AdmissionLedger
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.rollouts.orchestration import build_rollout_schedule
+from vrl.rollouts.orchestration import (
+    ContinuousRolloutSchedule,
+    RolloutSchedule,
+    StrictOnPolicyRolloutSchedule,
+)
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.core.types import CORRECTED_REPLAY_MAX_ABS_LOG_RATIO, TrainState
@@ -553,11 +557,18 @@ class OnlineTrainer:
             weight_syncer=self.weight_syncer,
             sync_state_getter=self.sync_state_getter,
         )
-        self.rollout_schedule = build_rollout_schedule(
-            self.config.rollout_orchestration,
-            self._rollout_runtime,
-            versioned_weight_sync=self.config.versioned_weight_sync,
-        )
+        # The phase discipline the config names, over the coordinator above;
+        # whether the objective is sound under it was settled in TrainerConfig.
+        orchestration = self.config.rollout_orchestration
+        self.rollout_schedule: RolloutSchedule
+        if orchestration.schedule_mode == "continuous":
+            self.rollout_schedule = ContinuousRolloutSchedule.from_config(
+                orchestration.continuous,
+                lifecycle=self._rollout_runtime,
+                versioned_weight_sync=self.config.versioned_weight_sync,
+            )
+        else:
+            self.rollout_schedule = StrictOnPolicyRolloutSchedule(lifecycle=self._rollout_runtime)
         cp_groups = self._strategy.context_parallel_groups
         if cp_groups is not None:
             from vrl.rollouts.orchestration.context_parallel import (

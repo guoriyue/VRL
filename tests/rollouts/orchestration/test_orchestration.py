@@ -7,10 +7,8 @@ import torch
 
 from tests.rollouts.collector._helpers import Trace, real_collector, trainer_side
 from vrl.ray.resources import RayLifecyclePlan
-from vrl.rollouts.orchestration import build_rollout_schedule
 from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
 from vrl.rollouts.stats import RolloutStats
-from vrl.trainers.core.types import RolloutOrchestrationConfig
 from vrl.trainers.weight_sync import flatten_trainable_module_state
 
 
@@ -21,11 +19,7 @@ async def test_strict_schedule_collects_and_syncs(monkeypatch, tmp_path) -> None
 
     bench = real_collector(monkeypatch, tmp_path)
     trainer = trainer_side(bench)
-    schedule = build_rollout_schedule(
-        RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
-        trainer.coordinator(bench),
-        versioned_weight_sync=False,
-    )
+    schedule = StrictOnPolicyRolloutSchedule(lifecycle=trainer.coordinator(bench))
 
     iteration = await schedule.next_iteration(["p0", "p1"], group_size=2, runtime_debug=True)
     await schedule.after_train_step()

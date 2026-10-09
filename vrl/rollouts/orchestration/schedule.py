@@ -7,11 +7,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Protocol
 
-from vrl.rollouts.orchestration.continuous import (
-    ContinuousRolloutSchedule,
-)
-from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
-from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
 from vrl.rollouts.orchestration.types import (
     RolloutIteration,
     RolloutScheduleMode,
@@ -104,32 +99,6 @@ class RolloutSchedule(Protocol):
     async def shutdown(self) -> None: ...
 
 
-def build_rollout_schedule(
-    config: RolloutOrchestrationConfig,
-    lifecycle: RolloutRuntimeCoordinator,
-    *,
-    versioned_weight_sync: bool,
-) -> RolloutSchedule:
-    """Select the RL rollout schedule the trainer config names, over ``lifecycle``.
-
-    The caller owns the coordinator (the collector, strategy, weight syncer and
-    training-state access it schedules); this only picks the phase discipline.
-    Whether the algorithm is sound under the chosen schedule was settled when
-    ``TrainerConfig`` was resolved.
-    """
-
-    mode = RolloutScheduleMode(config.schedule_mode)
-    if mode is RolloutScheduleMode.STRICT_ON_POLICY:
-        return StrictOnPolicyRolloutSchedule(lifecycle=lifecycle)
-    if mode is RolloutScheduleMode.CONTINUOUS:
-        return ContinuousRolloutSchedule.from_config(
-            config.continuous,
-            lifecycle=lifecycle,
-            versioned_weight_sync=versioned_weight_sync,
-        )
-    raise AssertionError(f"unreachable rollout schedule mode: {mode}")
-
-
 def validate_rollout_schedule_topology(
     config: RolloutOrchestrationConfig,
     resources: ResolvedDistributedResources,
@@ -167,7 +136,6 @@ def validate_rollout_schedule_topology(
 
 __all__ = [
     "RolloutSchedule",
-    "build_rollout_schedule",
     "collect_context_parallel_iteration",
     "validate_rollout_schedule_topology",
 ]
