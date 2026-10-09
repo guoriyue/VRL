@@ -1,0 +1,10 @@
+# Known-layer decomposition axis (layered_hidden_completion): one minus the premultiplied RGBA error on truth pixels hidden behind objects in front.
+# Metadata layered_reference.layers names the truth layer directory (relative
+# to data_root). Not qualified for a training key yet; run the reward
+# qualification gates on the policy's own outputs first.
+reward:
+  components:
+    layered_hidden_completion: 1.0
+  kwargs:
+    layered_hidden_completion:
+      data_root: data/external

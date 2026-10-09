@@ -1,0 +1,10 @@
+# Known-layer decomposition axis (layered_object_match): product of per-object match quality; merged or missing objects zero it.
+# Metadata layered_reference.layers names the truth layer directory (relative
+# to data_root). Not qualified for a training key yet; run the reward
+# qualification gates on the policy's own outputs first.
+reward:
+  components:
+    layered_object_match: 1.0
+  kwargs:
+    layered_object_match:
+      data_root: data/external

@@ -1,0 +1,10 @@
+# Known-layer decomposition axis (layered_edit_holes): one minus the composite error after hiding or moving each object.
+# Metadata layered_reference.layers names the truth layer directory (relative
+# to data_root). Not qualified for a training key yet; run the reward
+# qualification gates on the policy's own outputs first.
+reward:
+  components:
+    layered_edit_holes: 0.5
+  kwargs:
+    layered_edit_holes:
+      data_root: data/external
