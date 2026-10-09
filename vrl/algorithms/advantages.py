@@ -252,16 +252,19 @@ class GroupAdvantageEstimator:
             return self._normalize_weighted_rewards(rewards, None, group_ids)
         component_names = set(component_rewards)
         weight_names = set(self.component_weights)
-        if component_names != weight_names:
+        missing = sorted(weight_names - component_names)
+        if missing:
             raise ValueError(
                 "reward component keys must match configured weights; "
-                f"missing={sorted(weight_names - component_names)}, "
-                f"unknown={sorted(component_names - weight_names)}",
+                f"missing={missing}, available={sorted(component_names)}",
             )
+        # A reward may publish extra observation-only axes (locality_keep's
+        # PSNR and texture ratios); only the configured, weighted components
+        # enter the advantage.
 
         total = None
         # Stable ordering keeps global-std collectives aligned across DDP ranks.
-        for name in sorted(component_rewards):
+        for name in sorted(weight_names):
             advantage = _standardize_group_rewards(
                 component_rewards[name],
                 group_ids,

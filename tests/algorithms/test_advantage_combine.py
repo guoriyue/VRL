@@ -100,6 +100,25 @@ def test_normalized_sum_lets_low_variance_component_win_when_weighted() -> None:
     assert final_only.max().item() == 2.5
 
 
+def test_normalized_sum_ignores_observation_only_axes_but_requires_weighted_ones() -> None:
+    """A reward may publish extra axes (locality_keep's PSNR); they never enter
+    the advantage, while a configured component that is absent is an error."""
+    group_ids = torch.zeros(3, dtype=torch.long)
+    quality = torch.tensor([1.0, 2.0, 3.0])
+    estimator = GroupAdvantageEstimator(
+        strategy="normalized_sum", component_weights={"quality": 1.0}, **_KW
+    )
+
+    with_observer = estimator.compute(
+        quality, group_ids, component_rewards={"quality": quality, "psnr": torch.zeros(3)}
+    )
+    alone = estimator.compute(quality, group_ids, component_rewards={"quality": quality})
+
+    torch.testing.assert_close(with_observer, alone, atol=0, rtol=0)
+    with pytest.raises(ValueError, match="missing=\\['quality'\\]"):
+        estimator.compute(quality, group_ids, component_rewards={"psnr": torch.zeros(3)})
+
+
 def test_normalized_sum_with_only_the_total_is_the_raw_group_advantage() -> None:
     """The tensor-only advantage path carries no components, so the default
     strategy has one objective to standardize: it must equal weighted_sum_raw
