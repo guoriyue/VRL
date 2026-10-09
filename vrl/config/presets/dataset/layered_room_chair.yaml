@@ -1,0 +1,13 @@
+# One rendered known-layer scene (room_chair): the source image, its complete
+# RGBA truth layers for the layered_reference reward, the composite + layers
+# frame stack for data.sft_latents, and a chair-occluded-cabinet weight mask.
+# Assets live under the data root (data/external/layered/room_chair).
+data:
+  loader: prompt_manifest
+  manifest: manifests/layered/room_chair_train.jsonl
+  preprocessing:
+    format: jsonl
+  sampler:
+    type: random_without_replacement
+  artifact_data_root: data/external
+  sft_latents: data/external/layered/room_chair/sft_latents.pt

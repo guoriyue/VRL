@@ -1,0 +1,1 @@
+{"prompt": "a clean, well composed image", "reference_images": ["layered/room_chair/source.png"], "target_video": "layered/room_chair/target_frames", "sft_weight_mask": "layered/room_chair/occlusion_mask.png", "metadata": {"layered_reference": {"layers": "layered/room_chair/truth_layers"}, "fixture": "known_layer_calibration/room_chair (rendered truth, hidden content known)"}}

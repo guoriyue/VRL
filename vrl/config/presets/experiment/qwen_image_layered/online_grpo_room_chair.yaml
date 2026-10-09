@@ -1,0 +1,67 @@
+# Qwen-Image-Layered online GRPO on the room_chair known-layer scene (phase B
+# of docs: outputs/layering_handoff_20261008/NEXT_STEP_PLAN.md).
+#
+# Rewards are the known-layer axes; the diffusion-loss regularizer trains on
+# the complete truth layers with the chair-occluded cabinet up-weighted
+# (encode first):
+#   python -m vrl.scripts.denoise.encode_targets \
+#     --experiment qwen_image_layered/online_grpo_room_chair \
+#     --out data/external/layered/room_chair/sft_latents.pt
+#
+# NOT RUNNABLE AS-IS ON ONE 32 GB CARD: the ~20B base does not fit the
+# replay/trainer model in bf16; the rollout fits through fp8 quantization
+# (precision.rollout.quantization), the trainer side needs
+# distributed.training.strategy=fsdp with fsdp.cpu_offload under torchrun,
+# which this recipe has not been validated with. Start from the phase-A
+# support checkpoint (model.lora.path) once phase A gate A2 passes.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/qwen_image_layered/base
+  - /reward/layered_reference
+  - /dataset/layered_room_chair
+  - _self_
+
+sampling:
+  height: 640
+  width: 640
+  num_steps: 50
+  guidance_scale: 1.0
+  layers: 4
+  input_mode: rgb
+  max_sequence_length: 1024
+
+algorithm:
+  kl_coef: 0.01
+  # Diffusion-loss regularizer on the weighted truth layers; scale untuned.
+  sft_weight: 0.1
+
+precision:
+  rollout:
+    quantization:
+      format: fp8
+
+actor:
+  optim:
+    lr: 1.0e-5
+  gradient_checkpointing: true
+  timestep_fraction: 0.5
+  prompts_per_collection: 1
+
+rollout:
+  n_samples_per_prompt: 8
+  prompts_per_batch: 1
+  samples_per_generation_batch: 1
+  # Decisive window only (sigma ~0.79 .. ~0.09 of the 50-step linear grid);
+  # ODE outside it keeps surfaces clean while the window carries the policy's
+  # actions. 0.4 is the noise the shared-initial diagnostics needed for
+  # feet-retention diversity.
+  noise_level: 0.4
+  sde:
+    window_range: [20, 48]
+
+trainer:
+  output_dir: outputs/qwen_image_layered_room_chair_grpo
+  total_epochs: 8
+  save_freq: 1
+  debug:
+    first_step: true
