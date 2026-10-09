@@ -257,7 +257,6 @@ async def test_multi_reward_parks_every_child_after_score_failure() -> None:
 
         async def park_memory(self):
             events.append(f"park:{self.name}")
-            return True
 
     reward = MultiReward(
         [

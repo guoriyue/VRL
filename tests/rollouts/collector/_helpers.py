@@ -123,9 +123,8 @@ class IndexReward(RewardFunction):
         self.memory_parked = False
         return RewardOutput(scores=tuple(float(index) for index in range(len(samples))))
 
-    async def park_memory(self) -> bool:
+    async def park_memory(self) -> None:
         self.memory_parked = True
-        return True
 
 
 @dataclass(slots=True)

@@ -166,7 +166,8 @@ async def test_profiled_collector_builds_cpu_batch_without_trainer_cuda_sync(
 def test_collector_offloads_runtime_memory_before_reward_scoring(monkeypatch, tmp_path) -> None:
     """Under a lifecycle plan that shares the reward GPU, scoring is bracketed by a rollout
     offload before the reward model activates and a reward park afterwards; the phase-final
-    offload parks the rollout again and finds no reward park owed.
+    offload parks the rollout again and asks the reward to park again (the function knows
+    it holds nothing by then).
     """
 
     # Shared reward GPU: the lifecycle plan (not the runtime) tells the collector
@@ -186,6 +187,7 @@ def test_collector_offloads_runtime_memory_before_reward_scoring(monkeypatch, tm
         "score",
         "reward_park",
         "offload",
+        "reward_park",
     ]
 
 
@@ -325,7 +327,7 @@ def test_collector_aggregates_rollout_offload_and_owed_reward_park_failures(
     assert bench.trace.events[-2:] == ["offload", "reward_park"]
 
 
-def test_collector_reports_rollout_offload_failure_alone_when_no_park_is_owed(
+def test_collector_reports_rollout_offload_failure_alone_when_the_park_succeeds(
     monkeypatch, tmp_path
 ) -> None:
     bench = real_collector(
@@ -338,7 +340,7 @@ def test_collector_reports_rollout_offload_failure_alone_when_no_park_is_owed(
     with pytest.raises(RuntimeError, match="rollout offload failed"):
         asyncio.run(bench.collector.offload_generation_runtime_memory())
 
-    assert bench.trace.events == ["offload"]
+    assert bench.trace.events == ["offload", "reward_park"]
 
 
 def _reward_sample_builder(

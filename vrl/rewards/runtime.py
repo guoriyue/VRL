@@ -63,11 +63,6 @@ class RewardFunctionRuntime:
 
     def __init__(self, reward_function: RewardFunction) -> None:
         self._reward_function = reward_function
-        # Whether the function may hold device memory: set when it is woken or
-        # scores, cleared by a successful park. When to park is the scheduler's
-        # decision (the collector reads the placement plan); this runtime only
-        # knows whether there is anything to release.
-        self._holds_memory = False
         self._score_timeout_s = _DEFAULT_SCORE_TIMEOUT_S
         self._operation_lock = asyncio.Lock()
         # Same terminal FSM as the generation runtime: RUNNING accepts work,
@@ -87,11 +82,7 @@ class RewardFunctionRuntime:
 
         async with self._operation_lock:
             self.lifecycle.require_running("activate")
-            # Claim memory only once the function holds it: a failed activation
-            # has nothing to park, and the phase-final park must then be a no-op
-            # so the real error surfaces alone and the trainer is restored.
             await self._reward_function.activate()
-            self._holds_memory = True
 
     async def score(self, samples: Sequence[RewardSample]) -> RewardOutput:
         """Score ordered samples while serializing function and memory ownership."""
@@ -106,7 +97,6 @@ class RewardFunctionRuntime:
             sample_ids = [sample.sample_id for sample in normalized]
             if len(set(sample_ids)) != len(sample_ids):
                 raise ValueError("reward runtime sample_id values must be unique")
-            self._holds_memory = True
             # The deadline preempts every awaitable transport (HTTP
             # service round-trips, overlapped async scoring) and raises
             # the shared terminal OperationTimeout. A component that
@@ -130,23 +120,18 @@ class RewardFunctionRuntime:
             return output
 
     async def park_memory(self) -> None:
-        """Release the function's device memory; nothing to do if it holds none.
+        """Park the function's device memory under the operation lock.
 
         The collector calls this wherever the placement plan makes the reward
         yield its GPU: after scoring, and again at the phase-final handoff,
-        where it retries a park that failed after scoring.
+        where it retries a park that failed after scoring. Whether anything is
+        held is the function's own parking state, so a park after a failed
+        activation or a second park at the handoff reaches nothing.
         """
 
         async with self._operation_lock:
             self.lifecycle.require_running("park_memory")
-            if not self._holds_memory:
-                return
-            parked = await self._reward_function.park_memory()
-            if not isinstance(parked, bool):
-                raise TypeError("reward function park_memory() must return bool")
-            if not parked:
-                raise RuntimeError("reward function has no active memory-parking owner")
-            self._holds_memory = False
+            await self._reward_function.park_memory()
 
     async def shutdown(self) -> None:
         """Release the wrapped function exactly once after successful teardown.

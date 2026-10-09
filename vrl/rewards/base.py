@@ -158,10 +158,10 @@ class RewardFunction:
 
         return None
 
-    async def park_memory(self) -> bool:
-        """Release reward-owned accelerator memory and report whether an owner parked."""
+    async def park_memory(self) -> None:
+        """Release reward-owned accelerator memory; a no-op when none is held."""
 
-        return False
+        return None
 
     async def score(self, sample: RewardSample) -> float:
         """Score one generated sample; family-specific scalar extension hook."""
@@ -217,7 +217,9 @@ class InferenceRewardFunction(RewardFunction):
         self.debug_dir = str(debug_dir)
         # Prefixes request ids and names the debug sidecar files.
         self._name = name
-        self._inference_started = False
+        # Parked whenever the scorer holds no device memory: before activate
+        # or score builds its model, and again after each park.
+        self._parked = True
 
     async def preflight(self) -> None:
         """Fail before training starts when a remote scoring dependency is broken.
@@ -243,22 +245,20 @@ class InferenceRewardFunction(RewardFunction):
         if not isinstance(scorer, MemoryParkingScorer):
             return
         await scorer.activate()
-        self._inference_started = True
+        self._parked = False
 
-    async def park_memory(self) -> bool:
-        """Park this reward runtime when its model has been activated."""
+    async def park_memory(self) -> None:
+        """Park the scorer's model; a no-op while it holds no device memory."""
 
         scorer = self.scorer
-        if not isinstance(scorer, MemoryParkingScorer):
-            return False
-        if not scorer.requires_memory_parking:
-            return False
-        if not self._inference_started:
-            # This component never activated its model (for example an earlier
-            # sibling failed). There is no GPU lease to release.
-            return False
+        if not isinstance(scorer, MemoryParkingScorer) or not scorer.requires_memory_parking:
+            return
+        if self._parked:
+            # Never activated (an earlier sibling failed), or already parked:
+            # there is no GPU lease to release.
+            return
         await scorer.park_memory()
-        return True
+        self._parked = True
 
     async def score(self, sample: RewardSample) -> float:
         """Score one sample through the batch inference path."""
@@ -300,7 +300,7 @@ class InferenceRewardFunction(RewardFunction):
             # Contract enforcement lives at this seam, not inside each runtime,
             # so every runtime (including injected fakes) gets the same result
             # identity guard and request-order re-sort.
-            self._inference_started = True
+            self._parked = False
             raw_results = await scorer.score_batch(request)
             results = request.validate_and_order_results(raw_results)
             inference_total_ms = (time.perf_counter() - inference_started) * 1000.0

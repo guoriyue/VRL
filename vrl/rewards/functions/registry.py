@@ -296,20 +296,18 @@ class MultiReward(RewardFunction):
             timing_ms=timing_ms,
         )
 
-    async def park_memory(self) -> bool:
-        """Actively park every component and report whether any owner parked."""
+    async def park_memory(self) -> None:
+        """Park every component, attempting each before reporting failures."""
 
-        parked = False
         errors: list[BaseException] = []
         for name, _, fn in self.rewards:
             try:
-                parked = await fn.park_memory() or parked
+                await fn.park_memory()
             except BaseException as error:
                 errors.append(RuntimeError(f"reward component {name!r} failed to park"))
                 errors[-1].__cause__ = error
         if errors:
             raise RewardCleanupError("reward memory parking failures", errors)
-        return parked
 
 
 def validate_reward_memory_parking_components(
