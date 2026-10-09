@@ -56,6 +56,13 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.hpsv3 import HPSv3Reward
     from vrl.rewards.functions.image_sharpness import ImageSharpnessReward
     from vrl.rewards.functions.kling_video_reward import KlingVideoReward
+    from vrl.rewards.functions.layered_reference import (
+        LayeredEditHolesReward,
+        LayeredHiddenCompletionReward,
+        LayeredObjectMatchReward,
+        LayeredReferenceReward,
+        LayeredVisibleRetentionReward,
+    )
     from vrl.rewards.functions.local_edit import LocalEditReward
     from vrl.rewards.functions.locality_keep import LocalityKeepReward
     from vrl.rewards.functions.motion_dynamics import MotionDynamicsReward
@@ -75,6 +82,11 @@ def _register_builtins() -> None:
             "editreward": EditReward,
             "image_sharpness": ImageSharpnessReward,
             "local_edit": LocalEditReward,
+            "layered_reference": LayeredReferenceReward,
+            "layered_hidden_completion": LayeredHiddenCompletionReward,
+            "layered_object_match": LayeredObjectMatchReward,
+            "layered_visible_retention": LayeredVisibleRetentionReward,
+            "layered_edit_holes": LayeredEditHolesReward,
             "geneval_owl": GenEvalOwlReward,
             "nsfw_safety": NSFWSafetyReward,
             "ocr": OCRReward,

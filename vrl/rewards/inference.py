@@ -116,6 +116,11 @@ class RewardInferenceArtifact:
             ):
                 raise ValueError("reward metadata.reference_images must be file path strings")
             paths.extend(references)
+        if self.metadata.get("layered_reference") is not None:
+            # The known-layer reward reads a directory of layer_*.png frames.
+            from vrl.rewards.models.layered_reference import reference_layers_directory
+
+            paths.append(reference_layers_directory(self.metadata))
         return tuple(dict.fromkeys(paths))
 
     def as_path(self) -> str:
