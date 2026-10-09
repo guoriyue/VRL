@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from vrl.algorithms.advantages import GroupAdvantageConfig, GroupAdvantageObjective
+from vrl.algorithms.advantages import GroupAdvantageConfig, GroupRelativeObjective
 from vrl.algorithms.logprob_mismatch import (
     PrecisionCorrectionConfig,
     apply_rejection_sample_mask,
@@ -48,7 +48,7 @@ class GRPOConfig(ClippedPolicyConfig):
     sft_weight: float = 0.0
 
 
-class GRPO(GroupAdvantageObjective):
+class GRPO(GroupRelativeObjective):
     """Group Relative Policy Optimization for continuous rollout signals.
 
     Advantages are normalised within each prompt group:

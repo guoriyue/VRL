@@ -6,9 +6,19 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.algorithms.advantages import GroupAdvantageEstimator
+from vrl.algorithms.advantages import GroupAdvantageConfig, GroupRelativeObjective
 
 _KW = {"eps": 1e-4, "adv_clip_max": 5.0, "global_std": False}
+
+
+def _objective(
+    strategy: str, component_weights: dict[str, float] | None = None, **config
+) -> GroupRelativeObjective:
+    settings = {**_KW, **config}
+    return GroupRelativeObjective(
+        GroupAdvantageConfig(advantage_combine=strategy, **settings),
+        component_weights=component_weights,
+    )
 
 
 def _corr(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -33,23 +43,15 @@ def test_normalized_sum_de_dominates_high_variance_component() -> None:
     weights = {"quality": 1.0, "nsfw": 1.0}
 
     weighted_total = sum(weights[name] * reward for name, reward in comps.items())
-    raw = GroupAdvantageEstimator(
-        strategy="weighted_sum_raw",
-        component_weights=weights,
-        **_KW,
-    ).compute(
+    raw = _objective("weighted_sum_raw", weights).compute_advantages_from_components(
         weighted_total,
+        comps,
         group_ids,
-        component_rewards=comps,
     )
-    norm = GroupAdvantageEstimator(
-        strategy="normalized_sum",
-        component_weights=weights,
-        **_KW,
-    ).compute(
+    norm = _objective("normalized_sum", weights).compute_advantages_from_components(
         weighted_total,
+        comps,
         group_ids,
-        component_rewards=comps,
     )
 
     # Raw path is captured by the high-variance nsfw reward (strong +corr).
@@ -70,14 +72,10 @@ def test_normalized_sum_lets_low_variance_component_win_when_weighted() -> None:
     comps = {"quality": quality, "nsfw": nsfw}
     weights = {"quality": 2.0, "nsfw": 1.0}
 
-    norm = GroupAdvantageEstimator(
-        strategy="normalized_sum",
-        component_weights=weights,
-        **_KW,
-    ).compute(
+    norm = _objective("normalized_sum", weights).compute_advantages_from_components(
         weights["quality"] * quality + weights["nsfw"] * nsfw,
+        comps,
         group_ids,
-        component_rewards=comps,
     )
     # Quality (increasing) now wins: highest-quality sample gets the top advantage.
     assert int(norm.argmax().item()) == 3
@@ -86,16 +84,12 @@ def test_normalized_sum_lets_low_variance_component_win_when_weighted() -> None:
     # Component values are not clipped before weighting; only the combined
     # advantage is clamped. Pre-clipping this outlier would incorrectly yield 1.25.
     sparse = torch.tensor([0.0] * 31 + [1.0])
-    final_only = GroupAdvantageEstimator(
-        eps=1e-4,
-        adv_clip_max=2.5,
-        global_std=False,
-        strategy="normalized_sum",
-        component_weights={"quality": 0.5},
-    ).compute(
+    final_only = _objective(
+        "normalized_sum", {"quality": 0.5}, adv_clip_max=2.5
+    ).compute_advantages_from_components(
         0.5 * sparse,
+        {"quality": sparse},
         torch.zeros(32, dtype=torch.long),
-        component_rewards={"quality": sparse},
     )
     assert final_only.max().item() == 2.5
 
@@ -107,20 +101,16 @@ def test_normalized_sum_with_only_the_total_is_the_raw_group_advantage() -> None
     group_ids = torch.tensor([0, 0, 0, 1, 1, 1])
     total = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
 
-    norm = GroupAdvantageEstimator(strategy="normalized_sum", **_KW).compute(total, group_ids)
-    raw = GroupAdvantageEstimator(strategy="weighted_sum_raw", **_KW).compute(total, group_ids)
+    norm = _objective("normalized_sum").compute_advantages_from_tensors(total, group_ids)
+    raw = _objective("weighted_sum_raw").compute_advantages_from_tensors(total, group_ids)
 
     torch.testing.assert_close(norm, raw, atol=0.0, rtol=0.0)
     assert norm.abs().max().item() > 1.0
 
 
 def test_unknown_strategy_raises() -> None:
-    try:
-        GroupAdvantageEstimator(strategy="nope", component_weights={"q": 1.0}, **_KW)
-    except ValueError as exc:
-        assert "unknown advantage_combine strategy" in str(exc)
-    else:
-        raise AssertionError("expected ValueError for unknown strategy")
+    with pytest.raises(ValueError, match="unknown advantage_combine strategy"):
+        GroupAdvantageConfig(advantage_combine="nope")
 
 
 def test_nft_component_fusion_preserves_chain_credit_and_component_units() -> None:
@@ -163,22 +153,20 @@ def test_normalized_sum_combines_configured_objectives_and_ignores_observations(
 
     group_ids = torch.tensor([0, 0, 0, 1, 1, 1])
     sharpness = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 7.0])
-    estimator = GroupAdvantageEstimator(
-        strategy="normalized_sum", component_weights={"sharpness": 1.0}, **_KW
-    )
+    objective = _objective("normalized_sum", {"sharpness": 1.0})
 
-    with_observation = estimator.compute(
+    with_observation = objective.compute_advantages_from_components(
         sharpness,
+        {"sharpness": sharpness, "sharpness/edge_energy": sharpness * 100.0},
         group_ids,
-        component_rewards={"sharpness": sharpness, "sharpness/edge_energy": sharpness * 100.0},
     )
-    alone = estimator.compute(sharpness, group_ids, component_rewards={"sharpness": sharpness})
+    alone = objective.compute_advantages_from_components(
+        sharpness, {"sharpness": sharpness}, group_ids
+    )
     torch.testing.assert_close(with_observation, alone, atol=0.0, rtol=0.0)
 
-    only_observations = estimator.compute(
-        sharpness, group_ids, component_rewards={"observer": sharpness + 10.0}
+    only_observations = objective.compute_advantages_from_components(
+        sharpness, {"observer": sharpness + 10.0}, group_ids
     )
-    total = GroupAdvantageEstimator(strategy="weighted_sum_raw", **_KW).compute(
-        sharpness, group_ids
-    )
+    total = _objective("weighted_sum_raw").compute_advantages_from_tensors(sharpness, group_ids)
     torch.testing.assert_close(only_observations, total, atol=0.0, rtol=0.0)

@@ -6,11 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from vrl.algorithms.advantages import (
-    GroupAdvantageConfig,
-    GroupAdvantageEstimator,
-    GroupAdvantageObjective,
-)
+from vrl.algorithms.advantages import GroupAdvantageConfig, GroupRelativeObjective
 from vrl.algorithms.previous_policy import PreviousPolicyObjective
 from vrl.algorithms.requirements import AlgorithmRequirements
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -31,7 +27,7 @@ class DiffusionNFTConfig(GroupAdvantageConfig):
 
     eps: float = 1e-8
     # Keep the existing positional constructor fields in their original order.
-    advantage_combine: str = field(default=GroupAdvantageEstimator.DEFAULT_STRATEGY, kw_only=True)
+    advantage_combine: str = field(default="normalized_sum", kw_only=True)
     nft_beta: float = 1.0
     kl_coef: float = 1.0
     advantage_scale: float = 5.0
@@ -46,7 +42,7 @@ class DiffusionNFTConfig(GroupAdvantageConfig):
             )
 
 
-class DiffusionNFT(PreviousPolicyObjective, GroupAdvantageObjective):
+class DiffusionNFT(PreviousPolicyObjective, GroupRelativeObjective):
     """DiffusionNFT-style GRPO objective.
 
     This objective does not consume evaluator log-prob signals. It trains from
@@ -65,7 +61,7 @@ class DiffusionNFT(PreviousPolicyObjective, GroupAdvantageObjective):
         *,
         component_weights: Mapping[str, float] | None = None,
     ) -> None:
-        GroupAdvantageObjective.__init__(self, config, component_weights=component_weights)
+        GroupRelativeObjective.__init__(self, config, component_weights=component_weights)
 
     @property
     def kl_coef(self) -> float:

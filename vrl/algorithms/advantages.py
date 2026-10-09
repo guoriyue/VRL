@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any
 
 
 def nonzero_advantage_mask(advantages: Any) -> Any:
@@ -158,107 +158,90 @@ def group_relative_advantages(
     return torch.clamp(advantages, -adv_clip_max, adv_clip_max)
 
 
-class GroupAdvantageEstimator:
-    """Compute scalar or multi-objective group-relative advantages.
+# How a multi-component reward turns into one advantage. ``normalized_sum``
+# standardizes each configured component within its group before weighting,
+# so no reward's units can dominate the update; ``weighted_sum_raw``
+# standardizes the weighted total the reward runtime already produced.
+ADVANTAGE_COMBINE_STRATEGIES = ("weighted_sum_raw", "normalized_sum")
 
-    The estimator binds reward-component weights and normalization settings to
-    one algorithm instance. The algorithm config selects the combination
-    strategy; the reward config supplies its component weights.
+
+@dataclass(slots=True)
+class GroupAdvantageConfig:
+    """Normalization settings shared by group-relative policy objectives."""
+
+    eps: float = 1e-4
+    adv_clip_max: float = 5.0
+    global_std: bool = False
+    advantage_combine: str = "normalized_sum"
+
+    def __post_init__(self) -> None:
+        if self.advantage_combine not in ADVANTAGE_COMBINE_STRATEGIES:
+            raise ValueError(
+                f"unknown advantage_combine strategy {self.advantage_combine!r}; "
+                f"available: {sorted(ADVANTAGE_COMBINE_STRATEGIES)}",
+            )
+
+
+class GroupRelativeObjective:
+    """The advantage half of an objective that normalizes rewards per prompt group.
+
+    GRPO, DiffusionNFT and V-GRPO inherit it: ``config`` is the objective's
+    own hyper-parameters (the normalization fields are the
+    ``GroupAdvantageConfig`` part of it) and ``component_weights`` are the
+    reward config's objective weights, bound once at construction.
     """
-
-    __slots__ = (
-        "adv_clip_max",
-        "component_weights",
-        "eps",
-        "global_std",
-        "strategy",
-    )
-
-    DEFAULT_STRATEGY = "normalized_sum"
 
     def __init__(
         self,
+        config: GroupAdvantageConfig,
         *,
-        eps: float,
-        adv_clip_max: float,
-        global_std: bool,
-        strategy: str = DEFAULT_STRATEGY,
         component_weights: Mapping[str, float] | None = None,
     ) -> None:
-        self.validate_strategy(strategy)
-        self.eps = float(eps)
-        self.adv_clip_max = float(adv_clip_max)
-        self.global_std = bool(global_std)
-        self.strategy = strategy
+        self.config = config
         self.component_weights = {
             name: float(weight) for name, weight in (component_weights or {}).items()
         }
 
-    @classmethod
-    def validate_strategy(cls, strategy: str) -> None:
-        """Reject an unknown public strategy name at configuration time."""
+    def compute_advantages_from_tensors(self, rewards: Any, group_ids: Any) -> Any:
+        """Standardize and clamp the weighted reward total within each group."""
 
-        if strategy not in cls._STRATEGIES:
-            raise ValueError(
-                f"unknown advantage_combine strategy {strategy!r}; "
-                f"available: {sorted(cls._STRATEGIES)}",
-            )
-
-    def compute(
-        self,
-        rewards: Any,
-        group_ids: Any,
-        *,
-        component_rewards: Mapping[str, Any] | None = None,
-    ) -> Any:
-        """Compute advantages using the configured aggregation strategy."""
-
-        compute_strategy = self._STRATEGIES[self.strategy]
-        return compute_strategy(self, rewards, component_rewards, group_ids)
-
-    def _normalize_weighted_rewards(
-        self,
-        rewards: Any,
-        _component_rewards: Mapping[str, Any] | None,
-        group_ids: Any,
-    ) -> Any:
-        """Normalize the weighted total already produced by the reward runtime."""
-
+        cfg = self.config
         return group_relative_advantages(
             rewards,
             group_ids,
-            eps=self.eps,
-            adv_clip_max=self.adv_clip_max,
-            global_std=self.global_std,
+            eps=cfg.eps,
+            adv_clip_max=cfg.adv_clip_max,
+            global_std=cfg.global_std,
         )
 
-    def _normalize_components_then_sum(
+    def compute_advantages_from_components(
         self,
         rewards: Any,
-        component_rewards: Mapping[str, Any] | None,
+        component_rewards: Mapping[str, Any],
         group_ids: Any,
     ) -> Any:
-        """Normalize each objective, weighted-sum it, then clamp once.
+        """Advantages from the weighted total and its raw component observations.
 
-        Only the configured objectives combine. A reward also reports
-        observation axes beside them (``MultiReward`` namespaces them as
-        ``<component>/<axis>``) for logging; those never enter the advantage.
-        With no configured objective in hand (the tensor-only advantage path,
-        or a reward that reports only observations) there is exactly one
-        objective, the weighted total, so standardizing it is the whole
-        strategy: the result is the ``weighted_sum_raw`` advantage, not an
-        error. Some but not all configured objectives is a misconfiguration.
+        Under ``normalized_sum`` each configured objective is standardized in
+        its group, weighted and summed, then clamped once. A reward also
+        reports observation axes beside its objectives (``MultiReward``
+        namespaces them as ``<component>/<axis>``) for logging; those never
+        enter the advantage. With no configured objective in hand (a reward
+        that reports only observations) there is exactly one objective, the
+        weighted total, so standardizing it is the whole strategy. Some but not
+        all configured objectives is a misconfiguration.
         """
 
         import torch
 
+        cfg = self.config
         objectives = {
             name: values
-            for name, values in (component_rewards or {}).items()
+            for name, values in component_rewards.items()
             if name in self.component_weights
         }
-        if not objectives:
-            return self._normalize_weighted_rewards(rewards, None, group_ids)
+        if cfg.advantage_combine != "normalized_sum" or not objectives:
+            return self.compute_advantages_from_tensors(rewards, group_ids)
         missing = sorted(set(self.component_weights) - set(objectives))
         if missing:
             raise ValueError(
@@ -271,91 +254,18 @@ class GroupAdvantageEstimator:
             advantage = _standardize_group_rewards(
                 objectives[name],
                 group_ids,
-                eps=self.eps,
-                global_std=self.global_std,
+                eps=cfg.eps,
+                global_std=cfg.global_std,
             )
             weighted = self.component_weights[name] * advantage
             total = weighted if total is None else total + weighted
-        return torch.clamp(total, -self.adv_clip_max, self.adv_clip_max)
-
-    # This table is both dispatch and the source of truth for public validation.
-    _STRATEGIES: ClassVar = {
-        "weighted_sum_raw": _normalize_weighted_rewards,
-        "normalized_sum": _normalize_components_then_sum,
-    }
-
-
-@dataclass(slots=True)
-class GroupAdvantageConfig:
-    """Normalization settings shared by group-relative policy objectives."""
-
-    eps: float = 1e-4
-    adv_clip_max: float = 5.0
-    global_std: bool = False
-    # The default standardizes each component before weighting, so no reward's
-    # units can dominate the update. weighted_sum_raw normalizes the weighted
-    # raw total once instead.
-    advantage_combine: str = GroupAdvantageEstimator.DEFAULT_STRATEGY
-
-    def __post_init__(self) -> None:
-        GroupAdvantageEstimator.validate_strategy(self.advantage_combine)
-
-    def build_estimator(
-        self,
-        *,
-        component_weights: Mapping[str, float] | None = None,
-    ) -> GroupAdvantageEstimator:
-        """Bind reward weights to the algorithm's normalization settings."""
-
-        return GroupAdvantageEstimator(
-            eps=self.eps,
-            adv_clip_max=self.adv_clip_max,
-            global_std=self.global_std,
-            strategy=self.advantage_combine,
-            component_weights=component_weights,
-        )
-
-
-class GroupAdvantageObjective:
-    """An objective whose advantages come from a ``GroupAdvantageEstimator``.
-
-    Bound once at construction from the objective's own normalization config
-    and the reward config's component weights; ``advantage_combine`` on the
-    config decides whether those weights combine standardized components or
-    the weighted total the reward runtime already produced.
-    """
-
-    def __init__(
-        self,
-        config: GroupAdvantageConfig,
-        *,
-        component_weights: Mapping[str, float] | None = None,
-    ) -> None:
-        self.config = config
-        self.advantage_estimator = config.build_estimator(component_weights=component_weights)
-
-    def compute_advantages_from_tensors(self, rewards: Any, group_ids: Any) -> Any:
-        """Group-relative advantages of the weighted reward total."""
-
-        return self.advantage_estimator.compute(rewards, group_ids)
-
-    def compute_advantages_from_components(
-        self,
-        rewards: Any,
-        component_rewards: dict[str, Any],
-        group_ids: Any,
-    ) -> Any:
-        """Advantages from the weighted total and its raw component observations."""
-
-        return self.advantage_estimator.compute(
-            rewards, group_ids, component_rewards=component_rewards
-        )
+        return torch.clamp(total, -cfg.adv_clip_max, cfg.adv_clip_max)
 
 
 __all__ = [
+    "ADVANTAGE_COMBINE_STRATEGIES",
     "GroupAdvantageConfig",
-    "GroupAdvantageEstimator",
-    "GroupAdvantageObjective",
+    "GroupRelativeObjective",
     "group_relative_advantages",
     "nonzero_advantage_mask",
 ]

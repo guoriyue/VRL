@@ -216,7 +216,7 @@ D 批的难点：trainer 测试用 `nn.Linear(1, 1)` 策略和手造 batch 断�
 | 问题 | 处置 |
 |---|---|
 | `AlgorithmConfigContract` 名字不说明是什么；`tolerates_off_policy_staleness` 在所有在线目标上都等于 `not requires_previous_policy`（行为策略是当前权重的目标才吃不下 staleness） | 改名 `AlgorithmRequirements`（类属性 `requirements`），删掉 `tolerates_off_policy_staleness`，continuous 检查直接读 `requires_previous_policy` |
-| GRPO / FlowDPPO / GRPOGuard / DiffusionNFT 各自实现一遍"绑定 advantage estimator"和两个 advantage 方法；FlowDPPO / GRPOGuard 复制 GRPO 的构造器而不是继承；`_initialize_*` 两个只在构造器里用的 helper | `GroupAdvantageObjective`（`advantages.py`）一次持有 estimator 与两个 advantage 方法，GRPO / NFT / V-GRPO 继承；构造器收 reward 的 `component_weights` 而不是调用方先 build 好的 estimator；FlowDPPO / GRPOGuard 不再写构造器 |
+| GRPO / FlowDPPO / GRPOGuard / DiffusionNFT 各自实现一遍"绑定 advantage estimator"和两个 advantage 方法；FlowDPPO / GRPOGuard 复制 GRPO 的构造器而不是继承；`_initialize_*` 两个只在构造器里用的 helper | `GroupRelativeObjective`（`advantages.py`）一次持有归一化配置、reward 权重与两个 advantage 方法（原 `GroupAdvantageEstimator` 并入其中），GRPO / NFT / V-GRPO 继承；构造器收 reward 的 `component_weights` 而不是调用方先 build 好的 estimator；FlowDPPO / GRPOGuard 不再写构造器 |
 | `kl_coef = 0.0` / `sft_weight = 0.0` 在 FlowDPPO 和 GRPOGuard 各写一遍 | 共同父类 `TrustRegionGRPO` 声明一次（trust region 取代 KL 项，且无 SFT 项） |
 | `VGRPOConfig` 重复 `GroupAdvantageConfig` 的 `eps / adv_clip_max / global_std`，V-GRPO 自己再调一次 `group_relative_advantages` | `VGRPOConfig(GroupAdvantageConfig)`，默认 `advantage_combine="weighted_sum_raw"`（与原行为逐位相同），advantage 走同一条 estimator 路径 |
 | `config: ... | None = None` 让基类替子类选默认配置，子类因此各写构造器 | 所有目标的 `config` 必填；factory 本来就总是传 |

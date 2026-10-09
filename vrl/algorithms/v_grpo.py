@@ -48,7 +48,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from vrl.algorithms.advantages import GroupAdvantageConfig, GroupAdvantageObjective
+from vrl.algorithms.advantages import GroupAdvantageConfig, GroupRelativeObjective
 from vrl.algorithms.previous_policy import PreviousPolicyObjective
 from vrl.algorithms.requirements import AlgorithmRequirements
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -87,7 +87,7 @@ class VGRPOConfig(GroupAdvantageConfig):
             )
 
 
-class VGRPO(PreviousPolicyObjective, GroupAdvantageObjective):
+class VGRPO(PreviousPolicyObjective, GroupRelativeObjective):
     """Variational GRPO objective on the forward-process replay branch.
 
     ``theta_old`` is the detached current prediction, so the ratio is
@@ -103,7 +103,7 @@ class VGRPO(PreviousPolicyObjective, GroupAdvantageObjective):
         *,
         component_weights: Mapping[str, float] | None = None,
     ) -> None:
-        GroupAdvantageObjective.__init__(self, config, component_weights=component_weights)
+        GroupRelativeObjective.__init__(self, config, component_weights=component_weights)
         # Advances with the optimizer so the group-shared noise changes across
         # updates while staying fixed within one.
         self._update_counter = 0
