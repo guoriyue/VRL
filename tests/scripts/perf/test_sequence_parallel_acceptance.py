@@ -5,6 +5,7 @@ the hardware gate itself and is exercised on the multi-GPU host."""
 from __future__ import annotations
 
 import argparse
+import json
 import math
 from pathlib import Path
 
@@ -28,16 +29,18 @@ def _dump(path: Path, output: torch.Tensor, *, gpus_per_engine: int, seed: int =
     return path
 
 
-def _compare_args(reference: Path, candidate: Path, **overrides: object) -> argparse.Namespace:
-    values: dict[str, object] = {
-        "reference": reference,
-        "candidate": candidate,
-        "atol": 0.02,
-        "max_mismatch_fraction": 0.0,
-        "min_psnr_db": 0.0,
-    }
-    values.update(overrides)
-    return argparse.Namespace(**values)
+def _compare(capsys, reference: Path, candidate: Path, *flags: str) -> dict[str, object]:
+    """Run the ``compare`` subcommand and return its printed verdict.
+
+    A failed comparison exits 1 after printing; the verdict is read back from
+    stdout either way so the numbers behind the exit code stay assertable.
+    """
+
+    try:
+        sp.main(["compare", str(reference), str(candidate), *flags])
+    except SystemExit as exit_code:
+        assert exit_code.code == 1
+    return json.loads(capsys.readouterr().out)
 
 
 def test_fleet_overrides_pin_topology_seed_and_eager_policy() -> None:
@@ -69,7 +72,7 @@ def test_compare_passes_within_tolerance_and_scales_uint8(tmp_path: Path, capsys
         torch.full((2, 3, 4, 4), 130, dtype=torch.uint8),
         gpus_per_engine=2,
     )
-    result = sp._compare(_compare_args(reference, candidate))
+    result = _compare(capsys, reference, candidate)
     assert result["passed"] is True
     assert result["max_abs_diff"] == pytest.approx(2 / 255)
     assert result["mismatch_fraction"] == 0.0
@@ -80,7 +83,7 @@ def test_compare_passes_within_tolerance_and_scales_uint8(tmp_path: Path, capsys
 def test_compare_fails_below_psnr_floor(tmp_path: Path, capsys) -> None:
     reference = _dump(tmp_path / "n1", torch.zeros(1, 3, 2, 2), gpus_per_engine=1)
     candidate = _dump(tmp_path / "n2", torch.full((1, 3, 2, 2), 0.01), gpus_per_engine=2)
-    result = sp._compare(_compare_args(reference, candidate, min_psnr_db=45.0))
+    result = _compare(capsys, reference, candidate, "--min-psnr-db", "45.0")
     assert result["mismatch_fraction"] == 0.0
     assert result["psnr_db"] == pytest.approx([40.0])
     assert result["passed"] is False
@@ -89,18 +92,19 @@ def test_compare_fails_below_psnr_floor(tmp_path: Path, capsys) -> None:
 def test_compare_fails_beyond_tolerance(tmp_path: Path, capsys) -> None:
     reference = _dump(tmp_path / "n1", torch.zeros(1, 3, 2, 2), gpus_per_engine=1)
     candidate = _dump(tmp_path / "n2", torch.full((1, 3, 2, 2), 0.5), gpus_per_engine=2)
-    result = sp._compare(_compare_args(reference, candidate))
+    with pytest.raises(SystemExit) as raised:
+        sp.main(["compare", str(reference), str(candidate)])
+    assert raised.value.code == 1
+    result = json.loads(capsys.readouterr().out)
     assert result["passed"] is False
     assert result["mismatch_fraction"] == 1.0
-    with pytest.raises(SystemExit):
-        sp.main(["compare", str(reference), str(candidate)])
 
 
 def test_compare_rejects_mismatched_inputs(tmp_path: Path, capsys) -> None:
     reference = _dump(tmp_path / "n1", torch.zeros(1, 3, 2, 2), gpus_per_engine=1, seed=1)
     candidate = _dump(tmp_path / "n2", torch.zeros(1, 3, 2, 2), gpus_per_engine=2, seed=2)
     with pytest.raises(ValueError, match="seed"):
-        sp._compare(_compare_args(reference, candidate))
+        sp.main(["compare", str(reference), str(candidate)])
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
@@ -113,14 +117,14 @@ def test_compare_rejects_nonfinite_outputs(
     reference = _dump(tmp_path / "n1", outputs["reference"], gpus_per_engine=1)
     candidate = _dump(tmp_path / "n2", outputs["candidate"], gpus_per_engine=2)
     with pytest.raises(ValueError, match=f"{invalid_side} output must be nonempty and finite"):
-        sp._compare(_compare_args(reference, candidate))
+        sp.main(["compare", str(reference), str(candidate)])
 
 
 def test_compare_rejects_empty_outputs(tmp_path: Path) -> None:
     reference = _dump(tmp_path / "n1", torch.empty(0), gpus_per_engine=1)
     candidate = _dump(tmp_path / "n2", torch.empty(0), gpus_per_engine=2)
     with pytest.raises(ValueError, match="nonempty and finite"):
-        sp._compare(_compare_args(reference, candidate))
+        sp.main(["compare", str(reference), str(candidate)])
 
 
 def test_peak_memory_by_rank_takes_the_max_per_rank() -> None:

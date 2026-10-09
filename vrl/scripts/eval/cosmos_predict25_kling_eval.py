@@ -147,7 +147,20 @@ def main(argv: list[str] | None = None) -> None:
         device=device,
         requires_trainer="Cosmos checkpoint evaluation",
     )
-    sampling = _resolve_sampling(args, root)
+    # Adapt this script's CLI flags to the shared sampling projection. The arg names
+    # (notably --steps -> num_steps) are cosmos-specific; wan has no such overrides.
+    sampling = resolve_eval_sampling(
+        root,
+        overrides={
+            "width": args.width,
+            "height": args.height,
+            "num_frames": args.num_frames,
+            "num_steps": args.steps,
+            "fps": args.fps,
+            "max_sequence_length": args.max_sequence_length,
+            "guidance_scale": args.guidance_scale,
+        },
+    )
     if root.model is None:
         raise ValueError("Cosmos checkpoint evaluation requires model configuration")
     entry = get_model_family_entry(str(root.model.family))
@@ -193,7 +206,11 @@ def main(argv: list[str] | None = None) -> None:
         keep_model_between_checkpoints=keep_model_between_checkpoints,
         expected_model_identity=model_identity,
     )
-    _write_generation_metadata(generated, output_dir)
+    with (output_dir / "generated.jsonl").open("w", encoding="utf-8") as handle:
+        for video in generated:
+            row = asdict(video)
+            row["path"] = str(video.path)
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
 
     if args.generate_only:
         print(json.dumps({"output_dir": str(output_dir), "videos": len(generated)}, indent=2))
@@ -222,23 +239,6 @@ def _load_prompts(args: argparse.Namespace, root: RootConfig) -> list[str]:
     if args.manifest:
         prompts.extend(example.prompt for example in load_prompt_dataset_index(args.manifest))
     return prompts
-
-
-def _resolve_sampling(args: argparse.Namespace, root: RootConfig) -> dict[str, Any]:
-    # Adapt this script's CLI flags to the shared sampling projection. The arg names
-    # (notably --steps -> num_steps) are cosmos-specific; wan has no such overrides.
-    return resolve_eval_sampling(
-        root,
-        overrides={
-            "width": args.width,
-            "height": args.height,
-            "num_frames": args.num_frames,
-            "num_steps": args.steps,
-            "fps": args.fps,
-            "max_sequence_length": args.max_sequence_length,
-            "guidance_scale": args.guidance_scale,
-        },
-    )
 
 
 def _generate_all(
@@ -407,15 +407,6 @@ def _score_key(args: argparse.Namespace, root: RootConfig) -> str:
 
 def _artifact_id(video: GeneratedVideo) -> str:
     return f"{video.checkpoint_label}-p{video.prompt_index:04d}-s{video.sample_index:02d}"
-
-
-def _write_generation_metadata(videos: list[GeneratedVideo], output_dir: Path) -> None:
-    path = output_dir / "generated.jsonl"
-    with path.open("w", encoding="utf-8") as handle:
-        for video in videos:
-            row = asdict(video)
-            row["path"] = str(video.path)
-            handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
 def _summarize_scores(rows: list[dict[str, Any]]) -> dict[str, Any]:

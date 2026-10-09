@@ -12,11 +12,10 @@ Reads a directory of ``.mp4`` files plus a prompt manifest and emits
   ``vbench_*`` columns stay present but empty and a warning is logged. The exact
   per-video JSON schema is confirmed by the Phase A availability gate.
 
-Repo-owned video reward models can plug in behind CLI flags, emitting
-``vs2_<key>`` columns. Other external benchmarks (VMBench, VBench-2.0,
-DynamicEval) are run via their own CLIs and folded in with ``--merge-json
-prefix=path`` — a per-video ``{filename: {metric: score}}`` JSON — so the suite
-never guesses an unverified Python API.
+Other external benchmarks (VMBench, VBench-2.0, DynamicEval) are run via their
+own CLIs and folded in with ``--merge-json prefix=path`` — a per-video
+``{filename: {metric: score}}`` JSON — so the suite never guesses an unverified
+Python API.
 
 This is a fixed *eval* surface, not an online reward — VBench's multi-model
 latency/VRAM is unbounded, so the sprint keeps it out of the training loop until
@@ -124,7 +123,20 @@ def main(argv: list[str] | None = None) -> None:
     if not videos:
         raise FileNotFoundError(f"no .mp4 files found in {video_dir}")
 
-    prompts = _pair_prompts(videos, args.manifest)
+    # Map each video to a prompt: by reference_video filename, else by order.
+    prompts: dict[Path, str] = {video: "" for video in videos}
+    if args.manifest:
+        examples = load_prompt_dataset_index(args.manifest)
+        by_name = {
+            Path(example.reference_video).name: example.prompt
+            for example in examples
+            if str(example.reference_video).strip()
+        }
+        for index, video in enumerate(videos):
+            if video.name in by_name:
+                prompts[video] = by_name[video.name]
+            elif index < len(examples):
+                prompts[video] = examples[index].prompt
     output = (
         Path(args.output).expanduser().resolve()
         if args.output
@@ -155,14 +167,24 @@ def main(argv: list[str] | None = None) -> None:
             for dim in vbench_dims:
                 row[f"vbench_{dim}"] = vbench_scores.get(str(video), {}).get(dim)
 
-    for prefix, model in _optional_reward_models(args).items():
-        scores = _score_reward_model(videos, prompts, model)
-        for row, video in zip(rows, videos, strict=True):
-            for key, value in scores.get(str(video), {}).items():
-                row[f"{prefix}_{key}"] = value
-
     for merge_arg in args.merge_json:
-        prefix, merged = _load_merge_json(merge_arg)
+        # ``prefix=path`` names a per-video external-metric JSON
+        # (``{filename: {metric: score}}``), merged as <prefix>_<metric> columns.
+        if "=" not in merge_arg:
+            raise ValueError(f"--merge-json expects prefix=path, got {merge_arg!r}")
+        prefix, path = merge_arg.split("=", 1)
+        prefix = prefix.strip()
+        payload = json.loads(Path(path).expanduser().resolve().read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"--merge-json {path!r} must be a JSON object keyed by video filename"
+            )
+        merged: dict[str, dict[str, float]] = {}
+        for name, metrics in payload.items():
+            if isinstance(metrics, dict):
+                merged[Path(str(name)).name] = {
+                    str(metric): float(value) for metric, value in metrics.items()
+                }
         for row, video in zip(rows, videos, strict=True):
             for metric, value in merged.get(video.name, {}).items():
                 row[f"{prefix}_{metric}"] = value
@@ -170,28 +192,6 @@ def main(argv: list[str] | None = None) -> None:
     _write_csv(rows, output)
     logger.info("wrote %d rows to %s", len(rows), output)
     print(json.dumps({"output": str(output), "videos": len(rows)}, indent=2))
-
-
-def _pair_prompts(videos: list[Path], manifest: str) -> dict[Path, str]:
-    """Map each video to a prompt: by reference_video filename, else by order."""
-
-    if not manifest:
-        return {video: "" for video in videos}
-    examples = load_prompt_dataset_index(manifest)
-    by_name = {
-        Path(example.reference_video).name: example.prompt
-        for example in examples
-        if str(example.reference_video).strip()
-    }
-    paired: dict[Path, str] = {}
-    for index, video in enumerate(videos):
-        if video.name in by_name:
-            paired[video] = by_name[video.name]
-        elif index < len(examples):
-            paired[video] = examples[index].prompt
-        else:
-            paired[video] = ""
-    return paired
 
 
 def _score_kling(
@@ -269,20 +269,12 @@ def _score_vbench(
     except Exception as exc:  # optional tool; never fail the suite on its errors
         logger.warning("VBench evaluation failed (%s); leaving vbench_* columns empty", exc)
         return {}
-    return _parse_vbench_results(output_dir, videos)
 
-
-def _parse_vbench_results(
-    output_dir: Path,
-    videos: list[Path],
-) -> dict[str, dict[str, float]]:
-    """Parse VBench ``<name>_eval_results.json`` into ``{video_path: {dim: score}}``.
-
-    VBench writes ``{dimension: [aggregate, [per_video_entry, ...]]}``; each
-    per-video entry is a ``{video_path, video_results}`` dict. We match entries to
-    our videos by filename so absolute-path differences don't drop rows.
-    """
-
+    # Parse VBench ``<name>_eval_results.json`` into ``{video_path: {dim: score}}``.
+    # VBench writes ``{dimension: [aggregate, [per_video_entry, ...]]}``; each
+    # per-video entry is a ``{video_path, video_results}`` dict. Entries are
+    # matched to our videos by filename so absolute-path differences don't drop
+    # rows.
     candidates = sorted(output_dir.glob("*_eval_results.json"))
     if not candidates:
         logger.warning("no VBench *_eval_results.json found in %s", output_dir)
@@ -307,60 +299,6 @@ def _parse_vbench_results(
             except (TypeError, ValueError):
                 continue
     return scores
-
-
-def _optional_reward_models(args: argparse.Namespace) -> dict[str, Any]:
-    """Instantiate the repo-owned video reward models enabled by CLI flags.
-
-    Keyed by the CSV column prefix. Each is a ``RewardModel`` whose ``__call__``
-    returns named scores we emit as ``<prefix>_<key>`` columns.
-    """
-
-    device = "cuda:0" if (args.device == "auto" and torch.cuda.is_available()) else args.device
-    del device
-    models: dict[str, Any] = {}
-    return models
-
-
-def _score_reward_model(
-    videos: list[Path],
-    prompts: dict[Path, str],
-    model: Any,
-) -> dict[str, dict[str, float]]:
-    """Run a RewardModel over each video, returning ``{video_path: {key: score}}``."""
-
-    scores: dict[str, dict[str, float]] = {}
-    try:
-        for video in videos:
-            artifact = RewardInferenceArtifact(
-                artifact_id=video.stem,
-                sample_id=video.stem,
-                path=str(video),
-                prompt=prompts[video],
-            )
-            scores[str(video)] = {str(key): float(value) for key, value in model(artifact).items()}
-    finally:
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    return scores
-
-
-def _load_merge_json(merge_arg: str) -> tuple[str, dict[str, dict[str, float]]]:
-    """Parse a ``prefix=path`` external-metric JSON into ``(prefix, {filename: {metric: score}})``."""
-
-    if "=" not in merge_arg:
-        raise ValueError(f"--merge-json expects prefix=path, got {merge_arg!r}")
-    prefix, path = merge_arg.split("=", 1)
-    payload = json.loads(Path(path).expanduser().resolve().read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"--merge-json {path!r} must be a JSON object keyed by video filename")
-    merged: dict[str, dict[str, float]] = {}
-    for name, metrics in payload.items():
-        if isinstance(metrics, dict):
-            merged[Path(str(name)).name] = {
-                str(metric): float(value) for metric, value in metrics.items()
-            }
-    return prefix.strip(), merged
 
 
 def _write_csv(rows: list[dict[str, Any]], output: Path) -> None:

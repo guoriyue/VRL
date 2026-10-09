@@ -294,7 +294,12 @@ def score_grid(args: argparse.Namespace) -> dict[str, Any]:
     if not rows:
         raise ValueError(f"no generated.jsonl rows under {args.output_dir}")
     device = resolve_eval_device(args.device)
-    worker_config = _hpsv3_worker_config(_load_run_config(args.run_dir), device=device)
+    # Project the run's own reward block so eval scores on training's terms.
+    worker_config = RewardRuntimeConfig.from_cfg(_load_run_config(args.run_dir)).worker_config(
+        "hpsv3",
+        default_reward_model_name="MizzenAI/HPSv3@main",
+    )
+    worker_config["device"] = str(device)
 
     model = HPSv3Model(worker_config)
     scored: list[dict[str, Any]] = []
@@ -337,17 +342,6 @@ def score_grid(args: argparse.Namespace) -> dict[str, Any]:
     report = {"schema": REPORT_SCHEMA, "scored": len(scored), **summary}
     write_json(args.output_dir / "report.json", report)
     return report
-
-
-def _hpsv3_worker_config(cfg: DictConfig, *, device: torch.device) -> dict[str, Any]:
-    """Project the run's own reward block so eval scores on training's terms."""
-
-    worker_config = RewardRuntimeConfig.from_cfg(cfg).worker_config(
-        "hpsv3",
-        default_reward_model_name="MizzenAI/HPSv3@main",
-    )
-    worker_config["device"] = str(device)
-    return worker_config
 
 
 # --- shared -------------------------------------------------------------------

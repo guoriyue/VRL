@@ -122,22 +122,6 @@ def _generate(
     return video_to_cthw(decoded.detach().cpu())
 
 
-def _frame_stats(frames: np.ndarray) -> dict[str, Any]:
-    diffs = np.abs(frames[1:].astype(np.float32) - frames[:-1].astype(np.float32)).mean(
-        axis=(1, 2, 3)
-    )
-    # Blockiness: energy of 8-pixel-period edges vs. all edges (VAE latent = 8x8 px).
-    gray = frames.astype(np.float32).mean(axis=-1)
-    dx = np.abs(np.diff(gray, axis=2))
-    grid = dx[:, :, 7::8].mean(axis=(1, 2))
-    total = dx.mean(axis=(1, 2)) + 1e-6
-    return {
-        "frame_std": [round(float(f.std()), 2) for f in frames],
-        "consecutive_abs_diff": [round(float(d), 2) for d in diffs],
-        "blockiness_8px_ratio": [round(float(g / t), 3) for g, t in zip(grid, total, strict=True)],
-    }
-
-
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = build_parser().parse_args(argv)
@@ -201,6 +185,17 @@ def main(argv: list[str] | None = None) -> None:
                     for index in (0, 1, 2, 8, 16):
                         if index < len(frames):
                             Image.fromarray(frames[index]).save(f"{stem}_f{index:02d}.png")
+                    # Raw per-frame statistics on the model's own frames (not the
+                    # codec's): spread, consecutive change, and blockiness as the
+                    # energy of 8-pixel-period edges vs. all edges (VAE latent =
+                    # 8x8 px).
+                    diffs = np.abs(
+                        frames[1:].astype(np.float32) - frames[:-1].astype(np.float32)
+                    ).mean(axis=(1, 2, 3))
+                    gray = frames.astype(np.float32).mean(axis=-1)
+                    dx = np.abs(np.diff(gray, axis=2))
+                    grid = dx[:, :, 7::8].mean(axis=(1, 2))
+                    total = dx.mean(axis=(1, 2)) + 1e-6
                     row = {
                         "variant": name,
                         "prompt_index": prompt_index,
@@ -213,7 +208,13 @@ def main(argv: list[str] | None = None) -> None:
                         "negative_prompt": bool(negative_prompt),
                         "wall_s": round(wall, 1),
                         "finite": bool(torch.isfinite(video).all()),
-                        "raw": _frame_stats(frames),
+                        "raw": {
+                            "frame_std": [round(float(f.std()), 2) for f in frames],
+                            "consecutive_abs_diff": [round(float(d), 2) for d in diffs],
+                            "blockiness_8px_ratio": [
+                                round(float(g / t), 3) for g, t in zip(grid, total, strict=True)
+                            ],
+                        },
                     }
                     results.append(row)
                     logger.info("%s", json.dumps(row))

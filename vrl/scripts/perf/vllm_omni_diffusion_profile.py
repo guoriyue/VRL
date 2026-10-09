@@ -62,24 +62,6 @@ def _build_omni(model: str, precision: str, offload: bool):
     return Omni(model=model, **kwargs)
 
 
-def _sampling_params(height: int, width: int, steps: int, guidance: float, is_qwen: bool):
-    from vllm_omni.inputs.data import OmniDiffusionSamplingParams
-
-    kwargs = dict(
-        height=height,
-        width=width,
-        num_inference_steps=steps,
-        seed=0,
-        num_outputs_per_prompt=1,
-    )
-    # Qwen-Image uses true_cfg_scale; FLUX.1-dev uses the distilled guidance_scale.
-    if is_qwen:
-        kwargs["true_cfg_scale"] = guidance
-    else:
-        kwargs["guidance_scale"] = guidance
-    return OmniDiffusionSamplingParams(**kwargs)
-
-
 def main(argv=None) -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--model", required=True)
@@ -115,14 +97,22 @@ def main(argv=None) -> None:
         torch.cuda.reset_peak_memory_stats()
 
     try:
+        from vllm_omni.inputs.data import OmniDiffusionSamplingParams
+
         omni = _build_omni(args.model, args.precision, args.offload)
-        params = _sampling_params(
-            args.height,
-            args.width,
-            args.steps,
-            args.guidance,
-            is_qwen,
+        sampling_kwargs = dict(
+            height=args.height,
+            width=args.width,
+            num_inference_steps=args.steps,
+            seed=0,
+            num_outputs_per_prompt=1,
         )
+        # Qwen-Image uses true_cfg_scale; FLUX.1-dev uses the distilled guidance_scale.
+        if is_qwen:
+            sampling_kwargs["true_cfg_scale"] = args.guidance
+        else:
+            sampling_kwargs["guidance_scale"] = args.guidance
+        params = OmniDiffusionSamplingParams(**sampling_kwargs)
         for _ in range(args.warmup):
             omni.generate(DIFFUSION_BENCHMARK_PROMPT, params)
         if torch.cuda.is_available():
@@ -140,6 +130,15 @@ def main(argv=None) -> None:
             last_metrics = getattr(outputs[0], "metrics", None)
 
         latencies.sort()
+        # Engine metrics are recorded as-is when JSON-serialisable, else as a
+        # float-valued mapping.
+        try:
+            json.dumps(last_metrics)
+            engine_metrics = last_metrics
+        except (TypeError, ValueError):
+            engine_metrics = (
+                {k: float(v) for k, v in dict(last_metrics).items()} if last_metrics else None
+            )
         record.update(
             status="ok",
             forward_ms_median=latencies[len(latencies) // 2],
@@ -150,7 +149,7 @@ def main(argv=None) -> None:
                 if torch.cuda.is_available()
                 else None
             ),
-            engine_metrics=_jsonable(last_metrics),
+            engine_metrics=engine_metrics,
         )
         print(
             f"[ok] {args.model} {args.precision}: "
@@ -179,14 +178,6 @@ def main(argv=None) -> None:
     existing.append(record)
     out.write_text(json.dumps(existing, indent=2))
     print(f"-> appended to {out}")
-
-
-def _jsonable(obj):
-    try:
-        json.dumps(obj)
-        return obj
-    except (TypeError, ValueError):
-        return {k: float(v) for k, v in dict(obj).items()} if obj else None
 
 
 if __name__ == "__main__":

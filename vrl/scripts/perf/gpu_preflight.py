@@ -96,51 +96,6 @@ def measured_bf16_peak_tflops(size: int = 12288) -> float:
     return best
 
 
-def _bench_sdpa_backends() -> dict[str, float]:
-    """TFLOPS of each EXACT SDPA backend at a representative DiT attention shape.
-
-    Shape ~ a video DiT self-attention (heads=16, head_dim=128, seq~7k). Skips the
-    math backend (reference, never the fast path). Returns {backend_name: TFLOPS}.
-    """
-    import torch
-    from torch.nn.attention import SDPBackend, sdpa_kernel
-    from torch.nn.functional import scaled_dot_product_attention as sdpa
-
-    b, h, s, d = 1, 16, 7040, 128
-    q = torch.randn(b, h, s, d, device="cuda", dtype=torch.bfloat16)
-    k = torch.randn(b, h, s, d, device="cuda", dtype=torch.bfloat16)
-    v = torch.randn(b, h, s, d, device="cuda", dtype=torch.bfloat16)
-    flops = 4 * b * h * s * s * d
-    out: dict[str, float] = {}
-    for backend, name in (
-        (SDPBackend.FLASH_ATTENTION, "flash"),
-        (SDPBackend.CUDNN_ATTENTION, "cudnn"),
-        (SDPBackend.EFFICIENT_ATTENTION, "mem_efficient"),
-    ):
-        try:
-            with sdpa_kernel(backend):
-                ms = _cuda_time_ms(
-                    lambda q=q, k=k, v=v: sdpa(q, k, v),
-                    iters=60,
-                    warmup=15,
-                )
-            out[name] = flops / (ms / 1e3) / 1e12
-        except Exception:  # backend unavailable for this shape/build
-            continue
-    del q, k, v
-    torch.cuda.empty_cache()
-    return out
-
-
-def _flash_attn_version() -> str | None:
-    try:
-        import flash_attn
-
-        return getattr(flash_attn, "__version__", "installed")
-    except Exception:
-        return None
-
-
 def run_gpu_preflight(*, force: bool = False) -> GpuPreflight:
     """Measure the GPU once and return the resolved facts + best kernels (cached)."""
     global _REPORT_CACHE
@@ -148,6 +103,8 @@ def run_gpu_preflight(*, force: bool = False) -> GpuPreflight:
         return _REPORT_CACHE
 
     import torch
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+    from torch.nn.functional import scaled_dot_product_attention as sdpa_fn
 
     if not torch.cuda.is_available():
         _REPORT_CACHE = GpuPreflight(
@@ -177,7 +134,32 @@ def run_gpu_preflight(*, force: bool = False) -> GpuPreflight:
         )
 
     peak = measured_bf16_peak_tflops()
-    sdpa = _bench_sdpa_backends()
+    # TFLOPS of each EXACT SDPA backend at a representative DiT attention shape
+    # (~ a video DiT self-attention: heads=16, head_dim=128, seq~7k). Skips the
+    # math backend (reference, never the fast path).
+    b, h, s, d = 1, 16, 7040, 128
+    q = torch.randn(b, h, s, d, device="cuda", dtype=torch.bfloat16)
+    k = torch.randn(b, h, s, d, device="cuda", dtype=torch.bfloat16)
+    v = torch.randn(b, h, s, d, device="cuda", dtype=torch.bfloat16)
+    flops = 4 * b * h * s * s * d
+    sdpa: dict[str, float] = {}
+    for backend, name in (
+        (SDPBackend.FLASH_ATTENTION, "flash"),
+        (SDPBackend.CUDNN_ATTENTION, "cudnn"),
+        (SDPBackend.EFFICIENT_ATTENTION, "mem_efficient"),
+    ):
+        try:
+            with sdpa_kernel(backend):
+                ms = _cuda_time_ms(
+                    lambda q=q, k=k, v=v: sdpa_fn(q, k, v),
+                    iters=60,
+                    warmup=15,
+                )
+            sdpa[name] = flops / (ms / 1e3) / 1e12
+        except Exception:  # backend unavailable for this shape/build
+            continue
+    del q, k, v
+    torch.cuda.empty_cache()
     best = max(sdpa, key=sdpa.get) if sdpa else "math"
     if best != "flash" and sdpa.get("flash") and sdpa[best] > sdpa["flash"] * 1.03:
         warns.append(
@@ -185,7 +167,12 @@ def run_gpu_preflight(*, force: bool = False) -> GpuPreflight:
             f"default to 'flash' ({sdpa['flash']:.0f}); prefer '{best}' via sdpa_kernel "
             f"for a free exact speedup on this GPU",
         )
-    fa = _flash_attn_version()
+    try:
+        import flash_attn
+
+        fa: str | None = getattr(flash_attn, "__version__", "installed")
+    except Exception:
+        fa = None
 
     _REPORT_CACHE = GpuPreflight(
         available=True,

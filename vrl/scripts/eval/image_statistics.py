@@ -93,18 +93,6 @@ def sample_diversity(paths: Sequence[Path]) -> dict[str, float]:
     return {"pixel_rms": float(np.mean(pixel_rms)), "color_hist_l2": float(np.mean(color_hist_l2))}
 
 
-def _collect_images(paths: list[Path]) -> list[Path]:
-    images: list[Path] = []
-    for path in paths:
-        if path.is_dir():
-            images.extend(
-                sorted(p for p in path.iterdir() if p.suffix.lower() in _IMAGE_SUFFIXES),
-            )
-        else:
-            images.append(path)
-    return images
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("paths", nargs="+", type=Path, help="Image files or directories")
@@ -117,7 +105,14 @@ def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     names = STATISTICS if args.statistic == "all" else (args.statistic,)
 
-    images = _collect_images(args.paths)
+    images: list[Path] = []
+    for path in args.paths:
+        if path.is_dir():
+            images.extend(
+                sorted(p for p in path.iterdir() if p.suffix.lower() in _IMAGE_SUFFIXES),
+            )
+        else:
+            images.append(path)
     if not images:
         raise SystemExit("no images found")
 

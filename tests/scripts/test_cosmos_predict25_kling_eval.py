@@ -18,6 +18,7 @@ from vrl.config.schema import parse_config
 from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
+from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.trainers.checkpointing import CheckpointTarget, save_training_checkpoint
 
 MODEL_IDENTITY = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
@@ -71,9 +72,7 @@ def test_seed_grid_cell_is_identical_across_checkpoints(tmp_path) -> None:
 
     _snapshot, _config_path, root, entry, build, _identity = _tiny_cosmos_run(tmp_path)
     model = entry.build_rollout(build).model.eval()
-    sampling = eval_script._resolve_sampling(
-        eval_script.build_parser().parse_args(["--checkpoint", "unused"]), root
-    )
+    sampling = resolve_eval_sampling(root)
 
     def run(label: str) -> list[int]:
         videos = eval_script._generate_checkpoint_videos(
@@ -131,48 +130,6 @@ def test_score_summary_groups_by_checkpoint() -> None:
     assert summary["base"]["mean"] == 2.0
     assert summary["base"]["count"] == 2
     assert summary["trained"]["mean"] == 5.0
-
-
-def _video_root(**sampling: object):
-    """A parsed cosmos config declaring every key the eval projection carries."""
-    return parse_config(
-        OmegaConf.create(
-            {
-                "model": {"family": "cosmos-predict2.5"},
-                "sampling": {
-                    "width": 8,
-                    "height": 8,
-                    "num_frames": 9,
-                    "num_steps": 1,
-                    "fps": 16,
-                    "max_sequence_length": 8,
-                    **sampling,
-                },
-            },
-        ),
-    )
-
-
-def test_eval_sampling_inherits_guidance_when_cli_omits_it() -> None:
-    """An omitted guidance flag inherits the merged sampling config."""
-    root = _video_root(guidance_scale=4.0)
-    args = eval_script.build_parser().parse_args(["--checkpoint", "unused"])
-
-    sampling = eval_script._resolve_sampling(args, root)
-
-    assert sampling["guidance_scale"] == 4.0
-
-
-def test_eval_sampling_preserves_explicit_zero_guidance() -> None:
-    """An explicit zero disables CFG instead of falling back to the config."""
-    root = _video_root(guidance_scale=4.0)
-    args = eval_script.build_parser().parse_args(
-        ["--checkpoint", "unused", "--guidance-scale", "0"],
-    )
-
-    sampling = eval_script._resolve_sampling(args, root)
-
-    assert sampling["guidance_scale"] == 0.0
 
 
 def _tiny_cosmos_run(tmp_path: Path):
@@ -378,9 +335,7 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
         restored.append((checkpoint.checkpoint_dir, float(weight.flatten()[0])))
 
     monkeypatch.setattr(eval_script.TrainingCheckpoint, "restore_model", spy_restore)
-    sampling = eval_script._resolve_sampling(
-        eval_script.build_parser().parse_args(["--checkpoint", "unused"]), root
-    )
+    sampling = resolve_eval_sampling(root)
 
     videos = eval_script._generate_all(
         build,
@@ -422,9 +377,7 @@ def test_generate_all_rejects_model_source_drift_before_checkpoint_load(
         "load",
         classmethod(lambda _cls, path: checkpoint_loads.append(Path(path))),
     )
-    sampling = eval_script._resolve_sampling(
-        eval_script.build_parser().parse_args(["--checkpoint", "unused"]), root
-    )
+    sampling = resolve_eval_sampling(root)
 
     with pytest.raises(
         RuntimeError, match="Cosmos model source changed during runtime construction"

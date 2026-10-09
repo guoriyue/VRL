@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import importlib
 import json
 import os
@@ -45,14 +44,19 @@ def test_scoring_uses_public_reward_artifacts(monkeypatch, tmp_path: Path) -> No
     monkeypatch.setattr(gate.iio, "imread", lambda _path: np.zeros((2, 4, 4, 3), dtype=np.uint8))
     monkeypatch.setattr(gate.iio, "immeta", lambda _path: {"fps": 8.0})
     monkeypatch.setattr(gate.iio, "imwrite", lambda path, _frames, **_kwargs: Path(path).touch())
-    args = argparse.Namespace(
-        videos=str(videos),
-        shard="0/1",
-        n=1,
-        out=str(tmp_path / "scores.json"),
-    )
 
-    gate._run_shard(args)
+    gate.main(
+        [
+            "--videos",
+            str(videos),
+            "--shard",
+            "0/1",
+            "--n",
+            "1",
+            "--out",
+            str(tmp_path / "scores.json"),
+        ],
+    )
 
     assert len(scored) == len(gate._LEVELS) + 1
     assert all(artifact.prompt == gate._PROMPT for artifact in scored)

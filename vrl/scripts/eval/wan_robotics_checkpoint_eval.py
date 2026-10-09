@@ -166,7 +166,12 @@ def main(argv: list[str] | None = None) -> None:
 def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
     """Generate and atomically publish one protocol-bound checkpoint shard."""
 
-    _validate_generation_args(args)
+    if int(args.limit) < 1:
+        raise ValueError("--limit must be >= 1")
+    if int(args.samples_per_prompt) < 1:
+        raise ValueError("--samples-per-prompt must be >= 1")
+    if int(args.seed_stride) < 1:
+        raise ValueError("--seed-stride must be >= 1")
     run_dir, cfg, config_path = _load_run(args.run_dir)
     target = _resolve_target(run_dir, str(args.target))
     protocol = _build_protocol(
@@ -203,7 +208,15 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
         bundle = entry.build_rollout(resolved.build)
         if target.path is not None:
             checkpoint = TrainingCheckpoint.load(target.path)
-            _validate_loaded_checkpoint(checkpoint, target)
+            if str(checkpoint.payload.get("family", "")) != "wan_2_1":
+                raise ValueError(f"checkpoint payload family is not wan_2_1: {target.path}")
+            if checkpoint.meta != target.meta:
+                raise RuntimeError(f"checkpoint metadata changed during evaluation: {target.path}")
+            if checkpoint.next_epoch != target.epoch:
+                raise ValueError(
+                    f"checkpoint progress disagrees with target: {target.path} "
+                    f"next_epoch={checkpoint.next_epoch}",
+                )
             checkpoint_state = checkpoint.checkpoint_state
             load_checkpoint_state(bundle, checkpoint_state)
             del checkpoint_state, checkpoint
@@ -323,7 +336,13 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
         include_reference_targets=not bool(args.no_reference_targets),
     )
     device = resolve_eval_device(str(args.device))
-    worker_config = _reward_worker_config(cfg, device=device)
+    worker_config = RewardRuntimeConfig.from_cfg(cfg).worker_config("robotics_video_reward")
+    worker_config["device"] = str(device)
+    worker_config["data_root"] = str(
+        Path(str(worker_config.get("data_root") or cfg.data.artifact_data_root))
+        .expanduser()
+        .resolve(),
+    )
     logger.info("Loading robotics reward to score %d fixed artifacts", len(artifacts))
     model = RoboticsVideoRewardModel(worker_config)
     scored: list[dict[str, Any]] = []
@@ -374,15 +393,6 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def _validate_generation_args(args: argparse.Namespace) -> None:
-    if int(args.limit) < 1:
-        raise ValueError("--limit must be >= 1")
-    if int(args.samples_per_prompt) < 1:
-        raise ValueError("--samples-per-prompt must be >= 1")
-    if int(args.seed_stride) < 1:
-        raise ValueError("--seed-stride must be >= 1")
-
-
 def _load_run(run_dir_arg: Path) -> tuple[Path, DictConfig, Path]:
     run_dir = run_dir_arg.expanduser().resolve()
     cfg, root = load_resolved_run_config(run_dir)
@@ -421,20 +431,6 @@ def _resolve_target(run_dir: Path, raw_value: str) -> CheckpointTarget:
             f"checkpoint epoch disagrees with directory: {path} completed_epoch={target.epoch!r}",
         )
     return target
-
-
-def _validate_loaded_checkpoint(checkpoint: Any, target: CheckpointTarget) -> None:
-    if target.path is None:
-        raise ValueError("base target must not load a checkpoint")
-    if str(checkpoint.payload.get("family", "")) != "wan_2_1":
-        raise ValueError(f"checkpoint payload family is not wan_2_1: {target.path}")
-    if checkpoint.meta != target.meta:
-        raise RuntimeError(f"checkpoint metadata changed during evaluation: {target.path}")
-    if checkpoint.next_epoch != target.epoch:
-        raise ValueError(
-            f"checkpoint progress disagrees with target: {target.path} "
-            f"next_epoch={checkpoint.next_epoch}",
-        )
 
 
 def _build_protocol(
@@ -682,17 +678,6 @@ def _build_scoring_artifacts(
                 },
             )
     return artifacts, rows
-
-
-def _reward_worker_config(cfg: DictConfig, *, device: torch.device) -> dict[str, Any]:
-    worker_config = RewardRuntimeConfig.from_cfg(cfg).worker_config("robotics_video_reward")
-    worker_config["device"] = str(device)
-    worker_config["data_root"] = str(
-        Path(str(worker_config.get("data_root") or cfg.data.artifact_data_root))
-        .expanduser()
-        .resolve(),
-    )
-    return worker_config
 
 
 def summarize_scores(rows: list[dict[str, Any]]) -> dict[str, Any]:

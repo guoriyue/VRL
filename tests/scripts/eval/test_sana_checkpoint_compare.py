@@ -317,16 +317,44 @@ def test_run_rejects_model_source_drift_before_generation(monkeypatch, tmp_path)
         pytest.param("model.lora", {"rank": 16}, "full-parameter", id="lora-config"),
     ],
 )
-def test_config_protocol_rejects_out_of_scope_runs(path, value, message) -> None:
+def test_config_protocol_rejects_out_of_scope_runs(tmp_path, path, value, message) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
     cfg = _config()
     OmegaConf.update(cfg, path, value, merge=False)
+    OmegaConf.save(cfg, run_dir / "resolved_config.yaml")
 
     with pytest.raises(ValueError, match=message):
-        checkpoint_compare._validate_resolved_config(cfg)
+        checkpoint_compare.run_comparison(
+            checkpoint_compare.build_parser().parse_args(["--run-dir", str(run_dir)]),
+        )
 
 
-def test_config_protocol_accepts_full_parameter_sana_run() -> None:
-    checkpoint_compare._validate_resolved_config(_config())
+def test_config_protocol_accepts_full_parameter_sana_run(tmp_path) -> None:
+    """A full-parameter sana run passes the config protocol: the next failure
+    is the missing checkpoint file, not a protocol rejection."""
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    OmegaConf.save(_config(), run_dir / "resolved_config.yaml")
+
+    with pytest.raises(FileNotFoundError, match="training checkpoint file not found"):
+        checkpoint_compare.run_comparison(
+            checkpoint_compare.build_parser().parse_args(["--run-dir", str(run_dir)]),
+        )
+
+
+def test_sampling_protocol_rejects_guidance_without_cfg(tmp_path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    OmegaConf.save(_config(), run_dir / "resolved_config.yaml")
+
+    with pytest.raises(ValueError, match=r"guidance-scale must be > 1\.0"):
+        checkpoint_compare.run_comparison(
+            checkpoint_compare.build_parser().parse_args(
+                ["--run-dir", str(run_dir), "--guidance-scale", "1.0"],
+            ),
+        )
 
 
 @pytest.mark.parametrize(

@@ -289,7 +289,15 @@ def _as_unit_scale(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.float()
 
 
-def _compare(args: argparse.Namespace) -> dict[str, Any]:
+def main(argv: list[str] | None = None) -> None:
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+    )
+    args = build_parser().parse_args(argv)
+    if args.command == "generate":
+        asyncio.run(_generate(args))
+        return
+
     reference = torch.load(args.reference / OUTPUT_TENSOR_FILE, weights_only=True)
     candidate = torch.load(args.candidate / OUTPUT_TENSOR_FILE, weights_only=True)
     for key in ("prompts", "seed"):
@@ -326,18 +334,6 @@ def _compare(args: argparse.Namespace) -> dict[str, Any]:
         and min(psnr_db) >= args.min_psnr_db,
     }
     print(json.dumps(result, indent=2))
-    return result
-
-
-def main(argv: list[str] | None = None) -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
-    )
-    args = build_parser().parse_args(argv)
-    if args.command == "generate":
-        asyncio.run(_generate(args))
-        return
-    result = _compare(args)
     if not result["passed"]:
         raise SystemExit(1)
 

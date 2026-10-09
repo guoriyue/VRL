@@ -33,58 +33,8 @@ def _read_rows(path: Path) -> list[dict[str, float]]:
     return rows
 
 
-def _read_eval_rows(run_dir: Path) -> list[dict[str, float]]:
-    from vrl.scripts.eval.sana_aesthetic_report import (
-        REPORT_RELATIVE_PATH,
-        load_report_metrics,
-    )
-
-    report_path = run_dir / REPORT_RELATIVE_PATH
-    if report_path.is_file():
-        return load_report_metrics(run_dir)
-    legacy_path = run_dir / "eval_metrics.csv"
-    if legacy_path.is_file():
-        from omegaconf import OmegaConf
-
-        from vrl.trainers.checkpointing import RESOLVED_CONFIG_NAME
-
-        config_path = run_dir / RESOLVED_CONFIG_NAME
-        if config_path.is_file():
-            legacy_cfg = OmegaConf.load(config_path)
-            # ``trainer.eval`` was intentionally removed from the current schema.
-            # Inspect the archived resolved mapping as legacy data instead of
-            # resurrecting it as a live config path in the runtime-key registry.
-            legacy_plain = OmegaConf.to_container(legacy_cfg, resolve=True)
-            legacy_trainer = (
-                legacy_plain.get("trainer", {}) if isinstance(legacy_plain, dict) else {}
-            )
-            legacy_eval = (
-                legacy_trainer.get("eval", {}) if isinstance(legacy_trainer, dict) else {}
-            )
-            if isinstance(legacy_eval, dict) and bool(legacy_eval.get("enabled", False)):
-                return _read_rows(legacy_path)
-    raise FileNotFoundError(
-        f"standalone SANA evaluation report not found: {report_path}. Run "
-        "`python -m vrl.scripts.eval.sana_aesthetic_checkpoint_eval "
-        f"--run-dir {run_dir}` after checkpoints have been saved.",
-    )
-
-
 def _mean(rows: list[dict[str, float]], key: str) -> float:
     return statistics.fmean(row[key] for row in rows)
-
-
-def _slope(rows: list[dict[str, float]], key: str) -> float:
-    xs = [row["epoch"] for row in rows]
-    ys = [row[key] for row in rows]
-    x_mean = statistics.fmean(xs)
-    y_mean = statistics.fmean(ys)
-    denom = sum((x - x_mean) ** 2 for x in xs)
-    return (
-        0.0
-        if denom == 0
-        else sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys, strict=True)) / denom
-    )
 
 
 # Pre-registered PASS/FAIL protocol thresholds for the SANA trustworthy curve.
@@ -171,7 +121,17 @@ def evaluate(
         )
         combined_stderr = math.hypot(baseline["eval_reward_stderr"], endpoint_stderr)
         gain_z = aesthetic_gain / combined_stderr if combined_stderr > 0 else math.inf
-        aesthetic_slope = _slope(post_rows, "r_aesthetic")
+        # Least-squares slope of r_aesthetic over epoch across the post rows.
+        xs = [row["epoch"] for row in post_rows]
+        ys = [row["r_aesthetic"] for row in post_rows]
+        x_mean = statistics.fmean(xs)
+        y_mean = statistics.fmean(ys)
+        denom = sum((x - x_mean) ** 2 for x in xs)
+        aesthetic_slope = (
+            0.0
+            if denom == 0
+            else sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys, strict=True)) / denom
+        )
         pickscore_end = _mean(endpoint, "r_pickscore")
         pickscore_floor = baseline["r_pickscore"] * (1.0 - MAX_PICKSCORE_RELATIVE_DROP)
         diagnostics.update(
@@ -270,8 +230,42 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
+    run_dir: Path = args.run_dir
     try:
-        eval_rows = _read_eval_rows(args.run_dir)
+        from omegaconf import OmegaConf
+
+        from vrl.scripts.eval.sana_aesthetic_report import (
+            REPORT_RELATIVE_PATH,
+            load_report_metrics,
+        )
+        from vrl.trainers.checkpointing import RESOLVED_CONFIG_NAME
+
+        report_path = run_dir / REPORT_RELATIVE_PATH
+        legacy_path = run_dir / "eval_metrics.csv"
+        config_path = run_dir / RESOLVED_CONFIG_NAME
+        eval_rows: list[dict[str, float]] | None = None
+        if report_path.is_file():
+            eval_rows = load_report_metrics(run_dir)
+        elif legacy_path.is_file() and config_path.is_file():
+            # The old inline-eval CSV is accepted only for a historical run whose
+            # archived resolved config enabled ``trainer.eval``. That key was
+            # removed from the current schema, so inspect the archived mapping as
+            # legacy data instead of resurrecting it as a live config path.
+            legacy_plain = OmegaConf.to_container(OmegaConf.load(config_path), resolve=True)
+            legacy_trainer = (
+                legacy_plain.get("trainer", {}) if isinstance(legacy_plain, dict) else {}
+            )
+            legacy_eval = (
+                legacy_trainer.get("eval", {}) if isinstance(legacy_trainer, dict) else {}
+            )
+            if isinstance(legacy_eval, dict) and bool(legacy_eval.get("enabled", False)):
+                eval_rows = _read_rows(legacy_path)
+        if eval_rows is None:
+            raise FileNotFoundError(
+                f"standalone SANA evaluation report not found: {report_path}. Run "
+                "`python -m vrl.scripts.eval.sana_aesthetic_checkpoint_eval "
+                f"--run-dir {run_dir}` after checkpoints have been saved.",
+            )
     except (FileNotFoundError, ValueError, TypeError, json.JSONDecodeError) as error:
         raise SystemExit(str(error)) from error
     result = evaluate(

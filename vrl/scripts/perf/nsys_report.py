@@ -210,7 +210,11 @@ class GpuBusyReport:
                 raise RuntimeError(f"empty window {win}")
             wall = hi - lo
 
-            names = _device_names(conn)
+            names: dict[int, str] = {}
+            if _has_table(conn, "TARGET_INFO_GPU"):
+                names = {
+                    int(i): str(n) for i, n in conn.execute("select id, name from TARGET_INFO_GPU")
+                }
             by_dev = _kernels_by_device(conn, win)
             total_kernels = sum(len(v) for v in by_dev.values())
 
@@ -236,10 +240,26 @@ class GpuBusyReport:
             gaps = _idle_gaps(conn, gap_kernels, win, top=top_gaps, min_gap_ns=min_gap_ns)
             nvtx = _nvtx_attribution(conn, gap_kernels, win, top=top_nvtx)
 
+            nsys_version = "unknown"
+            for table, col in (("META_DATA_EXPORT", "value"), ("META_DATA_CAPTURE", "value")):
+                if not _has_table(conn, table):
+                    continue
+                try:
+                    meta_rows = conn.execute(f"select name, {col} from {table}").fetchall()
+                except sqlite3.OperationalError:
+                    continue
+                version = next(
+                    (str(value) for key, value in meta_rows if "version" in str(key).lower()),
+                    None,
+                )
+                if version is not None:
+                    nsys_version = version
+                    break
+
             provenance = ReportProvenance(
                 source_path=str(path),
                 sqlite_path=sqlite_path,
-                nsys_version=_nsys_version(conn),
+                nsys_version=nsys_version,
                 total_kernels=total_kernels,
                 devices=tuple((d, names.get(d, f"device{d}")) for d in sorted(by_dev)),
                 window_source=window_source,
@@ -290,9 +310,10 @@ class GpuBusyReport:
                     f"  memcpy {_ms(g.memcpy_ns):.2f} ms / {g.memcpy_bytes / 1e6:.1f} MB"
                 )
                 for a in g.api_breakdown[:5]:
+                    pct = 100.0 * a.total_ns / g.duration_ns if g.duration_ns > 0 else 0.0
                     lines.append(
                         f"      {a.name:<28} {a.count:>6}x  {_ms(a.total_ns):>9.2f} ms "
-                        f"({_pct(a.total_ns, g.duration_ns):4.0f}% of gap)"
+                        f"({pct:4.0f}% of gap)"
                     )
 
         if self.nvtx:
@@ -413,58 +434,19 @@ def open_report(path: str | Path) -> tuple[sqlite3.Connection, str]:
     raise ValueError(f"unsupported capture extension {src.suffix!r} (want .sqlite/.nsys-rep)")
 
 
-def _device_names(conn: sqlite3.Connection) -> dict[int, str]:
-    if not _has_table(conn, "TARGET_INFO_GPU"):
-        return {}
-    return {int(i): str(n) for i, n in conn.execute("select id, name from TARGET_INFO_GPU")}
-
-
-def _physical_cuda_devices(conn: sqlite3.Connection) -> dict[tuple[int, int], int]:
-    """Map ``(pid, process-local CUDA id)`` to the host's physical GPU id.
-
-    Ray assigns each rollout actor a one-device ``CUDA_VISIBLE_DEVICES`` view, so
-    CUPTI records ``deviceId=0`` for every actor even when they run on different
-    physical GPUs. Nsight preserves the real mapping in
-    ``TARGET_INFO_CUDA_DEVICE``; use it whenever the capture contains that table.
-    """
-
-    if not _has_table(conn, "TARGET_INFO_CUDA_DEVICE"):
-        return {}
-    columns = {str(row[1]) for row in conn.execute("pragma table_info(TARGET_INFO_CUDA_DEVICE)")}
-    if not {"gpuId", "cudaId", "pid"}.issubset(columns):
-        return {}
-    return {
-        (int(pid), int(cuda_id)): int(gpu_id)
-        for gpu_id, cuda_id, pid in conn.execute(
-            "select gpuId, cudaId, pid from TARGET_INFO_CUDA_DEVICE"
-        )
-    }
-
-
-def _process_ids(conn: sqlite3.Connection) -> dict[int, int]:
-    """Map Nsight serialized process ids to operating-system process ids."""
-
-    if not _has_table(conn, "PROCESSES"):
-        return {}
-    columns = {str(row[1]) for row in conn.execute("pragma table_info(PROCESSES)")}
-    if not {"globalPid", "pid"}.issubset(columns):
-        return {}
-    return {
-        int(global_pid): int(pid)
-        for global_pid, pid in conn.execute(
-            "select globalPid, pid from PROCESSES where globalPid is not null and pid is not null"
-        )
-    }
-
-
 def _kernels_by_device(
     conn: sqlite3.Connection, window: Interval | None
 ) -> dict[int, list[Interval]]:
     """All kernel intervals bucketed by physical GPU, optionally window-clipped.
 
-    Older/minimal captures do not expose process-to-physical-device metadata. In
-    that case the CUPTI ``deviceId`` remains the best available identity and the
-    behavior is identical to the legacy reader.
+    Ray assigns each rollout actor a one-device ``CUDA_VISIBLE_DEVICES`` view, so
+    CUPTI records ``deviceId=0`` for every actor even when they run on different
+    physical GPUs. Nsight preserves the real mapping in
+    ``TARGET_INFO_CUDA_DEVICE`` (keyed by OS pid, which ``PROCESSES`` maps from
+    the serialized ``globalPid``); it is used whenever the capture carries both
+    tables. Older/minimal captures do not expose that metadata; the CUPTI
+    ``deviceId`` then remains the best available identity and the behavior is
+    identical to the legacy reader.
     """
 
     kernel_columns = {
@@ -477,8 +459,29 @@ def _kernels_by_device(
         else "select start, end, deviceId, null from CUPTI_ACTIVITY_KIND_KERNEL"
     )
     rows = conn.execute(query).fetchall()
-    process_ids = _process_ids(conn)
-    physical_devices = _physical_cuda_devices(conn)
+    process_ids: dict[int, int] = {}
+    if _has_table(conn, "PROCESSES"):
+        columns = {str(row[1]) for row in conn.execute("pragma table_info(PROCESSES)")}
+        if {"globalPid", "pid"}.issubset(columns):
+            process_ids = {
+                int(global_pid): int(pid)
+                for global_pid, pid in conn.execute(
+                    "select globalPid, pid from PROCESSES "
+                    "where globalPid is not null and pid is not null"
+                )
+            }
+    physical_devices: dict[tuple[int, int], int] = {}
+    if _has_table(conn, "TARGET_INFO_CUDA_DEVICE"):
+        columns = {
+            str(row[1]) for row in conn.execute("pragma table_info(TARGET_INFO_CUDA_DEVICE)")
+        }
+        if {"gpuId", "cudaId", "pid"}.issubset(columns):
+            physical_devices = {
+                (int(pid), int(cuda_id)): int(gpu_id)
+                for gpu_id, cuda_id, pid in conn.execute(
+                    "select gpuId, cudaId, pid from TARGET_INFO_CUDA_DEVICE"
+                )
+            }
     by_dev: dict[int, list[Interval]] = {}
     lo, hi = window if window else (None, None)
     for start, end, local_dev, global_pid in rows:
@@ -667,29 +670,11 @@ def _nvtx_attribution(
     return out[:top]
 
 
-def _nsys_version(conn: sqlite3.Connection) -> str:
-    for table, col in (("META_DATA_EXPORT", "value"), ("META_DATA_CAPTURE", "value")):
-        if not _has_table(conn, table):
-            continue
-        try:
-            rows = conn.execute(f"select name, {col} from {table}").fetchall()
-        except sqlite3.OperationalError:
-            continue
-        for key, value in rows:
-            if "version" in str(key).lower():
-                return str(value)
-    return "unknown"
-
-
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
 def _ms(ns: int) -> float:
     return ns / 1e6
-
-
-def _pct(part: int, whole: int) -> float:
-    return 100.0 * part / whole if whole > 0 else 0.0
 
 
 __all__ = [

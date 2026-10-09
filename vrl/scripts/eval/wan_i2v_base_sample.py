@@ -56,29 +56,6 @@ NEGATIVE_PROMPT = (
 )
 
 
-def _first_frame(video_path: Path) -> Image.Image:
-    """Return frame 0 of an mp4 as a PIL image."""
-    frame = iio.imread(video_path, index=0)
-    return Image.fromarray(np.asarray(frame)).convert("RGB")
-
-
-def _fit_resolution(
-    image: Image.Image, pipe: WanImageToVideoPipeline, max_area: int
-) -> Image.Image:
-    """Resize keeping aspect so H*W ~= max_area and both are model-valid multiples.
-
-    Mirrors the diffusers Wan I2V recipe: dims must be divisible by
-    vae_scale_factor_spatial * transformer patch size.
-    """
-    patch = pipe.transformer.config.patch_size
-    patch_w = patch[1] if isinstance(patch, (list, tuple)) else patch
-    mod = pipe.vae_scale_factor_spatial * patch_w
-    aspect = image.height / image.width
-    height = max(mod, round((max_area * aspect) ** 0.5 / mod) * mod)
-    width = max(mod, round((max_area / aspect) ** 0.5 / mod) * mod)
-    return image.resize((width, height), Image.LANCZOS)
-
-
 def _load_pipe(model_path: str, offload: str) -> WanImageToVideoPipeline:
     pipe = WanImageToVideoPipeline.from_pretrained(
         model_path,
@@ -164,8 +141,17 @@ def main() -> None:
     manifest: list[dict[str, object]] = []
     offload = args.offload
     for idx, prompt, clip in seeds:
-        image = _first_frame(clip)
-        image = _fit_resolution(image, pipe, args.max_area)
+        # Frame 0 of the baseline clip, resized keeping aspect so H*W ~= max_area
+        # and both dims are model-valid multiples (the diffusers Wan I2V recipe:
+        # divisible by vae_scale_factor_spatial * transformer patch size).
+        image = Image.fromarray(np.asarray(iio.imread(clip, index=0))).convert("RGB")
+        patch = pipe.transformer.config.patch_size
+        patch_w = patch[1] if isinstance(patch, (list, tuple)) else patch
+        mod = pipe.vae_scale_factor_spatial * patch_w
+        aspect = image.height / image.width
+        height = max(mod, round((args.max_area * aspect) ** 0.5 / mod) * mod)
+        width = max(mod, round((args.max_area / aspect) ** 0.5 / mod) * mod)
+        image = image.resize((width, height), Image.LANCZOS)
         cond_path = out_dir / f"prompt{idx:02d}_input.png"
         image.save(cond_path)
 

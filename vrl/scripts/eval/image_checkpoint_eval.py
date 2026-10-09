@@ -133,6 +133,11 @@ class EvaluationPlan:
         for target in self.targets:
             for prompt_index, prompt in enumerate(self.prompts):
                 for sample_index in range(self.samples_per_prompt):
+                    # Reward metadata, plus the reference images an edit reward
+                    # compares against.
+                    reward_metadata = prompt.example.reward_metadata()
+                    if prompt.example.reference_images:
+                        reward_metadata["reference_images"] = list(prompt.example.reference_images)
                     yield {
                         "checkpoint_label": target.label,
                         "epoch": target.epoch,
@@ -146,7 +151,7 @@ class EvaluationPlan:
                             samples_per_prompt=self.samples_per_prompt,
                         ),
                         "prompt": prompt.example.prompt,
-                        "reward_metadata": _reward_metadata(prompt.example),
+                        "reward_metadata": reward_metadata,
                         "image_path": f"images/{target.label}/prompt{prompt_index:04d}_sample{sample_index:02d}.png",
                     }
 
@@ -264,15 +269,6 @@ class EvaluationPlan:
         return rows
 
 
-def _reward_metadata(example: PromptExample) -> dict[str, Any]:
-    """Reward metadata, plus the reference images an edit reward compares against."""
-
-    metadata = example.reward_metadata()
-    if example.reference_images:
-        metadata["reference_images"] = list(example.reference_images)
-    return metadata
-
-
 @dataclass(frozen=True, slots=True)
 class EvaluationArchive:
     """Own the generation/retry boundary and atomically published report."""
@@ -345,6 +341,8 @@ class EvaluationArchive:
             raise FileExistsError("refusing to overwrite a completed evaluation report")
 
     def publish_report(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        from PIL import Image, ImageDraw, ImageOps
+
         from vrl.scripts.eval.score_report import write_curve_report, write_scores
 
         self.load_generation()
@@ -361,7 +359,49 @@ class EvaluationArchive:
                 bootstrap_resamples=self.plan.bootstrap_resamples,
                 seed=self.plan.seed,
             )
-            _write_contact_sheets(self.plan, rows, staging)
+            # Blinded contact sheets: one PNG per prompt, arms in a seeded
+            # shuffled order, with the key written beside them.
+            by_key = {
+                (row["checkpoint_label"], row["prompt_index"], row["sample_index"]): row
+                for row in rows
+            }
+            sheet_dir = staging / "contact_sheets"
+            sheet_dir.mkdir()
+            orders = self.plan.blind_orders()
+            manifest = []
+            for prompt_index, labels in orders.items():
+                tile, header = 256, 24
+                canvas = Image.new(
+                    "RGB",
+                    (len(labels) * tile, self.plan.samples_per_prompt * (tile + header)),
+                    "white",
+                )
+                draw = ImageDraw.Draw(canvas)
+                for sample_index in range(self.plan.samples_per_prompt):
+                    for cell, label in enumerate(labels):
+                        row = by_key[label, prompt_index, sample_index]
+                        x, y = cell * tile, sample_index * (tile + header)
+                        draw.text((x + 4, y + 4), f"{cell + 1} / seed {row['seed']}", fill="black")
+                        with Image.open(row["image_path"]) as image:
+                            canvas.paste(
+                                ImageOps.contain(image.convert("RGB"), (tile, tile)),
+                                (x, y + header),
+                            )
+                filename = f"prompt{prompt_index:04d}.png"
+                canvas.save(sheet_dir / filename)
+                manifest.append(
+                    {
+                        "sheet": filename,
+                        "prompt_index": prompt_index,
+                        "manifest_index": self.plan.prompts[prompt_index].manifest_index,
+                        "prompt": self.plan.prompts[prompt_index].example.prompt,
+                    }
+                )
+            write_json(sheet_dir / "manifest.json", manifest)
+            write_json(
+                staging / "blind_key.json",
+                {"note": "Review contact sheets before opening this key.", "orders": orders},
+            )
             write_json(
                 staging / "provenance.json",
                 {
@@ -700,50 +740,6 @@ async def score_images(
                     raise ValueError("reward component names collide with diversity diagnostics")
                 row.update(diagnostics)
     return scored
-
-
-def _write_contact_sheets(
-    plan: EvaluationPlan, rows: list[dict[str, Any]], report_dir: Path
-) -> None:
-    from PIL import Image, ImageDraw, ImageOps
-
-    by_key = {
-        (row["checkpoint_label"], row["prompt_index"], row["sample_index"]): row for row in rows
-    }
-    sheet_dir = report_dir / "contact_sheets"
-    sheet_dir.mkdir()
-    orders = plan.blind_orders()
-    manifest = []
-    for prompt_index, labels in orders.items():
-        tile, header = 256, 24
-        canvas = Image.new(
-            "RGB", (len(labels) * tile, plan.samples_per_prompt * (tile + header)), "white"
-        )
-        draw = ImageDraw.Draw(canvas)
-        for sample_index in range(plan.samples_per_prompt):
-            for cell, label in enumerate(labels):
-                row = by_key[label, prompt_index, sample_index]
-                x, y = cell * tile, sample_index * (tile + header)
-                draw.text((x + 4, y + 4), f"{cell + 1} / seed {row['seed']}", fill="black")
-                with Image.open(row["image_path"]) as image:
-                    canvas.paste(
-                        ImageOps.contain(image.convert("RGB"), (tile, tile)), (x, y + header)
-                    )
-        filename = f"prompt{prompt_index:04d}.png"
-        canvas.save(sheet_dir / filename)
-        manifest.append(
-            {
-                "sheet": filename,
-                "prompt_index": prompt_index,
-                "manifest_index": plan.prompts[prompt_index].manifest_index,
-                "prompt": plan.prompts[prompt_index].example.prompt,
-            }
-        )
-    write_json(sheet_dir / "manifest.json", manifest)
-    write_json(
-        report_dir / "blind_key.json",
-        {"note": "Review contact sheets before opening this key.", "orders": orders},
-    )
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -159,29 +159,73 @@ def test_run_config_requires_a_resolved_config(tmp_path: Path) -> None:
 # --- reward worker config ----------------------------------------------------
 
 
-def test_worker_config_projects_the_runs_own_reward_block() -> None:
-    import torch
+def test_score_grid_builds_hpsv3_from_the_runs_own_reward_block(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """``score`` projects the run's ``reward.kwargs.hpsv3`` block (plus the eval
+    device) into the HPSv3 worker config and merges every score key into the
+    generated rows."""
 
-    cfg = OmegaConf.create(
-        {
-            "reward": {
-                # A run's resolved config always carries components; the shared
-                # projection validates the whole reward section rather than
-                # selecting one subtree out of it.
-                "components": {"hpsv3": 1.0},
-                "kwargs": {
-                    "hpsv3": {
-                        "reward_name": "MizzenAI/HPSv3@main",
-                        "worker_config": {"model_path": "/models/HPSv3", "dtype": "bfloat16"},
-                    },
-                },
+    run_dir = _write_run(tmp_path)
+    cfg = OmegaConf.load(run_dir / "resolved_config.yaml")
+    # A run's resolved config always carries components; the shared projection
+    # validates the whole reward section rather than selecting one subtree.
+    cfg.reward = {
+        "components": {"hpsv3": 1.0},
+        "kwargs": {
+            "hpsv3": {
+                "reward_name": "MizzenAI/HPSv3@main",
+                "worker_config": {"model_path": "/models/HPSv3", "dtype": "bfloat16"},
             },
         },
+    }
+    OmegaConf.save(cfg, run_dir / "resolved_config.yaml")
+    output_dir = tmp_path / "eval"
+    output_dir.mkdir()
+    video = output_dir / "base.mp4"
+    video.write_bytes(b"not really a video")
+    row = {
+        "checkpoint_label": "base",
+        "prompt_index": 0,
+        "sample_index": 0,
+        "seed": 1,
+        "prompt": "a prompt",
+        "path": str(video),
+        "size_bytes": video.stat().st_size,
+        "sha256": checkpoint_eval.sha256_file(video),
+    }
+    (output_dir / "generated.jsonl").write_text(json.dumps(row) + "\n")
+    built: list[dict[str, object]] = []
+
+    class FakeHPSv3Model:
+        def __init__(self, worker_config: dict[str, object]) -> None:
+            built.append(worker_config)
+
+        def __call__(self, artifact) -> dict[str, float]:
+            return {"top_frame_mean": 3.0, "frame_mean": 2.0, "frame_min": 1.0}
+
+    monkeypatch.setattr("vrl.rewards.models.hpsv3.HPSv3Model", FakeHPSv3Model)
+
+    report = checkpoint_eval.score_grid(
+        checkpoint_eval.build_parser().parse_args(
+            [
+                "score",
+                "--run-dir",
+                str(run_dir),
+                "--output-dir",
+                str(output_dir),
+                "--device",
+                "cpu",
+            ],
+        ),
     )
 
-    worker_config = checkpoint_eval._hpsv3_worker_config(cfg, device=torch.device("cuda:1"))
-
+    (worker_config,) = built
     assert worker_config["model_path"] == "/models/HPSv3"
     assert worker_config["dtype"] == "bfloat16"
     assert worker_config["reward_model_name"] == "MizzenAI/HPSv3@main"
-    assert worker_config["device"] == "cuda:1"
+    assert worker_config["device"] == "cpu"
+    assert report["scored"] == 1
+    scored = [json.loads(line) for line in (output_dir / "scores.jsonl").read_text().splitlines()]
+    assert scored[0]["r_top_frame_mean"] == 3.0
+    assert scored[0]["r_frame_min"] == 1.0

@@ -49,27 +49,6 @@ from vrl.scripts.perf.common.diffusion_runtime import (
 _SDE_TYPE = "cps"
 
 
-def _build_model(root, device, dtype, *, precision):
-    """Build the rollout model, refusing a config/CLI dtype mismatch.
-
-    This one-shot probe owns its historical BF16 context locally, so it verifies
-    the requested dtype matches the resolved rollout precision instead of
-    silently diverging from the resolved rollout role.
-    """
-
-    from vrl.models.dtypes import dtype_to_precision_token
-
-    runtime = build_runtime(root, device, precision=precision)
-    token = dtype_to_precision_token(dtype)
-    if runtime.precision.dtype != token:
-        raise ValueError(
-            "TeaCache probe dtype does not match resolved rollout precision: "
-            f"requested {token!r}, resolved dtype={runtime.precision.dtype!r}, "
-            f"outer_autocast={runtime.precision.outer_autocast!r}",
-        )
-    return runtime.model
-
-
 def _measure(model, root, device, dtype, threshold):
     """Return (rollout_logp, replay_logp, skip_ratio) for one threshold (None=off)."""
 
@@ -217,7 +196,20 @@ def main(argv=None):
     precision = PrecisionPolicy.from_section(root.precision)
     device = torch.device(args.device)
     dtype = torch.bfloat16
-    model = _build_model(root, device, dtype, precision=precision)
+    # This one-shot probe owns its historical BF16 context locally, so it
+    # verifies the requested dtype matches the resolved rollout precision
+    # instead of silently diverging from the resolved rollout role.
+    from vrl.models.dtypes import dtype_to_precision_token
+
+    runtime = build_runtime(root, device, precision=precision)
+    token = dtype_to_precision_token(dtype)
+    if runtime.precision.dtype != token:
+        raise ValueError(
+            "TeaCache probe dtype does not match resolved rollout precision: "
+            f"requested {token!r}, resolved dtype={runtime.precision.dtype!r}, "
+            f"outer_autocast={runtime.precision.outer_autocast!r}",
+        )
+    model = runtime.model
 
     if args.diagnose:
         _diagnose(model, root, device, dtype)

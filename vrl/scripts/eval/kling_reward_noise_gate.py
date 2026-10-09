@@ -40,71 +40,6 @@ _LEVELS = [0, 20, 40, 80, 160]  # gaussian noise sigma (0 = re-encoded original)
 _DIMS = ["visual_quality", "motion_quality", "overall_reward"]
 
 
-def _noised(frames: np.ndarray, sigma: float, fps: float, dst: Path) -> None:
-    """Same frames + fps; only add gaussian noise (no shuffle/drop/fps confound)."""
-    if sigma <= 0:
-        out = frames
-    else:
-        rng = np.random.default_rng(int(sigma))
-        out = np.clip(
-            frames.astype(np.float32) + rng.normal(0, sigma, frames.shape), 0, 255
-        ).astype(
-            np.uint8,
-        )
-    iio.imwrite(dst, out, fps=fps)
-
-
-def _run_shard(args: argparse.Namespace) -> None:
-    # qwen-vl-utils reads this during the reward model import. Keep the process
-    # mutation scoped to the scoring command so importing/combining is inert.
-    os.environ.setdefault("FORCE_QWENVL_VIDEO_READER", "decord")
-
-    from vrl.rewards.inference import RewardInferenceArtifact
-    from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
-
-    i, n = (int(x) for x in args.shard.split("/"))
-    allv = sorted(Path(args.videos).glob("*.mp4"))
-    mine = [v for k, v in enumerate(allv) if k % n == i][: args.n]
-    model = KlingVideoRewardModel(
-        {
-            "reward_model_name": "KlingTeam/VideoReward@main",
-            "device": "cuda:0",
-            "dtype": "bfloat16",
-        },
-    )
-
-    def score(path: Path) -> dict[str, float]:
-        return dict(
-            model(
-                RewardInferenceArtifact(
-                    artifact_id=path.stem,
-                    sample_id=path.stem,
-                    path=str(path.resolve()),
-                    prompt=_PROMPT,
-                ),
-            ),
-        )
-
-    rows = []
-    with tempfile.TemporaryDirectory() as tmp:
-        for v in mine:
-            frames = np.asarray(iio.imread(v))
-            meta = iio.immeta(v)
-            fps = float(meta.get("fps", 8.0))
-            rec = {"video": v.name, "levels": {}}
-            for s in _LEVELS:
-                p = Path(tmp) / f"{v.stem}_s{s}.mp4"
-                _noised(frames, s, fps, p)
-                rec["levels"][str(s)] = score(p)
-            # determinism: re-score the clean re-encode a 2nd time
-            p0 = Path(tmp) / f"{v.stem}_s0.mp4"
-            rec["repeat0"] = score(p0)
-            rows.append(rec)
-            print(f"  [{args.shard}] {v.name} scored {len(_LEVELS)} levels", flush=True)
-    Path(args.out).write_text(json.dumps(rows, indent=2))
-    print(f"  [{args.shard}] wrote {len(rows)} rows -> {args.out}", flush=True)
-
-
 def _combine(paths: list[str]) -> None:
     rows = []
     for p in paths:
@@ -183,18 +118,75 @@ def _combine(paths: list[str]) -> None:
         )
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--videos", help="dir of real rollout .mp4")
     ap.add_argument("--shard", help="i/n — score every n-th video starting at i")
     ap.add_argument("--n", type=int, default=999, help="cap videos in this shard")
     ap.add_argument("--out", help="shard JSON output path")
     ap.add_argument("--combine", nargs="+", help="merge shard JSONs and print verdict")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if args.combine:
         _combine(args.combine)
-    else:
-        _run_shard(args)
+        return
+
+    # qwen-vl-utils reads this during the reward model import. Keep the process
+    # mutation scoped to the scoring command so importing/combining is inert.
+    os.environ.setdefault("FORCE_QWENVL_VIDEO_READER", "decord")
+
+    from vrl.rewards.inference import RewardInferenceArtifact
+    from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
+
+    i, n = (int(x) for x in args.shard.split("/"))
+    allv = sorted(Path(args.videos).glob("*.mp4"))
+    mine = [v for k, v in enumerate(allv) if k % n == i][: args.n]
+    model = KlingVideoRewardModel(
+        {
+            "reward_model_name": "KlingTeam/VideoReward@main",
+            "device": "cuda:0",
+            "dtype": "bfloat16",
+        },
+    )
+
+    def score(path: Path) -> dict[str, float]:
+        return dict(
+            model(
+                RewardInferenceArtifact(
+                    artifact_id=path.stem,
+                    sample_id=path.stem,
+                    path=str(path.resolve()),
+                    prompt=_PROMPT,
+                ),
+            ),
+        )
+
+    rows = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for v in mine:
+            frames = np.asarray(iio.imread(v))
+            meta = iio.immeta(v)
+            fps = float(meta.get("fps", 8.0))
+            rec = {"video": v.name, "levels": {}}
+            for s in _LEVELS:
+                # Same frames + fps; only add gaussian noise (no shuffle/drop/fps
+                # confound).
+                if s <= 0:
+                    out = frames
+                else:
+                    rng = np.random.default_rng(int(s))
+                    out = np.clip(
+                        frames.astype(np.float32) + rng.normal(0, s, frames.shape), 0, 255
+                    ).astype(np.uint8)
+                p = Path(tmp) / f"{v.stem}_s{s}.mp4"
+                iio.imwrite(p, out, fps=fps)
+                rec["levels"][str(s)] = score(p)
+            # determinism: re-score the clean re-encode a 2nd time
+            p0 = Path(tmp) / f"{v.stem}_s0.mp4"
+            rec["repeat0"] = score(p0)
+            rows.append(rec)
+            print(f"  [{args.shard}] {v.name} scored {len(_LEVELS)} levels", flush=True)
+    Path(args.out).write_text(json.dumps(rows, indent=2))
+    print(f"  [{args.shard}] wrote {len(rows)} rows -> {args.out}", flush=True)
 
 
 if __name__ == "__main__":

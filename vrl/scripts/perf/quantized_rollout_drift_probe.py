@@ -59,22 +59,6 @@ def _logprob_from_logits(logits: torch.Tensor, actions: torch.Tensor) -> torch.T
     return logp.gather(-1, actions.unsqueeze(-1)).squeeze(-1)
 
 
-def _signals(log_prob: torch.Tensor, old_log_prob: torch.Tensor) -> TrajectorySignalBatch:
-    return TrajectorySignalBatch(
-        segments={
-            "denoise": SegmentSignal(
-                name="denoise",
-                distribution="flow_matching",
-                log_prob=log_prob,
-                old_log_prob=old_log_prob,
-                mask=torch.ones_like(log_prob),
-            ),
-        },
-        group_ids=torch.arange(log_prob.shape[0], device=log_prob.device),
-        primary_segment="denoise",
-    )
-
-
 def _step_logprob(logits: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
     """Categorical logprob for each independent denoise step -> [samples, steps]."""
     logp = torch.log_softmax(logits.float(), dim=-1)  # [samples, T, vocab]
@@ -113,11 +97,21 @@ def _policy_grad_norm(
         tis_imp_weight_cap=cap,
         rs_mode=rs_mode,
     )
+    signals = TrajectorySignalBatch(
+        segments={
+            "denoise": SegmentSignal(
+                name="denoise",
+                distribution="flow_matching",
+                log_prob=flat_fresh,
+                old_log_prob=flat_old,
+                mask=torch.ones_like(flat_fresh),
+            ),
+        },
+        group_ids=torch.arange(flat_fresh.shape[0], device=flat_fresh.device),
+        primary_segment="denoise",
+    )
     loss, metrics = grpo.compute_loss(
-        AlgorithmInput(
-            signals=_signals(flat_fresh, flat_old),
-            advantages=flat_advantages,
-        ),
+        AlgorithmInput(signals=signals, advantages=flat_advantages),
     )
     loss.backward()
     return (

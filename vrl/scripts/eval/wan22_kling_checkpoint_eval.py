@@ -145,9 +145,12 @@ def _load_run_config(run_dir: Path, *, extra_overrides: list[str] = ()) -> DictC
     return cfg
 
 
-def _kling_worker_config(cfg: DictConfig, *, device: torch.device) -> dict[str, Any]:
-    """Project the run's own Kling block so eval scores on training's terms."""
+def _build_kling(run_dir: Path, device: str) -> Any:
+    """Kling built from the run's own reward block so eval scores on training's terms."""
 
+    from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
+
+    cfg = _load_run_config(run_dir)
     selected = OmegaConf.select(cfg, "reward.kwargs.kling_video_reward", default={})
     reward_cfg = OmegaConf.to_container(selected, resolve=True) or {}
     if not isinstance(reward_cfg, dict):
@@ -156,16 +159,8 @@ def _kling_worker_config(cfg: DictConfig, *, device: torch.device) -> dict[str, 
     worker_config.setdefault("reward_model_name", "KlingTeam/VideoReward@main")
     # Training-only lifecycle knob; the eval owns the whole GPU.
     worker_config.pop("memory_parking_mode", None)
-    worker_config["device"] = str(device)
-    return worker_config
-
-
-def _build_kling(run_dir: Path, device: str) -> Any:
-    from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
-
-    return KlingVideoRewardModel(
-        _kling_worker_config(_load_run_config(run_dir), device=resolve_eval_device(device)),
-    )
+    worker_config["device"] = str(resolve_eval_device(device))
+    return KlingVideoRewardModel(worker_config)
 
 
 def _score_path(model: Any, path: Path, prompt: str, artifact_id: str) -> dict[str, float]:
@@ -382,32 +377,19 @@ def score_grid(args: argparse.Namespace) -> dict[str, Any]:
         schema=REPORT_SCHEMA,
         base_label=BASE_LABEL,
     )
-    report = {
-        "schema": REPORT_SCHEMA,
-        "scored": len(scored),
-        "prompt_level": _prompt_level_paired(scored),
-        **summary,
-    }
-    write_json(args.output_dir / "report.json", report)
-    return {k: v for k, v in report.items() if k in {"schema", "scored", "prompt_level"}}
-
-
-def _prompt_level_paired(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Paired deltas with the PROMPT as the unit: seeds of one prompt are correlated.
-
-    Per arm and key: average the samples of each prompt, difference against the
-    base arm's same-prompt average, then report mean / stderr / win rate over
-    prompts. This is the statistic a learning claim rests on.
-    """
-
+    # Paired deltas with the PROMPT as the unit: seeds of one prompt are
+    # correlated. Per arm and key: average the samples of each prompt,
+    # difference against the base arm's same-prompt average, then report
+    # mean / stderr / win rate over prompts. This is the statistic a learning
+    # claim rests on.
     by_arm: dict[str, dict[int, dict[str, list[float]]]] = {}
-    for row in rows:
+    for row in scored:
         arm = by_arm.setdefault(str(row["checkpoint_label"]), {})
         prompt = arm.setdefault(int(row["prompt_index"]), {key: [] for key in SCORE_KEYS})
         for key in SCORE_KEYS:
             prompt[key].append(float(row[f"r_{key}"]))
     base = by_arm[BASE_LABEL]
-    out: dict[str, Any] = {}
+    prompt_level: dict[str, Any] = {}
     for label, prompts in by_arm.items():
         if label == BASE_LABEL:
             continue
@@ -428,32 +410,19 @@ def _prompt_level_paired(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "delta_stderr": statistics.stdev(deltas) / n**0.5 if n > 1 else float("nan"),
                 "win_rate": sum(d > 0 for d in deltas) / n,
             }
-        out[label] = per_key
-    return out
+        prompt_level[label] = per_key
+
+    report = {
+        "schema": REPORT_SCHEMA,
+        "scored": len(scored),
+        "prompt_level": prompt_level,
+        **summary,
+    }
+    write_json(args.output_dir / "report.json", report)
+    return {k: v for k, v in report.items() if k in {"schema", "scored", "prompt_level"}}
 
 
 # --- probe --------------------------------------------------------------------
-
-
-def _read_frames(path: Path) -> tuple[np.ndarray, float]:
-    frames = iio.imread(path, plugin="pyav")
-    meta = iio.immeta(path, plugin="pyav")
-    return np.asarray(frames), float(meta.get("fps", 16.0))
-
-
-def _write_frames(frames: np.ndarray, fps: float, dst: Path) -> None:
-    iio.imwrite(dst, frames.astype(np.uint8), fps=fps, plugin="pyav", codec="libx264")
-
-
-def _degradations(frames: np.ndarray) -> dict[str, np.ndarray]:
-    rng = np.random.default_rng(0)
-    out: dict[str, np.ndarray] = {}
-    for sigma in PROBE_NOISE_SIGMAS:
-        noisy = frames.astype(np.float32) + rng.normal(0.0, sigma, frames.shape)
-        out[f"noise_{int(sigma)}"] = np.clip(noisy, 0, 255).astype(np.uint8)
-    out["shuffle"] = frames[rng.permutation(len(frames))]
-    out["frozen"] = np.repeat(frames[:1], len(frames), axis=0)
-    return out
 
 
 def probe_reward(args: argparse.Namespace) -> dict[str, Any]:
@@ -474,10 +443,22 @@ def probe_reward(args: argparse.Namespace) -> dict[str, Any]:
             record: dict[str, Any] = {"cell": cell, "prompt": prompt, "variants": {}}
             record["variants"]["original"] = _score_path(model, path, prompt, cell)
             record["variants"]["repeat"] = _score_path(model, path, prompt, cell + "-r")
-            frames, fps = _read_frames(path)
-            for name, degraded in _degradations(frames).items():
+            frames = np.asarray(iio.imread(path, plugin="pyav"))
+            fps = float(iio.immeta(path, plugin="pyav").get("fps", 16.0))
+            # Degradations an honest quality/motion reward must rank below the
+            # original: gaussian noise, shuffled frames, one frozen frame.
+            rng = np.random.default_rng(0)
+            degradations: dict[str, np.ndarray] = {}
+            for sigma in PROBE_NOISE_SIGMAS:
+                noisy = frames.astype(np.float32) + rng.normal(0.0, sigma, frames.shape)
+                degradations[f"noise_{int(sigma)}"] = np.clip(noisy, 0, 255).astype(np.uint8)
+            degradations["shuffle"] = frames[rng.permutation(len(frames))]
+            degradations["frozen"] = np.repeat(frames[:1], len(frames), axis=0)
+            for name, degraded in degradations.items():
                 dst = Path(tmp) / f"{cell}_{name}.mp4"
-                _write_frames(degraded, fps, dst)
+                iio.imwrite(
+                    dst, degraded.astype(np.uint8), fps=fps, plugin="pyav", codec="libx264"
+                )
                 record["variants"][name] = _score_path(model, dst, prompt, f"{cell}-{name}")
             records.append(record)
             logger.info("probed %s", cell)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 
 import pytest
 
@@ -105,31 +106,38 @@ def test_single_pass_fullparam_rejects_any_policy_clip(field: str) -> None:
     assert any("clip" in failure for failure in result["failures"])
 
 
-def test_eval_reader_keeps_historical_inline_csv_compatibility(tmp_path) -> None:
-    path = tmp_path / "eval_metrics.csv"
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=sorted(_eval_rows()[0]))
-        writer.writeheader()
-        writer.writerows(_eval_rows())
+def test_main_keeps_historical_inline_csv_compatibility(tmp_path, capsys) -> None:
+    """A historical run whose archived config enabled ``trainer.eval`` is judged
+    from its inline ``eval_metrics.csv``; the verdict reads the same rows the
+    standalone report would carry."""
+
+    for name, rows in (("eval_metrics.csv", _eval_rows()), ("metrics.csv", _train_rows())):
+        with (tmp_path / name).open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=sorted(rows[0]))
+            writer.writeheader()
+            writer.writerows(rows)
     (tmp_path / "resolved_config.yaml").write_text(
         "trainer:\n  eval:\n    enabled: true\n",
         encoding="utf-8",
     )
 
-    assert verdict._read_eval_rows(tmp_path) == _eval_rows()
+    with pytest.raises(SystemExit) as raised:
+        verdict.main(["--run-dir", str(tmp_path), "--qualitative-audit", "pass"])
+
+    assert raised.value.code == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["verdict"] == "PASS"
+    assert result["diagnostics"]["post_eval_points"] == 12
+    assert result["diagnostics"]["baseline_aesthetic"] == 5.0
 
 
-def test_eval_reader_rejects_unmarked_csv_from_new_run(tmp_path) -> None:
+def test_main_rejects_unmarked_csv_from_new_run(tmp_path, capsys) -> None:
     (tmp_path / "eval_metrics.csv").write_text("epoch,r_aesthetic\n-1,5.0\n")
     (tmp_path / "resolved_config.yaml").write_text("trainer: {}\n", encoding="utf-8")
 
-    with pytest.raises(FileNotFoundError, match="sana_aesthetic_checkpoint_eval"):
-        verdict._read_eval_rows(tmp_path)
-
-
-def test_eval_reader_rejects_missing_standalone_report(tmp_path) -> None:
-    with pytest.raises(FileNotFoundError, match="sana_aesthetic_checkpoint_eval"):
-        verdict._read_eval_rows(tmp_path)
+    with pytest.raises(SystemExit, match="sana_aesthetic_checkpoint_eval"):
+        verdict.main(["--run-dir", str(tmp_path)])
+    assert capsys.readouterr().out == ""
 
 
 def test_main_reports_missing_standalone_report(tmp_path, capsys) -> None:

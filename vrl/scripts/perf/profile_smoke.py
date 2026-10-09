@@ -40,13 +40,6 @@ _OUTER_RANGE = "test.outer"
 _MATMUL_RANGE = "test.cuda_matmul"
 
 
-def _read_trace_text(path: Path) -> str:
-    if path.suffix == ".gz":
-        with gzip.open(path, "rt", encoding="utf-8") as handle:
-            return handle.read()
-    return path.read_text(encoding="utf-8")
-
-
 def run_smoke(activities: tuple[str, ...], output_dir: Path) -> dict:
     device = "cuda" if "cuda" in activities and torch.cuda.is_available() else "cpu"
     config = TorchProfilerConfig(
@@ -82,7 +75,14 @@ def run_smoke(activities: tuple[str, ...], output_dir: Path) -> dict:
     trace_files = manifest["trace_files"]
     if not trace_files:
         raise SystemExit(f"FAIL: no trace file written in {trace_dir}")
-    trace_text = "".join(_read_trace_text(trace_dir / name) for name in trace_files)
+    trace_text = ""
+    for name in trace_files:
+        trace_path = trace_dir / name
+        if trace_path.suffix == ".gz":
+            with gzip.open(trace_path, "rt", encoding="utf-8") as handle:
+                trace_text += handle.read()
+        else:
+            trace_text += trace_path.read_text(encoding="utf-8")
 
     # 2. Summary exists.
     summary_name = manifest["summary_file"]

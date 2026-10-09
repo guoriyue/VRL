@@ -113,38 +113,6 @@ async def _score_anchor(
     return scores
 
 
-def _load_anchors(
-    examples: list[PromptExample],
-    *,
-    data_root: Path,
-) -> list[torch.Tensor]:
-    clips: list[torch.Tensor] = []
-    for example in examples:
-        if not example.target_video:
-            raise ValueError(f"manifest row {example.prompt!r} has no target_video")
-        path = resolve_artifact_path(
-            example.target_video,
-            data_root=data_root,
-            allow_absolute=True,
-        )
-        frames = read_video_frames(path)
-        if frames.shape[0] < 2:
-            raise ValueError(
-                f"anchor {example.target_video!r} has {frames.shape[0]} frame(s); need >=2",
-            )
-        clips.append(frames)
-    return clips
-
-
-def _different_prompt_index(examples: list[PromptExample], index: int) -> int:
-    prompt = examples[index].prompt.strip().casefold()
-    for offset in range(1, len(examples)):
-        other = (index + offset) % len(examples)
-        if examples[other].prompt.strip().casefold() != prompt:
-            return other
-    raise ValueError("robotics reward gate needs at least two distinct prompts for wrong_clip")
-
-
 async def _run_probe(
     scorer: Any,
     examples: list[PromptExample],
@@ -155,7 +123,16 @@ async def _run_probe(
     rows: list[dict[str, Any]] = []
     scored_anchors: list[dict[str, dict[str, float]]] = []
     for index, example in enumerate(examples):
-        wrong_index = _different_prompt_index(examples, index)
+        # The wrong_clip candidate comes from the next anchor whose prompt differs.
+        prompt_key = example.prompt.strip().casefold()
+        for offset in range(1, len(examples)):
+            wrong_index = (index + offset) % len(examples)
+            if examples[wrong_index].prompt.strip().casefold() != prompt_key:
+                break
+        else:
+            raise ValueError(
+                "robotics reward gate needs at least two distinct prompts for wrong_clip"
+            )
         candidates = build_discrimination_candidates(
             clips[index],
             clips[wrong_index],
@@ -210,7 +187,21 @@ async def _main_async(args: argparse.Namespace) -> dict[str, Any]:
     examples = load_prompt_dataset_index(args.manifest)[: args.num_anchors]
     if len(examples) < 2:
         raise ValueError("robotics reward gate needs at least two manifest rows")
-    clips = _load_anchors(examples, data_root=data_root)
+    clips: list[torch.Tensor] = []
+    for example in examples:
+        if not example.target_video:
+            raise ValueError(f"manifest row {example.prompt!r} has no target_video")
+        path = resolve_artifact_path(
+            example.target_video,
+            data_root=data_root,
+            allow_absolute=True,
+        )
+        frames = read_video_frames(path)
+        if frames.shape[0] < 2:
+            raise ValueError(
+                f"anchor {example.target_video!r} has {frames.shape[0]} frame(s); need >=2",
+            )
+        clips.append(frames)
 
     from vrl.rewards.service.client import HttpRewardScorer
 

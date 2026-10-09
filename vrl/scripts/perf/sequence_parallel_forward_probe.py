@@ -29,12 +29,6 @@ from typing import Any
 import torch
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 def _load_transformer(args: argparse.Namespace, device: torch.device) -> Any:
     from diffusers import SD3Transformer2DModel
 
@@ -47,26 +41,6 @@ def _load_transformer(args: argparse.Namespace, device: torch.device) -> Any:
         local_files_only=True,
     )
     return model.to(device).eval()
-
-
-def _build_inputs(args: argparse.Namespace, model: Any, device: torch.device) -> dict[str, Any]:
-    config = model.config
-    generator = torch.Generator().manual_seed(args.seed)
-    dtype = getattr(torch, args.dtype)
-    latent_h = args.height // 8
-    latent_w = args.width // 8
-    return {
-        "hidden_states": torch.randn(
-            args.batch, config.in_channels, latent_h, latent_w, generator=generator
-        ).to(device, dtype),
-        "encoder_hidden_states": torch.randn(
-            args.batch, args.text_tokens, config.joint_attention_dim, generator=generator
-        ).to(device, dtype),
-        "pooled_projections": torch.randn(
-            args.batch, config.pooled_projection_dim, generator=generator
-        ).to(device, dtype),
-        "timestep": torch.full((args.batch,), float(args.timestep), device=device, dtype=dtype),
-    }
 
 
 def _rank_main(rank: int, port: int, args: argparse.Namespace, scratch: str, queue: Any) -> None:
@@ -89,7 +63,29 @@ def _rank_main(rank: int, port: int, args: argparse.Namespace, scratch: str, que
         )
         try:
             model = _load_transformer(args, device)
-            inputs = _build_inputs(args, model, device)
+            # The same seeded random latents / text embeddings / timestep on
+            # every rank, in the probe dtype.
+            config = model.config
+            generator = torch.Generator().manual_seed(args.seed)
+            dtype = getattr(torch, args.dtype)
+            inputs = {
+                "hidden_states": torch.randn(
+                    args.batch,
+                    config.in_channels,
+                    args.height // 8,
+                    args.width // 8,
+                    generator=generator,
+                ).to(device, dtype),
+                "encoder_hidden_states": torch.randn(
+                    args.batch, args.text_tokens, config.joint_attention_dim, generator=generator
+                ).to(device, dtype),
+                "pooled_projections": torch.randn(
+                    args.batch, config.pooled_projection_dim, generator=generator
+                ).to(device, dtype),
+                "timestep": torch.full(
+                    (args.batch,), float(args.timestep), device=device, dtype=dtype
+                ),
+            }
             reference = None
             if rank == 0:
                 with torch.no_grad():
@@ -129,7 +125,9 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("one visible GPU per rank is required")
     context = multiprocessing.get_context("spawn")
     queue = context.Queue()
-    port = _free_port()
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = int(sock.getsockname()[1])
     payloads: dict[int, str] = {}
     with tempfile.TemporaryDirectory(prefix="sp_forward_probe_") as scratch:
         procs = [

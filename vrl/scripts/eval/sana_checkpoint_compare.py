@@ -23,7 +23,6 @@ from typing import Any
 import torch
 
 from vrl.config.precision import PrecisionPolicy
-from vrl.config.schema import RootConfig
 from vrl.models import checkpoint_identity
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.models.precision import float32_precision_state, model_precision
@@ -103,8 +102,28 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     config_path = run_dir / RESOLVED_CONFIG_NAME
     _, root = load_resolved_run_config(run_dir)
     precision = PrecisionPolicy.from_section(root.precision)
-    _validate_resolved_config(root)
-    _validate_sampling_args(args)
+    model_section = root.model
+    family = str(model_section.family if model_section is not None else "").strip().lower()
+    if family != "sana":
+        raise ValueError(
+            f"SANA checkpoint comparison requires model.family='sana'; got {family!r}"
+        )
+    assert model_section is not None
+    if model_section.use_lora is not False or model_section.lora is not None:
+        raise ValueError(
+            "SANA checkpoint comparison accepts full-parameter runs only: "
+            "model.use_lora must be false and model.lora must be null",
+        )
+    if not str(args.prompt).strip():
+        raise ValueError("prompt must not be empty")
+    for name in ("height", "width", "steps"):
+        value = int(getattr(args, name))
+        if value < 1:
+            raise ValueError(f"{name} must be >= 1; got {value}")
+    if float(args.guidance_scale) <= 1.0:
+        raise ValueError(
+            "guidance-scale must be > 1.0 so the comparison exercises SANA's CFG path",
+        )
 
     checkpoint_input = args.checkpoint.expanduser()
     if not checkpoint_input.is_absolute():
@@ -279,34 +298,6 @@ def _model_precision_snapshot(model: Any) -> dict[str, Any]:
         "outer_autocast": precision.outer_autocast,
         "effective_float32_precision": float32_precision_state(),
     }
-
-
-def _validate_resolved_config(root: RootConfig) -> None:
-    model = root.model
-    family = str(model.family if model is not None else "").strip().lower()
-    if family != "sana":
-        raise ValueError(
-            f"SANA checkpoint comparison requires model.family='sana'; got {family!r}"
-        )
-    assert model is not None
-    if model.use_lora is not False or model.lora is not None:
-        raise ValueError(
-            "SANA checkpoint comparison accepts full-parameter runs only: "
-            "model.use_lora must be false and model.lora must be null",
-        )
-
-
-def _validate_sampling_args(args: argparse.Namespace) -> None:
-    if not str(args.prompt).strip():
-        raise ValueError("prompt must not be empty")
-    for name in ("height", "width", "steps"):
-        value = int(getattr(args, name))
-        if value < 1:
-            raise ValueError(f"{name} must be >= 1; got {value}")
-    if float(args.guidance_scale) <= 1.0:
-        raise ValueError(
-            "guidance-scale must be > 1.0 so the comparison exercises SANA's CFG path",
-        )
 
 
 def _validate_checkpoint(checkpoint: Any) -> None:

@@ -203,12 +203,25 @@ def build_reward_model_definitions(
         if not str(model_config.get("dtype") or "").strip():
             model_config["dtype"] = "float32"
         if name == "aesthetic":
+            from importlib import resources
+
+            asset = resources.files("vrl.rewards.assets").joinpath(
+                "aesthetic_predictor_v2_5.pth",
+            )
+            with resources.as_file(asset) as asset_path:
+                asset_sha256 = sha256_file(asset_path)
+                asset_bytes = asset_path.stat().st_size
             provenance = {
                 "model": {
                     "repo": str(model_config["model_name"]),
                     "revision": str(model_config["model_revision"]),
                 },
-                "mlp_asset": _aesthetic_asset_record(),
+                "mlp_asset": {
+                    "package": "vrl.rewards.assets",
+                    "name": "aesthetic_predictor_v2_5.pth",
+                    "sha256": asset_sha256,
+                    "bytes": asset_bytes,
+                },
             }
         else:
             provenance = {
@@ -356,20 +369,3 @@ def publish_report(
     }
     write_json(path, payload)
     return path
-
-
-def _aesthetic_asset_record() -> dict[str, Any]:
-    from importlib import resources
-
-    asset = resources.files("vrl.rewards.assets").joinpath(
-        "aesthetic_predictor_v2_5.pth",
-    )
-    with resources.as_file(asset) as asset_path:
-        sha256 = sha256_file(asset_path)
-        size = asset_path.stat().st_size
-    return {
-        "package": "vrl.rewards.assets",
-        "name": "aesthetic_predictor_v2_5.pth",
-        "sha256": sha256,
-        "bytes": size,
-    }
