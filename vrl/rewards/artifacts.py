@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Any, Literal, Protocol, get_args, runtime_checkable
+from typing import Literal, Protocol, get_args, runtime_checkable
 
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.types import RewardSample
@@ -191,6 +191,13 @@ class DiskRewardArtifactStore:
             size_bytes = path.stat().st_size
             # Per-request audit trails are the opt-in debug_dir JSONLs owned by
             # InferenceRewardFunction._write_debug; the store writes media only.
+            # Scalar metadata crosses the artifact wire; rich values stay
+            # driver-side. The predicate replaces a hand-curated key list: the
+            # disk artifact rides a JSON wire to the reward service, so only
+            # JSON-scalar provenance (task type, reference/target paths, source
+            # ids) can cross — tensors, PIL images, and nested payloads (e.g.
+            # GenEval metadata dicts) are in-memory-transport data by nature,
+            # and a predicate cannot forget a newly added provenance key.
             artifact = RewardInferenceArtifact(
                 artifact_id=artifact_id,
                 sample_id=sample.sample_id,
@@ -198,30 +205,17 @@ class DiskRewardArtifactStore:
                 prompt=str(sample.prompt),
                 size_bytes=size_bytes,
                 sha256=sha256_file(path),
-                metadata=_artifact_provenance(metadata),
+                metadata={
+                    key: value
+                    for key, value in metadata.items()
+                    if isinstance(value, (str, int, float, bool)) and str(value).strip()
+                },
             )
         except BaseException:
             path.unlink(missing_ok=True)
             self._owned_paths.discard(path)
             raise
         return artifact
-
-
-def _artifact_provenance(metadata: dict[str, Any]) -> dict[str, Any]:
-    """Scalar metadata crosses the artifact wire; rich values stay driver-side.
-
-    The rule replaces a hand-curated key list: the disk artifact rides a JSON
-    wire to the reward service, so only JSON-scalar provenance (task type,
-    reference/target paths, source ids) can cross — tensors, PIL images, and
-    nested payloads (e.g. GenEval metadata dicts) are in-memory-transport data by
-    nature. A predicate cannot forget a newly added provenance key.
-    """
-
-    return {
-        key: value
-        for key, value in metadata.items()
-        if isinstance(value, (str, int, float, bool)) and str(value).strip()
-    }
 
 
 __all__ = [

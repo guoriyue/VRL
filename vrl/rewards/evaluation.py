@@ -96,46 +96,6 @@ def load_media_manifest(path: Path) -> list[MediaRow]:
     return rows
 
 
-def _input_record(row: MediaRow) -> dict[str, Any]:
-    return {
-        **row.model_dump(mode="json"),
-        "sha256": sha256_file(row.path),
-        "asset_sha256": {key: sha256_file(path) for key, path in row.assets.items()},
-    }
-
-
-def _asset_metadata(assets: dict[str, Path]) -> dict[str, Any]:
-    """Manifest assets as reward metadata; ``reference_image`` becomes the one-element list."""
-
-    metadata: dict[str, Any] = {key: str(path) for key, path in assets.items()}
-    reference = metadata.pop("reference_image", None)
-    if reference is not None:
-        metadata["reference_images"] = [reference]
-    return metadata
-
-
-def _artifact(row: MediaRow, record: dict[str, Any], media_mode: str) -> RewardInferenceArtifact:
-    media = None
-    if media_mode == "tensor":
-        from vrl.rewards.models.media import decode_artifact_frames
-
-        source = RewardInferenceArtifact(
-            artifact_id=row.sample_id, sample_id=row.sample_id, path=str(row.path)
-        )
-        # Explicit RGB decode is part of this mode; alpha-aware scorers use file mode.
-        media = decode_artifact_frames(source).permute(3, 0, 1, 2).contiguous()
-    return RewardInferenceArtifact(
-        artifact_id=row.sample_id,
-        sample_id=row.sample_id,
-        path=str(row.path) if media is None else "",
-        prompt=row.prompt,
-        metadata={**row.metadata, **_asset_metadata(row.assets)},
-        size_bytes=row.path.stat().st_size if media is None else None,
-        sha256=record["sha256"] if media is None else None,
-        media=media,
-    )
-
-
 def _record_path(directory: Path, sample_id: str) -> Path:
     return directory / "samples" / f"{canonical_json_sha256(sample_id, allow_nan=False)}.json"
 
@@ -188,7 +148,14 @@ class Evaluation:
         from vrl.rewards.runtime import build_reward_scorer
 
         rows = load_media_manifest(manifest.resolve())
-        inputs = [_input_record(row) for row in rows]
+        inputs = [
+            {
+                **row.model_dump(mode="json"),
+                "sha256": sha256_file(row.path),
+                "asset_sha256": {key: sha256_file(path) for key, path in row.assets.items()},
+            }
+            for row in rows
+        ]
         provenance = {"schema": EVALUATION_SCHEMA, "config": config.model_dump(mode="json")}
         provenance = {
             **provenance,
@@ -221,11 +188,40 @@ class Evaluation:
             for start in range(0, len(todo), config.batch_size):
                 batch = todo[start : start + config.batch_size]
                 try:
+                    artifacts = []
+                    for row, record, _ in batch:
+                        # Manifest assets ride as reward metadata; ``reference_image``
+                        # becomes the one-element list the scorers read.
+                        metadata = {**row.metadata, **{k: str(p) for k, p in row.assets.items()}}
+                        reference = metadata.pop("reference_image", None)
+                        if reference is not None:
+                            metadata["reference_images"] = [reference]
+                        media = None
+                        if config.media_mode == "tensor":
+                            from vrl.rewards.models.media import decode_artifact_frames
+
+                            source = RewardInferenceArtifact(
+                                artifact_id=row.sample_id,
+                                sample_id=row.sample_id,
+                                path=str(row.path),
+                            )
+                            # Explicit RGB decode is part of this mode; alpha-aware
+                            # scorers use file mode.
+                            media = decode_artifact_frames(source).permute(3, 0, 1, 2).contiguous()
+                        artifacts.append(
+                            RewardInferenceArtifact(
+                                artifact_id=row.sample_id,
+                                sample_id=row.sample_id,
+                                path=str(row.path) if media is None else "",
+                                prompt=row.prompt,
+                                metadata=metadata,
+                                size_bytes=row.path.stat().st_size if media is None else None,
+                                sha256=record["sha256"] if media is None else None,
+                                media=media,
+                            )
+                        )
                     request = RewardInferenceRequest(
-                        request_id=f"eval-{uuid.uuid4().hex}",
-                        artifacts=tuple(
-                            _artifact(row, record, config.media_mode) for row, record, _ in batch
-                        ),
+                        request_id=f"eval-{uuid.uuid4().hex}", artifacts=tuple(artifacts)
                     )
                     results = request.validate_and_order_results(
                         await asyncio.wait_for(

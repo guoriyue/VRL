@@ -366,7 +366,6 @@ def test_create_model_and_processor_runs_offline_on_a_tiny_repo(tmp_path: Path) 
     from vrl.rewards.models.kling_video_reward import (
         _SPECIAL_TOKENS,
         _create_model_and_processor,
-        _find_target_linear_names,
         _ModelConfig,
         _PeftLoraConfig,
     )
@@ -393,7 +392,7 @@ def test_create_model_and_processor_runs_offline_on_a_tiny_repo(tmp_path: Path) 
     assert base.special_token_ids == processor.tokenizer.convert_tokens_to_ids(_SPECIAL_TOKENS)
     assert len(base.special_token_ids) == 3
     assert base.reward_token == "special"
-    targets = _find_target_linear_names(base, lora_namespan_exclude=_LORA_EXCLUDE)
+    targets = model.peft_config["default"].target_modules
     assert targets
     assert not any(
         bad in name for name in targets for bad in ("rm_head", "embed_tokens", "visual")

@@ -275,7 +275,19 @@ class HPSv3Model:
         array = (frames.clamp(0.0, 1.0) * 255.0).round().to(torch.uint8).cpu().numpy()
         images = [Image.fromarray(frame) for frame in array]
         if self.jpeg_roundtrip:
-            images = [_jpeg_roundtrip(image) for image in images]
+            # Encode/decode every frame as JPEG at PIL's default quality, as
+            # the reference client does.
+            from io import BytesIO
+
+            roundtripped = []
+            for image in images:
+                buffer = BytesIO()
+                image.save(buffer, format="JPEG")
+                buffer.seek(0)
+                decoded = Image.open(buffer, formats=["JPEG"])
+                decoded.load()
+                roundtripped.append(decoded)
+            images = roundtripped
         mu_scores: list[float] = []
         for start in range(0, len(images), self.frames_per_forward):
             chunk = images[start : start + self.frames_per_forward]
@@ -319,21 +331,6 @@ class HPSv3Model:
             return_tensors="pt",
         )
         return batch.to(self.device)
-
-
-def _jpeg_roundtrip(image: Any) -> Any:
-    """Encode/decode one frame as JPEG at PIL's default quality, as the reference client does."""
-
-    from io import BytesIO
-
-    from PIL import Image
-
-    buffer = BytesIO()
-    image.save(buffer, format="JPEG")
-    buffer.seek(0)
-    decoded = Image.open(buffer, formats=["JPEG"])
-    decoded.load()
-    return decoded
 
 
 def _aggregate_frame_scores(scores: list[float], top_fraction: float) -> dict[str, float]:

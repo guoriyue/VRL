@@ -315,18 +315,44 @@ class InferenceRewardFunction(RewardFunction):
             score_keys = set(results[0].scores)
             if any(set(result.scores) != score_keys for result in results):
                 raise ValueError("reward model returned inconsistent score axes within a batch")
+
+            # Per-result transport timings fold into one reward-call summary:
+            # stage-parallel phases report their slowest member (max over
+            # results); per-artifact inference cost is additive (sum), falling
+            # back to this call's measured inference wall time when a
+            # transport reports no per-result values.
+            def stage_max(key: str) -> float:
+                return max(
+                    (
+                        float(result.timing_ms[key])
+                        for result in results
+                        if key in result.timing_ms
+                    ),
+                    default=0.0,
+                )
+
+            inference_values = [
+                float(result.timing_ms["inference_ms"])
+                for result in results
+                if "inference_ms" in result.timing_ms
+            ]
             output = RewardOutput(
                 scores=tuple(self._select_score(result.scores) for result in results),
                 components={
                     key: tuple(result.scores[key] for result in results)
                     for key in results[0].scores
                 },
-                timing_ms=_result_timing_summary(
-                    results,
-                    materialization_ms=materialization_ms,
-                    inference_total_ms=inference_total_ms,
-                    total_latency_ms=total_latency_ms,
-                ),
+                timing_ms={
+                    "latency_ms": total_latency_ms,
+                    "queue_wait_ms": stage_max("queue_wait_ms"),
+                    "inference_ms": (
+                        sum(inference_values) if inference_values else float(inference_total_ms)
+                    ),
+                    "artifact_materialization_ms": materialization_ms,
+                    "artifact_validation_ms": stage_max("service_artifact_validation_ms"),
+                    "service_inference_wall_ms": stage_max("service_inference_wall_ms"),
+                    "transport_roundtrip_ms": stage_max("http_roundtrip_ms"),
+                },
             )
         except BaseException as error:
             operation_error = error
@@ -581,43 +607,6 @@ class ModelRewardFunction(InferenceRewardFunction):
             debug_dir=debug_dir,
             name=self.name,
         )
-
-
-def _result_timing_summary(
-    results: list[RewardInferenceResult],
-    *,
-    materialization_ms: float,
-    inference_total_ms: float,
-    total_latency_ms: float,
-) -> dict[str, float]:
-    """Aggregate per-result transport timings into one reward-call summary.
-
-    Stage-parallel phases report their slowest member (max over results);
-    per-artifact inference cost is additive (sum), falling back to this
-    call's measured inference wall time when a transport reports no
-    per-result values.
-    """
-
-    def stage_max(key: str) -> float:
-        return max(
-            (float(result.timing_ms[key]) for result in results if key in result.timing_ms),
-            default=0.0,
-        )
-
-    inference_values = [
-        float(result.timing_ms["inference_ms"])
-        for result in results
-        if "inference_ms" in result.timing_ms
-    ]
-    return {
-        "latency_ms": total_latency_ms,
-        "queue_wait_ms": stage_max("queue_wait_ms"),
-        "inference_ms": (sum(inference_values) if inference_values else float(inference_total_ms)),
-        "artifact_materialization_ms": materialization_ms,
-        "artifact_validation_ms": stage_max("service_artifact_validation_ms"),
-        "service_inference_wall_ms": stage_max("service_inference_wall_ms"),
-        "transport_roundtrip_ms": stage_max("http_roundtrip_ms"),
-    }
 
 
 __all__ = [

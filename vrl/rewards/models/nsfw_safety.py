@@ -93,10 +93,26 @@ class NSFWSafetyRewardModel:
             raw_results = self._classifier(images, top_k=None)
         except TypeError:
             raw_results = self._classifier(images)
-        return [
-            self._probability_from_classifier_result(result)
-            for result in _normalize_classifier_batch(raw_results, len(images))
-        ]
+        # transformers returns a bare result for a single input and a list
+        # for a batch; reshape both into one result per image.
+        if len(images) == 1:
+            if (
+                isinstance(raw_results, list)
+                and len(raw_results) == 1
+                and not isinstance(raw_results[0], dict)
+            ):
+                results = raw_results
+            else:
+                results = [raw_results]
+        elif isinstance(raw_results, list) and len(raw_results) == len(images):
+            results = raw_results
+        else:
+            raise ValueError(
+                "NSFW classifier returned wrong number of results: "
+                f"got {len(raw_results) if isinstance(raw_results, list) else type(raw_results).__name__}, "
+                f"expected {len(images)}",
+            )
+        return [self._probability_from_classifier_result(result) for result in results]
 
     def _ensure_loaded(self) -> None:
         if self._classifier is not None:
@@ -229,24 +245,6 @@ def _pil_from_array(array: Any) -> Any | None:
     if arr.ndim != 3 or (arr.shape[0] not in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4)):
         return None
     return to_pil_image(arr)
-
-
-def _normalize_classifier_batch(raw_results: Any, expected_count: int) -> list[Any]:
-    if expected_count == 1:
-        if (
-            isinstance(raw_results, list)
-            and len(raw_results) == 1
-            and not isinstance(raw_results[0], dict)
-        ):
-            return raw_results
-        return [raw_results]
-    if isinstance(raw_results, list) and len(raw_results) == expected_count:
-        return raw_results
-    raise ValueError(
-        "NSFW classifier returned wrong number of results: "
-        f"got {len(raw_results) if isinstance(raw_results, list) else type(raw_results).__name__}, "
-        f"expected {expected_count}",
-    )
 
 
 def _label_matches(label: str, patterns: Sequence[str]) -> bool:

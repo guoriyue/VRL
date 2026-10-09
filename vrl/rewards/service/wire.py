@@ -94,64 +94,10 @@ def _media_dtype(name: str) -> Any:
     return np.dtype(codecs[name])
 
 
-def _media_to_wire(media: Any) -> dict[str, Any]:
-    import torch
-
-    if not isinstance(media, torch.Tensor):
-        raise ValueError("uploaded reward media must be an image/video tensor")
-    if media.ndim not in {3, 4} or any(size < 1 for size in media.shape):
-        raise ValueError("uploaded reward media requires non-empty [C,H,W] or [C,T,H,W]")
-    media = media.detach().cpu()
-    # NumPy has no portable bfloat16 dtype; conversion preserves every value.
-    if media.dtype == torch.bfloat16:
-        media = media.float()
-    dtype = str(media.dtype).removeprefix("torch.")
-    raw = media.numpy().astype(_media_dtype(dtype), copy=False).tobytes(order="C")
-    return asdict(
-        _TensorMedia(
-            encoding="tensor-base64",
-            dtype=dtype,
-            shape=list(media.shape),
-            data=base64.b64encode(raw).decode("ascii"),
-            sha256=hashlib.sha256(raw).hexdigest(),
-        )
-    )
-
-
-def _media_from_wire(value: Any) -> Any:
-    import numpy as np
-    import torch
-
-    body = _require_mapping(value, context="reward media")
-    _reject_unknown_keys(
-        body, {field.name for field in fields(_TensorMedia)}, context="reward media"
-    )
-    media = _TensorMedia(**dict(body))
-    if media.encoding != "tensor-base64":
-        raise ValueError("reward media encoding must be tensor-base64")
-    dtype = _media_dtype(media.dtype)
-    if (
-        not isinstance(media.shape, list)
-        or len(media.shape) not in {3, 4}
-        or any(type(size) is not int or size < 1 for size in media.shape)
-    ):
-        raise ValueError("reward media shape requires positive [C,H,W] or [C,T,H,W] dimensions")
-    expected_bytes = math.prod(media.shape) * dtype.itemsize
-    if not isinstance(media.data, str) or len(media.data) != 4 * ((expected_bytes + 2) // 3):
-        raise ValueError("reward media encoded size disagrees with shape and dtype")
-    # Check declared shape before decoding or allocating a tensor. No compression
-    # or executable serialization can expand an adversarial payload here.
-    raw = base64.b64decode(media.data, validate=True)
-    if len(raw) != expected_bytes:
-        raise ValueError("reward media byte size disagrees with shape and dtype")
-    if not isinstance(media.sha256, str) or hashlib.sha256(raw).hexdigest() != media.sha256:
-        raise ValueError("reward media SHA-256 mismatch")
-    array = np.frombuffer(raw, dtype=dtype).reshape(media.shape)
-    return torch.from_numpy(array.astype(dtype.newbyteorder("="), copy=True))
-
-
 def request_to_wire(request: RewardInferenceRequest) -> dict[str, Any]:
     """Serialize uploaded tensors or explicitly shared artifact paths."""
+
+    import torch
 
     request = request.resolve_media()
     artifacts: list[dict[str, Any]] = []
@@ -161,8 +107,32 @@ def request_to_wire(request: RewardInferenceRequest) -> dict[str, Any]:
             for field in fields(RewardInferenceArtifact)
             if field.name != "media"
         }
-        if artifact.media is not None:
-            row.update(path="", size_bytes=None, sha256=None, media=_media_to_wire(artifact.media))
+        media = artifact.media
+        if media is not None:
+            if not isinstance(media, torch.Tensor):
+                raise ValueError("uploaded reward media must be an image/video tensor")
+            if media.ndim not in {3, 4} or any(size < 1 for size in media.shape):
+                raise ValueError("uploaded reward media requires non-empty [C,H,W] or [C,T,H,W]")
+            media = media.detach().cpu()
+            # NumPy has no portable bfloat16 dtype; conversion preserves every value.
+            if media.dtype == torch.bfloat16:
+                media = media.float()
+            dtype = str(media.dtype).removeprefix("torch.")
+            raw = media.numpy().astype(_media_dtype(dtype), copy=False).tobytes(order="C")
+            row.update(
+                path="",
+                size_bytes=None,
+                sha256=None,
+                media=asdict(
+                    _TensorMedia(
+                        encoding="tensor-base64",
+                        dtype=dtype,
+                        shape=list(media.shape),
+                        data=base64.b64encode(raw).decode("ascii"),
+                        sha256=hashlib.sha256(raw).hexdigest(),
+                    )
+                ),
+            )
         artifacts.append(row)
     body = {
         field.name: getattr(request, field.name)
@@ -212,9 +182,49 @@ def request_from_wire(payload: Any) -> RewardInferenceRequest:
             )
             artifact_kwargs = dict(artifact)
             if artifact_kwargs.get("media") is not None:
+                import numpy as np
+                import torch
+
                 if artifact_kwargs.get("path"):
                     raise ValueError("reward artifact must choose uploaded media or a shared path")
-                artifact_kwargs["media"] = _media_from_wire(artifact_kwargs["media"])
+                media_body = _require_mapping(artifact_kwargs["media"], context="reward media")
+                _reject_unknown_keys(
+                    media_body,
+                    {field.name for field in fields(_TensorMedia)},
+                    context="reward media",
+                )
+                media = _TensorMedia(**dict(media_body))
+                if media.encoding != "tensor-base64":
+                    raise ValueError("reward media encoding must be tensor-base64")
+                dtype = _media_dtype(media.dtype)
+                if (
+                    not isinstance(media.shape, list)
+                    or len(media.shape) not in {3, 4}
+                    or any(type(size) is not int or size < 1 for size in media.shape)
+                ):
+                    raise ValueError(
+                        "reward media shape requires positive [C,H,W] or [C,T,H,W] dimensions"
+                    )
+                expected_bytes = math.prod(media.shape) * dtype.itemsize
+                if not isinstance(media.data, str) or len(media.data) != 4 * (
+                    (expected_bytes + 2) // 3
+                ):
+                    raise ValueError("reward media encoded size disagrees with shape and dtype")
+                # Check declared shape before decoding or allocating a tensor. No
+                # compression or executable serialization can expand an adversarial
+                # payload here.
+                raw = base64.b64decode(media.data, validate=True)
+                if len(raw) != expected_bytes:
+                    raise ValueError("reward media byte size disagrees with shape and dtype")
+                if (
+                    not isinstance(media.sha256, str)
+                    or hashlib.sha256(raw).hexdigest() != media.sha256
+                ):
+                    raise ValueError("reward media SHA-256 mismatch")
+                array = np.frombuffer(raw, dtype=dtype).reshape(media.shape)
+                artifact_kwargs["media"] = torch.from_numpy(
+                    array.astype(dtype.newbyteorder("="), copy=True)
+                )
             artifacts.append(RewardInferenceArtifact(**artifact_kwargs))
         # Construct from the full validated body (unknown keys were rejected
         # above) so a future request field crosses the wire instead of being

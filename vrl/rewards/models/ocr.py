@@ -291,9 +291,27 @@ def _extract_ocr_lines(result: Any) -> tuple[_OcrLine, ...]:
     if result is None:
         return ()
     if isinstance(result, Mapping):
-        if "rec_texts" in result:
-            return _lines_from_columns(result.get("rec_texts"), result.get("rec_scores"))
-        return ()
+        # PaddleOCR 3.x result: parallel rec_texts / rec_scores columns.
+        texts = result.get("rec_texts")
+        if texts is None:
+            return ()
+        if not isinstance(texts, (list, tuple)):
+            raise TypeError("PaddleOCR rec_texts must be a list or tuple")
+        scores = result.get("rec_scores")
+        if scores is None:
+            scores = [1.0] * len(texts)
+        if not isinstance(scores, (list, tuple)):
+            raise TypeError("PaddleOCR rec_scores must be a list or tuple")
+        if len(texts) != len(scores):
+            raise ValueError(
+                f"PaddleOCR rec_texts and rec_scores lengths differ: {len(texts)} != {len(scores)}",
+            )
+        lines: list[_OcrLine] = []
+        for text, raw_confidence in zip(texts, scores, strict=True):
+            confidence = float(raw_confidence)
+            if isinstance(text, str) and text and confidence > 0.0:
+                lines.append(_OcrLine(text=text, confidence=confidence))
+        return tuple(lines)
     # PaddleOCR 2.x row: [box, (text, score)].
     if (
         isinstance(result, (list, tuple))
@@ -314,27 +332,6 @@ def _extract_ocr_lines(result: Any) -> tuple[_OcrLine, ...]:
             lines.extend(_extract_ocr_lines(item))
         return tuple(lines)
     return ()
-
-
-def _lines_from_columns(texts: Any, scores: Any) -> tuple[_OcrLine, ...]:
-    if texts is None:
-        return ()
-    if not isinstance(texts, (list, tuple)):
-        raise TypeError("PaddleOCR rec_texts must be a list or tuple")
-    if scores is None:
-        scores = [1.0] * len(texts)
-    if not isinstance(scores, (list, tuple)):
-        raise TypeError("PaddleOCR rec_scores must be a list or tuple")
-    if len(texts) != len(scores):
-        raise ValueError(
-            f"PaddleOCR rec_texts and rec_scores lengths differ: {len(texts)} != {len(scores)}",
-        )
-    lines: list[_OcrLine] = []
-    for text, raw_confidence in zip(texts, scores, strict=True):
-        confidence = float(raw_confidence)
-        if isinstance(text, str) and text and confidence > 0.0:
-            lines.append(_OcrLine(text=text, confidence=confidence))
-    return tuple(lines)
 
 
 __all__ = ["OCRRewardModel", "normalize_ocr_text"]

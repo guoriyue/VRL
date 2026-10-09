@@ -392,30 +392,37 @@ def nms(detections: Sequence[Detection], iou_threshold: float) -> list[Detection
 
     kept: list[Detection] = []
     for box, score in sorted(detections, key=lambda det: -det[1]):
-        if all(_iou(box, other[0]) < iou_threshold for other in kept):
+        for other, _ in kept:
+            inter_w = max(0.0, min(box[2], other[2]) - max(box[0], other[0]))
+            inter_h = max(0.0, min(box[3], other[3]) - max(box[1], other[1]))
+            inter = inter_w * inter_h
+            union = (
+                (box[2] - box[0]) * (box[3] - box[1])
+                + (other[2] - other[0]) * (other[3] - other[1])
+                - inter
+            )
+            if (inter / union if union > 0 else 0.0) >= iou_threshold:
+                break
+        else:
             kept.append((box, score))
-    return [
-        det
-        for det in kept
-        if sum(other is not det and _contains(det[0], other[0]) for other in kept) < 2
-    ]
-
-
-def _contains(outer: Box, inner: Box, ratio: float = 0.8) -> bool:
-    """Whether ``outer`` covers at least ``ratio`` of ``inner``'s area."""
-
-    inter_w = max(0.0, min(outer[2], inner[2]) - max(outer[0], inner[0]))
-    inter_h = max(0.0, min(outer[3], inner[3]) - max(outer[1], inner[1]))
-    inner_area = (inner[2] - inner[0]) * (inner[3] - inner[1])
-    return inner_area > 0 and inter_w * inter_h / inner_area >= ratio
-
-
-def _iou(a: Box, b: Box) -> float:
-    inter_w = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
-    inter_h = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-    inter = inter_w * inter_h
-    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
-    return inter / union if union > 0 else 0.0
+    instances: list[Detection] = []
+    for det in kept:
+        outer = det[0]
+        # A kept box is a group box when it covers >= 80% of at least two
+        # other kept boxes' areas.
+        contained = 0
+        for other in kept:
+            if other is det:
+                continue
+            inner = other[0]
+            inter_w = max(0.0, min(outer[2], inner[2]) - max(outer[0], inner[0]))
+            inter_h = max(0.0, min(outer[3], inner[3]) - max(outer[1], inner[1]))
+            inner_area = (inner[2] - inner[0]) * (inner[3] - inner[1])
+            if inner_area > 0 and inter_w * inter_h / inner_area >= 0.8:
+                contained += 1
+        if contained < 2:
+            instances.append(det)
+    return instances
 
 
 def relative_position(box: Box, reference: Box, threshold: float) -> set[str]:

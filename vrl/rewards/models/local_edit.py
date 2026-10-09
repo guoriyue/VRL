@@ -155,19 +155,55 @@ class LocalEditRewardModel(LazyTorchModule):
             min(x1 + pad, 1.0) * width,
             min(y1 + pad, 1.0) * height,
         )
+        rx0, ry0, rx1, ry1 = region
         first, second = self._patches(source), self._patches(edited)
         side = first.shape[0]
         rows, cols = torch.meshgrid(torch.arange(side), torch.arange(side), indexing="ij")
         centers = torch.stack(
             [(cols.flatten() + 0.5) * width / side, (rows.flatten() + 0.5) * height / side], -1
         )
-        outside = _outside_boxes(centers, [region])
+        # Patches whose centre lies outside the padded box must keep their content.
+        outside = ~(
+            (centers[:, 0] >= rx0)
+            & (centers[:, 0] <= rx1)
+            & (centers[:, 1] >= ry0)
+            & (centers[:, 1] <= ry1)
+        )
         if bool(outside.any()):
             cosine = (first * second).sum(-1).flatten()[outside]
             kept = float((cosine >= self._patch_match).float().mean())
         else:
             kept = 1.0  # the box covers the frame: nothing outside it to keep
-        shift = _global_shift(source, edited, [region])
+
+        # Translation of ``edited`` relative to ``source`` (phase-correlation
+        # peak) as a share of the diagonal. The edited box is blanked first: a
+        # large object set down in a flat scene (a suitcase on grass) would
+        # otherwise own the correlation peak.
+        corr_side = 256
+        margin = corr_side // 50  # resampling halo around the blanked box
+        blank_rows = slice(
+            max(int(ry0 * corr_side / height) - margin, 0),
+            int(ry1 * corr_side / height) + margin + 1,
+        )
+        blank_cols = slice(
+            max(int(rx0 * corr_side / width) - margin, 0),
+            int(rx1 * corr_side / width) + margin + 1,
+        )
+        window = torch.hann_window(corr_side)[:, None] * torch.hann_window(corr_side)[None, :]
+
+        def gray(image: Any) -> Any:
+            values = image.resize((corr_side, corr_side)).convert("L").getdata()
+            plane = torch.tensor(list(values), dtype=torch.float32).reshape(corr_side, corr_side)
+            keep = torch.ones_like(plane, dtype=torch.bool)
+            keep[blank_rows, blank_cols] = False
+            plane = torch.where(keep, plane - plane[keep].mean(), torch.zeros(()))
+            return plane * window
+
+        spectrum = torch.fft.fft2(gray(source)) * torch.fft.fft2(gray(edited)).conj()
+        correlation = torch.fft.ifft2(spectrum / (spectrum.abs() + 1e-8)).real
+        dy, dx = divmod(int(correlation.argmax()), corr_side)
+        dy, dx = (d - corr_side if d > corr_side // 2 else d for d in (dy, dx))
+        shift = math.hypot(dx, dy) / math.hypot(corr_side, corr_side)
         stayed = min(max(2.0 - shift / self._stay_tolerance, 0.0), 1.0)
         keep = kept * stayed
         execution = min(max(float(execution), 0.0), 1.0)
@@ -273,60 +309,6 @@ class LocalEditRewardModel(LazyTorchModule):
         # the cycle on its own loop in a worker thread instead of nesting.
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(asyncio.run, cycle()).result()
-
-
-Box = tuple[float, float, float, float]
-
-
-def _outside_boxes(points: Any, boxes: Sequence[Box]) -> Any:
-    """Boolean mask of ``[N, 2]`` points that lie outside every box."""
-
-    import torch
-
-    keep = torch.ones(points.shape[0], dtype=torch.bool)
-    for x0, y0, x1, y1 in boxes:
-        inside = (
-            (points[:, 0] >= x0)
-            & (points[:, 0] <= x1)
-            & (points[:, 1] >= y0)
-            & (points[:, 1] <= y1)
-        )
-        keep = keep & ~inside
-    return keep
-
-
-def _global_shift(first: Any, second: Any, boxes: Sequence[Box], side: int = 256) -> float:
-    """Translation of ``second`` relative to ``first`` (phase-correlation peak) as a share of the diagonal.
-
-    The edited boxes are blanked first: a large object set down in a flat scene
-    (a suitcase on grass) would otherwise own the correlation peak.
-    """
-
-    import torch
-
-    width, height = first.size
-
-    def gray(image: Any) -> Any:
-        values = image.resize((side, side)).convert("L").getdata()
-        plane = torch.tensor(list(values), dtype=torch.float32).reshape(side, side)
-        keep = torch.ones_like(plane, dtype=torch.bool)
-        margin = side // 50  # resampling halo around a blanked box
-        for x0, y0, x1, y1 in boxes:
-            rows = slice(
-                max(int(y0 * side / height) - margin, 0), int(y1 * side / height) + margin + 1
-            )
-            cols = slice(
-                max(int(x0 * side / width) - margin, 0), int(x1 * side / width) + margin + 1
-            )
-            keep[rows, cols] = False
-        plane = torch.where(keep, plane - plane[keep].mean(), torch.zeros(()))
-        return plane * (torch.hann_window(side)[:, None] * torch.hann_window(side)[None, :])
-
-    spectrum = torch.fft.fft2(gray(first)) * torch.fft.fft2(gray(second)).conj()
-    correlation = torch.fft.ifft2(spectrum / (spectrum.abs() + 1e-8)).real
-    dy, dx = divmod(int(correlation.argmax()), side)
-    dy, dx = (d - side if d > side // 2 else d for d in (dy, dx))
-    return math.hypot(dx, dy) / math.hypot(side, side)
 
 
 __all__ = ["LocalEditRewardModel"]

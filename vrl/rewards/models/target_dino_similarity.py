@@ -105,7 +105,15 @@ class TargetDinoSimilarityModel(LazyTorchModule):
         tgt_embed = self._embed(target)
         sequence = _mean_cosine(gen_embed, tgt_embed)
         final = _mean_cosine(gen_embed[-1:], tgt_embed[-1:])
-        temporal = _temporal_cosine(gen_embed, tgt_embed)
+        # Order-sensitive motion term: per-frame cosine is order-blind (a
+        # shuffled or reversed clip looks identical frame-wise), so compare the
+        # direction of change between adjacent embeddings instead.
+        if gen_embed.shape[0] < 2 or tgt_embed.shape[0] < 2:
+            temporal = _mean_cosine(gen_embed, tgt_embed)
+        else:
+            gen_delta = torch.nn.functional.normalize(gen_embed[1:] - gen_embed[:-1], dim=-1)
+            tgt_delta = torch.nn.functional.normalize(tgt_embed[1:] - tgt_embed[:-1], dim=-1)
+            temporal = float((gen_delta * tgt_delta).sum(dim=-1).mean().item())
         total_weight = self.sequence_weight + self.final_weight + self.temporal_weight
         if total_weight <= 0:
             raise ValueError("target_dino_similarity weights must sum to a positive value")
@@ -150,21 +158,6 @@ def _mean_cosine(a: torch.Tensor, b: torch.Tensor) -> float:
     """Mean per-frame cosine similarity of two L2-normalized ``[T,D]`` stacks."""
 
     return float((a * b).sum(dim=-1).mean().item())
-
-
-def _temporal_cosine(a: torch.Tensor, b: torch.Tensor) -> float:
-    """Cosine of consecutive-frame embedding deltas -- order-sensitive motion term.
-
-    Per-frame cosine is order-blind (shuffle / reverse look identical frame-wise),
-    so the temporal term compares the *direction of change* between adjacent
-    embeddings; a shuffled or reversed clip has different deltas and scores lower.
-    """
-
-    if a.shape[0] < 2 or b.shape[0] < 2:
-        return _mean_cosine(a, b)
-    da = torch.nn.functional.normalize(a[1:] - a[:-1], dim=-1)
-    db = torch.nn.functional.normalize(b[1:] - b[:-1], dim=-1)
-    return float((da * db).sum(dim=-1).mean().item())
 
 
 __all__ = ["TargetDinoSimilarityModel"]

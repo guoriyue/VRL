@@ -152,23 +152,6 @@ class RewardFunctionRuntime:
             self.lifecycle.finish_shutdown()
 
 
-@contextmanager
-def _preserve_driver_rng_during_model_build():
-    """Keep synchronous cold construction from changing trainer resume streams."""
-    import numpy as np
-    import torch
-
-    python_state = random.getstate()
-    numpy_state = np.random.get_state()
-    devices = list(range(torch.cuda.device_count())) if torch.cuda.is_initialized() else []
-    try:
-        with torch.random.fork_rng(devices=devices):
-            yield
-    finally:
-        random.setstate(python_state)
-        np.random.set_state(numpy_state)
-
-
 def _host_memory_trim() -> Any:
     """Resolve glibc ``malloc_trim`` for reload-mode parking.
 
@@ -390,15 +373,27 @@ class InProcessRewardScorer:
 
     def _ensure_model(self) -> Any:
         if self._model is None:
-            with _preserve_driver_rng_during_model_build():
-                factory_path = self._launch.model_factory
-                if not factory_path:
-                    raise ValueError(
-                        "InProcessRewardScorer requires worker_config.model_factory "
-                        "(import path to a RewardModel factory) or an explicit model",
-                    )
-                factory = import_from_path(factory_path)
-                self._model = self._parking.build(partial(self._build_prepared_model, factory))
+            import numpy as np
+            import torch
+
+            factory_path = self._launch.model_factory
+            if not factory_path:
+                raise ValueError(
+                    "InProcessRewardScorer requires worker_config.model_factory "
+                    "(import path to a RewardModel factory) or an explicit model",
+                )
+            # Synchronous cold construction must not change the trainer's
+            # resume streams: every RNG the build may touch is restored after.
+            python_state = random.getstate()
+            numpy_state = np.random.get_state()
+            devices = list(range(torch.cuda.device_count())) if torch.cuda.is_initialized() else []
+            try:
+                with torch.random.fork_rng(devices=devices):
+                    factory = import_from_path(factory_path)
+                    self._model = self._parking.build(partial(self._build_prepared_model, factory))
+            finally:
+                random.setstate(python_state)
+                np.random.set_state(numpy_state)
         return self._model
 
     def _build_prepared_model(self, factory: Callable[[Mapping[str, Any]], Any]) -> Any:

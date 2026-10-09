@@ -496,22 +496,33 @@ def test_reward_parking_session_scopes_pool_operations_to_the_configured_device(
 @pytest.mark.skipif(
     os.environ.get("WM_RUN_REAL_MODEL_TESTS") != "1", reason="explicit CUDA RNG gate"
 )
+@pytest.mark.asyncio
 @pytest.mark.parametrize("raises", [False, True])
-def test_reward_build_scope_preserves_all_initialized_cuda_rngs(raises) -> None:
-    from vrl.rewards.runtime import _preserve_driver_rng_during_model_build
+async def test_reward_build_scope_preserves_all_initialized_cuda_rngs(monkeypatch, raises) -> None:
+    import vrl.rewards.runtime as runtime_mod
 
     assert torch.cuda.is_available()
     for device in range(torch.cuda.device_count()):
         torch.rand(8, device=f"cuda:{device}")
     before = torch.cuda.get_rng_state_all()
+
+    def factory(config):
+        for device in range(torch.cuda.device_count()):
+            torch.rand(16, device=f"cuda:{device}")
+        if raises:
+            raise RuntimeError("construction failed")
+        return object()
+
+    monkeypatch.setattr(runtime_mod, "import_from_path", lambda _: factory)
+    runtime = InProcessRewardScorer({"model_factory": "test:factory"})
     try:
-        with _preserve_driver_rng_during_model_build():
-            for device in range(torch.cuda.device_count()):
-                torch.rand(16, device=f"cuda:{device}")
-            if raises:
-                raise RuntimeError("construction failed")
-    except RuntimeError as error:
-        assert raises and str(error) == "construction failed"
+        if raises:
+            with pytest.raises(RuntimeError, match="construction failed"):
+                await runtime.activate()
+        else:
+            await runtime.activate()
+    finally:
+        await runtime.shutdown()
     after = torch.cuda.get_rng_state_all()
     assert len(before) == len(after) == torch.cuda.device_count()
     assert all(torch.equal(a, b) for a, b in zip(before, after, strict=True))

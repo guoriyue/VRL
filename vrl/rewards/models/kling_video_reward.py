@@ -432,7 +432,16 @@ def load_kling_video_reward_checkpoint(
     model: Any,
     checkpoint_dir: Path,
 ) -> tuple[Any, str]:
-    checkpoint_path, resolved_step = _resolve_checkpoint_path(checkpoint_dir)
+    # The newest checkpoint-<step> directory under the model root.
+    checkpoint_paths = sorted(
+        checkpoint_dir.glob("checkpoint-*"),
+        key=lambda path: int(path.name.split("-")[-1]),
+        reverse=True,
+    )
+    if not checkpoint_paths:
+        raise FileNotFoundError(f"No Kling VideoReward checkpoints found in {checkpoint_dir}")
+    checkpoint_path = checkpoint_paths[0]
+    resolved_step = checkpoint_path.name.split("checkpoint-")[-1]
     full_ckpt = checkpoint_path / "model.pth"
     if full_ckpt.exists():
         # Keep checkpoint pages file-backed during concurrent reward cold starts.
@@ -451,29 +460,20 @@ def load_kling_video_reward_checkpoint(
         map_location="cpu",
         weights_only=True,
     )
-    lora_state = _insert_adapter_name_into_state_dict(
-        lora_state,
-        adapter_name="default",
-        parameter_prefix="lora_",
-    )
+    # PEFT saves adapter weights without the adapter name; the live model
+    # keys them as ``<module>.lora_A.default.weight``.
+    named_lora_state = {}
+    for key, value in lora_state.items():
+        if "lora_" in key:
+            prefix, separator, leaf = key.rpartition(".")
+            key = f"{prefix}.default.{leaf}" if separator else f"{key}.default"
+        named_lora_state[key] = value
     model_state = model.state_dict()
     model_state.update(non_lora_state)
-    model_state.update(lora_state)
+    model_state.update(named_lora_state)
     model_state = relocate_checkpoint_keys(model, model_state)
     model.load_state_dict(model_state, strict=True)
     return model, resolved_step
-
-
-def _resolve_checkpoint_path(checkpoint_dir: Path) -> tuple[Path, str]:
-    checkpoint_paths = list(checkpoint_dir.glob("checkpoint-*"))
-    checkpoint_paths.sort(
-        key=lambda path: int(path.name.split("-")[-1]),
-        reverse=True,
-    )
-    if not checkpoint_paths:
-        raise FileNotFoundError(f"No Kling VideoReward checkpoints found in {checkpoint_dir}")
-    checkpoint_path = checkpoint_paths[0]
-    return checkpoint_path, checkpoint_path.name.split("checkpoint-")[-1]
 
 
 def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
@@ -596,11 +596,16 @@ def _create_model_and_processor(
             lora_namespan_exclude = [excluded]
         else:
             lora_namespan_exclude = list(excluded)
-        target_modules = _find_target_linear_names(
-            model,
-            num_lora_modules=peft_config.num_lora_modules,
-            lora_namespan_exclude=lora_namespan_exclude,
-        )
+        # Every Linear/Embedding outside the excluded name spans, optionally
+        # only the last ``num_lora_modules`` of them.
+        target_modules = [
+            name
+            for name, module in model.named_modules()
+            if isinstance(module, (nn.Linear, nn.Embedding))
+            and not any(token in name for token in lora_namespan_exclude)
+        ]
+        if peft_config.num_lora_modules > 0:
+            target_modules = target_modules[-peft_config.num_lora_modules :]
         model = get_peft_model(
             model,
             LoraConfig(
@@ -632,22 +637,6 @@ def _from_dataclass(cls: Any, values: Mapping[str, Any]) -> Any:
     return cls(**{key: value for key, value in dict(values).items() if key in allowed})
 
 
-def _find_target_linear_names(
-    model: Any,
-    *,
-    num_lora_modules: int = -1,
-    lora_namespan_exclude: list[str] | None = None,
-) -> list[str]:
-    excluded = tuple(lora_namespan_exclude or ())
-    names = [
-        name
-        for name, module in model.named_modules()
-        if isinstance(module, (nn.Linear, nn.Embedding))
-        and not any(token in name for token in excluded)
-    ]
-    return names[-num_lora_modules:] if num_lora_modules > 0 else names
-
-
 def _torch_dtype(name: str | None, *, fallback: torch.dtype | None = None) -> torch.dtype | str:
     if name is None:
         if fallback is None:
@@ -658,21 +647,6 @@ def _torch_dtype(name: str | None, *, fallback: torch.dtype | None = None) -> to
     from vrl.models.dtypes import resolve_torch_dtype
 
     return resolve_torch_dtype(name)
-
-
-def _insert_adapter_name_into_state_dict(
-    state_dict: Mapping[str, torch.Tensor],
-    adapter_name: str,
-    parameter_prefix: str,
-) -> dict[str, torch.Tensor]:
-    remapped = {}
-    for key, value in state_dict.items():
-        new_key = key
-        if parameter_prefix in key:
-            prefix, separator, leaf = key.rpartition(".")
-            new_key = f"{prefix}.{adapter_name}.{leaf}" if separator else f"{key}.{adapter_name}"
-        remapped[new_key] = value
-    return remapped
 
 
 __all__ = [
