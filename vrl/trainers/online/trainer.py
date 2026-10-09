@@ -37,6 +37,7 @@ from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.orchestration import build_rollout_schedule
 from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.core.types import CORRECTED_REPLAY_MAX_ABS_LOG_RATIO, TrainState
+from vrl.trainers.data.sft_latents import CleanTarget
 from vrl.trainers.diagnostics import (
     append_jsonl_record,
     trainable_state_digest,
@@ -512,7 +513,11 @@ class OnlineTrainer:
         # Clean fine-tuning latents ({target artifact -> [C,T,H,W]}) for the GRPO
         # diffusion-loss regularizer; the recipe loads data.sft_latents, which
         # vrl/config/rules.py requires whenever sft_weight > 0.
-        self._sft_latents = dict(sft_latents) if sft_latents else None
+        self._sft_latents = (
+            {target: CleanTarget.coerce(value) for target, value in sft_latents.items()}
+            if sft_latents
+            else None
+        )
         self.device = torch.device(device) if isinstance(device, str) else device
         self.state = TrainState()
         # How a step runs on the hardware (backward / clip / state export). The
@@ -1732,8 +1737,7 @@ class OnlineTrainer:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(
-                    json.dumps({"step": int(metric_step), **phase_times}, sort_keys=True)
-                    + "\n"
+                    json.dumps({"step": int(metric_step), **phase_times}, sort_keys=True) + "\n"
                 )
             self._write_phase_events(timer, step=metric_step)
 
@@ -1936,9 +1940,12 @@ class OnlineTrainer:
         the forward through ``model.replay_forward_with_latents`` — the exact
         conditioning + timestep the log-prob replay uses, so no second
         sigma-domain conversion path exists (the EDM-domain trap).
-        """
 
-        import torch.nn.functional as F
+        A target's optional weight map (mean one, latent geometry) reweights
+        the squared error per latent cell before the mean, so a recipe can
+        concentrate the term on an occluded or protected region without
+        changing the scale ``sft_weight`` was tuned at.
+        """
 
         from vrl.math.denoise.flow_matching import diffusion_pretraining_pair
         from vrl.trainers.data.sft_latents import CleanTargetRef
@@ -1962,7 +1969,8 @@ class OnlineTrainer:
         reader = TrajectoryReader.from_batch(group_batch)
         primary_segment = reader.primary_trainable_segment_name()
         observations = reader.role_value(primary_segment, "observation")
-        clean_latents = self._sft_latents[target_key]
+        clean_target = self._sft_latents[target_key]
+        clean_latents = clean_target.latents
         batch_shape = (int(observations.shape[0]), *clean_latents.shape)
         expected_shape = tuple(observations.shape[0:1]) + tuple(observations.shape[2:])
         if batch_shape != expected_shape:
@@ -1996,7 +2004,12 @@ class OnlineTrainer:
         noisy, target = diffusion_pretraining_pair(scheduler, x0, noise, t)
         values = self.model.replay_forward_with_latents(group_batch, step_idx, noisy)
         model_pred = self.model.diffusion_pretraining_prediction(values)
-        return self._sft_weight * F.mse_loss(model_pred.float(), target.float())
+        squared_error = (model_pred.float() - target.float()).square()
+        if clean_target.weights is not None:
+            # Mean-one weights: a uniform map is bit-for-bit the plain MSE.
+            weights = clean_target.weights.to(device=squared_error.device, dtype=torch.float32)
+            squared_error = squared_error * weights.unsqueeze(0)
+        return self._sft_weight * squared_error.mean()
 
     def _shared_sft_step_index(self, num_steps: int) -> int:
         """Draw one denoise step index that every training rank agrees on.

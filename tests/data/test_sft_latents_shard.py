@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from vrl.trainers.data.sft_latents import (
+    CleanTarget,
     CleanTargetRef,
     load_sft_latents,
     save_sft_latents,
@@ -34,8 +35,80 @@ def test_sft_latents_round_trip(tmp_path) -> None:
     )
     assert set(loaded) == set(latents)
     for target, value in latents.items():
-        torch.testing.assert_close(loaded[target], value)
-        assert loaded[target].device.type == "cpu"
+        torch.testing.assert_close(loaded[target].latents, value)
+        assert loaded[target].latents.device.type == "cpu"
+        assert loaded[target].weights is None
+
+
+def test_weighted_target_round_trips_and_unweighted_sibling_stays_bare(tmp_path) -> None:
+    shard = tmp_path / "sft.pt"
+    weights = torch.tensor([[[0.5, 1.5], [1.0, 1.0]]])  # [1, H, W], mean 1
+    save_sft_latents(
+        shard,
+        family="wan_2_1",
+        model_path="w",
+        model_revision="r",
+        latents_by_target={
+            "targets/occluded.png": CleanTarget(latents=torch.randn(4, 2, 2), weights=weights),
+            "targets/plain.png": torch.randn(4, 2, 2),
+        },
+    )
+
+    loaded = load_sft_latents(shard, family="wan_2_1", model_path="w", model_revision="r")
+    torch.testing.assert_close(loaded["targets/occluded.png"].weights, weights)
+    assert loaded["targets/plain.png"].weights is None
+    payload = torch.load(shard, weights_only=True)
+    assert payload["schema_version"] == 3
+    assert set(payload["weights"]) == {"targets/occluded.png"}
+
+
+def test_schema_two_shard_loads_without_weights(tmp_path) -> None:
+    """Shards written before weight maps existed stay readable as unweighted targets."""
+    shard = tmp_path / "old.pt"
+    torch.save(
+        {
+            "schema_version": 2,
+            "family": "f",
+            "model_path": "m",
+            "model_revision": "r",
+            "latents": {"target.mp4": torch.ones(2, 1, 1)},
+        },
+        shard,
+    )
+
+    loaded = load_sft_latents(shard, family="f")
+    assert loaded["target.mp4"].weights is None
+    torch.testing.assert_close(loaded["target.mp4"].latents, torch.ones(2, 1, 1))
+
+
+def test_shard_rejects_weight_map_for_unknown_target(tmp_path) -> None:
+    shard = tmp_path / "bad.pt"
+    torch.save(
+        {
+            "schema_version": 3,
+            "latents": {"a": torch.zeros(1, 2, 2)},
+            "weights": {"b": torch.ones(1, 2, 2)},
+        },
+        shard,
+    )
+    with pytest.raises(ValueError, match="unknown targets"):
+        load_sft_latents(shard)
+
+
+@pytest.mark.parametrize(
+    ("weights", "match"),
+    [
+        (torch.ones(1, 3, 3), "does not broadcast"),
+        (torch.ones(2, 1, 2, 2), "would enlarge"),
+        (torch.tensor([[[2.0, 0.0], [1.0, -1.0]]]), "non-negative"),
+        (torch.full((1, 2, 2), 2.0), "mean 1"),
+        (torch.tensor([[[float("nan"), 1.0], [1.0, 1.0]]]), "finite"),
+    ],
+    ids=["shape", "enlarges", "negative", "scale", "nan"],
+)
+def test_clean_target_rejects_malformed_weight_map(weights, match) -> None:
+    with pytest.raises(ValueError, match=match):
+        CleanTarget(latents=torch.zeros(1, 2, 2), weights=weights)
 
 
 @pytest.mark.parametrize("stage", ["serialize", "flush"])
@@ -85,7 +158,7 @@ def test_shard_publication_preserves_destination_symlink(tmp_path):
         latents_by_target={"target": torch.ones(1)},
     )
     assert link.is_symlink()
-    torch.testing.assert_close(load_sft_latents(target)["target"], torch.ones(1))
+    torch.testing.assert_close(load_sft_latents(target)["target"].latents, torch.ones(1))
 
 
 def test_sft_latents_rejects_family_mismatch(tmp_path) -> None:

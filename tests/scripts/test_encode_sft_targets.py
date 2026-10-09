@@ -10,6 +10,7 @@ from vrl.scripts.denoise import encode_targets
 from vrl.scripts.denoise.encode_targets import (
     _resolve_clean_targets,
     _target_at_sampling_geometry,
+    _weight_map_at_latent_geometry,
 )
 from vrl.trainers.data.prompts import PromptExample
 
@@ -26,12 +27,62 @@ def test_target_preflight_uses_artifact_root_and_target_identity(tmp_path) -> No
 
     targets = _resolve_clean_targets(examples, data_root=root)
 
-    assert [key for key, _, _ in targets] == ["targets/a.mp4", "targets/b.mp4"]
-    assert [path for _, path, _ in targets] == [
+    assert [key for key, _, _, _ in targets] == ["targets/a.mp4", "targets/b.mp4"]
+    assert [path for _, path, _, _ in targets] == [
         str(root / "targets/a.mp4"),
         str(root / "targets/b.mp4"),
     ]
-    assert [kind for _, _, kind in targets] == ["target_video", "target_video"]
+    assert [kind for _, _, kind, _ in targets] == ["target_video", "target_video"]
+    assert [mask for _, _, _, mask in targets] == [None, None]
+
+
+def test_target_preflight_resolves_weight_mask_beside_target(tmp_path) -> None:
+    root = tmp_path / "artifacts"
+    (root / "targets").mkdir(parents=True)
+    (root / "targets/a.png").touch()
+    (root / "targets/a_mask.png").touch()
+    examples = [
+        PromptExample(
+            prompt="complete the cabinet",
+            target_image="targets/a.png",
+            metadata={"sft_weight_mask": "targets/a_mask.png"},
+        ),
+    ]
+
+    [(key, _path, _kind, mask)] = _resolve_clean_targets(examples, data_root=root)
+
+    assert key == "targets/a.png"
+    assert mask == str(root / "targets/a_mask.png")
+
+
+def test_target_preflight_rejects_missing_weight_mask(tmp_path) -> None:
+    (tmp_path / "a.png").touch()
+    example = PromptExample(
+        prompt="p", target_image="a.png", metadata={"sft_weight_mask": "nope.png"}
+    )
+    with pytest.raises(FileNotFoundError, match="sft_weight_mask does not exist"):
+        _resolve_clean_targets([example], data_root=tmp_path)
+
+
+def test_weight_map_pools_to_latent_grid_and_normalizes_to_mean_one(monkeypatch) -> None:
+    # 4x4 mask: bright top-left quadrant, black elsewhere -> 2x2 latent grid.
+    mask = torch.zeros(1, 4, 4, 3)
+    mask[:, :2, :2, :] = 1.0
+    monkeypatch.setattr("vrl.utils.media.read_image_as_frames", lambda _path: mask)
+
+    weights = _weight_map_at_latent_geometry("mask.png", (16, 3, 2, 2))
+
+    assert weights.shape == (1, 1, 2, 2)
+    torch.testing.assert_close(weights[0, 0], torch.tensor([[4.0, 0.0], [0.0, 0.0]]))
+    assert float(weights.mean()) == 1.0
+
+
+def test_weight_map_rejects_all_black_mask(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "vrl.utils.media.read_image_as_frames", lambda _path: torch.zeros(1, 4, 4, 3)
+    )
+    with pytest.raises(ValueError, match="all black"):
+        _weight_map_at_latent_geometry("mask.png", (4, 2, 2))
 
 
 def test_target_preflight_rejects_duplicate_target_identity(tmp_path) -> None:

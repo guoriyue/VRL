@@ -16,6 +16,7 @@ from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.trainers.core.types import EMAConfig, OptimConfig
+from vrl.trainers.data.sft_latents import CleanTarget
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import OnlineTrainer, _ReplayMetrics
 
@@ -123,6 +124,61 @@ def test_sft_term_flows_gradient_and_scales_with_weight(tmp_path) -> None:
     step_idx, noisy = trainer1.model.forward_calls[0]
     assert 0 <= step_idx < _T
     assert noisy.shape == (_B, *_LATENT)
+
+
+def test_uniform_weight_map_reproduces_the_unweighted_term(tmp_path) -> None:
+    latents = _latents_for_targets()[_TARGET_VIDEO]
+    plain = _trainer(tmp_path, sft_weight=0.5, sft_latents={_TARGET_VIDEO: latents})
+    uniform = _trainer(
+        tmp_path,
+        sft_weight=0.5,
+        sft_latents={_TARGET_VIDEO: CleanTarget(latents=latents, weights=torch.ones(1, 2, 2))},
+    )
+    batch = _batch(plain.evaluator.scheduler)
+
+    torch.manual_seed(0)
+    plain_loss = plain._sft_regularizer_loss(batch)
+    torch.manual_seed(0)
+    uniform_loss = uniform._sft_regularizer_loss(batch)
+
+    torch.testing.assert_close(uniform_loss, plain_loss, atol=0, rtol=0)
+
+
+def test_weight_map_concentrates_the_term_on_the_weighted_cells(tmp_path) -> None:
+    """A map that is all mass on one latent cell scores only that cell's error,
+    scaled so the mean-one normalization keeps the overall magnitude."""
+    latents = _latents_for_targets()[_TARGET_VIDEO]
+    weights = torch.zeros(1, 2, 2)
+    weights[0, 1, 0] = 4.0  # four cells, mean one
+    trainer = _trainer(
+        tmp_path,
+        sft_weight=1.0,
+        sft_latents={_TARGET_VIDEO: CleanTarget(latents=latents, weights=weights)},
+    )
+    batch = _batch(trainer.evaluator.scheduler)
+
+    torch.manual_seed(0)
+    loss = trainer._sft_regularizer_loss(batch)
+
+    # Recompute the per-cell error the stub policy produced on the same draw.
+    _step, noisy = trainer.model.forward_calls[0]
+    from vrl.math.denoise.flow_matching import diffusion_pretraining_pair
+
+    torch.manual_seed(0)
+    trainer._shared_sft_step_index(_T)  # consume the step draw
+    noise = torch.randn(_B, *_LATENT)
+    x0 = latents.unsqueeze(0).expand(_B, *_LATENT)
+    _, target = diffusion_pretraining_pair(
+        trainer.evaluator.scheduler,
+        x0,
+        noise,
+        trainer.evaluator.scheduler.timesteps[_step].expand(_B),
+    )
+    error = (noisy.float() - target.float()).square()  # stub prediction == noisy
+    expected = (error * weights.unsqueeze(0)).mean()
+
+    torch.testing.assert_close(loss, expected)
+    assert float(loss.detach()) > 0
 
 
 def test_sft_term_rejects_missing_target(tmp_path) -> None:

@@ -17,6 +17,12 @@ Requires the family model to expose ``encode_video_to_latents`` and every
 manifest row to carry exactly one ``target_image`` or ``target_video`` artifact.
 The shard is keyed by that stable artifact identity, not prompt text: a
 fine-tuning manifest may use the same instruction for several clean targets.
+
+A row may add ``sft_weight_mask``: a grayscale image (manifest-relative like
+the other artifacts) whose brightness says how much each pixel's supervision
+counts. It is area-pooled to the target's latent grid, normalized to mean one
+and stored beside the latents, so the regularizer can concentrate on an
+occluded region or a protected edit area at the same ``sft_weight`` scale.
 """
 
 from __future__ import annotations
@@ -113,17 +119,55 @@ def _target_at_sampling_geometry(
     return video.permute(1, 0, 2, 3).unsqueeze(0)  # [1,3,T,H,W]
 
 
+WEIGHT_MASK_KEY = "sft_weight_mask"
+
+
+def _weight_map_at_latent_geometry(path: str, latent_shape: tuple[int, ...]) -> Any:
+    """Read a grayscale weight mask and pool it onto one target's latent grid.
+
+    The latent's last two dims are its spatial grid (``[C, H, W]`` images,
+    ``[C, T, H, W]`` videos); the map is returned as ``[1, ..., H, W]`` so it
+    broadcasts over channels and frames. Brightness is relative importance:
+    the map is rescaled to mean one, so ``sft_weight`` keeps the scale it was
+    tuned at and a uniform mask reproduces the unweighted term exactly.
+    """
+
+    import torch.nn.functional as F
+
+    from vrl.utils.media import read_image_as_frames
+
+    if len(latent_shape) < 3:
+        raise ValueError(
+            f"{WEIGHT_MASK_KEY} needs a latent with a spatial grid; got shape {latent_shape}",
+        )
+    frames = read_image_as_frames(path)  # [1, H, W, 3] in [0, 1]
+    gray = frames.mean(dim=-1, keepdim=True).permute(0, 3, 1, 2)  # [1, 1, H, W]
+    pooled = F.interpolate(gray, size=tuple(latent_shape[-2:]), mode="area")
+    mean = pooled.mean()
+    if float(mean) <= 0:
+        raise ValueError(f"{WEIGHT_MASK_KEY} {path} is all black; nothing would be supervised")
+    weights = pooled / mean
+    return weights.reshape(*([1] * (len(latent_shape) - 2)), *latent_shape[-2:]).contiguous()
+
+
 def _resolve_clean_targets(
     examples: list[Any],
     *,
     data_root: str | Path | None,
-) -> list[tuple[str, str, str]]:
-    """Resolve and validate stable target identities before loading a model."""
+) -> list[tuple[str, str, str, str | None]]:
+    """Resolve and validate stable target identities before loading a model.
 
-    from vrl.trainers.data.artifacts import resolve_prompt_example_artifacts
+    Each row yields ``(target key, target path, target field, weight mask
+    path or None)``.
+    """
+
+    from vrl.trainers.data.artifacts import (
+        resolve_artifact_path,
+        resolve_prompt_example_artifacts,
+    )
     from vrl.trainers.data.sft_latents import CleanTargetRef
 
-    targets: list[tuple[str, str, str]] = []
+    targets: list[tuple[str, str, str, str | None]] = []
     seen_target_keys: set[str] = set()
     for index, example in enumerate(examples):
         try:
@@ -145,7 +189,20 @@ def _resolve_clean_targets(
             raise FileNotFoundError(
                 f"manifest row {index} {target.field} does not exist: {resolved_target}",
             )
-        targets.append((target.key, str(resolved_target), target.field))
+        mask = example.metadata.get(WEIGHT_MASK_KEY)
+        mask_path: str | None = None
+        if mask is not None:
+            if not isinstance(mask, str) or not mask.strip():
+                raise ValueError(
+                    f"manifest row {index} {WEIGHT_MASK_KEY} must be a non-empty path string",
+                )
+            resolved_mask = Path(str(resolve_artifact_path(mask.strip(), data_root=data_root)))
+            if not resolved_mask.is_file():
+                raise FileNotFoundError(
+                    f"manifest row {index} {WEIGHT_MASK_KEY} does not exist: {resolved_mask}",
+                )
+            mask_path = str(resolved_mask)
+        targets.append((target.key, str(resolved_target), target.field, mask_path))
     return targets
 
 
@@ -163,7 +220,7 @@ def main(argv: list[str] | None = None) -> None:
         get_model_family_entry,
     )
     from vrl.trainers.data.prompts import load_prompt_examples_from_config
-    from vrl.trainers.data.sft_latents import save_sft_latents
+    from vrl.trainers.data.sft_latents import CleanTarget, save_sft_latents
 
     cfg = load_config(f"experiment/{args.experiment}", overrides=args.overrides)
     root = parse_config(cfg)
@@ -221,7 +278,7 @@ def main(argv: list[str] | None = None) -> None:
     storage_dtype = (
         None if args.storage_dtype == "preserve" else resolve_torch_dtype(args.storage_dtype)
     )
-    for index, (target_key, target, media_type) in enumerate(targets):
+    for index, (target_key, target, media_type, mask_path) in enumerate(targets):
         video = _target_at_sampling_geometry(
             str(target),
             media_type=media_type,
@@ -233,7 +290,12 @@ def main(argv: list[str] | None = None) -> None:
         stored = latents.squeeze(0).detach()
         if storage_dtype is not None:
             stored = stored.to(dtype=storage_dtype)
-        latents_by_target[target_key] = stored.cpu()
+        weights = (
+            None
+            if mask_path is None
+            else _weight_map_at_latent_geometry(mask_path, tuple(stored.shape))
+        )
+        latents_by_target[target_key] = CleanTarget(latents=stored.cpu(), weights=weights)
         if args.preview_out and index == 0:
             from vrl.utils.media import write_mp4, write_png
 
@@ -249,11 +311,12 @@ def main(argv: list[str] | None = None) -> None:
                 write_mp4(decoded, preview_path, fps=fps)
             logger.info("wrote first-target round-trip preview to %s", args.preview_out)
         logger.info(
-            "[%d/%d] encoded %s -> %s",
+            "[%d/%d] encoded %s -> %s%s",
             index + 1,
             len(examples),
             target,
-            tuple(latents_by_target[target_key].shape),
+            tuple(stored.shape),
+            "" if mask_path is None else f" with weight mask {mask_path}",
         )
 
     save_sft_latents(

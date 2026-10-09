@@ -238,8 +238,9 @@ class DataConfig(ConfigBase):
     split: str | None = None
     cache_dir: str | None = None
     # Precomputed clean-latents shard for the GRPO diffusion-loss regularizer
-    # (algorithm.sft_weight > 0): {target image/video -> VAE latents} written by
-    # vrl/scripts/denoise/encode_targets.py. reader: run_online_recipe.
+    # (algorithm.sft_weight > 0): {target image/video -> VAE latents, plus an
+    # optional mean-one spatial weight map from the row's sft_weight_mask}
+    # written by vrl/scripts/denoise/encode_targets.py. reader: run_online_recipe.
     sft_latents: str | None = None
     max_train_samples: StrictInt | None = None
     task_type: str | None = None
