@@ -245,12 +245,17 @@ class Magi1SubprocessModel(torch.nn.Module):
         super().__init__()
         self.config = config
         self._device = torch.device(device or "cpu")
-        self._base_config = prepare_magi_runtime_config(
-            _preflight_local_installation(config),
-            config=config,
-            sampling={},
-            sample_index=0,
-        )
+        # The official JSON with this run's weight paths resolved once; every
+        # request specializes a copy with its own sampling and seed.
+        self._base_config = _preflight_local_installation(config)
+        runtime = self._base_config["runtime_config"]
+        if config.checkpoint_path is not None:
+            runtime["load"] = str(config.checkpoint_path)
+        if config.t5_pretrained_path is not None:
+            runtime["t5_pretrained"] = str(config.t5_pretrained_path)
+        if config.vae_pretrained_path is not None:
+            runtime["vae_pretrained"] = str(config.vae_pretrained_path)
+        _resolve_runtime_paths(runtime, source_path=config.source_path)
         self.precision: Any = None
 
     @classmethod
@@ -400,7 +405,6 @@ class Magi1SubprocessModel(torch.nn.Module):
             conditioning_path = str(resolved_conditioning)
         prepared = prepare_magi_runtime_config(
             self._base_config,
-            config=self.config,
             sampling=sampling,
             sample_index=sample_index,
         )
@@ -497,27 +501,19 @@ class Magi1SubprocessModel(torch.nn.Module):
 def prepare_magi_runtime_config(
     base_config: Mapping[str, Any],
     *,
-    config: Magi1SubprocessConfig,
     sampling: Mapping[str, Any],
     sample_index: int,
 ) -> dict[str, Any]:
-    """Copy and specialize one official JSON config for one VRL sample."""
+    """Copy and specialize the installed JSON config for one VRL sample.
+
+    ``base_config`` is the preflighted official JSON with the run's weight
+    paths already resolved; this applies the request's sampling and seed and
+    checks the result against the shapes the official CLI would round.
+    """
 
     require_int(sample_index, path="MAGI-1 sample_index", minimum=0)
     prepared = copy.deepcopy(dict(base_config))
-    runtime = prepared.get("runtime_config")
-    engine = prepared.get("engine_config")
-    if not isinstance(runtime, dict) or not isinstance(engine, dict):
-        raise ValueError(
-            "MAGI-1 config must contain object-valued runtime_config and engine_config",
-        )
-
-    if config.checkpoint_path is not None:
-        runtime["load"] = str(config.checkpoint_path)
-    if config.t5_pretrained_path is not None:
-        runtime["t5_pretrained"] = str(config.t5_pretrained_path)
-    if config.vae_pretrained_path is not None:
-        runtime["vae_pretrained"] = str(config.vae_pretrained_path)
+    runtime = prepared["runtime_config"]
 
     for request_key, runtime_key in _MAGI_1_SAMPLING_RUNTIME_KEYS:
         if request_key in sampling and sampling[request_key] is not None:
@@ -527,10 +523,7 @@ def prepare_magi_runtime_config(
     if base_seed is None:
         base_seed = runtime.get("seed", 1234)
     runtime["seed"] = require_int(base_seed, path="MAGI-1 seed") + sample_index
-    # engine_config is copied untouched from the base config, whose
-    # single-process shape the installation preflight already checked.
     _validate_magi_sampling_contract(prepared, sampling=sampling)
-    _validate_runtime_paths(prepared, source_path=config.source_path)
     return prepared
 
 
@@ -636,7 +629,6 @@ def _preflight_local_installation(
             "MAGI-1 4.5B model_config.params_dtype must be 'torch.bfloat16'",
         )
     _validate_single_process_config(payload)
-    _validate_magi_sampling_contract(payload, sampling={})
     return payload
 
 
@@ -759,12 +751,9 @@ def _validate_magi_sampling_contract(
         )
 
 
-def _validate_runtime_paths(
-    config: Mapping[str, Any],
-    *,
-    source_path: Path,
-) -> None:
-    runtime = config["runtime_config"]
+def _resolve_runtime_paths(runtime: dict[str, Any], *, source_path: Path) -> None:
+    """Resolve the three weight paths against the source checkout, in place."""
+
     for key in ("load", "t5_pretrained", "vae_pretrained"):
         value = runtime.get(key)
         if not value:
@@ -775,11 +764,6 @@ def _validate_runtime_paths(
                 f"MAGI-1 runtime_config.{key} does not exist: {path}",
             )
         runtime[key] = str(path)
-
-    for key in ("chunk_width", "temporal_downsample_factor"):
-        value = int(runtime.get(key, 0))
-        if value < 1:
-            raise ValueError(f"MAGI-1 runtime_config.{key} must be >= 1")
 
 
 def _resolve_weight_components(

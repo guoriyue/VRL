@@ -122,15 +122,11 @@ def test_model_preset_owns_the_official_rollout_precision_contract() -> None:
     assert precision.prompt_encoder_dtype == "fp32"
 
 
-def test_prepare_config_applies_paths_sampling_and_per_sample_seed(
-    tmp_path: Path,
-) -> None:
-    config, _ = _installation(tmp_path)
+def test_prepare_config_applies_sampling_and_per_sample_seed() -> None:
     base = _base_config()
 
     prepared = prepare_magi_runtime_config(
         base,
-        config=config,
         sampling={
             "seed": 7,
             "num_frames": 48,
@@ -149,9 +145,6 @@ def test_prepare_config_applies_paths_sampling_and_per_sample_seed(
     assert runtime["video_size_w"] == 640
     assert runtime["num_steps"] == 12
     assert runtime["fps"] == 16
-    assert runtime["load"] == str(config.checkpoint_path)
-    assert runtime["t5_pretrained"] == str(config.t5_pretrained_path)
-    assert runtime["vae_pretrained"] == str(config.vae_pretrained_path)
     assert base["runtime_config"]["seed"] == 1234
 
 
@@ -184,19 +177,11 @@ def test_installation_preflight_rejects_multi_process_official_config(
     ],
 )
 def test_prepare_config_rejects_silently_rounded_or_ignored_sampling(
-    tmp_path: Path,
     sampling: dict[str, Any],
     message: str,
 ) -> None:
-    config, _ = _installation(tmp_path)
-
     with pytest.raises(ValueError, match=message):
-        prepare_magi_runtime_config(
-            _base_config(),
-            config=config,
-            sampling=sampling,
-            sample_index=0,
-        )
+        prepare_magi_runtime_config(_base_config(), sampling=sampling, sample_index=0)
 
 
 def test_command_targets_official_entry_and_i2v_flag(tmp_path: Path) -> None:
@@ -684,18 +669,12 @@ def test_subprocess_config_requires_finite_positive_timeout(tmp_path, timeout):
         {"seed": "7"},
     ],
 )
-def test_prepare_config_rejects_coerced_sampling_values(tmp_path, sampling):
-    config, _ = _installation(tmp_path)
+def test_prepare_config_rejects_coerced_sampling_values(sampling):
     with pytest.raises(ValueError, match="must be an integer"):
-        prepare_magi_runtime_config(
-            _base_config(), config=config, sampling=sampling, sample_index=0
-        )
+        prepare_magi_runtime_config(_base_config(), sampling=sampling, sample_index=0)
 
 
 @pytest.mark.parametrize("sample_index", [True, 1.5, "1", -1])
-def test_prepare_config_requires_nonnegative_integer_sample_index(tmp_path, sample_index):
-    config, _ = _installation(tmp_path)
+def test_prepare_config_requires_nonnegative_integer_sample_index(sample_index):
     with pytest.raises(ValueError, match="sample_index"):
-        prepare_magi_runtime_config(
-            _base_config(), config=config, sampling={}, sample_index=sample_index
-        )
+        prepare_magi_runtime_config(_base_config(), sampling={}, sample_index=sample_index)
