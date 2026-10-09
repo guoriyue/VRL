@@ -849,24 +849,6 @@ def _bounded_number(cast: type, minimum: float, *, exclusive: bool = False) -> A
     return parse
 
 
-def _require_single_supervisor_owner(environ: Any = None) -> None:
-    """Reject nesting this one-owner restart loop inside a multi-rank launcher."""
-
-    environment = os.environ if environ is None else environ
-    world_size_raw = environment.get("WORLD_SIZE", "1")
-    try:
-        world_size = int(world_size_raw)
-    except ValueError as exc:
-        raise ValueError(
-            f"supervisor WORLD_SIZE must be an integer, got {world_size_raw!r}"
-        ) from exc
-    if world_size != 1:
-        raise ValueError(
-            "supervise must have exactly one owner; do not launch it under torchrun. "
-            "It launches the configured single-node DDP/FSDP workers itself",
-        )
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Supervise a vrl-train run: restart on failure, resume from "
@@ -969,6 +951,20 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser = build_parser()
     args = parser.parse_args(argv)
+    # This one-owner restart loop must not be nested inside a multi-rank
+    # launcher: it launches the configured single-node DDP/FSDP workers itself.
+    world_size_raw = os.environ.get("WORLD_SIZE", "1")
+    try:
+        world_size = int(world_size_raw)
+    except ValueError as exc:
+        raise SystemExit(
+            f"supervisor WORLD_SIZE must be an integer, got {world_size_raw!r}"
+        ) from exc
+    if world_size != 1:
+        raise SystemExit(
+            "supervise must have exactly one owner; do not launch it under torchrun. "
+            "It launches the configured single-node DDP/FSDP workers itself",
+        )
 
     from vrl.config.loading import load_config
     from vrl.config.schema import parse_config
@@ -979,7 +975,6 @@ def main(argv: list[str] | None = None) -> None:
     if not output_dir:
         raise SystemExit("supervise requires trainer.output_dir in the resolved config")
     try:
-        _require_single_supervisor_owner()
         launch = TrainLaunch.from_root(
             root,
             config=args.config,

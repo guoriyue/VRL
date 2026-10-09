@@ -172,8 +172,6 @@ def prepare_videophy_i2v_dataset(
         *select_videos_for_prompts(eval_text, candidates, split="eval"),
     ]
 
-    fetch = fetch_video or _download_url
-    decode = extract_first_frame or _extract_first_frame
     train_rows: list[dict[str, Any]] = []
     eval_rows: list[dict[str, Any]] = []
     for item in selected:
@@ -196,8 +194,8 @@ def prepare_videophy_i2v_dataset(
                     keep_videos=keep_videos,
                     width=width,
                     height=height,
-                    fetch_video=fetch,
-                    extract_first_frame=decode,
+                    fetch_video=fetch_video,
+                    extract_first_frame=extract_first_frame,
                 )
                 break
             except HTTPError as error:
@@ -351,8 +349,8 @@ def _materialize_selected_video(
     keep_videos: bool,
     width: int,
     height: int,
-    fetch_video: Callable[[str, Path], None],
-    extract_first_frame: Callable[[Path, Path], None],
+    fetch_video: Callable[[str, Path], None] | None,
+    extract_first_frame: Callable[[Path, Path], None] | None,
 ) -> dict[str, Any]:
     source_key = hashlib.sha256(item.source_row.video_url.encode()).hexdigest()[:16]
     stem = f"{item.split_index:03d}-{source_key}-{width}x{height}"
@@ -365,8 +363,28 @@ def _materialize_selected_video(
     # A different candidate must never reuse the prior candidate's frame. Keep
     # the original dimensions separately so retries do not report resized sizes.
     if not image_path.exists() or not source_info_path.exists():
-        fetch_video(item.source_row.video_url, video_path)
-        extract_first_frame(video_path, image_path)
+        if fetch_video is not None:
+            fetch_video(item.source_row.video_url, video_path)
+        elif not (video_path.exists() and video_path.stat().st_size > 0):
+            tmp = video_path.with_suffix(video_path.suffix + ".tmp")
+            with (
+                urllib.request.urlopen(item.source_row.video_url, timeout=120) as response,
+                tmp.open("wb") as handle,
+            ):
+                shutil.copyfileobj(response, handle)
+            tmp.replace(video_path)
+        if extract_first_frame is not None:
+            extract_first_frame(video_path, image_path)
+        else:
+            import imageio.v2 as imageio
+            from PIL import Image
+
+            reader = imageio.get_reader(str(video_path), "ffmpeg")
+            try:
+                frame = reader.get_data(0)
+            finally:
+                reader.close()
+            Image.fromarray(frame).convert("RGB").save(image_path, format="PNG")
         source_size = _resize_image(image_path, width=width, height=height)
         write_json(source_info_path, {"source_size": list(source_size)})
     else:
@@ -402,29 +420,6 @@ def _materialize_selected_video(
     }
 
 
-def _download_url(url: str, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists() and target.stat().st_size > 0:
-        return
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    with urllib.request.urlopen(url, timeout=120) as response, tmp.open("wb") as handle:
-        shutil.copyfileobj(response, handle)
-    tmp.replace(target)
-
-
-def _extract_first_frame(video_path: Path, image_path: Path) -> None:
-    import imageio.v2 as imageio
-    from PIL import Image
-
-    reader = imageio.get_reader(str(video_path), "ffmpeg")
-    try:
-        frame = reader.get_data(0)
-    finally:
-        reader.close()
-    image_path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(frame).convert("RGB").save(image_path, format="PNG")
-
-
 def _resize_image(image_path: Path, *, width: int, height: int) -> tuple[int, int]:
     from PIL import Image
 
@@ -441,9 +436,12 @@ def _cmd_videophy_i2v(args: argparse.Namespace) -> None:
     from huggingface_hub import hf_hub_download
 
     data_root = args.data_root.expanduser().resolve() if args.data_root else default_data_root()
-    specs = (
-        DEFAULT_SOURCES if not args.source else tuple(_parse_source(item) for item in args.source)
-    )
+    specs: list[tuple[str, str, str]] = []
+    for spec in args.source or ():
+        parts = spec.split(":")
+        if len(parts) != 3 or not all(parts):
+            raise ValueError(f"--source must be REPO_ID:CSV_FILE:SPLIT, got {spec!r}")
+        specs.append((parts[0], parts[1], parts[2]))
     sources = [
         VideoPhySource(
             repo_id=repo_id,
@@ -458,7 +456,7 @@ def _cmd_videophy_i2v(args: argparse.Namespace) -> None:
                 ),
             ),
         )
-        for repo_id, csv_file, split in specs
+        for repo_id, csv_file, split in (specs or DEFAULT_SOURCES)
     ]
     report = prepare_videophy_i2v_dataset(
         sources=sources,
@@ -471,13 +469,6 @@ def _cmd_videophy_i2v(args: argparse.Namespace) -> None:
         height=args.height,
     )
     emit(report)
-
-
-def _parse_source(spec: str) -> tuple[str, str, str]:
-    parts = spec.split(":")
-    if len(parts) != 3 or not all(parts):
-        raise ValueError(f"--source must be REPO_ID:CSV_FILE:SPLIT, got {spec!r}")
-    return parts[0], parts[1], parts[2]
 
 
 def _read_prompts(path: Path) -> list[str]:

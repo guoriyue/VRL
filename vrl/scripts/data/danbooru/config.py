@@ -7,7 +7,6 @@ used by the safety prompt builder and the CLI.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import yaml
@@ -59,21 +58,17 @@ class _Taxonomy(ConfigBase):
     safety: _SafetyTaxonomy
 
 
-def _load_taxonomy(path: Path) -> _Taxonomy:
-    """Parse the tag taxonomy through the same closed-section contract as configs."""
-
-    with path.open(encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle)
-    try:
-        return _Taxonomy.model_validate(raw)
-    except ValidationError as exc:
-        from vrl.config.base import _extract_error_message
-
-        raise ValueError(f"{path}: {_extract_error_message(exc)}") from exc
-
-
+# Parse the tag taxonomy through the same closed-section contract as configs.
 _TAXONOMY_PATH = OUTPUT_DIR / "config.yaml"
-_TAXONOMY = _load_taxonomy(_TAXONOMY_PATH)
+with _TAXONOMY_PATH.open(encoding="utf-8") as _handle:
+    _RAW_TAXONOMY = yaml.safe_load(_handle)
+try:
+    _TAXONOMY = _Taxonomy.model_validate(_RAW_TAXONOMY)
+except ValidationError as exc:
+    from vrl.config.base import _extract_error_message
+
+    raise ValueError(f"{_TAXONOMY_PATH}: {_extract_error_message(exc)}") from exc
+del _handle, _RAW_TAXONOMY
 _TAGS = _TAXONOMY.tags
 _SAFETY = _TAXONOMY.safety
 

@@ -55,8 +55,24 @@ def iter_metadata(path: str | Path) -> Iterator[dict[str, Any]]:
     metadata_path = Path(path)
     suffixes = metadata_path.suffixes
     if suffixes[-2:] == [".tar", ".gz"] or metadata_path.suffix == ".tgz":
-        yield from _iter_tarred_json_metadata(metadata_path)
-        return
+        with tarfile.open(metadata_path, "r:*") as archive:
+            for member in archive:
+                if not member.isfile():
+                    continue
+                if not member.name.endswith((".json", ".jsonl", ".json.gz")):
+                    continue
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    continue
+                source = f"{metadata_path}:{member.name}"
+                if member.name.endswith(".gz"):
+                    with gzip.open(extracted, "rt", encoding="utf-8") as handle:
+                        yield from _iter_json_records(handle, source=source)
+                else:
+                    with io.TextIOWrapper(extracted, encoding="utf-8") as handle:
+                        yield from _iter_json_records(handle, source=source)
+                return
+        raise ValueError(f"{metadata_path}: expected a JSON or JSONL file inside the archive")
 
     if metadata_path.suffix == ".gz":
         with gzip.open(metadata_path, "rt", encoding="utf-8") as handle:
@@ -70,26 +86,6 @@ def iter_metadata(path: str | Path) -> Iterator[dict[str, Any]]:
 
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
     yield from _iter_json_payload(payload, source=str(metadata_path))
-
-
-def _iter_tarred_json_metadata(path: Path) -> Iterator[dict[str, Any]]:
-    with tarfile.open(path, "r:*") as archive:
-        for member in archive:
-            if not member.isfile():
-                continue
-            if not member.name.endswith((".json", ".jsonl", ".json.gz")):
-                continue
-            extracted = archive.extractfile(member)
-            if extracted is None:
-                continue
-            if member.name.endswith(".gz"):
-                with gzip.open(extracted, "rt", encoding="utf-8") as handle:
-                    yield from _iter_json_records(handle, source=f"{path}:{member.name}")
-            else:
-                with io.TextIOWrapper(extracted, encoding="utf-8") as handle:
-                    yield from _iter_json_records(handle, source=f"{path}:{member.name}")
-            return
-    raise ValueError(f"{path}: expected a JSON or JSONL file inside the archive")
 
 
 def _iter_json_records(handle: io.TextIOBase, *, source: str) -> Iterator[dict[str, Any]]:

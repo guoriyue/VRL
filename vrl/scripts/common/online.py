@@ -22,7 +22,6 @@ from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
 from vrl.ray.resources import (
-    ResolvedDistributedResources,
     format_distributed_resource_plan,
 )
 from vrl.rewards import RewardRuntime
@@ -294,33 +293,6 @@ class _OnlineRecipeLifecycle:
             self._shutdown_errors.append((name, exc))
             return False
         return True
-
-
-def _require_supported_distributed_rollout_topology(
-    context: DistributedTrainingContext,
-    resources: ResolvedDistributedResources,
-) -> None:
-    """Reject multi-rank rollout ownership that the recipe cannot coordinate.
-
-    The implemented DDP/FSDP orchestration is per-rank-local and colocated: each
-    rank owns its own Ray runtime on its trainer GPU. With disjoint rollout GPUs,
-    every rank would instead resolve the same global rollout plan, start or attach
-    Ray independently, and launch duplicate workers onto those GPUs. Supporting
-    that topology needs one explicit owner (for example rank-0 collection plus a
-    broadcast), not a resource-only YAML change.
-    """
-
-    if not context.distributed:
-        return
-    if bool(resources.colocated) or int(resources.rollout_num_gpus) == 0:
-        return
-    raise NotImplementedError(
-        "distributed training with disjoint rollout GPUs is not supported by "
-        "run_online_recipe: every torchrun rank would independently initialize Ray "
-        "and launch the same rollout device plan. Use single_process with dedicated "
-        "rollout GPUs. Multi-rank DDP/FSDP needs rank-owned rollout placement or "
-        "rank-0 collection/broadcast before this topology can run.",
-    )
 
 
 def _log_rollout_memory_plan(
@@ -796,7 +768,24 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     # strategies the online recipe can't yet drive end-to-end, before building the
     # model / Ray runtime.
     training_context = DistributedTrainingContext.from_root(built.root, device=device)
-    _require_supported_distributed_rollout_topology(training_context, resources)
+    # The implemented DDP/FSDP orchestration is per-rank-local and colocated: each
+    # rank owns its own Ray runtime on its trainer GPU. With disjoint rollout GPUs,
+    # every rank would instead resolve the same global rollout plan, start or attach
+    # Ray independently, and launch duplicate workers onto those GPUs. Supporting
+    # that topology needs one explicit owner (for example rank-0 collection plus a
+    # broadcast), not a resource-only YAML change.
+    if (
+        training_context.distributed
+        and not bool(resources.colocated)
+        and int(resources.rollout_num_gpus) != 0
+    ):
+        raise NotImplementedError(
+            "distributed training with disjoint rollout GPUs is not supported by "
+            "run_online_recipe: every torchrun rank would independently initialize Ray "
+            "and launch the same rollout device plan. Use single_process with dedicated "
+            "rollout GPUs. Multi-rank DDP/FSDP needs rank-owned rollout placement or "
+            "rank-0 collection/broadcast before this topology can run.",
+        )
     # Construct the strategy before any model or Ray actor. Shared-GPU on-demand
     # execution needs complete trainer-state parking; distributed strategies must
     # reject that topology here instead of failing after expensive launch work.

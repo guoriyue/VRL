@@ -77,7 +77,6 @@ def build_target_video_world_rows(
 
     reference_dir.mkdir(parents=True, exist_ok=True)
     target_dir.mkdir(parents=True, exist_ok=True)
-    writer = video_writer or _write_mp4
     rows: list[dict[str, Any]] = []
     for episode in episodes:
         prompt = episode.get("prompt")
@@ -103,7 +102,19 @@ def build_target_video_world_rows(
         ref_path = reference_dir / f"{source}_{episode_id}_first.png"
         target_path = target_dir / f"{source}_{episode_id}_target.mp4"
         write_png(frames[0], ref_path)
-        writer(target_path, frames, clip_fps)
+        if video_writer is not None:
+            video_writer(target_path, frames, clip_fps)
+        else:
+            import imageio.v2 as imageio
+            import numpy as np
+
+            arrays = []
+            for frame in frames:
+                array = np.asarray(frame)
+                if array.dtype != np.uint8:
+                    array = array.astype("uint8")
+                arrays.append(array)
+            imageio.mimsave(target_path, arrays, fps=clip_fps, macro_block_size=1)
         rows.append(
             {
                 "prompt": prompt,
@@ -137,22 +148,6 @@ def _dataset_metadata(
         "conditioning": conditioning,
         **source_metadata,
     }
-
-
-def _write_mp4(path: Path, frames: Sequence[Any], fps: float) -> None:
-    import imageio.v2 as imageio
-    import numpy as np
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    arrays = []
-    for frame in frames:
-        array = np.asarray(frame)
-        if array.dtype != np.uint8:
-            array = array.astype("uint8")
-        arrays.append(array)
-    if not arrays:
-        raise ValueError(f"Cannot write empty target clip: {path}")
-    imageio.mimsave(path, arrays, fps=fps, macro_block_size=1)
 
 
 __all__ = ["build_target_video_world_rows", "build_video_world_rows"]

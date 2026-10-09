@@ -136,6 +136,7 @@ def build_danbooru_safety_prompt_rows(
     if not target_ratings:
         raise ValueError("at least one valid safety rating is required")
 
+    context_tags = tuple(POSE_TAGS) + PROMPT_ANCHOR_TAGS + CLOTHING_TAGS + SCENE_TAGS
     candidates: list[dict[str, Any]] = []
     scanned = 0
     seen_prompts: set[str] = set()
@@ -145,25 +146,38 @@ def build_danbooru_safety_prompt_rows(
             break
         tags = normalize_tags(row)
         tag_set = set(tags)
-        if not _is_active_post(row):
+        if any(bool(row.get(key)) for key in ("is_deleted", "is_flagged", "is_banned")):
             continue
         if tag_set & SAFETY_EXCLUDED_TAGS:
             continue
-        rating = _record_rating(row, tag_set)
+        # The rating field, else a rating:<x> tag.
+        rating = _normalize_rating(row.get("rating"))
+        if rating is None:
+            for tag in tag_set:
+                if tag.startswith("rating:"):
+                    rating = _normalize_rating(tag.split(":", 1)[1])
+                    if rating is not None:
+                        break
         if rating not in target_ratings:
             continue
         if record_score(row) < min_score:
             continue
-        nsfw_tags = _safety_nsfw_tags(tags, rating=rating)
+        nsfw_tags = dedupe_text(
+            [f"rating:{rating}", *(tag for tag in tags if tag in SAFETY_RISK_TAGS)],
+        )
         risk_tags = [tag for tag in nsfw_tags if not tag.startswith("rating:")]
         if len(risk_tags) < min_risk_tags:
             continue
-        prompt = _safety_prompt_from_tags(
-            tags,
-            rating=rating,
-            nsfw_tags=nsfw_tags,
-            prompt_tag_limit=prompt_tag_limit,
-        )
+        parts: list[str] = [f"rating:{rating}", "adult"]
+        for tag in SUBJECT_PROMPT_TAGS:
+            if tag in tag_set:
+                parts.append(tag)
+                break
+        if "solo" in tag_set:
+            parts.append("solo")
+        parts.extend(nsfw_tags)
+        parts.extend(tag for tag in context_tags if tag in tag_set)
+        prompt = ", ".join(dedupe_text(parts)[: max(1, prompt_tag_limit)])
         if not prompt or prompt in seen_prompts:
             continue
         seen_prompts.add(prompt)
@@ -241,54 +255,6 @@ def _nsfw_tag_counts(rows: Sequence[Mapping[str, Any]], *, limit: int) -> dict[s
     return dict(counter.most_common(limit))
 
 
-def _is_active_post(row: Mapping[str, Any]) -> bool:
-    return not any(bool(row.get(key)) for key in ("is_deleted", "is_flagged", "is_banned"))
-
-
 def _normalize_rating(value: Any) -> str | None:
     text = str(value or "").strip().lower()
     return SAFETY_RATING_ALIASES.get(text)
-
-
-def _record_rating(row: Mapping[str, Any], tags: set[str]) -> str | None:
-    rating = _normalize_rating(row.get("rating"))
-    if rating is not None:
-        return rating
-    for tag in tags:
-        if not tag.startswith("rating:"):
-            continue
-        rating = _normalize_rating(tag.split(":", 1)[1])
-        if rating is not None:
-            return rating
-    return None
-
-
-def _safety_nsfw_tags(tags: Sequence[str], *, rating: str) -> list[str]:
-    out = [f"rating:{rating}"]
-    out.extend(tag for tag in tags if tag in SAFETY_RISK_TAGS)
-    return dedupe_text(out)
-
-
-def _safety_prompt_from_tags(
-    tags: Sequence[str],
-    *,
-    rating: str,
-    nsfw_tags: Sequence[str],
-    prompt_tag_limit: int,
-) -> str:
-    tag_set = set(tags)
-    parts: list[str] = [f"rating:{rating}", "adult"]
-    for tag in SUBJECT_PROMPT_TAGS:
-        if tag in tag_set:
-            parts.append(tag)
-            break
-    if "solo" in tag_set:
-        parts.append("solo")
-    parts.extend(nsfw_tags)
-
-    context_tags = tuple(POSE_TAGS) + PROMPT_ANCHOR_TAGS + CLOTHING_TAGS + SCENE_TAGS
-    for tag in context_tags:
-        if tag in tag_set:
-            parts.append(tag)
-    cleaned = dedupe_text(parts)
-    return ", ".join(cleaned[: max(1, prompt_tag_limit)])

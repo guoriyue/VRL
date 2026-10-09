@@ -129,10 +129,27 @@ def preflight_rewards(
     request_builder = GenerationRequestBuilder(
         entry=entry, config=RolloutCollectorConfig.from_root(built.root)
     )
-    samples = tuple(
-        _sample_for(example, index, request_builder, built.root.sampling, entry.task, seed)
-        for index, example in enumerate(examples)
-    )
+    samples: list[RewardSample] = []
+    for index, example in enumerate(examples):
+        generation_input = (
+            example.generation_input()
+            if hasattr(example, "generation_input")
+            else GenerationInput(prompt=str(example))
+        )
+        collector_request = request_builder.build(
+            [generation_input],
+            1,
+            metadata=example.reward_metadata() if hasattr(example, "reward_metadata") else None,
+            request_overrides=dict(getattr(example, "request_overrides", None) or {}),
+        )
+        samples.append(
+            RewardSample(
+                prompt=generation_input.prompt,
+                output=_synthetic_media(built.root.sampling, entry.task, seed + index),
+                sample_id=f"preflight-{index}",
+                metadata=dict(collector_request.metadata),
+            ),
+        )
 
     async def _run() -> RewardOutput:
         runtime = None
@@ -198,7 +215,7 @@ def preflight_rewards(
             runtime = RewardFunctionRuntime(reward.build_function(ray_placement=placement))
             await runtime.preflight()
             await runtime.activate()
-            return await runtime.score(samples)
+            return await runtime.score(tuple(samples))
         finally:
             try:
                 if runtime is not None:
@@ -213,33 +230,6 @@ def preflight_rewards(
 
     output = asyncio.run(_run())
     return PreflightReport(prompts=tuple(sample.prompt for sample in samples), output=output)
-
-
-def _sample_for(
-    example: Any,
-    index: int,
-    request_builder: Any,
-    sampling: Any,
-    task: str,
-    seed: int,
-) -> RewardSample:
-    generation_input = (
-        example.generation_input()
-        if hasattr(example, "generation_input")
-        else GenerationInput(prompt=str(example))
-    )
-    collector_request = request_builder.build(
-        [generation_input],
-        1,
-        metadata=example.reward_metadata() if hasattr(example, "reward_metadata") else None,
-        request_overrides=dict(getattr(example, "request_overrides", None) or {}),
-    )
-    return RewardSample(
-        prompt=generation_input.prompt,
-        output=_synthetic_media(sampling, task, seed + index),
-        sample_id=f"preflight-{index}",
-        metadata=dict(collector_request.metadata),
-    )
 
 
 def _synthetic_media(sampling: Any, task: str, seed: int) -> torch.Tensor:

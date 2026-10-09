@@ -462,13 +462,14 @@ def test_build_train_launch_rejects_unowned_multi_node_rendezvous() -> None:
         )
 
 
-def test_supervisor_rejects_nested_torchrun_owners() -> None:
+def test_supervisor_rejects_nested_torchrun_owners(monkeypatch) -> None:
     from vrl.scripts import supervise
 
-    with pytest.raises(ValueError, match="exactly one owner"):
-        supervise._require_single_supervisor_owner(
-            {"RANK": "1", "WORLD_SIZE": "4"},
-        )
+    monkeypatch.setenv("RANK", "1")
+    monkeypatch.setenv("WORLD_SIZE", "4")
+
+    with pytest.raises(SystemExit, match="exactly one owner"):
+        supervise.main(["--config", "experiment/cosmos"])
 
 
 def test_train_writes_atomic_rank_results_and_failure_wins_aggregation(tmp_path) -> None:

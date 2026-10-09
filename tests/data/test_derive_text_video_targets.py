@@ -168,14 +168,14 @@ def test_bootstrap_runs_shared_derived_manifest_producer_once(
             },
         },
     )
-    commands: list[str] = []
+    commands: list[list[str]] = []
     monkeypatch.setattr("vrl.config.loading.load_config", lambda *args, **kwargs: config)
     monkeypatch.setattr(bootstrap, "_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(bootstrap, "_run_setup_command", commands.append)
+    monkeypatch.setattr("vrl.scripts.data.setup.main", commands.append)
 
     bootstrap._cmd_for_experiment(
         Namespace(experiment="test/derived", override=[], run=True),
     )
 
     assert len(commands) == 1
-    assert "derive-text-video-targets" in commands[0]
+    assert commands[0][0] == "derive-text-video-targets"

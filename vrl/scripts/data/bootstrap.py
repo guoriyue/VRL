@@ -40,6 +40,21 @@ def resolve_experiment_dataset_plan(
     """
 
     from vrl.config.data import manifest_sources
+    from vrl.scripts.data import (
+        danbooru,
+        derive_text_video_targets,
+        video_world,
+        videophy_i2v,
+    )
+
+    # Which populate command produces a manifest under each path prefix.
+    setup_hints = (
+        *danbooru.manifest_setup_hints(),
+        *videophy_i2v.manifest_setup_hints(),
+        *derive_text_video_targets.manifest_setup_hints(),
+        *video_world.manifest_setup_hints(),
+    )
+    expected_sources = videophy_i2v.expected_manifest_sources()
 
     loader = str(data.get("loader", "") or "")
     role_paths: list[tuple[str, str]] = []
@@ -59,10 +74,18 @@ def resolve_experiment_dataset_plan(
         resolved = Path(path) if os.path.isabs(path) else (repo_root / path)
         present = resolved.exists()
         rows = _count_rows(resolved) if present and role != "source_report" else 0
-        expected_rows = _expected_rows_for_path(path, repo_root) if role != "source_report" else 0
+        expected_rows = 0
+        if role != "source_report" and expected_sources.get(path):
+            expected_rows = _count_rows(repo_root / expected_sources[path])
         complete = present and (expected_rows <= 0 or rows >= expected_rows)
+        get = ""
         if not complete:
             ready = False
+            get = f"{path} is not present and no populate command maps to it; see manifests/ docs"
+            for prefix, argv in setup_hints:
+                if path.startswith(prefix):
+                    get = _setup_command(argv)
+                    break
         steps.append(
             {
                 "role": role,
@@ -71,7 +94,7 @@ def resolve_experiment_dataset_plan(
                 "rows": rows,
                 "expected_rows": expected_rows,
                 "complete": complete,
-                "get": "" if complete else _populate_hint_for_path(path),
+                "get": get,
             },
         )
     if loader == "pickapic_preference":
@@ -102,40 +125,8 @@ def _count_rows(path: Path) -> int:
         return 0
 
 
-def _populate_hint_for_path(path: str) -> str:
-    for prefix, argv in _manifest_setup_hints():
-        if path.startswith(prefix):
-            return _setup_command(argv)
-    return f"{path} is not present and no populate command maps to it; see manifests/ docs"
-
-
-def _manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
-    from vrl.scripts.data import (
-        danbooru,
-        derive_text_video_targets,
-        video_world,
-        videophy_i2v,
-    )
-
-    return (
-        *danbooru.manifest_setup_hints(),
-        *videophy_i2v.manifest_setup_hints(),
-        *derive_text_video_targets.manifest_setup_hints(),
-        *video_world.manifest_setup_hints(),
-    )
-
-
 def _setup_command(argv: tuple[str, ...]) -> str:
     return "python -m vrl.scripts.data.setup " + shlex.join(argv)
-
-
-def _expected_rows_for_path(path: str, repo_root: Path) -> int:
-    from vrl.scripts.data import videophy_i2v
-
-    expected_source = videophy_i2v.expected_manifest_sources().get(path)
-    if not expected_source:
-        return 0
-    return _count_rows(repo_root / expected_source)
 
 
 def _cmd_for_experiment(args: argparse.Namespace) -> None:
@@ -153,19 +144,13 @@ def _cmd_for_experiment(args: argparse.Namespace) -> None:
         # Paired train/eval/report paths usually share one producer. Run each
         # canonical setup command once instead of rebuilding the same dataset
         # for every missing output in the pre-run plan.
+        from vrl.scripts.data import setup
+
         commands = dict.fromkeys(str(step.get("get", "")) for step in plan["steps"])
         for command in commands:
-            _run_setup_command(command)
-
-
-def _run_setup_command(command: str) -> None:
-    parts = shlex.split(command)
-    if parts[:4] != ["python", "-m", "vrl.scripts.data.setup"]:
-        return
-
-    from vrl.scripts.data.setup import main as setup_main
-
-    setup_main(parts[4:])
+            parts = shlex.split(command)
+            if parts[:3] == ["python", "-m", "vrl.scripts.data.setup"]:
+                setup.main(parts[3:])
 
 
 __all__ = ["register", "resolve_experiment_dataset_plan"]

@@ -238,10 +238,12 @@ def _iter_lerobot_v21_target_clips(
     """Cut target clips located by LeRobot v3.0 ``meta/episodes/*.parquet`` rows."""
 
     import pyarrow.parquet as pq
+    from huggingface_hub import HfApi
 
     video_tmpl = str(info["video_path"])
     fps = float(info.get("fps") or _video_fps(info, video_key) or 15.0)
-    episode_files = _repo_files(repo_id, prefix="meta/episodes/")
+    repo_files = HfApi().list_repo_files(repo_id, repo_type="dataset")
+    episode_files = sorted(path for path in repo_files if path.startswith("meta/episodes/"))
     selected = []
     video_chunk_col = f"videos/{video_key}/chunk_index"
     video_file_col = f"videos/{video_key}/file_index"
@@ -259,7 +261,18 @@ def _iter_lerobot_v21_target_clips(
             ],
         )
         for row in table.to_pylist():
-            prompt = _episode_prompt(row)
+            # The first non-empty task, else a language_instruction* column.
+            tasks = row.get("tasks") or []
+            texts = [str(task).strip() for task in tasks] if isinstance(tasks, list) else []
+            texts.extend(
+                str(row.get(key, "") or "").strip()
+                for key in (
+                    "language_instruction",
+                    "language_instruction_2",
+                    "language_instruction_3",
+                )
+            )
+            prompt = next((text for text in texts if text), "")
             if not prompt:
                 continue
             selected.append(
@@ -362,27 +375,6 @@ def _iter_lerobot_v20_target_clips(
                     "codebase_version": str(info.get("codebase_version", "v2.0")),
                 },
             }
-
-
-def _repo_files(repo_id: str, *, prefix: str) -> tuple[str, ...]:
-    from huggingface_hub import HfApi
-
-    files = HfApi().list_repo_files(repo_id, repo_type="dataset")
-    return tuple(sorted(path for path in files if path.startswith(prefix)))
-
-
-def _episode_prompt(row: Mapping[str, Any]) -> str:
-    tasks = row.get("tasks") or []
-    if isinstance(tasks, list):
-        for task in tasks:
-            text = str(task).strip()
-            if text:
-                return text
-    for key in ("language_instruction", "language_instruction_2", "language_instruction_3"):
-        text = str(row.get(key, "") or "").strip()
-        if text:
-            return text
-    return ""
 
 
 def _decode_grouped_target_clips(

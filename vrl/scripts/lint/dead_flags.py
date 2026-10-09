@@ -70,20 +70,15 @@ def declared_flags() -> list[tuple[str, int, str, str]]:
     return found
 
 
-def _corpus() -> dict[str, str]:
+def dead_flags() -> list[tuple[str, int, str, str]]:
+    """Declared flags with neither a ``args.<dest>`` reader nor any mention."""
+
     sources: dict[str, str] = {}
     for root in ("vrl", "tests"):
         for path in (REPO_ROOT / root).rglob("*.py"):
             if "__pycache__" in str(path):
                 continue
             sources[str(path.relative_to(REPO_ROOT))] = path.read_text()
-    return sources
-
-
-def dead_flags() -> list[tuple[str, int, str, str]]:
-    """Declared flags with neither a ``args.<dest>`` reader nor any mention."""
-
-    sources = _corpus()
     prose = "\n".join(
         path.read_text() for path in (REPO_ROOT / "docs").rglob("*.md") if path.is_file()
     )

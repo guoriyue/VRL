@@ -63,23 +63,6 @@ def _cmd_init_dirs(args: argparse.Namespace) -> None:
     )
 
 
-def _register_init_dirs(
-    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
-) -> None:
-    parser = subparsers.add_parser(
-        "init-dirs",
-        help="Create the empty artifact directories a dataset downloads into.",
-    )
-    parser.add_argument("dataset", choices=tuple(_INIT_DIRS_BY_DATASET))
-    parser.add_argument(
-        "--data-root",
-        type=Path,
-        default=None,
-        help="Artifact root. Defaults to VRL_DATA_ROOT or ./data/external.",
-    )
-    parser.set_defaults(func=_cmd_init_dirs)
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -89,7 +72,18 @@ def build_parser() -> argparse.ArgumentParser:
     video_world.register(subparsers)
     derive_text_video_targets.register(subparsers)
     bootstrap.register(subparsers)
-    _register_init_dirs(subparsers)
+    init_dirs = subparsers.add_parser(
+        "init-dirs",
+        help="Create the empty artifact directories a dataset downloads into.",
+    )
+    init_dirs.add_argument("dataset", choices=tuple(_INIT_DIRS_BY_DATASET))
+    init_dirs.add_argument(
+        "--data-root",
+        type=Path,
+        default=None,
+        help="Artifact root. Defaults to VRL_DATA_ROOT or ./data/external.",
+    )
+    init_dirs.set_defaults(func=_cmd_init_dirs)
     return parser
 
 
