@@ -252,6 +252,14 @@ class VLMPreferenceRewardModel(LazyTorchModule):
             )
         if absolute and crops:
             raise ValueError(f"vlm_preference criterion {name!r}: absolute takes no crops")
+        # ``group``: scored by comparing siblings of one prompt group against each
+        # other (Image 1 = A, Image 2 = B, Image 3 = the reference); only
+        # ``score_batch`` can fill it, a lone ``__call__`` scores it 0.5.
+        group = bool(raw.get("group", False))
+        if group and (answer != "ab" or absolute or crops):
+            raise ValueError(
+                f"vlm_preference group criterion {name!r} needs answer: ab, no absolute, no crops"
+            )
         return {
             "name": name,
             "question": question,
@@ -261,6 +269,7 @@ class VLMPreferenceRewardModel(LazyTorchModule):
             "checklist": checklist,
             "absolute": absolute,
             "invert": invert,
+            "group": group,
         }
 
     def _load_module(self) -> Any:
@@ -298,9 +307,11 @@ class VLMPreferenceRewardModel(LazyTorchModule):
         }
         return {"judge": judge, "processor": processor, "answers": answers}
 
-    def __call__(self, artifact: RewardInferenceArtifact) -> dict[str, float]:
+    def _resolve(self, artifact: RewardInferenceArtifact) -> tuple[Any, Any, str, dict[str, Any]]:
+        """Candidate image, reference image (or None), reference path, score kwargs."""
+
         image = artifact_middle_frame_image(artifact)
-        reference = None
+        reference, ref_path = None, ""
         if self._reference_key:
             from PIL import Image
 
@@ -314,17 +325,91 @@ class VLMPreferenceRewardModel(LazyTorchModule):
             path = resolve_artifact_path(
                 str(raw), data_root=self.data_root or default_data_root(), allow_absolute=True
             )
+            ref_path = str(path)
             with Image.open(path) as opened:
                 reference = opened.convert("RGB")
         intent = artifact.metadata.get(self._intent_key) if self._intent_key else None
         checklist = artifact.metadata.get(self._checklist_key) if self._checklist_key else None
-        return self.score(
-            image,
-            prompt=artifact.prompt,
-            reference=reference,
-            intent=str(intent) if intent else None,
-            checklist=[str(item) for item in checklist or () if str(item).strip()],
-        )
+        kwargs = {
+            "prompt": artifact.prompt,
+            "reference": reference,
+            "intent": str(intent) if intent else None,
+            "checklist": [str(item) for item in checklist or () if str(item).strip()],
+        }
+        return image, reference, ref_path, kwargs
+
+    def __call__(self, artifact: RewardInferenceArtifact) -> dict[str, float]:
+        image, _, _, kwargs = self._resolve(artifact)
+        return self.score(image, **kwargs)
+
+    def score_batch(self, artifacts: Sequence[RewardInferenceArtifact]) -> list[dict[str, float]]:
+        """Score a batch; ``group`` criteria compare siblings sharing prompt and reference.
+
+        Siblings are compared on a ring schedule (each sample against the next and,
+        for groups of more than three, the third-next), both image orders, with the
+        reference shown as Image 3. A sample's score is its mean win probability
+        over its comparisons; a sample with no sibling scores 0.5.
+        """
+
+        resolved = [self._resolve(a) for a in artifacts]
+        values = [self._criterion_values(image, **kwargs) for image, _, _, kwargs in resolved]
+        group_idx = [i for i, c in enumerate(self.criteria) if c["group"]]
+        if group_idx:
+            clusters: dict[tuple[str, str], list[int]] = {}
+            for k, (artifact, (_, _, ref_path, _)) in enumerate(
+                zip(artifacts, resolved, strict=True)
+            ):
+                clusters.setdefault((artifact.prompt.strip(), ref_path), []).append(k)
+            for (prompt, _), members in clusters.items():
+                for ci in group_idx:
+                    wins = self._group_wins(
+                        ci, prompt, [resolved[k][0] for k in members], resolved[members[0]][1]
+                    )
+                    for k, w in zip(members, wins, strict=True):
+                        values[k][ci] = w
+        return [self._compose(v) for v in values]
+
+    def _group_wins(
+        self, criterion: int, prompt: str, images: list[Any], reference: Any
+    ) -> list[float]:
+        n = len(images)
+        if n < 2:
+            return [0.5] * n
+        offsets = [1, 3] if n > 3 else [1]
+        pairs: list[tuple[int, int]] = []
+        seen: set[tuple[int, int]] = set()
+        for o in offsets:
+            for i in range(n):
+                j = (i + o) % n
+                key = (min(i, j), max(i, j))
+                if i != j and key not in seen:
+                    seen.add(key)
+                    pairs.append((i, j))
+        question = self.criteria[criterion]["question"].replace("{prompt}", prompt)
+        totals = [0.0] * n
+        counts = [0] * n
+        for i, j in pairs:
+            refs = [images[j]] + ([reference] if reference is not None else [])
+            forward = self.answer_scores(images[i], [question], ["ab"], reference=refs)[0]
+            if self._both_orders:
+                refs_b = [images[i]] + ([reference] if reference is not None else [])
+                backward = self.answer_scores(images[j], [question], ["ab"], reference=refs_b)[0]
+                p_i = (forward + (1.0 - backward)) / 2.0
+            else:
+                p_i = forward
+            totals[i] += p_i
+            totals[j] += 1.0 - p_i
+            counts[i] += 1
+            counts[j] += 1
+        return [t / c if c else 0.5 for t, c in zip(totals, counts, strict=True)]
+
+    def _compose(self, values: Sequence[float]) -> dict[str, float]:
+        out = {
+            "vlm_preference": float(sum(w * v for w, v in zip(self._weights, values, strict=True)))
+        }
+        for c, v in zip(self.criteria, values, strict=True):
+            out[f"vlm_preference/{c['name']}"] = float(v)
+        return out
 
     def score(
         self,
@@ -344,9 +429,25 @@ class VLMPreferenceRewardModel(LazyTorchModule):
         A ``checklist`` criterion is absolute, never pairwise: its question is asked
         once per ``checklist`` item about the candidate image alone and the score is
         the mean P(yes). Without items it scores 0.5 (a constant within a prompt
-        group, so it adds no advantage).
+        group, so it adds no advantage). ``group`` criteria score 0.5 here; only
+        :meth:`score_batch` can compare siblings.
         """
 
+        return self._compose(
+            self._criterion_values(
+                image, prompt=prompt, reference=reference, intent=intent, checklist=checklist
+            )
+        )
+
+    def _criterion_values(
+        self,
+        image: Any,
+        *,
+        prompt: str,
+        reference: Any = None,
+        intent: str | None = None,
+        checklist: Sequence[str] = (),
+    ) -> list[float]:
         prompt = prompt.strip()
         intent = (intent or prompt).strip()
         questions = [
@@ -354,7 +455,7 @@ class VLMPreferenceRewardModel(LazyTorchModule):
             for c in self.criteria
         ]
         answers = [c["answer"] for c in self.criteria]
-        values = [0.0] * len(self.criteria)
+        values = [0.5 if c["group"] else 0.0 for c in self.criteria]
         checks = [i for i, c in enumerate(self.criteria) if c["checklist"]]
         for i in checks:
             items = [item.strip() for item in checklist if item.strip()]
@@ -381,7 +482,11 @@ class VLMPreferenceRewardModel(LazyTorchModule):
                 strict=True,
             ):
                 values[i] = 1.0 - v if self.criteria[i]["invert"] else v
-        plain = [i for i in range(len(self.criteria)) if i not in checks and i not in absolutes]
+        plain = [
+            i
+            for i, c in enumerate(self.criteria)
+            if i not in checks and i not in absolutes and not c["group"]
+        ]
         if reference is None:
             if plain:
                 for i, v in zip(
@@ -425,12 +530,7 @@ class VLMPreferenceRewardModel(LazyTorchModule):
                     acc = [a + v for a, v in zip(acc, vals, strict=True)]
                 for j, i in enumerate(idx):
                     values[i] = acc[j] / len(views)
-        out = {
-            "vlm_preference": float(sum(w * v for w, v in zip(self._weights, values, strict=True)))
-        }
-        for c, v in zip(self.criteria, values, strict=True):
-            out[f"vlm_preference/{c['name']}"] = float(v)
-        return out
+        return values
 
     def answer_scores(
         self,
@@ -473,7 +573,15 @@ class VLMPreferenceRewardModel(LazyTorchModule):
                 )
             return im
 
-        images = [fit(image)] + ([fit(reference)] if reference is not None else [])
+        # ``reference`` may be one image (Image 2) or a sequence (Image 2, 3, ...).
+        refs = (
+            []
+            if reference is None
+            else list(reference)
+            if isinstance(reference, (list, tuple))
+            else [reference]
+        )
+        images = [fit(image)] + [fit(r) for r in refs]
         messages = [
             [
                 {

@@ -4,8 +4,11 @@
 #   correct   candidate alone, yes/no defect check, score 1 - P(yes)
 #   accurate  candidate alone, per-item checklist of what the prompt requires,
 #             mean P(yes) over the items
-#   like_ref  candidate beside the GPT image: how close is the candidate to the
-#             reference's quality and look, 1-5 digit expectation, both orders
+#   like_ref  siblings of one prompt group compared pairwise with the GPT image
+#             shown as Image 3 ("which comes closer to the reference?"), ring
+#             schedule, both orders; score = mean win probability. An absolute
+#             1-5 version of this question gave the GPT image itself 3/5 and
+#             spread siblings by 0.02, so it ranked nothing.
 # The GPT image is the thing to learn from, so the third question asks for
 # closeness to it, not for a winner. Group normalization in GRPO makes the
 # absolute scale irrelevant; only the relative weights matter, and they are equal.
@@ -51,10 +54,11 @@ worker_config:
         Look at Image 1 only. Does it clearly and recognizably show {item}?
     - name: like_ref
       weight: 1.0
-      answer: digit
+      answer: ab
+      group: true
       question: >-
-        Image 2 is a reference picture for the description "{prompt}". Image 1 was made for
-        the same description. How close does Image 1 come to the reference in overall
-        quality and look: composition and framing, the form and pose of the subject,
-        material and surface quality, color and light? 5 means as good and as well-made
-        as the reference, 1 means far below it.
+        Image 1 and Image 2 were both made for the description "{prompt}". Image 3 is a
+        reference picture for the same description. Which of Image 1 (A) or Image 2 (B)
+        comes closer to the reference in overall quality and look: composition and
+        framing, the form and pose of the subject, material and surface quality, color
+        and light?

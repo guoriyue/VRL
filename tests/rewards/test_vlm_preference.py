@@ -331,3 +331,59 @@ def test_ab_and_digit_answer_modes_are_accepted_and_carry_their_suffix():
     scores = model.score(Image.new("RGB", (8, 8)), prompt="x")
     assert scores["vlm_preference/beauty"] == 0.8 and scores["vlm_preference/score"] == 0.5
     assert model.asked[0][2] == ["ab", "digit"]  # one batched forward, both modes
+
+
+def test_group_criterion_ranks_siblings_by_pairwise_wins_with_the_reference_shown(tmp_path):
+    ref = tmp_path / "ref.png"
+    Image.new("RGB", (8, 8), (255, 0, 0)).save(ref)
+    criteria = [
+        {"name": "correct", "question": "Defect?", "absolute": True, "invert": True},
+        {
+            "name": "closer",
+            "question": "Which is closer to Image 3?",
+            "answer": "ab",
+            "group": True,
+        },
+    ]
+    model = VLMPreferenceRewardModel(
+        {
+            "device": "cpu",
+            "criteria": criteria,
+            "reference_key": "judge_reference",
+            "data_root": str(tmp_path),
+            "both_orders": True,
+        }
+    )
+    calls = []
+
+    def answer_scores(image, questions, modes, reference=None):
+        if reference is None:  # the absolute defect question
+            return [0.0] * len(questions)
+        refs = list(reference)
+        calls.append((image.getpixel((0, 0))[1], refs[0].getpixel((0, 0))[1], len(refs)))
+        # A wins iff its green channel (the sample id) is larger than B's
+        return [1.0 if image.getpixel((0, 0))[1] > refs[0].getpixel((0, 0))[1] else 0.0]
+
+    model.answer_scores = answer_scores
+
+    def artifact(idx, prompt="a knight"):
+        media = torch.zeros(3, 8, 8, dtype=torch.uint8)
+        media[1] = idx  # green channel encodes the sample id
+        return RewardInferenceArtifact(
+            artifact_id=f"a{idx}",
+            sample_id=f"s{idx}",
+            path="",
+            prompt=prompt,
+            media=media,
+            metadata={"judge_reference": "ref.png"},
+        )
+
+    scores = model.score_batch([artifact(i * 10) for i in range(8)] + [artifact(5, "other")])
+    closer = [s["vlm_preference/closer"] for s in scores]
+    # 8 siblings on a ring with offsets 1 and 3: 16 pairs, both orders, 3 images each
+    assert len(calls) == 32 and all(n == 2 for _, _, n in calls)
+    assert closer[7] == 1.0 and closer[0] == 0.0  # highest id wins every comparison
+    assert closer[3] == pytest.approx(0.5)  # middle sample wins half of its four comparisons
+    assert closer[8] == 0.5  # lone prompt: no sibling to compare against
+    assert scores[7]["vlm_preference"] == pytest.approx((1.0 + 1.0) / 2)
+    assert model(artifact(0))["vlm_preference/closer"] == 0.5  # __call__ cannot compare
