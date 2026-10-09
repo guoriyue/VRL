@@ -18,6 +18,11 @@ manifest row to carry exactly one ``target_image`` or ``target_video`` artifact.
 The shard is keyed by that stable artifact identity, not prompt text: a
 fine-tuning manifest may use the same instruction for several clean targets.
 
+A ``target_video`` may also name a directory of RGBA PNG frames (sorted by
+name) for families whose clean target is a frame stack with alpha, such as
+``qwen_image_layered``'s source composite plus layers; the family states the
+expected frame count through ``clean_target_frames``.
+
 A row may add ``sft_weight_mask``: a grayscale image (manifest-relative like
 the other artifacts) whose brightness says how much each pixel's supervision
 counts. It is area-pooled to the target's latent grid, normalized to mean one
@@ -97,6 +102,8 @@ def _target_at_sampling_geometry(
                 "provide target_video instead of silently repeating one frame",
             )
         frames = read_image_as_frames(path)
+    elif media_type == "target_video" and Path(path).is_dir():
+        frames = _read_rgba_frame_directory(path)
     elif media_type == "target_video":
         frames = read_video_frames(path, num_frames=num_frames)
     else:  # pragma: no cover - CleanTargetRef.from_source owns this closed set
@@ -108,7 +115,7 @@ def _target_at_sampling_geometry(
             "clip at the training frame count instead of silently padding or "
             "interpolating supervision",
         )
-    video = frames.permute(0, 3, 1, 2)  # [T,3,H,W]
+    video = frames.permute(0, 3, 1, 2)  # [T,C,H,W]
     if video.shape[-2:] != (height, width):
         video = F.interpolate(
             video,
@@ -116,7 +123,30 @@ def _target_at_sampling_geometry(
             mode="bilinear",
             align_corners=False,
         )
-    return video.permute(1, 0, 2, 3).unsqueeze(0)  # [1,3,T,H,W]
+    return video.permute(1, 0, 2, 3).unsqueeze(0)  # [1,C,T,H,W]
+
+
+def _read_rgba_frame_directory(path: str) -> Any:
+    """Read ``*.png`` frames of a directory, in name order, as ``[T, H, W, 4]`` in ``[0, 1]``.
+
+    Alpha is kept: these targets supervise four-channel decoders, so the usual
+    composite-over-white media readers do not apply.
+    """
+
+    import numpy as np
+    import torch
+    from PIL import Image
+
+    files = sorted(Path(path).glob("*.png"))
+    if not files:
+        raise ValueError(f"clean target directory {path} holds no .png frames")
+    frames = []
+    for file in files:
+        with Image.open(file) as image:
+            frames.append(torch.from_numpy(np.asarray(image.convert("RGBA"))))
+    if any(frame.shape != frames[0].shape for frame in frames):
+        raise ValueError(f"clean target directory {path} mixes frame geometries")
+    return torch.stack(frames).float() / 255.0
 
 
 WEIGHT_MASK_KEY = "sft_weight_mask"
@@ -193,7 +223,8 @@ def _resolve_clean_targets(
             data_root=data_root,
         )
         resolved_target = Path(str(getattr(resolved, target.field)))
-        if not resolved_target.is_file():
+        is_frame_directory = target.field == "target_video" and resolved_target.is_dir()
+        if not (resolved_target.is_file() or is_frame_directory):
             raise FileNotFoundError(
                 f"manifest row {index} {target.field} does not exist: {resolved_target}",
             )
@@ -281,6 +312,12 @@ def main(argv: list[str] | None = None) -> None:
             "the family's VAE-encode inverse (see CosmosPredict2Model) before "
             "encoding sft latents for it",
         )
+
+    # A family whose clean target is a frame stack (layers plus composite) owns
+    # the frame count; everything else supervises the sampling frame count.
+    clean_target_frames = getattr(model, "clean_target_frames", None)
+    if callable(clean_target_frames):
+        num_frames = int(clean_target_frames(sampling))
 
     latents_by_target: dict[str, Any] = {}
     storage_dtype = (

@@ -152,6 +152,37 @@ def test_image_target_becomes_one_frame_video(monkeypatch) -> None:
     assert video.shape == (1, 3, 1, 4, 6)
 
 
+def test_rgba_frame_directory_target_keeps_alpha_and_frame_order(tmp_path) -> None:
+    from PIL import Image
+
+    frames = tmp_path / "layers"
+    frames.mkdir()
+    Image.new("RGBA", (8, 6), (255, 0, 0, 255)).save(frames / "frame_0.png")
+    Image.new("RGBA", (8, 6), (0, 255, 0, 0)).save(frames / "frame_1.png")
+
+    video = _target_at_sampling_geometry(
+        str(frames), media_type="target_video", height=6, width=8, num_frames=2
+    )
+
+    assert video.shape == (1, 4, 2, 6, 8)
+    assert float(video[0, 0, 0].mean()) == 1.0 and float(video[0, 3, 0].mean()) == 1.0
+    assert float(video[0, 1, 1].mean()) == 1.0 and float(video[0, 3, 1].mean()) == 0.0
+    with pytest.raises(ValueError, match="requires 3"):
+        _target_at_sampling_geometry(
+            str(frames), media_type="target_video", height=6, width=8, num_frames=3
+        )
+
+
+def test_target_preflight_accepts_a_frame_directory_as_target_video(tmp_path) -> None:
+    (tmp_path / "layers").mkdir()
+    example = PromptExample(prompt="decompose", target_video="layers")
+
+    [(key, path, kind, _mask)] = _resolve_clean_targets([example], data_root=tmp_path)
+
+    assert (key, kind) == ("layers", "target_video")
+    assert path == str(tmp_path / "layers")
+
+
 def test_entrypoint_rejects_malformed_model_before_registry_model_build(
     monkeypatch,
     tmp_path,

@@ -135,6 +135,11 @@ class QwenImageLayeredModel(QwenImageModel):
             latents.permute(0, 2, 1, 3, 4), batch, z_dim, height, width, frame_count
         )
 
+    @staticmethod
+    def clean_target_frames(sampling: Any) -> int:
+        """A clean target is the source composite plus ``sampling.layers`` RGBA layers."""
+        return int(getattr(sampling, "layers", 4)) + 1
+
     def encode_video_to_latents(self, video: torch.Tensor) -> torch.Tensor:
         """Encode a clean ``[B, C, layers + 1, H, W]`` clip in ``[0, 1]`` into rollout latents.
 
