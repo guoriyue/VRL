@@ -624,25 +624,26 @@ def test_invalid_build_sampling_prevents_weight_download(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import huggingface_hub
+
     from vrl.models.families.magi_1 import model as magi_model
 
     config, _ = _installation(tmp_path)
     build = _build(config, rollout=True)
     build.sampling_config = {"num_frames": 25}
+    # No explicit weight paths: resolving them would need a Hub download.
+    for key in ("checkpoint_path", "t5_pretrained_path", "vae_pretrained_path"):
+        del build.model_config[key]
     monkeypatch.setattr(
-        magi_model,
-        "_preflight_local_installation",
-        lambda preflight: _base_config(),
+        magi_model.Magi1SubprocessConfig,
+        "load_official_config",
+        lambda self: _base_config(),
     )
 
-    def unexpected_weight_resolution(build: ModelBuild) -> tuple[Path, Path, Path]:
-        raise AssertionError(f"weight resolution must not start: {build}")
+    def unexpected_download(**kwargs):
+        raise AssertionError(f"weight download must not start: {kwargs}")
 
-    monkeypatch.setattr(
-        magi_model,
-        "_resolve_weight_components",
-        unexpected_weight_resolution,
-    )
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", unexpected_download)
 
     with pytest.raises(ValueError, match=r"multiple.*24"):
         Magi1SubprocessConfig.from_build(build)

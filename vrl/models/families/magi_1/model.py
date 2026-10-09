@@ -118,6 +118,99 @@ class Magi1SubprocessConfig:
     def entry_path(self) -> Path:
         return self.source_path / "inference" / "pipeline" / "entry.py"
 
+    def load_official_config(self) -> dict[str, Any]:
+        """Check the local checkout and interpreter, then read the official JSON.
+
+        Everything here is cheap and local; it runs before a missing weight
+        component can trigger a multi-gigabyte Hub download, and again on the
+        worker that will launch the subprocess.
+        """
+
+        if not self.source_path.is_dir():
+            raise FileNotFoundError(
+                f"MAGI-1 source_path is not a directory: {self.source_path}",
+            )
+        if not self.entry_path.is_file():
+            raise FileNotFoundError(
+                f"MAGI-1 official entry point is missing: {self.entry_path}",
+            )
+        actual_revision = source_head_revision(self.source_path)
+        if actual_revision != self.source_revision:
+            raise RuntimeError(
+                "MAGI-1 source checkout revision mismatch: expected "
+                f"{self.source_revision}, got {actual_revision}",
+            )
+        if not self.config_path.is_file():
+            raise FileNotFoundError(
+                f"MAGI-1 config_path does not exist: {self.config_path}",
+            )
+        executable = self.python_executable
+        if shutil.which(executable) is None and not (
+            Path(executable).is_file() and os.access(executable, os.X_OK)
+        ):
+            raise FileNotFoundError(
+                f"MAGI-1 python_executable was not found: {executable!r}",
+            )
+        # Import the official CLI in its dedicated Python before any weight
+        # download.
+        probe_code = (
+            "import runpy, sys; runpy.run_path(sys.argv[1], run_name='vrl_magi_1_preflight')"
+        )
+        try:
+            completed = subprocess.run(
+                [executable, "-c", probe_code, str(self.entry_path)],
+                cwd=self.source_path,
+                env=magi_subprocess_environment(self.source_path),
+                capture_output=True,
+                text=True,
+                timeout=min(self.timeout_seconds, 120.0),
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise RuntimeError(
+                "MAGI-1 dedicated environment preflight could not import the official CLI: "
+                f"{error}",
+            ) from error
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "").strip()[-4000:]
+            raise RuntimeError(
+                "MAGI-1 dedicated environment cannot import the official CLI; "
+                "install the pinned upstream requirements before resolving weights: "
+                f"{detail or 'no subprocess output'}",
+            )
+        try:
+            payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(
+                f"failed to read MAGI-1 JSON config {self.config_path}: {error}",
+            ) from error
+        if not isinstance(payload, dict):
+            raise ValueError("MAGI-1 JSON config must contain an object")
+        model = payload.get("model_config")
+        runtime = payload.get("runtime_config")
+        engine = payload.get("engine_config")
+        if (
+            not isinstance(model, dict)
+            or not isinstance(runtime, dict)
+            or not isinstance(engine, dict)
+        ):
+            raise ValueError(
+                "MAGI-1 config must contain object-valued model_config, runtime_config, "
+                "and engine_config",
+            )
+        if model.get("params_dtype") != "torch.bfloat16":
+            raise ValueError(
+                "MAGI-1 4.5B model_config.params_dtype must be 'torch.bfloat16'",
+            )
+        pp_size = int(engine.get("pp_size", 1))
+        cp_size = int(engine.get("cp_size", 1))
+        if pp_size != 1 or cp_size != 1:
+            raise ValueError(
+                "VRL's MAGI-1 4.5B subprocess adapter is single-process only; "
+                f"official config has pp_size={pp_size}, cp_size={cp_size}",
+            )
+        return payload
+
     def build_command(
         self,
         *,
@@ -186,24 +279,57 @@ class Magi1SubprocessConfig:
 
         # Check the cheap, local compatibility boundary before a missing weight
         # component can trigger a multi-gigabyte Hub download.
-        preflight = cls(
+        installation = cls(
             source_path=Path(str(source_path)),
             source_revision=str(source_revision),
             config_path=Path(str(config_path)),
             python_executable=str(python_executable),
             timeout_seconds=config.get("timeout_seconds", 7200.0),
         )
-        preflight_payload = _preflight_local_installation(preflight)
         _validate_magi_sampling_contract(
-            preflight_payload,
+            installation.load_official_config(),
             sampling=build.sampling_config or {},
         )
-        checkpoint_path, t5_path, vae_path = _resolve_weight_components(build)
+
+        # The official 4.5B / T5 / VAE folders: explicit paths, else one
+        # immutable Hugging Face revision of model.path.
+        checkpoint = _optional_path(config.get("checkpoint_path"))
+        t5 = _optional_path(config.get("t5_pretrained_path"))
+        vae = _optional_path(config.get("vae_pretrained_path"))
+        if checkpoint is None or t5 is None or vae is None:
+            repo_id = str(build.model_name_or_path or "").strip()
+            revision = str(build.revision or "").strip()
+            if not repo_id or repo_id == "None":
+                raise ValueError(
+                    "MAGI-1 missing model.path: set an official Hugging Face repository "
+                    "or configure checkpoint_path, t5_pretrained_path, and vae_pretrained_path",
+                )
+            if not revision:
+                raise ValueError(
+                    "MAGI-1 model.revision is required when resolving official weights "
+                    "from model.path",
+                )
+
+            from huggingface_hub import snapshot_download
+
+            patterns: list[str] = []
+            if checkpoint is None:
+                patterns.append("ckpt/magi/4.5B_base/**")
+            if t5 is None:
+                patterns.append("ckpt/t5/**")
+            if vae is None:
+                patterns.append("ckpt/vae/**")
+            snapshot = Path(
+                snapshot_download(repo_id=repo_id, revision=revision, allow_patterns=patterns),
+            )
+            checkpoint = checkpoint or snapshot / "ckpt" / "magi" / "4.5B_base"
+            t5 = t5 or snapshot / "ckpt" / "t5"
+            vae = vae or snapshot / "ckpt" / "vae"
         return replace(
-            preflight,
-            checkpoint_path=checkpoint_path,
-            t5_pretrained_path=t5_path,
-            vae_pretrained_path=vae_path,
+            installation,
+            checkpoint_path=checkpoint,
+            t5_pretrained_path=t5,
+            vae_pretrained_path=vae,
         )
 
 
@@ -247,7 +373,7 @@ class Magi1SubprocessModel(torch.nn.Module):
         self._device = torch.device(device or "cpu")
         # The official JSON with this run's weight paths resolved once; every
         # request specializes a copy with its own sampling and seed.
-        self._base_config = _preflight_local_installation(config)
+        self._base_config = config.load_official_config()
         runtime = self._base_config["runtime_config"]
         if config.checkpoint_path is not None:
             runtime["load"] = str(config.checkpoint_path)
@@ -255,7 +381,14 @@ class Magi1SubprocessModel(torch.nn.Module):
             runtime["t5_pretrained"] = str(config.t5_pretrained_path)
         if config.vae_pretrained_path is not None:
             runtime["vae_pretrained"] = str(config.vae_pretrained_path)
-        _resolve_runtime_paths(runtime, source_path=config.source_path)
+        for key in ("load", "t5_pretrained", "vae_pretrained"):
+            value = runtime.get(key)
+            if not value:
+                raise ValueError(f"MAGI-1 runtime_config.{key} must be configured")
+            path = _resolve_from_source(config.source_path, Path(str(value)))
+            if not path.exists():
+                raise FileNotFoundError(f"MAGI-1 runtime_config.{key} does not exist: {path}")
+            runtime[key] = str(path)
         self.precision: Any = None
 
     @classmethod
@@ -530,6 +663,9 @@ def prepare_magi_runtime_config(
 def magi_subprocess_environment(source_path: Path) -> dict[str, str]:
     """Mirror the official single-GPU 4.5B launcher without overriding Ray GPU scope."""
 
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as handle:
+        handle.bind(("127.0.0.1", 0))
+        master_port = int(handle.getsockname()[1])
     env = dict(os.environ)
     # The subprocess uses its dedicated interpreter plus this one verified
     # upstream package root. Inheriting a trainer PYTHONPATH could shadow either
@@ -544,7 +680,7 @@ def magi_subprocess_environment(source_path: Path) -> dict[str, str]:
     env.update(
         {
             "MASTER_ADDR": "127.0.0.1",
-            "MASTER_PORT": str(_unused_local_port()),
+            "MASTER_PORT": str(master_port),
             "WORLD_SIZE": "1",
             "RANK": "0",
             "LOCAL_RANK": "0",
@@ -570,109 +706,6 @@ def magi_subprocess_environment(source_path: Path) -> dict[str, str]:
         },
     )
     return env
-
-
-def _preflight_local_installation(
-    config: Magi1SubprocessConfig,
-) -> dict[str, Any]:
-    """Validate the local source/runtime boundary without resolving weights."""
-
-    if not config.source_path.is_dir():
-        raise FileNotFoundError(
-            f"MAGI-1 source_path is not a directory: {config.source_path}",
-        )
-    if not config.entry_path.is_file():
-        raise FileNotFoundError(
-            f"MAGI-1 official entry point is missing: {config.entry_path}",
-        )
-    actual_revision = source_head_revision(config.source_path)
-    if actual_revision != config.source_revision:
-        raise RuntimeError(
-            "MAGI-1 source checkout revision mismatch: expected "
-            f"{config.source_revision}, got {actual_revision}",
-        )
-    if not config.config_path.is_file():
-        raise FileNotFoundError(
-            f"MAGI-1 config_path does not exist: {config.config_path}",
-        )
-    executable = config.python_executable
-    executable_path = shutil.which(executable)
-    if executable_path is None and not (
-        Path(executable).is_file() and os.access(executable, os.X_OK)
-    ):
-        raise FileNotFoundError(
-            f"MAGI-1 python_executable was not found: {executable!r}",
-        )
-    _probe_runtime_environment(config)
-    try:
-        payload = json.loads(config.config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(
-            f"failed to read MAGI-1 JSON config {config.config_path}: {error}",
-        ) from error
-    if not isinstance(payload, dict):
-        raise ValueError("MAGI-1 JSON config must contain an object")
-    model = payload.get("model_config")
-    runtime = payload.get("runtime_config")
-    engine = payload.get("engine_config")
-    if (
-        not isinstance(model, dict)
-        or not isinstance(runtime, dict)
-        or not isinstance(engine, dict)
-    ):
-        raise ValueError(
-            "MAGI-1 config must contain object-valued model_config, runtime_config, "
-            "and engine_config",
-        )
-    if model.get("params_dtype") != "torch.bfloat16":
-        raise ValueError(
-            "MAGI-1 4.5B model_config.params_dtype must be 'torch.bfloat16'",
-        )
-    _validate_single_process_config(payload)
-    return payload
-
-
-def _probe_runtime_environment(config: Magi1SubprocessConfig) -> None:
-    """Import the official CLI in its dedicated Python before weight download."""
-
-    probe_code = "import runpy, sys; runpy.run_path(sys.argv[1], run_name='vrl_magi_1_preflight')"
-    try:
-        completed = subprocess.run(
-            [
-                config.python_executable,
-                "-c",
-                probe_code,
-                str(config.entry_path),
-            ],
-            cwd=config.source_path,
-            env=magi_subprocess_environment(config.source_path),
-            capture_output=True,
-            text=True,
-            timeout=min(config.timeout_seconds, 120.0),
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise RuntimeError(
-            f"MAGI-1 dedicated environment preflight could not import the official CLI: {error}",
-        ) from error
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "").strip()[-4000:]
-        raise RuntimeError(
-            "MAGI-1 dedicated environment cannot import the official CLI; "
-            "install the pinned upstream requirements before resolving weights: "
-            f"{detail or 'no subprocess output'}",
-        )
-
-
-def _validate_single_process_config(config: Mapping[str, Any]) -> None:
-    engine = config["engine_config"]
-    pp_size = int(engine.get("pp_size", 1))
-    cp_size = int(engine.get("cp_size", 1))
-    if pp_size != 1 or cp_size != 1:
-        raise ValueError(
-            "VRL's MAGI-1 4.5B subprocess adapter is single-process only; "
-            f"official config has pp_size={pp_size}, cp_size={cp_size}",
-        )
 
 
 def _validate_magi_sampling_contract(
@@ -751,67 +784,6 @@ def _validate_magi_sampling_contract(
         )
 
 
-def _resolve_runtime_paths(runtime: dict[str, Any], *, source_path: Path) -> None:
-    """Resolve the three weight paths against the source checkout, in place."""
-
-    for key in ("load", "t5_pretrained", "vae_pretrained"):
-        value = runtime.get(key)
-        if not value:
-            raise ValueError(f"MAGI-1 runtime_config.{key} must be configured")
-        path = _resolve_from_source(source_path, Path(str(value)))
-        if not path.exists():
-            raise FileNotFoundError(
-                f"MAGI-1 runtime_config.{key} does not exist: {path}",
-            )
-        runtime[key] = str(path)
-
-
-def _resolve_weight_components(
-    build: ModelBuild,
-) -> tuple[Path | None, Path | None, Path | None]:
-    """Resolve official 4.5B/T5/VAE folders at one immutable HF revision."""
-
-    model_config = build.model_config or {}
-    explicit_checkpoint = _optional_path(model_config.get("checkpoint_path"))
-    explicit_t5 = _optional_path(model_config.get("t5_pretrained_path"))
-    explicit_vae = _optional_path(model_config.get("vae_pretrained_path"))
-    if all(value is not None for value in (explicit_checkpoint, explicit_t5, explicit_vae)):
-        return explicit_checkpoint, explicit_t5, explicit_vae
-
-    repo_id = str(build.model_name_or_path or "").strip()
-    revision = str(build.revision or "").strip()
-    if not repo_id or repo_id == "None":
-        raise ValueError(
-            "MAGI-1 missing model.path: set an official Hugging Face repository "
-            "or configure checkpoint_path, t5_pretrained_path, and vae_pretrained_path",
-        )
-    if not revision:
-        raise ValueError(
-            "MAGI-1 model.revision is required when resolving official weights from model.path",
-        )
-
-    from huggingface_hub import snapshot_download
-
-    patterns: list[str] = []
-    if explicit_checkpoint is None:
-        patterns.append("ckpt/magi/4.5B_base/**")
-    if explicit_t5 is None:
-        patterns.append("ckpt/t5/**")
-    if explicit_vae is None:
-        patterns.append("ckpt/vae/**")
-    snapshot = Path(
-        snapshot_download(
-            repo_id=repo_id,
-            revision=revision,
-            allow_patterns=patterns,
-        ),
-    )
-    checkpoint = explicit_checkpoint or snapshot / "ckpt" / "magi" / "4.5B_base"
-    t5 = explicit_t5 or snapshot / "ckpt" / "t5"
-    vae = explicit_vae or snapshot / "ckpt" / "vae"
-    return checkpoint, t5, vae
-
-
 def source_head_revision(source_path: Path) -> str:
     """Revision of the MAGI-1 runtime source: packaged digest, or ``git rev-parse``.
 
@@ -874,12 +846,6 @@ def source_head_revision(source_path: Path) -> str:
             f"MAGI-1 source checkout at {source_path} has tracked modifications: {detail}",
         )
     return revision
-
-
-def _unused_local_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as handle:
-        handle.bind(("127.0.0.1", 0))
-        return int(handle.getsockname()[1])
 
 
 def _resolve_from_source(source_path: Path, value: Path) -> Path:

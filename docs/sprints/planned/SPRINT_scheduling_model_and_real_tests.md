@@ -226,4 +226,6 @@ D 批的难点：trainer 测试用 `nn.Linear(1, 1)` 策略和手造 batch 断�
 
 目标的构造器只收自己的 config（2026-10-08 续）：`component_weights`（来自 `reward.components`）、`precision_correction`（来自 `trainer.precision_correction`）和 Flash-GRPO 的 `noise_level` / `sde_type`（来自 rollout denoise 选项）原来由 factory 在运行时一根根接进算法；按"配置解析一次、由读它的对象持有"的规则，`build_configs._bridge_online_algorithm` 现在把它们解析进算法 config 的 `init=False` 字段（不是 YAML 键，`root` 保持未桥接的公开副本），GRPO / FlowDPPO / GRPOGuard / NFT / V-GRPO 都是 `Objective(config)`，FlashGRPO 多一个运行时对象 `scheduler`。
 
+MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_preflight_local_installation` / `_probe_runtime_environment` / `_validate_single_process_config` / `_resolve_runtime_paths` / `_resolve_weight_components` / `_unused_local_port`——并回各自唯一的调用方：安装检查 + 读官方 JSON 是 `Magi1SubprocessConfig.load_official_config()`，权重路径解析在 `from_build` 里，运行时路径解析在模型构造器里，端口在环境构造里。留下的模块函数都有两个以上调用方或是公开入口。
+
 `precision_correction` 保留：它不是修精度损失，而是在 rollout 与 replay 精度不一致（如 FP8 rollout、fp32 replay）时把 `exp(replay - rollout)` 这个重要性权重截断（TIS）并整条拒绝越界样本（RS），让少数漂移样本不能主导梯度；`TrainerConfig.from_root` 在精度分裂时自动开启。它只对 GRPO 族（有重要性比）有意义，所以只在 `GRPO` 构造器上出现一次。
