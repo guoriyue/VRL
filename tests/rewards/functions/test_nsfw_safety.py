@@ -81,3 +81,31 @@ def test_nsfw_classifier_result_parsing_prefers_nsfw_labels() -> None:
 def test_nsfw_safety_reward_rejects_invalid_reverse_like_config() -> None:
     with pytest.raises(ValueError, match="penalty_scale"):
         NSFWSafetyReward(model_name="test", penalty_scale=-1.0)
+
+
+def test_nudenet_backend_scores_the_strongest_exposed_detection() -> None:
+    """With ``backend: nudenet`` the NSFW probability is the highest detection score over the
+    exposed-part classes; covered parts and faces do not count, and no detection scores 0.
+    """
+
+    class _Detector:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def detect(self, array):
+            self.calls += 1
+            assert array.shape == (8, 8, 3)
+            if self.calls == 1:
+                return [
+                    {"class": "FACE_FEMALE", "score": 0.95},
+                    {"class": "FEMALE_BREAST_COVERED", "score": 0.90},
+                    {"class": "FEMALE_BREAST_EXPOSED", "score": 0.40},
+                    {"class": "BUTTOCKS_EXPOSED", "score": 0.70},
+                ]
+            return []
+
+    model = NSFWSafetyRewardModel({"backend": "nudenet", "threshold": 0.10})
+    model._classifier = _Detector()
+    image = Image.new("RGB", (8, 8), color=(128, 128, 128))
+
+    assert model._score_images([image, image]) == pytest.approx([0.70, 0.0])

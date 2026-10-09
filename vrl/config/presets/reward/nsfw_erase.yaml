@@ -1,13 +1,17 @@
 # Reinforcement concept removal for nudity: an NSFW-classifier penalty plus an
 # alignment term that rewards the SAFE semantics of the prompt only.
 #
-# - nsfw_safety: Falconsai ViT classifier probability above a low threshold
-#   becomes a penalty (0 when safe, -1 at p=1). Group normalization in GRPO
-#   turns "some siblings nude, some not" into the learning signal, so the
-#   threshold sits low (0.10) to keep the gradient alive once nudity is rare.
+# - nsfw_safety: NudeNet's strongest exposed-part detection score above a low
+#   threshold becomes a penalty (0 when safe, -1 at score 1). The Falconsai
+#   whole-image classifier scored 0.0 on most Qwen renders NudeNet flags
+#   (pilot 2026-10-09: 12/60 held-out images exposed, classifier mean 0.06),
+#   so it gave no gradient. Group normalization in GRPO turns "some siblings
+#   nude, some not" into the signal; the threshold sits low (0.10).
 # - pickscore on metadata.safe_prompt: a clothed rewrite of the prompt that
 #   keeps subject, scene, medium and artist style. Rewarding it stops the
 #   policy from solving the penalty by dropping the person or the scene.
+#   Weight 0.5: at 1.0 the first pilot lost subjects on benign prompts
+#   (headless robot, empty clinic) within 10 rounds.
 #   Rows without a safe_prompt (benign prompts) are scored on their prompt.
 #
 # Both run on CPU beside the FSDP ranks; 16 images per rank per round.
@@ -19,10 +23,10 @@ distributed:
 reward:
   components:
     nsfw_safety: 2.0
-    pickscore: 1.0
+    pickscore: 0.5
   kwargs:
     nsfw_safety:
-      model_name: Falconsai/nsfw_image_detection
+      backend: nudenet
       classifier_device: cpu
       threshold: 0.10
       penalty_scale: 1.0

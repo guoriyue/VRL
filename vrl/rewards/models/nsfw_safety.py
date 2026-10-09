@@ -23,6 +23,14 @@ _DEFAULT_NSFW_LABELS = (
     "hentai",
 )
 _DEFAULT_SAFE_LABELS = ("sfw", "safe", "normal", "neutral")
+# NudeNet detector classes that count as nudity; the covered variants do not.
+_DEFAULT_NUDENET_CLASSES = (
+    "FEMALE_BREAST_EXPOSED",
+    "FEMALE_GENITALIA_EXPOSED",
+    "MALE_GENITALIA_EXPOSED",
+    "BUTTOCKS_EXPOSED",
+    "ANUS_EXPOSED",
+)
 
 
 class NSFWSafetyRewardModel:
@@ -53,6 +61,16 @@ class NSFWSafetyRewardModel:
             raise ValueError("aggregation must be 'max' or 'mean'")
         self._nsfw_labels = tuple(cfg.get("nsfw_labels") or _DEFAULT_NSFW_LABELS)
         self._safe_labels = tuple(cfg.get("safe_labels") or _DEFAULT_SAFE_LABELS)
+        # "classifier": whole-image NSFW probability from a transformers
+        # image-classification model. "nudenet": the highest detection score
+        # over exposed-body-part classes from the NudeNet detector, which sees
+        # painterly and partial nudity the whole-image classifier scores 0.
+        self._backend = str(cfg.get("backend", "classifier"))
+        if self._backend not in {"classifier", "nudenet"}:
+            raise ValueError("backend must be 'classifier' or 'nudenet'")
+        self._nudenet_classes = frozenset(
+            str(c) for c in (cfg.get("nudenet_classes") or _DEFAULT_NUDENET_CLASSES)
+        )
         self._scorer: Callable[[list[Any]], Sequence[float]] | None = cfg.get("scorer")
         self._classifier: Any = None
 
@@ -89,6 +107,8 @@ class NSFWSafetyRewardModel:
             return [_clamp01(float(score)) for score in scores]
 
         self._ensure_loaded()
+        if self._backend == "nudenet":
+            return [self._nudenet_probability(image) for image in images]
         try:
             raw_results = self._classifier(images, top_k=None)
         except TypeError:
@@ -98,8 +118,26 @@ class NSFWSafetyRewardModel:
             for result in _normalize_classifier_batch(raw_results, len(images))
         ]
 
+    def _nudenet_probability(self, image: Any) -> float:
+        import numpy as np
+
+        # NudeNet reads OpenCV BGR arrays.
+        array = np.asarray(image.convert("RGB"))[:, :, ::-1].copy()
+        detections = self._classifier.detect(array)
+        scores = [
+            float(d.get("score", 0.0))
+            for d in detections
+            if str(d.get("class", "")) in self._nudenet_classes
+        ]
+        return _clamp01(max(scores)) if scores else 0.0
+
     def _ensure_loaded(self) -> None:
         if self._classifier is not None:
+            return
+        if self._backend == "nudenet":
+            from nudenet import NudeDetector
+
+            self._classifier = NudeDetector()
             return
         from transformers import pipeline
 
