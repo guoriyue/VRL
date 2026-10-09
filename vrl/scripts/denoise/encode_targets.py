@@ -122,6 +122,15 @@ def _target_at_sampling_geometry(
 WEIGHT_MASK_KEY = "sft_weight_mask"
 
 
+def _read_weight_mask(path: str) -> Any:
+    """Read a grayscale weight mask as ``[1, 1, H, W]`` in ``[0, 1]``."""
+
+    from vrl.utils.media import read_image_as_frames
+
+    frames = read_image_as_frames(path)  # [1, H, W, 3] in [0, 1]
+    return frames.mean(dim=-1, keepdim=True).permute(0, 3, 1, 2)
+
+
 def _weight_map_at_latent_geometry(path: str, latent_shape: tuple[int, ...]) -> Any:
     """Read a grayscale weight mask and pool it onto one target's latent grid.
 
@@ -130,18 +139,17 @@ def _weight_map_at_latent_geometry(path: str, latent_shape: tuple[int, ...]) -> 
     broadcasts over channels and frames. Brightness is relative importance:
     the map is rescaled to mean one, so ``sft_weight`` keeps the scale it was
     tuned at and a uniform mask reproduces the unweighted term exactly.
+    Families with a packed token layout place the mask themselves through
+    ``model.sft_weight_map``.
     """
 
     import torch.nn.functional as F
-
-    from vrl.utils.media import read_image_as_frames
 
     if len(latent_shape) < 3:
         raise ValueError(
             f"{WEIGHT_MASK_KEY} needs a latent with a spatial grid; got shape {latent_shape}",
         )
-    frames = read_image_as_frames(path)  # [1, H, W, 3] in [0, 1]
-    gray = frames.mean(dim=-1, keepdim=True).permute(0, 3, 1, 2)  # [1, 1, H, W]
+    gray = _read_weight_mask(path)
     pooled = F.interpolate(gray, size=tuple(latent_shape[-2:]), mode="area")
     mean = pooled.mean()
     if float(mean) <= 0:
@@ -290,11 +298,19 @@ def main(argv: list[str] | None = None) -> None:
         stored = latents.squeeze(0).detach()
         if storage_dtype is not None:
             stored = stored.to(dtype=storage_dtype)
-        weights = (
-            None
-            if mask_path is None
-            else _weight_map_at_latent_geometry(mask_path, tuple(stored.shape))
-        )
+        weights = None
+        if mask_path is not None:
+            place_mask = getattr(model, "sft_weight_map", None)
+            weights = (
+                place_mask(
+                    _read_weight_mask(mask_path),
+                    latent_shape=tuple(stored.shape),
+                    height=height,
+                    width=width,
+                )
+                if callable(place_mask)
+                else _weight_map_at_latent_geometry(mask_path, tuple(stored.shape))
+            )
         latents_by_target[target_key] = CleanTarget(latents=stored.cpu(), weights=weights)
         if args.preview_out and index == 0:
             from vrl.utils.media import write_mp4, write_png

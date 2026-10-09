@@ -51,6 +51,7 @@ _MODEL_EXECUTOR_CAPABILITIES = {
     "flux": True,
     "qwen_image": True,
     "qwen_image_21": False,
+    "qwen_image_layered": False,
     "sana": True,
     "lumina2": True,
     "hunyuan_video": True,

@@ -137,12 +137,15 @@ def _parity_cases() -> list[object]:
 def _set_timesteps(scheduler) -> None:
     # Flow-match schedulers with dynamic shifting (flux, qwen_image) require a
     # resolution-derived ``mu`` at set_timesteps; the sample<->replay parity
-    # invariant is independent of the shift, so pin mu=0 (identity shift) for a
-    # deterministic, valid sigma table. Fixed-schedule schedulers ignore mu.
+    # invariant is independent of the shift, so pin the identity shift for a
+    # deterministic, valid sigma table: mu=0 for the exponential time shift,
+    # mu=1 for the linear one (qwen_image_layered), where mu=0 collapses every
+    # sigma to zero. Fixed-schedule schedulers ignore mu.
     if getattr(scheduler, "_vrl_timesteps_ready", False):
         return  # family construction already set its own ladder (mochi)
     if getattr(scheduler.config, "use_dynamic_shifting", False):
-        scheduler.set_timesteps(_NUM_STEPS, mu=0.0)
+        linear = getattr(scheduler.config, "time_shift_type", "exponential") == "linear"
+        scheduler.set_timesteps(_NUM_STEPS, mu=1.0 if linear else 0.0)
     else:
         scheduler.set_timesteps(_NUM_STEPS)
 
