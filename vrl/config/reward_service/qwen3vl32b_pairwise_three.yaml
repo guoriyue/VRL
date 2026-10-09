@@ -16,7 +16,10 @@
 # like_ref ranks the untouched GPT image top and blur/collage/low-res bottom,
 # but ignores an added signature line, so stray_text returns as a guard; an
 # image with extra paws still out-scored a clean one at equal weights, so
-# correct carries weight 2.
+# correct carries weight 2. v13 ck40 and v14 ck20 (2026-10-09) drifted into
+# sticker sheets and 3x3 expression grids that like_ref does not penalize
+# (probe: turtle sheet 0.79 > single 0.70), so single_scene is an absolute
+# defect question at weight 2.
 host: 127.0.0.1
 port: 8318
 model_name: vlm-preference-qwen3vl32b
@@ -60,6 +63,16 @@ worker_config:
         Look at Image 1 only. Does it contain written text, letters, captions, labels,
         signatures or watermarks other than text that the description "{prompt}"
         explicitly asks to be written? Answer yes if there is any such unrequested text.
+    - name: single_scene
+      weight: 2.0
+      answer: yesno
+      absolute: true
+      invert: true
+      question: >-
+        Look at Image 1 only. Is it split into several panels, tiles, a grid, a sticker
+        sheet, a contact sheet or a character turnaround, or does it repeat the main
+        subject several times at small scale around one large copy? Answer yes if the
+        picture is anything other than one single continuous scene.
     - name: accurate
       weight: 1.0
       answer: yesno
