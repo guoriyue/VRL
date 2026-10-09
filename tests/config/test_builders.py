@@ -180,7 +180,7 @@ def test_every_allow_listed_offline_dpo_actor_field_has_a_reader() -> None:
     """The offline-DPO allow-list is hand-maintained; this is what keeps it honest.
 
     The cross-section rules reject any ``actor`` key the user sets that is not
-    in the algorithm's ``config_contract.consumed_sections``, so the list *is*
+    in the algorithm's ``requirements.consumed_sections``, so the list *is*
     the recipe's public surface.
     Nothing mechanically ties it to what the recipe reads, and most of it is
     read through ``required("name")`` -- a string access no symbol grep finds.
@@ -213,10 +213,10 @@ def test_every_allow_listed_offline_dpo_actor_field_has_a_reader() -> None:
     )
     resolve_gradient_checkpointing_mode(recording_root)
 
-    consumed = dict(DiffusionDPOConfig.config_contract.consumed_sections or ())
+    consumed = dict(DiffusionDPOConfig.requirements.consumed_sections or ())
     unread = sorted(consumed["actor"] - read)
     assert unread == [], (
         f"actor field(s) {unread} are accepted by the offline-DPO surface but no "
         "resolver on the recipe reads them; drop them from "
-        "DiffusionDPOConfig.config_contract or wire a reader"
+        "DiffusionDPOConfig.requirements or wire a reader"
     )

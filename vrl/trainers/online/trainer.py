@@ -497,10 +497,9 @@ class OnlineTrainer:
         # The policy supplies its own reference (the base weights under an
         # adapter, a pre-training snapshot otherwise); only objectives that
         # read one get it: a KL term, or a contract that asks for it.
-        contract = type(algorithm.config).config_contract
         uses_reference = (
-            algorithm.uses_evaluator and algorithm.kl_coef > 0
-        ) or contract.requires_reference_policy
+            algorithm.kl_coef > 0 or type(algorithm.config).requirements.requires_reference_policy
+        )
         # Clean fine-tuning latents ({target artifact -> [C,T,H,W]}) for the GRPO
         # diffusion-loss regularizer; the recipe loads data.sft_latents, which
         # vrl/config/rules.py requires whenever sft_weight > 0.
@@ -1020,14 +1019,8 @@ class OnlineTrainer:
         selection = self.config.timestep_selection
 
         # Evaluator-less objectives replay one step per call like step evaluators.
-        granularity = "step" if self.evaluator is None else self.evaluator.replay_granularity
-        if granularity == "trajectory":
+        if self.evaluator is not None and self.evaluator.replay_granularity == "trajectory":
             return [0]
-        if granularity != "step":
-            raise ValueError(
-                "evaluator.replay_granularity must be 'step' or 'trajectory', "
-                f"got {granularity!r}",
-            )
         if selection == "sde_window":
             # Flash-GRPO: train exactly the steps the rollout made stochastic.
             # The window is a GENERATION-time fact recorded in the trajectory,

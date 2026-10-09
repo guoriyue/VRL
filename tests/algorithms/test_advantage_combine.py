@@ -128,12 +128,7 @@ def test_nft_component_fusion_preserves_chain_credit_and_component_units() -> No
     from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 
     config = DiffusionNFTConfig(advantage_combine="normalized_sum")
-    algorithm = DiffusionNFT(
-        config,
-        advantage_estimator=config.build_estimator(
-            component_weights={"instruction": 1.0, "preservation": 0.3}
-        ),
-    )
+    algorithm = DiffusionNFT(config, component_weights={"instruction": 1.0, "preservation": 0.3})
     # Three candidate trajectories, each repeated across three editing turns.
     instruction = torch.tensor([0.0, 1.0, 2.0]).repeat(3)
     preservation = torch.tensor([0.01, 0.03, 0.02]).repeat(3)

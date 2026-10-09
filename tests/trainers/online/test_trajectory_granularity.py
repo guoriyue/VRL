@@ -12,6 +12,7 @@ from tests.rollouts.collector._helpers import real_collector
 from tests.trainers.online._helpers import _diffusion_rollout_batch, bare_trainer
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 from vrl.scripts.common.online import _run_streaming_optimizer_update
@@ -97,7 +98,7 @@ def _chunk_denoise_batch(batch_size: int = 2) -> RolloutBatch:
     )
 
 
-class _TrajectoryEvaluator:
+class _TrajectoryEvaluator(Evaluator):
     """A trajectory-granularity evaluator over the real policy's parameters.
 
     No family that produces chunk-autoregressive trajectories runs on CPU
@@ -187,18 +188,6 @@ def test_trajectory_evaluator_runs_once_for_chunk_transition_axes(
     asyncio.run(update())
 
     assert evaluator.calls == [0]
-
-
-def test_unknown_replay_granularity_fails_fast() -> None:
-    trainer = bare_trainer(evaluator=type("Evaluator", (), {"replay_granularity": "batch"})())
-    batch = _diffusion_rollout_batch(
-        rewards=torch.zeros(1),
-        group_ids=torch.zeros(1, dtype=torch.long),
-        num_steps=4,
-    )
-
-    with pytest.raises(ValueError, match="replay_granularity"):
-        _indices(trainer, batch, 1.0, "strided")
 
 
 def test_step_evaluator_uses_primary_action_axis_for_fractional_selection() -> None:

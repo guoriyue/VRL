@@ -27,10 +27,11 @@ class PreviousPolicyObjective:
     # These objectives train the forward process from the rollout's clean
     # latents (TrajectoryReader.forward_process_replay) — no reverse-SDE
     # trajectory, no log-probs, no evaluator.
-    # The behaviour policy is the current policy, so their config contracts
-    # leave tolerates_off_policy_staleness False: a superseded policy's
-    # rollout would be scored against the wrong theta_old (and NFT, being
-    # likelihood-free, has no importance ratio to absorb the lag).
+    # The behaviour policy is the current policy, which their requirements
+    # declare as requires_previous_policy: a superseded policy's rollout would
+    # be scored against the wrong theta_old (and NFT, being likelihood-free,
+    # has no importance ratio to absorb the lag), so continuous staleness is
+    # rejected at config resolution.
     uses_evaluator = False
     # Trained on the forward process: no clean-target SFT term, and no KL term
     # unless the objective defines one.

@@ -24,7 +24,7 @@ class TestGRPOSingleSampleNaN:
         """Single sample per group → advantage = 0.0, NOT NaN."""
         import torch
 
-        grpo = GRPO()
+        grpo = GRPO(GRPOConfig())
         rewards = torch.tensor([5.0])
         group_ids = torch.tensor([0])
         advantages = grpo.compute_advantages_from_tensors(rewards, group_ids)
@@ -35,7 +35,7 @@ class TestGRPOSingleSampleNaN:
         """Multiple groups each with 1 sample → all advantages = 0."""
         import torch
 
-        grpo = GRPO()
+        grpo = GRPO(GRPOConfig())
         rewards = torch.tensor([1.0, 5.0, 10.0])
         group_ids = torch.tensor([0, 1, 2])  # each prompt has 1 sample
         advantages = grpo.compute_advantages_from_tensors(rewards, group_ids)
@@ -46,7 +46,7 @@ class TestGRPOSingleSampleNaN:
         """Group with multiple samples → proper normalization, no NaN."""
         import torch
 
-        grpo = GRPO()
+        grpo = GRPO(GRPOConfig())
         rewards = torch.tensor([1.0, 3.0, 5.0, 7.0])
         group_ids = torch.tensor([0, 0, 0, 0])  # all same prompt
         advantages = grpo.compute_advantages_from_tensors(rewards, group_ids)

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from vrl.algorithms.advantages import GroupAdvantageConfig, GroupAdvantageEstimator
-from vrl.algorithms.config_contract import AlgorithmConfigContract
+from vrl.algorithms.advantages import GroupAdvantageConfig, GroupAdvantageObjective
 from vrl.algorithms.logprob_mismatch import (
     PrecisionCorrectionConfig,
     apply_rejection_sample_mask,
@@ -15,6 +14,7 @@ from vrl.algorithms.logprob_mismatch import (
     behavior_log_prob,
     combine_keep_masks,
 )
+from vrl.algorithms.requirements import AlgorithmRequirements
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.rollouts.evaluators.types import FlowSDESignal
@@ -32,10 +32,9 @@ class ClippedPolicyConfig(GroupAdvantageConfig):
 class GRPOConfig(ClippedPolicyConfig):
     """Hyper-parameters for continuous GRPO."""
 
-    config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
+    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
         needs_sde_rollout=True,
         sft_source="latents",
-        tolerates_off_policy_staleness=True,
     )
 
     flow_kl_use_dt: bool = False
@@ -49,7 +48,7 @@ class GRPOConfig(ClippedPolicyConfig):
     sft_weight: float = 0.0
 
 
-class GRPO:
+class GRPO(GroupAdvantageObjective):
     """Group Relative Policy Optimization for continuous rollout signals.
 
     Advantages are normalised within each prompt group:
@@ -63,26 +62,15 @@ class GRPO:
 
     def __init__(
         self,
-        config: GRPOConfig | None = None,
+        config: GRPOConfig,
         *,
-        advantage_estimator: GroupAdvantageEstimator | None = None,
+        component_weights: Mapping[str, float] | None = None,
         precision_correction: PrecisionCorrectionConfig | None = None,
     ) -> None:
-        self.config = config or GRPOConfig()
-        self._initialize_precision_correction(precision_correction)
-        self._initialize_advantage_estimator(advantage_estimator)
-
-    def _initialize_precision_correction(
-        self,
-        precision_correction: PrecisionCorrectionConfig | None,
-    ) -> None:
-        """Install the rollout/replay precision correction (TIS) this loss applies.
-
-        The knobs live at the trainer level (``trainer.precision_correction``),
-        not in the algorithm's hyperparameters; the factory hands them in at
-        construction. Off by default.
-        """
-
+        super().__init__(config, component_weights=component_weights)
+        # The rollout/replay precision correction (TIS/RS) this loss applies.
+        # The knobs are trainer-level (``trainer.precision_correction``), not
+        # hyperparameters; the factory hands them in. Off by default.
         self.precision_correction = precision_correction or PrecisionCorrectionConfig()
 
     @property
@@ -109,49 +97,6 @@ class GRPO:
         """Called after every applied (not scaler-skipped) optimizer step."""
 
         del global_step
-
-    def _initialize_advantage_estimator(
-        self,
-        advantage_estimator: GroupAdvantageEstimator | None,
-    ) -> None:
-        """Bind one resolved advantage strategy to this algorithm instance."""
-
-        if advantage_estimator is None:
-            advantage_estimator = self.config.build_estimator()
-        self.advantage_estimator = advantage_estimator
-
-    def compute_advantages_from_tensors(
-        self,
-        rewards: Any,
-        group_ids: Any,
-    ) -> Any:
-        """Per-group advantage normalization on tensors.
-
-        Groups are identified by ``group_ids``: samples sharing the same
-        group_id are normalized together (GRPO per-prompt normalization).
-        """
-        return self.advantage_estimator.compute(
-            rewards,
-            group_ids,
-        )
-
-    def compute_advantages_from_components(
-        self,
-        rewards: Any,
-        component_rewards: dict[str, Any],
-        group_ids: Any,
-    ) -> Any:
-        """Compute advantages with optional raw reward-component observations.
-
-        The default strategy consumes ``rewards``, the authoritative weighted
-        total from the reward runtime. Component-aware strategies consume the
-        raw observations using the weights bound to ``advantage_estimator``.
-        """
-        return self.advantage_estimator.compute(
-            rewards,
-            group_ids,
-            component_rewards=component_rewards,
-        )
 
     def compute_loss(
         self,
@@ -205,15 +150,11 @@ class GRPO:
         # policy actions. Existing diffusion masks are all ones, preserving
         # their numerical behavior.
         keep = combine_keep_masks(signals.mask.to(ratio.dtype), tis_keep, rs_keep)
-        if keep is not None:
-            policy_loss = (per_sample_loss * keep).sum() / keep.sum().clamp_min(1.0)
-            active_clip_fraction = (
-                ((clipped_loss > unclipped_loss).to(keep.dtype) * keep).sum()
-                / keep.sum().clamp_min(1.0)
-            ).item()
-        else:
-            policy_loss = torch.mean(per_sample_loss)
-            active_clip_fraction = (clipped_loss > unclipped_loss).float().mean().item()
+        policy_loss = (per_sample_loss * keep).sum() / keep.sum().clamp_min(1.0)
+        active_clip_fraction = (
+            ((clipped_loss > unclipped_loss).to(keep.dtype) * keep).sum()
+            / keep.sum().clamp_min(1.0)
+        ).item()
         if tis_keep is not None:
             tis_clip_fraction = (1.0 - tis_keep.mean()).item()
         else:
@@ -276,14 +217,10 @@ class GRPO:
     def _broadcast_sample_values(values: Any, target: Any) -> Any:
         """Expand one value per sample across grouped policy-action axes."""
 
-        value_shape = getattr(values, "shape", None)
-        target_shape = getattr(target, "shape", None)
-        if value_shape is None or target_shape is None:
-            return values
-        if not value_shape or not target_shape or int(value_shape[0]) != int(target_shape[0]):
+        if values.shape[0] != target.shape[0]:
             raise ValueError(
                 "sample values and policy signals must share their leading batch axis: "
-                f"{tuple(value_shape)} vs {tuple(target_shape)}",
+                f"{tuple(values.shape)} vs {tuple(target.shape)}",
             )
         while values.ndim < target.ndim:
             values = values.unsqueeze(-1)
@@ -300,10 +237,9 @@ class FlashGRPOConfig(GRPOConfig):
     tight clip is a drift rail, not a trust region.
     """
 
-    config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
+    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
         needs_sde_rollout=True,
         sft_source="unsupported",
-        tolerates_off_policy_staleness=True,
     )
 
     clip_ratio: float = 1e-3
@@ -350,17 +286,17 @@ class FlashGRPO(GRPO):
 
     def __init__(
         self,
-        config: FlashGRPOConfig | None = None,
+        config: FlashGRPOConfig,
         *,
         scheduler: Any,
         noise_level: float = 1.0,
         sde_type: str = "flow_grpo",
-        advantage_estimator: GroupAdvantageEstimator | None = None,
+        component_weights: Mapping[str, float] | None = None,
         precision_correction: PrecisionCorrectionConfig | None = None,
     ) -> None:
         super().__init__(
-            config or FlashGRPOConfig(),
-            advantage_estimator=advantage_estimator,
+            config,
+            component_weights=component_weights,
             precision_correction=precision_correction,
         )
         # The rollout SDE the rectification weight is defined over: the same
@@ -448,10 +384,9 @@ class FlowDPPOConfig(GroupAdvantageConfig):
     # The KL mask is the objective: at strict + ppo_epochs=1 the rollout and
     # current proposal means coincide, KL==0, nothing is masked, and the loss
     # collapses to plain REINFORCE.
-    config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
+    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
         needs_sde_rollout=True,
         sft_source="unsupported",
-        tolerates_off_policy_staleness=True,
         requires_active_trust_region=True,
     )
 
@@ -463,7 +398,18 @@ class FlowDPPOConfig(GroupAdvantageConfig):
     add_kl_coefficient: bool = True
 
 
-class FlowDPPO(GRPO):
+class TrustRegionGRPO(GRPO):
+    """GRPO whose loss is a trust region against the rollout policy.
+
+    The trust region replaces the reference-KL term, and these variants carry
+    no clean-target SFT term, so their configs declare neither weight.
+    """
+
+    kl_coef = 0.0
+    sft_weight = 0.0
+
+
+class FlowDPPO(TrustRegionGRPO):
     """Trust-region GRPO: mask high-KL, gap-widening samples (no ratio clip).
 
     Asymmetric by construction — only updates that *increase* the divergence from
@@ -472,21 +418,7 @@ class FlowDPPO(GRPO):
     policy are always kept. This is the key difference from PPO's symmetric clip.
     """
 
-    # The trust region replaces the KL term, and the variant carries no SFT term.
-    kl_coef = 0.0
-    sft_weight = 0.0
-
-    def __init__(
-        self,
-        config: FlowDPPOConfig | None = None,
-        *,
-        advantage_estimator: GroupAdvantageEstimator | None = None,
-        precision_correction: PrecisionCorrectionConfig | None = None,
-    ) -> None:
-        cfg = config or FlowDPPOConfig()
-        self.config: FlowDPPOConfig = cfg
-        self._initialize_precision_correction(precision_correction)
-        self._initialize_advantage_estimator(advantage_estimator)
+    config: FlowDPPOConfig
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
         import torch
@@ -588,17 +520,16 @@ class GRPOGuardConfig(GroupAdvantageConfig):
     # The ratio-mean-bias / step-scale guard is the objective: at strict +
     # ppo_epochs=1 the current-vs-rollout drift is 0, the guard correction
     # vanishes, and the loss collapses to plain GRPO.
-    config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
+    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
         needs_sde_rollout=True,
         sft_source="unsupported",
-        tolerates_off_policy_staleness=True,
         requires_active_trust_region=True,
     )
 
     clip_ratio: float = 0.2
 
 
-class GRPOGuard(GRPO):
+class GRPOGuard(TrustRegionGRPO):
     """FlowGRPO with an additive ratio-mean-bias and 1/sqrt_dt**2 step-scale norm.
 
     Unlike Flow-DPPO (which *drops* high-KL samples), GRPO-Guard keeps every
@@ -607,21 +538,7 @@ class GRPOGuard(GRPO):
     early and late timesteps contribute comparably.
     """
 
-    # The trust region replaces the KL term, and the variant carries no SFT term.
-    kl_coef = 0.0
-    sft_weight = 0.0
-
-    def __init__(
-        self,
-        config: GRPOGuardConfig | None = None,
-        *,
-        advantage_estimator: GroupAdvantageEstimator | None = None,
-        precision_correction: PrecisionCorrectionConfig | None = None,
-    ) -> None:
-        cfg = config or GRPOGuardConfig()
-        self.config: GRPOGuardConfig = cfg
-        self._initialize_precision_correction(precision_correction)
-        self._initialize_advantage_estimator(advantage_estimator)
+    config: GRPOGuardConfig
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
         import torch
@@ -651,18 +568,14 @@ class GRPOGuard(GRPO):
         unclipped_loss = -advantages * ratio
         clipped_loss = -advantages * clipped_ratio
         per_sample_loss = torch.maximum(unclipped_loss, clipped_loss)
-        # Reject out-of-band precision-drift samples; collapses to the plain mean
-        # when no precision keep is active.
+        # Reject out-of-band precision-drift samples (the mask alone is all ones
+        # when no precision keep is active).
         keep = combine_keep_masks(signals.mask.to(ratio.dtype), tis_keep, rs_keep)
-        if keep is not None:
-            reduced = (per_sample_loss * keep).sum() / keep.sum().clamp_min(1.0)
-            active_clip_fraction = (
-                ((clipped_loss > unclipped_loss).to(keep.dtype) * keep).sum()
-                / keep.sum().clamp_min(1.0)
-            ).item()
-        else:
-            reduced = per_sample_loss.mean()
-            active_clip_fraction = (clipped_loss > unclipped_loss).float().mean().item()
+        reduced = (per_sample_loss * keep).sum() / keep.sum().clamp_min(1.0)
+        active_clip_fraction = (
+            ((clipped_loss > unclipped_loss).to(keep.dtype) * keep).sum()
+            / keep.sum().clamp_min(1.0)
+        ).item()
         # Per-step magnitude normalization (cross-timestep consistent gradients).
         policy_loss = reduced / sqrt_dt_mean.pow(2).clamp_min(1e-12)
 

@@ -316,9 +316,46 @@ class GroupAdvantageConfig:
         )
 
 
+class GroupAdvantageObjective:
+    """An objective whose advantages come from a ``GroupAdvantageEstimator``.
+
+    Bound once at construction from the objective's own normalization config
+    and the reward config's component weights; ``advantage_combine`` on the
+    config decides whether those weights combine standardized components or
+    the weighted total the reward runtime already produced.
+    """
+
+    def __init__(
+        self,
+        config: GroupAdvantageConfig,
+        *,
+        component_weights: Mapping[str, float] | None = None,
+    ) -> None:
+        self.config = config
+        self.advantage_estimator = config.build_estimator(component_weights=component_weights)
+
+    def compute_advantages_from_tensors(self, rewards: Any, group_ids: Any) -> Any:
+        """Group-relative advantages of the weighted reward total."""
+
+        return self.advantage_estimator.compute(rewards, group_ids)
+
+    def compute_advantages_from_components(
+        self,
+        rewards: Any,
+        component_rewards: dict[str, Any],
+        group_ids: Any,
+    ) -> Any:
+        """Advantages from the weighted total and its raw component observations."""
+
+        return self.advantage_estimator.compute(
+            rewards, group_ids, component_rewards=component_rewards
+        )
+
+
 __all__ = [
     "GroupAdvantageConfig",
     "GroupAdvantageEstimator",
+    "GroupAdvantageObjective",
     "group_relative_advantages",
     "nonzero_advantage_mask",
 ]

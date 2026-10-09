@@ -19,9 +19,9 @@ class Algorithm(Protocol):
     - compute_loss(inputs)
     """
 
-    # Which schedules an objective is sound under (off-policy staleness, an
-    # active trust region) is a config fact: its config class declares it in
-    # ``config_contract`` and config resolution enforces it before launch.
+    # Which schedules an objective is sound under (a current-weights behaviour
+    # policy, an active trust region) is a config fact: its config class
+    # declares it in ``requirements`` and config resolution enforces it.
     #
     # What a loss reads is the type of its input (``SegmentSignal`` /
     # ``FlowSDESignal`` on the evaluator branch, ``ForwardProcessReplay`` on the

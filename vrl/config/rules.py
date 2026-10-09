@@ -62,11 +62,11 @@ def check_cross_section_rules(root: RootConfig) -> None:
     algo = root.algorithm
     if algo is None:
         return
-    contract = algo.hyperparameters.config_contract
+    requirements = algo.hyperparameters.requirements
     kind = algo.kind
     rollout = root.rollout
 
-    if contract.requires_previous_policy and root.model is not None:
+    if requirements.requires_previous_policy and root.model is not None:
         # The objectives re-noise the clean latent and evaluate it through the
         # shared full-sequence replay forward (``replay_forward_with_latents``),
         # so the family needs a trainer replay recipe on that regime. The
@@ -87,7 +87,7 @@ def check_cross_section_rules(root: RootConfig) -> None:
     # ── Sections and explicit fields outside the algorithm's declared surface.
     # An empty allowed set permits only an empty section; a None entry forbids
     # the section outright; consumed_sections=None imposes no restriction.
-    for section_name, allowed in contract.consumed_sections or ():
+    for section_name, allowed in requirements.consumed_sections or ():
         section = getattr(root, section_name)
         if section is None:
             continue
@@ -108,11 +108,11 @@ def check_cross_section_rules(root: RootConfig) -> None:
         if not math.isfinite(sft_weight) or sft_weight < 0:
             raise ValueError("algorithm.sft_weight must be a finite number >= 0")
         if sft_weight > 0:
-            if contract.sft_source == "unsupported":
+            if requirements.sft_source == "unsupported":
                 raise ValueError(
                     f"algorithm.sft_weight > 0 is not supported by algorithm.kind={kind!r}",
                 )
-            if contract.sft_source == "latents" and (
+            if requirements.sft_source == "latents" and (
                 root.data is None or not root.data.sft_latents
             ):
                 raise ValueError(
@@ -124,12 +124,12 @@ def check_cross_section_rules(root: RootConfig) -> None:
     # ── Objectives that collect through the stochastic sampler need rollout.sde.
     # Membership of sde.type itself is the SdeConfig Literal's job; only the
     # presence of the block is a cross-section fact.
-    if contract.needs_sde_rollout and (rollout is None or rollout.sde is None):
+    if requirements.needs_sde_rollout and (rollout is None or rollout.sde is None):
         raise ValueError("config missing required field: rollout.sde.type")
 
     # ── A trust-region loss measures drift against the rollout's proposal mean,
     # which generation stores only on request.
-    if contract.requires_active_trust_region and (
+    if requirements.requires_active_trust_region and (
         rollout is None or not rollout.return_prev_sample_mean
     ):
         raise ValueError(

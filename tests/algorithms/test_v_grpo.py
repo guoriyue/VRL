@@ -155,7 +155,7 @@ def test_unit_ratio_loss_is_the_negated_soft_clipped_advantage() -> None:
 
 
 def test_noise_is_shared_within_a_group_and_fresh_across_groups_and_updates() -> None:
-    objective = VGRPO()
+    objective = VGRPO(VGRPOConfig())
     x0 = torch.zeros(4, 2, 3)
     same_group = objective._group_shared_noise(
         x0, group_ids=torch.tensor([3, 3, 3, 3]), timestep_index=1
@@ -179,7 +179,7 @@ def test_noise_is_shared_within_a_group_and_fresh_across_groups_and_updates() ->
 
 
 def test_after_optimizer_step_advances_the_noise_counter() -> None:
-    objective = VGRPO()
+    objective = VGRPO(VGRPOConfig())
 
     objective.after_optimizer_step(7)
 
@@ -192,7 +192,9 @@ def test_after_optimizer_step_advances_the_noise_counter() -> None:
 def test_edm_scale_timestep_grid_fails_loudly() -> None:
     _, _, batch = _batch(timestep=80000.0)
     with pytest.raises(RuntimeError, match=r"normalize into \[0, 1\]"):
-        VGRPO().compute_batch_timestep_loss(_build_model(), batch, 0, torch.ones(_BATCH))
+        VGRPO(VGRPOConfig()).compute_batch_timestep_loss(
+            _build_model(), batch, 0, torch.ones(_BATCH)
+        )
 
 
 def test_config_rejects_a_non_positive_soft_clip() -> None:

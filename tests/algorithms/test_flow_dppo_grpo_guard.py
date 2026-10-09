@@ -14,6 +14,7 @@ from vrl.algorithms.grpo.continuous import (
     GRPO,
     FlowDPPO,
     FlowDPPOConfig,
+    GRPOConfig,
     GRPOGuard,
     GRPOGuardConfig,
 )
@@ -86,9 +87,9 @@ def _on_policy_signals(n: int):
 @pytest.mark.parametrize(
     "make_algo",
     [
-        pytest.param(GRPO, id="grpo"),
+        pytest.param(lambda: GRPO(GRPOConfig()), id="grpo"),
         pytest.param(lambda: FlowDPPO(FlowDPPOConfig(kl_mask_threshold=10.0)), id="flow_dppo"),
-        pytest.param(GRPOGuard, id="grpo_guard"),
+        pytest.param(lambda: GRPOGuard(GRPOGuardConfig()), id="grpo_guard"),
     ],
 )
 def test_gradient_points_to_raise_high_advantage_and_lower_low(make_algo) -> None:
@@ -110,7 +111,7 @@ def test_gradient_magnitude_scales_with_advantage() -> None:
     # surface (linear in advantage at the on-policy point), confirming the
     # direction signal is the advantage, not an artifact.
     log_prob, sig = _on_policy_signals(2)
-    loss, _ = GRPO().compute_loss(_input(sig, torch.tensor([1.0, 2.0])))
+    loss, _ = GRPO(GRPOConfig()).compute_loss(_input(sig, torch.tensor([1.0, 2.0])))
     loss.backward()
     assert log_prob.grad[1].item() == pytest.approx(2.0 * log_prob.grad[0].item())
 
@@ -278,7 +279,7 @@ def test_grpo_guard_rs_rejects_out_of_band_precision_drift() -> None:
         std_dev_t=torch.ones(n, 1, 2, 2),
         dt=torch.ones(n, 1, 2, 2),
     )
-    algo = GRPOGuard()
+    algo = GRPOGuard(GRPOGuardConfig())
     algo.precision_correction = PrecisionCorrectionConfig(
         rs_mode="seq_mean_k1",
         rs_log_ratio_low=-1.0,
@@ -355,7 +356,7 @@ def test_grpo_guard_ratio_mean_increases_with_drift() -> None:
     mean = torch.zeros(n, 1, 2, 2)
     small = _signals(prev_sample_mean=mean, old_prev_sample_mean=mean + 0.1, **base)
     large = _signals(prev_sample_mean=mean, old_prev_sample_mean=mean + 1.0, **base)
-    algo = GRPOGuard()
+    algo = GRPOGuard(GRPOGuardConfig())
     adv = torch.tensor([1.0, -1.0, 0.5])
     _, m_small = algo.compute_loss(_input(small, adv))
     _, m_large = algo.compute_loss(_input(large, adv))

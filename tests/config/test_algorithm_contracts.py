@@ -5,7 +5,7 @@ from typing import get_args
 
 import pytest
 
-from vrl.algorithms.config_contract import AlgorithmConfigContract
+from vrl.algorithms.requirements import AlgorithmRequirements
 from vrl.algorithms.v_grpo import VGRPOConfig
 from vrl.config.algorithm import algorithm_config_class
 from vrl.config.schema import AlgorithmConfig, RootConfig
@@ -14,10 +14,10 @@ from vrl.config.schema import AlgorithmConfig, RootConfig
 @pytest.mark.parametrize("kind", get_args(AlgorithmConfig.model_fields["kind"].annotation))
 def test_every_algorithm_declares_non_configurable_facts(kind: str) -> None:
     config = algorithm_config_class(kind)()
-    assert isinstance(config.config_contract, AlgorithmConfigContract)
-    assert "config_contract" not in asdict(config)
-    with pytest.raises(ValueError, match=r"unknown algorithm.config_contract"):
-        AlgorithmConfig.model_validate({"kind": kind, "config_contract": {}})
+    assert isinstance(config.requirements, AlgorithmRequirements)
+    assert "requirements" not in asdict(config)
+    with pytest.raises(ValueError, match=r"unknown algorithm.requirements"):
+        AlgorithmConfig.model_validate({"kind": kind, "requirements": {}})
 
 
 @pytest.mark.parametrize(
@@ -31,9 +31,7 @@ def test_rules_follow_declared_facts_without_changing_kind(
 ) -> None:
     payload = {"algorithm": {"kind": "v_grpo", **algorithm_fields}}
     RootConfig.model_validate(payload)
-    monkeypatch.setattr(
-        VGRPOConfig, "config_contract", replace(VGRPOConfig.config_contract, **changes)
-    )
+    monkeypatch.setattr(VGRPOConfig, "requirements", replace(VGRPOConfig.requirements, **changes))
     with pytest.raises(ValueError, match=error):
         RootConfig.model_validate(payload)
 
@@ -47,15 +45,15 @@ def test_offline_surface_is_owned_by_algorithm_config(monkeypatch) -> None:
     }
     with pytest.raises(ValueError, match=r"trainer.seed"):
         RootConfig.model_validate(payload)
-    contract = DiffusionDPOConfig.config_contract
+    requirements = DiffusionDPOConfig.requirements
     monkeypatch.setattr(
         DiffusionDPOConfig,
-        "config_contract",
+        "requirements",
         replace(
-            contract,
+            requirements,
             consumed_sections=tuple(
                 (name, allowed | {"seed"} if name == "trainer" else allowed)
-                for name, allowed in contract.consumed_sections
+                for name, allowed in requirements.consumed_sections
             ),
         ),
     )
@@ -72,14 +70,16 @@ def test_section_presence_restriction_is_declared_independently_of_fields(
     with pytest.raises(ValueError, match="does not consume the reward config section"):
         RootConfig.model_validate(payload)
 
-    contract = DiffusionDPOConfig.config_contract
+    requirements = DiffusionDPOConfig.requirements
     monkeypatch.setattr(
         DiffusionDPOConfig,
-        "config_contract",
+        "requirements",
         replace(
-            contract,
+            requirements,
             consumed_sections=tuple(
-                (name, allowed) for name, allowed in contract.consumed_sections if name != "reward"
+                (name, allowed)
+                for name, allowed in requirements.consumed_sections
+                if name != "reward"
             ),
         ),
     )

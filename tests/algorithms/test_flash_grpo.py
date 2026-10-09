@@ -114,7 +114,7 @@ def _prepared(steps: list[int]) -> FlashGRPO:
     """A FlashGRPO whose update-wide denominator covers exactly ``steps``."""
 
     scheduler = _Wan20Scheduler()
-    algorithm = FlashGRPO(scheduler=scheduler)
+    algorithm = FlashGRPO(FlashGRPOConfig(), scheduler=scheduler)
     algorithm.prepare_update(lambda: scheduler.timesteps[steps])
     return algorithm
 
@@ -235,7 +235,7 @@ def test_update_denominator_is_the_reference_value_norm() -> None:
 def test_loss_weight_requires_the_update_denominator() -> None:
     std, dt, sigma = _sde_intermediates([0, 1])
     with pytest.raises(RuntimeError, match="prepare_update"):
-        FlashGRPO(scheduler=_Wan20Scheduler())._loss_weight(
+        FlashGRPO(FlashGRPOConfig(), scheduler=_Wan20Scheduler())._loss_weight(
             _signals(2, std_dev_t=std, dt=dt, sigma=sigma).primary
         )
 

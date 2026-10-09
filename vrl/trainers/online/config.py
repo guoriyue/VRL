@@ -313,18 +313,19 @@ class TrainerConfig:
         config = cls(**payload)
         algorithm = root.algorithm
         if algorithm is not None:
-            contract = algorithm.hyperparameters.config_contract
+            requirements = algorithm.hyperparameters.requirements
             if (
                 config.rollout_orchestration.schedule_mode == "continuous"
-                and not contract.tolerates_off_policy_staleness
+                and requirements.requires_previous_policy
             ):
                 raise ValueError(
                     "trainer.rollout_orchestration.schedule_mode='continuous' trains on "
-                    f"samples up to max_stale_policy_versions old, which algorithm.kind="
-                    f"{algorithm.kind!r} does not tolerate. Use schedule_mode="
+                    f"samples up to max_stale_policy_versions old, but algorithm.kind="
+                    f"{algorithm.kind!r} scores against the current weights and has no "
+                    "importance ratio to absorb that lag. Use schedule_mode="
                     "'strict_on_policy'.",
                 )
-            if contract.requires_active_trust_region and not config.replays_off_policy:
+            if requirements.requires_active_trust_region and not config.replays_off_policy:
                 raise ValueError(
                     f"algorithm.kind={algorithm.kind!r} is defined by its importance-ratio "
                     "trust region, but the rollout schedule permits no behavior-policy "

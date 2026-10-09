@@ -44,12 +44,13 @@ full-sequence replay recipe runs either objective.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-from vrl.algorithms.advantages import group_relative_advantages
-from vrl.algorithms.config_contract import AlgorithmConfigContract
+from vrl.algorithms.advantages import GroupAdvantageConfig, GroupAdvantageObjective
 from vrl.algorithms.previous_policy import PreviousPolicyObjective
+from vrl.algorithms.requirements import AlgorithmRequirements
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.models.precision import model_autocast
@@ -60,32 +61,33 @@ _SEED_INDEX = 104_729
 
 
 @dataclass(slots=True)
-class VGRPOConfig:
+class VGRPOConfig(GroupAdvantageConfig):
     """Hyper-parameters for the V-GRPO objective.
 
     ``adv_soft_clip`` is off when ``None``. The paper's SD 3.5 M Stage-1 recipe
-    (fully on-policy) uses ``adv_soft_clip=3``.
+    (fully on-policy) uses ``adv_soft_clip=3`` and standardizes the weighted
+    reward total once (``weighted_sum_raw``).
     """
 
-    config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
+    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
         needs_sde_rollout=False,
         sft_source="unsupported",
         requires_previous_policy=True,
     )
 
     eps: float = 1e-8
-    adv_clip_max: float = 5.0
-    global_std: bool = False
+    advantage_combine: str = "weighted_sum_raw"
     adv_soft_clip: float | None = 3.0
 
     def __post_init__(self) -> None:
+        GroupAdvantageConfig.__post_init__(self)
         if self.adv_soft_clip is not None and float(self.adv_soft_clip) <= 0.0:
             raise ValueError(
                 f"VGRPOConfig.adv_soft_clip must be > 0 or null, got {self.adv_soft_clip}"
             )
 
 
-class VGRPO(PreviousPolicyObjective):
+class VGRPO(PreviousPolicyObjective, GroupAdvantageObjective):
     """Variational GRPO objective on the forward-process replay branch.
 
     ``theta_old`` is the detached current prediction, so the ratio is
@@ -93,21 +95,18 @@ class VGRPO(PreviousPolicyObjective):
     is the paper's Stage-1 recipe.
     """
 
-    def __init__(self, config: VGRPOConfig | None = None) -> None:
-        self.config = config or VGRPOConfig()
+    config: VGRPOConfig
+
+    def __init__(
+        self,
+        config: VGRPOConfig,
+        *,
+        component_weights: Mapping[str, float] | None = None,
+    ) -> None:
+        GroupAdvantageObjective.__init__(self, config, component_weights=component_weights)
         # Advances with the optimizer so the group-shared noise changes across
         # updates while staying fixed within one.
         self._update_counter = 0
-
-    def compute_advantages_from_tensors(self, rewards: Any, group_ids: Any) -> Any:
-        cfg = self.config
-        return group_relative_advantages(
-            rewards,
-            group_ids,
-            eps=cfg.eps,
-            adv_clip_max=cfg.adv_clip_max,
-            global_std=cfg.global_std,
-        )
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
         return self.compute_batch_timestep_loss(

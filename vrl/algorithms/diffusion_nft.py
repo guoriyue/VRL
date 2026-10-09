@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from vrl.algorithms.advantages import GroupAdvantageConfig, GroupAdvantageEstimator
-from vrl.algorithms.config_contract import AlgorithmConfigContract
+from vrl.algorithms.advantages import (
+    GroupAdvantageConfig,
+    GroupAdvantageEstimator,
+    GroupAdvantageObjective,
+)
 from vrl.algorithms.previous_policy import PreviousPolicyObjective
+from vrl.algorithms.requirements import AlgorithmRequirements
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.models.precision import model_autocast
@@ -17,7 +22,7 @@ from vrl.models.precision import model_autocast
 class DiffusionNFTConfig(GroupAdvantageConfig):
     """Hyper-parameters for the DiffusionNFT training objective."""
 
-    config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
+    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
         needs_sde_rollout=True,
         sft_source="unsupported",
         requires_previous_policy=True,
@@ -41,7 +46,7 @@ class DiffusionNFTConfig(GroupAdvantageConfig):
             )
 
 
-class DiffusionNFT(PreviousPolicyObjective):
+class DiffusionNFT(PreviousPolicyObjective, GroupAdvantageObjective):
     """DiffusionNFT-style GRPO objective.
 
     This objective does not consume evaluator log-prob signals. It trains from
@@ -52,37 +57,19 @@ class DiffusionNFT(PreviousPolicyObjective):
     against ``theta_old``, the detached current prediction.
     """
 
+    config: DiffusionNFTConfig
+
     def __init__(
         self,
-        config: DiffusionNFTConfig | None = None,
+        config: DiffusionNFTConfig,
         *,
-        advantage_estimator: GroupAdvantageEstimator | None = None,
+        component_weights: Mapping[str, float] | None = None,
     ) -> None:
-        self.config = config or DiffusionNFTConfig()
-        self.advantage_estimator = advantage_estimator or self.config.build_estimator()
+        GroupAdvantageObjective.__init__(self, config, component_weights=component_weights)
 
     @property
     def kl_coef(self) -> float:
         return float(self.config.kl_coef)
-
-    def compute_advantages_from_tensors(
-        self,
-        rewards: Any,
-        group_ids: Any,
-    ) -> Any:
-        return self.advantage_estimator.compute(rewards, group_ids)
-
-    def compute_advantages_from_components(
-        self,
-        rewards: Any,
-        component_rewards: dict[str, Any],
-        group_ids: Any,
-    ) -> Any:
-        """Fuse independently normalized objectives using the shared trainer protocol."""
-
-        return self.advantage_estimator.compute(
-            rewards, group_ids, component_rewards=component_rewards
-        )
 
     def compute_loss(
         self,

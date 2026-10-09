@@ -1,7 +1,8 @@
 """An algorithm's schedule requirements are enforced when the config resolves.
 
-Each objective's config class declares, in its ``config_contract``, whether it
-tolerates off-policy staleness and whether its loss is an active trust region.
+Each objective's config class declares, in its ``requirements``, whether it
+scores against the current weights (no off-policy staleness) and whether its
+loss is an active trust region.
 Resolution rejects a schedule that breaks either declaration, and a
 ``recompute_old_logprob`` correction under off-policy replay, before any model
 or Ray worker exists. Every case swaps presets on a real SD3.5 experiment.
@@ -59,7 +60,7 @@ def test_trust_region_needs_the_stored_rollout_proposal_mean(recipe: str) -> Non
 def test_current_policy_objective_rejects_continuous_staleness() -> None:
     """DiffusionNFT's behaviour policy is the current weights; a stale sample has none."""
 
-    with pytest.raises(ValueError, match="does not tolerate"):
+    with pytest.raises(ValueError, match="scores against the current weights"):
         _build(_CONTINUOUS, experiment="experiment/flux/online_diffusion_nft_pickscore_validation")
 
 

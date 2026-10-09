@@ -67,9 +67,6 @@ class AlgorithmEvaluatorPair:
             is_chunk_autoregressive = (
                 family_entry.policy_semantics.generation_regime == "chunk_autoregressive"
             )
-            advantage_estimator = algorithm_config.build_estimator(
-                component_weights=reward.weights,
-            )
             trainer_config = built.trainer
             correction = None if trainer_config is None else trainer_config.precision_correction
             denoise = (
@@ -83,14 +80,14 @@ class AlgorithmEvaluatorPair:
                     scheduler=scheduler,
                     noise_level=denoise.noise_level,
                     sde_type=denoise.sde_type or "flow_grpo",
-                    advantage_estimator=advantage_estimator,
+                    component_weights=reward.weights,
                     precision_correction=correction,
                 )
             else:
                 algorithm_type = {"flow_dppo": FlowDPPO, "grpo_guard": GRPOGuard}.get(kind, GRPO)
                 algorithm = algorithm_type(
                     algorithm_config,
-                    advantage_estimator=advantage_estimator,
+                    component_weights=reward.weights,
                     precision_correction=correction,
                 )
             if is_chunk_autoregressive:
@@ -146,12 +143,7 @@ class AlgorithmEvaluatorPair:
             from vrl.algorithms.diffusion_nft import DiffusionNFT
 
             return cls(
-                algorithm=DiffusionNFT(
-                    algorithm_config,
-                    advantage_estimator=algorithm_config.build_estimator(
-                        component_weights=reward.weights,
-                    ),
-                ),
+                algorithm=DiffusionNFT(algorithm_config, component_weights=reward.weights),
                 evaluator=None,
             )
 
@@ -159,7 +151,7 @@ class AlgorithmEvaluatorPair:
             from vrl.algorithms.v_grpo import VGRPO
 
             return cls(
-                algorithm=VGRPO(algorithm_config),
+                algorithm=VGRPO(algorithm_config, component_weights=reward.weights),
                 evaluator=None,
             )
 

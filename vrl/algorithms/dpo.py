@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
-from vrl.algorithms.config_contract import AlgorithmConfigContract
+from vrl.algorithms.requirements import AlgorithmRequirements
 
 # Torch is a call-time dependency, not an import-time one: this module's config
 # dataclass is what ``algorithm.kind`` dispatch loads during config parsing,
@@ -35,7 +35,7 @@ class DiffusionDPOConfig:
       * Larger β → tighter ref-policy anchor.
     """
 
-    config_contract: ClassVar[AlgorithmConfigContract] = AlgorithmConfigContract(
+    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
         needs_sde_rollout=False,
         sft_source="preference_winner",
         consumed_sections=(

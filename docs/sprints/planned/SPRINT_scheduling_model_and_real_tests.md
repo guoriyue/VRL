@@ -144,7 +144,7 @@ D 批的难点：trainer 测试用 `nn.Linear(1, 1)` 策略和手造 batch 断�
 |---|---|---|
 | 单条 prompt 的 `request_overrides` 能改 `noise_level`/`sde_type`，回放仍用 run 级值 | denoise 参数只在 run 级配置里设置 | b8bb452a |
 | 初始权重版本两个来源：契约写 0，resume 时 syncer 另取步数 | runtime 唯一持有版本号，syncer 取当前加一 | f12ee2d0 |
-| 算法能力挂在运行对象上，经调度器传参只为抛配置错误；trust-region 检查分在工厂和训练器 | 两个能力进 `AlgorithmConfigContract`，检查移到 `TrainerConfig.from_root` 和 `rules.py` | c2a9fcf5 |
+| 算法能力挂在运行对象上，经调度器传参只为抛配置错误；trust-region 检查分在工厂和训练器 | 两个能力进 `AlgorithmRequirements`（当时名为 `AlgorithmConfigContract`），检查移到 `TrainerConfig.from_root` 和 `rules.py` | c2a9fcf5 |
 | 每次流式更新用 `getattr(..., False)` 探测 global_std | 直接读算法 config | c2a9fcf5 |
 | `ray_launch_inputs` 事后补写 `base_weight_sync` | 在 `resolve_model_build` 里按 `use_lora` 定 | f12ee2d0 |
 | `worker_config.sleep_offload` 绕过配置检查；构建器覆盖用户值 | 配置层拒绝两种写法，构建器只按拓扑注入 | ffb35ce8 |
@@ -210,3 +210,18 @@ D 批的难点：trainer 测试用 `nn.Linear(1, 1)` 策略和手造 batch 断�
 - **`RayGenerationLauncher`**：无状态类，改成模块函数属于命名层面的整理，不计入本轮。
 - **`TrainingCheckpoint.restore_training` 里对 `trainer._strategy` 的 getattr**：离线 DPO 训练器没有策略对象。
 - **`restore_model_checkpoint` 的 None 容忍在 Qwen probe 里确实被用到**：改为调用方判空。
+
+## 8. 算法层：声明、构造与求值器基类（2026-10-08）
+
+| 问题 | 处置 |
+|---|---|
+| `AlgorithmConfigContract` 名字不说明是什么；`tolerates_off_policy_staleness` 在所有在线目标上都等于 `not requires_previous_policy`（行为策略是当前权重的目标才吃不下 staleness） | 改名 `AlgorithmRequirements`（类属性 `requirements`），删掉 `tolerates_off_policy_staleness`，continuous 检查直接读 `requires_previous_policy` |
+| GRPO / FlowDPPO / GRPOGuard / DiffusionNFT 各自实现一遍"绑定 advantage estimator"和两个 advantage 方法；FlowDPPO / GRPOGuard 复制 GRPO 的构造器而不是继承；`_initialize_*` 两个只在构造器里用的 helper | `GroupAdvantageObjective`（`advantages.py`）一次持有 estimator 与两个 advantage 方法，GRPO / NFT / V-GRPO 继承；构造器收 reward 的 `component_weights` 而不是调用方先 build 好的 estimator；FlowDPPO / GRPOGuard 不再写构造器 |
+| `kl_coef = 0.0` / `sft_weight = 0.0` 在 FlowDPPO 和 GRPOGuard 各写一遍 | 共同父类 `TrustRegionGRPO` 声明一次（trust region 取代 KL 项，且无 SFT 项） |
+| `VGRPOConfig` 重复 `GroupAdvantageConfig` 的 `eps / adv_clip_max / global_std`，V-GRPO 自己再调一次 `group_relative_advantages` | `VGRPOConfig(GroupAdvantageConfig)`，默认 `advantage_combine="weighted_sum_raw"`（与原行为逐位相同），advantage 走同一条 estimator 路径 |
+| `config: ... | None = None` 让基类替子类选默认配置，子类因此各写构造器 | 所有目标的 `config` 必填；factory 本来就总是传 |
+| `Evaluator` Protocol 与 `ReplayEvaluatorBase` ABC 各声明一遍 `replay_granularity` / `supports_deferred_replay_tensor_move`；trainer 再在运行时校验字符串取值 | 只剩 ABC `Evaluator`，两个属性是 `ClassVar[Literal[...]]`；删掉 trainer 的字符串校验和对应用例 |
+| GRPO / GRPOGuard 的 loss 里 `keep is None` 分支：每个 signal 都带 mask，`combine_keep_masks` 永远返回张量 | 删掉死分支；`_broadcast_sample_values` 去掉对非张量的 getattr 探测 |
+| trainer 判断是否需要参考策略：`(uses_evaluator and kl_coef > 0) or requires_reference_policy` | `kl_coef > 0 or requires_reference_policy`（无 evaluator 的目标 kl_coef 本来就是 0，NFT 由 requirements 声明） |
+
+`precision_correction` 保留：它不是修精度损失，而是在 rollout 与 replay 精度不一致（如 FP8 rollout、fp32 replay）时把 `exp(replay - rollout)` 这个重要性权重截断（TIS）并整条拒绝越界样本（RS），让少数漂移样本不能主导梯度；`TrainerConfig.from_root` 在精度分裂时自动开启。它只对 GRPO 族（有重要性比）有意义，所以只在 `GRPO` 构造器上出现一次。
