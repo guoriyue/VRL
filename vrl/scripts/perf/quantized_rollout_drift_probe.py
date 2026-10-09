@@ -108,7 +108,7 @@ def _policy_grad_norm(
     flat_old = old_log_prob.reshape(-1)
     flat_advantages = advantages[:, None].expand_as(fresh_logprob).reshape(-1)
     grpo = GRPO(GRPOConfig(kl_coef=0.0))
-    grpo.precision_correction = PrecisionCorrectionConfig(
+    grpo.config.precision_correction = PrecisionCorrectionConfig(
         tis_mode=tis_mode,
         tis_imp_weight_cap=cap,
         rs_mode=rs_mode,

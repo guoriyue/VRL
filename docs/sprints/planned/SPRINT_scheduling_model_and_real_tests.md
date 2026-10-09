@@ -224,4 +224,6 @@ D 批的难点：trainer 测试用 `nn.Linear(1, 1)` 策略和手造 batch 断�
 | GRPO / GRPOGuard 的 loss 里 `keep is None` 分支：每个 signal 都带 mask，`combine_keep_masks` 永远返回张量 | 删掉死分支；`_broadcast_sample_values` 去掉对非张量的 getattr 探测 |
 | trainer 判断是否需要参考策略：`(uses_evaluator and kl_coef > 0) or requires_reference_policy` | `kl_coef > 0 or requires_reference_policy`（无 evaluator 的目标 kl_coef 本来就是 0，NFT 由 requirements 声明） |
 
+目标的构造器只收自己的 config（2026-10-08 续）：`component_weights`（来自 `reward.components`）、`precision_correction`（来自 `trainer.precision_correction`）和 Flash-GRPO 的 `noise_level` / `sde_type`（来自 rollout denoise 选项）原来由 factory 在运行时一根根接进算法；按"配置解析一次、由读它的对象持有"的规则，`build_configs._bridge_online_algorithm` 现在把它们解析进算法 config 的 `init=False` 字段（不是 YAML 键，`root` 保持未桥接的公开副本），GRPO / FlowDPPO / GRPOGuard / NFT / V-GRPO 都是 `Objective(config)`，FlashGRPO 多一个运行时对象 `scheduler`。
+
 `precision_correction` 保留：它不是修精度损失，而是在 rollout 与 replay 精度不一致（如 FP8 rollout、fp32 replay）时把 `exp(replay - rollout)` 这个重要性权重截断（TIS）并整条拒绝越界样本（RS），让少数漂移样本不能主导梯度；`TrainerConfig.from_root` 在精度分裂时自动开启。它只对 GRPO 族（有重要性比）有意义，所以只在 `GRPO` 构造器上出现一次。

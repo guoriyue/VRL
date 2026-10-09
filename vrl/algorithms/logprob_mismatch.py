@@ -10,11 +10,10 @@ toolkit for that drift:
   the per-step training metrics and the replay-parity gate).
 - :class:`PrecisionCorrectionConfig` + :func:`apply_truncated_importance_weight`
   CORRECT it via truncated importance sampling (TIS) — the counterpart to the
-  parity gate. The config lives at the trainer level
-  (``trainer.precision_correction``), not in any algorithm's hyperparameters,
-  because bounding a quantized/backend rollout's drift is a precision concern
-  shared across importance-ratio algorithms; the trainer injects it into the
-  algorithm, which applies the weight inside its own surrogate.
+  parity gate. The knob is ``trainer.precision_correction`` (the trainer's
+  replay-parity gate reads it too); ``build_configs`` bridges it into every
+  importance-ratio objective's config, and the loss applies the weight inside
+  its own surrogate.
 """
 
 from __future__ import annotations

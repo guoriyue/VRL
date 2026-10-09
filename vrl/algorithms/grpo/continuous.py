@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from vrl.algorithms.advantages import GroupAdvantageConfig, GroupRelativeObjective
@@ -21,7 +21,19 @@ from vrl.rollouts.evaluators.types import FlowSDESignal
 
 
 @dataclass(slots=True)
-class ClippedPolicyConfig(GroupAdvantageConfig):
+class ImportanceRatioConfig(GroupAdvantageConfig):
+    """Settings of every objective whose loss is a ratio against the rollout policy."""
+
+    # Bridged by build_configs from ``trainer.precision_correction`` (the
+    # trainer owns the knob: its replay-parity gate reads the same one), never
+    # a YAML key here. Bounds rollout->replay precision drift inside the loss.
+    precision_correction: PrecisionCorrectionConfig = field(
+        default_factory=PrecisionCorrectionConfig, init=False
+    )
+
+
+@dataclass(slots=True)
+class ClippedPolicyConfig(ImportanceRatioConfig):
     """Policy-ratio clipping and reference-KL knobs with real loss consumers."""
 
     clip_ratio: float = 0.2
@@ -60,18 +72,7 @@ class GRPO(GroupRelativeObjective):
 
     uses_evaluator = True
 
-    def __init__(
-        self,
-        config: GRPOConfig,
-        *,
-        component_weights: Mapping[str, float] | None = None,
-        precision_correction: PrecisionCorrectionConfig | None = None,
-    ) -> None:
-        super().__init__(config, component_weights=component_weights)
-        # The rollout/replay precision correction (TIS/RS) this loss applies.
-        # The knobs are trainer-level (``trainer.precision_correction``), not
-        # hyperparameters; the factory hands them in. Off by default.
-        self.precision_correction = precision_correction or PrecisionCorrectionConfig()
+    config: GRPOConfig
 
     @property
     def kl_coef(self) -> float:
@@ -113,7 +114,7 @@ class GRPO(GroupRelativeObjective):
         cfg = self.config
         signals = inputs.signals.primary
         advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
-        pc = self.precision_correction
+        pc = self.config.precision_correction
         old_log_probs = behavior_log_prob(signals.log_prob, signals.old_log_prob, pc)
 
         raw_ratio = torch.exp(signals.log_prob - old_log_probs)
@@ -243,6 +244,11 @@ class FlashGRPOConfig(GRPOConfig):
     )
 
     clip_ratio: float = 1e-3
+    # Bridged by build_configs from the rollout denoise options: the SDE the
+    # rectification weight is defined over, the same one the replay evaluator
+    # integrates. Never YAML keys here.
+    noise_level: float = field(default=1.0, init=False)
+    sde_type: str = field(default="flow_grpo", init=False)
 
 
 class FlashGRPO(GRPO):
@@ -284,26 +290,12 @@ class FlashGRPO(GRPO):
     the full-batch path (or one collection per update).
     """
 
-    def __init__(
-        self,
-        config: FlashGRPOConfig,
-        *,
-        scheduler: Any,
-        noise_level: float = 1.0,
-        sde_type: str = "flow_grpo",
-        component_weights: Mapping[str, float] | None = None,
-        precision_correction: PrecisionCorrectionConfig | None = None,
-    ) -> None:
-        super().__init__(
-            config,
-            component_weights=component_weights,
-            precision_correction=precision_correction,
-        )
-        # The rollout SDE the rectification weight is defined over: the same
-        # scheduler and noise the replay evaluator integrates.
+    config: FlashGRPOConfig
+
+    def __init__(self, config: FlashGRPOConfig, *, scheduler: Any) -> None:
+        super().__init__(config)
+        # The rollout scheduler the rectification weight is defined over.
         self._scheduler = scheduler
-        self._noise_level = noise_level
-        self._sde_type = sde_type
         self._update_coe_mean: Any | None = None
 
     def prepare_update(self, update_timesteps: Callable[[], Any]) -> None:
@@ -319,8 +311,8 @@ class FlashGRPO(GRPO):
         sigma, sqrt_neg_dt, std = flow_sde_scale_terms(
             self._scheduler,
             update_timesteps(),
-            noise_level=self._noise_level,
-            sde_type=self._sde_type,
+            noise_level=self.config.noise_level,
+            sde_type=self.config.sde_type,
         )
         coe = 1.0 / self._rectification_scale(std.float(), sqrt_neg_dt.float(), sigma.float())
         self._update_coe_mean = self._cross_rank_mean(coe).clamp_min(1e-12)
@@ -378,7 +370,7 @@ class FlashGRPO(GRPO):
 
 
 @dataclass(slots=True)
-class FlowDPPOConfig(GroupAdvantageConfig):
+class FlowDPPOConfig(ImportanceRatioConfig):
     """Flow-DPPO: exact-Gaussian-KL trust region instead of the PPO ratio clip."""
 
     # The KL mask is the objective: at strict + ppo_epochs=1 the rollout and
@@ -430,7 +422,7 @@ class FlowDPPO(TrustRegionGRPO):
         old_prev_sample_mean = signals.old_prev_sample_mean
         advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
 
-        pc = self.precision_correction
+        pc = self.config.precision_correction
         old_log_probs = behavior_log_prob(signals.log_prob, signals.old_log_prob, pc)
         raw_ratio = torch.exp(signals.log_prob - old_log_probs)
         # Bound rollout->replay precision drift (FP8/NVFP4 rollout) before it
@@ -511,7 +503,7 @@ class FlowDPPO(TrustRegionGRPO):
 
 
 @dataclass(slots=True)
-class GRPOGuardConfig(GroupAdvantageConfig):
+class GRPOGuardConfig(ImportanceRatioConfig):
     """GRPO-Guard: ratio-mean-bias correction + per-step magnitude normalization.
 
     The guard terms are derived from the per-step diffusion scale.
@@ -554,7 +546,7 @@ class GRPOGuard(TrustRegionGRPO):
         # the soft-corrected guard ratio; RS (whole-sample band rejection on the raw
         # rollout->replay log-ratio) is the effective precision guard here, plus
         # TIS-*mask* when configured. No-op when precision is not split.
-        pc = self.precision_correction
+        pc = self.config.precision_correction
         _, tis_keep = apply_truncated_importance_weight(torch.exp(log_ratio), pc)
         rs_keep = apply_rejection_sample_mask(log_ratio, pc, mask=signals.mask)
         sqrt_dt_mean = signals.dt.mean()

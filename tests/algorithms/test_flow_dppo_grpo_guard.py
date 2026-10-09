@@ -212,7 +212,7 @@ def test_flow_dppo_truncates_precision_weight_into_loss() -> None:
         dt=torch.full((1, 1, 1, 1), 0.1),
     )
     algo = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=float("inf")))
-    algo.precision_correction = PrecisionCorrectionConfig(
+    algo.config.precision_correction = PrecisionCorrectionConfig(
         tis_mode="truncate",
         tis_imp_weight_cap=1.5,
     )
@@ -234,7 +234,7 @@ def test_flow_dppo_rs_rejects_out_of_band_precision_drift() -> None:
         dt=torch.full((n, 1, 1, 1), 0.1),
     )
     algo = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=float("inf")))
-    algo.precision_correction = PrecisionCorrectionConfig(
+    algo.config.precision_correction = PrecisionCorrectionConfig(
         rs_mode="seq_mean_k1",
         rs_log_ratio_low=-1.0,
         rs_log_ratio_high=1.0,
@@ -280,7 +280,7 @@ def test_grpo_guard_rs_rejects_out_of_band_precision_drift() -> None:
         dt=torch.ones(n, 1, 2, 2),
     )
     algo = GRPOGuard(GRPOGuardConfig())
-    algo.precision_correction = PrecisionCorrectionConfig(
+    algo.config.precision_correction = PrecisionCorrectionConfig(
         rs_mode="seq_mean_k1",
         rs_log_ratio_low=-1.0,
         rs_log_ratio_high=1.0,

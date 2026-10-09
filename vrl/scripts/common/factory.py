@@ -67,29 +67,16 @@ class AlgorithmEvaluatorPair:
             is_chunk_autoregressive = (
                 family_entry.policy_semantics.generation_regime == "chunk_autoregressive"
             )
-            trainer_config = built.trainer
-            correction = None if trainer_config is None else trainer_config.precision_correction
             denoise = (
                 RolloutCollectorConfig.from_root(built.root).denoise or DenoiseRequestOptions()
             )
             if kind == "flash_grpo":
                 # The rectification weight is defined over the rollout SDE the
-                # replay evaluator integrates: same scheduler, same noise.
-                algorithm = FlashGRPO(
-                    algorithm_config,
-                    scheduler=scheduler,
-                    noise_level=denoise.noise_level,
-                    sde_type=denoise.sde_type or "flow_grpo",
-                    component_weights=reward.weights,
-                    precision_correction=correction,
-                )
+                # replay evaluator integrates: the same scheduler object.
+                algorithm = FlashGRPO(algorithm_config, scheduler=scheduler)
             else:
                 algorithm_type = {"flow_dppo": FlowDPPO, "grpo_guard": GRPOGuard}.get(kind, GRPO)
-                algorithm = algorithm_type(
-                    algorithm_config,
-                    component_weights=reward.weights,
-                    precision_correction=correction,
-                )
+                algorithm = algorithm_type(algorithm_config)
             if is_chunk_autoregressive:
                 if algorithm.sft_weight > 0:
                     raise ValueError(
@@ -143,7 +130,7 @@ class AlgorithmEvaluatorPair:
             from vrl.algorithms.diffusion_nft import DiffusionNFT
 
             return cls(
-                algorithm=DiffusionNFT(algorithm_config, component_weights=reward.weights),
+                algorithm=DiffusionNFT(algorithm_config),
                 evaluator=None,
             )
 
@@ -151,7 +138,7 @@ class AlgorithmEvaluatorPair:
             from vrl.algorithms.v_grpo import VGRPO
 
             return cls(
-                algorithm=VGRPO(algorithm_config, component_weights=reward.weights),
+                algorithm=VGRPO(algorithm_config),
                 evaluator=None,
             )
 

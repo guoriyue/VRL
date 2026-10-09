@@ -14,11 +14,9 @@ _KW = {"eps": 1e-4, "adv_clip_max": 5.0, "global_std": False}
 def _objective(
     strategy: str, component_weights: dict[str, float] | None = None, **config
 ) -> GroupRelativeObjective:
-    settings = {**_KW, **config}
-    return GroupRelativeObjective(
-        GroupAdvantageConfig(advantage_combine=strategy, **settings),
-        component_weights=component_weights,
-    )
+    settings = GroupAdvantageConfig(advantage_combine=strategy, **{**_KW, **config})
+    settings.component_weights = dict(component_weights or {})
+    return GroupRelativeObjective(settings)
 
 
 def _corr(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -118,7 +116,8 @@ def test_nft_component_fusion_preserves_chain_credit_and_component_units() -> No
     from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 
     config = DiffusionNFTConfig(advantage_combine="normalized_sum")
-    algorithm = DiffusionNFT(config, component_weights={"instruction": 1.0, "preservation": 0.3})
+    config.component_weights = {"instruction": 1.0, "preservation": 0.3}
+    algorithm = DiffusionNFT(config)
     # Three candidate trajectories, each repeated across three editing turns.
     instruction = torch.tensor([0.0, 1.0, 2.0]).repeat(3)
     preservation = torch.tensor([0.01, 0.03, 0.02]).repeat(3)

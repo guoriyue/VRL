@@ -250,15 +250,15 @@ class TestGRPOTruncatedImportanceSampling:
     These guard the FP8/NVFP4 rollout correction path: under quantized rollout the
     weight exp(replay - rollout) inflates on a few samples and, on negative
     advantages, drives a large *unclipped* gradient. TIS caps/masks it. The TIS
-    knobs live on the algorithm's injected ``precision_correction`` (the trainer
-    sets it from ``trainer.precision_correction``), not in GRPOConfig.
+    knobs are ``trainer.precision_correction``, bridged into the objective's
+    config by build_configs; here they are set on the config directly.
     """
 
     @staticmethod
     def _grpo(**pc_kwargs) -> GRPO:
         grpo = GRPO(GRPOConfig(kl_coef=0.0))
         if pc_kwargs:
-            grpo.precision_correction = PrecisionCorrectionConfig(**pc_kwargs)
+            grpo.config.precision_correction = PrecisionCorrectionConfig(**pc_kwargs)
         return grpo
 
     def test_off_mode_matches_legacy_and_reports_zero_clip(self) -> None:
@@ -337,7 +337,7 @@ class TestGRPORejectSampling:
     def _grpo(**pc_kwargs) -> GRPO:
         grpo = GRPO(GRPOConfig(kl_coef=0.0))
         if pc_kwargs:
-            grpo.precision_correction = PrecisionCorrectionConfig(**pc_kwargs)
+            grpo.config.precision_correction = PrecisionCorrectionConfig(**pc_kwargs)
         return grpo
 
     def test_off_mode_is_noop(self) -> None:
@@ -440,7 +440,7 @@ class TestGRPORecomputeOldLogprob:
         drifted = torch.tensor([0.9, 0.2, -0.4])  # far outside clip_ratio=1e-4
 
         grpo = GRPO(GRPOConfig(kl_coef=0.0, clip_ratio=1e-4))
-        grpo.precision_correction = PrecisionCorrectionConfig(recompute_old_logprob="on")
+        grpo.config.precision_correction = PrecisionCorrectionConfig(recompute_old_logprob="on")
         loss, metrics = grpo.compute_loss(
             AlgorithmInput(
                 signals=_flow_signals(log_prob=log_prob, old_log_prob=drifted), advantages=adv

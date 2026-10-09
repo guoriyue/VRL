@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -55,13 +54,8 @@ class DiffusionNFT(PreviousPolicyObjective, GroupRelativeObjective):
 
     config: DiffusionNFTConfig
 
-    def __init__(
-        self,
-        config: DiffusionNFTConfig,
-        *,
-        component_weights: Mapping[str, float] | None = None,
-    ) -> None:
-        GroupRelativeObjective.__init__(self, config, component_weights=component_weights)
+    def __init__(self, config: DiffusionNFTConfig) -> None:
+        GroupRelativeObjective.__init__(self, config)
 
     @property
     def kl_coef(self) -> float:

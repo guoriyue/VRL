@@ -66,7 +66,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
     assert pair.evaluator.sde_type == "cps"
     assert collector_config.denoise is not None
     assert collector_config.denoise.denoise_mode == "native"
-    assert pair.algorithm.component_weights == built.reward.weights
+    assert pair.algorithm.config.component_weights == built.reward.weights
 
 
 @pytest.mark.parametrize(

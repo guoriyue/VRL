@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -173,6 +173,9 @@ class GroupAdvantageConfig:
     adv_clip_max: float = 5.0
     global_std: bool = False
     advantage_combine: str = "normalized_sum"
+    # Bridged by build_configs from ``reward.components``, never a YAML key:
+    # the objective weights ``normalized_sum`` combines.
+    component_weights: dict[str, float] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         if self.advantage_combine not in ADVANTAGE_COMBINE_STRATEGIES:
@@ -185,22 +188,13 @@ class GroupAdvantageConfig:
 class GroupRelativeObjective:
     """The advantage half of an objective that normalizes rewards per prompt group.
 
-    GRPO, DiffusionNFT and V-GRPO inherit it: ``config`` is the objective's
-    own hyper-parameters (the normalization fields are the
-    ``GroupAdvantageConfig`` part of it) and ``component_weights`` are the
-    reward config's objective weights, bound once at construction.
+    GRPO, DiffusionNFT and V-GRPO inherit it; ``config`` is the objective's
+    resolved hyper-parameters, whose ``GroupAdvantageConfig`` part carries the
+    normalization fields and the bridged reward weights.
     """
 
-    def __init__(
-        self,
-        config: GroupAdvantageConfig,
-        *,
-        component_weights: Mapping[str, float] | None = None,
-    ) -> None:
+    def __init__(self, config: GroupAdvantageConfig) -> None:
         self.config = config
-        self.component_weights = {
-            name: float(weight) for name, weight in (component_weights or {}).items()
-        }
 
     def compute_advantages_from_tensors(self, rewards: Any, group_ids: Any) -> Any:
         """Standardize and clamp the weighted reward total within each group."""
@@ -238,11 +232,11 @@ class GroupRelativeObjective:
         objectives = {
             name: values
             for name, values in component_rewards.items()
-            if name in self.component_weights
+            if name in cfg.component_weights
         }
         if cfg.advantage_combine != "normalized_sum" or not objectives:
             return self.compute_advantages_from_tensors(rewards, group_ids)
-        missing = sorted(set(self.component_weights) - set(objectives))
+        missing = sorted(set(cfg.component_weights) - set(objectives))
         if missing:
             raise ValueError(
                 f"reward reports configured components {sorted(objectives)} but not {missing}",
@@ -257,7 +251,7 @@ class GroupRelativeObjective:
                 eps=cfg.eps,
                 global_std=cfg.global_std,
             )
-            weighted = self.component_weights[name] * advantage
+            weighted = cfg.component_weights[name] * advantage
             total = weighted if total is None else total + weighted
         return torch.clamp(total, -cfg.adv_clip_max, cfg.adv_clip_max)
 

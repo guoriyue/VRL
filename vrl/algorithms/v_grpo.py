@@ -44,7 +44,6 @@ full-sequence replay recipe runs either objective.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -97,13 +96,8 @@ class VGRPO(PreviousPolicyObjective, GroupRelativeObjective):
 
     config: VGRPOConfig
 
-    def __init__(
-        self,
-        config: VGRPOConfig,
-        *,
-        component_weights: Mapping[str, float] | None = None,
-    ) -> None:
-        GroupRelativeObjective.__init__(self, config, component_weights=component_weights)
+    def __init__(self, config: VGRPOConfig) -> None:
+        GroupRelativeObjective.__init__(self, config)
         # Advances with the optimizer so the group-shared noise changes across
         # updates while staying fixed within one.
         self._update_counter = 0

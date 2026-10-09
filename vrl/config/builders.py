@@ -176,6 +176,41 @@ def build_precision_split_safety_configs() -> PrecisionCorrectionConfig:
     )
 
 
+def _bridge_online_algorithm(
+    algorithm: Any,
+    *,
+    root: RootConfig,
+    trainer: TrainerConfig,
+    reward: RewardRuntimeConfig,
+) -> Any:
+    """Copy the facts an objective reads from other sections into its config.
+
+    The public ``algorithm`` section holds only the objective's own knobs; the
+    reward weights, the trainer's precision correction and the rollout SDE the
+    objective must agree with are resolved here, once, so the objective reads
+    everything off one config. The public ``root`` keeps the unbridged copy.
+    """
+
+    import copy
+
+    from vrl.algorithms.advantages import GroupAdvantageConfig
+    from vrl.algorithms.grpo.continuous import FlashGRPOConfig, ImportanceRatioConfig
+
+    algorithm = copy.copy(algorithm)
+    if isinstance(algorithm, GroupAdvantageConfig):
+        algorithm.component_weights = dict(reward.weights)
+    if isinstance(algorithm, ImportanceRatioConfig):
+        algorithm.precision_correction = trainer.precision_correction
+    if isinstance(algorithm, FlashGRPOConfig):
+        from vrl.generation.steps.denoise.config import DenoiseRequestOptions
+        from vrl.rollouts.collector.config import RolloutCollectorConfig
+
+        denoise = RolloutCollectorConfig.from_root(root).denoise or DenoiseRequestOptions()
+        algorithm.noise_level = denoise.noise_level
+        algorithm.sde_type = denoise.sde_type or "flow_grpo"
+    return algorithm
+
+
 def build_configs(cfg: DictConfig) -> BuiltConfigs:
     """Bundle typed configs for downstream training scripts."""
 
@@ -195,6 +230,7 @@ def build_configs(cfg: DictConfig) -> BuiltConfigs:
             raise ValueError("online recipe requires a reward section")
         if not any(weight > 0 for weight in reward.weights.values()):
             raise ValueError("At least one reward component must have weight > 0.")
+        algorithm = _bridge_online_algorithm(algorithm, root=root, trainer=trainer, reward=reward)
     return BuiltConfigs(
         root=root,
         algorithm=algorithm,

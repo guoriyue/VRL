@@ -16,12 +16,12 @@ _RECOMPUTE = 'trainer.precision_correction.recompute_old_logprob="on"'
 def test_strict_single_epoch_is_accepted(monkeypatch, tmp_path) -> None:
     tb = real_trainer(monkeypatch, tmp_path, overrides=(_RECOMPUTE, "actor.ppo_epochs=1"))
 
-    assert tb.trainer.algorithm.precision_correction.recompute_old_logprob == "on"
+    assert tb.trainer.algorithm.config.precision_correction.recompute_old_logprob == "on"
 
 
 def test_off_mode_ignores_the_schedule(monkeypatch, tmp_path) -> None:
     # The tiny recipe trains four PPO epochs; with recomputation off that is fine.
     tb = real_trainer(monkeypatch, tmp_path)
 
-    assert tb.trainer.algorithm.precision_correction.recompute_old_logprob == "off"
+    assert tb.trainer.algorithm.config.precision_correction.recompute_old_logprob == "off"
     assert tb.trainer.config.ppo_epochs == 4

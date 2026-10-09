@@ -185,9 +185,9 @@ class TrainerConfig:
     debug: DebugConfig = field(default_factory=DebugConfig)
     replay_parity: ReplayParityConfig = field(default_factory=ReplayParityConfig)
     # Rollout/replay drift correction: truncated importance sampling and
-    # rejection knobs. They live at the trainer (precision) level rather than
-    # in any algorithm's hyperparameters; the recipe factory hands them to the
-    # importance-ratio objectives at construction.
+    # rejection knobs. The trainer's replay-parity gate reads them here;
+    # build_configs bridges the same value into the importance-ratio
+    # objective's config, where the loss applies it.
     precision_correction: PrecisionCorrectionConfig = field(
         default_factory=PrecisionCorrectionConfig,
     )

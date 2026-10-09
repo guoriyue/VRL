@@ -49,7 +49,7 @@ def probe_loss(output: Path) -> None:
                 primary_segment="denoise",
             )
             algorithm = GRPO(GRPOConfig(clip_ratio=1e-4, kl_coef=0.0))
-            algorithm.precision_correction = PrecisionCorrectionConfig(
+            algorithm.config.precision_correction = PrecisionCorrectionConfig(
                 tis_mode="truncate" if mode == "tis" else "off",
                 rs_mode="seq_mean_k1" if mode == "rs" else "off",
                 recompute_old_logprob="on" if mode == "recompute" else "off",

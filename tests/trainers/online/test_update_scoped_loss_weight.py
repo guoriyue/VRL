@@ -75,7 +75,7 @@ def test_prepare_update_receives_every_trained_transition_of_the_update(
     (timesteps,) = calls
     algorithm, evaluator = tb.trainer.algorithm, tb.trainer.evaluator
     assert algorithm._scheduler is evaluator.scheduler
-    assert (algorithm._noise_level, algorithm._sde_type) == (
+    assert (algorithm.config.noise_level, algorithm.config.sde_type) == (
         evaluator.noise_level,
         evaluator.sde_type,
     )
