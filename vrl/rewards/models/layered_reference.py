@@ -4,7 +4,7 @@ Metadata ``layered_reference = {"layers": <directory>}`` names a directory of
 ``layer_*.png`` RGBA frames, back to front, that are the complete truth for
 the prompt's source image (a rendered fixture whose hidden content is known).
 The candidate is the policy's ``[layers, 4, H, W]`` RGBA stack. Every axis
-comes from ``vrl.scripts.eval.layered_reference_score.score_layers``, which
+comes from ``vrl.rewards.models.layered_score.score_layers``, which
 matches truth objects to candidate layers injectively and measures them:
 
 * ``layered_hidden_completion``: one minus the premultiplied RGBA error over
@@ -101,7 +101,7 @@ class LayeredReferenceRewardModel:
         return stack.clamp(0.0, 1.0).permute(0, 2, 3, 1).numpy().astype(np.float64)
 
     def __call__(self, artifact: RewardInferenceArtifact) -> dict[str, float]:
-        from vrl.scripts.eval.layered_reference_score import score_layers
+        from vrl.rewards.models.layered_score import score_layers
 
         reference = self._reference(reference_layers_directory(artifact.metadata))
         candidate = self._candidate(artifact)
