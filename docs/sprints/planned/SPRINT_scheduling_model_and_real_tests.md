@@ -231,3 +231,16 @@ D 批的难点：trainer 测试用 `nn.Linear(1, 1)` 策略和手造 batch 断�
 MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_preflight_local_installation` / `_probe_runtime_environment` / `_validate_single_process_config` / `_resolve_runtime_paths` / `_resolve_weight_components` / `_unused_local_port`——并回各自唯一的调用方：安装检查 + 读官方 JSON 是 `Magi1SubprocessConfig.load_official_config()`，权重路径解析在 `from_build` 里，运行时路径解析在模型构造器里，端口在环境构造里。留下的模块函数都有两个以上调用方或是公开入口。
 
 `precision_correction` 保留：它不是修精度损失，而是在 rollout 与 replay 精度不一致（如 FP8 rollout、fp32 replay）时把 `exp(replay - rollout)` 这个重要性权重截断（TIS）并整条拒绝越界样本（RS），让少数漂移样本不能主导梯度；`TrainerConfig.from_root` 在精度分裂时自动开启。它只对 GRPO 族（有重要性比）有意义，所以只在 `GRPO` 构造器上出现一次。
+
+## 9. 单调用方私有函数清扫（2026-10-08 / 10-09）
+
+判据（MAGI-1 那次定下的）：模块级私有函数只有一个生产调用方就并回调用方；只在四种情况下保留——(a) 按名字注册的回调（argparse `func=`、注册表钩子、Triton 内核、torch SAC policy），(b) 递归 / 线程或进程目标，(c) 测试直接钉它自己的数学而调用方需要真模型或完整 recipe，(d) 长 CLI `main` 的阶段，并回会超过 ~120 行。并回时顺手删掉调用方已经做过的检查和对非可选类型参数的守卫。扫描脚本：`single_callers.py`（私有顶格 `def _x(`，统计 vrl/ 内除定义外的引用次数）。
+
+| 组 | 提交 | 并回 | 保留 |
+|---|---|---|---|
+| rewards | fffdd5e7a | 19 | 10 |
+| scripts：common / data / denoise / rewards / generation / lint / supervise | 2ca7e37ad | 21 | 21 |
+| scripts：eval / perf | bde3c772a | 46 | 42 |
+| config / generation / models / ray / trajectory / utils / trainers | 3614bbd56 | 38 | 20 |
+
+清扫前 218 个候选，清扫后重扫剩 92 个，全部是上面四类保留项（每个提交说明里列了名字和理由）。顺带修到的真问题：`vrl/scripts/data/bootstrap.py` 的 `--run` 切片比错一位，setup 命令从未真正执行；`vrl/rewards/service/wire.py` 解码里一个局部变量遮住了请求体；`video_reward_suite` 一段不可达的 optional-model 循环。
