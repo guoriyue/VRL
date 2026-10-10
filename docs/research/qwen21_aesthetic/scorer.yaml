@@ -1,0 +1,12 @@
+name: siglip-aesthetic-v2_5-qwen21
+revision: v2.5-head-a6caf256b3dc434273c98dcb12f6bf17c5d4fc647d8df11f038386923dd06220
+preprocessing_revision: siglip-384-9fdffc58afc957d1a03a25b10dba0329ab15c2a3
+rubric_revision: image-only-aesthetic-raw-v2.5
+worker_config:
+  model_factory: vrl.rewards.models.aesthetic:AestheticRewardModel
+  model_name: google/siglip-so400m-patch14-384
+  model_revision: 9fdffc58afc957d1a03a25b10dba0329ab15c2a3
+  device: cuda:0
+  dtype: float32
+media_mode: tensor
+batch_size: 8

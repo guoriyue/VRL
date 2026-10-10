@@ -1,0 +1,299 @@
+{
+  "decision": "DO_NOT_TRAIN_UNDER_TESTED_RECIPE",
+  "interpretation": "Preference gate inconclusive, not proof of no possible benefit. No RL improvement established.",
+  "user_gate": {
+    "labels_sha256": "45b8de42132da9937f7348efd8dd650a47a95a64d0213c6885845aa07eb3f618",
+    "judge": "GPT-6 assistant visual review, blinded to reward and selection identity; not human labels",
+    "n": 64,
+    "utility": {
+      "mean": 0.5703125,
+      "ci95": [
+        0.4609375,
+        0.6796875
+      ]
+    },
+    "adherence_delta": {
+      "mean": 0.03125,
+      "ci95": [
+        -0.125,
+        0.1875
+      ]
+    },
+    "wins": 32,
+    "ties": 9,
+    "losses": 23,
+    "identical_selections": 9,
+    "preference_gate": false,
+    "adherence_gate": true,
+    "user_training_gate_pass": false,
+    "categories": {
+      "0": {
+        "utility": 0.8125,
+        "adherence_delta": 0.25
+      },
+      "1": {
+        "utility": 0.4375,
+        "adherence_delta": 0.25
+      },
+      "2": {
+        "utility": 0.625,
+        "adherence_delta": 0.0
+      },
+      "3": {
+        "utility": 0.75,
+        "adherence_delta": 0.5
+      },
+      "4": {
+        "utility": 0.625,
+        "adherence_delta": -0.125
+      },
+      "5": {
+        "utility": 0.625,
+        "adherence_delta": 0.125
+      },
+      "6": {
+        "utility": 0.5,
+        "adherence_delta": 0.0
+      },
+      "7": {
+        "utility": 0.1875,
+        "adherence_delta": -0.75
+      }
+    }
+  },
+  "aesthetic_scores": {
+    "selected_mean": 4.902529574930668,
+    "random_mean": 4.5041507966816425,
+    "paired_delta": 0.39837877824902534,
+    "delta_ci95": [
+      0.3255328295752406,
+      0.47674399064853784
+    ]
+  },
+  "categories": [
+    {
+      "category": "people",
+      "n": 8,
+      "wins": 6,
+      "ties": 1,
+      "losses": 1,
+      "utility": 0.8125,
+      "adherence_delta": 0.25
+    },
+    {
+      "category": "nature",
+      "n": 8,
+      "wins": 3,
+      "ties": 1,
+      "losses": 4,
+      "utility": 0.4375,
+      "adherence_delta": 0.25
+    },
+    {
+      "category": "architecture",
+      "n": 8,
+      "wins": 5,
+      "ties": 0,
+      "losses": 3,
+      "utility": 0.625,
+      "adherence_delta": 0
+    },
+    {
+      "category": "still_life",
+      "n": 8,
+      "wins": 5,
+      "ties": 2,
+      "losses": 1,
+      "utility": 0.75,
+      "adherence_delta": 0.5
+    },
+    {
+      "category": "illustration",
+      "n": 8,
+      "wins": 5,
+      "ties": 0,
+      "losses": 3,
+      "utility": 0.625,
+      "adherence_delta": -0.125
+    },
+    {
+      "category": "stylized",
+      "n": 8,
+      "wins": 5,
+      "ties": 0,
+      "losses": 3,
+      "utility": 0.625,
+      "adherence_delta": 0.125
+    },
+    {
+      "category": "layout_text",
+      "n": 8,
+      "wins": 2,
+      "ties": 4,
+      "losses": 2,
+      "utility": 0.5,
+      "adherence_delta": 0
+    },
+    {
+      "category": "composition",
+      "n": 8,
+      "wins": 1,
+      "ties": 1,
+      "losses": 6,
+      "utility": 0.1875,
+      "adherence_delta": -0.75
+    }
+  ],
+  "exclude_smoke_prompt_sensitivity": {
+    "n": 63,
+    "utility": 0.5793650793650794,
+    "ci95": [
+      0.46825396825396826,
+      0.6904761904761905
+    ]
+  },
+  "continuous_spread": {
+    "sampler": "512x512, 10-step Flow-GRPO SDE, noise 0.7, 8 seeds per prompt",
+    "prompt_count": 64,
+    "zero_spread_prompts": 0,
+    "mean_within_prompt_std": 0.2601758073206372,
+    "mean_within_prompt_range": 0.8367271907627583,
+    "note": "Continuous spread measured directly. No calibrated binary aesthetic-success threshold exists; no fabricated success-band gate."
+  },
+  "repeatability": {
+    "excluded_source_groups": [],
+    "max_score_range": 0.0,
+    "observation_status_counts": {
+      "success": 1024
+    },
+    "samples_with_all_scores": 512,
+    "samples_with_two_scores": 512,
+    "source_balanced_mean_sample_std": 0.0,
+    "source_balanced_mean_score_range": 0.0,
+    "source_groups_with_two_scores": 64
+  },
+  "stress": {
+    "black_rgb": {
+      "aesthetic": {
+        "decreases": 57,
+        "increases": 7,
+        "paired_delta": {
+          "count": 64,
+          "max": 0.5574898719787598,
+          "mean": -0.845756396651268,
+          "median": -0.8559508323669434,
+          "min": -2.151660680770874,
+          "std": 0.6458657794095043,
+          "stderr": 0.08073322242618804
+        },
+        "ties": 0
+      }
+    },
+    "blur_rgb": {
+      "aesthetic": {
+        "decreases": 40,
+        "increases": 24,
+        "paired_delta": {
+          "count": 64,
+          "max": 0.7985424995422363,
+          "mean": -0.1832139566540718,
+          "median": -0.13636469841003418,
+          "min": -1.4532625675201416,
+          "std": 0.4334023620235217,
+          "stderr": 0.054175295252940216
+        },
+        "ties": 0
+      }
+    },
+    "checkerboard_rgb": {
+      "aesthetic": {
+        "decreases": 60,
+        "increases": 4,
+        "paired_delta": {
+          "count": 64,
+          "max": 0.3476254940032959,
+          "mean": -1.0556207746267319,
+          "median": -1.0658152103424072,
+          "min": -2.361525058746338,
+          "std": 0.6458657794095043,
+          "stderr": 0.08073322242618804
+        },
+        "ties": 0
+      }
+    },
+    "empty_alpha": {
+      "aesthetic": {
+        "decreases": 58,
+        "increases": 6,
+        "paired_delta": {
+          "count": 64,
+          "max": 0.47696995735168457,
+          "mean": -0.9262763112783432,
+          "median": -0.9364707469940186,
+          "min": -2.232180595397949,
+          "std": 0.6458657794095043,
+          "stderr": 0.08073322242618804
+        },
+        "ties": 0
+      }
+    },
+    "noise_rgb": {
+      "aesthetic": {
+        "decreases": 56,
+        "increases": 8,
+        "paired_delta": {
+          "count": 64,
+          "max": 0.34734678268432617,
+          "mean": -0.5989744365215302,
+          "median": -0.6473734378814697,
+          "min": -1.4301843643188477,
+          "std": 0.43750775389972174,
+          "stderr": 0.05468846923746522
+        },
+        "ties": 0
+      }
+    },
+    "opaque_alpha": {
+      "aesthetic": {
+        "decreases": 0,
+        "increases": 0,
+        "paired_delta": {
+          "count": 64,
+          "max": 0.0,
+          "mean": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "std": 0.0,
+          "stderr": 0.0
+        },
+        "ties": 64
+      }
+    }
+  },
+  "environment": {
+    "git_head": "5ee8967411df85a0ad5f61faf89a9152088d7828",
+    "packages": {
+      "torch": "2.11.0",
+      "transformers": "5.17.0",
+      "diffusers": "0.41.0.dev0",
+      "aesthetic-predictor-v2-5": "2024.12.18.1",
+      "numpy": "2.3.5",
+      "Pillow": "12.2.0"
+    },
+    "prompt_manifest_sha256": "e8663ab08cb8ddae7714fbe002f2b8ac0a16bcb418fb7f3a4a7c88c9b803107f",
+    "scorer_head_sha256": "a6caf256b3dc434273c98dcb12f6bf17c5d4fc647d8df11f038386923dd06220"
+  },
+  "conditional_stages": {
+    "rl_pilot": "not run: predeclared paired preference gate failed",
+    "checkpoint_verdict_120": "not run: no trained checkpoints; 120 test prompts frozen and unused",
+    "post_rl_diversity": "not measured: no RL performed"
+  },
+  "limitations": [
+    "One AI visual judge, not human preference data.",
+    "64 purposively diverse prompts, eight per category; category comparisons exploratory.",
+    "512px/10-step SDE noise 0.7, not normal deployment sampling.",
+    "Native-sampler diagnostic is four prompts, not a new qualification or efficacy test.",
+    "Prompt overlap excluded exactly; no pretraining decontamination claim.",
+    "q00-s0 was viewed for smoke testing before randomization; sensitivity excluding q00 is reported."
+  ]
+}
