@@ -222,11 +222,27 @@ D 批的难点：trainer 测试用 `nn.Linear(1, 1)` 策略和手造 batch 断�
 | `config: ... | None = None` 让基类替子类选默认配置，子类因此各写构造器 | 所有目标的 `config` 必填；factory 本来就总是传 |
 | `Evaluator` Protocol 与 `ReplayEvaluatorBase` ABC 各声明一遍 `replay_granularity` / `supports_deferred_replay_tensor_move`；trainer 再在运行时校验字符串取值 | 只剩 ABC `Evaluator`，两个属性是 `ClassVar[Literal[...]]`；删掉 trainer 的字符串校验和对应用例 |
 | GRPO / GRPOGuard 的 loss 里 `keep is None` 分支：每个 signal 都带 mask，`combine_keep_masks` 永远返回张量 | 删掉死分支；`_broadcast_sample_values` 去掉对非张量的 getattr 探测 |
-| trainer 判断是否需要参考策略：`(uses_evaluator and kl_coef > 0) or requires_reference_policy` | `kl_coef > 0 or requires_reference_policy`（无 evaluator 的目标 kl_coef 本来就是 0，NFT 由 requirements 声明） |
+| trainer 判断是否需要参考策略：`(uses_evaluator and kl_coef > 0) or requires_reference_policy` | 只读 `algorithm.requires_reference_policy`：GRPO 作为 property 回答（`config.kl_coef > 0`），NFT 常量 True，其余继承默认 False |
 
-一个基类（2026-10-08 续）：`Algorithm`（`base.py`）从 Protocol 改为具体 ABC，持有 config、组相对 advantage 的两个方法、`kl_coef` / `sft_weight`（读 config）、两个生命周期空实现，`compute_loss` 抽象；GRPO / DiffusionNFT / V-GRPO 直接继承它。`GroupRelativeObjective`、`PreviousPolicyObjective`、`ComponentAdvantageAlgorithm` 三个名字删除：前两者是同一个基类的两半，后者是所有算法都实现的能力（trainer 直接走 components 路径）。NFT 与 V-GRPO 共用的 `normalized_mse` / `flow_time` 是纯函数，放在 `forward_process.py`。
+一个基类，先分在线 / 离线（2026-10-09 定稿）：`Algorithm`（`base.py`）只持有七个事实 ClassVar（`uses_evaluator`、`needs_sde_rollout`、`sft_source` 必填，`requires_*` / `consumed_sections` 有默认）、config、`sft_weight` 默认 0。第一层分叉和 `trainers/online` / `trainers/offline` 一致：`OnlineAlgorithm` 与 `GroupAdvantageConfig` 配对，持有组相对 advantage 的两个方法、两个生命周期空实现、抽象 `compute_loss(AlgorithmInput)`；`OfflineAlgorithm` 声明无 rollout、无 evaluator，loss 签名归具体算法。`DiffusionDPO(OfflineAlgorithm)` 与 `DiffusionDPOConfig` 配对，`compute_loss(model_pred, ref_pred, target)` 和 `sft_loss` 是它的方法（原 `diffusion_dpo_loss` / `diffusion_sft_loss` 自由函数），离线 trainer 持有 `algorithm` 并调用它，`OfflineDPOTrainerConfig` 不再复制 `beta` / `sft_weight`。`GroupRelativeObjective`、`PreviousPolicyObjective`、`ComponentAdvantageAlgorithm`、`AlgorithmRequirements`、`ClippedPolicyConfig` 五个名字删除（最后一个只有 `GRPOConfig` 一个子类，`clip_ratio` / `kl_coef` 直接放进 `GRPOConfig`）；词汇只剩三种：`*Config` 是 YAML 一节解析成的数据（解析一次、只读），对象（`Algorithm`、trainer、model）是行为，`typing.Protocol` 是行为对象要满足的接口，不再有第四个名词。
 
-目标的构造器只收自己的 config（2026-10-08 续）：`component_weights`（来自 `reward.components`）、`precision_correction`（来自 `trainer.precision_correction`）和 Flash-GRPO 的 `noise_level` / `sde_type`（来自 rollout denoise 选项）原来由 factory 在运行时一根根接进算法；按"配置解析一次、由读它的对象持有"的规则，`build_configs._bridge_online_algorithm` 现在把它们解析进算法 config 的 `init=False` 字段（不是 YAML 键，`root` 保持未桥接的公开副本），GRPO / FlowDPPO / GRPOGuard / NFT / V-GRPO 都是 `Objective(config)`，FlashGRPO 多一个运行时对象 `scheduler`。
+```
+Algorithm                                  （七个事实 + config + sft_weight）
+├─ OnlineAlgorithm          ↔ GroupAdvantageConfig
+│  ├─ ImportanceRatioAlgorithm ↔ ImportanceRatioConfig
+│  │  ├─ GRPO ↔ GRPOConfig，FlashGRPO ↔ FlashGRPOConfig
+│  │  ├─ FlowDPPO ↔ FlowDPPOConfig
+│  │  └─ GRPOGuard ↔ GRPOGuardConfig
+│  └─ ForwardProcessAlgorithm ↔ ForwardProcessConfig
+│     ├─ VGRPO ↔ VGRPOConfig
+│     └─ DiffusionNFT ↔ DiffusionNFTConfig
+└─ OfflineAlgorithm
+   └─ DiffusionDPO ↔ DiffusionDPOConfig
+```
+
+两条在线分支各一层继承：重要性比分支 `ImportanceRatioAlgorithm` 持有三条共同事实和 TIS / RS / masked-mean 脚手架（`precision_keeps`、`masked_mean`、`masked_fraction`），GRPO / FlowDPPO / GRPOGuard 的 loss 只写各自的比与 mask；前向过程分支 `ForwardProcessAlgorithm`（`ForwardProcessConfig` 只放 `eps=1e-8`）持有 `compute_loss` 转发、`renoised`、`noise` 覆盖点、`flow_time`、`normalized_mse`，V-GRPO 只覆盖 `noise`（组内共享噪声），NFT 只声明自己独有的两条事实。`forward_process.py` 里没有独立函数；算法包里剩下的模块级函数只有三个 loss 共用的 `_broadcast_sample_values`。加噪仍读轨迹记录的 timestep 而不是 scheduler：`vrl/math/denoise` 的 `diffusion_pretraining_pair` 要求 trainer 进程里的 scheduler 状态等于 rollout 网格，这两个算法不带 SDE evaluator，轨迹是唯一保证一致的状态。
+
+算法的构造器只收自己的 config（2026-10-08 续）：`component_weights`（来自 `reward.components`）、`precision_correction`（来自 `trainer.precision_correction`）和 Flash-GRPO 的 `noise_level` / `sde_type`（来自 rollout denoise 选项）原来由 factory 在运行时一根根接进算法；按"配置解析一次、由读它的对象持有"的规则，`build_configs._bridge_online_algorithm` 现在把它们解析进算法 config 的 `init=False` 字段（不是 YAML 键，`root` 保持未桥接的公开副本），GRPO / FlowDPPO / GRPOGuard / NFT / V-GRPO 都是 `Algorithm(config)`，FlashGRPO 多一个运行时对象 `scheduler`。
 
 MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_preflight_local_installation` / `_probe_runtime_environment` / `_validate_single_process_config` / `_resolve_runtime_paths` / `_resolve_weight_components` / `_unused_local_port`——并回各自唯一的调用方：安装检查 + 读官方 JSON 是 `Magi1SubprocessConfig.load_official_config()`，权重路径解析在 `from_build` 里，运行时路径解析在模型构造器里，端口在环境构造里。留下的模块函数都有两个以上调用方或是公开入口。
 
