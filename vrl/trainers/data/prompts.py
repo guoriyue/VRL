@@ -5,8 +5,8 @@ from __future__ import annotations
 import io
 import json
 import random
-from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -73,25 +73,35 @@ class PromptExample:
             metadata["target_video"] = self.target_video
         return metadata
 
-    def with_resolved_references(
+    def with_resolved_artifacts(
         self,
+        fields: Sequence[str],
         *,
         data_root: str | Path | None = None,
         allow_absolute: bool = False,
     ) -> PromptExample:
-        """A copy with reference paths resolved and target identities intact."""
+        """A copy with the named artifact fields resolved under the data root.
+
+        Online loading passes ``REFERENCE_FIELDS`` only: the clean targets stay
+        manifest-relative for the whole run (see the field comment above).
+        ``encode_targets`` passes ``ARTIFACT_FIELDS`` because it reads the
+        target files themselves.
+        """
 
         def resolve(raw: str) -> str:
             return str(
                 resolve_artifact_path(raw, data_root=data_root, allow_absolute=allow_absolute)
             )
 
-        reference_video = str(self.reference_video or "").strip()
-        return replace(
-            self,
-            reference_video=resolve(reference_video) if reference_video else None,
-            reference_images=[resolve(item) for item in self.reference_images],
-        )
+        changes: dict[str, Any] = {}
+        for name in fields:
+            value = getattr(self, name)
+            if isinstance(value, list):
+                changes[name] = [resolve(item) for item in value]
+            else:
+                text = str(value or "").strip()
+                changes[name] = resolve(text) if text else None
+        return replace(self, **changes)
 
     def with_required_reference_images(
         self,
@@ -100,58 +110,40 @@ class PromptExample:
         row_index: int,
         default_reference_image: str | None = None,
     ) -> PromptExample:
-        """A copy whose reference images are required, resolved and present.
+        """A copy whose reference images are required and present.
 
-        A row without ``reference_images`` takes ``default_reference_image``
-        (the recipe's ``data.preprocessing.reference_image``) as its single
-        image; a missing file names the manifest row.
+        Runs after ``with_resolved_artifacts(REFERENCE_FIELDS)``, so the row's own paths are
+        already absolute under the data root and are only checked here. A row
+        without ``reference_images`` takes ``default_reference_image`` (the
+        recipe's ``data.preprocessing.reference_image``, a config path) as its
+        single image; a missing file names the manifest row.
         """
 
-        paths = [Path(raw).expanduser() for raw in self.reference_images]
+        images = list(self.reference_images)
         default_text = str(default_reference_image or "").strip()
-        if not paths and default_text:
-            default_path = Path(default_text).expanduser()
+        if not images and default_text:
+            default_path = Path(default_text).expanduser().resolve()
             if not default_path.exists():
                 raise FileNotFoundError(
                     f"data.preprocessing.reference_image does not exist: {default_path}",
                 )
-            paths = [default_path]
-        if not paths:
+            images = [str(default_path)]
+        if not images:
             raise ValueError(
                 f"{manifest}: row {row_index} is missing required field reference_images",
             )
-        for path in paths:
-            if not path.exists():
+        for image in images:
+            if not Path(image).exists():
                 raise FileNotFoundError(
-                    f"{manifest}: row {row_index} reference image does not exist: {path}",
+                    f"{manifest}: row {row_index} reference image does not exist: {image}",
                 )
-        return replace(self, reference_images=[str(path.resolve()) for path in paths])
+        return replace(self, reference_images=images)
 
-    def with_resolved_artifacts(
-        self,
-        *,
-        data_root: str | Path | None = None,
-        allow_absolute: bool = False,
-    ) -> PromptExample:
-        """A copy with reference and clean-target paths resolved."""
 
-        def resolve(raw: str | None) -> str | None:
-            if not raw:
-                return None
-            return str(
-                resolve_artifact_path(raw, data_root=data_root, allow_absolute=allow_absolute)
-            )
-
-        resolved = self.with_resolved_references(
-            data_root=data_root, allow_absolute=allow_absolute
-        )
-        return replace(
-            resolved,
-            target_image=resolve(resolved.target_image),
-            target_video=resolve(resolved.target_video),
-            request_overrides=dict(resolved.request_overrides),
-            metadata=dict(resolved.metadata),
-        )
+# Every field tagged metadata={"artifact": True}: a manifest path under the data root.
+ARTIFACT_FIELDS = tuple(f.name for f in fields(PromptExample) if f.metadata.get("artifact"))
+# The subset online loading resolves; clean targets keep their manifest identity.
+REFERENCE_FIELDS = ("reference_video", "reference_images")
 
 
 def load_prompt_dataset_index(path: str | Path) -> list[PromptExample]:

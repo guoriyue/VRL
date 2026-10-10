@@ -50,7 +50,7 @@ from vrl.trainers.checkpointing import (
     validate_rng_state,
 )
 from vrl.trainers.data.prompt_sampler import PromptBatchSampler
-from vrl.trainers.data.prompts import load_prompt_examples_from_config
+from vrl.trainers.data.prompts import REFERENCE_FIELDS, load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, run_on_primary_rank
 from vrl.trainers.metrics_io import OnlineMetricsCSV
 from vrl.trainers.online.config import OnlineBatchPlan
@@ -838,7 +838,9 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     examples = [
         example
         if isinstance(example, OwnedCollection)
-        else example.with_resolved_references(data_root=artifact_data_root, allow_absolute=True)
+        else example.with_resolved_artifacts(
+            REFERENCE_FIELDS, data_root=artifact_data_root, allow_absolute=True
+        )
         for example in examples
     ]
     if family_entry.task in {"i2v", "v2w"}:

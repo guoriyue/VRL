@@ -9,7 +9,7 @@ from vrl.scripts.data import setup as setup_cli
 from vrl.trainers.data.artifacts import (
     DatasetFileReport,
 )
-from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
+from vrl.trainers.data.prompts import REFERENCE_FIELDS, PromptExample, load_prompt_dataset_index
 from vrl.utils.artifacts import ArtifactManifestError, resolve_artifact_path
 
 
@@ -95,7 +95,7 @@ def test_reference_resolution_preserves_target_identity_fields(tmp_path: Path) -
         target_video="targets/result.mp4",
     )
 
-    resolved = example.with_resolved_references(data_root=tmp_path)
+    resolved = example.with_resolved_artifacts(REFERENCE_FIELDS, data_root=tmp_path)
 
     assert resolved.reference_images == [str((tmp_path / "references/frame.ppm").resolve())]
     assert resolved.reference_video == str((tmp_path / "references/context.mp4").resolve())

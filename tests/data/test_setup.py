@@ -11,7 +11,11 @@ from PIL import Image
 
 from vrl.config.schema import DataConfig
 from vrl.scripts.data import bootstrap, setup, video_world
-from vrl.trainers.data.prompts import load_prompt_dataset_index, load_prompt_examples_from_config
+from vrl.trainers.data.prompts import (
+    REFERENCE_FIELDS,
+    load_prompt_dataset_index,
+    load_prompt_examples_from_config,
+)
 from vrl.utils.json_files import write_jsonl
 
 
@@ -222,7 +226,7 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
 
     monkeypatch.setenv("VRL_DATA_ROOT", str(tmp_path))
     examples = [
-        example.with_resolved_references(allow_absolute=True)
+        example.with_resolved_artifacts(REFERENCE_FIELDS, allow_absolute=True)
         for example in load_prompt_dataset_index(manifest)
     ]
     examples = [

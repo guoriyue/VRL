@@ -502,7 +502,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     from vrl.run import ResolvedModel
     from vrl.scripts.eval._device import resolve_eval_device
     from vrl.trainers.checkpointing import CheckpointTarget
-    from vrl.trainers.data.prompts import load_prompt_dataset_index
+    from vrl.trainers.data.prompts import REFERENCE_FIELDS, load_prompt_dataset_index
 
     if (
         any(value is not None and value < 1 for value in (args.width, args.height, args.num_steps))
@@ -595,7 +595,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         )
     prompts = select_prompts(
         [
-            example.with_resolved_references(allow_absolute=True)
+            example.with_resolved_artifacts(REFERENCE_FIELDS, allow_absolute=True)
             for example in load_prompt_dataset_index(manifest_path)
         ],
         limit=args.limit,
