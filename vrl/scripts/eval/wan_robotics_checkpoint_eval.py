@@ -186,7 +186,7 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
         base_seed=int(args.base_seed),
         seed_stride=int(args.seed_stride),
     )
-    protocol_sha256 = _json_sha256(protocol)
+    protocol_sha256 = canonical_json_sha256(protocol, ensure_ascii=False)
 
     output_dir = user_path(args.output_dir)
     generation_root = output_dir / "generation"
@@ -495,7 +495,7 @@ def select_strict_examples(
 ) -> list[SelectedExample]:
     """Select deterministic eval rows with prompt, episode, target, and shard isolation."""
 
-    train_prompts = {_normalized_prompt(example.prompt) for example in train_examples}
+    train_prompts = {" ".join(example.prompt.split()).casefold() for example in train_examples}
     train_source_videos = {_metadata_text(example, "source_video") for example in train_examples}
     train_episodes = {_metadata_text(example, "source_episode") for example in train_examples}
     train_targets = {str(example.target_video or "") for example in train_examples}
@@ -513,7 +513,7 @@ def select_strict_examples(
         target_video = str(example.target_video or "").strip()
         if not source_video or not source_episode or not target_video:
             raise ValueError(f"evaluation row {row_index} lacks source/target identity")
-        if _normalized_prompt(example.prompt) in train_prompts:
+        if " ".join(example.prompt.split()).casefold() in train_prompts:
             continue
         if source_video in train_source_videos:
             continue
@@ -550,10 +550,6 @@ def _metadata_text(example: PromptExample, key: str) -> str:
     return "" if value is None else str(value).strip()
 
 
-def _normalized_prompt(value: str) -> str:
-    return " ".join(str(value).split()).casefold()
-
-
 def _seed_for(*, base_seed: int, row_index: int, sample_index: int, seed_stride: int) -> int:
     return int(base_seed) + int(sample_index) * int(seed_stride) + int(row_index)
 
@@ -578,7 +574,10 @@ def _load_and_validate_shards(
         if provenance.get("target", {}).get("label") != target.label:
             raise ValueError(f"evaluation shard target mismatch: {shard_dir}")
         observed_protocol_sha256 = str(provenance.get("protocol_sha256", ""))
-        if _json_sha256(provenance.get("protocol")) != observed_protocol_sha256:
+        if (
+            canonical_json_sha256(provenance.get("protocol"), ensure_ascii=False)
+            != observed_protocol_sha256
+        ):
             raise ValueError(f"evaluation shard protocol digest is invalid: {shard_dir}")
         if protocol_sha256 is None:
             protocol_sha256 = observed_protocol_sha256
@@ -704,10 +703,6 @@ def summarize_scores(rows: list[dict[str, Any]]) -> dict[str, Any]:
         key=lambda label: float(absolute[label]["robotics_blend"]["mean"]),
     )
     return {**summary, "best_mean_robotics_blend": best_label}
-
-
-def _json_sha256(value: Any) -> str:
-    return canonical_json_sha256(value, ensure_ascii=False)
 
 
 def _fsync_tree(path: Path) -> None:

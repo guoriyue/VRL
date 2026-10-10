@@ -260,10 +260,6 @@ def score_grid(args: argparse.Namespace) -> dict[str, Any]:
 # --- probe --------------------------------------------------------------------
 
 
-def _probe_score(model: Any, path: Path, prompt: str, cell: str) -> dict[str, float]:
-    return score_video(model, path, prompt=prompt, artifact_id=cell, score_keys=SCORE_KEYS)
-
-
 def probe_reward(args: argparse.Namespace) -> dict[str, Any]:
     rows = [
         row
@@ -280,8 +276,12 @@ def probe_reward(args: argparse.Namespace) -> dict[str, Any]:
             prompt = str(row["prompt"])
             cell = f"p{row['prompt_index']:04d}-s{row['sample_index']:02d}"
             record: dict[str, Any] = {"cell": cell, "prompt": prompt, "variants": {}}
-            record["variants"]["original"] = _probe_score(model, path, prompt, cell)
-            record["variants"]["repeat"] = _probe_score(model, path, prompt, cell + "-r")
+            record["variants"]["original"] = score_video(
+                model, path, prompt=prompt, artifact_id=cell, score_keys=SCORE_KEYS
+            )
+            record["variants"]["repeat"] = score_video(
+                model, path, prompt=prompt, artifact_id=cell + "-r", score_keys=SCORE_KEYS
+            )
             frames = np.asarray(iio.imread(path, plugin="pyav"))
             fps = float(iio.immeta(path, plugin="pyav").get("fps", 16.0))
             # Degradations an honest quality/motion reward must rank below the
@@ -298,7 +298,9 @@ def probe_reward(args: argparse.Namespace) -> dict[str, Any]:
                 iio.imwrite(
                     dst, degraded.astype(np.uint8), fps=fps, plugin="pyav", codec="libx264"
                 )
-                record["variants"][name] = _probe_score(model, dst, prompt, f"{cell}-{name}")
+                record["variants"][name] = score_video(
+                    model, dst, prompt=prompt, artifact_id=f"{cell}-{name}", score_keys=SCORE_KEYS
+                )
             records.append(record)
             logger.info("probed %s", cell)
 

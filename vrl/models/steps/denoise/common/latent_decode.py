@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import torch
 
@@ -99,3 +99,13 @@ class VaeDecodeMixin:
             ),
         )
         return decoder(latents)
+
+
+def denormalize_video_vae_latents(unpacked: torch.Tensor, vae: Any) -> torch.Tensor:
+    """Undo a video VAE's per-channel ``latents_mean`` / ``latents_std`` normalization."""
+
+    z_dim = vae.config.z_dim
+    unpacked = unpacked.to(vae.dtype)
+    mean = torch.tensor(vae.config.latents_mean).view(1, z_dim, 1, 1, 1).to(unpacked)
+    std = torch.tensor(vae.config.latents_std).view(1, z_dim, 1, 1, 1).to(unpacked)
+    return unpacked * std + mean

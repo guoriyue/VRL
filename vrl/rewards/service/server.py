@@ -382,7 +382,17 @@ class RewardService:
             )
             if record is None or replay_success or retry_failure:
                 if self._active_requests >= self._info.max_pending_requests:
-                    raise self._overloaded_error(request_id)
+                    raise RewardServiceProtocolError(
+                        RewardServiceErrorCode.OVERLOADED,
+                        "reward service admission queue is full",
+                        status_code=429,
+                        retryable=True,
+                        request_id=request_id,
+                        details={
+                            "active_requests": self._active_requests,
+                            "max_pending_requests": self._info.max_pending_requests,
+                        },
+                    )
                 self._active_requests += 1
                 if replay_success:
                     task = asyncio.create_task(
@@ -533,19 +543,6 @@ class RewardService:
             async with self._records_lock:
                 self._active_requests -= 1
                 self._evict_completed_records(completing=request.request_id)
-
-    def _overloaded_error(self, request_id: str) -> RewardServiceProtocolError:
-        return RewardServiceProtocolError(
-            RewardServiceErrorCode.OVERLOADED,
-            "reward service admission queue is full",
-            status_code=429,
-            retryable=True,
-            request_id=request_id,
-            details={
-                "active_requests": self._active_requests,
-                "max_pending_requests": self._info.max_pending_requests,
-            },
-        )
 
     async def _validate_artifact_paths(
         self,

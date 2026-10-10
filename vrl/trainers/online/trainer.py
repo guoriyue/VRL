@@ -1870,15 +1870,12 @@ class OnlineTrainer:
     # State dict
     # ------------------------------------------------------------------
 
-    def state_dict(self) -> dict[str, Any]:
-        return self._state_dict(checkpoint_primary_only=False)
-
     def checkpoint_state_dict(self) -> dict[str, Any]:
         """Build a resume snapshot without full state copies on every FSDP rank."""
 
-        return self._state_dict(checkpoint_primary_only=True)
+        return self.state_dict(checkpoint_primary_only=True)
 
-    def _state_dict(self, *, checkpoint_primary_only: bool) -> dict[str, Any]:
+    def state_dict(self, *, checkpoint_primary_only: bool = False) -> dict[str, Any]:
         # COLLECTIVE under fsdp (optimizer-moment + EMA-shadow gathers): the
         # checkpoint writer must call this on EVERY rank before its
         # primary-only file write, like the trainable-state gather.

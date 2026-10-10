@@ -32,8 +32,7 @@ class BatchExecutorBase:
     - ``execute_request_batches`` runs ALL of a request's batches on one
       worker in one call, copying each result to pinned CPU memory (and
       staging it, when asked) before the next batch is produced. Ray uses
-      this entry directly; ``forward_plan_pipelined`` wraps it only for local
-      execution and merge equivalence tests.
+      this entry directly and merges in a separate finalizer.
     - ``merge_generation_batches`` delegates to the gatherer injected by the composition
       root that already owns the family registry entry. The neutral execution
       layer never looks family identity up again.

@@ -22,6 +22,7 @@ from tests.algorithms.test_diffusion_nft import (
     _default_forward,
 )
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.v_grpo import VGRPO, VGRPOConfig
 from vrl.trainers.online.trainer import OnlineTrainer
 
@@ -87,7 +88,14 @@ def _step_distances(
     target = noise - x0
     t_raw = torch.full((_BATCH,), 500.0)
     before = float((_default_forward(model, xt, prompt_embeds, t_raw).detach() - target).norm())
-    loss, _ = objective.compute_batch_timestep_loss(model, batch, 0, torch.tensor([advantage]))
+    loss, _ = objective.compute_loss(
+        AlgorithmInput(
+            model=model,
+            rollout_batch=batch,
+            timestep_index=0,
+            advantages=torch.tensor([advantage]),
+        )
+    )
     trainable = [p for p in model.transformer.parameters() if p.requires_grad]
     opt = torch.optim.SGD(trainable, lr=lr)
     opt.zero_grad()
@@ -142,8 +150,8 @@ def test_unit_ratio_loss_is_the_negated_soft_clipped_advantage() -> None:
     _, _, batch = _batch()
     adv = torch.tensor([1.7])
 
-    loss, metrics = VGRPO(VGRPOConfig(adv_soft_clip=3.0)).compute_batch_timestep_loss(
-        _build_model(), batch, 0, adv
+    loss, metrics = VGRPO(VGRPOConfig(adv_soft_clip=3.0)).compute_loss(
+        AlgorithmInput(model=_build_model(), rollout_batch=batch, timestep_index=0, advantages=adv)
     )
 
     expected = -float(3.0 * torch.tanh(adv / 3.0))
@@ -192,8 +200,13 @@ def test_after_optimizer_step_advances_the_noise_counter() -> None:
 def test_edm_scale_timestep_grid_fails_loudly() -> None:
     _, _, batch = _batch(timestep=80000.0)
     with pytest.raises(RuntimeError, match=r"normalize into \[0, 1\]"):
-        VGRPO(VGRPOConfig()).compute_batch_timestep_loss(
-            _build_model(), batch, 0, torch.ones(_BATCH)
+        VGRPO(VGRPOConfig()).compute_loss(
+            AlgorithmInput(
+                model=_build_model(),
+                rollout_batch=batch,
+                timestep_index=0,
+                advantages=torch.ones(_BATCH),
+            )
         )
 
 

@@ -81,9 +81,10 @@ def test_wan_i2v_replay_takes_forward_math_from_i2v_and_plumbing_from_t2v_replay
 
     ``WanT2VReplayModel`` must come first so the replay plumbing (constructor,
     dual-stage ``prepare_replay``, pipeline-less accessors) wins, while the I2V
-    forward math must still resolve to ``WanI2VDiffusersModel``, not the T2V
-    class further down the MRO. Reversing the bases keeps every test that only
-    constructs the model green and silently swaps the forward.
+    forward math (``_backbone_extra``, the image conditioning the shared
+    ``forward_step`` folds in) must still resolve to ``WanI2VDiffusersModel``,
+    not the T2V class further down the MRO. Reversing the bases keeps every
+    test that only constructs the model green and silently swaps the forward.
     """
     from vrl.models.families.wan_2_1.model import (
         WanI2VDiffusersModel,
@@ -91,7 +92,7 @@ def test_wan_i2v_replay_takes_forward_math_from_i2v_and_plumbing_from_t2v_replay
         WanT2VReplayModel,
     )
 
-    for name in ("forward_step", "restore_eval_state", "export_replay_tensors"):
+    for name in ("_backbone_extra", "restore_eval_state", "export_replay_tensors"):
         assert _owner(WanI2VReplayModel, name) is WanI2VDiffusersModel, name
     for name in ("__init__", "prepare_replay", "pipeline", "scheduler", "_set_transformer"):
         assert _owner(WanI2VReplayModel, name) is WanT2VReplayModel, name

@@ -10,6 +10,7 @@ from vrl.models.steps.denoise.common.latent_decode import (
     ChunkedLatentDecoder,
     LatentDecodePlan,
     VaeDecodeMixin,
+    denormalize_video_vae_latents,
 )
 from vrl.models.steps.denoise.common.replay_tensors import (
     replay_tensor,
@@ -32,6 +33,7 @@ __all__ = [
     "LatentDecodePlan",
     "VaeDecodeMixin",
     "broadcast_spatial_timestep",
+    "denormalize_video_vae_latents",
     "expand_batch_timestep",
     "expand_tensor_to_batch",
     "pack_eval_timestep",

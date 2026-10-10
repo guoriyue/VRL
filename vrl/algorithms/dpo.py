@@ -81,10 +81,6 @@ class DiffusionDPO(OfflineAlgorithm):
         ("reward", None),
     )
 
-    @property
-    def sft_weight(self) -> float:  # type: ignore[override]
-        return float(self.config.sft_weight)
-
     def compute_loss(
         self,
         model_pred: torch.Tensor,

@@ -1,6 +1,8 @@
-"""End-to-end equivalence: DenoiseBatchExecutorBase.forward_plan_pipelined produces the
-SAME gathered output as the serial forward_plan, on a real EnginePlan with real
-tensors through the real stage chain + gather. This is the executor-level
+"""End-to-end equivalence: running a request's batches through
+``execute_request_batches`` (a pinned CPU copy after each batch, as the Ray
+workers do) and merging them produces the SAME gathered output as the serial
+``forward_plan``, on a real EnginePlan with real tensors through the real stage
+chain + gather. This is the executor-level
 correctness run; the ``real_cover`` label names the gpu-lane twin that owns the
 mechanism's bit-exactness."""
 
@@ -68,7 +70,9 @@ def test_forward_plan_pipelined_matches_serial_forward_plan() -> None:
     assert len(plan.sample_batches) >= 2
 
     serial = DenoiseBatchExecutorBase.forward_plan(ex, request, plan)
-    pipelined = DenoiseBatchExecutorBase.forward_plan_pipelined(ex, request, plan)
+    pipelined = ex.merge_generation_batches(
+        request, ex.execute_request_batches(request, plan.sample_batches)
+    )
 
     assert len(pipelined.output) == len(serial.output)
     for idx, (s, p) in enumerate(zip(serial.output, pipelined.output, strict=True)):

@@ -59,11 +59,18 @@ class Algorithm(ABC):
     requires_active_trust_region: ClassVar[bool] = False
     consumed_sections: ClassVar[tuple[tuple[str, frozenset[str] | None], ...] | None] = None
 
-    # Weight of the clean-target SFT term the trainer adds to the loss (it
-    # needs a model forward, which algorithms never run). Only an algorithm
-    # whose config carries the knob overrides this.
-    sft_weight: float = 0.0
     config: Any
+
+    @property
+    def sft_weight(self) -> float:
+        """Weight of the clean-target SFT term the trainer adds to the loss.
+
+        The term needs a model forward, which algorithms never run; the knob
+        exists only on the configs of algorithms whose ``sft_source`` names a
+        target, and is zero for every other algorithm.
+        """
+
+        return 0.0 if self.sft_source == "unsupported" else float(self.config.sft_weight)
 
     def __init__(self, config: Any) -> None:
         self.config = config

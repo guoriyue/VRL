@@ -10,8 +10,6 @@ from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from vrl.scripts.data.danbooru.config import DANBOORU_METADATA_FILE, DANBOORU_REPO_ID
-
 
 def resolve_metadata_path(
     *,
@@ -23,26 +21,13 @@ def resolve_metadata_path(
 ) -> str:
     if metadata:
         return str(metadata)
-    if download_metadata:
-        return download_metadata_file(
-            repo_id=hf_repo,
-            filename=hf_file,
-            cache_dir=hf_cache_dir,
-        )
-    raise ValueError("Provide metadata or set download_metadata=True")
-
-
-def download_metadata_file(
-    *,
-    repo_id: str = DANBOORU_REPO_ID,
-    filename: str = DANBOORU_METADATA_FILE,
-    cache_dir: str | Path | None = None,
-) -> str:
+    if not download_metadata:
+        raise ValueError("Provide metadata or set download_metadata=True")
     from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
     return str(
-        HuggingFaceRepoRevision(repo_id, "main").download_file(
-            filename, repo_type="dataset", cache_dir=cache_dir or None
+        HuggingFaceRepoRevision(hf_repo, "main").download_file(
+            hf_file, repo_type="dataset", cache_dir=hf_cache_dir or None
         ),
     )
 

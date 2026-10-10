@@ -272,9 +272,6 @@ class MultiReward(RewardFunction):
             triples.append((name, weight, component))
         return cls(triples)
 
-    async def score(self, sample: RewardSample) -> float:
-        return (await self.score_batch((sample,))).scores[0]
-
     async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
         """Return weighted totals plus per-component observations from one call."""
 

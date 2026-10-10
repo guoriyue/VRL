@@ -407,16 +407,6 @@ class RolloutConfig(ConfigBase):
         return value
 
 
-def generation_request_rollout_fields() -> frozenset[str]:
-    """Derive rollout keys allowed to cross the generation request boundary."""
-
-    return frozenset(
-        name
-        for name, model_field in RolloutConfig.model_fields.items()
-        if (model_field.json_schema_extra or {}).get("runtime_owner") == "generation_request"
-    )
-
-
 def _model_section_class_for_family(family: Any) -> type[ModelSection]:
     if family is None or not str(family).strip():
         raise ValueError("config missing required field: model.family")
@@ -855,7 +845,6 @@ __all__ = [
     "RolloutConfig",
     "RootConfig",
     "TrainerSection",
-    "generation_request_rollout_fields",
     "parse_config",
     "sampling_section_class_for_family",
 ]

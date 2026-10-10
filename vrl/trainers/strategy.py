@@ -29,11 +29,11 @@ from vrl.models.parking import (
 )
 from vrl.models.parking_disk_store import ParkingDiskStore
 from vrl.trainers.distributed import (
+    ContextParallelGroups,
     ContextParallelPeerGroup,
     DistributedTrainingContext,
     TrainerProcessGroup,
     TrainingCollectives,
-    create_context_parallel_peer_group,
 )
 from vrl.trainers.weight_sync import require_trainable_modules
 
@@ -296,6 +296,29 @@ class _UnshardedStateStrategy:
         # Every rank holds the full unsharded tensors, so every rank loads them.
         return True
 
+    def backward(self, loss: torch.Tensor, *, grad_scaler: Any | None = None) -> None:
+        # A plain backward: single process has nothing to synchronize and DDP
+        # all-reduces gradients inside its backward hooks, so the seam is the
+        # same as under FSDP.
+        if grad_scaler is not None:
+            grad_scaler.scale(loss).backward()
+        else:
+            loss.backward()
+
+    def clip_grad_norm(self, parameters: Iterable[nn.Parameter], max_norm: float) -> float:
+        # Grads are local or already all-reduced (identical on every rank), so a
+        # local clip is globally correct.
+        return float(nn.utils.clip_grad_norm_(parameters, max_norm))
+
+    # Parking the training state is refused by the backends that cannot do it
+    # collectively; a backend that can (single process, via TrainerParking
+    # earlier in its MRO) overrides both.
+    def park_training_state(self, state: TrainingMemoryState) -> None:
+        self.validate_training_state_parking()
+
+    def restore_training_state(self, state: TrainingMemoryState) -> None:
+        self.validate_training_state_parking()
+
     def place_trainable_roots(self, model: Any) -> None:
         """Move the policy's trainable roots onto this process's device.
 
@@ -400,19 +423,6 @@ class SingleProcessStrategy(TrainerParking, _UnshardedStateStrategy):
         # FSDP2 can wrap without the trainer changing.
         self.place_trainable_roots(model)
         return model
-
-    def backward(self, loss: torch.Tensor, *, grad_scaler: Any | None = None) -> None:
-        if grad_scaler is not None:
-            grad_scaler.scale(loss).backward()
-        else:
-            loss.backward()
-
-    def clip_grad_norm(
-        self,
-        parameters: Iterable[nn.Parameter],
-        max_norm: float,
-    ) -> float:
-        return float(nn.utils.clip_grad_norm_(parameters, max_norm))
 
     def gather_rng_states(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         return [state]
@@ -593,7 +603,7 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
             from vrl.trainers.context_parallel import enable_context_parallel
             from vrl.trainers.fsdp import build_context_parallel_mesh, unwrap_module
 
-            self._context_parallel_groups = create_context_parallel_peer_group(self.context)
+            self._context_parallel_groups = ContextParallelPeerGroup.create(self.context)
             cp_mesh = build_context_parallel_mesh(
                 self.context,
                 ulysses_degree=self._ulysses_degree,
@@ -934,7 +944,6 @@ class ContextParallelStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
 
         from vrl.models.families.cosmos.context_parallel import cosmos_context_parallel
         from vrl.models.precision import fixed_row_linear_compute, float32_precision_state
-        from vrl.trainers.distributed import create_context_parallel_groups
 
         if self.groups is not None:
             raise RuntimeError("CP strategy has already prepared a model")
@@ -957,7 +966,7 @@ class ContextParallelStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
         ):
             raise ValueError("CP CUDA strategy requires strict deterministic IEEE compute")
         TrainerProcessGroup.require(self.context)
-        self.groups = create_context_parallel_groups(self.cp_size)
+        self.groups = ContextParallelGroups.create(self.cp_size)
         for tensor in (*handle.parameters(), *handle.buffers()):
             dist.broadcast(tensor.detach(), src=0)
         branches = [
@@ -1003,12 +1012,6 @@ class ContextParallelStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
 
     def validate_training_state_parking(self) -> None:
         raise NotImplementedError("CP shared-GPU training-state parking is not implemented")
-
-    def park_training_state(self, state: TrainingMemoryState) -> None:
-        self.validate_training_state_parking()
-
-    def restore_training_state(self, state: TrainingMemoryState) -> None:
-        self.validate_training_state_parking()
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
         self._execution.close()
@@ -1077,31 +1080,12 @@ class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
             writer(wrapped)
         return model
 
-    def backward(self, loss: torch.Tensor, *, grad_scaler: Any | None = None) -> None:
-        # DDP all-reduces gradients inside the backward hooks (this IS the
-        # synchronized step); the seam stays identical to single-process/FSDP.
-        if grad_scaler is not None:
-            grad_scaler.scale(loss).backward()
-        else:
-            loss.backward()
-
-    def clip_grad_norm(self, parameters: Iterable[nn.Parameter], max_norm: float) -> float:
-        # Grads are already all-reduced (identical on every rank), so a local clip
-        # is globally correct.
-        return float(nn.utils.clip_grad_norm_(parameters, max_norm))
-
     def validate_training_state_parking(self) -> None:
         raise NotImplementedError(
             "shared-GPU on-demand rollout is not supported with DDP: reducer buckets, "
             "optimizer, EMA, GradScaler, and live-gradient parking has not been "
             "implemented collectively. Use disjoint rollout GPUs.",
         )
-
-    def park_training_state(self, state: TrainingMemoryState) -> None:
-        self.validate_training_state_parking()
-
-    def restore_training_state(self, state: TrainingMemoryState) -> None:
-        self.validate_training_state_parking()
 
 
 def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> Strategy:

@@ -98,13 +98,13 @@ class CosmosPredict2DenoiseBackboneRunner(DenoiseBackboneRunnerBase):
         branch: DenoiseBranch,
         raw_output: torch.Tensor,
     ) -> torch.Tensor:
-        return self._postprocess_branch(
-            raw=raw_output,
-            latents=request.hidden_states,
-            init_latents=request.extra["init_latents"],
-            indicator=branch.metadata["indicator"],
-            dtype=request.output_dtype or raw_output.dtype,
+        c_skip = 1 - self.current_t
+        c_out = -self.current_t
+        denoised = (c_skip * request.hidden_states + c_out * raw_output.float()).to(
+            request.output_dtype or raw_output.dtype
         )
+        indicator = branch.metadata["indicator"]
+        return indicator * request.extra["init_latents"] + (1 - indicator) * denoised
 
     def finalize_noise_pred(
         self,
@@ -129,20 +129,6 @@ class CosmosPredict2DenoiseBackboneRunner(DenoiseBackboneRunnerBase):
         condition_timestep = torch.full_like(timestep, float(self.sigma_conditioning))
         branch_timestep = indicator * condition_timestep + (1 - indicator) * timestep
         return hidden_states, branch_timestep
-
-    def _postprocess_branch(
-        self,
-        *,
-        raw: torch.Tensor,
-        latents: torch.Tensor,
-        init_latents: torch.Tensor,
-        indicator: torch.Tensor,
-        dtype: torch.dtype,
-    ) -> torch.Tensor:
-        c_skip = 1 - self.current_t
-        c_out = -self.current_t
-        branch = (c_skip * latents + c_out * raw.float()).to(dtype)
-        return indicator * init_latents + (1 - indicator) * branch
 
 
 @dataclass

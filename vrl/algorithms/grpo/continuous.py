@@ -122,10 +122,6 @@ class GRPO(ImportanceRatioAlgorithm):
 
         return self.config.kl_coef > 0
 
-    @property
-    def sft_weight(self) -> float:  # type: ignore[override]
-        return float(self.config.sft_weight)
-
     def compute_loss(
         self,
         inputs: AlgorithmInput,
@@ -307,6 +303,7 @@ class FlashGRPO(GRPO):
         ranks so every microbatch of every rank divides by the same number.
         """
 
+        from vrl.algorithms.advantages import all_reduce_sufficient_stats
         from vrl.math.denoise.flow_matching import flow_sde_scale_terms
 
         sigma, sqrt_neg_dt, std = flow_sde_scale_terms(
@@ -316,7 +313,14 @@ class FlashGRPO(GRPO):
             sde_type=self.config.sde_type,
         )
         coe = 1.0 / self._rectification_scale(std.float(), sqrt_neg_dt.float(), sigma.float())
-        self._update_coe_mean = self._cross_rank_mean(coe).clamp_min(1e-12)
+        # The mean of 1/c over all training ranks. Every rank reaches this once
+        # per update in lockstep (the trainer's unanimous-work gate keeps update
+        # counts balanced), so the collective cannot deadlock -- the same
+        # argument as ``_population_std_across_ranks``. An empty local tensor
+        # must NOT short-circuit before the collective: emptiness is rank-local,
+        # so an empty rank contributes zeros instead.
+        g_sum, _g_sumsq, g_count = all_reduce_sufficient_stats(coe)
+        self._update_coe_mean = (g_sum / g_count.clamp_min(1.0)).to(coe.device).clamp_min(1e-12)
 
     def _loss_weight(self, signals: FlowSDESignal) -> Any:
         import torch
@@ -352,22 +356,6 @@ class FlashGRPO(GRPO):
         sigma = sigma.clamp_min(1e-6)
         scale = sqrt_neg_dt / std + std * sqrt_neg_dt * (1 - sigma) / (2 * sigma)
         return scale.clamp_min(1e-12)
-
-    @staticmethod
-    def _cross_rank_mean(values: Any) -> Any:
-        """Mean of ``values`` over all training ranks.
-
-        Called once per update by every rank in lockstep (the trainer's
-        unanimous-work gate keeps update counts balanced), so the collective
-        cannot deadlock — the same argument as ``_population_std_across_ranks``.
-        An empty local tensor must NOT short-circuit before the collective:
-        emptiness is rank-local, so an empty rank contributes zeros instead.
-        """
-
-        from vrl.algorithms.advantages import all_reduce_sufficient_stats
-
-        g_sum, _g_sumsq, g_count = all_reduce_sufficient_stats(values)
-        return (g_sum / g_count.clamp_min(1.0)).to(values.device)
 
 
 @dataclass(slots=True)

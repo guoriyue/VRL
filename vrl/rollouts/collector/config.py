@@ -5,7 +5,7 @@ The one place validated public config becomes generation-request wire state:
 the per-request sampling payload, the typed engine-level request fields
 (batch width, trainable segments, trajectory storage, denoise options), and the
 collector-local KL reward coefficient. Projection is fail-closed — accepted
-keys are derived from the schema types (``generation_request_rollout_fields``,
+keys are derived from the schema types (``RolloutConfig`` fields owned by the generation request,
 the family-selected ``SamplingSection``), never from a hand-maintained list, so
 a new schema field flows through without a second vocabulary to update.
 """
@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import TYPE_CHECKING, Any
 
-from vrl.config.schema import generation_request_rollout_fields
+from vrl.config.schema import RolloutConfig
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.trajectory.storage import TrajectoryStoragePolicy
 
@@ -45,7 +45,12 @@ class RolloutCollectorConfig:
         # The planner batch width and the denoise options are GenerationRequest
         # fields; only the remaining rollout scalars flatten.
         rollout_fields = (
-            generation_request_rollout_fields()
+            {
+                name
+                for name, model_field in RolloutConfig.model_fields.items()
+                if (model_field.json_schema_extra or {}).get("runtime_owner")
+                == "generation_request"
+            }
             - _DENOISE_OPTION_FIELDS
             - {"samples_per_generation_batch"}
         )

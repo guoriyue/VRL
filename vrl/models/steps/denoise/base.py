@@ -130,7 +130,7 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
         state: Any,
         step_idx: int,
     ) -> dict[str, Any]:
-        """Run one trainable denoise transformer step."""
+        """``nn.Module.forward``: one trainable denoise step, so module hooks fire around it."""
 
         return self.forward_step(state, step_idx)
 

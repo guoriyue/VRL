@@ -7,7 +7,6 @@ without importing torch, diffusers, or upstream model packages.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any, Literal
 
 from pydantic import Field, StrictBool, StrictInt
@@ -19,26 +18,14 @@ class SamplingSection(ConfigBase):
     """Base for family-selected public sampling configuration.
 
     The declared fields are also the per-prompt ``request_overrides`` vocabulary:
-    the collector validates every override against the selected family class
-    before it reaches a ``GenerationRequest`` (``SamplingSection.require_overrides``).
+    the collector revalidates every override against the selected family class
+    before it reaches a ``GenerationRequest``.
     """
 
     # Usually a per-prompt request override (paired rollouts/evals); a YAML value
     # seeds every request identically. The online collector draws unspecified
     # seeds from the checkpointed driver RNG; direct generation owns its policy.
     seed: StrictInt | None = None
-
-    @classmethod
-    def require_overrides(cls, overrides: Mapping[str, Any]) -> dict[str, Any]:
-        """Return per-prompt ``request_overrides`` validated against this family's fields.
-
-        The override vocabulary is this class's fields, so a typo fails with the
-        same ``unknown sampling.<key>`` message as a YAML typo instead of riding
-        the wire to a runtime that ignores it. Returns the validated values.
-        """
-
-        section = cls.revalidate(dict(overrides), section="sampling")
-        return section.model_dump(mode="python", exclude_unset=True)
 
 
 class TeaCacheSection(ConfigBase):

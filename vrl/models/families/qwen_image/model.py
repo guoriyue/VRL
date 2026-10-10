@@ -41,6 +41,7 @@ from vrl.models.steps.denoise.common import (
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
     LatentDecodePlan,
+    denormalize_video_vae_latents,
     expand_batch_timestep,
     pack_eval_timestep,
     set_mu_shifted_timesteps,
@@ -375,16 +376,11 @@ class QwenImageModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         vae_scale_factor = pipe.vae_scale_factor
         height = self._decode_height
         width = self._decode_width
-        z_dim = vae.config.z_dim
-        latents_mean = torch.tensor(vae.config.latents_mean).view(1, z_dim, 1, 1, 1)
-        latents_std = torch.tensor(vae.config.latents_std).view(1, z_dim, 1, 1, 1)
 
         def _transform(batch: torch.Tensor) -> torch.Tensor:
-            unpacked = pipe._unpack_latents(batch, height, width, vae_scale_factor)
-            unpacked = unpacked.to(vae.dtype)
-            mean = latents_mean.to(unpacked.device, unpacked.dtype)
-            std = latents_std.to(unpacked.device, unpacked.dtype)
-            return unpacked * std + mean
+            return denormalize_video_vae_latents(
+                pipe._unpack_latents(batch, height, width, vae_scale_factor), vae
+            )
 
         decoder = ChunkedLatentDecoder(
             LatentDecodePlan(

@@ -119,7 +119,11 @@ class TrajectoryRolloutBatchBuilder:
 
         return RolloutBatch(
             rewards=rewards_adjusted,
-            group_ids=self._group_ids(device=device),
+            group_ids=torch.tensor(
+                [row.prompt_index for row in self.output.sample_rows],
+                dtype=torch.long,
+                device=device,
+            ),
             extras={},
             context=rollout_context,
             trajectory=self.trajectory,
@@ -137,13 +141,6 @@ class TrajectoryRolloutBatchBuilder:
                 "TrajectoryBatch.primary_segment must reference a trainable segment",
             )
         return segment
-
-    def _group_ids(self, *, device: Any) -> torch.Tensor:
-        return torch.tensor(
-            [row.prompt_index for row in self.output.sample_rows],
-            dtype=torch.long,
-            device=device,
-        )
 
     @staticmethod
     def _batch_size(value: Any) -> int:

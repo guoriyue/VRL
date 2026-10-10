@@ -21,7 +21,6 @@ from vrl.generation.bindings.full_sequence import (
     DenoiseSamplingParams,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
-from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.types import GenerationRequest
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.utils.logging import init_logger
@@ -55,16 +54,6 @@ class Cosmos3BatchExecutor(DenoiseBatchExecutorBase):
     task: str = "t2v"
     default_num_frames: int = 93
     default_fps: int | None = 24
-
-    def __init__(
-        self,
-        model: Any,
-        *,
-        gatherer: GenerationBatchGatherer | None = None,
-        samples_per_generation_batch: int | None = None,
-    ) -> None:
-        del samples_per_generation_batch  # cosmos3 is strictly batch=1 (pipeline constraint)
-        super().__init__(model, gatherer=gatherer)
 
     def encode_prompt_for_batch(
         self,

@@ -19,7 +19,7 @@ from vrl.rollouts.orchestration.strict_on_policy import (
     ContextParallelStrictRolloutSchedule,
     StrictOnPolicyRolloutSchedule,
 )
-from vrl.trainers.distributed import create_context_parallel_groups
+from vrl.trainers.distributed import ContextParallelGroups
 
 
 def _worker(rank, rendezvous, spool):
@@ -28,7 +28,7 @@ def _worker(rank, rendezvous, spool):
     )
     monkeypatch = pytest.MonkeyPatch()
     try:
-        groups = create_context_parallel_groups(2)
+        groups = ContextParallelGroups.create(2)
         phase = Trace(monkeypatch)
         bench = None
         owner = None

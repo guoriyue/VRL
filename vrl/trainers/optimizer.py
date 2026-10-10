@@ -80,7 +80,14 @@ class FP32MasterWeightOptimizer(torch.optim.Optimizer):
         sources = tuple(source_parameters)
         self._validate_sources(sources)
 
-        masters = tuple(self._make_master(parameter) for parameter in sources)
+        masters = tuple(
+            parameter
+            if parameter.dtype == torch.float32
+            else nn.Parameter(
+                parameter.detach().to(dtype=torch.float32), requires_grad=parameter.requires_grad
+            )
+            for parameter in sources
+        )
         optimizer = optimizer_factory(masters)
         if not isinstance(optimizer, torch.optim.Optimizer):
             raise TypeError(
@@ -121,15 +128,6 @@ class FP32MasterWeightOptimizer(torch.optim.Optimizer):
             if id(parameter) in seen:
                 raise ValueError("a source parameter may appear only once")
             seen.add(id(parameter))
-
-    @staticmethod
-    def _make_master(source: nn.Parameter) -> nn.Parameter:
-        if source.dtype == torch.float32:
-            return source
-        return nn.Parameter(
-            source.detach().to(dtype=torch.float32),
-            requires_grad=source.requires_grad,
-        )
 
     @staticmethod
     def _validate_optimizer_parameters(

@@ -17,14 +17,11 @@ the only state the trainer process is guaranteed to share with generation.
 
 from __future__ import annotations
 
-from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
 from vrl.algorithms.advantages import GroupAdvantageConfig
 from vrl.algorithms.base import OnlineAlgorithm
-from vrl.algorithms.trajectory import AlgorithmInput
-from vrl.algorithms.types import TrainStepMetrics
 
 
 @dataclass(slots=True)
@@ -46,24 +43,6 @@ class ForwardProcessAlgorithm(OnlineAlgorithm):
     sft_source = "unsupported"
     requires_previous_policy = True
     config: ForwardProcessConfig
-
-    def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
-        return self.compute_batch_timestep_loss(
-            inputs.model,
-            inputs.rollout_batch,
-            inputs.timestep_index,
-            inputs.advantages,
-        )
-
-    @abstractmethod
-    def compute_batch_timestep_loss(
-        self,
-        model: Any,
-        batch: Any,
-        timestep_index: int,
-        advantages: Any,
-    ) -> tuple[Any, TrainStepMetrics]:
-        """One loss slice for a rollout batch at one replay timestep."""
 
     # -- re-noising -------------------------------------------------------
 

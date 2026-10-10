@@ -33,10 +33,6 @@ def _read_rows(path: Path) -> list[dict[str, float]]:
     return rows
 
 
-def _mean(rows: list[dict[str, float]], key: str) -> float:
-    return statistics.fmean(row[key] for row in rows)
-
-
 # Pre-registered PASS/FAIL protocol thresholds for the SANA trustworthy curve.
 # These are an immutable contract (see SPRINT_sana_aesthetic_trustworthy_curve.md),
 # not tunable knobs -- the numerical decision must stay mechanical, so they live as
@@ -111,7 +107,7 @@ def evaluate(
     ):
         baseline = baseline_rows[0]
         endpoint = post_rows[-ENDPOINT_POINTS:]
-        aesthetic_end = _mean(endpoint, "r_aesthetic")
+        aesthetic_end = statistics.fmean(row["r_aesthetic"] for row in endpoint)
         aesthetic_gain = aesthetic_end - baseline["r_aesthetic"]
         endpoint_stderr = (
             math.sqrt(
@@ -132,7 +128,7 @@ def evaluate(
             if denom == 0
             else sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys, strict=True)) / denom
         )
-        pickscore_end = _mean(endpoint, "r_pickscore")
+        pickscore_end = statistics.fmean(row["r_pickscore"] for row in endpoint)
         pickscore_floor = baseline["r_pickscore"] * (1.0 - MAX_PICKSCORE_RELATIVE_DROP)
         diagnostics.update(
             {

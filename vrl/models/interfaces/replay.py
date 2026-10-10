@@ -66,12 +66,6 @@ class ReplayResult:
                     f"ReplaySegmentResult.segment={segment.segment!r}",
                 )
 
-    @classmethod
-    def from_segment(cls, name: str, values: dict[str, Any]) -> ReplayResult:
-        """Build one segment with its mapping key and segment name aligned."""
-
-        return cls(segments={name: ReplaySegmentResult(segment=name, values=values)})
-
     def require_segment(self, segment_name: str) -> ReplaySegmentResult:
         """Return a replay segment result or fail with a helpful segment list."""
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.algorithms.forward_process import ForwardProcessAlgorithm, ForwardProcessConfig
+from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.models.precision import model_autocast
 
@@ -42,14 +43,10 @@ class DiffusionNFT(ForwardProcessAlgorithm):
     requires_reference_policy = True
     config: DiffusionNFTConfig
 
-    def compute_batch_timestep_loss(
-        self,
-        model: Any,
-        batch: Any,
-        timestep_index: int,
-        advantages: Any,
-    ) -> tuple[Any, TrainStepMetrics]:
+    def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
         """Compute one DiffusionNFT loss slice for a rollout batch/timestep."""
+        model, batch = inputs.model, inputs.rollout_batch
+        timestep_index, advantages = inputs.timestep_index, inputs.advantages
 
         import torch
 

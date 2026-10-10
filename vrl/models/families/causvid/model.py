@@ -539,7 +539,13 @@ class _CausVidPolicyModel(DenoiseModelBase):
                     ),
                     dim=1,
                 )
-                with self._autocast_context():
+                # RuntimeBundle always stamps precision; direct fake-backend unit
+                # tests build the lightweight model without bundle assembly.
+                with (
+                    contextlib.nullcontext()
+                    if getattr(self, "precision", None) is None
+                    else model_autocast(self, self.device)
+                ):
                     full_x0 = self._backend.predict_x0_full_prefix(
                         full_prefix,
                         prompt_embeds=prompt_embeds,
@@ -556,13 +562,6 @@ class _CausVidPolicyModel(DenoiseModelBase):
                 per_transition.append(score.log_prob)
             per_chunk.append(torch.stack(per_transition, dim=1))
         return torch.stack(per_chunk, dim=1)
-
-    def _autocast_context(self) -> Any:
-        # RuntimeBundle always stamps precision. Direct fake-backend unit tests
-        # intentionally construct the lightweight model without bundle assembly.
-        if getattr(self, "precision", None) is None:
-            return contextlib.nullcontext()
-        return model_autocast(self, self.device)
 
     def _validate_replay_tensors(
         self,

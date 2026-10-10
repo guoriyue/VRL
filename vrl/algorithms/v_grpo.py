@@ -48,6 +48,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.algorithms.forward_process import ForwardProcessAlgorithm, ForwardProcessConfig
+from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.models.precision import model_autocast
 
@@ -95,18 +96,14 @@ class VGRPO(ForwardProcessAlgorithm):
 
     # -- the loss ---------------------------------------------------------
 
-    def compute_batch_timestep_loss(
-        self,
-        model: Any,
-        batch: Any,
-        timestep_index: int,
-        advantages: Any,
-    ) -> tuple[Any, TrainStepMetrics]:
+    def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
         """One ``(t, eps)`` pair of the surrogate for a rollout batch.
 
         ``t`` is the rollout grid's ``timesteps[:, timestep_index]``; ``eps`` is
         the group-shared draw for this index and update.
         """
+        model, batch = inputs.model, inputs.rollout_batch
+        timestep_index, advantages = inputs.timestep_index, inputs.advantages
 
         import torch
 

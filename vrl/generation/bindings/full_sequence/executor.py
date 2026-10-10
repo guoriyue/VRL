@@ -21,17 +21,16 @@ from vrl.generation.bindings.full_sequence.layout import (
     DenoiseSamplingParams,
 )
 from vrl.generation.execution.executor_base import BatchExecutorBase
-from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.protocols import GenerationBatchGatherer
 from vrl.generation.steps.denoise.config import DenoiseLoopConfig
 from vrl.generation.steps.denoise.loop import (
     DenoiseLoopResult,
+    DenoisePath,
     run_denoise_loop,
 )
 from vrl.generation.types import (
     DenoiseRequest,
-    GenerationOutput,
     GenerationRequest,
 )
 from vrl.trajectory.storage import (
@@ -47,15 +46,10 @@ from vrl.utils.tensors import expand_tensor_to_batch
 
 
 @dataclass(slots=True)
-class DenoiseBatchResult:
+class DenoiseBatchResult(DenoisePath):
     """Output of one fused diffusion sample batch."""
 
     batch: GenerationSampleBatch
-    # The denoise path once, ``(sample, num_steps + 1, *latent)``: observations
-    # are ``latents[:, :-1]`` and actions ``latents[:, 1:]``. The gatherer
-    # slices the two views after concatenation, so one storage crosses the
-    # worker->driver wire and one lives on the driver instead of two.
-    latents: Any
     log_probs: Any
     timesteps: Any
     # Decoded media (uint8), or sample-ordered references from a Ray actor.
@@ -71,16 +65,6 @@ class DenoiseBatchResult:
     stage_durations: dict[str, float] = field(default_factory=dict)
     # Display/provenance-only: emitted through per-batch runtime debug metrics.
     engine_counters: dict[str, Any] = field(default_factory=dict)
-
-    # The two trajectory views the loop result also exposes; readers outside
-    # the wire (probes, family tests) keep naming them by role.
-    @property
-    def observations(self) -> Any:
-        return self.latents[:, :-1]
-
-    @property
-    def actions(self) -> Any:
-        return self.latents[:, 1:]
 
     # The media a reward scores, by one name across the family result types
     # (the Ray adapter replaces it with references for online scoring).
@@ -211,45 +195,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
     def parse_sampling_params(self, request: GenerationRequest) -> DenoiseSamplingParams:
         return self.layout.parse_sampling_params(request)
 
-    def build_denoise_config(
-        self,
-        params: DenoiseSamplingParams,
-        batch: GenerationSampleBatch,
-    ) -> DenoiseLoopConfig:
-        """Build the SDE denoise config for one sample batch."""
-
-        return DenoiseLoopConfig(
-            sample_start=batch.sample_start,
-            sample_count=batch.sample_count,
-            seed=params.model_request.seed,
-            sde=params.sde,
-            # Use the parsed window without drawing again inside the loop.
-            # _forward_batch parses each batch; request-owned randomness keeps
-            # the selected window identical across those re-parses.
-            sde_window=params.sde_window,
-            denoise_mode=params.denoise_mode,
-            teacache=params.teacache,
-        )
-
-    def forward_plan_pipelined(
-        self,
-        request: GenerationRequest,
-        plan: EnginePlan,
-    ) -> GenerationOutput:
-        """Local execution and merge with a CPU handoff after each generation batch.
-
-        Kept as the local equivalence-test entrypoint: it runs the same
-        ``forward_batch`` and order-preserving gather as ``forward_plan``, but
-        copies each batch to pinned CPU memory before producing the next one.
-        The historical name does not imply overlapping copies and computation.
-
-        Ray workers call ``execute_request_batches`` directly and stage the
-        results for a separate finalizer; they do not use this local merge path.
-        """
-
-        batches = self.execute_request_batches(request, plan.sample_batches)
-        return self.merge_generation_batches(request, batches)
-
     def forward_batch(
         self,
         request: GenerationRequest,
@@ -292,7 +237,18 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
             generation_request=request,
             batch=batch,
         )
-        config = self.build_denoise_config(params, batch)
+        config = DenoiseLoopConfig(
+            sample_start=batch.sample_start,
+            sample_count=batch.sample_count,
+            seed=params.model_request.seed,
+            sde=params.sde,
+            # Use the parsed window without drawing again inside the loop.
+            # _forward_batch parses each batch; request-owned randomness keeps
+            # the selected window identical across those re-parses.
+            sde_window=params.sde_window,
+            denoise_mode=params.denoise_mode,
+            teacache=params.teacache,
+        )
         initial_latents = self.draw_initial_latents(
             request=params.model_request,
             encoded=encoded,

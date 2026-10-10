@@ -61,9 +61,13 @@ class GenerationRequestBuilder:
         # sample under the run's one noise_level/sde_type.
         overrides = dict(request_overrides or {})
         if overrides:
-            sampling.update(
-                sampling_section_class_for_family(self.entry.family).require_overrides(overrides)
+            # The override vocabulary is the family's sampling fields, so a typo
+            # fails with the same ``unknown sampling.<key>`` message as a YAML typo
+            # instead of riding the wire to a runtime that ignores it.
+            section = sampling_section_class_for_family(self.entry.family).revalidate(
+                overrides, section="sampling"
             )
+            sampling.update(section.model_dump(mode="python", exclude_unset=True))
         if sampling.get("seed") is None:
             # The online checkpoint captures the driver's Python RNG, not the
             # remote workers' RNGs. Drawing the request seed here makes a
@@ -76,7 +80,14 @@ class GenerationRequestBuilder:
         if "fps" in sampling:
             group_metadata.setdefault("video_fps", sampling["fps"])
 
-        defaulted_inputs = [self._apply_input_defaults(item) for item in inputs]
+        # Family defaults for each conditioning input: a bare string is a prompt,
+        # and the task type falls back to the family's.
+        defaulted_inputs = [
+            replace(item, task_type=item.task_type or task_type_for(self.entry.task))
+            for item in (
+                GenerationInput(prompt=raw) if isinstance(raw, str) else raw for raw in inputs
+            )
+        ]
         default_task_type = task_type_for(self.entry.task)
         if default_task_type is not None and defaulted_inputs:
             first = defaulted_inputs[0]
@@ -109,16 +120,6 @@ class GenerationRequestBuilder:
             request=request,
             metadata=group_metadata,
         )
-
-    def _apply_input_defaults(
-        self,
-        item: GenerationInput | str,
-    ) -> GenerationInput:
-        """Apply family defaults to one conditioning input."""
-
-        if isinstance(item, str):
-            item = GenerationInput(prompt=item)
-        return replace(item, task_type=item.task_type or task_type_for(self.entry.task))
 
 
 __all__ = [

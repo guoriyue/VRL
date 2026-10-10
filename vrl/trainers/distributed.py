@@ -120,36 +120,39 @@ class ContextParallelGroups:
     cp_rank: int
     dp_rank: int
 
+    @classmethod
+    def create(cls, cp_size: int) -> ContextParallelGroups:
+        """Collectively create DP x CP groups in identical order on every world rank.
 
-def create_context_parallel_groups(cp_size: int) -> ContextParallelGroups:
-    """Collectively create DP x CP groups in identical order on every world rank.
+        Does not initialize the default group. The process-group owner is also
+        responsible for shutdown. CP peers must receive identical replay inputs;
+        sampler identity is dp_rank/dp_size, not physical rank/world size.
+        """
+        import torch.distributed as dist
 
-    Does not initialize the default group. The process-group owner is also
-    responsible for shutdown. CP peers must receive identical replay inputs;
-    sampler identity is dp_rank/dp_size, not physical rank/world size.
-    """
-    import torch.distributed as dist
-
-    if not dist.is_initialized():
-        raise RuntimeError("CP groups require an initialized process group")
-    world, rank = dist.get_world_size(), dist.get_rank()
-    if isinstance(cp_size, bool) or not isinstance(cp_size, int) or cp_size < 2 or world % cp_size:
-        raise ValueError("CP size must be an integer >= 2 dividing world size")
-    dp_size = world // cp_size
-    cp_group = dp_group = None
-    for dp_rank in range(dp_size):
-        members = list(range(dp_rank * cp_size, (dp_rank + 1) * cp_size))
-        group = dist.new_group(members)
-        if rank in members:
-            cp_group = group
-    for cp_rank in range(cp_size):
-        members = list(range(cp_rank, world, cp_size))
-        group = dist.new_group(members)
-        if rank in members:
-            dp_group = group
-    return ContextParallelGroups(
-        cp_group, dp_group, cp_size, dp_size, rank % cp_size, rank // cp_size
-    )
+        if not dist.is_initialized():
+            raise RuntimeError("CP groups require an initialized process group")
+        world, rank = dist.get_world_size(), dist.get_rank()
+        if (
+            isinstance(cp_size, bool)
+            or not isinstance(cp_size, int)
+            or cp_size < 2
+            or world % cp_size
+        ):
+            raise ValueError("CP size must be an integer >= 2 dividing world size")
+        dp_size = world // cp_size
+        cp_group = dp_group = None
+        for dp_rank in range(dp_size):
+            members = list(range(dp_rank * cp_size, (dp_rank + 1) * cp_size))
+            group = dist.new_group(members)
+            if rank in members:
+                cp_group = group
+        for cp_rank in range(cp_size):
+            members = list(range(cp_rank, world, cp_size))
+            group = dist.new_group(members)
+            if rank in members:
+                dp_group = group
+        return cls(cp_group, dp_group, cp_size, dp_size, rank % cp_size, rank // cp_size)
 
 
 def synchronize_context_parallel_rng(*, groups: ContextParallelGroups) -> None:
@@ -531,35 +534,33 @@ class ContextParallelPeerGroup:
     cp_size: int
     cp_rank: int
 
+    @classmethod
+    def create(cls, context: DistributedTrainingContext) -> ContextParallelPeerGroup:
+        """Collectively create every CP group; return this rank's.
 
-def create_context_parallel_peer_group(
-    context: DistributedTrainingContext,
-) -> ContextParallelPeerGroup:
-    """Collectively create every CP group; return this rank's.
+        Every rank must call this in the same order (``dist.new_group`` is
+        collective). CP groups are contiguous, matching the row-major rank layout of
+        the ``("dp_shard", "ring", "ulysses")`` device mesh.
+        """
 
-    Every rank must call this in the same order (``dist.new_group`` is
-    collective). CP groups are contiguous, matching the row-major rank layout of
-    the ``("dp_shard", "ring", "ulysses")`` device mesh.
-    """
+        import torch.distributed as dist
 
-    import torch.distributed as dist
-
-    if context.cp_size < 2:
-        raise ValueError("context-parallel groups require cp_size >= 2")
-    if not dist.is_initialized():
-        raise RuntimeError("context-parallel groups require an initialized process group")
-    mine: Any = None
-    for dp_rank in range(context.dp_size):
-        members = list(range(dp_rank * context.cp_size, (dp_rank + 1) * context.cp_size))
-        group = dist.new_group(members, backend="gloo", timeout=collective_timeout(context))
-        if context.rank in members:
-            mine = group
-    assert mine is not None
-    return ContextParallelPeerGroup(
-        object_group=mine,
-        cp_size=context.cp_size,
-        cp_rank=context.cp_rank,
-    )
+        if context.cp_size < 2:
+            raise ValueError("context-parallel groups require cp_size >= 2")
+        if not dist.is_initialized():
+            raise RuntimeError("context-parallel groups require an initialized process group")
+        mine: Any = None
+        for dp_rank in range(context.dp_size):
+            members = list(range(dp_rank * context.cp_size, (dp_rank + 1) * context.cp_size))
+            group = dist.new_group(members, backend="gloo", timeout=collective_timeout(context))
+            if context.rank in members:
+                mine = group
+        assert mine is not None
+        return cls(
+            object_group=mine,
+            cp_size=context.cp_size,
+            cp_rank=context.cp_rank,
+        )
 
 
 def run_on_primary_rank(

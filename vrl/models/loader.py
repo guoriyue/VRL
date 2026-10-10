@@ -37,31 +37,20 @@ def load_diffusers_transformer(
             torch_dtype=build.parameter_dtype,
             **build.pretrained_kwargs,
         )
-    return skeleton_from_config(
-        transformer_cls,
-        transformer_cls.load_config(
-            build.model_name_or_path,
-            subfolder=subfolder,
-            **build.pretrained_kwargs,
-        ),
-        dtype=build.parameter_dtype,
-    )
-
-
-def skeleton_from_config(model_cls: Any, config: Any, *, dtype: Any) -> Any:
-    """Construct ``model_cls`` from ``config`` with meta parameters and real buffers.
-
-    The parameter dtypes follow ``dtype`` the way a plain ``from_pretrained``
-    cast would; a strategy that later fills the skeleton from another rank
-    re-syncs any per-parameter exception (diffusers' fp32 pins) before
-    materializing storage.
-    """
-
+    # A skeleton: meta parameters, real buffers, parameter dtypes as a plain
+    # from_pretrained cast would set them. A strategy that later fills it from
+    # another rank re-syncs any per-parameter exception (diffusers' fp32 pins)
+    # before materializing storage.
     from accelerate import init_empty_weights
 
+    config = transformer_cls.load_config(
+        build.model_name_or_path,
+        subfolder=subfolder,
+        **build.pretrained_kwargs,
+    )
     with init_empty_weights(include_buffers=False):
-        model = model_cls.from_config(config)
-    return model.to(dtype=dtype)
+        model = transformer_cls.from_config(config)
+    return model.to(dtype=build.parameter_dtype)
 
 
 def load_diffusers_scheduler(

@@ -20,24 +20,17 @@ from vrl.utils.profiling import profile_range
 
 
 @dataclass(slots=True)
-class DenoiseLoopResult:
-    """Denoise-loop output before decode and artifact packing."""
+class DenoisePath:
+    """The whole denoise path as one storage, ``(batch, num_steps + 1, *latent)``.
 
-    state: Any
-    # The whole denoise path, ``(batch, num_steps + 1, *latent)``; see
-    # ``DenoiseTrajectoryBuffers.latents``. Carried as one storage so the
-    # observation/action pair is never materialized twice downstream.
+    Row ``t`` is the sample the step-``t`` forward consumed and row ``t + 1``
+    the sample the step produced, so ``observations`` and ``actions`` are the
+    two step-aligned views ``latents[:, :-1]`` and ``latents[:, 1:]``. One
+    storage crosses the worker->driver wire and lives on the driver instead
+    of two; readers outside the wire name the views by role.
+    """
+
     latents: Any
-    log_probs: Any
-    timesteps: Any
-    prev_sample_means: Any | None = None
-    # Batch-memory reading (occupancy at loop start plus the denoise peak),
-    # None off CUDA. The executor adds the decode peak and derives the
-    # runtime-debug peak display from it.
-    memory: dict[str, int] | None = None
-    # display/provenance-only: denoise-engine counters forwarded to optional
-    # runtime-debug telemetry.
-    engine_counters: dict[str, Any] = field(default_factory=dict)
 
     @property
     def observations(self) -> Any:
@@ -49,20 +42,32 @@ class DenoiseLoopResult:
 
 
 @dataclass(slots=True)
-class DenoiseTrajectoryBuffers:
+class DenoiseLoopResult(DenoisePath):
+    """Denoise-loop output before decode and artifact packing."""
+
+    state: Any
+    log_probs: Any
+    timesteps: Any
+    prev_sample_means: Any | None = None
+    # Batch-memory reading (occupancy at loop start plus the denoise peak),
+    # None off CUDA. The executor adds the decode peak and derives the
+    # runtime-debug peak display from it.
+    memory: dict[str, int] | None = None
+    # display/provenance-only: denoise-engine counters forwarded to optional
+    # runtime-debug telemetry.
+    engine_counters: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class DenoiseTrajectoryBuffers(DenoisePath):
     """Preallocated replay tensors written once per denoise step.
 
-    ``latents`` holds the whole denoise path, ``(batch, num_steps + 1, *latent)``:
-    row ``t`` is the sample the step-``t`` forward consumed and row ``t + 1`` the
-    sample the step produced. ``observations`` and ``actions`` are the two
-    step-aligned views ``latents[:, :-1]`` and ``latents[:, 1:]``. The
-    observation of step ``t + 1`` is the action of step ``t`` by construction
+    The observation of step ``t + 1`` is the action of step ``t`` by construction
     (the loop assigns, never mutates, ``state.latents``), so keeping two buffers
     would hold every intermediate latent twice on the device and copy it twice
     per step.
     """
 
-    latents: torch.Tensor
     log_probs: torch.Tensor
     timesteps: torch.Tensor
     prev_sample_means: torch.Tensor | None = None
@@ -113,14 +118,6 @@ class DenoiseTrajectoryBuffers:
                 else None
             ),
         )
-
-    @property
-    def observations(self) -> torch.Tensor:
-        return self.latents[:, :-1]
-
-    @property
-    def actions(self) -> torch.Tensor:
-        return self.latents[:, 1:]
 
     def record_initial_latents(self, latents: torch.Tensor) -> None:
         """Write the observation of step 0; every later observation is a recorded action."""
@@ -268,6 +265,7 @@ def run_denoise_loop(
 
 __all__ = [
     "DenoiseLoopResult",
+    "DenoisePath",
     "DenoiseTrajectoryBuffers",
     "run_denoise_loop",
 ]

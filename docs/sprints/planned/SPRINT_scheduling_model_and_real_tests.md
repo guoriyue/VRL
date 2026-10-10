@@ -334,3 +334,53 @@ MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_prefl
 | dtype | `resolve_torch_dtype` 是唯一原语；`normalize_precision` / `_normalize_plain_dtype` 是配置 token 层，`resolve_eval_dtype` 是 eval 的 `auto` 语义，`normalize_fsdp_parameter_dtype` 是对模块参数的改写，Kling 的 `_torch_dtype` 多处理 `auto` 和 None；都是在原语之上各做一件事，没有第二个原语 |
 
 逐个看过、各自解析不同对象的：`ray/resources` 的四个 `_resolve_*_devices`（一个构造器的阶段，§10 决定保留）、causvid / magi 的源码目录与权重路径、`resolve_checkpoint_model_identity`、`resolve_eval_sampling`、`resolve_eval_device`、danbooru 的 `resolve_metadata_path`、`require_*` 一族（各自检查不同的事）、`load_*` 一族（各自读不同的文件；perf 的 `_load_prompts` 读纯文本行，和 `load_prompt_dataset_index` 的 `.txt` 约定不同）。
+
+## 15. 按形状找包装函数，不按名字（2026-10-10）
+
+按 `resolve_` / `validate_` 这类前缀搜只能找到起了那种名字的函数。包装函数的定义是形状：函数体只有一次对别的函数的调用，外加最多一行参数整理。用 AST 扫 `vrl/` 得到 209 个这种形状的函数，其中绝大多数不是包装：协议实现（各 family 的 `forward_step` / `restore_eval_state` / `encode_prompt_for_batch` / `build_branch`、`Strategy` 的导出方法）、框架回调（aiohttp 路由、pydantic 校验器、Ray actor 方法）、多模块共用的一行原语（`user_path`、`kv`、`to_uint8`、`read_json`）、以及测试钉住数学的函数（`group_relative_advantages`）。剩下的单调用方或双调用方的转发层这轮折掉：
+
+| 原来 | 现在 |
+|---|---|
+| `image_checkpoint_eval.load_target` | `discover_targets` 自己调 `CheckpointTarget.from_cli_values` + `.load`，`uses_lora` 在一处循环里检查 |
+| `ForwardProcessAlgorithm.compute_loss` → `compute_batch_timestep_loss` 两个入口 | 只剩 `compute_loss(inputs)`，V-GRPO / NFT 直接实现它，测试构造 `AlgorithmInput` |
+| wan22 `_probe_score`、robotics `_json_sha256` / `_normalized_prompt`、curve verdict `_mean` | 调用处直接写 |
+| HPSv3 `_frames`、服务端 `_overloaded_error`、causvid `_autocast_context`、loader `skeleton_from_config`、batch builder `_group_ids`、request builder `_apply_input_defaults`、优化器 `_make_master`、schema 的 `generation_request_rollout_fields` | 并进唯一的调用方 |
+| `OnlineTrainer.state_dict` / `checkpoint_state_dict` → `_state_dict(checkpoint_primary_only=)` 三层 | `state_dict(*, checkpoint_primary_only=False)` 持有正文；`checkpoint_state_dict` 留着，是 checkpoint writer 按名字找的协议入口 |
+| Cosmos Predict2 `postprocess_branch` → `_postprocess_branch(**拆开的字段)` | 一个方法 |
+| Wan T2V / I2V 各一个 `forward_step` 转发到 `_forward_wan_backbone(extra_builder=)` | `forward_step` 本身是 T2V 基类上的那段正文，I2V 只覆盖 `_backbone_extra`（图像条件）；MRO 测试改为钉 `_backbone_extra` 的归属 |
+| danbooru `split_safety_prompt_rows` → `split_rows_proportionally`（单调用方的泛型函数） | 正文并进唯一调用方 |
+
+折错又恢复的一处：`DenoiseModelBase.forward` 不是 `forward_step` 的重复名字，它是 `nn.Module` 的入口，module hook 绕着它触发；留下并写明。
+名字前缀本身不是判据。常见的几类：形状变换（resolve / normalize / coerce / parse）、门禁（validate / verify / check / ensure / require）、构造（build / make / create / prepare）、取得（get / fetch / load / read）、转换（to_ / from_ / as_）。每一类里都既有真正的多调用方原语，也有一层薄转发；区分的是调用方数量和它有没有自己的逻辑，不是动词。
+
+## 16. 函数体完全相同的重复（2026-10-10）
+
+按 AST 比对函数体（忽略 docstring，短于 120 字符的一行函数不算），vrl/ 里有 21 组函数体完全相同。处置：
+
+| 组 | 处置 |
+|---|---|
+| `GRPO.sft_weight` / `DiffusionDPO.sft_weight` 两个 property 同体 | 一个 `Algorithm.sft_weight`，按 `sft_source` 事实决定读不读 config |
+| `DenoiseBatchResult` / `DenoiseLoopResult` / `DenoiseTrajectoryBuffers` 各一份 `observations` / `actions` 视图 | 一个数据基类 `DenoisePath`（`latents` 加两个视图），三者继承 |
+| qwen_image / qwen_image_21 解码里一样的 `_transform` 闭包 | `common.latent_decode.denormalize_video_vae_latents` 一处 |
+| SingleProcess / DDP 两份 `backward`、`clip_grad_norm`；CP / DDP 两份"拒绝 parking"的 `park_training_state` / `restore_training_state` | 都放在 `_UnshardedStateStrategy` 上，SingleProcess 的 `TrainerParking` 在 MRO 更前面所以仍走真正的 parking |
+| cosmos3 / minimax_h3 executor 各一份只为吞掉 `samples_per_generation_batch` 的构造器 | 生产代码从不传这个参数，两份删除；测试里那一处调用改掉 |
+| lerobot 两个函数里各定义一遍同样的 `_dl` 闭包 | 一个模块函数，用 `functools.partial` 绑定仓库和缓存目录传给按版本的迭代器（它要的是回调） |
+| `MultiReward.score` | 没有调用方，删除 |
+
+试过又退回来的：
+- 把 lumina2 / mochi / sana 逐行相同的 `build_branch` 上提为 `DenoiseBackboneRunnerBase` 的默认实现：这正是 2026-09-17 合并后又撤回的 `EncoderAttentionMaskRunnerBase`，违反 `SPRINT_functional_duplicates.md` 定下的边界（基础设施去重，model glue 不合并：每个 family 的 `encode_prompt` / `prepare_sampling` / `forward_step` / `build_branch` / 轨迹导出与恢复各留一份，即使逐行相同），退回。
+- 把两个 denoise executor 基类相同的 `__init__(model, *, gatherer)` 上提到 `BatchExecutorBase`：三个测试替身证明那一层是故意没有 model 的（它只管分批和 gather），退回。
+- 把 flux / qwen_image 相同的 `packed_token_count` 做成基类默认：`test_dynamic_shift_replay_without_a_token_count_fails_loud` 钉的是"动态 shift 的 family 必须自己声明打包方式，否则 replay 网格无声出错"这条契约，退回。
+
+留下的同体函数（四个 masked-prompt family 的 `export_replay_tensors`、lumina2 / sana 的 `encode_prompt` 这类同体 model glue 按上面的边界一律保留，近似重复扫描会一直报它们，结论是“model glue, kept”）：`reward_media` 两个结果类的别名属性、geneval / wd_tagger 的 `__call__`、各 family 相同的协议方法（`encode_prompt_for_batch` 等）、`policy_cores` / `trainable_modules`（同体但概念不同，docstring 写明）、`requires_memory_parking` / `required`（两个协议）、lumina2 / mochi 的 `postprocess_branch`（两家都预测反向时间速度，各自声明）。
+
+## 17. 产出某个类实例的自由函数并回该类（2026-10-10）
+
+| 原函数 | 现在 |
+|---|---|
+| `create_context_parallel_groups(cp_size)` | `ContextParallelGroups.create(cp_size)` |
+| `create_context_parallel_peer_group(context)` | `ContextParallelPeerGroup.create(context)` |
+
+判断标准（按 C++ 的 static 成员函数）：函数并进类 `T`，要么它是具名构造函数——返回恰好一个 `T`，且普通构造表达不了（集体通信、字段由输入推导）；要么它要用 `T` 的不变量或内部表示。返回容器、`None`，或装的是别的模块的规则，就留在模块里当函数：Python 的模块就是命名空间。上表两项是具名构造函数。`build_adapter_exports`（返回 `dict | None`，决定的是检查点目录布局）和 `build_reward_model_definitions`（返回列表，写死的是这份 SANA 报告用哪两个 reward）按这条标准不并，留在 checkpointing 和报告模块里。
+
+留下的 build_* / validate_*（80 个里的其余）：19 个脚本的 `build_parser` 是 CLI 入口约定；`build_*_replay_runtime_bundle` 是注册表按字符串引用的 family 钩子；`build_strategy` / `build_reward_scorer` / `build_optimizer` 按 kind 分发到多个类；`build_fsdp_mesh` / `build_context_parallel_mesh` 产出 torch 的 DeviceMesh；其余产出 dict / list / str，没有对应的类；`validate_*` 各检查一件自己的事，读的是文件或张量而不是某个对象的字段。两处同一角色两个名字的：`encode_targets` 和 `full_sequence_probe` 叫 `_build_arg_parser`，其它 19 个脚本叫 `build_parser`；改名要你定。

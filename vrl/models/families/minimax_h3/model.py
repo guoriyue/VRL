@@ -721,11 +721,16 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
             ):
                 return vae.decode(batch, return_dict=False)[0]
 
+        from diffusers.video_processor import VideoProcessor
+
+        video_processor = VideoProcessor(
+            vae_scale_factor=int(vae.spatial_compression_ratio), do_normalize=False
+        )
         decoder = ChunkedLatentDecoder(
             LatentDecodePlan(
                 prepare_latents=lambda batch: batch.to(torch.float32) * latents_std + latents_mean,
                 vae_decode=_vae_decode,
-                postprocess=lambda video: self._video_processor().postprocess_video(
+                postprocess=lambda video: video_processor.postprocess_video(
                     (video.float() * pixel_std + pixel_mean).clamp(0, 1),
                     output_type="pt",
                 ),
@@ -758,13 +763,6 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
         audio = audio_vae.decode(latents.float() * std + mean, return_dict=False)[0]
         return audio.float().permute(1, 0, 2)[0].to(output_device), int(
             audio_vae.config.sampling_rate
-        )
-
-    def _video_processor(self) -> Any:
-        from diffusers.video_processor import VideoProcessor
-
-        return VideoProcessor(
-            vae_scale_factor=int(self.pipeline.vae.spatial_compression_ratio), do_normalize=False
         )
 
     # ---- replay export/restore ----

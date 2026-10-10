@@ -11,9 +11,22 @@ dataset and video dependencies stay inside the paths that use them.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
+
+from vrl.utils.hf_hub import HuggingFaceRepoRevision
+
+
+def _lerobot_file(repo_id: str, cache_dir: Path | None, rel: str) -> str:
+    """One file of the LeRobot dataset repo, fetched into the Hugging Face cache."""
+
+    return str(
+        HuggingFaceRepoRevision(repo_id, "main").download_file(
+            rel, repo_type="dataset", cache_dir=cache_dir
+        )
+    )
 
 
 def iter_lerobot_first_frames(
@@ -36,14 +49,9 @@ def iter_lerobot_first_frames(
 
     import json
 
-    from vrl.utils.hf_hub import HuggingFaceRepoRevision
-
-    repo = HuggingFaceRepoRevision(repo_id, "main")
-
-    def _dl(rel: str) -> str:
-        return str(repo.download_file(rel, repo_type="dataset", cache_dir=cache_dir))
-
-    info = json.loads(Path(_dl("meta/info.json")).read_text(encoding="utf-8"))
+    info = json.loads(
+        Path(_lerobot_file(repo_id, cache_dir, "meta/info.json")).read_text(encoding="utf-8")
+    )
     features = list(info.get("features", {}).keys())
     video_key = camera or next(
         (f for f in features if f.startswith("observation.images.")),
@@ -54,9 +62,21 @@ def iter_lerobot_first_frames(
 
     version = str(info.get("codebase_version", "v2.1")).lower()
     if version.startswith("v2.0"):
-        yield from _iter_lerobot_v20(repo_id, info, video_key=video_key, limit=limit, dl=_dl)
+        yield from _iter_lerobot_v20(
+            repo_id,
+            info,
+            video_key=video_key,
+            limit=limit,
+            dl=functools.partial(_lerobot_file, repo_id, cache_dir),
+        )
     else:
-        yield from _iter_lerobot_v21(repo_id, info, video_key=video_key, limit=limit, dl=_dl)
+        yield from _iter_lerobot_v21(
+            repo_id,
+            info,
+            video_key=video_key,
+            limit=limit,
+            dl=functools.partial(_lerobot_file, repo_id, cache_dir),
+        )
 
 
 def iter_lerobot_target_clips(
@@ -71,17 +91,12 @@ def iter_lerobot_target_clips(
 
     import json
 
-    from vrl.utils.hf_hub import HuggingFaceRepoRevision
-
     if max_target_frames <= 0:
         raise ValueError("--max-target-frames must be positive")
 
-    repo = HuggingFaceRepoRevision(repo_id, "main")
-
-    def _dl(rel: str) -> str:
-        return str(repo.download_file(rel, repo_type="dataset", cache_dir=cache_dir))
-
-    info = json.loads(Path(_dl("meta/info.json")).read_text(encoding="utf-8"))
+    info = json.loads(
+        Path(_lerobot_file(repo_id, cache_dir, "meta/info.json")).read_text(encoding="utf-8")
+    )
     features = list(info.get("features", {}).keys())
     video_key = camera or next(
         (f for f in features if f.startswith("observation.images.")),
@@ -98,7 +113,7 @@ def iter_lerobot_target_clips(
             video_key=video_key,
             limit=limit,
             max_target_frames=max_target_frames,
-            dl=_dl,
+            dl=functools.partial(_lerobot_file, repo_id, cache_dir),
         )
     else:
         yield from _iter_lerobot_v21_target_clips(
@@ -107,7 +122,7 @@ def iter_lerobot_target_clips(
             video_key=video_key,
             limit=limit,
             max_target_frames=max_target_frames,
-            dl=_dl,
+            dl=functools.partial(_lerobot_file, repo_id, cache_dir),
         )
 
 

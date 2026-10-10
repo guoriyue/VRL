@@ -44,18 +44,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def load_target(value: str, *, run_dir: Path, uses_lora: bool) -> CheckpointTarget:
-    """Parse one ``label=path`` (or bare path) arm and pin its checkpoint."""
-
-    from vrl.trainers.checkpointing import CheckpointTarget
-
-    [arm] = CheckpointTarget.from_cli_values([value], run_dir=run_dir, reserved_label="base")
-    target = CheckpointTarget.load(arm.path, label=arm.label, digest=True)
-    if target.meta.get("uses_lora") is not uses_lora:
-        raise ValueError(f"checkpoint uses_lora differs from the run model: {target.path}")
-    return target
-
-
 @dataclass(frozen=True, slots=True)
 class EvalPrompt:
     """Selected manifest row; metadata remains available to any reward."""
@@ -421,15 +409,16 @@ def discover_targets(
     ):
         raise ValueError("--epochs must contain unique non-negative integers")
     if checkpoint_specs:
-        targets = [
-            load_target(value, run_dir=run_dir, uses_lora=uses_lora) for value in checkpoint_specs
-        ]
+        arms = CheckpointTarget.from_cli_values(
+            checkpoint_specs, run_dir=run_dir, reserved_label="base"
+        )
+        targets = [CheckpointTarget.load(arm.path, label=arm.label, digest=True) for arm in arms]
     else:
         by_epoch: dict[int, CheckpointTarget] = {}
         for path in sorted(run_dir.glob("checkpoint-*")):
             if not path.is_dir() or not is_complete_checkpoint(path):
                 continue
-            target = load_target(str(path), run_dir=run_dir, uses_lora=uses_lora)
+            target = CheckpointTarget.load(path, label=path.name, digest=True)
             previous = by_epoch.get(target.epoch)
             if previous is None or target.label == "checkpoint-final":
                 by_epoch[target.epoch] = target
@@ -440,6 +429,9 @@ def discover_targets(
         targets = [by_epoch[epoch] for epoch in sorted(epochs or by_epoch)]
     if not targets or len({target.label for target in targets}) != len(targets):
         raise ValueError("select at least one checkpoint with unique labels")
+    for target in targets:
+        if target.meta.get("uses_lora") is not uses_lora:
+            raise ValueError(f"checkpoint uses_lora differs from the run model: {target.path}")
     return (CheckpointTarget.base(), *targets)
 
 

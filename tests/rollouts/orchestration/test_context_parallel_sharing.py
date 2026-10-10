@@ -16,7 +16,7 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.schedule import collect_context_parallel_iteration
 from vrl.rollouts.orchestration.types import RolloutIteration
 from vrl.trainers.data.prompt_sampler import PromptBatchSampler
-from vrl.trainers.distributed import create_context_parallel_groups
+from vrl.trainers.distributed import ContextParallelGroups
 from vrl.trajectory.types import TrajectoryBatch
 
 
@@ -33,7 +33,7 @@ def _worker(rank, rendezvous, spool_dir, cuda):
         timeout=timedelta(seconds=90),
     )
     try:
-        groups = create_context_parallel_groups(2)
+        groups = ContextParallelGroups.create(2)
         sampler = PromptBatchSampler(
             generator=torch.Generator().manual_seed(551),
             num_examples=16,

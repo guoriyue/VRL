@@ -515,13 +515,22 @@ class WanT2VDiffusersModel(
             return "transformer_2", transformer_2, state.guidance_scale_2 or state.guidance_scale
         return "transformer", self.transformer, state.guidance_scale
 
-    def _forward_wan_backbone(
+    def forward_step(
         self,
         state: WanT2VSamplingState | WanI2VSamplingState,
         step_idx: int,
-        *,
-        extra_builder: Callable[[torch.dtype], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        """Wan transformer forward + optional batched CFG.
+
+        Returns noise_pred plus the un/conditional branches; the caller owns
+        scheduler.step / SDE. ``_backbone_extra`` adds the family's extra
+        conditioning (I2V's image condition).
+
+        Timestep shape convention (mirrors SD3 model):
+        - rollouts: ``state.timesteps`` is 1-D ``[T]``; we expand a scalar to ``[B]``.
+        - eval/training: collector packs per-sample timestep as ``[B]``; expand is a no-op.
+        """
+
         bsz = state.latents.shape[0]
         timestep = state.timesteps[step_idx]
         expert_name, transformer, guidance_scale = self._transformer_for_step(
@@ -558,7 +567,7 @@ class WanT2VDiffusersModel(
                     guidance_scale=guidance_scale,
                     do_cfg=state.do_cfg,
                     output_dtype=td,
-                    extra=extra_builder(td) if extra_builder is not None else {},
+                    extra=self._backbone_extra(state, td),
                 ),
             )
         return output.as_dict()
@@ -706,21 +715,11 @@ class WanT2VDiffusersModel(
 
     # -- forward_step --------------------------------------------------
 
-    def forward_step(
-        self,
-        state: WanT2VSamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """Wan T2V transformer forward + optional batched CFG.
+    def _backbone_extra(self, state: Any, dtype: torch.dtype) -> dict[str, Any]:
+        """Extra transformer inputs beyond latents, timestep and prompts; none for T2V."""
 
-        Returns noise_pred plus the un/conditional branches; the caller owns
-        scheduler.step / SDE.
-
-        Timestep shape convention (mirrors SD3 model):
-        - rollouts: ``state.timesteps`` is 1-D ``[T]``; we expand a scalar to ``[B]``.
-        - eval/training: collector packs per-sample timestep as ``[B]``; expand is a no-op.
-        """
-        return self._forward_wan_backbone(state, step_idx)
+        del state, dtype
+        return {}
 
     # -- collector boundary --------------------------------------------
 
@@ -1132,23 +1131,13 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             num_train_timesteps=_scheduler_num_train_timesteps(scheduler),
         )
 
-    def forward_step(
-        self,
-        state: WanI2VSamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """Wan I2V transformer forward + optional batched CFG."""
+    def _backbone_extra(self, state: WanI2VSamplingState, dtype: torch.dtype) -> dict[str, Any]:
+        """I2V conditions the transformer on the first-frame latent and image embeds."""
 
-        return self._forward_wan_backbone(
-            state,
-            step_idx,
-            extra_builder=lambda td: {
-                "condition": state.condition.to(td),
-                "image_embeds": (
-                    None if state.image_embeds is None else state.image_embeds.to(td)
-                ),
-            },
-        )
+        return {
+            "condition": state.condition.to(dtype),
+            "image_embeds": None if state.image_embeds is None else state.image_embeds.to(dtype),
+        }
 
     def export_batch_context(self, state: WanI2VSamplingState) -> dict[str, Any]:
         """Project SamplingState -> RolloutBatch.context (shared metadata)."""

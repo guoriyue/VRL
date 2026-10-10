@@ -12,8 +12,8 @@ from diffusers.models.transformers.transformer_cosmos import CosmosTransformerBl
 from vrl.models.families.cosmos import CosmosContextParallelAttnProcessor
 from vrl.models.precision import fixed_row_linear_compute
 from vrl.trainers.distributed import (
+    ContextParallelGroups,
     context_parallel_gather_tokens,
-    create_context_parallel_groups,
     reduce_context_parallel_gradients,
 )
 
@@ -33,8 +33,8 @@ def _worker(rank, rendezvous, cuda):
     try:
         for invalid in (0, 3, True, 2.5):
             with pytest.raises(ValueError, match="dividing world size"):
-                create_context_parallel_groups(invalid)
-        groups = create_context_parallel_groups(2)
+                ContextParallelGroups.create(invalid)
+        groups = ContextParallelGroups.create(2)
         assert (groups.dp_rank, groups.cp_rank) == (rank // 2, rank % 2)
         torch.manual_seed(991)
         reference = CosmosTransformerBlock(4, 8, 32).attn1.to(device)

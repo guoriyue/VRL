@@ -178,7 +178,7 @@ def test_batch_executor_pins_one_sample_and_carries_only_the_prompt() -> None:
             encoded_calls.append((prompt, negative, kwargs))
             return {"prompt_embeds": torch.zeros(1, 2, 3)}
 
-    executor = MiniMaxH3BatchExecutor(_Model(), samples_per_generation_batch=8)
+    executor = MiniMaxH3BatchExecutor(_Model())
 
     assert executor.family == "minimax_h3"
     assert executor.default_num_frames == 124

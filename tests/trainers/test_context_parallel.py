@@ -31,9 +31,9 @@ from vrl.trainers.context_parallel import (
     install_autocast_safe_attention_ops,
 )
 from vrl.trainers.distributed import (
+    ContextParallelPeerGroup,
     DistributedTrainingContext,
     collective_timeout,
-    create_context_parallel_peer_group,
 )
 from vrl.trainers.fsdp import build_context_parallel_mesh, build_fsdp_mesh
 
@@ -261,7 +261,7 @@ def _run_rank(rank: int, port: int, q: mp.Queue) -> None:
         ctx = DistributedTrainingContext(
             strategy="fsdp", rank=rank, world_size=2, device=torch.device("cpu"), cp_size=2
         )
-        groups = create_context_parallel_peer_group(ctx)
+        groups = ContextParallelPeerGroup.create(ctx)
         cp_mesh = build_context_parallel_mesh(ctx, ulysses_degree=2, ring_degree=1)
         fsdp_mesh = build_fsdp_mesh(ctx)
         # FSDP shards over the whole world; the CP mesh is its own 3D object.

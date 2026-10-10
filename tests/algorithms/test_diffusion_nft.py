@@ -34,6 +34,7 @@ from tests.models.steps.denoise.fixtures import (
 )
 from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.config.precision import RolePrecision
 from vrl.generation.types import DenoiseRequest, GenerationRequest, GenerationSampleRow
 from vrl.models.steps.denoise import DenoiseModelBase
@@ -260,11 +261,13 @@ def _step_distances(
 
     before = float((_default_forward(model, xt, prompt_embeds, t_raw).detach() - target).norm())
 
-    loss, _ = DiffusionNFT(cfg).compute_batch_timestep_loss(
-        model,
-        batch,
-        0,
-        torch.tensor([advantage]),
+    loss, _ = DiffusionNFT(cfg).compute_loss(
+        AlgorithmInput(
+            model=model,
+            rollout_batch=batch,
+            timestep_index=0,
+            advantages=torch.tensor([advantage]),
+        )
     )
     parameters = [p for p in model.transformer.parameters() if p.requires_grad]
     # LoRA weights sit at gaussian init and need a large step to move the
@@ -291,11 +294,13 @@ def test_nft_returns_only_objective_owned_step_metrics() -> None:
         timestep=500.0,
     )
 
-    _, metrics = DiffusionNFT(DiffusionNFTConfig()).compute_batch_timestep_loss(
-        model,
-        batch,
-        0,
-        torch.full((_BATCH,), 5.0),
+    _, metrics = DiffusionNFT(DiffusionNFTConfig()).compute_loss(
+        AlgorithmInput(
+            model=model,
+            rollout_batch=batch,
+            timestep_index=0,
+            advantages=torch.full((_BATCH,), 5.0),
+        )
     )
 
     # approx_kl is the historical CSV view of this exact reference-prediction
@@ -350,11 +355,10 @@ def test_edm_scale_timestep_grid_fails_loudly() -> None:
     )
 
     with pytest.raises(RuntimeError, match="EDM-scale"):
-        DiffusionNFT(DiffusionNFTConfig()).compute_batch_timestep_loss(
-            model,
-            batch,
-            0,
-            torch.tensor([1.0]),
+        DiffusionNFT(DiffusionNFTConfig()).compute_loss(
+            AlgorithmInput(
+                model=model, rollout_batch=batch, timestep_index=0, advantages=torch.tensor([1.0])
+            )
         )
 
 
@@ -383,8 +387,16 @@ def test_bf16_predictions_preserve_advantage_flip_invariant(monkeypatch) -> None
         timestep=500.0,
     )
     nft = DiffusionNFT(DiffusionNFTConfig(nft_beta=1.0, kl_coef=0.0))
-    _, metrics_neg = nft.compute_batch_timestep_loss(model, batch, 0, torch.tensor([-4.9375]))
-    _, metrics_pos = nft.compute_batch_timestep_loss(model, batch, 0, torch.tensor([4.9375]))
+    _, metrics_neg = nft.compute_loss(
+        AlgorithmInput(
+            model=model, rollout_batch=batch, timestep_index=0, advantages=torch.tensor([-4.9375])
+        )
+    )
+    _, metrics_pos = nft.compute_loss(
+        AlgorithmInput(
+            model=model, rollout_batch=batch, timestep_index=0, advantages=torch.tensor([4.9375])
+        )
+    )
     assert abs(metrics_pos.policy_loss - metrics_neg.policy_loss) <= 1e-6
 
 
@@ -412,7 +424,11 @@ def test_clean_prediction_auxiliary_loss_learns_when_rewards_tie(monkeypatch) ->
     timestep = torch.full((_BATCH,), 500.0)
     before = (xt - 0.5 * _default_forward(model, xt, prompt, timestep)).detach().square().mean()
     objective = PreserveClean(DiffusionNFTConfig(kl_coef=0))
-    loss, metrics = objective.compute_batch_timestep_loss(model, batch, 0, torch.zeros(_BATCH))
+    loss, metrics = objective.compute_loss(
+        AlgorithmInput(
+            model=model, rollout_batch=batch, timestep_index=0, advantages=torch.zeros(_BATCH)
+        )
+    )
     assert calls == [False, True]
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
     optimizer.zero_grad()
@@ -439,12 +455,12 @@ def test_zero_clean_prediction_auxiliary_loss_preserves_nft_loss_and_gradients()
     config = DiffusionNFTConfig(nft_beta=0.5)
     parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
     advantage = torch.full((_BATCH,), -5.0)
-    expected, expected_metrics = DiffusionNFT(config).compute_batch_timestep_loss(
-        model, batch, 0, advantage
+    expected, expected_metrics = DiffusionNFT(config).compute_loss(
+        AlgorithmInput(model=model, rollout_batch=batch, timestep_index=0, advantages=advantage)
     )
     expected_gradients = torch.autograd.grad(expected, parameters)
-    actual, actual_metrics = ZeroAuxiliary(config).compute_batch_timestep_loss(
-        model, batch, 0, advantage
+    actual, actual_metrics = ZeroAuxiliary(config).compute_loss(
+        AlgorithmInput(model=model, rollout_batch=batch, timestep_index=0, advantages=advantage)
     )
     actual_gradients = torch.autograd.grad(actual, parameters)
     torch.testing.assert_close(actual, expected, atol=0, rtol=0)
