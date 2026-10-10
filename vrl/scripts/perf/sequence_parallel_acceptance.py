@@ -48,6 +48,7 @@ from vrl.models.families.semantics import task_type_for
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner
 from vrl.run import ResolvedModel, ResolvedOnlineRun
+from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.json_files import write_json
 
 logger = logging.getLogger(__name__)
@@ -126,7 +127,7 @@ def _load_prompts(args: argparse.Namespace) -> list[str]:
     if args.prompts is None:
         prompts = list(DEFAULT_PROMPTS)
     else:
-        prompts = [line.strip() for line in args.prompts.read_text().splitlines() if line.strip()]
+        prompts = [example.prompt for example in load_prompt_dataset_index(args.prompts)]
     if args.num_prompts < 1 or args.num_prompts > len(prompts):
         raise ValueError(
             f"--num-prompts must be in [1, {len(prompts)}] for the given prompt source",

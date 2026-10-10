@@ -43,30 +43,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def load_target(value: str, *, uses_lora: bool) -> CheckpointTarget:
+def load_target(value: str, *, run_dir: Path, uses_lora: bool) -> CheckpointTarget:
     """Parse one ``label=path`` (or bare path) arm and pin its checkpoint."""
 
-    from vrl.trainers.checkpointing import LORA_WEIGHTS_NAME, CheckpointTarget
+    from vrl.trainers.checkpointing import CheckpointTarget
 
-    label, separator, raw_path = value.partition("=")
-    path = user_path(raw_path if separator else value)
-    if path.name == LORA_WEIGHTS_NAME:
-        path = path.parent
-    label = label.strip() if separator else path.name
-    if (
-        label == "base"
-        or not label
-        or any(
-            not (character.isascii() and (character.isalnum() or character in "_-"))
-            for character in label
-        )
-    ):
-        raise ValueError(
-            "checkpoint labels must use letters, digits, '_' or '-'; base is reserved"
-        )
-    target = CheckpointTarget.load(path, label=label, digest=True)
+    [arm] = CheckpointTarget.from_cli_values([value], run_dir=run_dir, reserved_label="base")
+    target = CheckpointTarget.load(arm.path, label=arm.label, digest=True)
     if target.meta.get("uses_lora") is not uses_lora:
-        raise ValueError(f"checkpoint uses_lora differs from the run model: {path}")
+        raise ValueError(f"checkpoint uses_lora differs from the run model: {target.path}")
     return target
 
 
@@ -433,13 +418,15 @@ def discover_targets(
     ):
         raise ValueError("--epochs must contain unique non-negative integers")
     if checkpoint_specs:
-        targets = [load_target(value, uses_lora=uses_lora) for value in checkpoint_specs]
+        targets = [
+            load_target(value, run_dir=run_dir, uses_lora=uses_lora) for value in checkpoint_specs
+        ]
     else:
         by_epoch: dict[int, CheckpointTarget] = {}
         for path in sorted(run_dir.glob("checkpoint-*")):
             if not path.is_dir() or not is_complete_checkpoint(path):
                 continue
-            target = load_target(str(path), uses_lora=uses_lora)
+            target = load_target(str(path), run_dir=run_dir, uses_lora=uses_lora)
             previous = by_epoch.get(target.epoch)
             if previous is None or target.label == "checkpoint-final":
                 by_epoch[target.epoch] = target

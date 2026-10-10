@@ -330,7 +330,7 @@ MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_prefl
 | 组 | 处置 |
 |---|---|
 | 训练 run 的 resolved config（eval 入口） | `load_resolved_run_config` 是唯一读者；image eval 和 SANA 曲线原来各自再 `load_config` 一遍，改为调它 |
-| checkpoint 目标（eval 入口） | SANA 曲线自己的 `CheckpointTarget` dataclass 和“扫目录、读 meta、核对 epoch”循环删除，改用 `trainers.checkpointing.CheckpointTarget.load`（baseline 是 `.base("baseline")`，持久化曲线里仍标 epoch -1）；image eval 的 `load_target` 保留自己的标签规则（叶目录名，`checkpoint-final` 不取父目录），和 `from_cli_values` 的规则不同，不能并 |
+| checkpoint 目标（eval 入口） | SANA 曲线自己的 `CheckpointTarget` dataclass 和“扫目录、读 meta、核对 epoch”循环删除，改用 `trainers.checkpointing.CheckpointTarget.load`（baseline 是 `.base("baseline")`，持久化曲线里仍标 epoch -1）；image eval 的 `load_target` 也走 `CheckpointTarget.from_cli_values`：两边标签规则的差别（Wan 工具跨 run 比较时 `checkpoint-final` 取 run 名，image eval 在同一个 run 里取叶名）由一个上下文参数 `run_dir` 表达，不是模式开关：`checkpoint-final` 只有在被评测的 run 之外时才取 run 名；LoRA 权重文件指向其所在目录的规则也只写在解析器里 |
 | dtype | `resolve_torch_dtype` 是唯一原语；`normalize_precision` / `_normalize_plain_dtype` 是配置 token 层，`resolve_eval_dtype` 是 eval 的 `auto` 语义，`normalize_fsdp_parameter_dtype` 是对模块参数的改写，Kling 的 `_torch_dtype` 多处理 `auto` 和 None；都是在原语之上各做一件事，没有第二个原语 |
 
 逐个看过、各自解析不同对象的：`ray/resources` 的四个 `_resolve_*_devices`（一个构造器的阶段，§10 决定保留）、causvid / magi 的源码目录与权重路径、`resolve_checkpoint_model_identity`、`resolve_eval_sampling`、`resolve_eval_device`、danbooru 的 `resolve_metadata_path`、`require_*` 一族（各自检查不同的事）、`load_*` 一族（各自读不同的文件；perf 的 `_load_prompts` 读纯文本行，和 `load_prompt_dataset_index` 的 `.txt` 约定不同）。

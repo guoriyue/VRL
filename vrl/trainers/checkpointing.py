@@ -67,15 +67,19 @@ class CheckpointTarget:
         cls,
         values: Sequence[str],
         *,
+        run_dir: str | Path | None = None,
         require_directory: bool = True,
         reserved_label: str | None = None,
     ) -> list[CheckpointTarget]:
         """Parse ``--checkpoint [LABEL=]PATH`` arguments into distinct arms.
 
-        An omitted label is derived from the path, taking the parent directory
-        when the leaf is the conventional ``checkpoint-final``, and is
-        sanitized to characters that survive both a filename and a report key.
-        Labels must be distinct because they name the report's columns.
+        An omitted label is the path's leaf name, sanitized to characters that
+        survive both a filename and a report key. A ``checkpoint-final`` leaf
+        takes its run's directory name instead, unless that run is ``run_dir``,
+        the run under evaluation, where "checkpoint-final" says more than the
+        run's own name. A path naming the adapter weights file means the
+        checkpoint directory that holds it. Labels must be distinct because
+        they name the report's columns.
 
         ``require_directory`` rejects a plain file, which an entrypoint that
         loads a published checkpoint directory wants and one that accepts a
@@ -90,11 +94,16 @@ class CheckpointTarget:
             if not text:
                 raise ValueError("--checkpoint values must be non-empty")
             raw_label, separator, raw_path = text.partition("=")
-            if separator:
-                path = user_path(raw_path)
-            else:
-                path = user_path(text)
-                raw_label = path.parent.name if path.name == "checkpoint-final" else path.name
+            path = user_path(raw_path if separator else text)
+            if path.name == LORA_WEIGHTS_NAME:
+                path = path.parent
+            if not separator:
+                inside_run = run_dir is not None and path.parent == user_path(run_dir)
+                raw_label = (
+                    path.parent.name
+                    if path.name == "checkpoint-final" and not inside_run
+                    else path.name
+                )
             label = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_label.strip()).strip("._-")
             if not label:
                 raise ValueError(f"checkpoint label resolved empty for {value!r}")
