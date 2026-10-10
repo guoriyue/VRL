@@ -21,7 +21,6 @@ from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig, parse_config
 from vrl.models import checkpoint_identity
@@ -36,28 +35,15 @@ from vrl.scripts.eval.sana_inference import (
 from vrl.trainers.checkpointing import (
     RESOLVED_CONFIG_NAME,
     TRAINING_CHECKPOINT_NAME,
+    CheckpointTarget,
     TrainingCheckpoint,
-    is_complete_checkpoint,
-    read_checkpoint_meta,
+    load_resolved_run_config,
 )
-from vrl.trainers.checkpointing import CheckpointTarget as TrainerCheckpointTarget
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file, user_path
 from vrl.utils.cuda_memory import release_cuda_memory
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class CheckpointTarget:
-    """One curve point and its immutable checkpoint provenance."""
-
-    label: str
-    epoch: int
-    path: Path | None
-    # Provenance-only: emitted into the report.
-    checkpoint_sha256: str | None
-    checkpoint_bytes: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,13 +91,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     run_dir = user_path(args.run_dir)
     config_path = run_dir / RESOLVED_CONFIG_NAME
-    if not config_path.is_file():
-        raise FileNotFoundError(f"training run has no resolved config: {config_path}")
+    cfg, _ = load_resolved_run_config(run_dir)
     training_metrics_path = run_dir / "metrics.csv"
     if not training_metrics_path.is_file():
         raise FileNotFoundError(f"training run has no metrics CSV: {training_metrics_path}")
 
-    cfg = load_config(config_path)
     root = sana_report.validate_run_config(cfg)
     sana_report.validate_training_metrics(training_metrics_path, root)
     training_manifest_path, eval_manifest_path, prompts = sana_report.resolve_protocol_manifests(
@@ -140,12 +124,7 @@ def main(argv: list[str] | None = None) -> None:
     ).identity
     for target in targets:
         if target.path is not None:
-            TrainerCheckpointTarget(
-                label=target.label, path=target.path, meta=read_checkpoint_meta(target.path)
-            ).validate_compatibility(
-                family="sana",
-                expected_model_identity=model_identity,
-            )
+            target.validate_compatibility(family="sana", expected_model_identity=model_identity)
     build_root = _materialize_model_snapshot(cfg)
     build_precision = PrecisionPolicy.from_section(build_root.precision)
     reward_models = _materialize_reward_model_snapshots(
@@ -235,55 +214,34 @@ def _discover_checkpoint_targets(
     settings: sana_report.EvaluationSettings | None = None,
 ) -> list[CheckpointTarget]:
     settings = settings or sana_report.EvaluationSettings()
-    numbered: list[tuple[int, Path]] = []
+    numbered: list[tuple[int, CheckpointTarget]] = []
     for candidate in run_dir.glob("checkpoint-*"):
         match = re.fullmatch(r"checkpoint-(\d+)", candidate.name)
         if match is None:
             continue
-        if not is_complete_checkpoint(candidate):
-            raise ValueError(f"incomplete checkpoint in SANA curve: {candidate}")
         epoch = int(match.group(1))
-        meta = read_checkpoint_meta(candidate)
-        if str(meta.get("family", "")) != "sana":
+        target = CheckpointTarget.load(candidate, label=candidate.name, digest=True)
+        if str(target.meta.get("family", "")) != "sana":
             raise ValueError(f"checkpoint family is not sana: {candidate}")
-        if int(meta.get("completed_epoch", -1)) != epoch:
+        if target.epoch != epoch:
             raise ValueError(
                 f"checkpoint epoch disagrees with directory name: {candidate} "
-                f"completed_epoch={meta.get('completed_epoch')!r}",
+                f"completed_epoch={target.epoch!r}",
             )
-        numbered.append((epoch, candidate.resolve()))
+        numbered.append((epoch, target))
     if not numbered:
         raise ValueError(f"training run has no complete checkpoint-N directories: {run_dir}")
-    numbered.sort()
+    numbered.sort(key=lambda item: item[0])
     expected = sana_report.checkpoint_curve_epochs(root, settings)
-    eval_numbered = [
-        (epoch, path) for epoch, path in numbered if epoch % settings.checkpoint_interval == 0
+    checkpoint_targets = [
+        target for epoch, target in numbered if epoch % settings.checkpoint_interval == 0
     ]
-    epochs = [epoch for epoch, _ in eval_numbered]
+    epochs = [target.epoch for target in checkpoint_targets]
     if epochs != expected:
         raise ValueError(
             f"checkpoint curve is incomplete or has gaps: found={epochs}, expected={expected}",
         )
-
-    checkpoint_targets: list[CheckpointTarget] = []
-    for epoch, path in eval_numbered:
-        checkpoint_file = path / TRAINING_CHECKPOINT_NAME
-        checkpoint_targets.append(
-            CheckpointTarget(
-                label=path.name,
-                epoch=epoch,
-                path=path,
-                checkpoint_sha256=sha256_file(checkpoint_file),
-                checkpoint_bytes=checkpoint_file.stat().st_size,
-            ),
-        )
-    baseline = CheckpointTarget(
-        label="baseline",
-        epoch=-1,
-        path=None,
-        checkpoint_sha256=None,
-        checkpoint_bytes=None,
-    )
+    baseline = CheckpointTarget.base("baseline")
     return [baseline, *checkpoint_targets]
 
 
@@ -394,16 +352,10 @@ def _generate_images(
     checkpoint_read = False
     try:
         for target in targets:
-            if target.epoch == -1:
-                if target.path is not None:
-                    raise ValueError(
-                        "full-parameter baseline must come from the pinned base model"
-                    )
+            if target.path is None:
                 if checkpoint_read:
                     raise RuntimeError("SANA baseline was scheduled after checkpoint loading")
             else:
-                if target.path is None:
-                    raise ValueError(f"checkpoint target has no path: {target.label}")
                 checkpoint = TrainingCheckpoint.load(target.path)
                 if checkpoint.meta.get("uses_lora") is not False:
                     raise ValueError(
@@ -456,7 +408,8 @@ def _generate_images(
                     generated.append(
                         GeneratedImage(
                             checkpoint_label=target.label,
-                            epoch=target.epoch,
+                            # The persisted curve marks the baseline as epoch -1.
+                            epoch=-1 if target.path is None else target.epoch,
                             prompt_index=prompt_index,
                             sample_index=sample_index,
                             group_seed=group_seed,
@@ -534,21 +487,19 @@ def _score_images(
 
 
 def _checkpoint_record(target: CheckpointTarget, run_dir: Path) -> dict[str, Any]:
-    if target.epoch == -1:
+    if target.path is None:
         return {
             "label": target.label,
-            "epoch": target.epoch,
+            "epoch": -1,
             "source": "pinned_base_model_snapshot",
             "checkpoint_loaded": False,
         }
-    if target.path is None or target.checkpoint_sha256 is None or target.checkpoint_bytes is None:
-        raise ValueError(f"checkpoint target provenance is incomplete: {target.label}")
     return {
         "label": target.label,
         "epoch": target.epoch,
         "path": str(target.path.relative_to(run_dir)),
         "checkpoint_sha256": target.checkpoint_sha256,
-        "checkpoint_bytes": target.checkpoint_bytes,
+        "checkpoint_bytes": (target.path / TRAINING_CHECKPOINT_NAME).stat().st_size,
     }
 
 

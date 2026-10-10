@@ -322,3 +322,15 @@ MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_prefl
 | 数据根下的 manifest 文件 | `RootedPaths`（多根沙箱）和 `resolve_artifact_path`（数据根策略）两层；`with_resolved_references` / `with_resolved_artifacts` 两个只差字段集的方法；`with_required_reference_images` 自己再解析一遍；editreward / local_edit / dino / 报告各自再调一遍 | 照 vLLM 的 `MediaConnector` 收成一个对象：`RootedPaths(roots, absolute=)` 在构造时定策略（`"inside"` 是 reward 服务的沙箱，`"reject"` / `"anywhere"` 是 manifest 的两种），`resolve(raw, strict=)` 是唯一的分发点；`RootedPaths.data_root(value, allow_absolute=)` 从配置或 `VRL_DATA_ROOT` 建；`PromptExample.with_resolved_references(roots)` 只解析两个参考字段，干净目标按合约不解析，要读目标文件的工具自己 `roots.resolve` 那一个路径；reward 服务、editreward、local_edit、dino、报告、encode_targets、两个 eval 都拿同一个对象，没有第二套解析。`default_data_root` / `coerce_data_root` 两个自由函数也并进 `RootedPaths.data_root`（环境变量和本地默认在它里面），要 Path 的调用方读 `.root` |
 
 没收的：相对于 run 目录或源码目录的路径（`sana_checkpoint_compare` 的 checkpoint、magi 的 `python_executable`、causvid 的 `third_party` 源码）各自有自己的根；`rewards/service`、`checkpoint_identity` 里保留原样的 `expanduser()`，因为那里的字符串进入身份或服务协议，不能顺手 `resolve()`。
+
+## 14. 全仓库 resolve / normalize / require / load 自由函数普查（2026-10-10）
+
+按“解析的是什么”分组后，真正重复的只有三组，其余各自解析不同的东西：
+
+| 组 | 处置 |
+|---|---|
+| 训练 run 的 resolved config（eval 入口） | `load_resolved_run_config` 是唯一读者；image eval 和 SANA 曲线原来各自再 `load_config` 一遍，改为调它 |
+| checkpoint 目标（eval 入口） | SANA 曲线自己的 `CheckpointTarget` dataclass 和“扫目录、读 meta、核对 epoch”循环删除，改用 `trainers.checkpointing.CheckpointTarget.load`（baseline 是 `.base("baseline")`，持久化曲线里仍标 epoch -1）；image eval 的 `load_target` 保留自己的标签规则（叶目录名，`checkpoint-final` 不取父目录），和 `from_cli_values` 的规则不同，不能并 |
+| dtype | `resolve_torch_dtype` 是唯一原语；`normalize_precision` / `_normalize_plain_dtype` 是配置 token 层，`resolve_eval_dtype` 是 eval 的 `auto` 语义，`normalize_fsdp_parameter_dtype` 是对模块参数的改写，Kling 的 `_torch_dtype` 多处理 `auto` 和 None；都是在原语之上各做一件事，没有第二个原语 |
+
+逐个看过、各自解析不同对象的：`ray/resources` 的四个 `_resolve_*_devices`（一个构造器的阶段，§10 决定保留）、causvid / magi 的源码目录与权重路径、`resolve_checkpoint_model_identity`、`resolve_eval_sampling`、`resolve_eval_device`、danbooru 的 `resolve_metadata_path`、`require_*` 一族（各自检查不同的事）、`load_*` 一族（各自读不同的文件；perf 的 `_load_prompts` 读纯文本行，和 `load_prompt_dataset_index` 的 `.txt` 约定不同）。

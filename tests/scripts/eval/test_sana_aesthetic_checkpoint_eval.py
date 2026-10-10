@@ -24,7 +24,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.scripts.eval import sana_aesthetic_checkpoint_eval as checkpoint_eval
 from vrl.scripts.eval import sana_aesthetic_report as sana_report
 from vrl.scripts.eval import sana_inference
-from vrl.trainers.checkpointing import save_training_checkpoint
+from vrl.trainers.checkpointing import CheckpointTarget, save_training_checkpoint
 from vrl.utils.artifacts import sha256_file
 
 SANA_PRECISION = RolePrecision(
@@ -354,7 +354,8 @@ def test_checkpoint_discovery_keeps_recovery_saves_out_of_eval_curve(
 
     targets = checkpoint_eval._discover_checkpoint_targets(run_dir, parse_config(cfg))
 
-    assert [target.epoch for target in targets] == [-1, 25]
+    assert targets[0].path is None
+    assert [target.epoch for target in targets[1:]] == [25]
 
 
 def test_training_metrics_preflight_requires_every_registered_update(
@@ -667,7 +668,7 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
     bundle = entry.build_rollout(build)
     base_state = {name: value.clone() for name, value in pipeline.transformer.state_dict().items()}
 
-    targets = [checkpoint_eval.CheckpointTarget("baseline", -1, None, None, None)]
+    targets = [CheckpointTarget.base("baseline")]
     for epoch, fill in ((25, 1.0), (50, 2.0)):
         with torch.no_grad():
             for parameter in pipeline.transformer.parameters():
@@ -679,13 +680,11 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
             trainer=_Trainer(),
             bundle=bundle,
             family="sana",
-            progress={"next_epoch": epoch},
+            progress={"completed_epoch": epoch, "next_epoch": epoch},
             rng_state={},
             model_identity=identity,
         )
-        targets.append(
-            checkpoint_eval.CheckpointTarget(f"checkpoint-{epoch}", epoch, path, None, None)
-        )
+        targets.append(CheckpointTarget.load(path, label=f"checkpoint-{epoch}"))
     pipeline.transformer.load_state_dict(base_state)
     assert pipeline.holds() == "base"
 
@@ -742,7 +741,7 @@ def test_generate_images_rejects_materialized_source_drift_before_generation(
         checkpoint_eval._generate_images(
             root,
             precision,
-            [checkpoint_eval.CheckpointTarget("baseline", -1, None, None, None)],
+            [CheckpointTarget.base("baseline")],
             ["fox"],
             output_dir=tmp_path / "eval",
             sampling=dict(sana_inference.SANA_EVAL_SAMPLING_CONFIG),

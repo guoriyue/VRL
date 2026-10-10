@@ -497,7 +497,7 @@ def select_prompts(
 def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     from vrl.config.loading import load_config
     from vrl.config.precision import PrecisionPolicy
-    from vrl.config.schema import RewardConfig, parse_config
+    from vrl.config.schema import RewardConfig
     from vrl.models.families.registry import get_model_family_entry
     from vrl.run import ResolvedModel
     from vrl.scripts.eval._device import resolve_eval_device
@@ -513,11 +513,10 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         or args.tie_epsilon < 0
     ):
         raise ValueError("invalid sampling/statistics options")
-    from vrl.trainers.checkpointing import RESOLVED_CONFIG_NAME
+    from vrl.trainers.checkpointing import RESOLVED_CONFIG_NAME, load_resolved_run_config
 
     config_path = user_path(args.run_dir) / RESOLVED_CONFIG_NAME
-    cfg = load_config(config_path)
-    root = parse_config(cfg)
+    _, root = load_resolved_run_config(args.run_dir)
     if root.model is None:
         raise ValueError("checkpoint evaluation requires a model config")
     entry = get_model_family_entry(root.model.family)
