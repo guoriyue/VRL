@@ -260,3 +260,28 @@ MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_prefl
 | config / generation / models / ray / trajectory / utils / trainers | 3614bbd56 | 38 | 20 |
 
 清扫前 218 个候选，清扫后重扫剩 92 个，全部是上面四类保留项（每个提交说明里列了名字和理由）。顺带修到的真问题：`vrl/scripts/data/bootstrap.py` 的 `--run` 切片比错一位，setup 命令从未真正执行；`vrl/rewards/service/wire.py` 解码里一个局部变量遮住了请求体；`video_reward_suite` 一段不可达的 optional-model 循环。
+
+## 10. 独立的 resolve / validate / build 函数并回其所有者（2026-10-09）
+
+单调用方 helper 并回后，仍有一批公开的 `resolve_* / validate_* / build_*` 自由函数：它们产出或检查的东西本来就有一个对象。判据：**函数的结果就是某个类的实例 → 做成该类的构造方法；函数读的只是某个对象的字段 → 做成该对象的方法**。
+
+| 原函数 | 现在 |
+|---|---|
+| `bootstrap.resolve_experiment_dataset_plan` → dict | `ExperimentDataFiles.from_data` + `DataFile`（角色、路径、在不在、行数、该有几行、`fetch_command`），`to_dict` / `run_missing` |
+| `build_configs(cfg)` | `BuiltConfigs.from_cfg(cfg)`；`vrl.config` 包不再转发 |
+| `resolve_online_run(cfg)` / `resolve_model(...)` | `ResolvedOnlineRun.from_cfg` / `ResolvedModel.from_root` |
+| `resolve_data_loader` | 并入 `DataConfig` 的校验器 |
+| `resolve_train_target` | 并入 `train.run_config` |
+| `resolve_gradient_checkpointing_mode(root)` | `ActorSection.gradient_checkpointing_mode` property |
+| `validate_reward_memory_parking_components(...)` | `RewardRuntimeConfig.validate_memory_parking(device)` |
+| `resolve_required_reference_images_(examples, …)`（原地改列表） | `PromptExample.with_required_reference_images`，与其它 `with_*` 同型 |
+| `validate_checkpoint_meta_compatibility(meta, …)` | `CheckpointTarget.validate_compatibility`，与 `TrainingCheckpoint.validate_compatibility` 同型 |
+| `validate_rollout_schedule_topology(config, resources)` | `ResolvedDistributedResources.validate_schedule_mode(schedule_mode)`；拓扑用例改为真实 plan |
+
+保留并说明理由：
+- 按 kind 分发到多个实现类的工厂：`build_strategy`、`build_reward_scorer`、`build_optimizer`（产出不属于任何一个类）。
+- 注册表按字符串路径引用的钩子：各 family 的 `build_*_replay_runtime_bundle`、`normalize_*_model_build`。
+- 对 state-dict 树工作的一组函数：`capture_rng_state` / `validate_rng_state` / `restore_rng_state`。
+- `resolve_checkpoint_model_identity(build)`：产出的是写进 checkpoint 元数据的可序列化 dict，算法独立成模块；做成 `ModelBuild` 方法只能是转发。
+- `require_training_config(cfg)`：parse + 跨节规则 + 精度策略三件事的入口；`BuiltConfigs.from_cfg` 调它。
+- 多调用方的纯函数：`resolve_model_root`、`resolve_metadata_path`、`normalize_precision`、`normalize_fsdp_parameter_dtype`、`resolve_echo_video_dimensions`。
