@@ -29,10 +29,7 @@ from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.collector.core import OwnedCollection
-from vrl.rollouts.orchestration import (
-    RolloutSchedule,
-    validate_rollout_schedule_topology,
-)
+from vrl.rollouts.orchestration import RolloutSchedule
 from vrl.rollouts.stats import RolloutStats
 from vrl.run import (
     ResolvedModel,
@@ -761,7 +758,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     # fields are derived after the preflight, next to the trainer that reads them.
     resume_config = built.resume
     resume_checkpoint = TrainingCheckpoint.load_for_resume(resume_config)
-    validate_rollout_schedule_topology(trainer_config.rollout_orchestration, resources)
+    resources.validate_schedule_mode(trainer_config.rollout_orchestration.schedule_mode)
     family_entry.validate_gpus_per_engine(resources.rollout_gpus_per_engine)
     logger.info(format_distributed_resource_plan(resources))
     # Resolve the training process identity (rank/device) and fail-fast on

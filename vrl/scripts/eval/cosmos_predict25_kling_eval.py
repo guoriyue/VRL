@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +31,6 @@ from vrl.trainers.checkpointing import (
     CheckpointTarget,
     TrainingCheckpoint,
     read_checkpoint_meta,
-    validate_checkpoint_meta_compatibility,
 )
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.cuda_memory import release_cuda_memory
@@ -173,8 +172,7 @@ def main(argv: list[str] | None = None) -> None:
     model_identity = resolve_checkpoint_model_identity(build)
     for target in checkpoint_targets:
         checkpoint_dir = target.path.parent if target.path.is_file() else target.path
-        validate_checkpoint_meta_compatibility(
-            read_checkpoint_meta(checkpoint_dir),
+        replace(target, meta=read_checkpoint_meta(checkpoint_dir)).validate_compatibility(
             family=entry.family,
             expected_model_identity=model_identity,
         )

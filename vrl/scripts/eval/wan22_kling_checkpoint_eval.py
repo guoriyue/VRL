@@ -54,7 +54,6 @@ from vrl.trainers.checkpointing import (
     CheckpointTarget,
     TrainingCheckpoint,
     load_resolved_run_config,
-    validate_checkpoint_meta_compatibility,
 )
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file
@@ -221,8 +220,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
     for target in targets:
         if target.label in present:
             raise ValueError(f"arm {target.label!r} already exists in {grid_path}")
-        validate_checkpoint_meta_compatibility(
-            target.meta,
+        target.validate_compatibility(
             family=entry.family,
             expected_model_identity=identity,
         )

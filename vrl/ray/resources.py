@@ -344,6 +344,37 @@ class ResolvedDistributedResources:
     def colocated(self) -> bool:
         return bool(set(self.trainer_devices) & set(self.rollout_devices))
 
+    def validate_schedule_mode(self, schedule_mode: str) -> None:
+        """Reject a rollout schedule whose phase semantics contradict this GPU ownership.
+
+        The online entrypoint calls this before model or Ray construction. It
+        is the only topology check, including reward isolation: a reward
+        sharing the trainer's or the rollout's GPU is exactly the plan's
+        ``park_trainer_for_reward`` / ``park_rollout_for_reward``.
+        """
+
+        if schedule_mode != "continuous":
+            return
+        # Rollout kernels and trainer backward cannot share physical capacity,
+        # and a trainer parked for generation cannot train while generation
+        # overlaps it.
+        if self.colocated or self.lifecycle.park_trainer_for_rollout:
+            raise ValueError(
+                "continuous rollout requires disjoint trainer and rollout GPUs without "
+                "trainer parking for generation; use strict_on_policy for shared-GPU "
+                "phase handoff",
+            )
+        if self.lifecycle.park_rollout_for_reward:
+            raise ValueError(
+                "continuous rollout cannot hand the rollout GPU to reward scoring "
+                "mid-iteration; use a dedicated reward GPU or strict_on_policy",
+            )
+        if self.lifecycle.park_trainer_for_reward:
+            raise ValueError(
+                "continuous rollout cannot run reward scoring on the trainer GPU while "
+                "backward overlaps; use a CPU/dedicated reward or strict_on_policy",
+            )
+
     @property
     def requires_trainer_reservation(self) -> bool:
         return (

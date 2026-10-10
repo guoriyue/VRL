@@ -3,7 +3,6 @@
 from vrl.rollouts.orchestration.continuous import ContinuousRolloutSchedule
 from vrl.rollouts.orchestration.schedule import (
     RolloutSchedule,
-    validate_rollout_schedule_topology,
 )
 from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
 from vrl.rollouts.orchestration.types import (
@@ -17,5 +16,4 @@ __all__ = [
     "RolloutSchedule",
     "RolloutScheduleMode",
     "StrictOnPolicyRolloutSchedule",
-    "validate_rollout_schedule_topology",
 ]

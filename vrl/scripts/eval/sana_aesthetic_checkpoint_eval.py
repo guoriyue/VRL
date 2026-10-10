@@ -39,8 +39,8 @@ from vrl.trainers.checkpointing import (
     TrainingCheckpoint,
     is_complete_checkpoint,
     read_checkpoint_meta,
-    validate_checkpoint_meta_compatibility,
 )
+from vrl.trainers.checkpointing import CheckpointTarget as TrainerCheckpointTarget
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
@@ -140,8 +140,9 @@ def main(argv: list[str] | None = None) -> None:
     ).identity
     for target in targets:
         if target.path is not None:
-            validate_checkpoint_meta_compatibility(
-                read_checkpoint_meta(target.path),
+            TrainerCheckpointTarget(
+                label=target.label, path=target.path, meta=read_checkpoint_meta(target.path)
+            ).validate_compatibility(
                 family="sana",
                 expected_model_identity=model_identity,
             )

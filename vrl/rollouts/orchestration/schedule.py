@@ -9,13 +9,10 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from vrl.rollouts.orchestration.types import (
     RolloutIteration,
-    RolloutScheduleMode,
 )
 from vrl.rollouts.stats import RolloutStats
 
 if TYPE_CHECKING:
-    from vrl.ray.resources import ResolvedDistributedResources
-    from vrl.trainers.core.types import RolloutOrchestrationConfig
     from vrl.trainers.distributed import ContextParallelGroups
 
 
@@ -99,43 +96,7 @@ class RolloutSchedule(Protocol):
     async def shutdown(self) -> None: ...
 
 
-def validate_rollout_schedule_topology(
-    config: RolloutOrchestrationConfig,
-    resources: ResolvedDistributedResources,
-) -> None:
-    """Reject a schedule whose phase semantics contradict resolved GPU ownership.
-
-    The online entrypoint calls this after resource resolution and before model or
-    Ray construction. It is the only topology check, including reward isolation:
-    a reward sharing the trainer's or the rollout's GPU is exactly the plan's
-    ``park_trainer_for_reward`` / ``park_rollout_for_reward``.
-    """
-
-    mode = RolloutScheduleMode(config.schedule_mode)
-    if mode is not RolloutScheduleMode.CONTINUOUS:
-        return
-    # Rollout kernels and trainer backward cannot share physical capacity, and a
-    # trainer parked for generation cannot train while generation overlaps it.
-    if resources.colocated or resources.lifecycle.park_trainer_for_rollout:
-        raise ValueError(
-            "continuous rollout requires disjoint trainer and rollout GPUs without "
-            "trainer parking for generation; use strict_on_policy for shared-GPU "
-            "phase handoff",
-        )
-    if resources.lifecycle.park_rollout_for_reward:
-        raise ValueError(
-            "continuous rollout cannot hand the rollout GPU to reward scoring "
-            "mid-iteration; use a dedicated reward GPU or strict_on_policy",
-        )
-    if resources.lifecycle.park_trainer_for_reward:
-        raise ValueError(
-            "continuous rollout cannot run reward scoring on the trainer GPU while "
-            "backward overlaps; use a CPU/dedicated reward or strict_on_policy",
-        )
-
-
 __all__ = [
     "RolloutSchedule",
     "collect_context_parallel_iteration",
-    "validate_rollout_schedule_topology",
 ]

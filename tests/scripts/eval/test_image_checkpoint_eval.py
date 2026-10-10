@@ -203,7 +203,7 @@ def test_independent_policy_does_not_replace_run_sampling(tmp_path, plan, monkey
         "vrl.run.ResolvedModel.from_root", lambda *_args, **_kwargs: plan.resolved_model
     )
     monkeypatch.setattr(
-        "vrl.trainers.checkpointing.validate_checkpoint_meta_compatibility",
+        "vrl.trainers.checkpointing.CheckpointTarget.validate_compatibility",
         lambda *_args, **_kwargs: None,
     )
     parser = checkpoint_eval.build_parser()

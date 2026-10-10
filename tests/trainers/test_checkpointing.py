@@ -25,12 +25,12 @@ from vrl.trainers.checkpointing import (
     LORA_WEIGHTS_NAME,
     TRAINING_CHECKPOINT_NAME,
     AdapterExport,
+    CheckpointTarget,
     TrainingCheckpoint,
     TrainingResumeConfig,
     export_checkpoint_state,
     load_checkpoint_state,
     save_training_checkpoint,
-    validate_checkpoint_meta_compatibility,
 )
 
 
@@ -298,12 +298,15 @@ def test_checkpoint_compatibility_preflight_accepts_matching_identity(tmp_path) 
 
 
 def test_checkpoint_meta_preflight_accepts_matching_identity() -> None:
-    validate_checkpoint_meta_compatibility(
-        {
+    CheckpointTarget(
+        label="unit",
+        path=None,
+        meta={
             "schema_version": CHECKPOINT_SCHEMA_VERSION,
             "family": "sana",
             "model_identity": UNIT_IDENTITY,
         },
+    ).validate_compatibility(
         family="sana",
         expected_model_identity=UNIT_IDENTITY,
     )
@@ -311,12 +314,15 @@ def test_checkpoint_meta_preflight_accepts_matching_identity() -> None:
 
 def test_checkpoint_meta_preflight_rejects_identity_mismatch() -> None:
     with pytest.raises(ValueError, match="metadata model identity mismatch"):
-        validate_checkpoint_meta_compatibility(
-            {
+        CheckpointTarget(
+            label="unit",
+            path=None,
+            meta={
                 "schema_version": CHECKPOINT_SCHEMA_VERSION,
                 "family": "sana",
                 "model_identity": UNIT_IDENTITY,
             },
+        ).validate_compatibility(
             family="sana",
             expected_model_identity={"schema": "wrong/v1"},
         )
@@ -335,8 +341,7 @@ def test_checkpoint_meta_preflight_rejects_identity_mismatch() -> None:
 )
 def test_checkpoint_meta_preflight_rejects_missing_protocol_fields(meta) -> None:
     with pytest.raises((TypeError, ValueError), match=r"schema_version|family"):
-        validate_checkpoint_meta_compatibility(
-            meta,
+        CheckpointTarget(label="unit", path=None, meta=meta).validate_compatibility(
             family="sana",
             expected_model_identity=UNIT_IDENTITY,
         )

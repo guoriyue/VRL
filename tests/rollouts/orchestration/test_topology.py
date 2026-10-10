@@ -1,116 +1,73 @@
-"""Pre-launch rollout schedule topology validation."""
+"""Pre-launch rollout schedule validation on the resolved resource plan."""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
+from omegaconf import OmegaConf
 
-from vrl.rollouts.orchestration import validate_rollout_schedule_topology
+from vrl.config.schema import parse_config
+from vrl.ray.resources import ResolvedDistributedResources
 
 
 def _resources(
     *,
-    colocated: bool,
-    trainer_rollout_handoff: bool = False,
-    reward_handoff: bool = False,
-    trainer_reward_handoff: bool = False,
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        colocated=colocated,
-        lifecycle=SimpleNamespace(
-            park_trainer_for_rollout=trainer_rollout_handoff,
-            park_rollout_for_reward=reward_handoff,
-            park_trainer_for_reward=trainer_reward_handoff,
-        ),
-    )
+    visible: list[int],
+    trainer: list[int],
+    rollout: list[int],
+    reward: list[int] | None = None,
+) -> ResolvedDistributedResources:
+    """A real plan over one GPU reward (``aesthetic``), with or without its own card."""
 
-
-@pytest.mark.parametrize(
-    ("schedule_mode", "colocated"),
-    [("strict_on_policy", True), ("continuous", False)],
-)
-def test_supported_topologies_pass_validation(schedule_mode: str, colocated: bool) -> None:
-    """Strict on a shared GPU and continuous on disjoint GPUs are the two
-    supported pairings; validation is silent for both."""
-
-    validate_rollout_schedule_topology(
-        SimpleNamespace(schedule_mode=schedule_mode),
-        _resources(colocated=colocated),
-    )
-
-
-def test_continuous_shared_gpu_is_rejected() -> None:
-    with pytest.raises(ValueError, match="disjoint trainer and rollout GPUs"):
-        validate_rollout_schedule_topology(
-            SimpleNamespace(schedule_mode="continuous"),
-            _resources(colocated=True),
-        )
-
-
-def test_continuous_trainer_parked_for_generation_is_rejected() -> None:
-    """An explicit trainer offload on disjoint GPUs still cannot overlap backward."""
-
-    with pytest.raises(ValueError, match="without trainer parking for generation"):
-        validate_rollout_schedule_topology(
-            SimpleNamespace(schedule_mode="continuous"),
-            _resources(colocated=False, trainer_rollout_handoff=True),
-        )
-
-
-def test_continuous_reward_handoff_is_rejected() -> None:
-    with pytest.raises(ValueError, match="reward scoring"):
-        validate_rollout_schedule_topology(
-            SimpleNamespace(schedule_mode="continuous"),
-            _resources(colocated=False, reward_handoff=True),
-        )
-
-
-def test_continuous_trainer_reward_overlap_is_rejected() -> None:
-    with pytest.raises(ValueError, match="reward scoring on the trainer GPU"):
-        validate_rollout_schedule_topology(
-            SimpleNamespace(schedule_mode="continuous"),
-            _resources(colocated=False, trainer_reward_handoff=True),
-        )
-
-    validate_rollout_schedule_topology(
-        SimpleNamespace(schedule_mode="continuous"),
-        _resources(colocated=False),
-    )
-
-
-def test_continuous_rejects_a_reward_sharing_the_trainer_gpu() -> None:
-    """A GPU reward with no reservation of its own follows the trainer's card in
-    the real resolved plan, so scoring would need the trainer to yield its GPU;
-    continuous scheduling overlaps backward with scoring and cannot."""
-
-    from omegaconf import OmegaConf
-
-    from vrl.config.schema import parse_config
-    from vrl.ray.resources import ResolvedDistributedResources
-    from vrl.trainers.core.types import RolloutOrchestrationConfig
-
-    resources = ResolvedDistributedResources.from_root(
+    resources: dict[str, object] = {
+        "visible_devices": visible,
+        "trainer": {"devices": trainer},
+        "rollout": {"devices": rollout},
+    }
+    if reward is not None:
+        resources["reward"] = {"devices": reward}
+    return ResolvedDistributedResources.from_root(
         parse_config(
             OmegaConf.create(
                 {
-                    "distributed": {
-                        "resources": {
-                            "visible_devices": [0, 1],
-                            "trainer": {"devices": [0]},
-                            "rollout": {"devices": [1]},
-                        },
-                    },
+                    "distributed": {"resources": resources},
                     "reward": {"components": {"aesthetic": 1.0}, "kwargs": {"aesthetic": {}}},
                 },
             ),
         ),
     )
+
+
+def test_strict_on_a_shared_gpu_and_continuous_on_disjoint_gpus_pass() -> None:
+    """The two supported pairings are silent."""
+
+    _resources(visible=[0], trainer=[0], rollout=[0]).validate_schedule_mode("strict_on_policy")
+    _resources(visible=[0, 1, 2], trainer=[0], rollout=[1], reward=[2]).validate_schedule_mode(
+        "continuous"
+    )
+
+
+def test_continuous_shared_gpu_is_rejected() -> None:
+    with pytest.raises(ValueError, match="disjoint trainer and rollout GPUs"):
+        _resources(visible=[0], trainer=[0], rollout=[0]).validate_schedule_mode("continuous")
+
+
+def test_continuous_rejects_a_reward_sharing_the_rollout_gpu() -> None:
+    """Scoring on the rollout card would hand it over mid-iteration."""
+
+    with pytest.raises(ValueError, match="hand the rollout GPU to reward scoring"):
+        _resources(visible=[0, 1], trainer=[0], rollout=[1], reward=[1]).validate_schedule_mode(
+            "continuous"
+        )
+
+
+def test_continuous_rejects_a_reward_sharing_the_trainer_gpu() -> None:
+    """A GPU reward with no reservation of its own follows the trainer's card, so
+    scoring would need the trainer to yield its GPU; continuous scheduling
+    overlaps backward with scoring and cannot."""
+
+    resources = _resources(visible=[0, 1], trainer=[0], rollout=[1])
     assert resources.reward_follows_trainer
     assert resources.lifecycle.park_trainer_for_reward
 
     with pytest.raises(ValueError, match="reward scoring on the trainer GPU"):
-        validate_rollout_schedule_topology(
-            RolloutOrchestrationConfig(schedule_mode="continuous"),
-            resources,
-        )
+        resources.validate_schedule_mode("continuous")

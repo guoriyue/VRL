@@ -54,7 +54,6 @@ from vrl.trainers.checkpointing import (
     CheckpointTarget,
     TrainingCheckpoint,
     load_resolved_run_config,
-    validate_checkpoint_meta_compatibility,
 )
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.artifacts import sha256_file
@@ -175,8 +174,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
     # pinning the published metadata happens here, once, for every arm.
     targets = [CheckpointTarget.load(target.path, label=target.label) for target in targets]
     for target in targets:
-        validate_checkpoint_meta_compatibility(
-            target.meta,
+        target.validate_compatibility(
             family=entry.family,
             expected_model_identity=identity,
         )

@@ -501,7 +501,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     from vrl.models.families.registry import get_model_family_entry
     from vrl.run import ResolvedModel
     from vrl.scripts.eval._device import resolve_eval_device
-    from vrl.trainers.checkpointing import CheckpointTarget, validate_checkpoint_meta_compatibility
+    from vrl.trainers.checkpointing import CheckpointTarget
     from vrl.trainers.data.prompts import load_prompt_dataset_index
 
     if (
@@ -546,8 +546,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         for_rollout=True,
     )
     for target in targets[1:]:
-        validate_checkpoint_meta_compatibility(
-            target.meta,
+        target.validate_compatibility(
             family=entry.family,
             expected_model_identity=resolved.identity,
         )

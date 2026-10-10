@@ -132,6 +132,39 @@ class CheckpointTarget:
             ),
         )
 
+    def validate_compatibility(
+        self,
+        *,
+        family: str,
+        expected_model_identity: dict[str, Any] | None = None,
+    ) -> None:
+        """Validate the cheap checkpoint sidecar before model construction.
+
+        Schema-v2 metadata carries a provenance-only copy of the immutable
+        model identity. Restore still validates the authoritative
+        ``checkpoint.pt`` payload and requires the sidecar copy to match it.
+        A target without published metadata has nothing to check yet.
+        """
+
+        meta = self.meta
+        if not meta:
+            return
+        schema_version = TrainingCheckpoint._read_schema_version(
+            meta,
+            source="checkpoint metadata",
+        )
+        raw_identity = meta.get("model_identity")
+        if raw_identity is not None and not isinstance(raw_identity, dict):
+            raise TypeError("checkpoint metadata model_identity must be a dict")
+        TrainingCheckpoint._validate_identity(
+            source="checkpoint metadata",
+            schema_version=schema_version,
+            checkpoint_family=meta.get("family"),
+            saved_identity=raw_identity,
+            family=family,
+            expected_model_identity=expected_model_identity,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class TrainingCheckpoint:
@@ -1154,40 +1187,6 @@ def save_training_checkpoint(
     return published_meta
 
 
-def validate_checkpoint_meta_compatibility(
-    meta: Mapping[str, Any],
-    *,
-    family: str,
-    expected_model_identity: dict[str, Any] | None = None,
-) -> None:
-    """Validate the cheap checkpoint sidecar before model construction.
-
-    Schema-v2 metadata carries a provenance-only copy of the immutable model
-    identity. Restore still validates the authoritative ``checkpoint.pt``
-    payload and requires the sidecar copy to match it.
-    """
-
-    if not isinstance(meta, Mapping):
-        raise TypeError("checkpoint metadata must be a mapping")
-    if not meta:
-        return
-    schema_version = TrainingCheckpoint._read_schema_version(
-        meta,
-        source="checkpoint metadata",
-    )
-    raw_identity = meta.get("model_identity")
-    if raw_identity is not None and not isinstance(raw_identity, dict):
-        raise TypeError("checkpoint metadata model_identity must be a dict")
-    TrainingCheckpoint._validate_identity(
-        source="checkpoint metadata",
-        schema_version=schema_version,
-        checkpoint_family=meta.get("family"),
-        saved_identity=raw_identity,
-        family=family,
-        expected_model_identity=expected_model_identity,
-    )
-
-
 def _require_equal_tensor_tree(expected: Any, actual: Any, *, label: str) -> None:
     """Fail closed unless two checkpoint state trees are tensor-exact."""
 
@@ -1604,7 +1603,6 @@ __all__ = [
     "restore_rng_state",
     "save_resolved_config",
     "save_training_checkpoint",
-    "validate_checkpoint_meta_compatibility",
     "validate_rng_state",
     "write_checkpoint_meta",
 ]

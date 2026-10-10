@@ -35,10 +35,10 @@ from vrl.scripts.eval.sana_inference import (
 )
 from vrl.trainers.checkpointing import (
     RESOLVED_CONFIG_NAME,
+    CheckpointTarget,
     TrainingCheckpoint,
     load_resolved_run_config,
     read_checkpoint_meta,
-    validate_checkpoint_meta_compatibility,
 )
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import write_json
@@ -162,8 +162,11 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     )
     build = resolved.build
     model_identity = resolved.identity
-    validate_checkpoint_meta_compatibility(
-        read_checkpoint_meta(expected_checkpoint_file.parent),
+    CheckpointTarget(
+        label="current",
+        path=expected_checkpoint_file.parent,
+        meta=read_checkpoint_meta(expected_checkpoint_file.parent),
+    ).validate_compatibility(
         family="sana",
         expected_model_identity=model_identity,
     )
