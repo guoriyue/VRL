@@ -45,12 +45,9 @@ full-sequence replay recipe runs either objective.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any
 
-from vrl.algorithms.advantages import GroupAdvantageConfig, GroupRelativeObjective
-from vrl.algorithms.previous_policy import PreviousPolicyObjective
-from vrl.algorithms.requirements import AlgorithmRequirements
-from vrl.algorithms.trajectory import AlgorithmInput
+from vrl.algorithms.forward_process import ForwardProcessAlgorithm, ForwardProcessConfig
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.models.precision import model_autocast
 
@@ -60,7 +57,7 @@ _SEED_INDEX = 104_729
 
 
 @dataclass(slots=True)
-class VGRPOConfig(GroupAdvantageConfig):
+class VGRPOConfig(ForwardProcessConfig):
     """Hyper-parameters for the V-GRPO objective.
 
     ``adv_soft_clip`` is off when ``None``. The paper's SD 3.5 M Stage-1 recipe
@@ -68,49 +65,35 @@ class VGRPOConfig(GroupAdvantageConfig):
     reward total once (``weighted_sum_raw``).
     """
 
-    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
-        needs_sde_rollout=False,
-        sft_source="unsupported",
-        requires_previous_policy=True,
-    )
-
-    eps: float = 1e-8
     advantage_combine: str = "weighted_sum_raw"
     adv_soft_clip: float | None = 3.0
 
     def __post_init__(self) -> None:
-        GroupAdvantageConfig.__post_init__(self)
+        ForwardProcessConfig.__post_init__(self)
         if self.adv_soft_clip is not None and float(self.adv_soft_clip) <= 0.0:
             raise ValueError(
                 f"VGRPOConfig.adv_soft_clip must be > 0 or null, got {self.adv_soft_clip}"
             )
 
 
-class VGRPO(PreviousPolicyObjective, GroupRelativeObjective):
-    """Variational GRPO objective on the forward-process replay branch.
+class VGRPO(ForwardProcessAlgorithm):
+    """Variational GRPO on the forward-process replay branch.
 
     ``theta_old`` is the detached current prediction, so the ratio is
-    identically 1 and the objective is REINFORCE with a group baseline, which
-    is the paper's Stage-1 recipe.
+    identically 1 and the loss is REINFORCE with a group baseline, which is
+    the paper's Stage-1 recipe.
     """
 
+    needs_sde_rollout = False
     config: VGRPOConfig
 
     def __init__(self, config: VGRPOConfig) -> None:
-        GroupRelativeObjective.__init__(self, config)
+        super().__init__(config)
         # Advances with the optimizer so the group-shared noise changes across
         # updates while staying fixed within one.
         self._update_counter = 0
 
-    def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
-        return self.compute_batch_timestep_loss(
-            inputs.model,
-            inputs.rollout_batch,
-            inputs.timestep_index,
-            inputs.advantages,
-        )
-
-    # -- the objective ------------------------------------------------------
+    # -- the loss ---------------------------------------------------------
 
     def compute_batch_timestep_loss(
         self,
@@ -127,29 +110,15 @@ class VGRPO(PreviousPolicyObjective, GroupRelativeObjective):
 
         import torch
 
-        from vrl.trajectory.reader import TrajectoryReader
-
         cfg = self.config
-        replay = TrajectoryReader.from_batch(batch).forward_process_replay(
-            "denoise", timestep_index
-        )
-        x0 = replay.latents_clean
-        t = self.flow_time(replay.timestep, x0)
-        t_expanded = t.view(-1, *([1] * (x0.ndim - 1)))
-        noise = self._group_shared_noise(
-            x0,
-            group_ids=getattr(batch, "group_ids", None),
-            timestep_index=int(timestep_index),
-        )
-        xt = (1 - t_expanded) * x0.float() + t_expanded * noise
-        xt_input = xt.to(x0.dtype)
+        x0, t, xt = self.renoised(batch, timestep_index)
         with model_autocast(model, x0.device):
             prediction = model.replay_forward_with_latents(
-                batch, timestep_index, xt_input, classifier_free_guidance=False
+                batch, timestep_index, xt.to(x0.dtype), classifier_free_guidance=False
             )["noise_pred"]
 
         # x-prediction reparameterization of the rectified-flow velocity.
-        x_pred = xt - t_expanded * prediction.float()
+        x_pred = xt - t * prediction.float()
         surrogate = self.normalized_mse(x_pred, x0.float())  # [B], adaptive weighting
         # theta_old is the detached current policy: the ratio is 1 in value and
         # carries the surrogate's gradient.
@@ -163,13 +132,7 @@ class VGRPO(PreviousPolicyObjective, GroupRelativeObjective):
         loss_value = float(loss.detach().item())
         return loss, TrainStepMetrics(loss=loss_value, policy_loss=loss_value)
 
-    def _group_shared_noise(
-        self,
-        x0: Any,
-        *,
-        group_ids: Any,
-        timestep_index: int,
-    ) -> Any:
+    def noise(self, x0: Any, *, group_ids: Any, timestep_index: int, recorded: Any | None) -> Any:
         """One ``eps`` per prompt group, identical across the group's samples.
 
         Seeded from ``(update counter, group id, replay index)`` so the pairs a
@@ -179,6 +142,7 @@ class VGRPO(PreviousPolicyObjective, GroupRelativeObjective):
 
         import torch
 
+        del recorded
         batch = int(x0.shape[0])
         if group_ids is None:
             ids = [0] * batch

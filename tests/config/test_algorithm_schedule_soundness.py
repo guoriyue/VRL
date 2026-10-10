@@ -1,6 +1,6 @@
-"""An algorithm's schedule requirements are enforced when the config resolves.
+"""An objective's schedule facts are enforced when the config resolves.
 
-Each objective's config class declares, in its ``requirements``, whether it
+Each objective's config class declares, as class attributes, whether it
 scores against the current weights (no off-policy staleness) and whether its
 loss is an active trust region.
 Resolution rejects a schedule that breaks either declaration, and a

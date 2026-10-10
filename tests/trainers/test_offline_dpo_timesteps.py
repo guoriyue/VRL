@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from vrl.algorithms.dpo import DiffusionDPO, DiffusionDPOConfig
 from vrl.config.precision import RolePrecision
 from vrl.trainers.data.preferences import PreferenceBatch
 from vrl.trainers.offline import OfflineDPOTrainer, OfflineDPOTrainerConfig
@@ -67,6 +68,7 @@ def _make_trainer(
     )
     return OfflineDPOTrainer(
         model=model,
+        algorithm=DiffusionDPO(DiffusionDPOConfig()),
         ref_model=None,
         forward_fn=_noop_forward,
         noise_scheduler=scheduler,
@@ -144,6 +146,7 @@ def test_offline_dpo_consumes_resolved_optimizer_values(use_adafactor) -> None:
     )
     trainer = OfflineDPOTrainer(
         model=model,
+        algorithm=DiffusionDPO(DiffusionDPOConfig()),
         ref_model=None,
         forward_fn=_noop_forward,
         noise_scheduler=SimpleNamespace(timesteps=torch.arange(20)),
@@ -247,8 +250,9 @@ def test_step_metrics_report_the_optimized_loss(
         return model_pred.sum() * 0.0 + 3.0
 
     monkeypatch.setattr(dpo_module, "model_autocast", track_model_autocast)
-    monkeypatch.setattr(dpo_module, "diffusion_dpo_loss", fake_dpo_loss)
-    monkeypatch.setattr(dpo_module, "diffusion_sft_loss", fake_sft_loss)
+    algorithm = DiffusionDPO(DiffusionDPOConfig(sft_weight=sft_weight))
+    monkeypatch.setattr(algorithm, "compute_loss", fake_dpo_loss)
+    monkeypatch.setattr(algorithm, "sft_loss", fake_sft_loss)
     clip_calls: list[float] = []
 
     def fake_clip_grad_norm(parameters, limit):
@@ -260,6 +264,7 @@ def test_step_metrics_report_the_optimized_loss(
     model.precision = PRECISION
     trainer = OfflineDPOTrainer(
         model=model,
+        algorithm=algorithm,
         ref_model=ref_model,
         forward_fn=forward_fn,
         noise_scheduler=scheduler,
@@ -267,7 +272,6 @@ def test_step_metrics_report_the_optimized_loss(
         encode_text=lambda captions: torch.zeros(len(captions), 1),
         config=OfflineDPOTrainerConfig(
             prediction_type="epsilon",
-            sft_weight=sft_weight,
             lr=0.0,
             max_grad_norm=max_grad_norm,
         ),
@@ -309,6 +313,7 @@ def test_step_preserves_caption_pairing(invalid) -> None:
 
     trainer = OfflineDPOTrainer(
         model=model,
+        algorithm=DiffusionDPO(DiffusionDPOConfig()),
         ref_model=torch.nn.Linear(1, 1),
         forward_fn=forward,
         noise_scheduler=SimpleNamespace(
@@ -384,6 +389,7 @@ def test_step_uses_schedule_values_and_exact_sigma_indices(
 
     trainer = OfflineDPOTrainer(
         model=model,
+        algorithm=DiffusionDPO(DiffusionDPOConfig()),
         ref_model=torch.nn.Linear(1, 1),
         forward_fn=forward,
         noise_scheduler=scheduler,

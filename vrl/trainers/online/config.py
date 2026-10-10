@@ -187,7 +187,7 @@ class TrainerConfig:
     # Rollout/replay drift correction: truncated importance sampling and
     # rejection knobs. The trainer's replay-parity gate reads them here;
     # build_configs bridges the same value into the importance-ratio
-    # objective's config, where the loss applies it.
+    # algorithm's config, where the loss applies it.
     precision_correction: PrecisionCorrectionConfig = field(
         default_factory=PrecisionCorrectionConfig,
     )
@@ -313,10 +313,12 @@ class TrainerConfig:
         config = cls(**payload)
         algorithm = root.algorithm
         if algorithm is not None:
-            requirements = algorithm.hyperparameters.requirements
+            from vrl.config.algorithm import algorithm_class
+
+            algorithm_cls = algorithm_class(algorithm.kind)
             if (
                 config.rollout_orchestration.schedule_mode == "continuous"
-                and requirements.requires_previous_policy
+                and algorithm_cls.requires_previous_policy
             ):
                 raise ValueError(
                     "trainer.rollout_orchestration.schedule_mode='continuous' trains on "
@@ -325,7 +327,7 @@ class TrainerConfig:
                     "importance ratio to absorb that lag. Use schedule_mode="
                     "'strict_on_policy'.",
                 )
-            if requirements.requires_active_trust_region and not config.replays_off_policy:
+            if algorithm_cls.requires_active_trust_region and not config.replays_off_policy:
                 raise ValueError(
                     f"algorithm.kind={algorithm.kind!r} is defined by its importance-ratio "
                     "trust region, but the rollout schedule permits no behavior-policy "

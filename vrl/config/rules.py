@@ -26,6 +26,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from vrl.config.algorithm import algorithm_class
+
 if TYPE_CHECKING:
     from vrl.config.schema import RootConfig
 
@@ -62,12 +64,12 @@ def check_cross_section_rules(root: RootConfig) -> None:
     algo = root.algorithm
     if algo is None:
         return
-    requirements = algo.hyperparameters.requirements
     kind = algo.kind
+    algorithm_cls = algorithm_class(kind)
     rollout = root.rollout
 
-    if requirements.requires_previous_policy and root.model is not None:
-        # The objectives re-noise the clean latent and evaluate it through the
+    if algorithm_cls.requires_previous_policy and root.model is not None:
+        # These algorithms re-noise the clean latent and evaluate it through the
         # shared full-sequence replay forward (``replay_forward_with_latents``),
         # so the family needs a trainer replay recipe on that regime. The
         # timestep-grid domain is checked at the first loss, not here.
@@ -87,7 +89,7 @@ def check_cross_section_rules(root: RootConfig) -> None:
     # ── Sections and explicit fields outside the algorithm's declared surface.
     # An empty allowed set permits only an empty section; a None entry forbids
     # the section outright; consumed_sections=None imposes no restriction.
-    for section_name, allowed in requirements.consumed_sections or ():
+    for section_name, allowed in algorithm_cls.consumed_sections or ():
         section = getattr(root, section_name)
         if section is None:
             continue
@@ -98,38 +100,36 @@ def check_cross_section_rules(root: RootConfig) -> None:
             fields = ", ".join(f"{section_name}.{name}" for name in unsupported)
             raise ValueError(f"{kind} does not consume config field(s): {fields}")
 
-    # ── SFT weights must be valid and backed by the data source their owner declares.
-    raw = getattr(algo.hyperparameters, "sft_weight", None)
-    if raw is not None:
+    # ── A clean-target SFT weight must be valid and backed by the data source
+    # its algorithm declares. An algorithm without the term has no such knob:
+    # the YAML key is unknown there and is rejected by the schema.
+    if algorithm_cls.sft_source != "unsupported":
         try:
-            sft_weight = float(raw)
+            sft_weight = float(algo.hyperparameters.sft_weight)
         except (TypeError, ValueError) as exc:
             raise ValueError("algorithm.sft_weight must be a finite number >= 0") from exc
         if not math.isfinite(sft_weight) or sft_weight < 0:
             raise ValueError("algorithm.sft_weight must be a finite number >= 0")
-        if sft_weight > 0:
-            if requirements.sft_source == "unsupported":
-                raise ValueError(
-                    f"algorithm.sft_weight > 0 is not supported by algorithm.kind={kind!r}",
-                )
-            if requirements.sft_source == "latents" and (
-                root.data is None or not root.data.sft_latents
-            ):
-                raise ValueError(
-                    "algorithm.sft_weight > 0 requires data.sft_latents "
-                    "(the precomputed clean-latents shard; see "
-                    "vrl/scripts/denoise/encode_targets.py)",
-                )
+        if (
+            sft_weight > 0
+            and algorithm_cls.sft_source == "latents"
+            and (root.data is None or not root.data.sft_latents)
+        ):
+            raise ValueError(
+                "algorithm.sft_weight > 0 requires data.sft_latents "
+                "(the precomputed clean-latents shard; see "
+                "vrl/scripts/denoise/encode_targets.py)",
+            )
 
-    # ── Objectives that collect through the stochastic sampler need rollout.sde.
+    # ── Algorithms that collect through the stochastic sampler need rollout.sde.
     # Membership of sde.type itself is the SdeConfig Literal's job; only the
     # presence of the block is a cross-section fact.
-    if requirements.needs_sde_rollout and (rollout is None or rollout.sde is None):
+    if algorithm_cls.needs_sde_rollout and (rollout is None or rollout.sde is None):
         raise ValueError("config missing required field: rollout.sde.type")
 
     # ── A trust-region loss measures drift against the rollout's proposal mean,
     # which generation stores only on request.
-    if requirements.requires_active_trust_region and (
+    if algorithm_cls.requires_active_trust_region and (
         rollout is None or not rollout.return_prev_sample_mean
     ):
         raise ValueError(

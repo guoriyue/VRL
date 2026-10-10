@@ -55,7 +55,7 @@ class PreferenceBatch:
     def stacked_winner_then_loser(self) -> torch.Tensor:
         """Return ``[2B, 3, H, W]`` — winner block first, loser second.
 
-        This is the layout consumed by ``diffusion_dpo_loss``.
+        This is the layout ``DiffusionDPO.compute_loss`` consumes.
         """
         winner, loser = self.split_winner_loser()
         return torch.cat([winner, loser], dim=0)

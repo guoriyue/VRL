@@ -2,37 +2,24 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from dataclasses import dataclass
+from typing import Any
 
-from vrl.algorithms.advantages import GroupAdvantageConfig, GroupRelativeObjective
-from vrl.algorithms.previous_policy import PreviousPolicyObjective
-from vrl.algorithms.requirements import AlgorithmRequirements
-from vrl.algorithms.trajectory import AlgorithmInput
+from vrl.algorithms.forward_process import ForwardProcessAlgorithm, ForwardProcessConfig
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.models.precision import model_autocast
 
 
 @dataclass(slots=True)
-class DiffusionNFTConfig(GroupAdvantageConfig):
+class DiffusionNFTConfig(ForwardProcessConfig):
     """Hyper-parameters for the DiffusionNFT training objective."""
 
-    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
-        needs_sde_rollout=True,
-        sft_source="unsupported",
-        requires_previous_policy=True,
-        requires_reference_policy=True,
-    )
-
-    eps: float = 1e-8
-    # Keep the existing positional constructor fields in their original order.
-    advantage_combine: str = field(default="normalized_sum", kw_only=True)
     nft_beta: float = 1.0
     kl_coef: float = 1.0
     advantage_scale: float = 5.0
 
     def __post_init__(self) -> None:
-        GroupAdvantageConfig.__post_init__(self)
+        ForwardProcessConfig.__post_init__(self)
         if float(self.nft_beta) <= 0:
             raise ValueError(f"DiffusionNFTConfig.nft_beta must be > 0, got {self.nft_beta}")
         if float(self.advantage_scale) <= 0:
@@ -41,36 +28,19 @@ class DiffusionNFTConfig(GroupAdvantageConfig):
             )
 
 
-class DiffusionNFT(PreviousPolicyObjective, GroupRelativeObjective):
-    """DiffusionNFT-style GRPO objective.
+class DiffusionNFT(ForwardProcessAlgorithm):
+    """DiffusionNFT on the forward-process replay branch.
 
-    This objective does not consume evaluator log-prob signals. It trains from
-    generated clean latents, prompt embeddings, sampled diffusion timesteps, and
-    video-level rewards. This algorithm is diffusion-specific and owns its
-    model-forward objective assembly. Likelihood-free: it computes no
-    importance-sampling ratio, and its positive/negative decomposition is taken
-    against ``theta_old``, the detached current prediction.
+    Likelihood-free: it computes no importance-sampling ratio, and its
+    positive/negative decomposition is taken against ``theta_old``, the
+    detached current prediction. The rollout's own noise is replayed when the
+    trajectory recorded it (``diffusion_nft_noise``).
     """
 
+    needs_sde_rollout = True
+    # The loss reads the pre-training reference unconditionally.
+    requires_reference_policy = True
     config: DiffusionNFTConfig
-
-    def __init__(self, config: DiffusionNFTConfig) -> None:
-        GroupRelativeObjective.__init__(self, config)
-
-    @property
-    def kl_coef(self) -> float:
-        return float(self.config.kl_coef)
-
-    def compute_loss(
-        self,
-        inputs: AlgorithmInput,
-    ) -> tuple[Any, TrainStepMetrics]:
-        return self.compute_batch_timestep_loss(
-            inputs.model,
-            inputs.rollout_batch,
-            inputs.timestep_index,
-            inputs.advantages,
-        )
 
     def compute_batch_timestep_loss(
         self,
@@ -83,21 +53,9 @@ class DiffusionNFT(PreviousPolicyObjective, GroupRelativeObjective):
 
         import torch
 
-        from vrl.trajectory.reader import TrajectoryReader
-
         cfg = self.config
         advantage_scale = float(cfg.advantage_scale)
-        replay = TrajectoryReader.from_batch(batch).forward_process_replay(
-            "denoise", timestep_index
-        )
-        x0 = replay.latents_clean
-        t = self.flow_time(replay.timestep, x0).to(dtype=x0.dtype)
-        t_expanded = t.view(-1, *([1] * (x0.ndim - 1)))
-        if replay.noise is None:
-            noise = torch.randn_like(x0.float())
-        else:
-            noise = replay.noise.to(device=x0.device, dtype=torch.float32)
-        xt = (1 - t_expanded) * x0.float() + t_expanded * noise
+        x0, t_expanded, xt = self.renoised(batch, timestep_index)
         xt_input = xt.to(x0.dtype)
 
         # Two evaluations of the family's own conditional forward at this

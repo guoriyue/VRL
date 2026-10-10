@@ -215,14 +215,16 @@ D 批的难点：trainer 测试用 `nn.Linear(1, 1)` 策略和手造 batch 断�
 
 | 问题 | 处置 |
 |---|---|
-| `AlgorithmConfigContract` 名字不说明是什么；`tolerates_off_policy_staleness` 在所有在线目标上都等于 `not requires_previous_policy`（行为策略是当前权重的目标才吃不下 staleness） | 改名 `AlgorithmRequirements`（类属性 `requirements`），删掉 `tolerates_off_policy_staleness`，continuous 检查直接读 `requires_previous_policy` |
+| `AlgorithmConfigContract` 名字不说明是什么；`tolerates_off_policy_staleness` 在所有在线目标上都等于 `not requires_previous_policy`（行为策略是当前权重的目标才吃不下 staleness） | 不再有单独的类：五个事实是每个**目标类**的 ClassVar（`needs_sde_rollout`、`sft_source`、`requires_previous_policy`、`requires_reference_policy`、`requires_active_trust_region`，离线 DPO 的 `DiffusionDPO` 多一个 `consumed_sections`），和已有的 `uses_evaluator` 并排，词汇在 `Algorithm` 基类上写一次；配置层经 `vrl/config/algorithm.py` 的 kind 表拿到目标类（同一张表也给 factory 用，factory 自己的 kind→类字典删除）；删掉 `tolerates_off_policy_staleness`，continuous 检查直接读 `requires_previous_policy` |
 | GRPO / FlowDPPO / GRPOGuard / DiffusionNFT 各自实现一遍"绑定 advantage estimator"和两个 advantage 方法；FlowDPPO / GRPOGuard 复制 GRPO 的构造器而不是继承；`_initialize_*` 两个只在构造器里用的 helper | `GroupRelativeObjective`（`advantages.py`）一次持有归一化配置、reward 权重与两个 advantage 方法（原 `GroupAdvantageEstimator` 并入其中），GRPO / NFT / V-GRPO 继承；构造器收 reward 的 `component_weights` 而不是调用方先 build 好的 estimator；FlowDPPO / GRPOGuard 不再写构造器 |
-| `kl_coef = 0.0` / `sft_weight = 0.0` 在 FlowDPPO 和 GRPOGuard 各写一遍 | 共同父类 `TrustRegionGRPO` 声明一次（trust region 取代 KL 项，且无 SFT 项） |
+| `kl_coef = 0.0` / `sft_weight = 0.0` 在 FlowDPPO 和 GRPOGuard 各写一遍 | 两个权重只在真有这一项的 config 上作为 knob 存在（`kl_coef`：GRPO 族、NFT；`sft_weight`：GRPO、DPO；Flash 继承后钉 0）。trainer 不再读 `kl_coef`：它要的是"要不要参考策略"，GRPO 把 `requires_reference_policy` 作为 property（`kl_coef > 0`）给出，NFT 是常量 True；`sft_weight` 在 `Algorithm` 基类默认 0，GRPO 用 property 从 config 读 |
 | `VGRPOConfig` 重复 `GroupAdvantageConfig` 的 `eps / adv_clip_max / global_std`，V-GRPO 自己再调一次 `group_relative_advantages` | `VGRPOConfig(GroupAdvantageConfig)`，默认 `advantage_combine="weighted_sum_raw"`（与原行为逐位相同），advantage 走同一条 estimator 路径 |
 | `config: ... | None = None` 让基类替子类选默认配置，子类因此各写构造器 | 所有目标的 `config` 必填；factory 本来就总是传 |
 | `Evaluator` Protocol 与 `ReplayEvaluatorBase` ABC 各声明一遍 `replay_granularity` / `supports_deferred_replay_tensor_move`；trainer 再在运行时校验字符串取值 | 只剩 ABC `Evaluator`，两个属性是 `ClassVar[Literal[...]]`；删掉 trainer 的字符串校验和对应用例 |
 | GRPO / GRPOGuard 的 loss 里 `keep is None` 分支：每个 signal 都带 mask，`combine_keep_masks` 永远返回张量 | 删掉死分支；`_broadcast_sample_values` 去掉对非张量的 getattr 探测 |
 | trainer 判断是否需要参考策略：`(uses_evaluator and kl_coef > 0) or requires_reference_policy` | `kl_coef > 0 or requires_reference_policy`（无 evaluator 的目标 kl_coef 本来就是 0，NFT 由 requirements 声明） |
+
+一个基类（2026-10-08 续）：`Algorithm`（`base.py`）从 Protocol 改为具体 ABC，持有 config、组相对 advantage 的两个方法、`kl_coef` / `sft_weight`（读 config）、两个生命周期空实现，`compute_loss` 抽象；GRPO / DiffusionNFT / V-GRPO 直接继承它。`GroupRelativeObjective`、`PreviousPolicyObjective`、`ComponentAdvantageAlgorithm` 三个名字删除：前两者是同一个基类的两半，后者是所有算法都实现的能力（trainer 直接走 components 路径）。NFT 与 V-GRPO 共用的 `normalized_mse` / `flow_time` 是纯函数，放在 `forward_process.py`。
 
 目标的构造器只收自己的 config（2026-10-08 续）：`component_weights`（来自 `reward.components`）、`precision_correction`（来自 `trainer.precision_correction`）和 Flash-GRPO 的 `noise_level` / `sde_type`（来自 rollout denoise 选项）原来由 factory 在运行时一根根接进算法；按"配置解析一次、由读它的对象持有"的规则，`build_configs._bridge_online_algorithm` 现在把它们解析进算法 config 的 `init=False` 字段（不是 YAML 键，`root` 保持未桥接的公开副本），GRPO / FlowDPPO / GRPOGuard / NFT / V-GRPO 都是 `Objective(config)`，FlashGRPO 多一个运行时对象 `scheduler`。
 

@@ -180,7 +180,7 @@ def test_every_allow_listed_offline_dpo_actor_field_has_a_reader() -> None:
     """The offline-DPO allow-list is hand-maintained; this is what keeps it honest.
 
     The cross-section rules reject any ``actor`` key the user sets that is not
-    in the algorithm's ``requirements.consumed_sections``, so the list *is*
+    in the algorithm's ``consumed_sections``, so the list *is*
     the recipe's public surface.
     Nothing mechanically ties it to what the recipe reads, and most of it is
     read through ``required("name")`` -- a string access no symbol grep finds.
@@ -191,7 +191,7 @@ def test_every_allow_listed_offline_dpo_actor_field_has_a_reader() -> None:
     resolvers, so instrumenting attribute access across both is the check.
     """
 
-    from vrl.algorithms.dpo import DiffusionDPOConfig
+    from vrl.algorithms.dpo import DiffusionDPO
     from vrl.config.schema import parse_config
     from vrl.trainers.activation_checkpointing import resolve_gradient_checkpointing_mode
     from vrl.trainers.offline import OfflineDPOTrainerConfig
@@ -207,16 +207,13 @@ def test_every_allow_listed_offline_dpo_actor_field_has_a_reader() -> None:
             return getattr(root.actor, name)
 
     recording_root = SimpleNamespace(actor=_RecordingActor())
-    OfflineDPOTrainerConfig.from_root(
-        recording_root,
-        build_configs(load_config(recipe)).algorithm,
-    )
+    OfflineDPOTrainerConfig.from_root(recording_root)
     resolve_gradient_checkpointing_mode(recording_root)
 
-    consumed = dict(DiffusionDPOConfig.requirements.consumed_sections or ())
+    consumed = dict(DiffusionDPO.consumed_sections or ())
     unread = sorted(consumed["actor"] - read)
     assert unread == [], (
         f"actor field(s) {unread} are accepted by the offline-DPO surface but no "
         "resolver on the recipe reads them; drop them from "
-        "DiffusionDPOConfig.requirements or wire a reader"
+        "DiffusionDPO.consumed_sections or wire a reader"
     )

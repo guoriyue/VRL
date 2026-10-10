@@ -6,17 +6,15 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.algorithms.advantages import GroupAdvantageConfig, GroupRelativeObjective
+from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 
 _KW = {"eps": 1e-4, "adv_clip_max": 5.0, "global_std": False}
 
 
-def _objective(
-    strategy: str, component_weights: dict[str, float] | None = None, **config
-) -> GroupRelativeObjective:
-    settings = GroupAdvantageConfig(advantage_combine=strategy, **{**_KW, **config})
+def _objective(strategy: str, component_weights: dict[str, float] | None = None, **config) -> GRPO:
+    settings = GRPOConfig(advantage_combine=strategy, **{**_KW, **config})
     settings.component_weights = dict(component_weights or {})
-    return GroupRelativeObjective(settings)
+    return GRPO(settings)
 
 
 def _corr(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -108,7 +106,7 @@ def test_normalized_sum_with_only_the_total_is_the_raw_group_advantage() -> None
 
 def test_unknown_strategy_raises() -> None:
     with pytest.raises(ValueError, match="unknown advantage_combine strategy"):
-        GroupAdvantageConfig(advantage_combine="nope")
+        GRPOConfig(advantage_combine="nope")
 
 
 def test_nft_component_fusion_preserves_chain_credit_and_component_units() -> None:

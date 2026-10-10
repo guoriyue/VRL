@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.algorithms.dpo import DiffusionDPOConfig
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
 from vrl.trainers.offline import OfflineDPOTrainerConfig
@@ -19,10 +18,7 @@ def _resolved_trainer_config(overrides: list[str] | None = None):
         "experiment/wan_2_1/offline_dpo_pickapic",
         overrides=overrides,
     )
-    return OfflineDPOTrainerConfig.from_root(
-        parse_config(cfg),
-        DiffusionDPOConfig(beta=123.0, sft_weight=0.25),
-    )
+    return OfflineDPOTrainerConfig.from_root(parse_config(cfg))
 
 
 def test_offline_dpo_bridges_every_supported_adam_knob() -> None:
@@ -39,8 +35,6 @@ def test_offline_dpo_bridges_every_supported_adam_knob() -> None:
         ],
     )
 
-    assert resolved.beta == pytest.approx(123.0)
-    assert resolved.sft_weight == pytest.approx(0.25)
     assert resolved.lr == pytest.approx(0.06)
     assert resolved.adam_beta1 == pytest.approx(0.7)
     assert resolved.adam_beta2 == pytest.approx(0.8)

@@ -1,6 +1,6 @@
 """Tests for vrl.algorithms.dpo — Diffusion-DPO loss correctness.
 
-Validates that ``diffusion_dpo_loss`` matches the reference formula in
+Validates that ``DiffusionDPO.compute_loss`` matches the reference formula in
 SalesforceAIResearch/DiffusionDPO ``train.py:1119-1145``.
 """
 
@@ -12,10 +12,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from vrl.algorithms.dpo import (
-    diffusion_dpo_loss,
-    diffusion_sft_loss,
-)
+from vrl.algorithms.dpo import DiffusionDPO, DiffusionDPOConfig
 
 
 def _reference_dpo_loss(
@@ -56,7 +53,9 @@ class TestParityWithReference:
         target = torch.randn(2 * B, C, H, W)
         beta = 5000.0
 
-        ours = diffusion_dpo_loss(model_pred, ref_pred, target, beta=beta)
+        ours = DiffusionDPO(DiffusionDPOConfig(beta=beta)).compute_loss(
+            model_pred, ref_pred, target
+        )
         ref_loss, ref_acc = _reference_dpo_loss(model_pred, ref_pred, target, beta)
 
         assert torch.allclose(ours["loss"], ref_loss, atol=1e-6)
@@ -71,7 +70,9 @@ class TestParityWithReference:
         target = torch.randn(2 * B, C, T, H, W)
         beta = 2000.0
 
-        ours = diffusion_dpo_loss(model_pred, ref_pred, target, beta=beta)
+        ours = DiffusionDPO(DiffusionDPOConfig(beta=beta)).compute_loss(
+            model_pred, ref_pred, target
+        )
         ref_loss, ref_acc = _reference_dpo_loss(model_pred, ref_pred, target, beta)
 
         assert torch.allclose(ours["loss"], ref_loss, atol=1e-6)
@@ -94,7 +95,9 @@ class TestBehavior:
         ref_pred = model_pred.clone()
         target = torch.randn(2 * B, 4, 8, 8)
 
-        out = diffusion_dpo_loss(model_pred, ref_pred, target, beta=5000.0)
+        out = DiffusionDPO(DiffusionDPOConfig(beta=5000.0)).compute_loss(
+            model_pred, ref_pred, target
+        )
         assert out["loss"].item() == pytest.approx(math.log(2.0), abs=1e-5)
         # 50% accuracy because all inside_terms are exactly zero (we use > 0)
         assert out["implicit_acc"].item() == pytest.approx(0.0)
@@ -114,7 +117,9 @@ class TestBehavior:
         model_pred = torch.cat([winner, loser], dim=0)
         ref_pred = torch.randn(2 * B, 4, 8, 8) * 0.5  # neutral
 
-        out = diffusion_dpo_loss(model_pred, ref_pred, target, beta=100.0)
+        out = DiffusionDPO(DiffusionDPOConfig(beta=100.0)).compute_loss(
+            model_pred, ref_pred, target
+        )
         assert out["loss"].item() < math.log(2.0)
         assert out["model_diff"].item() < 0.0  # winner MSE < loser MSE
         assert out["implicit_acc"].item() > 0.5
@@ -129,7 +134,9 @@ class TestBehavior:
         model_pred = torch.cat([winner, loser], dim=0)
         ref_pred = torch.randn(2 * B, 4, 8, 8) * 0.5
 
-        out = diffusion_dpo_loss(model_pred, ref_pred, target, beta=100.0)
+        out = DiffusionDPO(DiffusionDPOConfig(beta=100.0)).compute_loss(
+            model_pred, ref_pred, target
+        )
         assert out["loss"].item() > math.log(2.0)
         assert out["model_diff"].item() > 0.0
         assert out["implicit_acc"].item() < 0.5
@@ -146,13 +153,13 @@ class TestValidation:
     def test_rejects_odd_batch(self) -> None:
         x = torch.randn(3, 4, 4, 4)
         with pytest.raises(ValueError, match="2\\*B"):
-            diffusion_dpo_loss(x, x, x, beta=1.0)
+            DiffusionDPO(DiffusionDPOConfig(beta=1.0)).compute_loss(x, x, x)
 
     def test_rejects_shape_mismatch(self) -> None:
         a = torch.randn(4, 4, 4, 4)
         b = torch.randn(4, 4, 4, 5)
         with pytest.raises(ValueError, match="shape mismatch"):
-            diffusion_dpo_loss(a, b, a, beta=1.0)
+            DiffusionDPO(DiffusionDPOConfig(beta=1.0)).compute_loss(a, b, a)
 
 
 # ---------------------------------------------------------------------------
@@ -161,10 +168,10 @@ class TestValidation:
 
 
 def test_sft_loss_is_winner_mse() -> None:
-    """``diffusion_sft_loss`` is plain MSE between the winner prediction and its target."""
+    """``DiffusionDPO.sft_loss`` is plain MSE between the winner prediction and its target."""
     torch.manual_seed(5)
     pred_w = torch.randn(3, 4, 8, 8)
     target_w = torch.randn(3, 4, 8, 8)
     expected = F.mse_loss(pred_w, target_w)
-    got = diffusion_sft_loss(pred_w, target_w)
+    got = DiffusionDPO.sft_loss(pred_w, target_w)
     assert torch.allclose(got, expected)

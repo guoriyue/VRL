@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any
 import torch
 import torch.nn as nn
 
-from vrl.algorithms.dpo import diffusion_dpo_loss, diffusion_sft_loss
 from vrl.models.precision import (
     apply_float32_precision,
     model_autocast,
@@ -32,17 +31,13 @@ from vrl.trainers.data.preferences import PreferenceBatch
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
-    from vrl.algorithms.dpo import DiffusionDPOConfig
+    from vrl.algorithms.dpo import DiffusionDPO
     from vrl.config.schema import RootConfig
 
 
 @dataclass(slots=True)
 class OfflineDPOTrainerConfig:
     """Configuration for the offline DPO training loop."""
-
-    # --- DPO ---
-    beta: float = 5000.0
-    sft_weight: float = 0.0
 
     # --- optimizer ---
     # The caller resolves lr scaling (e.g. by effective batch size) before
@@ -67,11 +62,7 @@ class OfflineDPOTrainerConfig:
         )
 
     @classmethod
-    def from_root(
-        cls,
-        root: RootConfig,
-        dpo_config: DiffusionDPOConfig,
-    ) -> OfflineDPOTrainerConfig:
+    def from_root(cls, root: RootConfig) -> OfflineDPOTrainerConfig:
         """Project the public actor section into the offline trainer config."""
         from vrl.trainers.core.types import OptimConfig
 
@@ -114,8 +105,6 @@ class OfflineDPOTrainerConfig:
         if max_grad_norm is None:
             max_grad_norm = cls().max_grad_norm
         return cls(
-            beta=float(dpo_config.beta),
-            sft_weight=float(dpo_config.sft_weight),
             lr=lr,
             adam_beta1=float(optim.adam_beta1),
             adam_beta2=float(optim.adam_beta2),
@@ -185,6 +174,7 @@ class OfflineDPOTrainer:
     def __init__(
         self,
         model: nn.Module,
+        algorithm: DiffusionDPO,
         ref_model: nn.Module | None,
         forward_fn: ForwardFn,
         noise_scheduler: Any,
@@ -194,6 +184,7 @@ class OfflineDPOTrainer:
         device: torch.device | str = "cuda",
     ) -> None:
         self.model = model
+        self.algorithm = algorithm
         self.ref_model = ref_model
         self.forward_fn = forward_fn
         self.noise_scheduler = noise_scheduler
@@ -358,23 +349,19 @@ class OfflineDPOTrainer:
             ).detach()
 
         # DPO/SFT reductions are protected FP32 math, not transformer forward.
-        stats = diffusion_dpo_loss(
+        stats = self.algorithm.compute_loss(
             model_pred=model_pred.float(),
             ref_pred=ref_pred.float(),
             target=target.float(),
-            beta=cfg.beta,
         )
         loss = stats["loss"]
 
         sft_loss_val = torch.tensor(0.0, device=self.device)
-        if cfg.sft_weight > 0:
-            # Compute MSE on winner only
+        sft_weight = self.algorithm.sft_weight
+        if sft_weight > 0:
             bsz = model_pred.shape[0] // 2
-            sft_loss_val = diffusion_sft_loss(
-                model_pred[:bsz].float(),
-                target[:bsz].float(),
-            )
-            loss = loss + cfg.sft_weight * sft_loss_val
+            sft_loss_val = self.algorithm.sft_loss(model_pred[:bsz].float(), target[:bsz].float())
+            loss = loss + sft_weight * sft_loss_val
 
         # 6. Backward + step (with optional accumulation)
         loss_scaled = loss / cfg.gradient_accumulation_steps

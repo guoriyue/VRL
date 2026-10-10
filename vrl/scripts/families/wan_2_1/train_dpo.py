@@ -142,7 +142,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     from torch.utils.data import DataLoader
 
-    from vrl.algorithms.dpo import DiffusionDPOConfig
+    from vrl.algorithms.dpo import DiffusionDPO, DiffusionDPOConfig
     from vrl.models.dtypes import resolve_torch_dtype
     from vrl.ray.resources import format_distributed_resource_plan
     from vrl.trainers.activation_checkpointing import enable_transformer_gradient_checkpointing
@@ -173,7 +173,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         )
 
     precision = built.precision
-    trainer_cfg = OfflineDPOTrainerConfig.from_root(built.root, dpo_config)
+    algorithm = DiffusionDPO(dpo_config)
+    trainer_cfg = OfflineDPOTrainerConfig.from_root(built.root)
     assert built.root.actor is not None  # the builder required actor.train_batch_size
     train_batch_size = int(built.root.actor.train_batch_size)
     resume_config = built.resume
@@ -249,6 +250,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     )
     trainer = OfflineDPOTrainer(
         model=wan_model,
+        algorithm=algorithm,
         ref_model=None,  # use LoRA disable_adapter for ref
         forward_fn=wan_forward,
         noise_scheduler=pipeline.scheduler,
@@ -302,7 +304,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     logger.info(
         "Starting Wan-1.3B DPO — %d steps, beta=%g, lr=%g, num_frames=%d",
         max_train_steps,
-        trainer_cfg.beta,
+        dpo_config.beta,
         trainer_cfg.lr,
         num_frames,
     )

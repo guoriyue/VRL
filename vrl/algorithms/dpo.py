@@ -5,18 +5,16 @@ reference implementation at github.com/SalesforceAIResearch/DiffusionDPO
 (see ``train.py:1119-1145``).
 
 DPO is offline preference learning, fundamentally different from GRPO/PPO
-(no rollouts, no advantages). This module exposes the pure functional loss
-(``diffusion_dpo_loss`` / ``diffusion_sft_loss``) and its config; the offline
-DPO trainer calls the loss directly rather than through the online ``Algorithm``
-protocol (which is reward/advantage-based and explicitly rejects DPO).
+(no rollouts, no advantages): ``DiffusionDPO`` is an ``OfflineAlgorithm``
+whose loss the offline DPO trainer calls on each preference batch.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 
-from vrl.algorithms.requirements import AlgorithmRequirements
+from vrl.algorithms.base import OfflineAlgorithm
 
 # Torch is a call-time dependency, not an import-time one: this module's config
 # dataclass is what ``algorithm.kind`` dispatch loads during config parsing,
@@ -35,140 +33,138 @@ class DiffusionDPOConfig:
       * Larger β → tighter ref-policy anchor.
     """
 
-    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
-        needs_sde_rollout=False,
-        sft_source="preference_winner",
-        consumed_sections=(
-            (
-                "actor",
-                frozenset(
-                    {
-                        "gradient_accumulation_steps",
-                        "gradient_checkpointing",
-                        "max_norm",
-                        "optim",
-                        "prediction_type",
-                        "scale_lr",
-                        "train_batch_size",
-                        "use_adafactor",
-                    }
-                ),
-            ),
-            (
-                "trainer",
-                frozenset(
-                    {
-                        "checkpointing_steps",
-                        "entrypoint",
-                        "log_interval",
-                        "max_train_steps",
-                        "output_dir",
-                        "resume_from",
-                    }
-                ),
-            ),
-            ("rollout", frozenset()),
-            ("reward", None),
-        ),
-    )
-
     beta: float = 5000.0
     sft_weight: float = 0.0  # optional auxiliary SFT-on-winner loss
 
 
-def diffusion_dpo_loss(
-    model_pred: torch.Tensor,
-    ref_pred: torch.Tensor,
-    target: torch.Tensor,
-    beta: float,
-) -> dict[str, torch.Tensor]:
-    """Compute the Diffusion-DPO loss for one batch of preference pairs.
+class DiffusionDPO(OfflineAlgorithm):
+    """The offline Diffusion-DPO algorithm.
 
-    Tensor layout: each tensor has leading dim ``2*B`` where the first ``B``
-    entries are the *winner* (preferred) samples and the last ``B`` are the
-    *loser* (dispreferred) samples — matching the reference repo's
-    ``batch(2)`` convention.
-
-    Works for both 4-D (image UNet) and 5-D (video transformer) tensors —
-    per-sample MSE reduces over all non-batch dims.
-
-    Args:
-      model_pred: policy prediction, shape ``[2B, ...]``
-      ref_pred:   reference prediction (frozen), shape ``[2B, ...]``
-      target:     ground-truth signal (noise for ε-pred, velocity for
-                  flow-matching), shape ``[2B, ...]``
-      beta:       DPO temperature
-
-    Returns dict with:
-      ``loss``           — scalar, the DPO objective to backprop
-      ``raw_model_loss`` — diagnostic: average MSE under policy
-      ``raw_ref_loss``   — diagnostic: average MSE under reference
-      ``model_diff``     — winner_loss - loser_loss under policy
-      ``ref_diff``       — winner_loss - loser_loss under reference
-      ``implicit_acc``   — fraction of pairs where the policy ranks winner
-                           above loser more strongly than the reference does
+    ``compute_loss`` is the paper's pairwise objective over the policy's and
+    the frozen reference's predictions; ``sft_loss`` the optional winner-only
+    regularizer. The class also restricts the config sections the recipe
+    consumes.
     """
-    import torch
-    import torch.nn.functional as F
 
-    if model_pred.shape != ref_pred.shape or model_pred.shape != target.shape:
-        raise ValueError(
-            f"shape mismatch: model_pred={tuple(model_pred.shape)} "
-            f"ref_pred={tuple(ref_pred.shape)} target={tuple(target.shape)}"
-        )
-    if model_pred.shape[0] % 2 != 0:
-        raise ValueError(f"leading dim must be 2*B (winner-then-loser); got {model_pred.shape[0]}")
+    sft_source = "preference_winner"
+    config: DiffusionDPOConfig
+    consumed_sections = (
+        (
+            "actor",
+            frozenset(
+                {
+                    "gradient_accumulation_steps",
+                    "gradient_checkpointing",
+                    "max_norm",
+                    "optim",
+                    "prediction_type",
+                    "scale_lr",
+                    "train_batch_size",
+                    "use_adafactor",
+                }
+            ),
+        ),
+        (
+            "trainer",
+            frozenset(
+                {
+                    "checkpointing_steps",
+                    "entrypoint",
+                    "log_interval",
+                    "max_train_steps",
+                    "output_dir",
+                    "resume_from",
+                }
+            ),
+        ),
+        ("rollout", frozenset()),
+        ("reward", None),
+    )
 
-    reduce_dims = tuple(range(1, model_pred.ndim))
+    @property
+    def sft_weight(self) -> float:  # type: ignore[override]
+        return float(self.config.sft_weight)
 
-    # Per-sample MSE — shape [2B]
-    model_losses = (model_pred - target).pow(2).mean(dim=reduce_dims)
-    model_losses_w, model_losses_l = model_losses.chunk(2)
+    def compute_loss(
+        self,
+        model_pred: torch.Tensor,
+        ref_pred: torch.Tensor,
+        target: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Compute the Diffusion-DPO loss for one batch of preference pairs.
 
-    with torch.no_grad():
-        ref_losses = (ref_pred - target).pow(2).mean(dim=reduce_dims)
-        ref_losses_w, ref_losses_l = ref_losses.chunk(2)
+        Tensor layout: each tensor has leading dim ``2*B`` where the first ``B``
+        entries are the *winner* (preferred) samples and the last ``B`` are the
+        *loser* (dispreferred) samples — matching the reference repo's
+        ``batch(2)`` convention.
 
-    model_diff = model_losses_w - model_losses_l
-    ref_diff = ref_losses_w - ref_losses_l
+        Works for both 4-D (image UNet) and 5-D (video transformer) tensors —
+        per-sample MSE reduces over all non-batch dims.
 
-    # Lower MSE on winner → smaller model_diff. We want policy to push
-    # this even further below ref_diff, so inside_term should be > 0.
-    inside_term = -0.5 * beta * (model_diff - ref_diff)
-    loss = -F.logsigmoid(inside_term).mean()
+        Args:
+          model_pred: policy prediction, shape ``[2B, ...]``
+          ref_pred:   reference prediction (frozen), shape ``[2B, ...]``
+          target:     ground-truth signal (noise for ε-pred, velocity for
+                      flow-matching), shape ``[2B, ...]``
 
-    implicit_acc = (inside_term > 0).float().mean()
+        Returns dict with:
+          ``loss``           — scalar, the DPO objective to backprop
+          ``raw_model_loss`` — diagnostic: average MSE under policy
+          ``raw_ref_loss``   — diagnostic: average MSE under reference
+          ``model_diff``     — winner_loss - loser_loss under policy
+          ``ref_diff``       — winner_loss - loser_loss under reference
+          ``implicit_acc``   — fraction of pairs where the policy ranks winner
+                               above loser more strongly than the reference does
+        """
+        import torch
+        import torch.nn.functional as F
 
-    return {
-        "loss": loss,
-        "raw_model_loss": 0.5 * (model_losses_w.mean() + model_losses_l.mean()),
-        "raw_ref_loss": ref_losses.mean(),
-        "model_diff": model_diff.mean(),
-        "ref_diff": ref_diff.mean(),
-        "implicit_acc": implicit_acc,
-    }
+        if model_pred.shape != ref_pred.shape or model_pred.shape != target.shape:
+            raise ValueError(
+                f"shape mismatch: model_pred={tuple(model_pred.shape)} "
+                f"ref_pred={tuple(ref_pred.shape)} target={tuple(target.shape)}"
+            )
+        if model_pred.shape[0] % 2 != 0:
+            raise ValueError(
+                f"leading dim must be 2*B (winner-then-loser); got {model_pred.shape[0]}"
+            )
+
+        reduce_dims = tuple(range(1, model_pred.ndim))
+
+        # Per-sample MSE — shape [2B]
+        model_losses = (model_pred - target).pow(2).mean(dim=reduce_dims)
+        model_losses_w, model_losses_l = model_losses.chunk(2)
+
+        with torch.no_grad():
+            ref_losses = (ref_pred - target).pow(2).mean(dim=reduce_dims)
+            ref_losses_w, ref_losses_l = ref_losses.chunk(2)
+
+        model_diff = model_losses_w - model_losses_l
+        ref_diff = ref_losses_w - ref_losses_l
+
+        # Lower MSE on winner → smaller model_diff. We want policy to push
+        # this even further below ref_diff, so inside_term should be > 0.
+        inside_term = -0.5 * float(self.config.beta) * (model_diff - ref_diff)
+        loss = -F.logsigmoid(inside_term).mean()
+
+        implicit_acc = (inside_term > 0).float().mean()
+
+        return {
+            "loss": loss,
+            "raw_model_loss": 0.5 * (model_losses_w.mean() + model_losses_l.mean()),
+            "raw_ref_loss": ref_losses.mean(),
+            "model_diff": model_diff.mean(),
+            "ref_diff": ref_diff.mean(),
+            "implicit_acc": implicit_acc,
+        }
+
+    @staticmethod
+    def sft_loss(model_pred_winner: torch.Tensor, target_winner: torch.Tensor) -> torch.Tensor:
+        """Plain MSE on the winner halves (``model_pred[:B]``, ``target[:B]``)."""
+
+        import torch.nn.functional as F
+
+        return F.mse_loss(model_pred_winner.float(), target_winner.float(), reduction="mean")
 
 
-def diffusion_sft_loss(
-    model_pred_winner: torch.Tensor,
-    target_winner: torch.Tensor,
-) -> torch.Tensor:
-    """Plain MSE on the winner only — useful as auxiliary regulariser.
-
-    Pass ``model_pred[:B]`` and ``target[:B]`` (the winner halves).
-    """
-    import torch.nn.functional as F
-
-    # WHY keep this thin wrapper exported: it is a deliberately exposed
-    # auxiliary-loss API paired with diffusion_dpo_loss (see module docstring
-    # and __all__) to mirror the reference DPO loss surface for the offline DPO
-    # trainer (trainers/offline/dpo.py, gated on sft_weight>0). Not an
-    # incidental F.mse_loss alias — do not inline.
-    return F.mse_loss(model_pred_winner.float(), target_winner.float(), reduction="mean")
-
-
-__all__ = [
-    "DiffusionDPOConfig",
-    "diffusion_dpo_loss",
-    "diffusion_sft_loss",
-]
+__all__ = ["DiffusionDPO", "DiffusionDPOConfig"]

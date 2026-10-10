@@ -87,8 +87,8 @@ change alone does not invalidate existing checkpoints. Historical run
 snapshots retain their original configuration and need these key migrations
 if relaunched. An explicit non-default adapter-upcast policy changes identity.
 
-The algorithm contract, not a model recipe, owns the previous-policy and
-reference-policy requirements (`requires_previous_policy`,
+The objective class, not a model recipe, declares the previous-policy and
+reference-policy facts (`requires_previous_policy`,
 `requires_reference_policy`; GRPO's reference follows `kl_coef > 0`). NFT and
 V-GRPO read the previous policy `theta_old` as the detached current prediction
 (one trainable forward per replay step, no weight snapshot). The model serves

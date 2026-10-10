@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -185,81 +184,9 @@ class GroupAdvantageConfig:
             )
 
 
-class GroupRelativeObjective:
-    """The advantage half of an objective that normalizes rewards per prompt group.
-
-    GRPO, DiffusionNFT and V-GRPO inherit it; ``config`` is the objective's
-    resolved hyper-parameters, whose ``GroupAdvantageConfig`` part carries the
-    normalization fields and the bridged reward weights.
-    """
-
-    def __init__(self, config: GroupAdvantageConfig) -> None:
-        self.config = config
-
-    def compute_advantages_from_tensors(self, rewards: Any, group_ids: Any) -> Any:
-        """Standardize and clamp the weighted reward total within each group."""
-
-        cfg = self.config
-        return group_relative_advantages(
-            rewards,
-            group_ids,
-            eps=cfg.eps,
-            adv_clip_max=cfg.adv_clip_max,
-            global_std=cfg.global_std,
-        )
-
-    def compute_advantages_from_components(
-        self,
-        rewards: Any,
-        component_rewards: Mapping[str, Any],
-        group_ids: Any,
-    ) -> Any:
-        """Advantages from the weighted total and its raw component observations.
-
-        Under ``normalized_sum`` each configured objective is standardized in
-        its group, weighted and summed, then clamped once. A reward also
-        reports observation axes beside its objectives (``MultiReward``
-        namespaces them as ``<component>/<axis>``) for logging; those never
-        enter the advantage. With no configured objective in hand (a reward
-        that reports only observations) there is exactly one objective, the
-        weighted total, so standardizing it is the whole strategy. Some but not
-        all configured objectives is a misconfiguration.
-        """
-
-        import torch
-
-        cfg = self.config
-        objectives = {
-            name: values
-            for name, values in component_rewards.items()
-            if name in cfg.component_weights
-        }
-        if cfg.advantage_combine != "normalized_sum" or not objectives:
-            return self.compute_advantages_from_tensors(rewards, group_ids)
-        missing = sorted(set(cfg.component_weights) - set(objectives))
-        if missing:
-            raise ValueError(
-                f"reward reports configured components {sorted(objectives)} but not {missing}",
-            )
-
-        total = None
-        # Stable ordering keeps global-std collectives aligned across DDP ranks.
-        for name in sorted(objectives):
-            advantage = _standardize_group_rewards(
-                objectives[name],
-                group_ids,
-                eps=cfg.eps,
-                global_std=cfg.global_std,
-            )
-            weighted = cfg.component_weights[name] * advantage
-            total = weighted if total is None else total + weighted
-        return torch.clamp(total, -cfg.adv_clip_max, cfg.adv_clip_max)
-
-
 __all__ = [
     "ADVANTAGE_COMBINE_STRATEGIES",
     "GroupAdvantageConfig",
-    "GroupRelativeObjective",
     "group_relative_advantages",
     "nonzero_advantage_mask",
 ]

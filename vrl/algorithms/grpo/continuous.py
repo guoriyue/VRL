@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any
 
-from vrl.algorithms.advantages import GroupAdvantageConfig, GroupRelativeObjective
+from vrl.algorithms.advantages import GroupAdvantageConfig
+from vrl.algorithms.base import OnlineAlgorithm
 from vrl.algorithms.logprob_mismatch import (
     PrecisionCorrectionConfig,
     apply_rejection_sample_mask,
@@ -14,7 +15,6 @@ from vrl.algorithms.logprob_mismatch import (
     behavior_log_prob,
     combine_keep_masks,
 )
-from vrl.algorithms.requirements import AlgorithmRequirements
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import PolicyUpdateStats, TrainStepMetrics
 from vrl.rollouts.evaluators.types import FlowSDESignal
@@ -33,22 +33,11 @@ class ImportanceRatioConfig(GroupAdvantageConfig):
 
 
 @dataclass(slots=True)
-class ClippedPolicyConfig(ImportanceRatioConfig):
-    """Policy-ratio clipping and reference-KL knobs with real loss consumers."""
+class GRPOConfig(ImportanceRatioConfig):
+    """Hyper-parameters for continuous GRPO."""
 
     clip_ratio: float = 0.2
     kl_coef: float = 0.0
-
-
-@dataclass(slots=True)
-class GRPOConfig(ClippedPolicyConfig):
-    """Hyper-parameters for continuous GRPO."""
-
-    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
-        needs_sde_rollout=True,
-        sft_source="latents",
-    )
-
     flow_kl_use_dt: bool = False
     # Diffusion-loss regularizer weight (Cosmos-Predict2.5 paper 4.2.2's
     # anti-reward-hacking term): adds sft_weight * MSE(model_pred,
@@ -60,7 +49,61 @@ class GRPOConfig(ClippedPolicyConfig):
     sft_weight: float = 0.0
 
 
-class GRPO(GroupRelativeObjective):
+def _broadcast_sample_values(values: Any, target: Any) -> Any:
+    """Expand one value per sample across grouped policy-action axes."""
+
+    if values.shape[0] != target.shape[0]:
+        raise ValueError(
+            "sample values and policy signals must share their leading batch axis: "
+            f"{tuple(values.shape)} vs {tuple(target.shape)}",
+        )
+    while values.ndim < target.ndim:
+        values = values.unsqueeze(-1)
+    return values
+
+
+class ImportanceRatioAlgorithm(OnlineAlgorithm):
+    """An algorithm whose loss is a ratio of replay to rollout log-probs.
+
+    It reads evaluator signals from the stochastic sampler and bounds
+    rollout->replay precision drift the same way in every loss: truncated
+    importance sampling on the per-element weight, rejection of whole
+    samples whose log-ratio is out of band, and a masked mean whose
+    denominator is the KEPT count (true off-policy rejection, not a
+    gradient-magnitude dilution).
+    """
+
+    uses_evaluator = True
+    needs_sde_rollout = True
+    sft_source = "unsupported"
+    config: ImportanceRatioConfig
+
+    def precision_keeps(self, log_ratio: Any, mask: Any) -> tuple[Any, Any | None, Any | None]:
+        """``(ratio, tis_keep, rs_keep)`` for the rollout->replay log-ratio.
+
+        No-ops when precision is not split (``tis_mode`` / ``rs_mode`` off):
+        the ratio is ``exp(log_ratio)`` and both keeps are None.
+        """
+
+        import torch
+
+        pc = self.config.precision_correction
+        ratio, tis_keep = apply_truncated_importance_weight(torch.exp(log_ratio), pc)
+        rs_keep = apply_rejection_sample_mask(log_ratio, pc, mask=mask)
+        return ratio, tis_keep, rs_keep
+
+    @staticmethod
+    def masked_mean(values: Any, keep: Any) -> Any:
+        return (values * keep).sum() / keep.sum().clamp_min(1.0)
+
+    @staticmethod
+    def masked_fraction(keep: Any | None) -> float:
+        """Share of samples a keep mask drops; 0 when the keep is inactive."""
+
+        return 0.0 if keep is None else (1.0 - keep.mean()).item()
+
+
+class GRPO(ImportanceRatioAlgorithm):
     """Group Relative Policy Optimization for continuous rollout signals.
 
     Advantages are normalised within each prompt group:
@@ -70,34 +113,18 @@ class GRPO(GroupRelativeObjective):
     per-sample log-probabilities produced by the evaluator.
     """
 
-    uses_evaluator = True
-
+    sft_source = "latents"
     config: GRPOConfig
 
     @property
-    def kl_coef(self) -> float:
-        return float(self.config.kl_coef)
+    def requires_reference_policy(self) -> bool:  # type: ignore[override]
+        """The reference replay is needed exactly when the KL term is on."""
+
+        return self.config.kl_coef > 0
 
     @property
-    def sft_weight(self) -> float:
+    def sft_weight(self) -> float:  # type: ignore[override]
         return float(self.config.sft_weight)
-
-    # -- lifecycle entry points the trainer calls on every objective ---------
-
-    def prepare_update(self, update_timesteps: Callable[[], Any]) -> None:
-        """Called once per optimizer update, before its first replay forward.
-
-        ``update_timesteps`` returns the recorded timestep of every (sample,
-        trained step) the update will put loss on; it is only evaluated by an
-        objective that normalizes over the whole update.
-        """
-
-        del update_timesteps
-
-    def after_optimizer_step(self, global_step: int) -> None:
-        """Called after every applied (not scaler-skipped) optimizer step."""
-
-        del global_step
 
     def compute_loss(
         self,
@@ -113,24 +140,14 @@ class GRPO(GroupRelativeObjective):
 
         cfg = self.config
         signals = inputs.signals.primary
-        advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
-        pc = self.config.precision_correction
+        advantages = _broadcast_sample_values(inputs.advantages, signals.log_prob)
+        pc = cfg.precision_correction
         old_log_probs = behavior_log_prob(signals.log_prob, signals.old_log_prob, pc)
-
-        raw_ratio = torch.exp(signals.log_prob - old_log_probs)
-        # Truncated importance sampling on the rollout->replay weight before the PPO
-        # clip, so quantized-rollout (FP8/NVFP4) drift on a few samples cannot dominate
-        # the gradient via the unclipped negative-advantage branch.
-        ratio, tis_keep = apply_truncated_importance_weight(raw_ratio, pc)
-        # RS rejects whole samples whose rollout->replay log-ratio drift is out of
-        # band — orthogonal to TIS (which clamps the per-element weight). Both feed
-        # the masked-mean denominator below (true off-policy rejection, not a
-        # gradient-magnitude dilution).
-        rs_keep = apply_rejection_sample_mask(
-            signals.log_prob - old_log_probs,
-            pc,
-            mask=signals.mask,
-        )
+        log_ratio = signals.log_prob - old_log_probs
+        # TIS runs before the PPO clip, so quantized-rollout (FP8/NVFP4) drift
+        # on a few samples cannot dominate the gradient via the unclipped
+        # negative-advantage branch.
+        ratio, tis_keep, rs_keep = self.precision_keeps(log_ratio, signals.mask)
         clipped_ratio = torch.clamp(ratio, 1.0 - cfg.clip_ratio, 1.0 + cfg.clip_ratio)
         unclipped_loss = -advantages * ratio
         clipped_loss = -advantages * clipped_ratio
@@ -141,7 +158,7 @@ class GRPO(GroupRelativeObjective):
         # surrogate without duplicating the loss body in the subclass.
         weight = self._loss_weight(signals)
         if weight is not None:
-            per_sample_loss = per_sample_loss * self._broadcast_sample_values(
+            per_sample_loss = per_sample_loss * _broadcast_sample_values(
                 weight,
                 per_sample_loss,
             )
@@ -151,18 +168,16 @@ class GRPO(GroupRelativeObjective):
         # policy actions. Existing diffusion masks are all ones, preserving
         # their numerical behavior.
         keep = combine_keep_masks(signals.mask.to(ratio.dtype), tis_keep, rs_keep)
-        policy_loss = (per_sample_loss * keep).sum() / keep.sum().clamp_min(1.0)
-        active_clip_fraction = (
-            ((clipped_loss > unclipped_loss).to(keep.dtype) * keep).sum()
-            / keep.sum().clamp_min(1.0)
+        policy_loss = self.masked_mean(per_sample_loss, keep)
+        active_clip_fraction = self.masked_mean(
+            (clipped_loss > unclipped_loss).to(keep.dtype), keep
         ).item()
-        if tis_keep is not None:
-            tis_clip_fraction = (1.0 - tis_keep.mean()).item()
+        if tis_keep is None and pc.tis_mode != "off":
+            # Truncation changes the weight without a keep: count changed elements.
+            tis_clip_fraction = (ratio != torch.exp(log_ratio)).float().mean().item()
         else:
-            tis_clip_fraction = (
-                0.0 if pc.tis_mode == "off" else (ratio != raw_ratio).float().mean().item()
-            )
-        rs_seq_masked_fraction = 0.0 if rs_keep is None else (1.0 - rs_keep.mean()).item()
+            tis_clip_fraction = self.masked_fraction(tis_keep)
+        rs_seq_masked_fraction = self.masked_fraction(rs_keep)
 
         if cfg.kl_coef > 0:
             # The reference forward ran (the trainer requests it whenever the KL
@@ -186,7 +201,7 @@ class GRPO(GroupRelativeObjective):
             loss = policy_loss
 
         clip_fraction = torch.mean((torch.abs(ratio - 1.0) > cfg.clip_ratio).float()).item()
-        approx_kl = 0.5 * torch.mean((signals.log_prob - old_log_probs) ** 2).item()
+        approx_kl = 0.5 * torch.mean(log_ratio**2).item()
 
         metrics = TrainStepMetrics(
             loss=loss.item(),
@@ -214,19 +229,6 @@ class GRPO(GroupRelativeObjective):
 
         return None
 
-    @staticmethod
-    def _broadcast_sample_values(values: Any, target: Any) -> Any:
-        """Expand one value per sample across grouped policy-action axes."""
-
-        if values.shape[0] != target.shape[0]:
-            raise ValueError(
-                "sample values and policy signals must share their leading batch axis: "
-                f"{tuple(values.shape)} vs {tuple(target.shape)}",
-            )
-        while values.ndim < target.ndim:
-            values = values.unsqueeze(-1)
-        return values
-
 
 @dataclass(slots=True)
 class FlashGRPOConfig(GRPOConfig):
@@ -238,12 +240,10 @@ class FlashGRPOConfig(GRPOConfig):
     tight clip is a drift rail, not a trust region.
     """
 
-    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
-        needs_sde_rollout=True,
-        sft_source="unsupported",
-    )
-
     clip_ratio: float = 1e-3
+    # Flash-GRPO carries no clean-target SFT term: the inherited knob is
+    # pinned at zero and is not a YAML key.
+    sft_weight: float = field(default=0.0, init=False)
     # Bridged by build_configs from the rollout denoise options: the SDE the
     # rectification weight is defined over, the same one the replay evaluator
     # integrates. Never YAML keys here.
@@ -290,6 +290,7 @@ class FlashGRPO(GRPO):
     the full-batch path (or one collection per update).
     """
 
+    sft_source = "unsupported"
     config: FlashGRPOConfig
 
     def __init__(self, config: FlashGRPOConfig, *, scheduler: Any) -> None:
@@ -371,17 +372,15 @@ class FlashGRPO(GRPO):
 
 @dataclass(slots=True)
 class FlowDPPOConfig(ImportanceRatioConfig):
-    """Flow-DPPO: exact-Gaussian-KL trust region instead of the PPO ratio clip."""
+    """Flow-DPPO: exact-Gaussian-KL trust region instead of the PPO ratio clip.
+
+    The trust region replaces the reference-KL term and there is no SFT term,
+    so neither weight is a knob here.
+    """
 
     # The KL mask is the objective: at strict + ppo_epochs=1 the rollout and
     # current proposal means coincide, KL==0, nothing is masked, and the loss
     # collapses to plain REINFORCE.
-    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
-        needs_sde_rollout=True,
-        sft_source="unsupported",
-        requires_active_trust_region=True,
-    )
-
     # Per-sample latent KL above which an update that *widens* the gap from the
     # rollout policy is dropped (the trust-region boundary).
     kl_mask_threshold: float = 1.0
@@ -390,18 +389,7 @@ class FlowDPPOConfig(ImportanceRatioConfig):
     add_kl_coefficient: bool = True
 
 
-class TrustRegionGRPO(GRPO):
-    """GRPO whose loss is a trust region against the rollout policy.
-
-    The trust region replaces the reference-KL term, and these variants carry
-    no clean-target SFT term, so their configs declare neither weight.
-    """
-
-    kl_coef = 0.0
-    sft_weight = 0.0
-
-
-class FlowDPPO(TrustRegionGRPO):
+class FlowDPPO(ImportanceRatioAlgorithm):
     """Trust-region GRPO: mask high-KL, gap-widening samples (no ratio clip).
 
     Asymmetric by construction — only updates that *increase* the divergence from
@@ -410,6 +398,9 @@ class FlowDPPO(TrustRegionGRPO):
     policy are always kept. This is the key difference from PPO's symmetric clip.
     """
 
+    # The trust region is the loss; it needs a behaviour policy that moved
+    # and the rollout's stored proposal mean.
+    requires_active_trust_region = True
     config: FlowDPPOConfig
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
@@ -420,22 +411,15 @@ class FlowDPPO(TrustRegionGRPO):
         cfg = self.config
         signals = inputs.signals.primary
         old_prev_sample_mean = signals.old_prev_sample_mean
-        advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
+        advantages = _broadcast_sample_values(inputs.advantages, signals.log_prob)
 
-        pc = self.config.precision_correction
-        old_log_probs = behavior_log_prob(signals.log_prob, signals.old_log_prob, pc)
-        raw_ratio = torch.exp(signals.log_prob - old_log_probs)
-        # Bound rollout->replay precision drift (FP8/NVFP4 rollout) before it
-        # enters the trust-region loss — the same TIS/RS the base GRPO applies.
-        # Without it a quantized rollout's logprob drift flows unclipped into the
-        # negative-advantage branch; the trust-region KL mask below only catches
-        # *policy* drift, not *precision* drift. No-op when precision is not split
-        # (tis_mode/rs_mode default to "off").
-        ratio, tis_keep = apply_truncated_importance_weight(raw_ratio, pc)
-        rs_keep = apply_rejection_sample_mask(
-            signals.log_prob - old_log_probs,
-            pc,
-            mask=signals.mask,
+        old_log_probs = behavior_log_prob(
+            signals.log_prob, signals.old_log_prob, self.config.precision_correction
+        )
+        # Precision drift is bounded before the trust region sees the ratio:
+        # the KL mask below catches *policy* drift, not *precision* drift.
+        ratio, tis_keep, rs_keep = self.precision_keeps(
+            signals.log_prob - old_log_probs, signals.mask
         )
         # Gaussian KL between the current and rollout proposal means (the
         # current-vs-rollout drift). With add_kl_coefficient the sigma folds in the
@@ -455,7 +439,7 @@ class FlowDPPO(TrustRegionGRPO):
             kl_per_sample = (signals.prev_sample_mean - old_prev_sample_mean).pow(2).mean(
                 dim=non_batch
             ) / 2.0
-        high_kl = self._broadcast_sample_values(
+        high_kl = _broadcast_sample_values(
             kl_per_sample >= cfg.kl_mask_threshold,
             ratio,
         )
@@ -471,17 +455,11 @@ class FlowDPPO(TrustRegionGRPO):
             tis_keep,
             rs_keep,
         )
-        unclipped_loss = -advantages * ratio
-        # Masked mean, matching GRPO/GRPOGuard: the denominator is the
-        # KEPT count, not the batch size. Dividing by the batch size would scale
-        # the gradient by the keep fraction, so the effective learning rate would
-        # shrink exactly as the trust region engages — a gradient-magnitude
-        # dilution, not the true off-policy rejection the mask is meant to be.
-        policy_loss = (unclipped_loss * keep).sum() / keep.sum().clamp_min(1.0)
+        policy_loss = self.masked_mean(-advantages * ratio, keep)
 
-        masked_fraction = (1.0 - keep.mean()).item()
-        tis_clip_fraction = (1.0 - tis_keep.mean()).item() if tis_keep is not None else 0.0
-        rs_seq_masked_fraction = (1.0 - rs_keep.mean()).item() if rs_keep is not None else 0.0
+        masked_fraction = self.masked_fraction(keep)
+        tis_clip_fraction = self.masked_fraction(tis_keep)
+        rs_seq_masked_fraction = self.masked_fraction(rs_keep)
         approx_kl = (
             0.5
             * torch.mean(
@@ -506,22 +484,18 @@ class FlowDPPO(TrustRegionGRPO):
 class GRPOGuardConfig(ImportanceRatioConfig):
     """GRPO-Guard: ratio-mean-bias correction + per-step magnitude normalization.
 
-    The guard terms are derived from the per-step diffusion scale.
+    The guard terms are derived from the per-step diffusion scale. The guard
+    replaces the reference-KL term and there is no SFT term, so neither weight
+    is a knob here.
     """
 
     # The ratio-mean-bias / step-scale guard is the objective: at strict +
     # ppo_epochs=1 the current-vs-rollout drift is 0, the guard correction
     # vanishes, and the loss collapses to plain GRPO.
-    requirements: ClassVar[AlgorithmRequirements] = AlgorithmRequirements(
-        needs_sde_rollout=True,
-        sft_source="unsupported",
-        requires_active_trust_region=True,
-    )
-
     clip_ratio: float = 0.2
 
 
-class GRPOGuard(TrustRegionGRPO):
+class GRPOGuard(ImportanceRatioAlgorithm):
     """FlowGRPO with an additive ratio-mean-bias and 1/sqrt_dt**2 step-scale norm.
 
     Unlike Flow-DPPO (which *drops* high-KL samples), GRPO-Guard keeps every
@@ -530,6 +504,9 @@ class GRPOGuard(TrustRegionGRPO):
     early and late timesteps contribute comparably.
     """
 
+    # The guard is the loss; it needs a behaviour policy that moved and the
+    # rollout's stored proposal mean.
+    requires_active_trust_region = True
     config: GRPOGuardConfig
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
@@ -538,17 +515,14 @@ class GRPOGuard(TrustRegionGRPO):
         cfg = self.config
         signals = inputs.signals.primary
         old_prev_sample_mean = signals.old_prev_sample_mean
-        advantages = self._broadcast_sample_values(inputs.advantages, signals.log_prob)
+        advantages = _broadcast_sample_values(inputs.advantages, signals.log_prob)
 
         log_ratio = signals.log_prob - signals.old_log_prob
-        # Bound rollout->replay precision drift (FP8/NVFP4 rollout). GRPO-Guard keeps
-        # every sample by design, so TIS-*truncate* on the raw weight does not touch
-        # the soft-corrected guard ratio; RS (whole-sample band rejection on the raw
-        # rollout->replay log-ratio) is the effective precision guard here, plus
-        # TIS-*mask* when configured. No-op when precision is not split.
-        pc = self.config.precision_correction
-        _, tis_keep = apply_truncated_importance_weight(torch.exp(log_ratio), pc)
-        rs_keep = apply_rejection_sample_mask(log_ratio, pc, mask=signals.mask)
+        # GRPO-Guard keeps every sample by design, so TIS-*truncate* on the raw
+        # weight does not touch the soft-corrected guard ratio; RS (whole-sample
+        # band rejection) is the effective precision guard here, plus TIS-*mask*
+        # when configured.
+        _, tis_keep, rs_keep = self.precision_keeps(log_ratio, signals.mask)
         sqrt_dt_mean = signals.dt.mean()
         scale = sqrt_dt_mean * signals.std_dev_t.mean()
         non_batch = tuple(range(1, signals.prev_sample_mean.ndim))
@@ -563,10 +537,9 @@ class GRPOGuard(TrustRegionGRPO):
         # Reject out-of-band precision-drift samples (the mask alone is all ones
         # when no precision keep is active).
         keep = combine_keep_masks(signals.mask.to(ratio.dtype), tis_keep, rs_keep)
-        reduced = (per_sample_loss * keep).sum() / keep.sum().clamp_min(1.0)
-        active_clip_fraction = (
-            ((clipped_loss > unclipped_loss).to(keep.dtype) * keep).sum()
-            / keep.sum().clamp_min(1.0)
+        reduced = self.masked_mean(per_sample_loss, keep)
+        active_clip_fraction = self.masked_mean(
+            (clipped_loss > unclipped_loss).to(keep.dtype), keep
         ).item()
         # Per-step magnitude normalization (cross-timestep consistent gradients).
         policy_loss = reduced / sqrt_dt_mean.pow(2).clamp_min(1e-12)
@@ -574,8 +547,8 @@ class GRPOGuard(TrustRegionGRPO):
         clip_fraction = torch.mean(
             (torch.abs(ratio - 1.0) > cfg.clip_ratio).float(),
         ).item()
-        tis_clip_fraction = (1.0 - tis_keep.mean()).item() if tis_keep is not None else 0.0
-        rs_seq_masked_fraction = (1.0 - rs_keep.mean()).item() if rs_keep is not None else 0.0
+        tis_clip_fraction = self.masked_fraction(tis_keep)
+        rs_seq_masked_fraction = self.masked_fraction(rs_keep)
         approx_kl = 0.5 * torch.mean(log_ratio**2).item()
         metrics = TrainStepMetrics(
             loss=policy_loss.item(),

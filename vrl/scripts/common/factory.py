@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from vrl.algorithms.base import Algorithm
+from vrl.algorithms.base import OnlineAlgorithm
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.models.dtypes import resolve_torch_dtype
@@ -17,7 +17,7 @@ from vrl.rollouts.evaluators.base import Evaluator
 class AlgorithmEvaluatorPair:
     """Algorithm instance plus its optional evaluator."""
 
-    algorithm: Algorithm
+    algorithm: OnlineAlgorithm
     evaluator: Evaluator | None
 
     @classmethod
@@ -62,7 +62,7 @@ class AlgorithmEvaluatorPair:
             # trainer's random timestep selection + multi-reward); flow_dppo /
             # grpo_guard are trust-region variants whose loss reads the rollout
             # proposal mean (config rules require it to be stored).
-            from vrl.algorithms.grpo.continuous import GRPO, FlashGRPO, FlowDPPO, GRPOGuard
+            from vrl.config.algorithm import algorithm_class
 
             is_chunk_autoregressive = (
                 family_entry.policy_semantics.generation_regime == "chunk_autoregressive"
@@ -73,10 +73,9 @@ class AlgorithmEvaluatorPair:
             if kind == "flash_grpo":
                 # The rectification weight is defined over the rollout SDE the
                 # replay evaluator integrates: the same scheduler object.
-                algorithm = FlashGRPO(algorithm_config, scheduler=scheduler)
+                algorithm = algorithm_class(kind)(algorithm_config, scheduler=scheduler)
             else:
-                algorithm_type = {"flow_dppo": FlowDPPO, "grpo_guard": GRPOGuard}.get(kind, GRPO)
-                algorithm = algorithm_type(algorithm_config)
+                algorithm = algorithm_class(kind)(algorithm_config)
             if is_chunk_autoregressive:
                 if algorithm.sft_weight > 0:
                     raise ValueError(

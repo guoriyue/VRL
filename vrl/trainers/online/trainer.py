@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 
 from vrl.algorithms.advantages import all_reduce_sufficient_stats
-from vrl.algorithms.base import Algorithm, ComponentAdvantageAlgorithm
+from vrl.algorithms.base import OnlineAlgorithm
 from vrl.algorithms.logprob_mismatch import (
     LogprobMismatchStats,
 )
@@ -287,16 +287,16 @@ class _ReplayMetrics:
         )
 
 
-def _compute_rollout_advantages(algorithm: Algorithm, batches: list[RolloutBatch]) -> torch.Tensor:
+def _compute_rollout_advantages(
+    algorithm: OnlineAlgorithm, batches: list[RolloutBatch]
+) -> torch.Tensor:
     rewards = torch.cat([batch.rewards for batch in batches])
     groups = torch.cat([batch.group_ids for batch in batches])
-    if isinstance(algorithm, ComponentAdvantageAlgorithm):
-        components = {
-            name: torch.as_tensor(values, dtype=rewards.dtype, device=rewards.device)
-            for name, values in OnlineTrainer.merge_reward_scores(batches).items()
-        }
-        return algorithm.compute_advantages_from_components(rewards, components, groups)
-    return algorithm.compute_advantages_from_tensors(rewards, groups)
+    components = {
+        name: torch.as_tensor(values, dtype=rewards.dtype, device=rewards.device)
+        for name, values in OnlineTrainer.merge_reward_scores(batches).items()
+    }
+    return algorithm.compute_advantages_from_components(rewards, components, groups)
 
 
 @dataclass(frozen=True, slots=True)
@@ -469,7 +469,7 @@ class OnlineTrainer:
 
     def __init__(
         self,
-        algorithm: Algorithm,
+        algorithm: OnlineAlgorithm,
         collector: Any,
         evaluator: Evaluator | None,
         model: nn.Module,
@@ -497,9 +497,7 @@ class OnlineTrainer:
         # The policy supplies its own reference (the base weights under an
         # adapter, a pre-training snapshot otherwise); only objectives that
         # read one get it: a KL term, or a contract that asks for it.
-        uses_reference = (
-            algorithm.kl_coef > 0 or type(algorithm.config).requirements.requires_reference_policy
-        )
+        uses_reference = algorithm.requires_reference_policy
         # Clean fine-tuning latents ({target artifact -> [C,T,H,W]}) for the GRPO
         # diffusion-loss regularizer; the recipe loads data.sft_latents, which
         # vrl/config/rules.py requires whenever sft_weight > 0.
@@ -663,7 +661,7 @@ class OnlineTrainer:
                 batch,
                 timestep_index,
                 ref_model=self.ref_model,
-                signal_request=SignalRequest(need_ref=self.algorithm.kl_coef > 0),
+                signal_request=SignalRequest(need_ref=self.algorithm.requires_reference_policy),
             )
         if not isinstance(signals, TrajectorySignalBatch):
             raise TypeError(
