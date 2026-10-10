@@ -26,7 +26,7 @@ class Algorithm(ABC):
     holds. A subclass states the first three and overrides only the facts
     that are true for it. Construction takes the algorithm's resolved config
     and nothing else; the facts an algorithm needs from other config sections
-    are bridged into that config by ``build_configs``.
+    are bridged into that config by ``BuiltConfigs.from_cfg``.
 
     The first fork is how the algorithm is trained: ``OnlineAlgorithm`` from
     rollouts the trainer collects, ``OfflineAlgorithm`` from a fixed dataset.

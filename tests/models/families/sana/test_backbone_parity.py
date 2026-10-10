@@ -59,13 +59,13 @@ def _state(*, do_cfg: bool) -> SanaSamplingState:
 def test_sana_yaml_resolves_native_forward_precision() -> None:
     """SANA's YAML owns the shared rollout and replay precision policy."""
 
-    from vrl.config.builders import build_configs
+    from vrl.config.builders import BuiltConfigs
     from vrl.config.loading import load_config
     from vrl.config.precision import RolePrecision
     from vrl.models.families.registry import get_model_family_entry
 
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     entry = get_model_family_entry("sana")
     expected = RolePrecision(
         dtype="fp16",

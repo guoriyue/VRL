@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.config.builders import build_configs
+from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 
 _BASE = "experiment/sd3_5/online_grpo_ocr"
@@ -24,7 +24,7 @@ _FULL_BATCH = "actor.prompts_per_collection=0"
 
 
 def _build(*overrides: str, experiment: str = _BASE):
-    return build_configs(load_config(experiment, overrides=list(overrides)))
+    return BuiltConfigs.from_cfg(load_config(experiment, overrides=list(overrides)))
 
 
 @pytest.mark.parametrize("recipe", ["flow_matching_dppo", "flow_matching_grpo_guard"])

@@ -19,8 +19,7 @@ def test_config_package_defers_typed_builder_import() -> None:
             (
                 "import sys; import vrl.config; "
                 "assert all(callable(getattr(vrl.config, name)) for name in "
-                "('build_configs', 'bundled_config_resource', "
-                "'list_bundled_configs', 'load_config')); "
+                "('bundled_config_resource', 'list_bundled_configs', 'load_config')); "
                 "assert 'vrl.config.builders' not in sys.modules"
             ),
         ],

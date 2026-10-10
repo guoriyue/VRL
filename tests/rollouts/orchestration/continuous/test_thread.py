@@ -397,7 +397,7 @@ async def _ray_owner(
         collector.set_generation_runtime(ray_run.runtime)
         trace = Trace(monkeypatch)
         trace.watch(collector, "shutdown", "collector_shutdown")
-        replay = run.resolve_model(
+        replay = run.ResolvedModel.from_root(
             resolved.family,
             resolved.built.root,
             resolved.device,

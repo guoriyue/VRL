@@ -22,8 +22,8 @@ from vrl.generation.ray.worker import RayGenerationWorker
 def _worker(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> tuple[RayGenerationWorker, Any]:
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
-    resolved = run.resolve_online_run(cfg)
-    replay = run.resolve_model(
+    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    replay = run.ResolvedModel.from_root(
         resolved.family,
         resolved.built.root,
         resolved.device,

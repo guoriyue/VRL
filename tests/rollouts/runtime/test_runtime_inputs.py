@@ -24,8 +24,8 @@ from vrl.models.families.registry import (
 )
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.run import (
-    resolve_model,
-    resolve_online_run,
+    ResolvedModel,
+    ResolvedOnlineRun,
 )
 
 
@@ -53,9 +53,9 @@ def _capture_launch_inputs(
 ) -> tuple[RayGenerationLaunchInputs, dict[str, Any]]:
     """Resolve the production launch payload without starting Ray actors."""
 
-    run = resolve_online_run(cfg)
+    run = ResolvedOnlineRun.from_cfg(cfg)
     assert run.family is entry
-    replay_model = resolve_model(
+    replay_model = ResolvedModel.from_root(
         entry,
         run.built.root,
         run.device,

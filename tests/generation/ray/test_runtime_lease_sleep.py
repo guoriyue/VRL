@@ -106,8 +106,8 @@ async def _on_demand(
         overrides=("distributed.rollout.cpus_per_worker=0.5", *overrides),
     )
     TinySanaPipeline().install(monkeypatch, snapshot)
-    resolved = run.resolve_online_run(cfg)
-    replay = run.resolve_model(
+    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    replay = run.ResolvedModel.from_root(
         resolved.family,
         resolved.built.root,
         resolved.device,

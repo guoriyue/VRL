@@ -128,10 +128,10 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("SANA checkpoint evaluation requires model configuration")
     identity_precision = PrecisionPolicy.from_section(root.precision)
     from vrl.models.families.registry import get_model_family_entry
-    from vrl.run import resolve_model
+    from vrl.run import ResolvedModel
 
     identity_entry = get_model_family_entry(str(root.model.family))
-    model_identity = resolve_model(
+    model_identity = ResolvedModel.from_root(
         identity_entry,
         root,
         device,
@@ -360,7 +360,7 @@ def _generate_images(
     settings: sana_report.EvaluationSettings | None = None,
 ) -> list[GeneratedImage]:
     from vrl.models.families.registry import get_model_family_entry
-    from vrl.run import resolve_model
+    from vrl.run import ResolvedModel
     from vrl.utils.media import write_png
 
     settings = settings or sana_report.EvaluationSettings()
@@ -370,7 +370,7 @@ def _generate_images(
     # Checkpoint compatibility stays bound to the configured Hub repo+commit.
     # The downloaded tree has a different, content-based identity, so retain it
     # separately only to prove the local snapshot did not change while loading.
-    resolved = resolve_model(
+    resolved = ResolvedModel.from_root(
         entry,
         root,
         device,

@@ -24,7 +24,7 @@ from vrl.rollouts.evaluators.types import FlowSDESignal
 class ImportanceRatioConfig(GroupAdvantageConfig):
     """Settings of every objective whose loss is a ratio against the rollout policy."""
 
-    # Bridged by build_configs from ``trainer.precision_correction`` (the
+    # Bridged by ``BuiltConfigs.from_cfg`` from ``trainer.precision_correction`` (the
     # trainer owns the knob: its replay-parity gate reads the same one), never
     # a YAML key here. Bounds rollout->replay precision drift inside the loss.
     precision_correction: PrecisionCorrectionConfig = field(
@@ -244,7 +244,7 @@ class FlashGRPOConfig(GRPOConfig):
     # Flash-GRPO carries no clean-target SFT term: the inherited knob is
     # pinned at zero and is not a YAML key.
     sft_weight: float = field(default=0.0, init=False)
-    # Bridged by build_configs from the rollout denoise options: the SDE the
+    # Bridged by ``BuiltConfigs.from_cfg`` from the rollout denoise options: the SDE the
     # rectification weight is defined over, the same one the replay evaluator
     # integrates. Never YAML keys here.
     noise_level: float = field(default=1.0, init=False)

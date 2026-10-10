@@ -12,7 +12,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.algorithms.grpo.continuous import FlowDPPOConfig, GRPOConfig, GRPOGuardConfig
-from vrl.config.builders import build_configs
+from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
 
@@ -28,7 +28,7 @@ def _load(recipe: str):
 def test_dance_grpo_recipe_resolves_with_random_timestep_selection() -> None:
     cfg = _load("flow_matching_dance_grpo")
     assert cfg.algorithm.kind == "dance_grpo"
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     assert isinstance(built.algorithm, GRPOConfig)
     # The defining knob: random per-update timestep subset reaches TrainerConfig.
     assert built.trainer.timestep_selection == "random"
@@ -55,7 +55,7 @@ def test_trust_region_recipes_resolve_and_enable_proposal_mean_storage(
         ],
     )
     assert cfg.algorithm.kind == kind
-    assert isinstance(build_configs(cfg).algorithm, config_cls)
+    assert isinstance(BuiltConfigs.from_cfg(cfg).algorithm, config_cls)
     # Required for the trust-region loss; without it generation never stores the
     # rollout proposal mean and the loss fails fast.
     assert cfg.rollout.return_prev_sample_mean is True
@@ -81,4 +81,4 @@ def test_algorithm_configs_reject_unconsumed_knobs(
 
 def test_v_grpo_recipe_has_no_unknown_config_keys() -> None:
     """An unknown key fails parse_config, so a clean build is the assertion."""
-    build_configs(_load("v_grpo"))
+    BuiltConfigs.from_cfg(_load("v_grpo"))

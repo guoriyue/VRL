@@ -7,7 +7,7 @@ import torch
 from omegaconf import OmegaConf
 
 import vrl.config.builders as builders
-from vrl.config.builders import build_configs
+from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 
 
@@ -20,7 +20,7 @@ def test_build_rejects_resume_with_a_warm_start_adapter() -> None:
         ValueError,
         match=r"trainer\.resume_from cannot be combined with model\.lora\.path",
     ):
-        build_configs(cfg)
+        BuiltConfigs.from_cfg(cfg)
 
 
 def test_build_preserves_warm_start_adapter_without_full_resume() -> None:
@@ -28,7 +28,7 @@ def test_build_preserves_warm_start_adapter_without_full_resume() -> None:
     OmegaConf.update(cfg, "trainer.resume_from", "")
     OmegaConf.update(cfg, "model.lora.path", "/tmp/warm-start-adapter")
 
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
 
     assert built.resume.checkpoint_path is None
     assert cfg.model.lora.path == "/tmp/warm-start-adapter"
@@ -38,7 +38,7 @@ def test_build_preserves_warm_start_adapter_without_full_resume() -> None:
 
 
 def test_online_build_has_named_reward_and_trainer_fields() -> None:
-    built = build_configs(load_config("experiment/sana/online_grpo_aesthetic"))
+    built = BuiltConfigs.from_cfg(load_config("experiment/sana/online_grpo_aesthetic"))
 
     assert built.trainer is not None
     assert built.reward is not None
@@ -104,7 +104,7 @@ def test_reward_builder_rejects_kwargs_without_a_component() -> None:
 
 
 def test_offline_dpo_uses_the_same_build_result_without_online_state() -> None:
-    built = build_configs(load_config("experiment/wan_2_1/offline_dpo_pickapic"))
+    built = BuiltConfigs.from_cfg(load_config("experiment/wan_2_1/offline_dpo_pickapic"))
 
     assert built.root.algorithm is not None
     assert built.root.algorithm.kind == "diffusion_dpo"
@@ -118,13 +118,13 @@ def test_online_build_rejects_missing_or_all_zero_reward() -> None:
     missing = load_config("experiment/sd3_5/online_grpo_ocr")
     del missing["reward"]
     with pytest.raises(ValueError, match="online recipe requires a reward section"):
-        build_configs(missing)
+        BuiltConfigs.from_cfg(missing)
 
     all_zero = load_config("experiment/sd3_5/online_grpo_ocr")
     for name in all_zero.reward.components:
         all_zero.reward.components[name] = 0.0
     with pytest.raises(ValueError, match="At least one reward component"):
-        build_configs(all_zero)
+        BuiltConfigs.from_cfg(all_zero)
 
 
 @pytest.mark.parametrize(
@@ -144,7 +144,7 @@ def test_precision_role_split_is_resolved_once_into_trainer(
         overrides=[f"precision.rollout.dtype={rollout_dtype}"],
     )
 
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
 
     assert built.trainer is not None
     assert built.precision.stages_match is stages_match
@@ -162,7 +162,7 @@ def test_typed_root_is_a_strategy_builder_input() -> None:
             "distributed.training.ddp.find_unused_parameters=true",
         ],
     )
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     context = DistributedTrainingContext(
         strategy="ddp",
         rank=0,

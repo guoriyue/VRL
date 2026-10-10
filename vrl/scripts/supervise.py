@@ -989,9 +989,9 @@ def main(argv: list[str] | None = None) -> None:
         # only here: doing it unconditionally would make the supervisor reject
         # recipes its child would still run. Otherwise supervise forwards
         # overrides verbatim and leaves validation to vrl.scripts.train.
-        from vrl.config.builders import build_configs
+        from vrl.config.builders import BuiltConfigs
 
-        trainer = build_configs(cfg).trainer
+        trainer = BuiltConfigs.from_cfg(cfg).trainer
         if trainer is None:
             raise SystemExit(
                 "--health-metrics requires an online recipe; this config resolves "

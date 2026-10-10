@@ -128,7 +128,9 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
 
     device = resolve_eval_device(str(args.device))
     precision = PrecisionPolicy.from_section(root.precision)
-    resolved = run.resolve_model(entry, root, device, precision=precision, for_rollout=True)
+    resolved = run.ResolvedModel.from_root(
+        entry, root, device, precision=precision, for_rollout=True
+    )
     bundle = None
     try:
         bundle = resolved.materialize(context="Cosmos Predict2.5 frame-prefix gate")

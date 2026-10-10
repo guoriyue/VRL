@@ -111,7 +111,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(8)
     device = torch.device(args.device)
-    from vrl.run import resolve_model
+    from vrl.run import ResolvedModel
     from vrl.trainers.checkpointing import (
         TrainingCheckpoint,
     )
@@ -143,7 +143,7 @@ def main() -> None:
         )
     )
     entry = get_model_family_entry("qwen_image_21")
-    resolved = resolve_model(
+    resolved = ResolvedModel.from_root(
         entry,
         root,
         device,

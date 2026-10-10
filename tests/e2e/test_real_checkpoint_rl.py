@@ -19,7 +19,7 @@ from huggingface_hub import snapshot_download
 from huggingface_hub.errors import LocalEntryNotFoundError
 
 from tests import ci_envs
-from vrl.config.builders import build_configs
+from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig, parse_config
@@ -351,7 +351,7 @@ def test_new_diffusion_algorithm_case_overrides_build_without_gpu(
     has_reference_kl = "algorithm.kl_coef=0.0" in case.overrides
     assert has_reference_kl is (case.case_id == "sd3_5_dance_grpo")
 
-    built = build_configs(load_config(case.config, overrides=list(case.overrides)))
+    built = BuiltConfigs.from_cfg(load_config(case.config, overrides=list(case.overrides)))
     assert hasattr(built.algorithm, "kl_coef") is has_reference_kl
 
 
@@ -555,7 +555,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
     reward_ray_session = None
     try:
         device = torch.device("cuda")
-        built = build_configs(cfg)
+        built = BuiltConfigs.from_cfg(cfg)
         trainer_config = built.trainer
         dtype = resolve_torch_dtype(built.precision.training.dtype)
         bundle = _build_runtime_bundle(

@@ -158,6 +158,58 @@ class BuiltConfigs:
             raise ValueError("training run requires model configuration")
         return get_model_family_entry(normalize_model_family(str(self.root.model.family)))
 
+    @classmethod
+    def from_cfg(cls, cfg: DictConfig) -> BuiltConfigs:
+        """Bundle typed configs for downstream training scripts."""
+
+        from vrl.trainers.checkpointing import TrainingResumeConfig
+        from vrl.trainers.online.config import TrainerConfig
+
+        root, precision = require_training_config(cfg)
+        resume = TrainingResumeConfig.from_root(root)
+        if root.algorithm is None:
+            raise ValueError("config missing `algorithm` section")
+        algorithm = root.algorithm.hyperparameters
+        is_offline_dpo = root.algorithm.kind == "diffusion_dpo"
+        trainer = None if is_offline_dpo else TrainerConfig.from_root(root)
+        reward = RewardRuntimeConfig.from_cfg(root.reward) if root.reward is not None else None
+        if not is_offline_dpo:
+            if reward is None:
+                raise ValueError("online recipe requires a reward section")
+            if not any(weight > 0 for weight in reward.weights.values()):
+                raise ValueError("At least one reward component must have weight > 0.")
+            # Copy the facts an objective reads from other sections into its
+            # config. The public ``algorithm`` section holds only the objective's
+            # own knobs; the reward weights, the trainer's precision correction and
+            # the rollout SDE the objective must agree with are resolved here,
+            # once, so the objective reads everything off one config. The public
+            # ``root`` keeps the unbridged copy.
+            import copy
+
+            from vrl.algorithms.advantages import GroupAdvantageConfig
+            from vrl.algorithms.grpo.continuous import FlashGRPOConfig, ImportanceRatioConfig
+
+            algorithm = copy.copy(algorithm)
+            if isinstance(algorithm, GroupAdvantageConfig):
+                algorithm.component_weights = dict(reward.weights)
+            if isinstance(algorithm, ImportanceRatioConfig):
+                algorithm.precision_correction = trainer.precision_correction
+            if isinstance(algorithm, FlashGRPOConfig):
+                from vrl.generation.steps.denoise.config import DenoiseRequestOptions
+                from vrl.rollouts.collector.config import RolloutCollectorConfig
+
+                denoise = RolloutCollectorConfig.from_root(root).denoise or DenoiseRequestOptions()
+                algorithm.noise_level = denoise.noise_level
+                algorithm.sde_type = denoise.sde_type or "flow_grpo"
+        return cls(
+            root=root,
+            algorithm=algorithm,
+            precision=precision,
+            trainer=trainer,
+            reward=reward,
+            resume=resume,
+        )
+
 
 def build_precision_split_safety_configs() -> PrecisionCorrectionConfig:
     """Build the production correction policy for a precision split.
@@ -176,60 +228,7 @@ def build_precision_split_safety_configs() -> PrecisionCorrectionConfig:
     )
 
 
-def build_configs(cfg: DictConfig) -> BuiltConfigs:
-    """Bundle typed configs for downstream training scripts."""
-
-    from vrl.trainers.checkpointing import TrainingResumeConfig
-    from vrl.trainers.online.config import TrainerConfig
-
-    root, precision = require_training_config(cfg)
-    resume = TrainingResumeConfig.from_root(root)
-    if root.algorithm is None:
-        raise ValueError("config missing `algorithm` section")
-    algorithm = root.algorithm.hyperparameters
-    is_offline_dpo = root.algorithm.kind == "diffusion_dpo"
-    trainer = None if is_offline_dpo else TrainerConfig.from_root(root)
-    reward = RewardRuntimeConfig.from_cfg(root.reward) if root.reward is not None else None
-    if not is_offline_dpo:
-        if reward is None:
-            raise ValueError("online recipe requires a reward section")
-        if not any(weight > 0 for weight in reward.weights.values()):
-            raise ValueError("At least one reward component must have weight > 0.")
-        # Copy the facts an objective reads from other sections into its
-        # config. The public ``algorithm`` section holds only the objective's
-        # own knobs; the reward weights, the trainer's precision correction and
-        # the rollout SDE the objective must agree with are resolved here,
-        # once, so the objective reads everything off one config. The public
-        # ``root`` keeps the unbridged copy.
-        import copy
-
-        from vrl.algorithms.advantages import GroupAdvantageConfig
-        from vrl.algorithms.grpo.continuous import FlashGRPOConfig, ImportanceRatioConfig
-
-        algorithm = copy.copy(algorithm)
-        if isinstance(algorithm, GroupAdvantageConfig):
-            algorithm.component_weights = dict(reward.weights)
-        if isinstance(algorithm, ImportanceRatioConfig):
-            algorithm.precision_correction = trainer.precision_correction
-        if isinstance(algorithm, FlashGRPOConfig):
-            from vrl.generation.steps.denoise.config import DenoiseRequestOptions
-            from vrl.rollouts.collector.config import RolloutCollectorConfig
-
-            denoise = RolloutCollectorConfig.from_root(root).denoise or DenoiseRequestOptions()
-            algorithm.noise_level = denoise.noise_level
-            algorithm.sde_type = denoise.sde_type or "flow_grpo"
-    return BuiltConfigs(
-        root=root,
-        algorithm=algorithm,
-        precision=precision,
-        trainer=trainer,
-        reward=reward,
-        resume=resume,
-    )
-
-
 __all__ = [
     "BuiltConfigs",
     "RewardRuntimeConfig",
-    "build_configs",
 ]

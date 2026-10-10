@@ -70,7 +70,7 @@ class RaySanaRuntime:
         from vrl import run
         from vrl.trainers.strategy import SingleProcessStrategy
 
-        replay = run.resolve_model(
+        replay = run.ResolvedModel.from_root(
             self.resolved.family,
             self.resolved.built.root,
             self.resolved.device,
@@ -108,8 +108,8 @@ async def ray_sana_runtime(
     )
     pipeline = TinySanaPipeline()
     pipeline.install(monkeypatch, snapshot)
-    resolved = run.resolve_online_run(cfg)
-    replay = run.resolve_model(
+    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    replay = run.ResolvedModel.from_root(
         resolved.family,
         resolved.built.root,
         resolved.device,

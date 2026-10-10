@@ -145,11 +145,11 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
     trainer = None
     try:
         torch.manual_seed(31)
-        resolved = run.resolve_online_run(
+        resolved = run.ResolvedOnlineRun.from_cfg(
             _tiny_cosmos_config(root, rank=rank, ema=phase is not None)
         )
         built = resolved.built
-        replay = run.resolve_model(
+        replay = run.ResolvedModel.from_root(
             resolved.family,
             built.root,
             resolved.device,

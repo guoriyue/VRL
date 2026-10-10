@@ -39,7 +39,7 @@ def test_parser_requires_a_real_prefix_video() -> None:
 def test_run_gate_loads_through_production_resolve_and_materialize(tmp_path: Path) -> None:
     """The gate runs unpatched: real config, real tiny Cosmos-2.5 snapshot, real prefix mp4.
 
-    ``resolve_model`` / ``materialize`` build the real LoRA bundle from the
+    ``ResolvedModel`` / ``materialize`` build the real LoRA bundle from the
     on-disk snapshot, ``_prepare_prefix_video`` decodes a real libx264 mp4, and
     ``pipe.prepare_latents`` runs the real conditioning math; the report is the
     script's own verdict on those tensors.

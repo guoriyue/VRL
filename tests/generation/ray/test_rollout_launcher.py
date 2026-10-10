@@ -54,8 +54,8 @@ async def _launched(
         overrides=("distributed.rollout.cpus_per_worker=0.5", *overrides),
     )
     TinySanaPipeline().install(monkeypatch, snapshot)
-    resolved = run.resolve_online_run(cfg)
-    replay = run.resolve_model(
+    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    replay = run.ResolvedModel.from_root(
         resolved.family,
         resolved.built.root,
         resolved.device,
@@ -144,8 +144,8 @@ def test_create_runtime_rejects_missing_rollout_placement(monkeypatch, tmp_path)
 
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
-    resolved = run.resolve_online_run(cfg)
-    replay = run.resolve_model(
+    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    replay = run.ResolvedModel.from_root(
         resolved.family,
         resolved.built.root,
         resolved.device,
@@ -225,8 +225,8 @@ def test_worker_metadata_preserves_placement_query_failure(monkeypatch, tmp_path
 
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
-    resolved = run.resolve_online_run(cfg)
-    replay = run.resolve_model(
+    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    replay = run.ResolvedModel.from_root(
         resolved.family,
         resolved.built.root,
         resolved.device,

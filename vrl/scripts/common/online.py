@@ -35,8 +35,8 @@ from vrl.rollouts.orchestration import (
 )
 from vrl.rollouts.stats import RolloutStats
 from vrl.run import (
-    resolve_model,
-    resolve_online_run,
+    ResolvedModel,
+    ResolvedOnlineRun,
 )
 from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 from vrl.trainers.activation_checkpointing import (
@@ -727,7 +727,7 @@ class OnlineRecipeRun:
 async def run_online_recipe(cfg: DictConfig) -> None:
     """Run a family online training job through shared recipe glue."""
 
-    resolved = resolve_online_run(cfg)
+    resolved = ResolvedOnlineRun.from_cfg(cfg)
     # Identical initialization on every rank, before any randomized model build.
     resolved.run.initialize_process_rng()
     built = resolved.built
@@ -812,7 +812,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
                 f"{family_entry.family} requires data.preprocessing.conditioning=reference_image",
             )
 
-    resolved_model = resolve_model(
+    resolved_model = ResolvedModel.from_root(
         family_entry,
         built.root,
         device,

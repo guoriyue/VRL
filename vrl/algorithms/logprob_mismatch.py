@@ -11,7 +11,7 @@ toolkit for that drift:
 - :class:`PrecisionCorrectionConfig` + :func:`apply_truncated_importance_weight`
   CORRECT it via truncated importance sampling (TIS) — the counterpart to the
   parity gate. The knob is ``trainer.precision_correction`` (the trainer's
-  replay-parity gate reads it too); ``build_configs`` bridges it into every
+  replay-parity gate reads it too); ``BuiltConfigs.from_cfg`` bridges it into every
   importance-ratio objective's config, and the loss applies the weight inside
   its own surrogate.
 """

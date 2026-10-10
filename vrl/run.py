@@ -1,15 +1,15 @@
 """THE single composition seam for training-run config resolution.
 
 Every training entrypoint used to hand-wire the same choreography:
-``build_configs`` -> family registry lookup -> distributed resource resolution
+``BuiltConfigs.from_cfg`` -> family registry lookup -> distributed resource resolution
 -> trainer device (and, for online recipes, run/generation/collector
 projections). That choreography lives here, once. New entrypoints call
-``ResolvedRun.from_built`` (or ``resolve_online_run``) and read fields off the
+``ResolvedRun.from_built`` (or ``ResolvedOnlineRun.from_cfg``) and read fields off the
 returned aggregate -- never re-wire the chain inline.
 
 Model materialization is the same story: the hand-wired chain
 ``resolve_model_build`` -> ``resolve_checkpoint_model_identity`` -> bundle
-build -> identity recheck lives here as ``resolve_model`` +
+build -> identity recheck lives here as ``ResolvedModel.from_root`` +
 ``ResolvedModel.materialize``.
 The two stages are deliberately separate: the online recipe runs its
 checkpoint-compatibility preflight between identity resolution and heavy
@@ -22,7 +22,7 @@ launcher consumes that payload and topology only; it never reinterprets trainer
 schedule or model YAML.
 
 The composers deliberately call their dependencies through the source modules
-(``builders.build_configs``, ``registry.get_model_family_entry``,
+(``BuiltConfigs.from_cfg``, ``registry.get_model_family_entry``,
 ``ray_resources.ResolvedDistributedResources``,
 ``checkpoint_identity.resolve_checkpoint_model_identity``) instead of
 importing the bare names. Attribute lookup happens at call time, so tests that
@@ -257,6 +257,27 @@ class ResolvedOnlineRun(ResolvedRun):
     generation: RayGenerationConfig
     collector: RolloutCollectorConfig
 
+    @classmethod
+    def from_cfg(cls, cfg: DictConfig) -> ResolvedOnlineRun:
+        """Resolve everything the online recipe reads before heavy construction.
+
+        The reward deployment is checked before any resource resolution; the
+        shared core is ``ResolvedRun.from_built``; the online projections (run
+        cadence, Ray generation, collector) are added on top of it.
+        """
+
+        built = builders.BuiltConfigs.from_cfg(cfg)
+        if built.reward is not None:
+            built.reward.require_online_training()
+        core = ResolvedRun.from_built(built)
+        return cls(
+            built=built,
+            resources=core.resources,
+            run=OnlineRunConfig.from_root(built.root),
+            generation=RayGenerationConfig.from_root(built.root, resources=core.resources),
+            collector=RolloutCollectorConfig.from_root(built.root),
+        )
+
     def reward_inputs(
         self,
         *,
@@ -344,27 +365,6 @@ class ResolvedOnlineRun(ResolvedRun):
         )
 
 
-def resolve_online_run(cfg: DictConfig) -> ResolvedOnlineRun:
-    """Resolve everything the online recipe reads before heavy construction.
-
-    The reward deployment is checked before any resource resolution; the
-    shared core is ``ResolvedRun.from_built``; the online projections (run
-    cadence, Ray generation, collector) are added on top of it.
-    """
-
-    built = builders.build_configs(cfg)
-    if built.reward is not None:
-        built.reward.require_online_training()
-    core = ResolvedRun.from_built(built)
-    return ResolvedOnlineRun(
-        built=built,
-        resources=core.resources,
-        run=OnlineRunConfig.from_root(built.root),
-        generation=RayGenerationConfig.from_root(built.root, resources=core.resources),
-        collector=RolloutCollectorConfig.from_root(built.root),
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class ResolvedModel:
     """Cheap model projection: family build inputs plus checkpoint identity."""
@@ -372,6 +372,34 @@ class ResolvedModel:
     entry: ModelFamilyEntry
     build: ModelBuild
     identity: dict[str, Any]
+
+    @classmethod
+    def from_root(
+        cls,
+        entry: ModelFamilyEntry,
+        root: RootConfig,
+        device: torch.device,
+        *,
+        precision: PrecisionPolicy,
+        for_rollout: bool,
+        precision_role: Literal["training", "rollout"] | None = None,
+    ) -> ResolvedModel:
+        """Project validated config into a ``ModelBuild`` and resolve its identity.
+
+        This is the cheap stage of model materialization. Callers run their own
+        preflights (checkpoint-compatibility, prompt validation) against the
+        returned identity before paying for ``materialize``.
+        """
+
+        build = entry.resolve_model_build(
+            root,
+            device,
+            precision=precision,
+            for_rollout=for_rollout,
+            precision_role=precision_role,
+        )
+        identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
+        return cls(entry=entry, build=build, identity=identity)
 
     def materialize(self, *, context: str, materialize_weights: bool = True) -> RuntimeBundle:
         """Build the resolved role and re-verify its checkpoint identity.
@@ -397,39 +425,10 @@ class ResolvedModel:
         return bundle
 
 
-def resolve_model(
-    entry: ModelFamilyEntry,
-    root: RootConfig,
-    device: torch.device,
-    *,
-    precision: PrecisionPolicy,
-    for_rollout: bool,
-    precision_role: Literal["training", "rollout"] | None = None,
-) -> ResolvedModel:
-    """Project validated config into a ``ModelBuild`` and resolve its identity.
-
-    This is the cheap stage of model materialization. Callers run their own
-    preflights (checkpoint-compatibility, prompt validation) against the
-    returned identity before paying for ``materialize``.
-    """
-
-    build = entry.resolve_model_build(
-        root,
-        device,
-        precision=precision,
-        for_rollout=for_rollout,
-        precision_role=precision_role,
-    )
-    identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
-    return ResolvedModel(entry=entry, build=build, identity=identity)
-
-
 __all__ = [
     "OnlineRunConfig",
     "ResolvedModel",
     "ResolvedOnlineRun",
     "ResolvedReward",
     "ResolvedRun",
-    "resolve_model",
-    "resolve_online_run",
 ]

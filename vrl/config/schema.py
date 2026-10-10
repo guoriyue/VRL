@@ -19,7 +19,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields
-from typing import Any, Literal
+from typing import Any, Literal, cast, get_args
 
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
@@ -39,7 +39,7 @@ from pydantic import (
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.algorithm import algorithm_config_class
 from vrl.config.base import ConfigBase, _extract_error_message
-from vrl.config.data import DataLoaderName, manifest_sources, resolve_data_loader
+from vrl.config.data import DataLoaderName, manifest_sources
 from vrl.config.model_schema import ModelSection
 from vrl.config.precision import PrecisionConfig
 from vrl.config.reward_inference import (
@@ -158,7 +158,7 @@ class AlgorithmConfig(ConfigBase):
         "v_grpo",
     ]
     # The runtime dataclass selected by ``kind`` (e.g. GRPOConfig), built from
-    # the remaining keys of this section. ``build_configs`` hands it to the
+    # the remaining keys of this section. ``BuiltConfigs`` hands it to the
     # trainer as ``BuiltConfigs.algorithm``.
     hyperparameters: Any = None
 
@@ -249,10 +249,34 @@ class DataConfig(ConfigBase):
     @model_validator(mode="after")
     def _validate_data(self) -> DataConfig:
         preprocessing = self.preprocessing
-        self.loader = resolve_data_loader(
-            self.loader,
-            None if preprocessing is None else preprocessing.format,
+        fmt = (
+            ""
+            if preprocessing is None or preprocessing.format is None
+            else str(preprocessing.format)
         )
+        # An unset loader follows the preprocessing format; a set one must agree with it.
+        if self.loader is None:
+            self.loader = (
+                "prompt_image_manifest" if fmt == "image_caption_jsonl" else "prompt_manifest"
+            )
+        else:
+            name = str(self.loader)
+            allowed = frozenset(get_args(DataLoaderName))
+            if name not in allowed:
+                raise ValueError(
+                    f"unknown data.loader={name!r}; expected one of {sorted(allowed)}",
+                )
+            if name == "prompt_image_manifest" and fmt != "image_caption_jsonl":
+                raise ValueError(
+                    "data.loader='prompt_image_manifest' requires "
+                    "data.preprocessing.format='image_caption_jsonl'",
+                )
+            if name == "prompt_manifest" and fmt == "image_caption_jsonl":
+                raise ValueError(
+                    "data.preprocessing.format='image_caption_jsonl' requires "
+                    "data.loader='prompt_image_manifest'",
+                )
+            self.loader = cast("DataLoaderName", name)
         if self.loader == "prompt_manifest":
             if not self.manifest:
                 raise ValueError("config missing required field: data.manifest")

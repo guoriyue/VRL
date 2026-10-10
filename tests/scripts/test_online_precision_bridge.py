@@ -13,7 +13,7 @@ from tests.config.test_load_all_experiments import (
     _load_experiment_for_static_validation,
 )
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
-from vrl.config.builders import build_configs
+from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
@@ -39,7 +39,7 @@ def test_fp16_precision_block_drives_trainer_and_rollout():
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
     cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": _plain_policy("fp16")}))
 
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
 
     assert built.precision.training.label == "fp16"
     assert built.precision.rollout.label == "fp16"
@@ -60,7 +60,7 @@ def test_rollout_precision_split_auto_derives_correction_policy(
         _rollout_quantization_policy(format_name),
     )
 
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     trainer_config = built.trainer
 
     assert built.precision.training.label == "bf16"
@@ -81,7 +81,7 @@ def test_no_split_means_no_auto_correction_policy() -> None:
         _plain_policy("bf16"),
     )
 
-    trainer_config = build_configs(cfg).trainer
+    trainer_config = BuiltConfigs.from_cfg(cfg).trainer
 
     # No split -> the correction field keeps its dataclass default; the
     # split-only policy (TIS truncate) is NOT installed.
@@ -93,7 +93,7 @@ def test_outer_autocast_split_is_preserved_in_trainer_role_labels() -> None:
     block["rollout"]["outer_autocast"] = False
     cfg = _with_precision("sd3_5/online_grpo_ocr", block)
 
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
 
     assert built.precision.training.label == "bf16"
     assert built.precision.rollout.label == "bf16+no-autocast"
@@ -117,7 +117,7 @@ def test_explicit_precision_correction_is_respected_on_rollout_split():
         ),
     )
 
-    trainer_config = build_configs(cfg).trainer
+    trainer_config = BuiltConfigs.from_cfg(cfg).trainer
 
     assert trainer_config.precision_correction.tis_mode == "off"
     assert trainer_config.precision_correction.rs_mode == "off"
@@ -158,7 +158,7 @@ def test_math_axis_resolves_to_dtype(math, expected):
         resolve_torch_dtype(PrecisionPolicy.from_section(parse_config(cfg).precision).denoise_math)
         is expected
     )
-    assert build_configs(cfg).precision.denoise_math == math
+    assert BuiltConfigs.from_cfg(cfg).precision.denoise_math == math
 
 
 def test_replay_parity_config_is_bridged_from_yaml() -> None:
@@ -173,7 +173,7 @@ def test_replay_parity_config_is_bridged_from_yaml() -> None:
         ),
     )
 
-    trainer_config = build_configs(cfg).trainer
+    trainer_config = BuiltConfigs.from_cfg(cfg).trainer
 
     assert trainer_config.replay_parity.max_abs_logprob_diff == pytest.approx(2.0e-4)
 
@@ -262,7 +262,7 @@ def test_prompt_encoder_axis_in_model_build(prompt_encoder, expected):
     block = _plain_policy("fp32")
     block["rollout"]["prompt_encoders"] = {"dtype": prompt_encoder}
     cfg = _with_precision("sd3_5/online_grpo_ocr", block)
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     build = get_model_family_entry("sd3_5").resolve_model_build(
         built.root,
         torch.device("cpu"),
@@ -285,7 +285,7 @@ def test_family_parameter_dtype_is_derived_from_runtime_role() -> None:
         },
     )
 
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     entry = get_model_family_entry("sd3_5")
     rollout = entry.resolve_model_build(
         built.root,
@@ -308,7 +308,7 @@ def test_direct_tool_parameter_dtype_override_is_explicit() -> None:
     from vrl.models.families.registry import get_model_family_entry
 
     cfg = _with_precision("sd3_5/online_grpo_ocr", _plain_policy("bf16"))
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     build = get_model_family_entry("sd3_5").resolve_model_build(
         built.root,
         torch.device("cpu"),

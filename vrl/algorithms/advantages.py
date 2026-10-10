@@ -172,7 +172,7 @@ class GroupAdvantageConfig:
     adv_clip_max: float = 5.0
     global_std: bool = False
     advantage_combine: str = "normalized_sum"
-    # Bridged by build_configs from ``reward.components``, never a YAML key:
+    # Bridged by ``BuiltConfigs.from_cfg`` from ``reward.components``, never a YAML key:
     # the objective weights ``normalized_sum`` combines.
     component_weights: dict[str, float] = field(default_factory=dict, init=False)
 

@@ -150,10 +150,10 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
 
     device = resolve_eval_device(args.device)
     from vrl.models.families.registry import get_model_family_entry
-    from vrl.run import resolve_model
+    from vrl.run import ResolvedModel
 
     entry = get_model_family_entry("sana")
-    resolved = resolve_model(
+    resolved = ResolvedModel.from_root(
         entry,
         root,
         device,

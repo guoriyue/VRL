@@ -123,11 +123,11 @@ def _required(value: Any, path: str) -> Any:
 def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     """Run Wan-family Diffusion-DPO training driven by a merged YAML config."""
 
-    from vrl.config import build_configs
-    from vrl.run import ResolvedRun, resolve_model
+    from vrl.config.builders import BuiltConfigs
+    from vrl.run import ResolvedModel, ResolvedRun
     from vrl.trainers.offline import OfflineDPOTrainerConfig
 
-    resolved = ResolvedRun.from_built(build_configs(cfg))
+    resolved = ResolvedRun.from_built(BuiltConfigs.from_cfg(cfg))
     built = resolved.built
     family_entry = resolved.family
     resources = resolved.resources
@@ -185,7 +185,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     # DPO needs the full family bundle because its VAE and text encoder prepare
     # preference pairs. Registry selection and model projection stay identical
     # to generation; only the downstream optimizer makes this a training path.
-    resolved_model = resolve_model(
+    resolved_model = ResolvedModel.from_root(
         family_entry,
         built.root,
         device,

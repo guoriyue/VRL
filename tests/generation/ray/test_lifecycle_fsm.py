@@ -832,7 +832,7 @@ async def test_async_launcher_loads_off_loop(
         from vrl import run
 
         resolved = ray_run.resolved
-        replay = run.resolve_model(
+        replay = run.ResolvedModel.from_root(
             resolved.family,
             resolved.built.root,
             resolved.device,

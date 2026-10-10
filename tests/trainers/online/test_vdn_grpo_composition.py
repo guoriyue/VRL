@@ -119,9 +119,9 @@ def _stack(
             *overrides,
         ],
     )
-    resolved = run.resolve_online_run(cfg)
+    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
     built = resolved.built
-    replay = run.resolve_model(
+    replay = run.ResolvedModel.from_root(
         resolved.family,
         built.root,
         resolved.device,

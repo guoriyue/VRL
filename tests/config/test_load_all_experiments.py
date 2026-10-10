@@ -19,8 +19,8 @@ from vrl.algorithms.dpo import DiffusionDPOConfig
 from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.algorithms.v_grpo import VGRPOConfig
 from vrl.config.builders import (
+    BuiltConfigs,
     RewardRuntimeConfig,
-    build_configs,
 )
 from vrl.config.loading import (
     bundled_config_resource,
@@ -289,7 +289,7 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
             resources_cfg.visible_devices = list(range(max(pinned, default=0) + 1))
 
         try:
-            built = build_configs(cfg)
+            built = BuiltConfigs.from_cfg(cfg)
             resources = ResolvedDistributedResources.from_root(parse_config(cfg))
             validate_rollout_schedule_topology(
                 built.trainer.rollout_orchestration,
@@ -348,7 +348,7 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
 
     cfg = load_config("experiment/sd3_5/online_grpo_ocr_continuous_4gpu_acceptance")
     require_training_config(cfg)
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
@@ -382,7 +382,7 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
     cfg = load_config(name)
     parent = load_config("experiment/cosmos_predict2/online_grpo_droid_overfit_validation")
     require_training_config(cfg)
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
@@ -418,7 +418,7 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
     cfg = load_config(name)
     parent = load_config("experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve")
     require_training_config(cfg)
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
@@ -484,7 +484,7 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
         "experiment/wan_2_1/online_grpo_robotics_physics_4x_l4_continuous",
     )
     require_training_config(cfg)
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
@@ -511,7 +511,7 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
         "experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_3x_l4",
     )
     require_training_config(cfg)
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
@@ -535,7 +535,7 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devi
         "experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_4x_l4",
     )
     require_training_config(cfg)
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
@@ -598,7 +598,7 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> No
     cuda_devices(1)
     cfg = load_config("experiment/wan_2_1/online_grpo_i2v_fsdp_2x_l4")
     require_training_config(cfg)
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     validate_rollout_schedule_topology(
         built.trainer.rollout_orchestration,
@@ -614,17 +614,12 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> No
 
 
 def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
-    """``resolve_train_target`` returns the YAML ``trainer.entrypoint`` and that dotted path
-    imports to a callable.
-    """
-    from vrl.scripts.train import resolve_train_target
+    """The YAML ``trainer.entrypoint`` is a dotted path that imports to a callable."""
     from vrl.utils.config import import_from_path
 
     cfg = load_config("experiment/sd3_5/online_grpo_ocr")
-    import_path = resolve_train_target(parse_config(cfg))
 
-    assert import_path == cfg.trainer.entrypoint
-    assert callable(import_from_path(import_path))
+    assert callable(import_from_path(parse_config(cfg).trainer.entrypoint))
 
 
 def test_cli_overrides_reach_typed_trainer_config() -> None:
@@ -641,7 +636,7 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
             "rollout.samples_per_generation_batch=2",
         ],
     )
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     trainer = built.trainer
 
     assert built.resume.checkpoint_path == "/tmp/checkpoint-10"
@@ -660,7 +655,7 @@ def test_generation_chunk_rejects_non_positive_or_non_integer_values(value: str)
     )
 
     with pytest.raises(ValueError, match=r"rollout\.samples_per_generation_batch"):
-        build_configs(cfg)
+        BuiltConfigs.from_cfg(cfg)
 
 
 def test_negative_reward_component_weights_are_rejected() -> None:

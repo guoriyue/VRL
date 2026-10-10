@@ -4,7 +4,7 @@ import pytest
 
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
-from vrl.run import resolve_online_run
+from vrl.run import ResolvedOnlineRun
 from vrl.trainers.activation_checkpointing import resolve_gradient_checkpointing_mode
 
 PRESET = "experiment/cosmos_predict2_5/online_grpo_kling_video_reward_colocated_fsdp_4x_l40s"
@@ -31,7 +31,7 @@ def test_four_card_preset_preserves_global_recipe_budget():
 
 @pytest.mark.parametrize("rank", range(4))
 def test_four_card_preset_resolves_rank_local_phase_owners(rank):
-    resolved = resolve_online_run(
+    resolved = ResolvedOnlineRun.from_cfg(
         load_config(
             PRESET,
             overrides=[

@@ -218,8 +218,10 @@ async def test_pipelined_launch_adds_one_finalizer_per_engine(
 def _sana_launch(tmp_path: Path, *overrides: str) -> tuple[RayGenerationLaunchInputs, Any]:
     """The launch inputs the recipe would ship for a tiny SANA run, and its replay model."""
 
-    resolved = run.resolve_online_run(tiny_sana_online_config(tmp_path, overrides=overrides))
-    replay = run.resolve_model(
+    resolved = run.ResolvedOnlineRun.from_cfg(
+        tiny_sana_online_config(tmp_path, overrides=overrides)
+    )
+    replay = run.ResolvedModel.from_root(
         resolved.family,
         resolved.built.root,
         resolved.device,
@@ -302,8 +304,8 @@ def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(tmp_pa
             "distributed.resources.rollout.num_gpus=0",
         ],
     )
-    resolved = run.resolve_online_run(cfg)
-    replay = run.resolve_model(
+    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    replay = run.ResolvedModel.from_root(
         resolved.family,
         resolved.built.root,
         resolved.device,
@@ -321,8 +323,8 @@ def test_generation_launch_inputs_reject_rollout_identity_mismatch(tmp_path) -> 
     """The checkpoint changing between the driver's replay resolution and the
     worker launch is refused before any actor starts."""
 
-    resolved = run.resolve_online_run(tiny_sana_online_config(tmp_path))
-    replay = run.resolve_model(
+    resolved = run.ResolvedOnlineRun.from_cfg(tiny_sana_online_config(tmp_path))
+    replay = run.ResolvedModel.from_root(
         resolved.family,
         resolved.built.root,
         resolved.device,
@@ -439,10 +441,10 @@ def _on_demand_launch(tmp_path: Path) -> tuple[Any, RayGenerationLaunchInputs, R
     placement without using it until activation.
     """
 
-    resolved = run.resolve_online_run(
+    resolved = run.ResolvedOnlineRun.from_cfg(
         tiny_sana_online_config(tmp_path, overrides=("distributed.resources.rollout.num_gpus=1",))
     )
-    replay = run.resolve_model(
+    replay = run.ResolvedModel.from_root(
         resolved.family,
         resolved.built.root,
         resolved.device,

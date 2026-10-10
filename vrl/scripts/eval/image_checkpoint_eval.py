@@ -499,7 +499,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import RewardConfig, parse_config
     from vrl.models.families.registry import get_model_family_entry
-    from vrl.run import resolve_model
+    from vrl.run import ResolvedModel
     from vrl.scripts.eval._device import resolve_eval_device
     from vrl.trainers.checkpointing import CheckpointTarget, validate_checkpoint_meta_compatibility
     from vrl.trainers.data.prompts import load_prompt_dataset_index
@@ -538,7 +538,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
             epochs=args.epochs or (),
             uses_lora=bool(root.model.use_lora),
         )
-    resolved = resolve_model(
+    resolved = ResolvedModel.from_root(
         entry,
         root,
         resolve_eval_device(args.device),

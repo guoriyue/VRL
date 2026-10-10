@@ -11,7 +11,7 @@ from vrl.algorithms.grpo.continuous import (
     FlowDPPO,
     GRPOGuard,
 )
-from vrl.config.builders import RewardRuntimeConfig, build_configs
+from vrl.config.builders import BuiltConfigs, RewardRuntimeConfig
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
@@ -55,7 +55,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
         ],
     )
     collector_config = RolloutCollectorConfig.from_root(parse_config(cfg))
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
 
     pair = AlgorithmEvaluatorPair.from_configs(
         built,
@@ -93,7 +93,7 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
     )
 
     pair = AlgorithmEvaluatorPair.from_configs(
-        build_configs(cfg),
+        BuiltConfigs.from_cfg(cfg),
         scheduler=object(),
     )
 
@@ -112,7 +112,7 @@ def test_nft_factory_passes_reward_weights_to_component_advantage_protocol() -> 
         ],
     )
     pair = AlgorithmEvaluatorPair.from_configs(
-        build_configs(cfg),
+        BuiltConfigs.from_cfg(cfg),
     )
     components = {
         "ocr": torch.tensor([0.0, 1.0, 2.0]),
@@ -147,7 +147,7 @@ def test_chunk_autoregressive_factory_builds_grouped_grpo_evaluator() -> None:
     cfg = _chunk_config("causvid=wan_1_3b_ar")
 
     pair = AlgorithmEvaluatorPair.from_configs(
-        build_configs(cfg),
+        BuiltConfigs.from_cfg(cfg),
     )
 
     assert type(pair.algorithm) is GRPO
@@ -161,7 +161,7 @@ def test_generation_only_chunk_family_fails_before_algorithm_construction() -> N
 
     with pytest.raises(RuntimeError, match=r"generation-only.*no trainable actions"):
         AlgorithmEvaluatorPair.from_configs(
-            build_configs(cfg),
+            BuiltConfigs.from_cfg(cfg),
         )
 
 
@@ -188,7 +188,7 @@ def test_chunk_autoregressive_factory_rejects_undefined_algorithm_semantics(
 
     with pytest.raises(ValueError, match=message):
         AlgorithmEvaluatorPair.from_configs(
-            build_configs(cfg),
+            BuiltConfigs.from_cfg(cfg),
         )
 
 
@@ -197,13 +197,13 @@ def test_chunk_autoregressive_factory_rejects_non_fp32_transition_math() -> None
 
     with pytest.raises(ValueError, match="exact fp32 Gaussian re-noise"):
         AlgorithmEvaluatorPair.from_configs(
-            build_configs(cfg),
+            BuiltConfigs.from_cfg(cfg),
         )
 
 
 def test_chunk_autoregressive_factory_rejects_full_sequence_sft_regularizer() -> None:
     cfg = _chunk_config("causvid=wan_1_3b_ar")
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     built.algorithm.sft_weight = 0.1
 
     with pytest.raises(ValueError, match=r"grouped causal-chunk replay.*sft_weight"):
@@ -216,7 +216,7 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     """PickScore is logged on CPU but contributes zero optimization weight."""
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
     cfg.distributed.resources.visible_devices = [0]
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     from vrl.rewards.ray import RayRewardPlacement
 
     reward = ResolvedReward.from_plan(
@@ -238,7 +238,7 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
 def test_sana_family_defaults_to_native_fp16() -> None:
     """The public role precision matches the checkpoint's runtime invariant."""
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     entry = get_model_family_entry("sana")
     build = entry.resolve_model_build(
         built.root,
@@ -278,7 +278,7 @@ def test_sana_role_precision_follows_yaml(role: str, dtype: str) -> None:
     """The selected YAML role owns SANA's transformer execution policy."""
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
     cfg.precision[role].dtype = dtype
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
 
     build = get_model_family_entry("sana").resolve_model_build(
         built.root,
@@ -299,7 +299,7 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     """The canonical curve starts from base with immutable scorer identities."""
     cfg = load_config("experiment/sana/online_grpo_aesthetic_fullparam_long")
     cfg.distributed.resources.visible_devices = [0]
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     from vrl.rewards.ray import RayRewardPlacement
 
     assert built.resume.checkpoint_path is None
@@ -328,7 +328,7 @@ def test_sana_rejects_redundant_or_conflicting_model_dtype() -> None:
 
 def test_sana_direct_tool_override_changes_storage_only() -> None:
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
 
     build = get_model_family_entry("sana").resolve_model_build(
         built.root,
@@ -484,7 +484,7 @@ def test_ray_rewards_do_not_materialize_transport_files_in_the_run_output(tmp_pa
         ],
     )
     cfg.distributed.resources.visible_devices = [0]
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     reward = ResolvedReward.from_plan(
         built.reward,
         ResolvedDistributedResources.from_root(parse_config(cfg)),
@@ -497,7 +497,7 @@ def test_ray_rewards_do_not_materialize_transport_files_in_the_run_output(tmp_pa
 
 
 def test_online_reward_transport_is_rejected_before_resource_resolution(monkeypatch):
-    from vrl.run import resolve_online_run
+    from vrl.run import ResolvedOnlineRun
 
     cfg = load_config(
         "experiment/sana/online_grpo_pickscore_pickapic_sfw",
@@ -509,7 +509,7 @@ def test_online_reward_transport_is_rejected_before_resource_resolution(monkeypa
 
     monkeypatch.setattr(ResolvedDistributedResources, "from_root", unexpected_resources)
     with pytest.raises(ValueError, match="in_process is not admitted for online training"):
-        resolve_online_run(cfg)
+        ResolvedOnlineRun.from_cfg(cfg)
     # Offline diagnostics can still resolve an in-process, zero-weight observer.
     offline = _built_reward(
         {"image_sharpness": 0}, {}, {"image_sharpness": {"kind": "in_process"}}

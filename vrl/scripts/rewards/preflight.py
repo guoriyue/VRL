@@ -90,7 +90,7 @@ def preflight_rewards(
 ) -> PreflightReport:
     """Score the first ``prompts`` rows of the configured manifest with the configured reward."""
 
-    from vrl.config.builders import build_configs
+    from vrl.config.builders import BuiltConfigs
     from vrl.config.schema import DistributedSection
     from vrl.generation.ray.config import RolloutWorkerConfig
     from vrl.ray.dependencies import require_ray
@@ -109,7 +109,7 @@ def preflight_rewards(
     from vrl.scripts.common.online import _RayClusterSession
     from vrl.trainers.data.prompts import load_prompt_examples_from_config
 
-    built = build_configs(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
     if built.reward is None:
         raise ValueError("reward preflight needs a reward section")
     if built.root.data is None:

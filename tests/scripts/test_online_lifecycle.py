@@ -365,7 +365,7 @@ async def test_reference_conditioned_task_fails_before_model_or_ray_launch(
     roles = _roles(monkeypatch)
     # The guard reads the family's declared task; SANA is t2i, so the entry is
     # relabelled v2w for this one theorem (the config carries no conditioning).
-    entry = resolved_run.resolve_online_run(run.cfg).family
+    entry = resolved_run.ResolvedOnlineRun.from_cfg(run.cfg).family
     monkeypatch.setattr(type(entry), "task", "v2w")
 
     with pytest.raises(ValueError, match=r"data\.preprocessing\.conditioning=reference_image"):

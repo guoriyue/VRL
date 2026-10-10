@@ -47,7 +47,7 @@ from vrl.generation.types import GenerationInput, GenerationRequest
 from vrl.models.families.semantics import task_type_for
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner
-from vrl.run import resolve_model, resolve_online_run
+from vrl.run import ResolvedModel, ResolvedOnlineRun
 from vrl.utils.json_files import write_json
 
 logger = logging.getLogger(__name__)
@@ -153,7 +153,7 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
     from vrl.config.loading import load_config
 
     cfg = load_config(args.config, overrides=_fleet_overrides(args))
-    resolved = resolve_online_run(cfg)
+    resolved = ResolvedOnlineRun.from_cfg(cfg)
     resources = resolved.resources
     if resources.rollout_gpus_per_engine != args.gpus_per_engine:
         raise RuntimeError(
@@ -202,7 +202,7 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
         policy_version=0,
     )
 
-    replay = resolve_model(
+    replay = ResolvedModel.from_root(
         resolved.family,
         resolved.built.root,
         torch.device("cpu"),

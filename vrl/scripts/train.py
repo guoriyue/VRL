@@ -16,16 +16,13 @@ import os
 import signal
 from collections.abc import Awaitable
 from types import FrameType
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from omegaconf import DictConfig
 
 from vrl.scripts.common.launch_environment import narrow_rank_local_cuda_visibility
 from vrl.training_run_result import TrainingRunResultWriter
 from vrl.utils.config import import_from_path
-
-if TYPE_CHECKING:
-    from vrl.config.schema import RootConfig
 
 
 async def train_online(cfg: DictConfig) -> None:
@@ -36,24 +33,18 @@ async def train_online(cfg: DictConfig) -> None:
     await run_online_recipe(cfg)
 
 
-def resolve_train_target(root: RootConfig) -> str:
-    """Return the validated training callable import path declared by ``root``."""
+def run_config(cfg: DictConfig) -> Any:
+    """Run the family trainer named by ``trainer.entrypoint``."""
 
+    from vrl.config.schema import parse_config
+
+    root = parse_config(cfg)
     import_path = root.trainer.entrypoint if root.trainer is not None else None
     if import_path is None:
         raise ValueError("config missing required field: trainer.entrypoint")
     if not isinstance(import_path, str) or not import_path.strip():
         raise ValueError("trainer.entrypoint must be a non-empty import path")
-    return import_path.strip()
-
-
-def run_config(cfg: DictConfig) -> Any:
-    """Run the family trainer selected by ``cfg``."""
-
-    from vrl.config.schema import parse_config
-
-    trainer = import_from_path(resolve_train_target(parse_config(cfg)))
-    return trainer(cfg)
+    return import_from_path(import_path.strip())(cfg)
 
 
 def build_parser() -> argparse.ArgumentParser:

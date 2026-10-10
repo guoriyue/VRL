@@ -424,8 +424,8 @@ def tiny_sana_stack(
 
     cfg = tiny_sana_online_config(tmp_path, overrides=overrides)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
-    resolved = run.resolve_online_run(cfg)
-    replay = run.resolve_model(
+    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    replay = run.ResolvedModel.from_root(
         resolved.family,
         resolved.built.root,
         resolved.device,

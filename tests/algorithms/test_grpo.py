@@ -251,7 +251,7 @@ class TestGRPOTruncatedImportanceSampling:
     weight exp(replay - rollout) inflates on a few samples and, on negative
     advantages, drives a large *unclipped* gradient. TIS caps/masks it. The TIS
     knobs are ``trainer.precision_correction``, bridged into the objective's
-    config by build_configs; here they are set on the config directly.
+    config by ``BuiltConfigs.from_cfg``; here they are set on the config directly.
     """
 
     @staticmethod
