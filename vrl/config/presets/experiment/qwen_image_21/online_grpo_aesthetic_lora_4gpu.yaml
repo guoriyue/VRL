@@ -1,0 +1,72 @@
+# Four-GPU exploratory aesthetic LoRA; native held-out evaluation decides improvement.
+defaults:
+- /recipe/online/flow_matching_grpo
+- /model/qwen_image_21/base
+- /sampling/image/512
+- /sampling/denoise/10_step_no_cfg
+- /dataset/pickscore_sfw
+- /reward/aesthetic_revision
+- _self_
+model:
+  use_lora: true
+  local_files_only: true
+  memory:
+    cpu_resident: []
+precision:
+  float32_precision: ieee
+  training:
+    dtype: bf16
+    outer_autocast: true
+sampling:
+  height: 1024
+  width: 1024
+  reference_resolution: 1024
+  num_steps: 40
+  output_mode: rgb
+algorithm:
+  kl_coef: 0.04
+actor:
+  optim:
+    lr: 0.0001
+  gradient_checkpointing: full
+  training_microbatch_size: 1
+  prompts_per_collection: 0
+  ppo_epochs: 2
+  timestep_fraction: 0.1
+  ema:
+    enable: false
+rollout:
+  prompts_per_batch: 1
+  n_samples_per_prompt: 4
+  samples_per_generation_batch: 1
+  noise_level: 0.2
+  trajectory_storage:
+    dtype: float32
+reward:
+  kwargs:
+    aesthetic:
+      model_revision: 9fdffc58afc957d1a03a25b10dba0329ab15c2a3
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 4
+    fsdp:
+      mesh:
+      - dp_shard
+      precision_policy: none
+      reshard_after_forward: true
+  resources:
+    rollout:
+      gpu_pool: trainer
+    trainer_parking_directory: /mnt/nvme/outputs/qwen21_aesthetic_lora/parking
+  rollout:
+    worker_rpc_timeout_s: 1800
+trainer:
+  total_epochs: 2
+  save_freq: 1
+  output_dir: /mnt/nvme/outputs/qwen21_aesthetic_lora/acceptance
+  debug:
+    first_step: true
+  replay_parity:
+    max_abs_logprob_diff: 1.0e-05
