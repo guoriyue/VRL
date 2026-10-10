@@ -1,0 +1,9 @@
+Read CHUNK (a JSON list of cells). For each cell write ONE natural-language text-to-image prompt (35-70 words, English) and output {"id", "prompt", "action_id"}:
+- Exactly `expected_people` ADULTS (write the number as a word: "two adults", "three grown men and women", ...); everyone is clearly an adult.
+- They are in CLOSE PHYSICAL CONTACT doing the `interaction` described in `interaction_desc`, with one concrete action you invent (action_id = short unique snake_case label; never reuse one).
+- Setting: the `scene_family`. Style: the `style` (start the prompt with it, e.g. "A photorealistic photograph of..." / "An anime illustration of...").
+- Medium-wide or full-body framing so all arms, hands and legs of every person are visible; ordinary clothing suited to the activity, fully clothed.
+- Tone: friendly, sporty or professional. Never romantic or sexual, no kissing, no lying in bed, no revealing clothes.
+- Do NOT mention: mannequins, statues, dolls, puppets, robots, reflections, posters, screens, crowds or extra people, children, ropes, poles, sticks, hoses, scarves or any long thin limb-like object. Do not write negations listing these; simply leave them out. No text in the image.
+- End with: "exactly <N> adults, all limbs visible."
+Write the result to OUT as a JSON list in the same order covering every cell. Do not generate images.

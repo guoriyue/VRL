@@ -1,0 +1,4322 @@
+[
+ {
+  "id": "train2_0477",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0085",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0326",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0423",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0403",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0283",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0396",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0027",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0330",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0459",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0222",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0228",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0090",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0172",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0240",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0377",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0106",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0129",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0006",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0426",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0227",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0327",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0146",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0299",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0031",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0442",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0462",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0461",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0292",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0282",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0470",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0430",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0350",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0288",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0062",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0210",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0192",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0273",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0387",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0422",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0058",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0398",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0041",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0144",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0025",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0371",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0032",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0207",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0456",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0318",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0392",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0076",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0412",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0280",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0030",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0405",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0458",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0435",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0348",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0126",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0334",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0474",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0140",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0086",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0198",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0321",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0098",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0036",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0336",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0026",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0118",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0359",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0102",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0313",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0193",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0220",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0151",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0224",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0329",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0044",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0399",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0034",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0011",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0290",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0389",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0095",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0386",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0056",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0122",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0093",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0401",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0421",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0388",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0017",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0191",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0045",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0201",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0275",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0049",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0184",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0069",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0464",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0009",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0325",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0216",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0157",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0002",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0194",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0096",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0410",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0120",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0281",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0000",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0460",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0141",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0291",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0473",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0400",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0023",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0040",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0212",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0349",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0202",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0414",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0431",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0072",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0133",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0236",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0341",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0454",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0156",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0064",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0311",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0406",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0094",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0333",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0127",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0033",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0295",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0441",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0074",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0148",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0425",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0250",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0368",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0345",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0437",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0150",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0323",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0457",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0438",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0178",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0143",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0012",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0467",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0021",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0411",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0200",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0264",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0360",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0440",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0116",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0063",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0471",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0344",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0249",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0274",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0432",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0300",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0319",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0080",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0248",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0238",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0164",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0417",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0444",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0124",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0316",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0057",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0223",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0331",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0427",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0262",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0115",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0342",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0073",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0339",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0445",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0097",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0108",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0391",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0139",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0079",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0455",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0190",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0434",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0046",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0039",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0363",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0367",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0420",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0050",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0010",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0104",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0278",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0066",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0301",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0340",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0418",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0166",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0081",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0293",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0211",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0243",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0305",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0070",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0284",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0161",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0356",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0221",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0199",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0322",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0357",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0234",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0404",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0402",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0379",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0268",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0022",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0235",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0101",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0335",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0307",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0136",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0320",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0217",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0428",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0119",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0385",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0162",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0114",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0358",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0075",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0463",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0219",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0239",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0362",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0059",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0447",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0452",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0218",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0084",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0197",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0376",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0054",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0475",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0018",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0267",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0397",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0168",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0053",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0407",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0466",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0465",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0137",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0089",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0152",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0042",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0132",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0088",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0047",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0087",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0004",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0247",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0270",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0121",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0265",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0068",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0209",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0373",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0043",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0082",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0380",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0170",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0370",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0254",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0257",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0393",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0203",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0258",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0246",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0383",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0279",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0128",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0294",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0355",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0285",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0338",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0451",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0185",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0195",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0296",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0067",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0215",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0384",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0289",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0297",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0181",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0436",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0029",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0365",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0167",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0158",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0409",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0188",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0252",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0351",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0105",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0014",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0130",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0347",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0346",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0394",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0381",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0306",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0416",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0374",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0303",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0419",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0225",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0261",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0269",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0052",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0109",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0472",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0259",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0255",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0298",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0229",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0424",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0446",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0016",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0304",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0277",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0468",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0378",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0159",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0153",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0226",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0450",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0205",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0005",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0449",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0231",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0169",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0078",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0171",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0061",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0479",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0196",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0003",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0332",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0272",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0100",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0366",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0476",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0315",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0208",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0310",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0048",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0233",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0308",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0092",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0353",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0138",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0287",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0448",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0324",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0263",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0266",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0160",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0314",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0107",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0038",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0244",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0478",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0408",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0037",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0051",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0134",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0372",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0302",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0214",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0187",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0382",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0204",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0328",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0110",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0165",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0286",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0135",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0145",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0154",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0180",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0091",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0206",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0125",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0256",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0317",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0015",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0453",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0276",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0060",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0024",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0112",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0369",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0413",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0433",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0237",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0163",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0147",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0186",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0174",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0175",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0242",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0035",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0230",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0429",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0083",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0469",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0055",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0260",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0182",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0113",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0155",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0103",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0375",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0395",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0179",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0354",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "lift_carry",
+  "interaction_desc": "one person lifting or carrying another (piggyback, fireman's carry, acrobatic lift, helping someone over a wall)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0213",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0131",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0071",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0008",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0149",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0312",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0232",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0364",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0415",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0189",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0099",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0077",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0123",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0117",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0001",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0013",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0241",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0065",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0439",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "park, beach or pool deck",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0271",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0309",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0337",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0111",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0176",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0343",
+  "split": "train2",
+  "expected_people": 4,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0390",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0443",
+  "split": "train2",
+  "expected_people": 8,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0361",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "dance studio or stage",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0007",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "gym, dojo or living room",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0352",
+  "split": "train2",
+  "expected_people": 6,
+  "interaction": "embrace",
+  "interaction_desc": "hugging, comforting, or a tight group hug (warm and non-romantic: friends, teammates, family reunion)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0019",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "kitchen, cafe or market",
+  "style": "anime illustration"
+ },
+ {
+  "id": "train2_0245",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0183",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "shared_reach",
+  "interaction_desc": "everyone's hands reaching for or holding the same compact object (a ball, a trophy, a box, a cake)",
+  "scene_family": "sports court or field",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0020",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0028",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "assist_support",
+  "interaction_desc": "physically helping or supporting someone (helping a fallen person up, steadying an injured hiker, spotting a gymnast)",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0142",
+  "split": "train2",
+  "expected_people": 2,
+  "interaction": "linked_group",
+  "interaction_desc": "a group moving together with linked arms or hands (circle dance, a human chain, a team huddle, three-legged race)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0173",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0253",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "hand_contact",
+  "interaction_desc": "hands in direct contact (holding hands while running, a firm handshake, high-five, a clapping game, pulling someone up by the hand)",
+  "scene_family": "work site or workshop",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0177",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "partner_dance",
+  "interaction_desc": "partner or group dancing with held hands, arms around shoulders or waists (ballroom, folk, swing), no kissing",
+  "scene_family": "festival or city street",
+  "style": "photorealistic photograph"
+ },
+ {
+  "id": "train2_0251",
+  "split": "train2",
+  "expected_people": 3,
+  "interaction": "grapple_sport",
+  "interaction_desc": "grappling or contact sport (judo throw, wrestling hold, rugby tackle, sumo push, arm-wrestling at a table)",
+  "scene_family": "mountain, forest or rescue scene",
+  "style": "photorealistic photograph"
+ }
+]

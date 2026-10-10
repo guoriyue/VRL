@@ -1,0 +1,91 @@
+# Three-criterion judge, as the user framed it on 2026-10-08: correctness,
+# prompt accuracy, and closeness to the GPT reference. Equal weights; every
+# criterion is one question whose answer lands in [0, 1]:
+#   correct   candidate alone, yes/no defect check, score 1 - P(yes)
+#   accurate  candidate alone, per-item checklist of what the prompt requires,
+#             mean P(yes) over the items
+#   like_ref  siblings of one prompt group compared pairwise with the GPT image
+#             shown as Image 3 ("which comes closer to the reference?"), ring
+#             schedule, both orders; score = mean win probability. An absolute
+#             1-5 version of this question gave the GPT image itself 3/5 and
+#             spread siblings by 0.02, so it ranked nothing.
+# The GPT image is the thing to learn from, so the third question asks for
+# closeness to it, not for a winner. Group normalization in GRPO makes the
+# absolute scale irrelevant; only the relative weights matter.
+# Probe 2026-10-08 (GPT image vs its own degraded copies; known-defect pairs):
+# like_ref ranks the untouched GPT image top and blur/collage/low-res bottom,
+# but ignores an added signature line, so stray_text returns as a guard; an
+# image with extra paws still out-scored a clean one at equal weights, so
+# correct carries weight 2. v13 ck40 and v14 ck20 (2026-10-09) drifted into
+# sticker sheets and 3x3 expression grids that like_ref does not penalize
+# (probe: turtle sheet 0.79 > single 0.70), so single_scene is an absolute
+# defect question at weight 2.
+host: 127.0.0.1
+port: 8318
+model_name: vlm-preference-qwen3vl32b
+model_version: Qwen/Qwen3-VL-32B-Instruct-FP8@4bf2c2f3
+artifact_roots:
+  - /mnt/nvme/outputs
+  - /mnt/nvme/data/external
+max_concurrency: 1
+max_pending_requests: 256
+max_cached_requests: 8192
+max_request_bytes: 1073741824
+generation_overlap_safe: true
+worker_config:
+  model_factory: vrl.rewards.models.qwen3vl_preference:Qwen3VLPreferenceRewardModel
+  device: cuda:0
+  judge_model: Qwen/Qwen3-VL-32B-Instruct-FP8
+  judge_revision: 4bf2c2f3
+  judge_max_side: 896
+  questions_per_forward: 3
+  local_files_only: true
+  reference_key: judge_reference
+  checklist_key: judge_checklist
+  both_orders: true
+  data_root: /mnt/nvme/data/external
+  criteria:
+    - name: correct
+      weight: 2.0
+      answer: yesno
+      absolute: true
+      invert: true
+      question: >-
+        Look at Image 1 only. Does any person, animal or creature in it have extra,
+        missing, duplicated or merged limbs, hands, fingers, legs, heads or eyes, or a
+        body part attached in an impossible place? Answer yes if you see any such defect.
+    - name: stray_text
+      weight: 1.0
+      answer: yesno
+      absolute: true
+      invert: true
+      question: >-
+        Look at Image 1 only. Does it contain written text, letters, captions, labels,
+        signatures or watermarks other than text that the description "{prompt}"
+        explicitly asks to be written? Answer yes if there is any such unrequested text.
+    - name: single_scene
+      weight: 2.0
+      answer: yesno
+      absolute: true
+      invert: true
+      question: >-
+        Look at Image 1 only. Is it split into several panels, tiles, a grid, a sticker
+        sheet, a contact sheet or a character turnaround, or does it repeat the main
+        subject several times at small scale around one large copy? Answer yes if the
+        picture is anything other than one single continuous scene.
+    - name: accurate
+      weight: 1.0
+      answer: yesno
+      checklist: true
+      question: >-
+        Look at Image 1 only. Does it clearly and recognizably show {item}?
+    - name: like_ref
+      weight: 1.0
+      answer: ab
+      group: true
+      question: >-
+        Image 1 and Image 2 were both made for the description "{prompt}". Image 3 is a
+        reference picture for the same description. Which of Image 1 (A) or Image 2 (B)
+        comes closer to the reference in overall quality and look: composition and
+        framing, the form and pose of the subject, material and surface quality, color
+        and light?
