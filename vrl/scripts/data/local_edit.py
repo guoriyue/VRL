@@ -37,7 +37,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from vrl.rewards.models.local_edit import HINT_SUFFIX
-from vrl.utils.artifacts import default_data_root
+from vrl.utils.artifacts import RootedPaths
 
 LOCAL_TASKS = ("attribute_modification", "swap", "removal", "addition")
 OMNIEDIT = "TIGER-Lab/OmniEdit-Filtered-1.2M"
@@ -162,8 +162,9 @@ def rows_from_omniedit(
     resamples the reference to its own geometry, as it did for 442 px COCO crops).
     """
 
-    from datasets import load_dataset
     from PIL import Image
+
+    from datasets import load_dataset
 
     rng = random.Random(seed)
     (out / "img").mkdir(parents=True, exist_ok=True)
@@ -292,7 +293,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--manifest-dir", type=Path, default=Path("manifests/local_edit"))
     args = parser.parse_args(argv)
-    root = Path(default_data_root())
+    root = RootedPaths.data_root().root
     out = root / "local_edit"
     rows = rows_from_omniedit(
         out,

@@ -13,10 +13,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-# Single source of truth for repo/data-root resolution is vrl.utils.artifacts
-# (it owns DATA_ROOT_ENV and is also used off the script path);
-# re-export here so the dataset scripts keep importing from common.
-from vrl.utils.artifacts import default_data_root, repo_root
+# The repo root lives in vrl.utils.artifacts (also used off the script path);
+# re-exported here so the dataset scripts keep importing it from common.
+from vrl.utils.artifacts import repo_root
 
 
 def default_cache_dir() -> Path:
@@ -41,7 +40,6 @@ def dedupe_text(parts: Iterable[str]) -> list[str]:
 __all__ = [
     "dedupe_text",
     "default_cache_dir",
-    "default_data_root",
     "emit",
     "repo_root",
 ]

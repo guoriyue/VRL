@@ -125,7 +125,17 @@ class RootedPaths:
     ) -> RootedPaths:
         """The manifest data root: ``value``, else ``VRL_DATA_ROOT``, else the local default."""
 
-        return cls(coerce_data_root(value), absolute="anywhere" if allow_absolute else "reject")
+        if value is None:
+            value = os.environ.get(DATA_ROOT_ENV, "").strip() or repo_root() / "data" / "external"
+        return cls(value, absolute="anywhere" if allow_absolute else "reject")
+
+    @property
+    def root(self) -> Path:
+        """The single root, for callers that write under it."""
+
+        if len(self.roots) != 1:
+            raise ValueError("root is defined only for a single storage root")
+        return self.roots[0]
 
     def resolve(self, raw_path: str | Path, *, strict: bool = False) -> Path:
         """One reference to an absolute path under the policy; ``strict`` requires it to exist."""
@@ -157,25 +167,10 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def default_data_root() -> Path:
-    """Resolve the artifact data root from ``VRL_DATA_ROOT`` or local ignored data."""
-
-    env_value = os.environ.get(DATA_ROOT_ENV, "").strip()
-    if env_value:
-        return user_path(env_value)
-    return (repo_root() / "data" / "external").resolve()
-
-
 def user_path(value: str | Path) -> Path:
     """A path the user wrote (CLI argument or config value): ``~`` expanded, made absolute."""
 
     return Path(value).expanduser().resolve()
-
-
-def coerce_data_root(value: str | Path | None) -> Path:
-    """Normalize an optional data-root override to an absolute path."""
-
-    return user_path(value) if value is not None else default_data_root()
 
 
 __all__ = [
@@ -185,8 +180,6 @@ __all__ = [
     "PathOutsideRootsError",
     "RootedPaths",
     "atomic_file",
-    "coerce_data_root",
-    "default_data_root",
     "repo_root",
     "user_path",
 ]

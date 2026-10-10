@@ -33,7 +33,7 @@ from vrl.scripts.data.common import (
     emit,
     repo_root,
 )
-from vrl.utils.artifacts import coerce_data_root, user_path
+from vrl.utils.artifacts import RootedPaths, user_path
 from vrl.utils.json_files import write_json, write_jsonl
 
 # (repo_id, csv_file, official split). Train captions live only in the training
@@ -435,7 +435,7 @@ def _resize_image(image_path: Path, *, width: int, height: int) -> tuple[int, in
 def _cmd_videophy_i2v(args: argparse.Namespace) -> None:
     from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
-    data_root = coerce_data_root(args.data_root)
+    data_root = RootedPaths.data_root(args.data_root).root
     specs: list[tuple[str, str, str]] = []
     for spec in args.source or ():
         parts = spec.split(":")

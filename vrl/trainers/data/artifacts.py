@@ -12,7 +12,6 @@ from vrl.utils.artifacts import (
     IMAGE_SUFFIXES,
     ArtifactManifestError,
     RootedPaths,
-    coerce_data_root,
 )
 
 # Derived from PromptExample fields tagged metadata={'artifact': True} — single source of truth.
@@ -183,8 +182,8 @@ class DatasetFileReport:
         """
 
         path = Path(manifest_path)
-        root = coerce_data_root(data_root)
-        roots = RootedPaths(root, absolute="reject")
+        roots = RootedPaths.data_root(data_root)
+        root = roots.root
         resolved: list[ResolvedArtifact] = []
         warnings: list[str] = []
         for row_index, example in enumerate(examples):

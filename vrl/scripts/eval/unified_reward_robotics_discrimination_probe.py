@@ -45,7 +45,7 @@ from vrl.scripts.eval.robotics_discrimination import (
     robotics_reward_verdict,
 )
 from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
-from vrl.utils.artifacts import RootedPaths, coerce_data_root, sha256_file, user_path
+from vrl.utils.artifacts import RootedPaths, sha256_file, user_path
 from vrl.utils.json_files import write_json
 from vrl.utils.media import read_video_frames, write_mp4
 
@@ -183,7 +183,7 @@ def _print_report(summary: dict[str, Any]) -> None:
 async def _main_async(args: argparse.Namespace) -> dict[str, Any]:
     if args.num_anchors < 2:
         raise ValueError("--num-anchors must be >=2 for wrong_clip discrimination")
-    data_root = coerce_data_root(args.data_root)
+    data_root = RootedPaths.data_root(args.data_root).root
     examples = load_prompt_dataset_index(args.manifest)[: args.num_anchors]
     if len(examples) < 2:
         raise ValueError("robotics reward gate needs at least two manifest rows")

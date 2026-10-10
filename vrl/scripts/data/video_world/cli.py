@@ -19,7 +19,7 @@ from vrl.scripts.data.video_world.lerobot import (
     iter_lerobot_target_clips,
 )
 from vrl.trainers.data.artifacts import DatasetFileReport
-from vrl.utils.artifacts import coerce_data_root, user_path
+from vrl.utils.artifacts import RootedPaths, user_path
 from vrl.utils.json_files import write_json, write_jsonl
 
 COMMAND_NAME = "video-world-bridge"
@@ -114,7 +114,7 @@ def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
 
 
 def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
-    data_root = coerce_data_root(args.data_root)
+    data_root = RootedPaths.data_root(args.data_root).root
     video_root = data_root / "video_world"
     manifest_dir = args.manifest_dir or (video_root / "manifests")
     reference_dir = video_root / "references"
@@ -189,7 +189,7 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
 
 
 def _cmd_video_world_targets(args: argparse.Namespace) -> None:
-    data_root = coerce_data_root(args.data_root)
+    data_root = RootedPaths.data_root(args.data_root).root
     video_root = data_root / "video_world"
     manifest_dir = args.manifest_dir or (video_root / "manifests")
     reference_dir = video_root / "references"
