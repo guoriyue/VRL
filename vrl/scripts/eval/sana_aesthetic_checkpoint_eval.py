@@ -42,7 +42,7 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.checkpointing import CheckpointTarget as TrainerCheckpointTarget
 from vrl.trainers.data.prompts import load_prompt_dataset_index
-from vrl.utils.artifacts import sha256_file
+from vrl.utils.artifacts import sha256_file, user_path
 from vrl.utils.cuda_memory import release_cuda_memory
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> None:
         samples_per_prompt=args.samples_per_prompt,
         checkpoint_interval=args.checkpoint_interval,
     )
-    run_dir = args.run_dir.expanduser().resolve()
+    run_dir = user_path(args.run_dir)
     config_path = run_dir / RESOLVED_CONFIG_NAME
     if not config_path.is_file():
         raise FileNotFoundError(f"training run has no resolved config: {config_path}")
@@ -290,11 +290,10 @@ def _discover_checkpoint_targets(
 def _materialize_model_snapshot(cfg: DictConfig) -> RootConfig:
     """Pin SANA architecture/frozen modules through the official Hub API."""
 
-    from huggingface_hub import snapshot_download
+    from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
-    local_path = snapshot_download(
-        repo_id=str(cfg.model.path),
-        revision=str(cfg.model.revision),
+    local_path = str(
+        HuggingFaceRepoRevision(str(cfg.model.path), str(cfg.model.revision)).download()
     )
     plain = OmegaConf.to_container(cfg, resolve=True)
     assert isinstance(plain, dict)
@@ -310,27 +309,28 @@ def _materialize_reward_model_snapshots(
 ) -> list[sana_report.RewardModelDefinition]:
     """Resolve immutable reward snapshots without exposing local paths in reports."""
 
-    from huggingface_hub import snapshot_download
+    from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
     materialized: list[sana_report.RewardModelDefinition] = []
     for reward_model in reward_models:
         model_config = dict(reward_model.model_config)
         if reward_model.name == "aesthetic":
             identity = reward_model.provenance["model"]
-            model_config["model_name"] = snapshot_download(
-                repo_id=str(identity["repo"]),
-                revision=str(identity["revision"]),
+            model_config["model_name"] = str(
+                HuggingFaceRepoRevision(
+                    str(identity["repo"]), str(identity["revision"])
+                ).download(),
             )
         elif reward_model.name == "pickscore":
             processor = reward_model.provenance["processor"]
             model = reward_model.provenance["model"]
-            model_config["processor_name"] = snapshot_download(
-                repo_id=str(processor["repo"]),
-                revision=str(processor["revision"]),
+            model_config["processor_name"] = str(
+                HuggingFaceRepoRevision(
+                    str(processor["repo"]), str(processor["revision"])
+                ).download(),
             )
-            model_config["model_name"] = snapshot_download(
-                repo_id=str(model["repo"]),
-                revision=str(model["revision"]),
+            model_config["model_name"] = str(
+                HuggingFaceRepoRevision(str(model["repo"]), str(model["revision"])).download(),
             )
         else:
             raise ValueError(

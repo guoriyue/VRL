@@ -9,8 +9,8 @@ from vrl.scripts.data import setup as setup_cli
 from vrl.trainers.data.artifacts import (
     DatasetFileReport,
 )
-from vrl.trainers.data.prompts import REFERENCE_FIELDS, PromptExample, load_prompt_dataset_index
-from vrl.utils.artifacts import ArtifactManifestError, resolve_artifact_path
+from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
+from vrl.utils.artifacts import ArtifactManifestError, RootedPaths
 
 
 def _write_ppm(path: Path) -> None:
@@ -95,7 +95,7 @@ def test_reference_resolution_preserves_target_identity_fields(tmp_path: Path) -
         target_video="targets/result.mp4",
     )
 
-    resolved = example.with_resolved_artifacts(REFERENCE_FIELDS, data_root=tmp_path)
+    resolved = example.with_resolved_references(RootedPaths.data_root(tmp_path))
 
     assert resolved.reference_images == [str((tmp_path / "references/frame.ppm").resolve())]
     assert resolved.reference_video == str((tmp_path / "references/context.mp4").resolve())
@@ -130,7 +130,7 @@ def test_absolute_artifact_paths_are_rejected_by_default(tmp_path: Path) -> None
     path.write_text("P3\n1 1\n255\n0 0 0\n", encoding="utf-8")
 
     with pytest.raises(ArtifactManifestError, match="absolute artifact paths"):
-        resolve_artifact_path(path)
+        RootedPaths.data_root().resolve(path)
 
 
 def test_production_metadata_domain_is_rejected(tmp_path: Path) -> None:
@@ -185,8 +185,8 @@ def test_relative_artifact_symlink_must_remain_under_data_root(tmp_path: Path) -
     outside = tmp_path / "outside.ppm"
     _write_ppm(outside)
     (root / "reference.ppm").symlink_to(outside)
-    with pytest.raises(ArtifactManifestError, match="stay under data root"):
-        resolve_artifact_path("reference.ppm", data_root=root)
+    with pytest.raises(ArtifactManifestError, match="outside configured roots"):
+        RootedPaths.data_root(root).resolve("reference.ppm")
 
 
 def test_artifact_symlink_within_root_and_explicit_absolute_path_remain_supported(
@@ -197,35 +197,32 @@ def test_artifact_symlink_within_root_and_explicit_absolute_path_remain_supporte
     reference = root / "reference.ppm"
     _write_ppm(reference)
     (root / "alias.ppm").symlink_to(reference)
-    assert resolve_artifact_path("alias.ppm", data_root=root) == reference
+    assert RootedPaths.data_root(root).resolve("alias.ppm") == reference
     outside = tmp_path / "outside.ppm"
-    assert resolve_artifact_path(outside, data_root=root, allow_absolute=True) == outside
+    assert RootedPaths.data_root(root, allow_absolute=True).resolve(outside) == outside
 
 
 @pytest.mark.parametrize("value", [{"ref.ppm": 1}, [1], [None], b"ref.ppm"])
 def test_artifact_field_rejects_non_path_values(tmp_path, value):
-    example = PromptExample(prompt="test", metadata={"attachments": value})
-    with pytest.raises(ArtifactManifestError, match=r"attachments.*string or.*strings"):
+    example = PromptExample(prompt="test", reference_images=value)
+    with pytest.raises(ArtifactManifestError, match=r"reference_images.*string or.*strings"):
         DatasetFileReport.from_examples(
             [example],
             manifest_path=tmp_path / "manifest.jsonl",
             data_root=tmp_path,
-            artifact_fields=("attachments",),
+            artifact_fields=("reference_images",),
         )
 
 
 @pytest.mark.parametrize("container", [list, tuple])
 def test_artifact_field_preserves_path_sequences(tmp_path, container):
     _write_ppm(tmp_path / "ref.ppm")
-    example = PromptExample(
-        prompt="test",
-        metadata={"attachments": container(["", "ref.ppm", "  "])},
-    )
+    example = PromptExample(prompt="test", reference_images=container(["", "ref.ppm", "  "]))
     report = DatasetFileReport.from_examples(
         [example],
         manifest_path=tmp_path / "manifest.jsonl",
         data_root=tmp_path,
-        artifact_fields=("attachments",),
+        artifact_fields=("reference_images",),
     )
     assert len(report.resolved_artifacts) == 1
     assert report.resolved_artifacts[0].raw_path == "ref.ppm"

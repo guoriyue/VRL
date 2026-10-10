@@ -119,9 +119,10 @@ def _resolve_clean_targets(
     data_root: str | Path | None,
 ) -> list[tuple[str, str, str]]:
     """Resolve and validate stable target identities before loading a model."""
-    from vrl.trainers.data.prompts import ARTIFACT_FIELDS
     from vrl.trainers.data.sft_latents import CleanTargetRef
+    from vrl.utils.artifacts import RootedPaths
 
+    roots = RootedPaths.data_root(data_root)
     targets: list[tuple[str, str, str]] = []
     seen_target_keys: set[str] = set()
     for index, example in enumerate(examples):
@@ -135,8 +136,7 @@ def _resolve_clean_targets(
                 "the target artifact is the sft shard identity and must be unique",
             )
         seen_target_keys.add(target.key)
-        resolved = example.with_resolved_artifacts(ARTIFACT_FIELDS, data_root=data_root)
-        resolved_target = Path(str(getattr(resolved, target.field)))
+        resolved_target = roots.resolve(str(getattr(example, target.field)))
         if not resolved_target.is_file():
             raise FileNotFoundError(
                 f"manifest row {index} {target.field} does not exist: {resolved_target}",

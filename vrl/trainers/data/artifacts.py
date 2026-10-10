@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
-from vrl.trainers.data.prompts import (
-    ARTIFACT_FIELDS,
-    PromptExample,
-    load_prompt_dataset_index,
-)
+from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
 from vrl.utils.artifacts import (
     IMAGE_SUFFIXES,
     ArtifactManifestError,
+    RootedPaths,
     coerce_data_root,
-    resolve_artifact_path,
+)
+
+# Derived from PromptExample fields tagged metadata={'artifact': True} — single source of truth.
+DEFAULT_ARTIFACT_FIELDS = tuple(
+    f.name for f in fields(PromptExample) if f.metadata.get("artifact")
 )
 
 # Ordered manifest provenance contract shared by data validation and dataset
@@ -75,9 +76,7 @@ class DatasetFileReport:
 
     @staticmethod
     def _read_file_paths(example: PromptExample, field_name: str) -> tuple[str, ...]:
-        value = getattr(example, field_name, None)
-        if value is None:
-            value = example.metadata.get(field_name)
+        value = getattr(example, field_name)
         if value is None:
             return ()
         if isinstance(value, str):
@@ -138,7 +137,7 @@ class DatasetFileReport:
         *,
         eval_manifest: str | Path | None = None,
         data_root: str | Path | None = None,
-        artifact_fields: Sequence[str] = ARTIFACT_FIELDS,
+        artifact_fields: Sequence[str] = DEFAULT_ARTIFACT_FIELDS,
         required_artifact_fields: Sequence[str] = (),
         required_metadata_fields: Sequence[str] = (),
     ) -> DatasetFileReport:
@@ -171,7 +170,7 @@ class DatasetFileReport:
         eval_examples: Sequence[PromptExample] | None = None,
         eval_manifest_path: str | Path | None = None,
         data_root: str | Path | None = None,
-        artifact_fields: Sequence[str] = ARTIFACT_FIELDS,
+        artifact_fields: Sequence[str] = DEFAULT_ARTIFACT_FIELDS,
         required_artifact_fields: Sequence[str] = (),
         required_metadata_fields: Sequence[str] = (),
     ) -> DatasetFileReport:
@@ -185,6 +184,7 @@ class DatasetFileReport:
 
         path = Path(manifest_path)
         root = coerce_data_root(data_root)
+        roots = RootedPaths(root, absolute="reject")
         resolved: list[ResolvedArtifact] = []
         warnings: list[str] = []
         for row_index, example in enumerate(examples):
@@ -207,11 +207,7 @@ class DatasetFileReport:
                     )
             for field_name in artifact_fields:
                 for raw_value in cls._read_file_paths(example, field_name):
-                    resolved_path = resolve_artifact_path(
-                        raw_value,
-                        data_root=root,
-                        allow_absolute=False,
-                    )
+                    resolved_path = roots.resolve(raw_value)
                     if not resolved_path.exists():
                         raise ArtifactManifestError(
                             f"{path}: row {row_index} {field_name} does not exist: {resolved_path}",

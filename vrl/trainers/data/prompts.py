@@ -5,8 +5,8 @@ from __future__ import annotations
 import io
 import json
 import random
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, fields, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,7 +17,7 @@ from torch.utils.data import Dataset
 
 from vrl.config.data import manifest_sources
 from vrl.generation import GenerationInput
-from vrl.utils.artifacts import resolve_artifact_path
+from vrl.utils.artifacts import RootedPaths, user_path
 
 
 @dataclass
@@ -73,35 +73,23 @@ class PromptExample:
             metadata["target_video"] = self.target_video
         return metadata
 
-    def with_resolved_artifacts(
-        self,
-        fields: Sequence[str],
-        *,
-        data_root: str | Path | None = None,
-        allow_absolute: bool = False,
-    ) -> PromptExample:
-        """A copy with the named artifact fields resolved under the data root.
+    def with_resolved_references(self, roots: RootedPaths) -> PromptExample:
+        """A copy with the reference video and images resolved through ``roots``.
 
-        Online loading passes ``REFERENCE_FIELDS`` only: the clean targets stay
-        manifest-relative for the whole run (see the field comment above).
-        ``encode_targets`` passes ``ARTIFACT_FIELDS`` because it reads the
-        target files themselves.
+        Only the references: the clean targets stay manifest-relative for the
+        whole run (see the field comment above); a tool that reads a target
+        file resolves that one path itself with ``roots.resolve``.
         """
 
         def resolve(raw: str) -> str:
-            return str(
-                resolve_artifact_path(raw, data_root=data_root, allow_absolute=allow_absolute)
-            )
+            return str(roots.resolve(raw))
 
-        changes: dict[str, Any] = {}
-        for name in fields:
-            value = getattr(self, name)
-            if isinstance(value, list):
-                changes[name] = [resolve(item) for item in value]
-            else:
-                text = str(value or "").strip()
-                changes[name] = resolve(text) if text else None
-        return replace(self, **changes)
+        reference_video = str(self.reference_video or "").strip()
+        return replace(
+            self,
+            reference_video=resolve(reference_video) if reference_video else None,
+            reference_images=[resolve(item) for item in self.reference_images],
+        )
 
     def with_required_reference_images(
         self,
@@ -112,7 +100,7 @@ class PromptExample:
     ) -> PromptExample:
         """A copy whose reference images are required and present.
 
-        Runs after ``with_resolved_artifacts(REFERENCE_FIELDS)``, so the row's own paths are
+        Runs after ``with_resolved_references``, so the row's own paths are
         already absolute under the data root and are only checked here. A row
         without ``reference_images`` takes ``default_reference_image`` (the
         recipe's ``data.preprocessing.reference_image``, a config path) as its
@@ -122,7 +110,7 @@ class PromptExample:
         images = list(self.reference_images)
         default_text = str(default_reference_image or "").strip()
         if not images and default_text:
-            default_path = Path(default_text).expanduser().resolve()
+            default_path = user_path(default_text)
             if not default_path.exists():
                 raise FileNotFoundError(
                     f"data.preprocessing.reference_image does not exist: {default_path}",
@@ -138,12 +126,6 @@ class PromptExample:
                     f"{manifest}: row {row_index} reference image does not exist: {image}",
                 )
         return replace(self, reference_images=images)
-
-
-# Every field tagged metadata={"artifact": True}: a manifest path under the data root.
-ARTIFACT_FIELDS = tuple(f.name for f in fields(PromptExample) if f.metadata.get("artifact"))
-# The subset online loading resolves; clean targets keep their manifest identity.
-REFERENCE_FIELDS = ("reference_video", "reference_images")
 
 
 def load_prompt_dataset_index(path: str | Path) -> list[PromptExample]:

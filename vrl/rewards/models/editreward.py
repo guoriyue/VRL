@@ -15,7 +15,7 @@ from typing import Any
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import LazyTorchModule
 from vrl.rewards.models.media import artifact_middle_frame_image
-from vrl.utils.artifacts import resolve_artifact_path
+from vrl.utils.artifacts import RootedPaths, user_path
 
 
 class EditRewardModel(LazyTorchModule):
@@ -23,13 +23,14 @@ class EditRewardModel(LazyTorchModule):
         super().__init__()
         self.config = dict(worker_config)
         self.device = str(self.config.get("device", "cuda"))
-        self.data_root = Path(self.config["data_root"]).expanduser().resolve()
+        self.roots = RootedPaths.data_root(self.config["data_root"], allow_absolute=True)
 
     def _load_module(self) -> Any:
         import yaml
-        from huggingface_hub import snapshot_download
 
-        upstream = Path(self.config["upstream_root"]).expanduser().resolve()
+        from vrl.utils.hf_hub import HuggingFaceRepoRevision
+
+        upstream = user_path(self.config["upstream_root"])
         if str(upstream) not in sys.path:
             sys.path.insert(0, str(upstream))
         from EditReward import EditRewardInferencer
@@ -38,15 +39,15 @@ class EditRewardModel(LazyTorchModule):
             (upstream / "EditReward/config/EditReward-Qwen2.5-7B-VL.yaml").read_text()
         )
         config["disable_flash_attn2"] = True
-        config["model_name_or_path"] = snapshot_download(
-            self.config["base_model"],
-            revision=self.config["base_revision"],
-            local_files_only=True,
+        config["model_name_or_path"] = str(
+            HuggingFaceRepoRevision(
+                self.config["base_model"], self.config["base_revision"]
+            ).download(local_files_only=True),
         )
-        checkpoint = snapshot_download(
-            self.config["reward_model_name"],
-            revision=self.config["revision"],
-            local_files_only=True,
+        checkpoint = str(
+            HuggingFaceRepoRevision(
+                self.config["reward_model_name"], self.config["revision"]
+            ).download(local_files_only=True),
         )
         with tempfile.TemporaryDirectory(prefix="vrl-editreward-config-") as directory:
             config["output_dir"] = directory
@@ -70,9 +71,7 @@ class EditRewardModel(LazyTorchModule):
         reference = references[0]
         if not isinstance(reference, str) or not reference or not artifact.prompt.strip():
             raise ValueError("EditReward requires a reference image and a non-empty instruction")
-        source_path = resolve_artifact_path(
-            reference, data_root=self.data_root, allow_absolute=True
-        )
+        source_path = self.roots.resolve(reference)
         image = artifact_middle_frame_image(artifact)
         with Image.open(source_path) as original:
             rgba = original.convert("RGBA")

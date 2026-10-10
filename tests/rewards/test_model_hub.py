@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from vrl.rewards.models.hub import HuggingFaceRepoRevision
+from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
 
 @pytest.mark.parametrize(
@@ -37,7 +37,7 @@ def test_resolve_model_root_uses_shared_repo_revision_parser(
 ) -> None:
     """Checks the shared resolver passes parsed repo id, revision, and offline flag."""
 
-    from vrl.rewards.models.hub import resolve_model_root
+    from vrl.rewards.models.hub import worker_model_root
 
     captured = {}
 
@@ -47,7 +47,7 @@ def test_resolve_model_root_uses_shared_repo_revision_parser(
 
     monkeypatch.setattr("huggingface_hub.snapshot_download", _fake_snapshot_download)
 
-    resolved = resolve_model_root(
+    resolved = worker_model_root(
         {
             "reward_model_name": "videophysics/videocon_physics@paper-rev",
             "local_files_only": True,

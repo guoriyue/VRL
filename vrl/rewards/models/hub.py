@@ -1,6 +1,6 @@
 """Shared helpers for locating and loading reward-model checkpoints.
 
-Model references (``repo_id@revision``, local roots) live here, and so does
+A judge's checkpoint directory (``worker_model_root``) lives here, and so does
 :func:`relocate_checkpoint_keys`: the reward loaders build a Qwen2-VL model
 with ``from_pretrained`` and then overlay a fine-tuned state dict with
 ``load_state_dict(strict=True)`` (after resizing embeddings or wrapping in
@@ -14,70 +14,36 @@ overlay runs their keys through the model's own conversion mapping first.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
-@dataclass(frozen=True, slots=True)
-class HuggingFaceRepoRevision:
-    """Parsed ``repo_id@revision`` model reference."""
-
-    repo_id: str
-    revision: str
-
-    @classmethod
-    def parse(cls, model_reference: str) -> HuggingFaceRepoRevision:
-        """Parse ``repo_id@revision`` with a default revision for bare repo ids."""
-
-        text = str(model_reference).strip()
-        repo_id, separator, revision = text.rpartition("@")
-        if not separator:
-            repo_id = text
-            revision = "main"
-        else:
-            repo_id = repo_id.strip()
-            revision = revision.strip() or "main"
-        if not repo_id:
-            raise ValueError("Hugging Face model reference must include a repo id")
-        return cls(repo_id=repo_id, revision=str(revision))
+from vrl.utils.artifacts import user_path
+from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
 
-def resolve_model_root(
+def worker_model_root(
     worker_config: Mapping[str, Any],
     *,
     default_model: str,
     family: str,
 ) -> Path:
-    """Return a local checkpoint dir: ``model_path`` if set, else snapshot_download.
+    """A judge's checkpoint directory from its ``worker_config``.
 
-    Shared by the reward judges that wrap ready public models (
-    unified_reward_video, videocon_physics). Kling keeps its
-    own resolver: it pins a revision, wraps download failures in a RuntimeError
-    with recovery hints, and validates the checkpoint layout.
+    ``model_path`` names a local directory; otherwise ``reward_model_name``
+    (``repo_id@revision``, ``default_model`` when absent) is fetched into the
+    Hugging Face cache. ``family`` only names the judge in errors.
     """
 
     model_path = str(worker_config.get("model_path", "")).strip()
     if model_path:
-        root = Path(model_path).expanduser().resolve()
+        root = user_path(model_path)
         if not root.exists():
             raise FileNotFoundError(f"{family} model_path missing: {root}")
         return root
-
     reward_model_name = str(worker_config.get("reward_model_name", "")).strip()
-    if not reward_model_name:
-        reward_model_name = default_model
-    model_ref = HuggingFaceRepoRevision.parse(reward_model_name)
-
-    from huggingface_hub import snapshot_download
-
-    return Path(
-        snapshot_download(
-            repo_id=model_ref.repo_id,
-            revision=model_ref.revision,
-            local_files_only=bool(worker_config.get("local_files_only", False)),
-        ),
-    ).resolve()
+    return HuggingFaceRepoRevision.parse(reward_model_name or default_model).download(
+        local_files_only=bool(worker_config.get("local_files_only", False)),
+    )
 
 
 def relocate_checkpoint_keys(model: Any, state: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -134,7 +100,6 @@ def relocate_checkpoint_keys(model: Any, state: Mapping[str, Any]) -> Mapping[st
 
 
 __all__ = [
-    "HuggingFaceRepoRevision",
     "relocate_checkpoint_keys",
-    "resolve_model_root",
+    "worker_model_root",
 ]

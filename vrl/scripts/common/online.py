@@ -50,7 +50,7 @@ from vrl.trainers.checkpointing import (
     validate_rng_state,
 )
 from vrl.trainers.data.prompt_sampler import PromptBatchSampler
-from vrl.trainers.data.prompts import REFERENCE_FIELDS, load_prompt_examples_from_config
+from vrl.trainers.data.prompts import load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, run_on_primary_rank
 from vrl.trainers.metrics_io import OnlineMetricsCSV
 from vrl.trainers.online.config import OnlineBatchPlan
@@ -62,6 +62,7 @@ from vrl.trainers.online.trainer import (
 from vrl.trainers.strategy import Strategy, build_strategy
 from vrl.trainers.trace import TrainingRunTrace
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
+from vrl.utils.artifacts import RootedPaths
 from vrl.utils.memory import HostMemoryMonitor
 from vrl.utils.profiling import profile_range
 
@@ -833,14 +834,14 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             )
 
     examples = load_prompt_examples_from_config(data_config)
-    artifact_data_root = data_config.artifact_data_root if data_config is not None else None
+    roots = RootedPaths.data_root(
+        data_config.artifact_data_root if data_config is not None else None, allow_absolute=True
+    )
     # An owned collection (see ``OwnedCollection``) resolved its own paths.
     examples = [
         example
         if isinstance(example, OwnedCollection)
-        else example.with_resolved_artifacts(
-            REFERENCE_FIELDS, data_root=artifact_data_root, allow_absolute=True
-        )
+        else example.with_resolved_references(roots)
         for example in examples
     ]
     if family_entry.task in {"i2v", "v2w"}:

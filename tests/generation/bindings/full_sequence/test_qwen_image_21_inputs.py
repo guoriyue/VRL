@@ -12,7 +12,8 @@ from vrl.models.families.qwen_image_21.runtime import QwenImage21BatchExecutor
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
-from vrl.trainers.data.prompts import REFERENCE_FIELDS, prompt_example_from_row
+from vrl.trainers.data.prompts import prompt_example_from_row
+from vrl.utils.artifacts import RootedPaths
 
 
 def test_manifest_references_reach_encoder_in_order_with_alpha(tmp_path) -> None:
@@ -23,8 +24,8 @@ def test_manifest_references_reach_encoder_in_order_with_alpha(tmp_path) -> None
         "reference_images": ["source.png", "leaf.png"],
         "request_overrides": {"output_mode": "rgba", "reference_resolution": 512},
     }
-    example = prompt_example_from_row(row, context="row").with_resolved_artifacts(
-        REFERENCE_FIELDS, data_root=tmp_path
+    example = prompt_example_from_row(row, context="row").with_resolved_references(
+        RootedPaths.data_root(tmp_path)
     )
     built = GenerationRequestBuilder(
         entry=get_model_family_entry("qwen_image_21"),

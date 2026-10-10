@@ -15,9 +15,9 @@ import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from typing import Any
 
+from vrl.utils.artifacts import user_path
 from vrl.utils.media_reference import MediaReference
 from vrl.utils.validation import require_int
 
@@ -146,7 +146,7 @@ class RewardInferenceArtifact:
                 f"{family} requires a prompt for artifact {self.artifact_id!r}; "
                 "artifact.prompt must be a non-empty string",
             )
-        video_path = str(Path(self.as_path()).expanduser().resolve())
+        video_path = str(user_path(self.as_path()))
         return prompt, video_path
 
 

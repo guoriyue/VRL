@@ -33,6 +33,7 @@ from vrl.trainers.checkpointing import (
     read_checkpoint_meta,
 )
 from vrl.trainers.data.prompts import load_prompt_dataset_index
+from vrl.utils.artifacts import user_path
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import write_json, write_jsonl
 from vrl.utils.media import write_mp4
@@ -165,7 +166,7 @@ def main(argv: list[str] | None = None) -> None:
             family=entry.family,
             expected_model_identity=model_identity,
         )
-    output_dir = Path(args.output_dir).expanduser().resolve()
+    output_dir = user_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     run_config = {

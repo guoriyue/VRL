@@ -38,16 +38,12 @@ def download_metadata_file(
     filename: str = DANBOORU_METADATA_FILE,
     cache_dir: str | Path | None = None,
 ) -> str:
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as exc:
-        raise RuntimeError("huggingface_hub is required to download Danbooru metadata") from exc
+    from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
-    return hf_hub_download(
-        repo_id=repo_id,
-        filename=filename,
-        repo_type="dataset",
-        cache_dir=str(Path(cache_dir).expanduser()) if cache_dir else None,
+    return str(
+        HuggingFaceRepoRevision(repo_id, "main").download_file(
+            filename, repo_type="dataset", cache_dir=cache_dir or None
+        ),
     )
 
 

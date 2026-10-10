@@ -21,7 +21,7 @@ from omegaconf import DictConfig
 
 from vrl.config.schema import RootConfig, parse_config
 from vrl.trainers.data.prompts import load_prompt_dataset_index
-from vrl.utils.artifacts import sha256_file
+from vrl.utils.artifacts import sha256_file, user_path
 from vrl.utils.json_files import write_json, write_jsonl
 
 # Report format and file names are shared by the producer and reader.
@@ -95,12 +95,8 @@ def resolve_protocol_manifests(root: RootConfig) -> tuple[Path, Path, list[str]]
     """Resolve the configured train/evaluation split and reject leakage."""
 
     data = root.data
-    training_path = (
-        Path(str((data.manifest if data is not None else None) or "")).expanduser().resolve()
-    )
-    eval_path = (
-        Path(str((data.eval_manifest if data is not None else None) or "")).expanduser().resolve()
-    )
+    training_path = user_path(str((data.manifest if data is not None else None) or ""))
+    eval_path = user_path(str((data.eval_manifest if data is not None else None) or ""))
     for label, path in (("training", training_path), ("evaluation", eval_path)):
         if not path.is_file():
             raise FileNotFoundError(f"SANA {label} manifest does not exist: {path}")
@@ -300,7 +296,7 @@ def checkpoint_curve_epochs(
 def load_report_metrics(run_dir: str | Path) -> list[dict[str, float]]:
     """Load the metric rows of one standalone evaluation report."""
 
-    report_path = Path(run_dir).expanduser().resolve() / REPORT_RELATIVE_PATH
+    report_path = user_path(run_dir) / REPORT_RELATIVE_PATH
     raw = json.loads(report_path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict) or raw.get("schema") != REPORT_SCHEMA:
         raise ValueError(

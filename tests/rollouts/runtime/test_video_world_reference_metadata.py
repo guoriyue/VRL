@@ -6,10 +6,9 @@ from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trainers.data.prompts import (
-    ARTIFACT_FIELDS,
-    REFERENCE_FIELDS,
     load_prompt_dataset_index,
 )
+from vrl.utils.artifacts import RootedPaths
 
 
 def _write_reference_manifest(root: Path) -> Path:
@@ -34,8 +33,8 @@ def test_resolved_reference_image_flows_to_collector_metadata(tmp_path: Path) ->
     input and the collector metadata.
     """
     manifest = _write_reference_manifest(tmp_path)
-    example = load_prompt_dataset_index(manifest)[0].with_resolved_artifacts(
-        ARTIFACT_FIELDS, data_root=tmp_path
+    example = load_prompt_dataset_index(manifest)[0].with_resolved_references(
+        RootedPaths.data_root(tmp_path)
     )
     builder = GenerationRequestBuilder(
         entry=get_model_family_entry("cosmos-predict2"),
@@ -59,7 +58,7 @@ def test_cosmos_per_sample_reference_uses_vrl_data_root(monkeypatch, tmp_path: P
     # Production sequence: run_online_recipe resolves reference paths at load
     # time, then required-image resolution fills defaults and checks existence.
     examples = [
-        example.with_resolved_artifacts(REFERENCE_FIELDS, allow_absolute=True)
+        example.with_resolved_references(RootedPaths.data_root(allow_absolute=True))
         for example in load_prompt_dataset_index(manifest)
     ]
     examples = [
@@ -77,7 +76,7 @@ def test_cosmos_per_sample_reference_uses_artifact_data_root(tmp_path: Path) -> 
     """Checks cosmos per_sample references resolve under data.artifact_data_root."""
     manifest = _write_reference_manifest(tmp_path)
     examples = [
-        example.with_resolved_artifacts(REFERENCE_FIELDS, data_root=tmp_path, allow_absolute=True)
+        example.with_resolved_references(RootedPaths.data_root(tmp_path, allow_absolute=True))
         for example in load_prompt_dataset_index(manifest)
     ]
     examples = [

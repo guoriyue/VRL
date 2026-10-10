@@ -22,7 +22,6 @@ Public score keys: ``alignment`` / ``physics`` / ``style`` / ``overall`` (mean).
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 import torch
@@ -33,12 +32,11 @@ from vrl.rewards.assets.video_judge_prompts import (
     UNIFIED_REWARD_VIDEO_PROBLEM_TEMPLATE,
 )
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.hub import resolve_model_root
+from vrl.rewards.models.hub import worker_model_root
+from vrl.utils.artifacts import user_path
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
-
-_DEFAULT_REWARD_MODEL = "CodeGoat24/UnifiedReward-2.0-qwen-7b"
 
 
 class UnifiedRewardVideoModel:
@@ -48,9 +46,10 @@ class UnifiedRewardVideoModel:
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)
-        self.model_root = resolve_model_root(
+        self.local_files_only = bool(self.worker_config.get("local_files_only", False))
+        self.model_root = worker_model_root(
             self.worker_config,
-            default_model=_DEFAULT_REWARD_MODEL,
+            default_model="CodeGoat24/UnifiedReward-2.0-qwen-7b",
             family="UnifiedReward-2.0",
         )
         self.dtype = resolve_torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
@@ -59,7 +58,6 @@ class UnifiedRewardVideoModel:
         self.max_new_tokens = int(
             self.worker_config.get("max_new_tokens", 256),
         )
-        self.local_files_only = bool(self.worker_config.get("local_files_only", False))
         self.problem_template = _load_rubric(
             str(self.worker_config.get("rubric_path", "")).strip(),
         )
@@ -170,7 +168,7 @@ def _load_rubric(rubric_path: str) -> str:
         return UNIFIED_REWARD_VIDEO_PROBLEM_TEMPLATE
     from omegaconf import OmegaConf
 
-    rubric = OmegaConf.load(Path(rubric_path).expanduser().resolve())
+    rubric = OmegaConf.load(user_path(rubric_path))
     template = str(OmegaConf.select(rubric, "problem_template", default="")).strip()
     if not template:
         raise ValueError(f"rubric {rubric_path!r} has no non-empty 'problem_template'")

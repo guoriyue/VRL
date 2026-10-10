@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from vrl.utils.artifacts import atomic_file
+from vrl.utils.artifacts import atomic_file, user_path
 
 if TYPE_CHECKING:
     from vrl.trainers.data.prompts import PromptExample
@@ -92,7 +92,7 @@ def save_sft_latents(
     if any(not isinstance(target, str) or not target.strip() for target in latents_by_target):
         raise ValueError("sft-latents target keys must be non-empty strings")
     # Preserve writing through an existing symlink when publishing by replacement.
-    out = Path(path).expanduser().resolve()
+    out = user_path(path)
     payload = {
         "schema_version": SFT_LATENTS_SCHEMA_VERSION,
         "family": str(family),
@@ -115,7 +115,7 @@ def load_sft_latents(
 
     import torch
 
-    shard_path = Path(path).expanduser()
+    shard_path = user_path(path)
     if not shard_path.exists():
         raise FileNotFoundError(
             f"data.sft_latents shard not found: {shard_path} "

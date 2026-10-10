@@ -24,16 +24,15 @@ from vrl.rewards.assets.kling_prompt_templates import (
     build_kling_video_reward_prompt,
 )
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.hub import (
-    HuggingFaceRepoRevision,
-    relocate_checkpoint_keys,
-)
+from vrl.rewards.models.hub import relocate_checkpoint_keys, worker_model_root
+from vrl.utils.hf_hub import HuggingFaceRepoRevision
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
 
-_SPECIAL_TOKENS = ["<|VQ_reward|>", "<|MQ_reward|>", "<|TA_reward|>"]
 _DEFAULT_REWARD_MODEL = "KlingTeam/VideoReward"
+
+_SPECIAL_TOKENS = ["<|VQ_reward|>", "<|MQ_reward|>", "<|TA_reward|>"]
 _SCORE_KEY_MAP = {
     "overall_reward": "Overall",
     "visual_quality": "VQ",
@@ -137,19 +136,22 @@ class KlingVideoRewardModel:
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)
-        self.reward_model_name = str(
-            self.worker_config.get("reward_model_name", ""),
-        ).strip()
         self.local_files_only = bool(self.worker_config.get("local_files_only", False))
-        logger.info(
-            "resolving Kling VideoReward root %s",
-            kv(
-                reward_model_name=self.reward_model_name,
-                model_path=str(self.worker_config.get("model_path", "")).strip(),
-                local_files_only=self.local_files_only,
+        if not str(self.worker_config.get("model_path", "")).strip():
+            reward_model_name = str(self.worker_config.get("reward_model_name", "")).strip()
+            if not reward_model_name:
+                raise ValueError("Kling VideoReward requires worker_config.reward_model_name")
+            repo_id = HuggingFaceRepoRevision.parse(reward_model_name).repo_id
+            if repo_id != _DEFAULT_REWARD_MODEL:
+                raise ValueError(
+                    "Kling VideoReward loader currently supports only "
+                    f"{_DEFAULT_REWARD_MODEL!r}, got {repo_id!r}",
+                )
+        self.model_root = _checkpoint_root(
+            worker_model_root(
+                self.worker_config, default_model=_DEFAULT_REWARD_MODEL, family="Kling VideoReward"
             ),
         )
-        self.model_root = _resolve_model_root(self.worker_config)
         self.dtype = _torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
         self.device = str(self.worker_config.get("device", "cuda:0"))
         self.use_norm = bool(self.worker_config.get("use_norm", True))
@@ -476,48 +478,19 @@ def load_kling_video_reward_checkpoint(
     return model, resolved_step
 
 
-def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
-    model_path = str(worker_config.get("model_path", "")).strip()
-    if model_path:
-        root = Path(model_path).expanduser().resolve()
-    else:
-        reward_model_name = str(
-            worker_config.get("reward_model_name", ""),
-        ).strip()
-        if not reward_model_name:
-            raise ValueError("Kling VideoReward requires worker_config.reward_model_name")
-        model_ref = HuggingFaceRepoRevision.parse(reward_model_name)
-        if model_ref.repo_id != _DEFAULT_REWARD_MODEL:
-            raise ValueError(
-                "Kling VideoReward loader currently supports only "
-                f"{_DEFAULT_REWARD_MODEL!r}, got {model_ref.repo_id!r}",
-            )
-        from huggingface_hub import snapshot_download
+def _checkpoint_root(root: Path) -> Path:
+    """The repo root that holds ``model_config.json`` and a ``checkpoint-*`` subdirectory.
 
-        local_files_only = bool(worker_config.get("local_files_only", False))
-        try:
-            root = Path(
-                snapshot_download(
-                    repo_id=model_ref.repo_id,
-                    revision=model_ref.revision,
-                    local_files_only=local_files_only,
-                ),
-            ).resolve()
-        except Exception as exc:
-            mode = "local cache" if local_files_only else "Hugging Face download"
-            raise RuntimeError(
-                f"Failed to resolve Kling VideoReward model root from {mode}: "
-                f"repo_id={model_ref.repo_id!r} revision={model_ref.revision!r}. Set "
-                "reward.kwargs.kling_video_reward.worker_config.model_path to a "
-                "local snapshot path, or pre-download the model cache before training.",
-            ) from exc
+    A ``model_path`` pointing at the ``checkpoint-*`` subdirectory resolves up
+    to its parent.
+    """
 
-    if not (root / "model_config.json").exists():
-        parent = root.parent
-        if root.name.startswith("checkpoint-") and (parent / "model_config.json").exists():
-            root = parent
-    if not root.exists():
-        raise FileNotFoundError(f"Kling VideoReward model path does not exist: {root}")
+    if (
+        not (root / "model_config.json").exists()
+        and root.name.startswith("checkpoint-")
+        and (root.parent / "model_config.json").exists()
+    ):
+        root = root.parent
     if not (root / "model_config.json").exists():
         raise FileNotFoundError(
             f"Kling VideoReward model root must contain model_config.json: {root}",

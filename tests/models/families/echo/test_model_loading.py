@@ -88,7 +88,7 @@ def test_echo_rollout_checkpoint_uses_optional_model_revision(
     calls: list[dict[str, Any]] = []
 
     def fake_hub_download(repo_id: str, filename: str, **kwargs: Any) -> str:
-        calls.append({"repo_id": repo_id, "filename": filename, **kwargs})
+        calls.append({"repo_id": repo_id, "filename": filename, "revision": kwargs["revision"]})
         return "/cache/echo.safetensors"
 
     import huggingface_hub
@@ -101,8 +101,7 @@ def test_echo_rollout_checkpoint_uses_optional_model_revision(
         "repo_id": "jdopensource/JoyAI-Echo",
         "filename": "JoyAI-Echo-release.safetensors",
     }
-    if revision is not None:
-        expected["revision"] = revision
+    expected["revision"] = revision or "main"
     assert calls == [expected]
     assert wrapper_calls[0]["video_height"] == 64
     assert wrapper_calls[0]["video_width"] == 64
@@ -124,7 +123,7 @@ def test_echo_replay_checkpoint_uses_optional_model_revision(
     calls: list[dict[str, Any]] = []
 
     def fake_hub_download(repo_id: str, filename: str, **kwargs: Any) -> str:
-        calls.append({"repo_id": repo_id, "filename": filename, **kwargs})
+        calls.append({"repo_id": repo_id, "filename": filename, "revision": kwargs["revision"]})
         return "/cache/echo.safetensors"
 
     import huggingface_hub
@@ -144,8 +143,7 @@ def test_echo_replay_checkpoint_uses_optional_model_revision(
         "repo_id": "jdopensource/JoyAI-Echo",
         "filename": "JoyAI-Echo-release.safetensors",
     }
-    if revision is not None:
-        expected["revision"] = revision
+    expected["revision"] = revision or "main"
     assert calls == [expected]
     assert wrapper_calls[0]["video_height"] == 64
     assert wrapper_calls[0]["video_width"] == 64
@@ -201,7 +199,4 @@ def test_echo_gemma_uses_its_own_optional_revision(
 
     assert _resolve_gemma_dir("google/gemma-3-12b-it", revision=revision) == "/cache/gemma"
     assert calls[0]["repo_id"] == "google/gemma-3-12b-it"
-    if revision is None:
-        assert "revision" not in calls[0]
-    else:
-        assert calls[0]["revision"] == revision
+    assert calls[0]["revision"] == (revision or "main")

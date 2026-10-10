@@ -8,12 +8,12 @@ from silently drifting back to the training sampler.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import torch
 
 from vrl.models.interfaces.runtime import ModelBuild
+from vrl.utils.artifacts import user_path
 from vrl.utils.media import to_pil_image
 from vrl.utils.validation import require_int
 
@@ -48,7 +48,7 @@ def load_official_scheduler(build: ModelBuild) -> Any:
         "subfolder": "scheduler",
         **build.revision_kwargs,
     }
-    if Path(str(build.model_name_or_path)).expanduser().is_dir():
+    if user_path(str(build.model_name_or_path)).is_dir():
         kwargs["local_files_only"] = True
     scheduler = DPMSolverMultistepScheduler.from_pretrained(
         build.model_name_or_path,

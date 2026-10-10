@@ -59,36 +59,29 @@ def _resolve_echo_checkpoint(
 
     if Path(path_or_repo).is_file():
         return path_or_repo
-    from huggingface_hub import hf_hub_download
+    from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
     # The single merged release artifact (transformer + VAEs + vocoder).
-    load_kwargs = {"revision": revision} if revision else {}
-    return hf_hub_download(
-        path_or_repo,
-        "JoyAI-Echo-release.safetensors",
-        **load_kwargs,
+    return str(
+        HuggingFaceRepoRevision(path_or_repo, revision or "main").download_file(
+            "JoyAI-Echo-release.safetensors"
+        ),
     )
 
 
-def _resolve_gemma_dir(
-    path_or_repo: str,
-    *,
-    revision: str | None = None,
-) -> str:
+def _resolve_gemma_dir(path_or_repo: str, *, revision: str | None = None) -> str:
     """Local dir of the Gemma encoder, fetched into the HF cache if a repo id."""
 
     from pathlib import Path
 
     if Path(path_or_repo).is_dir():
         return path_or_repo
-    from huggingface_hub import snapshot_download
+    from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
-    load_kwargs = {"revision": revision} if revision else {}
-    return snapshot_download(
-        repo_id=path_or_repo,
+    snapshot = HuggingFaceRepoRevision(path_or_repo, revision or "main").download(
         allow_patterns=["*.safetensors", "*.json", "*.model", "tokenizer*", "*.txt"],
-        **load_kwargs,
     )
+    return str(snapshot)
 
 
 @dataclass

@@ -41,7 +41,7 @@ from vrl.trainers.checkpointing import (
     load_resolved_run_config,
 )
 from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
-from vrl.utils.artifacts import resolve_artifact_path, sha256_file
+from vrl.utils.artifacts import RootedPaths, sha256_file, user_path
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import (
     canonical_json_sha256,
@@ -189,7 +189,7 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
     )
     protocol_sha256 = _json_sha256(protocol)
 
-    output_dir = args.output_dir.expanduser().resolve()
+    output_dir = user_path(args.output_dir)
     generation_root = output_dir / "generation"
     final_dir = generation_root / target.label
     if final_dir.exists():
@@ -327,7 +327,7 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
     if "base" not in labels:
         raise ValueError("paired checkpoint scoring requires the base shard")
 
-    output_dir = args.output_dir.expanduser().resolve()
+    output_dir = user_path(args.output_dir)
     scoring_dir = output_dir / "scoring"
     if scoring_dir.exists():
         raise FileExistsError(f"evaluation scoring output already exists: {scoring_dir}")
@@ -346,9 +346,7 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
     worker_config = RewardRuntimeConfig.from_cfg(cfg).worker_config("robotics_video_reward")
     worker_config["device"] = str(device)
     worker_config["data_root"] = str(
-        Path(str(worker_config.get("data_root") or cfg.data.artifact_data_root))
-        .expanduser()
-        .resolve(),
+        user_path(str(worker_config.get("data_root") or cfg.data.artifact_data_root)),
     )
     logger.info("Loading robotics reward to score %d fixed artifacts", len(artifacts))
     model = RoboticsVideoRewardModel(worker_config)
@@ -401,7 +399,7 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _load_run(run_dir_arg: Path) -> tuple[Path, DictConfig, Path]:
-    run_dir = run_dir_arg.expanduser().resolve()
+    run_dir = user_path(run_dir_arg)
     cfg, root = load_resolved_run_config(run_dir)
     if root.model is None:
         raise ValueError("training run config has no model section")
@@ -452,8 +450,8 @@ def _build_protocol(
     root = parse_config(cfg)
     if root.data is None or root.model is None:
         raise ValueError("training run config needs data and model sections")
-    train_path = Path(str(root.data.manifest)).expanduser().resolve()
-    eval_path = Path(str(root.data.eval_manifest)).expanduser().resolve()
+    train_path = user_path(str(root.data.manifest))
+    eval_path = user_path(str(root.data.eval_manifest))
     train_examples = load_prompt_dataset_index(train_path)
     eval_examples = load_prompt_dataset_index(eval_path)
     selected = select_strict_examples(train_examples, eval_examples, limit=limit)
@@ -649,13 +647,11 @@ def _build_scoring_artifacts(
         rows.append(dict(row))
 
     if include_reference_targets:
-        data_root = Path(str(cfg.data.artifact_data_root)).expanduser().resolve()
+        data_root = user_path(str(cfg.data.artifact_data_root))
         for selected in protocol["selected_examples"]:
             target_video = str(selected["target_video"])
-            target_path = resolve_artifact_path(
-                target_video,
-                data_root=data_root,
-                allow_absolute=True,
+            target_path = RootedPaths.data_root(data_root, allow_absolute=True).resolve(
+                target_video
             )
             digest = sha256_file(target_path)
             artifacts.append(

@@ -40,7 +40,7 @@ from typing import Any
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import LazyTorchModule
 from vrl.rewards.models.media import artifact_middle_frame_image
-from vrl.utils.artifacts import default_data_root, resolve_artifact_path
+from vrl.utils.artifacts import RootedPaths
 
 # Appended by the local-edit manifest builder when the reference image carries a
 # drawn red box; stripped again here so the execution judge sees the plain instruction.
@@ -54,7 +54,7 @@ class LocalEditRewardModel(LazyTorchModule):
         super().__init__()
         cfg = dict(worker_config)
         self.device = str(cfg.get("device", "cuda"))
-        self.data_root = str(cfg.get("data_root") or default_data_root())
+        self.roots = RootedPaths.data_root(cfg.get("data_root"), allow_absolute=True)
         self._dino_model = str(cfg.get("dino_model", "facebook/dinov2-large"))
         # Operator-run EditReward service (vrl.rewards.service.server with the
         # editreward model); the execution half of the score comes from it.
@@ -112,9 +112,7 @@ class LocalEditRewardModel(LazyTorchModule):
                 raise ValueError(
                     "local_edit reward needs local_edit.source_image or one reference image"
                 )
-            source_path = resolve_artifact_path(
-                str(source_ref), data_root=self.data_root, allow_absolute=True
-            )
+            source_path = self.roots.resolve(str(source_ref))
             edited = artifact_middle_frame_image(artifact)
             with Image.open(source_path) as image:
                 source = image.convert("RGB").resize(edited.size, Image.Resampling.LANCZOS)

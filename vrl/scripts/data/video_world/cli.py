@@ -8,7 +8,6 @@ from typing import Any
 
 from vrl.scripts.data.common import (
     default_cache_dir,
-    default_data_root,
     emit,
 )
 from vrl.scripts.data.video_world.dataset_index import (
@@ -20,6 +19,7 @@ from vrl.scripts.data.video_world.lerobot import (
     iter_lerobot_target_clips,
 )
 from vrl.trainers.data.artifacts import DatasetFileReport
+from vrl.utils.artifacts import coerce_data_root, user_path
 from vrl.utils.json_files import write_json, write_jsonl
 
 COMMAND_NAME = "video-world-bridge"
@@ -114,7 +114,7 @@ def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
 
 
 def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
-    data_root = args.data_root.expanduser().resolve() if args.data_root else default_data_root()
+    data_root = coerce_data_root(args.data_root)
     video_root = data_root / "video_world"
     manifest_dir = args.manifest_dir or (video_root / "manifests")
     reference_dir = video_root / "references"
@@ -124,7 +124,7 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
         episodes = iter_lerobot_first_frames(
             args.repo_id,
             limit=args.limit,
-            cache_dir=args.cache_dir.expanduser(),
+            cache_dir=user_path(args.cache_dir),
             camera=args.camera,
         )
         rows = build_video_world_rows(
@@ -189,7 +189,7 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
 
 
 def _cmd_video_world_targets(args: argparse.Namespace) -> None:
-    data_root = args.data_root.expanduser().resolve() if args.data_root else default_data_root()
+    data_root = coerce_data_root(args.data_root)
     video_root = data_root / "video_world"
     manifest_dir = args.manifest_dir or (video_root / "manifests")
     reference_dir = video_root / "references"
@@ -200,7 +200,7 @@ def _cmd_video_world_targets(args: argparse.Namespace) -> None:
         episodes = iter_lerobot_target_clips(
             args.repo_id,
             limit=args.limit,
-            cache_dir=args.cache_dir.expanduser(),
+            cache_dir=user_path(args.cache_dir),
             camera=args.camera,
             max_target_frames=args.max_target_frames,
         )

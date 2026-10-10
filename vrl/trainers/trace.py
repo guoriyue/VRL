@@ -21,6 +21,7 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.models.precision import float32_precision_state
+from vrl.utils.artifacts import user_path
 from vrl.utils.json_files import canonical_json_sha256, write_json
 
 # These are file/protocol and environment boundaries, not algorithm vocabulary.
@@ -173,7 +174,7 @@ class TrainingRunTrace:
         paths.extend(data[name] for name in ("eval_manifest", "source_report") if data.get(name))
         records = {}
         for name in dict.fromkeys(paths):
-            path = Path(name).expanduser().resolve()
+            path = user_path(name)
             try:
                 with path.open("rb") as handle:
                     before = os.fstat(handle.fileno())

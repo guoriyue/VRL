@@ -888,9 +888,9 @@ def _resolve_base_model(model_config: Mapping[str, Any]) -> Path:
         raise ValueError(
             "remote CausVid base_model_path requires immutable model.base_model_revision",
         )
-    from huggingface_hub import snapshot_download
+    from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
-    return Path(snapshot_download(repo_id=reference, revision=revision))
+    return HuggingFaceRepoRevision(reference, revision).download()
 
 
 def _resolve_checkpoint(build: ModelBuild) -> Path:
@@ -920,15 +920,9 @@ def _resolve_checkpoint(build: ModelBuild) -> Path:
             raise ValueError(
                 "remote CausVid checkpoint repository requires immutable model.revision",
             )
-        from huggingface_hub import hf_hub_download
+        from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
-        checkpoint = Path(
-            hf_hub_download(
-                repo_id=reference,
-                filename=relative_file,
-                revision=revision,
-            ),
-        )
+        checkpoint = HuggingFaceRepoRevision(reference, revision).download_file(relative_file)
 
     expected_sha = model_config.get("checkpoint_sha256")
     if (

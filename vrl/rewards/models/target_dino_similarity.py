@@ -25,7 +25,6 @@ sprint designs an inverse-dynamics reward in S3 (not shipped).
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 import torch
@@ -33,7 +32,7 @@ import torch
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import LazyTorchModule
 from vrl.rewards.models.media import decode_artifact_frames
-from vrl.utils.artifacts import default_data_root, resolve_artifact_path
+from vrl.utils.artifacts import RootedPaths
 from vrl.utils.media import align_frame_counts, read_image_as_frames, read_video_frames
 
 # ImageNet statistics DINOv2 was trained with; frames are normalized with these
@@ -55,7 +54,9 @@ class TargetDinoSimilarityModel(LazyTorchModule):
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         super().__init__()
         cfg = dict(worker_config)
-        self.data_root = str(cfg.get("data_root") or default_data_root())
+        self.roots = RootedPaths.data_root(
+            cfg.get("data_root"), allow_absolute=bool(cfg.get("allow_absolute_paths", True))
+        )
         self.num_frames = max(1, int(cfg.get("num_frames", 16)))
         # Temporal weight is high on purpose: per-frame cosine alone cannot separate
         # a frozen / temporal-mean clip from the real one (same scene -> ~0.76 cosine),
@@ -65,7 +66,6 @@ class TargetDinoSimilarityModel(LazyTorchModule):
         self.sequence_weight = float(cfg.get("sequence_weight", 0.4))
         self.final_weight = float(cfg.get("final_weight", 0.2))
         self.temporal_weight = float(cfg.get("temporal_weight", 0.4))
-        self.allow_absolute_paths = bool(cfg.get("allow_absolute_paths", True))
         self.hub_repo = str(cfg.get("dino_hub_repo", "facebookresearch/dinov2"))
         self.hub_model = str(cfg.get("dino_hub_model", "dinov2_vits14"))
         requested = str(cfg.get("device", "")).strip()
@@ -93,9 +93,9 @@ class TargetDinoSimilarityModel(LazyTorchModule):
 
         generated = decode_artifact_frames(artifact, self.num_frames)
         target = (
-            read_video_frames(self._resolve(target_video), self.num_frames)
+            read_video_frames(self.roots.resolve(target_video), self.num_frames)
             if target_video
-            else read_image_as_frames(self._resolve(target_image))
+            else read_image_as_frames(self.roots.resolve(target_image))
         )
         if target.shape[0] == 1 and generated.shape[0] > 1:
             target = target.expand(generated.shape[0], -1, -1, -1)
@@ -145,13 +145,6 @@ class TargetDinoSimilarityModel(LazyTorchModule):
         normalized = (nchw - mean) / std
         features = self._module_for_inference()(normalized)
         return torch.nn.functional.normalize(features.float(), dim=-1)
-
-    def _resolve(self, raw_path: str) -> Path:
-        return resolve_artifact_path(
-            raw_path,
-            data_root=self.data_root,
-            allow_absolute=self.allow_absolute_paths,
-        )
 
 
 def _mean_cosine(a: torch.Tensor, b: torch.Tensor) -> float:

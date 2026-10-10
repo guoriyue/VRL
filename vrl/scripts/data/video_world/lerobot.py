@@ -36,10 +36,12 @@ def iter_lerobot_first_frames(
 
     import json
 
-    from huggingface_hub import hf_hub_download
+    from vrl.utils.hf_hub import HuggingFaceRepoRevision
+
+    repo = HuggingFaceRepoRevision(repo_id, "main")
 
     def _dl(rel: str) -> str:
-        return hf_hub_download(repo_id, rel, repo_type="dataset", cache_dir=str(cache_dir))
+        return str(repo.download_file(rel, repo_type="dataset", cache_dir=cache_dir))
 
     info = json.loads(Path(_dl("meta/info.json")).read_text(encoding="utf-8"))
     features = list(info.get("features", {}).keys())
@@ -69,13 +71,15 @@ def iter_lerobot_target_clips(
 
     import json
 
-    from huggingface_hub import hf_hub_download
+    from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
     if max_target_frames <= 0:
         raise ValueError("--max-target-frames must be positive")
 
+    repo = HuggingFaceRepoRevision(repo_id, "main")
+
     def _dl(rel: str) -> str:
-        return hf_hub_download(repo_id, rel, repo_type="dataset", cache_dir=str(cache_dir))
+        return str(repo.download_file(rel, repo_type="dataset", cache_dir=cache_dir))
 
     info = json.loads(Path(_dl("meta/info.json")).read_text(encoding="utf-8"))
     features = list(info.get("features", {}).keys())

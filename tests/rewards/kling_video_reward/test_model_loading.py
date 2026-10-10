@@ -39,12 +39,19 @@ def test_kling_video_reward_snapshot_root_keeps_model_config_at_repo_root(
     """A hub ``reward_model_name`` resolves through ``snapshot_download`` to the snapshot root,
     where ``model_config.json`` lives.
     """
-    from vrl.rewards.models.kling_video_reward import _resolve_model_root
+    from vrl.rewards.models.hub import worker_model_root
+    from vrl.rewards.models.kling_video_reward import _checkpoint_root
 
     root = _video_reward_root(tmp_path)
     monkeypatch.setattr("huggingface_hub.snapshot_download", lambda **kwargs: str(root))
 
-    resolved = _resolve_model_root({"reward_model_name": "KlingTeam/VideoReward@main"})
+    resolved = _checkpoint_root(
+        worker_model_root(
+            {"reward_model_name": "KlingTeam/VideoReward@main"},
+            default_model="KlingTeam/VideoReward",
+            family="Kling VideoReward",
+        ),
+    )
 
     assert resolved == root
 
@@ -53,11 +60,18 @@ def test_kling_video_reward_checkpoint_path_resolves_to_repo_root(tmp_path: Path
     """A ``model_path`` pointing at the ``checkpoint-NNNN`` subdirectory resolves up to the repo
     root that holds ``model_config.json``.
     """
-    from vrl.rewards.models.kling_video_reward import _resolve_model_root
+    from vrl.rewards.models.hub import worker_model_root
+    from vrl.rewards.models.kling_video_reward import _checkpoint_root
 
     root = _video_reward_root(tmp_path)
 
-    resolved = _resolve_model_root({"model_path": str(root / "checkpoint-11352")})
+    resolved = _checkpoint_root(
+        worker_model_root(
+            {"model_path": str(root / "checkpoint-11352")},
+            default_model="KlingTeam/VideoReward",
+            family="Kling VideoReward",
+        ),
+    )
 
     assert resolved == root
 
@@ -169,7 +183,8 @@ def test_kling_video_reward_snapshot_download_honors_local_files_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks Kling video reward passes local-only mode to snapshot download."""
-    from vrl.rewards.models.kling_video_reward import _resolve_model_root
+    from vrl.rewards.models.hub import worker_model_root
+    from vrl.rewards.models.kling_video_reward import _checkpoint_root
 
     root = _video_reward_root(tmp_path)
     captured = {}
@@ -180,11 +195,15 @@ def test_kling_video_reward_snapshot_download_honors_local_files_only(
 
     monkeypatch.setattr("huggingface_hub.snapshot_download", _fake_snapshot_download)
 
-    resolved = _resolve_model_root(
-        {
-            "reward_model_name": "KlingTeam/VideoReward@main",
-            "local_files_only": True,
-        },
+    resolved = _checkpoint_root(
+        worker_model_root(
+            {
+                "reward_model_name": "KlingTeam/VideoReward@main",
+                "local_files_only": True,
+            },
+            default_model="KlingTeam/VideoReward",
+            family="Kling VideoReward",
+        ),
     )
 
     assert resolved == root

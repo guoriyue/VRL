@@ -39,7 +39,7 @@ def test_composite_config_logging_does_not_construct_vendor_defaults(
             return torch.nn.Linear(1, 1).to(torch_dtype)
 
     (tmp_path / "config.json").write_text(json.dumps({"text_config": {"model_type": "llama"}}))
-    monkeypatch.setattr(videocon_physics, "resolve_model_root", lambda *a, **kw: tmp_path)
+    monkeypatch.setattr(videocon_physics, "worker_model_root", lambda *a, **kw: tmp_path)
     tokenizer = SimpleNamespace(encode=lambda text, **kw: [3869 if text == "Yes" else 1939])
     monkeypatch.setattr(LlamaTokenizer, "from_pretrained", lambda *a, **kw: tokenizer)
     modeling = ModuleType("mplug_owl_video.modeling_mplug_owl")

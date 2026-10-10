@@ -42,12 +42,11 @@ from vrl.rewards.assets.hpsv3_prompts import (
     build_hpsv3_frame_prompt,
 )
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.hub import relocate_checkpoint_keys, resolve_model_root
+from vrl.rewards.models.hub import relocate_checkpoint_keys, worker_model_root
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
 
-_DEFAULT_REWARD_MODEL = "MizzenAI/HPSv3"
 _DEFAULT_BASE_MODEL = "Qwen/Qwen2-VL-7B-Instruct"
 _CHECKPOINT_FILENAME = "HPSv3.safetensors"
 # HPSv3_7B.yaml pins min_pixels == max_pixels == 256 * 28 * 28; inference uses
@@ -149,10 +148,9 @@ class HPSv3Model:
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)
-        self.model_root = resolve_model_root(
-            self.worker_config,
-            default_model=_DEFAULT_REWARD_MODEL,
-            family="HPSv3",
+        self.local_files_only = bool(self.worker_config.get("local_files_only", False))
+        self.model_root = worker_model_root(
+            self.worker_config, default_model="MizzenAI/HPSv3", family="HPSv3"
         )
         self.checkpoint_path = self.model_root / _CHECKPOINT_FILENAME
         if not self.checkpoint_path.exists():
@@ -163,7 +161,6 @@ class HPSv3Model:
         self.base_model = base_model_path or _DEFAULT_BASE_MODEL
         self.dtype = resolve_torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
         self.device = str(self.worker_config.get("device", "cuda:0"))
-        self.local_files_only = bool(self.worker_config.get("local_files_only", False))
         self.top_frame_fraction = float(
             self.worker_config.get("top_frame_fraction", _DEFAULT_TOP_FRAME_FRACTION),
         )

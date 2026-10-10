@@ -30,10 +30,10 @@ from urllib.error import HTTPError
 
 from vrl.scripts.data.common import (
     default_cache_dir,
-    default_data_root,
     emit,
     repo_root,
 )
+from vrl.utils.artifacts import coerce_data_root, user_path
 from vrl.utils.json_files import write_json, write_jsonl
 
 # (repo_id, csv_file, official split). Train captions live only in the training
@@ -433,9 +433,9 @@ def _resize_image(image_path: Path, *, width: int, height: int) -> tuple[int, in
 
 
 def _cmd_videophy_i2v(args: argparse.Namespace) -> None:
-    from huggingface_hub import hf_hub_download
+    from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
-    data_root = args.data_root.expanduser().resolve() if args.data_root else default_data_root()
+    data_root = coerce_data_root(args.data_root)
     specs: list[tuple[str, str, str]] = []
     for spec in args.source or ():
         parts = spec.split(":")
@@ -447,21 +447,16 @@ def _cmd_videophy_i2v(args: argparse.Namespace) -> None:
             repo_id=repo_id,
             csv_file=csv_file,
             split=split,
-            csv_path=Path(
-                hf_hub_download(
-                    repo_id,
-                    csv_file,
-                    repo_type="dataset",
-                    cache_dir=str(args.cache_dir.expanduser()),
-                ),
+            csv_path=HuggingFaceRepoRevision(repo_id, "main").download_file(
+                csv_file, repo_type="dataset", cache_dir=args.cache_dir
             ),
         )
         for repo_id, csv_file, split in (specs or DEFAULT_SOURCES)
     ]
     report = prepare_videophy_i2v_dataset(
         sources=sources,
-        train_prompts=args.train_prompts.expanduser(),
-        eval_prompts=args.eval_prompts.expanduser(),
+        train_prompts=user_path(args.train_prompts),
+        eval_prompts=user_path(args.eval_prompts),
         data_root=data_root,
         limit=args.limit,
         keep_videos=args.keep_videos,

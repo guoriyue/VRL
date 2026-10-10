@@ -120,10 +120,12 @@ class WDTaggerRewardModel:
             return
         import numpy as np
         import onnxruntime
-        from huggingface_hub import hf_hub_download
 
-        model_path = hf_hub_download(self._model_repo, self._model_file)
-        tags_path = hf_hub_download(self._model_repo, self._tags_file)
+        from vrl.utils.hf_hub import HuggingFaceRepoRevision
+
+        repo = HuggingFaceRepoRevision(self._model_repo, "main")
+        model_path = repo.download_file(self._model_file)
+        tags_path = repo.download_file(self._tags_file)
         with open(tags_path, newline="", encoding="utf-8") as handle:
             rows = list(csv.DictReader(handle))
         # Row order is the model's output index; only general tags are

@@ -28,7 +28,7 @@ from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig, parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval._device import resolve_eval_device
-from vrl.utils.artifacts import sha256_file
+from vrl.utils.artifacts import sha256_file, user_path
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import write_json
 from vrl.utils.media import read_video_frames
@@ -99,7 +99,7 @@ def _prepare_prefix_video(
 
 
 def run_gate(args: argparse.Namespace) -> dict[str, Any]:
-    prefix_path = args.prefix_video.expanduser().resolve()
+    prefix_path = user_path(args.prefix_video)
     if not prefix_path.is_file():
         raise FileNotFoundError(f"prefix video does not exist: {prefix_path}")
 
@@ -211,10 +211,10 @@ def main(argv: list[str] | None = None) -> None:
             "error": f"{type(exc).__name__}: {exc}",
             "trace": traceback.format_exc(limit=8),
         }
-        write_json(args.out.expanduser(), report)
+        write_json(user_path(args.out), report)
         print(json.dumps(report, indent=2, sort_keys=True))
         raise SystemExit(2) from exc
-    write_json(args.out.expanduser(), report)
+    write_json(user_path(args.out), report)
     print(json.dumps(report, indent=2, sort_keys=True))
 
 

@@ -29,7 +29,7 @@ from vrl.rewards.assets.video_judge_prompts import (
     VIDEOCON_SEMANTIC_TEMPLATE,
 )
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.hub import resolve_model_root
+from vrl.rewards.models.hub import worker_model_root
 from vrl.rewards.models.videocon_compat import (
     prepare_videocon_imports,
     prepare_videocon_model_class,
@@ -38,7 +38,6 @@ from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
 
-_DEFAULT_REWARD_MODEL = "videophysics/videocon_physics"
 _DEFAULT_NUM_FRAMES = 32
 _DEFAULT_VIDEO_TOKEN = "<|video|>"
 
@@ -50,11 +49,9 @@ class VideoConPhysicsModel:
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)
-        # Drift fix: this family previously dropped ``local_files_only`` on the
-        # snapshot_download path; the shared resolver forwards it.
-        self.model_root = resolve_model_root(
+        self.model_root = worker_model_root(
             self.worker_config,
-            default_model=_DEFAULT_REWARD_MODEL,
+            default_model="videophysics/videocon_physics",
             family="VideoCon-Physics",
         )
         self.dtype = resolve_torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))

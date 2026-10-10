@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from vrl.scripts.data.common import default_cache_dir, emit
+from vrl.utils.artifacts import user_path
 
 COMMAND_NAME = "pickapic"
 
@@ -39,14 +40,14 @@ def _cmd_pickapic(args: argparse.Namespace) -> None:
     dataset = load_dataset(
         dataset_name,
         split=args.split,
-        cache_dir=str(args.cache_dir.expanduser()),
+        cache_dir=str(user_path(args.cache_dir)),
     )
     emit(
         {
             "dataset": "pickapic",
             "dataset_name": dataset_name,
             "split": args.split,
-            "cache_dir": str(args.cache_dir.expanduser().resolve()),
+            "cache_dir": str(user_path(args.cache_dir)),
             "rows": len(dataset),
             "with_images": bool(args.with_images),
         },

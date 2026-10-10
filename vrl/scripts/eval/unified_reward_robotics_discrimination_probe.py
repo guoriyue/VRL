@@ -45,7 +45,7 @@ from vrl.scripts.eval.robotics_discrimination import (
     robotics_reward_verdict,
 )
 from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
-from vrl.utils.artifacts import default_data_root, resolve_artifact_path, sha256_file
+from vrl.utils.artifacts import RootedPaths, coerce_data_root, sha256_file, user_path
 from vrl.utils.json_files import write_json
 from vrl.utils.media import read_video_frames, write_mp4
 
@@ -183,7 +183,7 @@ def _print_report(summary: dict[str, Any]) -> None:
 async def _main_async(args: argparse.Namespace) -> dict[str, Any]:
     if args.num_anchors < 2:
         raise ValueError("--num-anchors must be >=2 for wrong_clip discrimination")
-    data_root = args.data_root.expanduser().resolve() if args.data_root else default_data_root()
+    data_root = coerce_data_root(args.data_root)
     examples = load_prompt_dataset_index(args.manifest)[: args.num_anchors]
     if len(examples) < 2:
         raise ValueError("robotics reward gate needs at least two manifest rows")
@@ -191,11 +191,7 @@ async def _main_async(args: argparse.Namespace) -> dict[str, Any]:
     for example in examples:
         if not example.target_video:
             raise ValueError(f"manifest row {example.prompt!r} has no target_video")
-        path = resolve_artifact_path(
-            example.target_video,
-            data_root=data_root,
-            allow_absolute=True,
-        )
+        path = RootedPaths.data_root(data_root, allow_absolute=True).resolve(example.target_video)
         frames = read_video_frames(path)
         if frames.shape[0] < 2:
             raise ValueError(
@@ -226,7 +222,7 @@ async def _main_async(args: argparse.Namespace) -> dict[str, Any]:
             },
         )
         if args.candidate_dir:
-            candidate_root = args.candidate_dir.expanduser().resolve()
+            candidate_root = user_path(args.candidate_dir)
             candidate_root.mkdir(parents=True, exist_ok=True)
             rows, summary = await _run_probe(
                 scorer,
@@ -253,7 +249,7 @@ async def _main_async(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "reward": "unified_reward_video",
         "score_key": "alignment+physics",
-        "manifest": str(args.manifest.expanduser().resolve()),
+        "manifest": str(user_path(args.manifest)),
         "data_root": str(data_root),
         "anchors": len(examples),
         "deployment": deployment,

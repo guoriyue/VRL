@@ -18,7 +18,7 @@ from vrl.trainers.data.artifacts import (
     SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
     DatasetFileReport,
 )
-from vrl.utils.artifacts import sha256_file
+from vrl.utils.artifacts import sha256_file, user_path
 from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
 
 COMMAND_NAME = "derive-text-video-targets"
@@ -110,10 +110,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_derive_text_video_targets(args: argparse.Namespace) -> None:
-    train_source = args.train_manifest.expanduser().resolve()
-    eval_source = args.eval_manifest.expanduser().resolve()
-    data_root = args.data_root.expanduser().resolve()
-    output_dir = args.output_dir.expanduser().resolve()
+    train_source = user_path(args.train_manifest)
+    eval_source = user_path(args.eval_manifest)
+    data_root = user_path(args.data_root)
+    output_dir = user_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     train_rows = derive_text_video_rows(_read_manifest(train_source))

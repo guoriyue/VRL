@@ -22,7 +22,7 @@ from vrl.trainers.weight_sync import (
     require_trainable_modules,
     to_cpu_snapshot,
 )
-from vrl.utils.artifacts import atomic_file, fsync_directory, sha256_file
+from vrl.utils.artifacts import atomic_file, fsync_directory, sha256_file, user_path
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
@@ -91,9 +91,9 @@ class CheckpointTarget:
                 raise ValueError("--checkpoint values must be non-empty")
             raw_label, separator, raw_path = text.partition("=")
             if separator:
-                path = Path(raw_path).expanduser().resolve()
+                path = user_path(raw_path)
             else:
-                path = Path(text).expanduser().resolve()
+                path = user_path(text)
                 raw_label = path.parent.name if path.name == "checkpoint-final" else path.name
             label = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_label.strip()).strip("._-")
             if not label:
@@ -113,7 +113,7 @@ class CheckpointTarget:
     def load(cls, path: str | Path, *, label: str, digest: bool = False) -> CheckpointTarget:
         """Pin one complete checkpoint directory and read its published metadata."""
 
-        resolved = Path(path).expanduser().resolve()
+        resolved = user_path(path)
         if not is_complete_checkpoint(resolved):
             raise ValueError(f"missing or incomplete checkpoint: {resolved}")
         meta = dict(read_checkpoint_meta(resolved))
@@ -333,7 +333,7 @@ class TrainingCheckpoint:
     def load(cls, path: str | Path) -> TrainingCheckpoint:
         """Load ``checkpoint.pt`` from a checkpoint directory or direct file path."""
 
-        raw_path = Path(path).expanduser().resolve()
+        raw_path = user_path(path)
         checkpoint_path = raw_path if raw_path.is_file() else raw_path / TRAINING_CHECKPOINT_NAME
         checkpoint_dir = checkpoint_path.parent
         if not checkpoint_path.exists():
@@ -1457,7 +1457,7 @@ def load_resolved_run_config(
 
     # An absolute Path, not a string: load_config resolves a relative string
     # against the bundled preset tree.
-    path = Path(run_dir).expanduser().resolve() / RESOLVED_CONFIG_NAME
+    path = user_path(run_dir) / RESOLVED_CONFIG_NAME
     if not path.is_file():
         raise FileNotFoundError(f"training run has no resolved config: {path}")
     cfg = load_config(path, overrides=list(overrides or []))

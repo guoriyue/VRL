@@ -40,7 +40,7 @@ from vrl.trainers.checkpointing import (
     load_resolved_run_config,
     read_checkpoint_meta,
 )
-from vrl.utils.artifacts import sha256_file
+from vrl.utils.artifacts import sha256_file, user_path
 from vrl.utils.json_files import write_json
 from vrl.utils.media import to_pil_image, write_png
 
@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> None:
 def run_comparison(args: argparse.Namespace) -> dict[str, str]:
     """Generate both images and return their materialized artifact paths."""
 
-    run_dir = args.run_dir.expanduser().resolve()
+    run_dir = user_path(args.run_dir)
     config_path = run_dir / RESOLVED_CONFIG_NAME
     _, root = load_resolved_run_config(run_dir)
     precision = PrecisionPolicy.from_section(root.precision)
@@ -135,7 +135,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         raise FileNotFoundError(f"training checkpoint file not found: {expected_checkpoint_file}")
 
     output_dir = (
-        args.out_dir.expanduser().resolve()
+        user_path(args.out_dir)
         if args.out_dir is not None
         else run_dir / "sana_checkpoint_compare"
     )

@@ -452,7 +452,7 @@ def test_snapshot_materialization_uses_all_four_pinned_revisions(monkeypatch) ->
 
     calls: list[tuple[str, str]] = []
 
-    def fake_snapshot_download(*, repo_id, revision):
+    def fake_snapshot_download(*, repo_id, revision, **kwargs):
         calls.append((repo_id, revision))
         return f"/immutable/{revision}"
 

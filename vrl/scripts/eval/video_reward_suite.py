@@ -44,6 +44,7 @@ from vrl.config.loading import load_config
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.trainers.data.prompts import load_prompt_dataset_index
+from vrl.utils.artifacts import user_path
 from vrl.utils.json_files import write_csv
 
 logger = logging.getLogger(__name__)
@@ -114,7 +115,7 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = build_parser().parse_args(argv)
 
-    video_dir = Path(args.video_dir).expanduser().resolve()
+    video_dir = user_path(args.video_dir)
     if not video_dir.is_dir():
         raise NotADirectoryError(f"--video-dir is not a directory: {video_dir}")
     videos = sorted(video_dir.glob("*.mp4"))
@@ -137,11 +138,7 @@ def main(argv: list[str] | None = None) -> None:
                 prompts[video] = by_name[video.name]
             elif index < len(examples):
                 prompts[video] = examples[index].prompt
-    output = (
-        Path(args.output).expanduser().resolve()
-        if args.output
-        else (video_dir / "eval_video_metrics.csv")
-    )
+    output = user_path(args.output) if args.output else (video_dir / "eval_video_metrics.csv")
 
     rows: list[dict[str, Any]] = [
         {"video_path": str(video), "prompt": prompts[video]} for video in videos
@@ -174,7 +171,7 @@ def main(argv: list[str] | None = None) -> None:
             raise ValueError(f"--merge-json expects prefix=path, got {merge_arg!r}")
         prefix, path = merge_arg.split("=", 1)
         prefix = prefix.strip()
-        payload = json.loads(Path(path).expanduser().resolve().read_text(encoding="utf-8"))
+        payload = json.loads(user_path(path).read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError(
                 f"--merge-json {path!r} must be a JSON object keyed by video filename"
@@ -260,7 +257,7 @@ def _score_vbench(
         device if device != "auto" else ("cuda:0" if torch.cuda.is_available() else "cpu"),
     )
     try:
-        evaluator = VBench(torch_device, str(Path(full_info).expanduser()), str(output_dir))
+        evaluator = VBench(torch_device, str(user_path(full_info)), str(output_dir))
         evaluator.evaluate(
             videos_path=str(video_dir),
             name="video_reward_suite",

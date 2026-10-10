@@ -32,7 +32,7 @@ from vrl.scripts.eval.denoise_generation import (
     generate_images,
     seed_for,
 )
-from vrl.utils.artifacts import sha256_file
+from vrl.utils.artifacts import RootedPaths, sha256_file, user_path
 from vrl.utils.json_files import write_json
 
 if TYPE_CHECKING:
@@ -49,7 +49,7 @@ def load_target(value: str, *, uses_lora: bool) -> CheckpointTarget:
     from vrl.trainers.checkpointing import LORA_WEIGHTS_NAME, CheckpointTarget
 
     label, separator, raw_path = value.partition("=")
-    path = Path(raw_path if separator else value).expanduser().resolve()
+    path = user_path(raw_path if separator else value)
     if path.name == LORA_WEIGHTS_NAME:
         path = path.parent
     label = label.strip() if separator else path.name
@@ -502,7 +502,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     from vrl.run import ResolvedModel
     from vrl.scripts.eval._device import resolve_eval_device
     from vrl.trainers.checkpointing import CheckpointTarget
-    from vrl.trainers.data.prompts import REFERENCE_FIELDS, load_prompt_dataset_index
+    from vrl.trainers.data.prompts import load_prompt_dataset_index
 
     if (
         any(value is not None and value < 1 for value in (args.width, args.height, args.num_steps))
@@ -515,7 +515,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         raise ValueError("invalid sampling/statistics options")
     from vrl.trainers.checkpointing import RESOLVED_CONFIG_NAME
 
-    config_path = args.run_dir.expanduser().resolve() / RESOLVED_CONFIG_NAME
+    config_path = user_path(args.run_dir) / RESOLVED_CONFIG_NAME
     cfg = load_config(config_path)
     root = parse_config(cfg)
     if root.model is None:
@@ -559,7 +559,7 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     manifest = args.manifest or OmegaConf.select(policy, "data.eval_manifest", default=None)
     if not manifest:
         raise ValueError("supply --manifest or data.eval_manifest in the evaluation policy")
-    manifest_path = Path(manifest).expanduser().resolve()
+    manifest_path = user_path(manifest)
     raw_reward = OmegaConf.select(policy, "reward", default=None)
     reward = OmegaConf.to_container(raw_reward, resolve=True) if raw_reward is not None else None
     if not isinstance(reward, dict) or not reward.get("components"):
@@ -593,9 +593,10 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         pending.extend(
             (f"{path}.{key}", value) for key, value in settings.items() if isinstance(value, dict)
         )
+    roots = RootedPaths.data_root(allow_absolute=True)
     prompts = select_prompts(
         [
-            example.with_resolved_artifacts(REFERENCE_FIELDS, allow_absolute=True)
+            example.with_resolved_references(roots)
             for example in load_prompt_dataset_index(manifest_path)
         ],
         limit=args.limit,

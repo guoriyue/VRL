@@ -26,6 +26,7 @@ from vrl.scripts.data import (
     video_world,
     videophy_i2v,
 )
+from vrl.utils.artifacts import coerce_data_root
 
 # init-dirs CLI: dataset -> directories to create under the data root. This is the
 # init-dirs command's own small wiring table, not a generic artifact registry (the
@@ -37,9 +38,9 @@ _INIT_DIRS_BY_DATASET = {
 
 
 def _cmd_init_dirs(args: argparse.Namespace) -> None:
-    from vrl.utils.artifacts import default_data_root, repo_root
+    from vrl.utils.artifacts import repo_root
 
-    data_root = args.data_root.expanduser().resolve() if args.data_root else default_data_root()
+    data_root = coerce_data_root(args.data_root)
     created: list[Path] = []
     for rel in _INIT_DIRS_BY_DATASET[args.dataset]:
         path = data_root / rel

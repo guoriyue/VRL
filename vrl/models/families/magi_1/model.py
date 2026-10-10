@@ -39,6 +39,7 @@ from vrl.generation.types import GenerationInput, GenerationRequest
 from vrl.models.interfaces.replay import ReplayRequest, ReplayResult
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.source_integrity import runtime_source_tree_sha256
+from vrl.utils.artifacts import user_path
 from vrl.utils.deadline import require_timeout
 from vrl.utils.media import read_video_frames
 from vrl.utils.validation import require_int
@@ -77,7 +78,7 @@ class Magi1SubprocessConfig:
     vae_pretrained_path: Path | None = None
 
     def __post_init__(self) -> None:
-        source_path = Path(self.source_path).expanduser().resolve()
+        source_path = user_path(self.source_path)
         config_path = _resolve_from_source(source_path, self.config_path)
         expected_config_path = (source_path / _MAGI_1_BASE_CONFIG_RELATIVE_PATH).resolve()
         if config_path != expected_config_path:
@@ -106,7 +107,7 @@ class Magi1SubprocessConfig:
         # source checkout. Bare command names (for example ``python3``) remain
         # PATH-resolved by shutil/subprocess.
         if os.sep in python_executable or (os.altsep and os.altsep in python_executable):
-            python_executable = str(Path(python_executable).expanduser().resolve())
+            python_executable = str(user_path(python_executable))
         object.__setattr__(self, "python_executable", python_executable)
         object.__setattr__(
             self,
@@ -310,7 +311,7 @@ class Magi1SubprocessConfig:
                     "from model.path",
                 )
 
-            from huggingface_hub import snapshot_download
+            from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
             patterns: list[str] = []
             if checkpoint is None:
@@ -319,9 +320,7 @@ class Magi1SubprocessConfig:
                 patterns.append("ckpt/t5/**")
             if vae is None:
                 patterns.append("ckpt/vae/**")
-            snapshot = Path(
-                snapshot_download(repo_id=repo_id, revision=revision, allow_patterns=patterns),
-            )
+            snapshot = HuggingFaceRepoRevision(repo_id, revision).download(allow_patterns=patterns)
             checkpoint = checkpoint or snapshot / "ckpt" / "magi" / "4.5B_base"
             t5 = t5 or snapshot / "ckpt" / "t5"
             vae = vae or snapshot / "ckpt" / "vae"
@@ -530,7 +529,7 @@ class Magi1SubprocessModel(torch.nn.Module):
         sample_index: int,
     ) -> tuple[torch.Tensor, int]:
         if conditioning_path is not None:
-            resolved_conditioning = Path(conditioning_path).expanduser().resolve()
+            resolved_conditioning = user_path(conditioning_path)
             if not resolved_conditioning.is_file():
                 raise FileNotFoundError(
                     f"MAGI-1 conditioning input does not exist: {resolved_conditioning}",
