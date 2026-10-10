@@ -46,9 +46,8 @@ parking. The **mechanism** is how the card is released: `move` (`.to("cpu")`
 per storage, `ModelParking`) or `cumem` (the model was built inside a vLLM
 CuMem pool, so its pages are backed up and unmapped as one unit,
 `CumemPool`). The **destination** is where the bytes live meanwhile: `ram`, or
-`disk` (frozen shards become shared file mappings under
-`distributed.resources.trainer_parking_directory`; trainable parameters,
-optimizer state and EMA still go to RAM). Three of the four cells exist, and
+`disk` (every parked tensor becomes a shared file mapping under
+`distributed.resources.trainer_parking_directory`). Three of the four cells exist, and
 each role sits in a fixed one:
 
 | | destination `ram` | destination `disk` |
@@ -65,12 +64,15 @@ It raises `ParkingBroken` / `CumemBroken` and holds no policy; the owners add
 what only they need: `GenerationWorkerParking` the quarantine phases and the
 driver-validated snapshot, `TrainerParking` the cross-rank failure
 agreement and identity ticket, `RewardParking` the reload mode and the
-terminal device-cache release. `ModelParking` takes the `parking_directory`, so `disk` is a
-property of the `move` mechanism rather than of the trainer:
-`FrozenDiskStore` (`vrl/models/frozen_disk_store.py`) owns
-directory validation, frozen CPU mappings, host-memory reclamation and file
-cleanup, and `TrainingStateParking` only adds optimizer, gradient, EMA and
-scaler storage. The trainer does not allocate its state inside CuMem;
+terminal device-cache release. `disk` is a property of the `move` mechanism
+rather than of the trainer: `ModelParking` takes an optional `disk` store and,
+given one, hands it every tensor it moves to CPU; without one the bytes stay
+in ordinary host RAM. `ParkingDiskStore` (`vrl/models/parking_disk_store.py`)
+owns directory validation, file mappings of every parked tensor, host-memory
+reclamation and file cleanup. `TrainingStateParking` only decides
+what the trainer parks (model, optimizer, gradient, EMA and scaler state), and
+`TrainerParking` injects the disk store when
+`distributed.resources.trainer_parking_directory` is set. The trainer does not allocate its state inside CuMem;
 generation CuMem backups use pinned RAM and do not implement disk storage. RAM
 capacity remains a resource requirement. GPU sharing in
 `distributed.resources` decides when roles park.

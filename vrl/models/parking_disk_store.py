@@ -1,9 +1,9 @@
-"""The ``disk`` parking destination: frozen CPU shards as reclaimable file mappings.
+"""The ``disk`` host storage of parking: parked CPU storage as reclaimable file mappings.
 
-Owns directory validation, mappings and temporary-file lifetime. It does not
-move models between devices (that is ``ModelParking``, the ``move``
-mechanism, which owns one of these when given a ``parking_directory``) or
-choose when a role yields the GPU.
+``ModelParking`` (the ``move`` mechanism) hands every tensor it has moved to
+CPU to the store it was given. Owns directory validation, mappings and
+temporary-file lifetime. It does not move tensors between devices or choose
+when a role yields the GPU.
 """
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ from collections.abc import Iterable
 from typing import Any
 
 
-class FrozenDiskStore:
-    """Replace frozen CPU storage with reclaimable file mappings.
+class ParkingDiskStore:
+    """Replace parked CPU storage with reclaimable file mappings.
 
     The caller refreshes framework-specific shard views after store(), and
-    restores the model before cleanup(). Mappings preserve parameter objects.
+    restores the tensors before cleanup(). Mappings preserve parameter objects.
     """
 
     # Linux filesystem classification and mount-table path, not user settings.
@@ -27,12 +27,13 @@ class FrozenDiskStore:
         self._directory = directory
         self._directories = []
 
-    def store(self, parameters: Iterable[Any]) -> None:
-        """Disk-backed frozen shards; bytes and parameter aliases stay intact.
+    def store(self, tensors: Iterable[Any]) -> None:
+        """Map parked CPU shards to files; bytes and parameter aliases stay intact.
 
         Anonymous CPU copies of every parked role can exceed host RAM. Shared
-        file mappings let Linux reclaim inactive frozen shards while generation
-        owns the GPUs. This is storage relocation only.
+        file mappings let Linux reclaim inactive pages while another role owns
+        the GPUs. A mapping is ordinary writable memory, so this is storage
+        relocation only.
         """
         import tempfile
         from pathlib import Path
@@ -41,15 +42,13 @@ class FrozenDiskStore:
 
         root = self._directory
         self._require_disk_backed_directory()
-        directory = tempfile.TemporaryDirectory(prefix="trainer-", dir=root)
+        directory = tempfile.TemporaryDirectory(prefix="parked-", dir=root)
         self._directories.append(directory)
         with torch.no_grad():
-            for index, parameter in enumerate(parameters):
-                if parameter.requires_grad:
-                    continue
+            for index, parameter in enumerate(tensors):
                 local = getattr(parameter, "_local_tensor", parameter)
                 if local.device.type != "cpu" or not local.is_contiguous():
-                    raise RuntimeError("disk parking requires contiguous CPU frozen shards")
+                    raise RuntimeError("disk parking requires contiguous CPU shards")
                 if local.numel() == 0:
                     continue
                 mapped = torch.from_file(

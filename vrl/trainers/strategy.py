@@ -27,6 +27,7 @@ from vrl.models.parking import (
     TrainingStateParking,
     module_on_host,
 )
+from vrl.models.parking_disk_store import ParkingDiskStore
 from vrl.trainers.distributed import (
     ContextParallelPeerGroup,
     DistributedTrainingContext,
@@ -198,7 +199,10 @@ class TrainerParking:
                 "cannot park different training state before restoring the current phase"
             )
 
-        ledger = TrainingStateParking(state, parking_directory=self._parking_directory)
+        directory = self._parking_directory
+        ledger = TrainingStateParking(
+            state, disk=ParkingDiskStore(directory) if directory is not None else None
+        )
         session = ParkingSession("trainer", required=True, ledger=ledger)
         self._parking = session
         try:

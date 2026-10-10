@@ -4,13 +4,13 @@ Every role parks through one :class:`ParkingSession`: build the object (inside
 a CuMem pool when the role must prove release), park it, restore it, release
 it, and measure the physical footprint in between. Two mechanisms sit under
 the session. ``move`` (:class:`ModelParking`) relocates tensors to CPU and
-records their original devices; with a ``parking_directory`` its frozen shards
-continue to file mappings (:class:`FrozenDiskStore`), which owns disk
-validation and file lifetime, not device moves. ``cumem`` (:class:`CumemPool`)
-requires model allocations to be created inside its pool, which it backs up to
-pinned RAM and unmaps while preserving virtual addresses; it has no disk
-destination. :class:`TrainingStateParking` extends ``move`` to optimizer,
-gradient, EMA and scaler state.
+records their original devices; given a ``ParkingDiskStore`` it maps every
+moved tensor to a file so Linux can reclaim the pages, and without one the
+bytes stay in ordinary host RAM. ``cumem`` (:class:`CumemPool`) requires model
+allocations to be created inside its pool, which it backs up to pinned RAM and
+unmaps while preserving virtual addresses; it has no disk destination.
+:class:`TrainingStateParking` decides only *what* the trainer parks: the model
+plus optimizer, gradient, EMA and scaler state.
 
 The session raises typed failures and keeps no phase policy. Whether a failure
 quarantines the owner, rolls back every rank, or is retried belongs to the
@@ -29,7 +29,6 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from vrl.models.frozen_disk_store import FrozenDiskStore
 from vrl.utils.cuda_memory import (
     empty_cuda_cache,
     gpu_process_used_bytes,
@@ -39,6 +38,8 @@ from vrl.utils.cuda_memory import (
 
 if TYPE_CHECKING:
     import torch
+
+    from vrl.models.parking_disk_store import ParkingDiskStore
 
 
 def module_on_host(module: Any) -> bool:
@@ -58,20 +59,19 @@ class ModelParking:
     """Mechanism ``move``: relocate storage to CPU and remember where it was.
 
     Retains original devices before moving storage, including partial moves.
-    With a ``parking_directory`` the frozen shards of every parked module go on
-    to file mappings under it, so Linux can reclaim them while another role
-    owns the GPU; trainable storage stays in host RAM.
+    With a ``disk`` store, every tensor that reaches CPU goes straight on to a
+    file mapping, one module or tensor at a time, so the anonymous copies never
+    pile up; without one the parked bytes stay in ordinary host RAM. A parked
+    tensor is unused until it is restored, so this holds for any role.
     """
 
-    def __init__(self, *, parking_directory: str | None = None) -> None:
+    def __init__(self, *, disk: ParkingDiskStore | None = None) -> None:
         self._modules: list[tuple[Any, Any]] = []
         self._tensors: list[tuple[torch.Tensor, torch.device]] = []
         self._seen_modules: set[int] = set()
         self._seen_tensors: set[int] = set()
         self._module_tensor_devices: dict[int, dict[str, Any]] = {}
-        self._disk_store = (
-            FrozenDiskStore(parking_directory) if parking_directory is not None else None
-        )
+        self._disk = disk
 
     @property
     def restore_device(self) -> Any | None:
@@ -112,11 +112,11 @@ class ModelParking:
         move_frozen = getattr(model, "move_frozen_components", None)
         if callable(move_frozen):
             move_frozen("cpu")
-        if self._disk_store is not None and callable(getattr(model, "parameters", None)):
-            self._disk_store.store(model.parameters())
+        if self._disk is not None:
+            self._disk.store(self.module_tensors(model))
             # Storage replacement requires FSDP to refresh its local shard views.
             self._move_module(model, "cpu")
-            self._disk_store.release_unused_host_memory()
+            self._disk.release_unused_host_memory()
 
     def park_tensors(self, value: Any) -> None:
         """Move extra state in place, preserving aliases with parked parameters."""
@@ -130,6 +130,8 @@ class ModelParking:
             if device.type != "cpu":
                 self._tensors.append((value, device))
                 self._move_tensor(value, torch.device("cpu"))
+            if self._disk is not None:
+                self._disk.store((value,))
         elif isinstance(value, Mapping):
             for child in value.values():
                 self.park_tensors(child)
@@ -223,8 +225,8 @@ class ModelParking:
         self._seen_modules.clear()
         self._seen_tensors.clear()
         self._module_tensor_devices.clear()
-        if self._disk_store is not None:
-            self._disk_store.cleanup()
+        if self._disk is not None:
+            self._disk.cleanup()
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,15 +262,15 @@ class TrainingMemoryState:
 
 class TrainingStateParking(ModelParking):
     """The trainer's ``move`` ledger: model parking plus optimizer, gradient,
-    EMA and scaler storage."""
+    EMA and scaler storage. Where those bytes live is the ``disk`` store's business."""
 
     def __init__(
         self,
         state: TrainingMemoryState,
         *,
-        parking_directory: str | None = None,
+        disk: ParkingDiskStore | None = None,
     ) -> None:
-        super().__init__(parking_directory=parking_directory)
+        super().__init__(disk=disk)
         self.state = state
         self.ema_device = getattr(state.ema, "device", None)
 
@@ -298,6 +300,8 @@ class TrainingStateParking(ModelParking):
         if state.grad_scaler is not None:
             for attr in ("_scale", "_growth_tracker", "_per_optimizer_states"):
                 self.park_tensors(getattr(state.grad_scaler, attr, None))
+        if self._disk is not None:
+            self._disk.release_unused_host_memory()
 
     def restore(self) -> None:
         super().restore()
