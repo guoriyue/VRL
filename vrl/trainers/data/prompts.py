@@ -93,6 +93,40 @@ class PromptExample:
             reference_images=[resolve(item) for item in self.reference_images],
         )
 
+    def with_required_reference_images(
+        self,
+        *,
+        manifest: Path,
+        row_index: int,
+        default_reference_image: str | None = None,
+    ) -> PromptExample:
+        """A copy whose reference images are required, resolved and present.
+
+        A row without ``reference_images`` takes ``default_reference_image``
+        (the recipe's ``data.preprocessing.reference_image``) as its single
+        image; a missing file names the manifest row.
+        """
+
+        paths = [Path(raw).expanduser() for raw in self.reference_images]
+        default_text = str(default_reference_image or "").strip()
+        if not paths and default_text:
+            default_path = Path(default_text).expanduser()
+            if not default_path.exists():
+                raise FileNotFoundError(
+                    f"data.preprocessing.reference_image does not exist: {default_path}",
+                )
+            paths = [default_path]
+        if not paths:
+            raise ValueError(
+                f"{manifest}: row {row_index} is missing required field reference_images",
+            )
+        for path in paths:
+            if not path.exists():
+                raise FileNotFoundError(
+                    f"{manifest}: row {row_index} reference image does not exist: {path}",
+                )
+        return replace(self, reference_images=[str(path.resolve()) for path in paths])
+
     def with_resolved_artifacts(
         self,
         *,

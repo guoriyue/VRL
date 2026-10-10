@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.base import (
     InferenceRewardFunction,
@@ -11,10 +12,7 @@ from vrl.rewards.base import (
     RewardCleanupError,
     RewardFunction,
 )
-from vrl.rewards.functions.registry import (
-    MultiReward,
-    validate_reward_memory_parking_components,
-)
+from vrl.rewards.functions.registry import MultiReward
 from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
 from vrl.rewards.runtime import InProcessRewardScorer, RewardFunctionRuntime
 from vrl.rewards.service.client import HttpRewardScorer
@@ -389,8 +387,15 @@ def test_shared_parking_allows_one_gpu_reward_with_cpu_sibling() -> None:
 
 def test_shared_parking_rejects_multiple_gpu_reward_components() -> None:
     """CuMem tags cannot make multiple reward pools independently sleepable."""
+    config = RewardRuntimeConfig(
+        weights={"aesthetic": 1.0, "pickscore": 1.0},
+        kwargs={},
+        inference_configs={
+            name: RewardInferenceConfig(kind="in_process") for name in ("aesthetic", "pickscore")
+        },
+    )
     with pytest.raises(ValueError, match="at most one configured GPU"):
-        validate_reward_memory_parking_components(("aesthetic", "pickscore"), device="cuda:0")
+        config.validate_memory_parking("cuda:0")
 
 
 @pytest.mark.parametrize(

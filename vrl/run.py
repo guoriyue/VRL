@@ -192,16 +192,8 @@ class ResolvedReward:
     def validate_parking(self) -> None:
         """Reject a GPU-sharing reward whose components cannot park, before any build."""
 
-        if not self.memory_parking_required:
-            return
-        from vrl.rewards.functions.registry import validate_reward_memory_parking_components
-
-        validate_reward_memory_parking_components(
-            tuple(self.config.weights),
-            device=self.device,
-            reward_kwargs=self.config.kwargs,
-            inference_configs=self.config.inference_configs,
-        )
+        if self.memory_parking_required:
+            self.config.validate_memory_parking(self.device)
 
     def actor_placement(self, owner: Any) -> Any:
         """Bind the reward's Ray actors to the run's acquired resource ownership.

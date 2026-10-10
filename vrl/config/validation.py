@@ -98,9 +98,7 @@ def compile_conflicts(root: RootConfig) -> tuple[CompileConflict, ...]:
     # torch.compile traces torch.utils.checkpoint into an InternalTorchDynamoError
     # (measured for full and selective alike), and inductor's min-cut partitioner
     # already does automatic selective recompute.
-    from vrl.trainers.activation_checkpointing import resolve_gradient_checkpointing_mode
-
-    checkpointing = resolve_gradient_checkpointing_mode(root)
+    checkpointing = "off" if root.actor is None else root.actor.gradient_checkpointing_mode
     if compiles_replay and checkpointing != "off":
         conflicts.append(
             CompileConflict(

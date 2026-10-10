@@ -5,7 +5,6 @@ import pytest
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
 from vrl.run import ResolvedOnlineRun
-from vrl.trainers.activation_checkpointing import resolve_gradient_checkpointing_mode
 
 PRESET = "experiment/cosmos_predict2_5/online_grpo_kling_video_reward_colocated_fsdp_4x_l40s"
 
@@ -21,7 +20,7 @@ def test_four_card_preset_preserves_global_recipe_budget():
     assert root.actor.model_dump(exclude={"gradient_checkpointing"}) == base.actor.model_dump(
         exclude={"gradient_checkpointing"}
     )
-    assert resolve_gradient_checkpointing_mode(root) == "full"
+    assert root.actor.gradient_checkpointing_mode == "full"
     assert root.algorithm == base.algorithm
     assert root.sampling == base.sampling
     assert root.trainer.total_epochs == base.trainer.total_epochs

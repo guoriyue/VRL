@@ -60,6 +60,37 @@ class RewardRuntimeConfig:
             )
         return worker_config
 
+    def validate_memory_parking(self, device: str) -> None:
+        """Fail before model construction when a shared reward cannot fully park.
+
+        vLLM CuMemAllocator.sleep is process-wide: tags select which pages are
+        backed up, not which pages are unmapped, so a process can park exactly
+        one GPU reward component.
+        """
+
+        from vrl.rewards.functions.registry import get_reward
+
+        gpu_components = [
+            name
+            for name in self.weights
+            if self.inference_configs[name].kind in {"in_process", "ray"}
+            if get_reward(name)
+            .resolve_execution_device(device=device, kwargs=dict(self.kwargs.get(name) or {}))
+            .startswith("cuda")
+        ]
+        if not gpu_components:
+            raise ValueError(
+                "shared reward GPU topology has no configured GPU reward "
+                "component. CPU-only components need no reservation; drop "
+                "distributed.resources.reward.devices.",
+            )
+        if len(gpu_components) > 1:
+            raise ValueError(
+                "shared reward parking supports at most one configured GPU "
+                f"component per process, got {gpu_components}. Keep CPU reward "
+                "siblings or use a dedicated/remote reward.",
+            )
+
     def require_online_training(self) -> None:
         """Admit the resolved deployment before allocating models or Ray actors.
 

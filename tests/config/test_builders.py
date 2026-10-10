@@ -187,13 +187,13 @@ def test_every_allow_listed_offline_dpo_actor_field_has_a_reader() -> None:
     A field left on the list after its reader goes becomes a knob the user sets
     and nothing consumes, which is the worst shape a config key can take.
 
-    The recipe reads its actor section through exactly two pure-config
-    resolvers, so instrumenting attribute access across both is the check.
+    The recipe reads its actor section through two pure-config resolvers
+    and one section property, so instrumenting attribute access across them
+    is the check.
     """
 
     from vrl.algorithms.dpo import DiffusionDPO
-    from vrl.config.schema import parse_config
-    from vrl.trainers.activation_checkpointing import resolve_gradient_checkpointing_mode
+    from vrl.config.schema import ActorSection, parse_config
     from vrl.trainers.offline import OfflineDPOTrainerConfig
 
     recipe = "experiment/wan_2_1/offline_dpo_pickapic"
@@ -208,7 +208,9 @@ def test_every_allow_listed_offline_dpo_actor_field_has_a_reader() -> None:
 
     recording_root = SimpleNamespace(actor=_RecordingActor())
     OfflineDPOTrainerConfig.from_root(recording_root)
-    resolve_gradient_checkpointing_mode(recording_root)
+    # The checkpointing mode is the section's own reading of its knob; run
+    # that reader against the recording actor so the field access is seen.
+    ActorSection.gradient_checkpointing_mode.fget(recording_root.actor)
 
     consumed = dict(DiffusionDPO.consumed_sections or ())
     unread = sorted(consumed["actor"] - read)

@@ -464,6 +464,30 @@ class ActorSection(ConfigBase):
     gradient_checkpointing: Literal["off", "full", "full_cpu", "selective"] | StrictBool | None = (
         None
     )
+
+    @property
+    def gradient_checkpointing_mode(self) -> str:
+        """The effective checkpointing mode: off | full | full_cpu | selective.
+
+        Absence means off. Back-compat: the historical knob was a bool (True ->
+        full, False -> off); strings select the policy explicitly.
+        """
+
+        value = self.gradient_checkpointing
+        if isinstance(value, bool):
+            return "full" if value else "off"
+        text = str(value).strip().lower()
+        if text in ("", "none", "false", "off", "0"):
+            return "off"
+        if text in ("true", "full", "1"):
+            return "full"
+        if text in ("selective", "full_cpu"):
+            return text
+        raise ValueError(
+            f"actor.gradient_checkpointing={value!r} invalid; "
+            "use off | full | full_cpu | selective (or a bool: true=full, false=off)",
+        )
+
     # Offline DPO counts actual training batches per optimizer update.
     gradient_accumulation_steps: StrictInt | None = None
     # offline DPO entrypoint (vrl/scripts/families/wan_2_1/train_dpo.py)

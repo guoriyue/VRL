@@ -11,7 +11,6 @@ from PIL import Image
 
 from vrl.config.schema import DataConfig
 from vrl.scripts.data import bootstrap, setup, video_world
-from vrl.trainers.data.artifacts import resolve_required_reference_images_
 from vrl.trainers.data.prompts import load_prompt_dataset_index, load_prompt_examples_from_config
 from vrl.utils.json_files import write_jsonl
 
@@ -226,10 +225,10 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
         example.with_resolved_references(allow_absolute=True)
         for example in load_prompt_dataset_index(manifest)
     ]
-    resolve_required_reference_images_(
-        examples,
-        manifest_path=manifest,
-    )
+    examples = [
+        example.with_required_reference_images(manifest=manifest, row_index=index)
+        for index, example in enumerate(examples)
+    ]
     assert examples[0].metadata["source_episode"] == "000001"
     assert Path(examples[0].reference_images[0]).exists()
 

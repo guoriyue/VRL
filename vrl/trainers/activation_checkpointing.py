@@ -73,42 +73,17 @@ def cpu_checkpoint_func(module, *args):
         return checkpoint(module.__call__, *args, use_reentrant=False)
 
 
-def resolve_gradient_checkpointing_mode(root: RootConfig) -> str:
-    """The recipe's effective checkpointing mode, including CPU-saved inputs.
-
-    The public actor key is the source of truth, mapped to off | full |
-    full_cpu | selective. Absence means off. Back-compat: the historical knob
-    was a bool (True -> full, False -> off); strings select the policy
-    explicitly.
-    """
-
-    value = root.actor.gradient_checkpointing if root.actor is not None else None
-    if isinstance(value, bool):
-        return "full" if value else "off"
-    text = str(value).strip().lower()
-    if text in ("", "none", "false", "off", "0"):
-        return "off"
-    if text in ("true", "full", "1"):
-        return "full"
-    if text in ("selective", "full_cpu"):
-        return text
-    raise ValueError(
-        f"actor.gradient_checkpointing={value!r} invalid; "
-        "use off | full | full_cpu | selective (or a bool: true=full, false=off)",
-    )
-
-
 def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> None:
     """Enable transformer gradient checkpointing while preserving family policy.
 
-    Mode is off | full | full_cpu | selective (``resolve_gradient_checkpointing_mode``).
+    Mode is off | full | full_cpu | selective (``ActorSection.gradient_checkpointing_mode``).
     ``selective`` uses SAC to recompute only the cheap ops; ``full`` recomputes
     every block. If a module's ``enable_gradient_checkpointing`` cannot accept a
     custom func, selective falls back to full for that module with a warning —
     never silently, so the run log states what it actually got.
     """
 
-    mode = resolve_gradient_checkpointing_mode(root)
+    mode = "off" if root.actor is None else root.actor.gradient_checkpointing_mode
     if mode == "off":
         return
     from vrl.config.validation import compile_conflicts
@@ -151,6 +126,5 @@ def enable_transformer_gradient_checkpointing(bundle: Any, root: RootConfig) -> 
 
 __all__ = [
     "enable_transformer_gradient_checkpointing",
-    "resolve_gradient_checkpointing_mode",
     "selective_checkpoint_func",
 ]

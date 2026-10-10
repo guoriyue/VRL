@@ -293,48 +293,8 @@ class DatasetFileReport:
         )
 
 
-def resolve_required_reference_images_(
-    examples: Sequence[PromptExample],
-    *,
-    manifest_path: str | Path,
-    default_reference_image: str | None = None,
-) -> None:
-    """Fill missing reference images and resolve paths in place, requiring existence.
-
-    A row without ``reference_images`` takes ``default_reference_image`` (the
-    recipe's ``data.preprocessing.reference_image``) as its single image.
-    """
-
-    manifest = Path(manifest_path)
-    default_text = str(default_reference_image or "").strip()
-    default_path: Path | None = None
-    if default_text:
-        default_path = Path(default_text).expanduser()
-        if not default_path.exists():
-            raise FileNotFoundError(
-                f"data.preprocessing.reference_image does not exist: {default_path}",
-            )
-        default_path = default_path.resolve()
-
-    for row_index, example in enumerate(examples):
-        paths = [Path(raw).expanduser() for raw in example.reference_images]
-        if not paths and default_path is not None:
-            paths = [default_path]
-        if not paths:
-            raise ValueError(
-                f"{manifest}: row {row_index} is missing required field reference_images",
-            )
-        for path in paths:
-            if not path.exists():
-                raise FileNotFoundError(
-                    f"{manifest}: row {row_index} reference image does not exist: {path}",
-                )
-        example.reference_images = [str(path.resolve()) for path in paths]
-
-
 __all__ = [
     "SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS",
     "DatasetFileReport",
     "ResolvedArtifact",
-    "resolve_required_reference_images_",
 ]

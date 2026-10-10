@@ -5,7 +5,6 @@ from pathlib import Path
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
-from vrl.trainers.data.artifacts import resolve_required_reference_images_
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 
 
@@ -57,10 +56,10 @@ def test_cosmos_per_sample_reference_uses_vrl_data_root(monkeypatch, tmp_path: P
         example.with_resolved_references(allow_absolute=True)
         for example in load_prompt_dataset_index(manifest)
     ]
-    resolve_required_reference_images_(
-        examples,
-        manifest_path=manifest,
-    )
+    examples = [
+        example.with_required_reference_images(manifest=manifest, row_index=index)
+        for index, example in enumerate(examples)
+    ]
 
     assert examples[0].reference_images == [
         str((tmp_path / "video_world" / "references" / "ref.ppm").resolve()),
@@ -75,10 +74,10 @@ def test_cosmos_per_sample_reference_uses_artifact_data_root(tmp_path: Path) -> 
         example.with_resolved_references(data_root=tmp_path, allow_absolute=True)
         for example in load_prompt_dataset_index(manifest)
     ]
-    resolve_required_reference_images_(
-        examples,
-        manifest_path=manifest,
-    )
+    examples = [
+        example.with_required_reference_images(manifest=manifest, row_index=index)
+        for index, example in enumerate(examples)
+    ]
 
     assert examples[0].reference_images == [
         str((tmp_path / "video_world" / "references" / "ref.ppm").resolve()),

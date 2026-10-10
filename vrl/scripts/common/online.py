@@ -845,15 +845,18 @@ async def run_online_recipe(cfg: DictConfig) -> None:
         for example in examples
     ]
     if family_entry.task in {"i2v", "v2w"}:
-        from vrl.trainers.data.artifacts import resolve_required_reference_images_
-
-        resolve_required_reference_images_(
-            examples,
-            manifest_path=Path(str(data_config.manifest or "manifest")),
-            default_reference_image=(
-                data_config.preprocessing.reference_image if data_config.preprocessing else None
-            ),
+        manifest = Path(str(data_config.manifest or "manifest"))
+        default_reference_image = (
+            data_config.preprocessing.reference_image if data_config.preprocessing else None
         )
+        examples = [
+            example.with_required_reference_images(
+                manifest=manifest,
+                row_index=row_index,
+                default_reference_image=default_reference_image,
+            )
+            for row_index, example in enumerate(examples)
+        ]
     # Derive the per-rank resume verdict the trainer reads below. Kept
     # after the checkpoint-identity preflight so an incompatible checkpoint fails
     # fast before we start reading its epoch/step/dir fields.
