@@ -1,0 +1,38 @@
+# Limb-integrity judge (2026-10-10): one absolute yes/no question about the
+# candidate alone, score = 1 - P(yes). The training corpus is close
+# multi-person interaction (six or eight adults in physical contact), where the
+# base draws fused torsos, extra or missing arms and misplaced hands. No
+# reference image and no other criterion: the user chose this single reward.
+# Known exploit directions to watch in held-out renders: fewer people than
+# requested, hidden or cropped hands and limbs, blur.
+host: 127.0.0.1
+port: 8318
+model_name: vlm-preference-qwen3vl32b
+model_version: Qwen/Qwen3-VL-32B-Instruct-FP8@4bf2c2f3
+artifact_roots:
+  - /mnt/nvme/outputs
+  - /mnt/nvme/data/external
+max_concurrency: 1
+max_pending_requests: 256
+max_cached_requests: 8192
+max_request_bytes: 1073741824
+generation_overlap_safe: true
+worker_config:
+  model_factory: vrl.rewards.models.vlm_preference:VLMPreferenceRewardModel
+  device: cuda:0
+  judge_model: Qwen/Qwen3-VL-32B-Instruct-FP8
+  judge_revision: 4bf2c2f3
+  judge_max_side: 896
+  questions_per_forward: 3
+  local_files_only: true
+  criteria:
+    - name: limbs
+      weight: 1.0
+      answer: yesno
+      absolute: true
+      invert: true
+      question: >-
+        Look at Image 1 only. Does any person in it have extra, missing, duplicated or
+        merged limbs, hands, fingers, legs, heads or eyes, a torso fused with another
+        person's body, or a body part attached in an impossible place? Answer yes if
+        you see any such defect.
