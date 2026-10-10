@@ -1,0 +1,58 @@
+# "Naturalness" variant of the pairwise judge. The default pairwise criteria
+# ask which image is the better finished picture, and a policy trained on them
+# drifts toward a brighter, smoother, more saturated render -- the generic AI
+# look. These criteria name that failure: fidelity to the medium the prompt
+# implies (a photograph must look like a photograph), prompt fidelity including
+# style qualifiers, and structural correctness. Nothing here rewards polish.
+#
+#   CUDA_VISIBLE_DEVICES=3 python -m vrl.rewards.service.server \
+#     --config vrl/config/reward_service/qwen3vl32b_pairwise_natural.yaml
+host: 127.0.0.1
+port: 8318
+model_name: vlm-preference-qwen3vl32b
+model_version: Qwen/Qwen3-VL-32B-Instruct-FP8@4bf2c2f3
+artifact_roots:
+  - ../../../outputs
+  - /mnt/nvme/outputs
+max_concurrency: 1
+max_pending_requests: 256
+max_cached_requests: 8192
+max_request_bytes: 1073741824
+generation_overlap_safe: true
+worker_config:
+  model_factory: vrl.rewards.models.qwen3vl_preference:Qwen3VLPreferenceRewardModel
+  device: cuda:0
+  judge_model: Qwen/Qwen3-VL-32B-Instruct-FP8
+  judge_revision: 4bf2c2f3
+  judge_max_side: 1024
+  local_files_only: true
+  reference_key: judge_reference
+  both_orders: true
+  data_root: /mnt/nvme/data/external
+  criteria:
+    - name: natural
+      weight: 2.0
+      answer: yesno
+      question: >-
+        Both images were made for the description "{prompt}". Does Image 1 look more like a
+        genuine work in the medium the description implies (a real photograph, an actual oil
+        painting, a real charcoal drawing, and so on), made by a skilled human, than Image 2?
+        Genuine means believable light and shadow, natural texture of skin, fur, fabric and
+        surfaces, restrained color, and the imperfections of the real medium. Count against an
+        image: plastic smoothness, airbrushed skin, over-brightening or washed-out tones,
+        over-saturation, glow halos, and the generic look of a 3D render or AI illustration
+        when the description did not ask for one.
+    - name: fidelity
+      weight: 1.0
+      answer: yesno
+      question: >-
+        Does Image 1 follow the description "{prompt}" more faithfully than Image 2, including
+        every style and mood qualifier it contains (named artists, "muted", "dark", "analog",
+        "charcoal", a period or a camera look), the requested subject, action and setting?
+    - name: structure
+      weight: 1.0
+      answer: yesno
+      question: >-
+        Is Image 1 better than Image 2 in structural correctness: hands with five fingers,
+        faces and bodies with normal proportions, objects with coherent geometry, legible
+        text where text was requested, and no merged, missing, extra or twisted parts?
