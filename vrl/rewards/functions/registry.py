@@ -62,6 +62,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
     from vrl.rewards.functions.ocr import OCRReward
     from vrl.rewards.functions.pickscore import PickScoreReward
+    from vrl.rewards.functions.qwen3vl_preference import Qwen3VLPreferenceReward
     from vrl.rewards.functions.robotics_video_reward import RoboticsVideoReward
     from vrl.rewards.functions.target_dino_similarity import TargetDinoSimilarityReward
     from vrl.rewards.functions.text_regions import TextRegionsReward
@@ -92,6 +93,7 @@ def _register_builtins() -> None:
             "hpsv3": HPSv3Reward,
             "kling_video_reward": KlingVideoReward,
             "videocon_physics": VideoConPhysicsReward,
+            "qwen3vl_preference": Qwen3VLPreferenceReward,
             "unified_reward_video": UnifiedRewardVideoReward,
         }
     )
