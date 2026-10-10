@@ -8,6 +8,8 @@ from omegaconf import OmegaConf
 
 from vrl.scripts.eval import score_report
 from vrl.scripts.eval import wan_hpsv3_checkpoint_eval as checkpoint_eval
+from vrl.scripts.eval._checkpoint_comparison import load_wan_run_config
+from vrl.utils.artifacts import sha256_file
 
 
 def _score_row(label: str, prompt: int, sample: int, value: float) -> dict[str, object]:
@@ -139,7 +141,7 @@ def _write_run(tmp_path: Path, **model_overrides: object) -> Path:
 def test_run_config_clears_the_warm_start_adapter_and_compile(tmp_path: Path) -> None:
     """A warm-started run records its donor adapter; the base arm must not inherit it."""
 
-    cfg = checkpoint_eval._load_run_config(_write_run(tmp_path))
+    cfg = load_wan_run_config(_write_run(tmp_path))
 
     assert OmegaConf.select(cfg, "model.lora.path") is None
     assert OmegaConf.select(cfg, "model.torch_compile.enable") is False
@@ -148,12 +150,12 @@ def test_run_config_clears_the_warm_start_adapter_and_compile(tmp_path: Path) ->
 
 def test_run_config_refuses_another_family(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires a wan_2_1 run"):
-        checkpoint_eval._load_run_config(_write_run(tmp_path, family="sana"))
+        load_wan_run_config(_write_run(tmp_path, family="sana"))
 
 
 def test_run_config_requires_a_resolved_config(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match=r"resolved_config\.yaml"):
-        checkpoint_eval._load_run_config(tmp_path)
+        load_wan_run_config(tmp_path)
 
 
 # --- reward worker config ----------------------------------------------------
@@ -192,7 +194,7 @@ def test_score_grid_builds_hpsv3_from_the_runs_own_reward_block(
         "prompt": "a prompt",
         "path": str(video),
         "size_bytes": video.stat().st_size,
-        "sha256": checkpoint_eval.sha256_file(video),
+        "sha256": sha256_file(video),
     }
     (output_dir / "generated.jsonl").write_text(json.dumps(row) + "\n")
     built: list[dict[str, object]] = []

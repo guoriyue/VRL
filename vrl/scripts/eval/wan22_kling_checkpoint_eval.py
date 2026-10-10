@@ -37,29 +37,28 @@ from typing import Any
 
 import imageio.v3 as iio
 import numpy as np
-import torch
-from omegaconf import DictConfig, OmegaConf
 
-from vrl.config.precision import PrecisionPolicy
-from vrl.config.schema import parse_config
-from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
-from vrl.models.families.registry import get_model_family_entry
-from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.scripts.eval._device import resolve_eval_device, resolve_eval_dtype
-from vrl.scripts.eval._sampling import resolve_eval_sampling
-from vrl.scripts.eval.denoise_generation import generate_one_video, seed_for
-from vrl.scripts.eval.score_report import summarize_paired_scores, write_scores
-from vrl.scripts.eval.wan_hpsv3_checkpoint_eval import BASE_LABEL, GeneratedVideo
-from vrl.trainers.checkpointing import (
-    CheckpointTarget,
-    TrainingCheckpoint,
-    load_resolved_run_config,
+from vrl.scripts.eval._checkpoint_comparison import (
+    BASE_LABEL,
+    CheckpointComparison,
+    GeneratedVideo,
+    load_wan_run_config,
+    reward_worker_config,
+    score_rows,
+    score_video,
 )
-from vrl.trainers.data.prompts import load_prompt_dataset_index
+from vrl.scripts.eval._device import resolve_eval_device
+from vrl.scripts.eval.score_report import (
+    summarize_paired_scores,
+    summarize_prompt_level,
+    write_scores,
+)
+from vrl.trainers.checkpointing import (
+    TrainingCheckpoint,
+)
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
-from vrl.utils.media import write_mp4
 
 logger = logging.getLogger(__name__)
 
@@ -131,118 +130,52 @@ def main(argv: list[str] | None = None) -> None:
 # --- shared -------------------------------------------------------------------
 
 
-def _load_run_config(run_dir: Path, *, extra_overrides: list[str] = ()) -> DictConfig:
-    """The run's resolved config with the eval-only overrides (see the HPSv3 twin)."""
-
-    cfg, _ = load_resolved_run_config(
-        run_dir,
-        overrides=["model.lora.path=", "model.torch_compile.enable=false", *extra_overrides],
-    )
-    entry = get_model_family_entry(str(OmegaConf.select(cfg, "model.family", default="")))
-    if entry.family != "wan_2_1":
-        raise ValueError(f"this evaluation requires a wan family run; got {entry.family!r}")
-    return cfg
-
-
 def _build_kling(run_dir: Path, device: str) -> Any:
     """Kling built from the run's own reward block so eval scores on training's terms."""
 
     from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 
-    cfg = _load_run_config(run_dir)
-    selected = OmegaConf.select(cfg, "reward.kwargs.kling_video_reward", default={})
-    reward_cfg = OmegaConf.to_container(selected, resolve=True) or {}
-    if not isinstance(reward_cfg, dict):
-        raise ValueError("reward.kwargs.kling_video_reward must be a mapping")
-    worker_config = dict(reward_cfg.get("worker_config") or {})
-    worker_config.setdefault("reward_model_name", "KlingTeam/VideoReward@main")
-    # Training-only lifecycle knob; the eval owns the whole GPU.
-    worker_config.pop("memory_parking_mode", None)
-    worker_config["device"] = str(resolve_eval_device(device))
-    return KlingVideoRewardModel(worker_config)
-
-
-def _score_path(model: Any, path: Path, prompt: str, artifact_id: str) -> dict[str, float]:
-    scores = model(
-        RewardInferenceArtifact(
-            artifact_id=artifact_id,
-            sample_id=artifact_id,
-            path=str(path),
-            prompt=prompt,
-            size_bytes=path.stat().st_size,
-            sha256=sha256_file(path),
+    return KlingVideoRewardModel(
+        reward_worker_config(
+            load_wan_run_config(run_dir),
+            "kling_video_reward",
+            device=str(resolve_eval_device(device)),
+            default_reward_model_name="KlingTeam/VideoReward@main",
         ),
     )
-    missing = [key for key in SCORE_KEYS if key not in scores]
-    if missing:
-        raise ValueError(f"Kling returned no {missing} for {path}")
-    return {key: float(scores[key]) for key in SCORE_KEYS}
 
 
 # --- generate -----------------------------------------------------------------
 
 
 def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
-    if args.limit < 1 or args.samples_per_prompt < 1:
-        raise ValueError("--limit and --samples-per-prompt must be >= 1")
-    targets = CheckpointTarget.from_cli_values(args.checkpoint, reserved_label=BASE_LABEL)
-    if not targets and args.no_base:
-        raise ValueError("nothing to generate: pass --checkpoint or drop --no-base")
-
-    args.output_dir.mkdir(parents=True, exist_ok=True)
     grid_path = args.output_dir / "generated.jsonl"
     existing = read_jsonl(grid_path) if grid_path.is_file() else []
     present = {str(row["checkpoint_label"]) for row in existing}
     provenance_path = args.output_dir / "provenance.json"
     provenance = json.loads(provenance_path.read_text()) if provenance_path.is_file() else None
 
-    cfg = _load_run_config(args.run_dir, extra_overrides=[f"sampling.fps={int(args.fps)}"])
-    root = parse_config(cfg)
-    device = resolve_eval_device(args.device)
-    precision = PrecisionPolicy.from_section(root.precision)
-    dtype = resolve_eval_dtype(
-        "auto",
-        root,
-        precision=precision,
-        device=device,
+    comparison = CheckpointComparison.from_args(
+        args,
         requires_trainer="Wan 2.2 Kling checkpoint evaluation",
+        extra_overrides=[f"sampling.fps={int(args.fps)}"],
     )
-    entry = get_model_family_entry(str(root.model.family))
-    build = entry.resolve_model_build(
-        root,
-        device,
-        precision=precision,
-        parameter_dtype_override=dtype,
-    )
-    identity = resolve_checkpoint_model_identity(build)
-
-    targets = [CheckpointTarget.load(target.path, label=target.label) for target in targets]
-    for target in targets:
+    for target in comparison.targets:
         if target.label in present:
             raise ValueError(f"arm {target.label!r} already exists in {grid_path}")
-        target.validate_compatibility(
-            family=entry.family,
-            expected_model_identity=identity,
-        )
-
-    examples = load_prompt_dataset_index(args.prompts)[: args.limit]
-    if len(examples) < args.limit:
-        raise ValueError(f"manifest has {len(examples)} prompts, fewer than --limit {args.limit}")
-    sampling = resolve_eval_sampling(root)
-    sampling["denoise_mode"] = str(args.denoise_mode)
-    grid = {
+    protocol = {
         "prompts": str(args.prompts.resolve()),
         "prompts_sha256": sha256_file(args.prompts),
         "limit": args.limit,
         "samples_per_prompt": args.samples_per_prompt,
         "base_seed": args.base_seed,
-        "seed_formula": "base_seed + prompt_index * samples_per_prompt + sample_index",
-        "sampling": sampling,
+        "seed_formula": comparison.seed_formula,
+        "sampling": comparison.sampling,
     }
-    if provenance is not None and provenance["grid"] != grid:
+    if provenance is not None and provenance["grid"] != protocol:
         raise ValueError(f"grid differs from the existing {provenance_path}: {provenance['grid']}")
 
-    bundle = entry.build_rollout(build)
+    bundle = comparison.entry.build_rollout(comparison.build)
     model = bundle.model.eval()
     videos: list[GeneratedVideo] = []
     try:
@@ -250,8 +183,8 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
             if BASE_LABEL in present:
                 raise ValueError(f"base arm already exists in {grid_path}; pass --no-base")
             with model.disable_adapter():
-                videos += _generate_arm(model, BASE_LABEL, examples, sampling, args)
-        for target in targets:
+                videos += comparison.generate_arm(model, BASE_LABEL)
+        for target in comparison.targets:
             checkpoint = TrainingCheckpoint.load(target.path)
             # Install the adapters through the family's weight-sync path: the
             # generic restore writes into rollout modules that sit behind Wan's
@@ -265,7 +198,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
                     for name, value in state.items()
                 },
             )
-            videos += _generate_arm(model, target.label, examples, sampling, args)
+            videos += comparison.generate_arm(model, target.label)
     finally:
         del model, bundle
         release_cuda_memory()
@@ -274,7 +207,10 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
     write_jsonl(grid_path, rows)
     checkpoints = dict(provenance["checkpoints"]) if provenance else {}
     checkpoints.update(
-        {target.label: {"path": str(target.path), "meta": target.meta} for target in targets},
+        {
+            target.label: {"path": str(target.path), "meta": target.meta}
+            for target in comparison.targets
+        },
     )
     write_json(
         provenance_path,
@@ -282,7 +218,7 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
             "schema": REPORT_SCHEMA,
             "run_dir": str(args.run_dir),
             "resolved_config_sha256": sha256_file(args.run_dir / "resolved_config.yaml"),
-            "grid": grid,
+            "grid": protocol,
             "arms": sorted({str(row["checkpoint_label"]) for row in rows}),
             "checkpoints": checkpoints,
         },
@@ -290,84 +226,16 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
     return {"videos": len(videos), "arms": sorted(present | {v.checkpoint_label for v in videos})}
 
 
-def _generate_arm(
-    model: Any,
-    label: str,
-    examples: list[Any],
-    sampling: dict[str, Any],
-    args: argparse.Namespace,
-) -> list[GeneratedVideo]:
-    arm_dir = args.output_dir / "videos" / label
-    arm_dir.mkdir(parents=True, exist_ok=True)
-    produced: list[GeneratedVideo] = []
-    for prompt_index, example in enumerate(examples):
-        for sample_index in range(args.samples_per_prompt):
-            seed = seed_for(
-                base_seed=args.base_seed,
-                prompt_index=prompt_index,
-                sample_index=sample_index,
-                samples_per_prompt=args.samples_per_prompt,
-            )
-            video = generate_one_video(model, prompt=example.prompt, seed=seed, sampling=sampling)
-            # A silently broken adapter yields constant frames that still score.
-            if not bool(torch.isfinite(video).all()) or float(video.float().std()) < 1e-3:
-                raise RuntimeError(
-                    f"degenerate video for {label} prompt {prompt_index} sample {sample_index}",
-                )
-            path = arm_dir / f"p{prompt_index:04d}_s{sample_index:02d}.mp4"
-            write_mp4(video, path, fps=float(sampling["fps"]))
-            produced.append(
-                GeneratedVideo(
-                    checkpoint_label=label,
-                    prompt_index=prompt_index,
-                    sample_index=sample_index,
-                    seed=seed,
-                    prompt=example.prompt,
-                    path=str(path),
-                    size_bytes=path.stat().st_size,
-                    sha256=sha256_file(path),
-                ),
-            )
-        logger.info("%s: %d/%d prompts", label, prompt_index + 1, len(examples))
-    return produced
-
-
 # --- score --------------------------------------------------------------------
 
 
 def score_grid(args: argparse.Namespace) -> dict[str, Any]:
-    rows = read_jsonl(args.output_dir / "generated.jsonl")
-    if not rows:
-        raise ValueError(f"no generated.jsonl rows under {args.output_dir}")
-    scores_path = args.output_dir / "scores.jsonl"
-    cached = {
-        (str(r["checkpoint_label"]), int(r["prompt_index"]), int(r["sample_index"])): r
-        for r in (read_jsonl(scores_path) if scores_path.is_file() else [])
-    }
-    model = None
-    scored: list[dict[str, Any]] = []
-    try:
-        for row in rows:
-            key = (
-                str(row["checkpoint_label"]),
-                int(row["prompt_index"]),
-                int(row["sample_index"]),
-            )
-            hit = cached.get(key)
-            if hit is not None and hit.get("sha256") == row["sha256"]:
-                scored.append(hit)
-                continue
-            path = Path(row["path"])
-            if sha256_file(path) != row["sha256"]:
-                raise ValueError(f"video changed since generation: {path}")
-            if model is None:
-                model = _build_kling(args.run_dir, args.device)
-            cell = f"{key[0]}-p{key[1]:04d}-s{key[2]:02d}"
-            scores = _score_path(model, path, str(row["prompt"]), cell)
-            scored.append({**row, **{f"r_{k}": v for k, v in scores.items()}})
-    finally:
-        del model
-        release_cuda_memory()
+    scored = score_rows(
+        args.output_dir,
+        lambda: _build_kling(args.run_dir, args.device),
+        score_keys=SCORE_KEYS,
+        reuse_cached=True,
+    )
     write_scores(scored, args.output_dir)
     summary = summarize_paired_scores(
         scored,
@@ -375,45 +243,12 @@ def score_grid(args: argparse.Namespace) -> dict[str, Any]:
         schema=REPORT_SCHEMA,
         base_label=BASE_LABEL,
     )
-    # Paired deltas with the PROMPT as the unit: seeds of one prompt are
-    # correlated. Per arm and key: average the samples of each prompt,
-    # difference against the base arm's same-prompt average, then report
-    # mean / stderr / win rate over prompts. This is the statistic a learning
-    # claim rests on.
-    by_arm: dict[str, dict[int, dict[str, list[float]]]] = {}
-    for row in scored:
-        arm = by_arm.setdefault(str(row["checkpoint_label"]), {})
-        prompt = arm.setdefault(int(row["prompt_index"]), {key: [] for key in SCORE_KEYS})
-        for key in SCORE_KEYS:
-            prompt[key].append(float(row[f"r_{key}"]))
-    base = by_arm[BASE_LABEL]
-    prompt_level: dict[str, Any] = {}
-    for label, prompts in by_arm.items():
-        if label == BASE_LABEL:
-            continue
-        if set(prompts) != set(base):
-            raise ValueError(f"arm {label!r} covers different prompts than the base arm")
-        per_key: dict[str, Any] = {}
-        for key in SCORE_KEYS:
-            deltas = [
-                statistics.fmean(prompts[p][key]) - statistics.fmean(base[p][key])
-                for p in sorted(base)
-            ]
-            n = len(deltas)
-            per_key[key] = {
-                "prompts": n,
-                "base_mean": statistics.fmean(statistics.fmean(base[p][key]) for p in base),
-                "arm_mean": statistics.fmean(statistics.fmean(prompts[p][key]) for p in base),
-                "delta_mean": statistics.fmean(deltas),
-                "delta_stderr": statistics.stdev(deltas) / n**0.5 if n > 1 else float("nan"),
-                "win_rate": sum(d > 0 for d in deltas) / n,
-            }
-        prompt_level[label] = per_key
-
     report = {
         "schema": REPORT_SCHEMA,
         "scored": len(scored),
-        "prompt_level": prompt_level,
+        "prompt_level": summarize_prompt_level(
+            scored, score_keys=SCORE_KEYS, base_label=BASE_LABEL
+        ),
         **summary,
     }
     write_json(args.output_dir / "report.json", report)
@@ -421,6 +256,10 @@ def score_grid(args: argparse.Namespace) -> dict[str, Any]:
 
 
 # --- probe --------------------------------------------------------------------
+
+
+def _probe_score(model: Any, path: Path, prompt: str, cell: str) -> dict[str, float]:
+    return score_video(model, path, prompt=prompt, artifact_id=cell, score_keys=SCORE_KEYS)
 
 
 def probe_reward(args: argparse.Namespace) -> dict[str, Any]:
@@ -439,8 +278,8 @@ def probe_reward(args: argparse.Namespace) -> dict[str, Any]:
             prompt = str(row["prompt"])
             cell = f"p{row['prompt_index']:04d}-s{row['sample_index']:02d}"
             record: dict[str, Any] = {"cell": cell, "prompt": prompt, "variants": {}}
-            record["variants"]["original"] = _score_path(model, path, prompt, cell)
-            record["variants"]["repeat"] = _score_path(model, path, prompt, cell + "-r")
+            record["variants"]["original"] = _probe_score(model, path, prompt, cell)
+            record["variants"]["repeat"] = _probe_score(model, path, prompt, cell + "-r")
             frames = np.asarray(iio.imread(path, plugin="pyav"))
             fps = float(iio.immeta(path, plugin="pyav").get("fps", 16.0))
             # Degradations an honest quality/motion reward must rank below the
@@ -457,7 +296,7 @@ def probe_reward(args: argparse.Namespace) -> dict[str, Any]:
                 iio.imwrite(
                     dst, degraded.astype(np.uint8), fps=fps, plugin="pyav", codec="libx264"
                 )
-                record["variants"][name] = _score_path(model, dst, prompt, f"{cell}-{name}")
+                record["variants"][name] = _probe_score(model, dst, prompt, f"{cell}-{name}")
             records.append(record)
             logger.info("probed %s", cell)
 

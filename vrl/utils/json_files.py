@@ -8,9 +8,10 @@ exceptions remove temporary files; abrupt process termination may leave one.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +78,25 @@ def write_jsonl(
     return count
 
 
+def write_csv(
+    path: str | Path,
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    lead: Sequence[str] = (),
+) -> None:
+    """Write rows as CSV over the union of their keys, sorted, ``lead`` columns first."""
+
+    fieldnames = sorted({key for row in rows for key in row})
+    for name in reversed(lead):
+        if name in fieldnames:
+            fieldnames.remove(name)
+            fieldnames.insert(0, name)
+    with atomic_file(path) as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
     """Read one JSON object per line, skipping blank lines."""
 
@@ -93,4 +113,4 @@ def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
     return rows
 
 
-__all__ = ["read_json", "read_jsonl", "write_json", "write_jsonl"]
+__all__ = ["read_json", "read_jsonl", "write_csv", "write_json", "write_jsonl"]

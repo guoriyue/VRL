@@ -84,7 +84,7 @@ def test_seed_grid_cell_is_identical_across_checkpoints(tmp_path) -> None:
             output_dir=tmp_path / label,
             sampling=sampling,
         )
-        assert all(video.path.is_file() and video.path.stat().st_size > 0 for video in videos)
+        assert all(Path(video.path).is_file() and video.size_bytes > 0 for video in videos)
         return [video.seed for video in videos]
 
     base, trained = run("base"), run("a-much-longer-label")
@@ -354,7 +354,7 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
     assert len(built) == 2
     assert restored == [(tmp_path / "base", 1.0), (tmp_path / "trained", 2.0)]
     assert [video.checkpoint_label for video in videos] == ["base", "trained"]
-    assert all(video.path.is_file() and video.path.stat().st_size > 0 for video in videos)
+    assert all(Path(video.path).is_file() and video.size_bytes > 0 for video in videos)
     gc.collect()
     assert [ref() for ref in built] == [None, None]
 

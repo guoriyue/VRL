@@ -32,7 +32,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import logging
 from pathlib import Path
@@ -45,6 +44,7 @@ from vrl.config.loading import load_config
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.trainers.data.prompts import load_prompt_dataset_index
+from vrl.utils.json_files import write_csv
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +189,8 @@ def main(argv: list[str] | None = None) -> None:
             for metric, value in merged.get(video.name, {}).items():
                 row[f"{prefix}_{metric}"] = value
 
-    _write_csv(rows, output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    write_csv(output, rows, lead=("prompt", "video_path"))
     logger.info("wrote %d rows to %s", len(rows), output)
     print(json.dumps({"output": str(output), "videos": len(rows)}, indent=2))
 
@@ -299,20 +300,6 @@ def _score_vbench(
             except (TypeError, ValueError):
                 continue
     return scores
-
-
-def _write_csv(rows: list[dict[str, Any]], output: Path) -> None:
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = sorted({key for row in rows for key in row})
-    # Keep identity columns first for readability.
-    for lead in ("prompt", "video_path"):
-        if lead in fieldnames:
-            fieldnames.remove(lead)
-            fieldnames.insert(0, lead)
-    with output.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
 
 
 if __name__ == "__main__":

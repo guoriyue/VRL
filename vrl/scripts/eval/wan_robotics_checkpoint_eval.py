@@ -9,7 +9,6 @@ video shards before deterministic identity hashing selects the requested rows.
 from __future__ import annotations
 
 import argparse
-import csv
 import gc
 import hashlib
 import json
@@ -44,7 +43,13 @@ from vrl.trainers.checkpointing import (
 from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
 from vrl.utils.artifacts import resolve_artifact_path, sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
-from vrl.utils.json_files import canonical_json_sha256, read_jsonl, write_json, write_jsonl
+from vrl.utils.json_files import (
+    canonical_json_sha256,
+    read_jsonl,
+    write_csv,
+    write_json,
+    write_jsonl,
+)
 from vrl.utils.media import write_mp4
 
 logger = logging.getLogger(__name__)
@@ -383,7 +388,7 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
         "summary": summary,
     }
     write_jsonl(staging_dir / "scores.jsonl", scored)
-    _write_csv(staging_dir / "scores.csv", scored)
+    write_csv(staging_dir / "scores.csv", scored)
     write_json(staging_dir / "report.json", report)
     _fsync_tree(staging_dir)
     os.replace(staging_dir, scoring_dir)
@@ -707,14 +712,6 @@ def summarize_scores(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _json_sha256(value: Any) -> str:
     return canonical_json_sha256(value, ensure_ascii=False)
-
-
-def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    fieldnames = sorted({key for row in rows for key in row})
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
 
 
 def _fsync_tree(path: Path) -> None:

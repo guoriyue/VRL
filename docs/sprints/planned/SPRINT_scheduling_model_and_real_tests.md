@@ -285,3 +285,27 @@ MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_prefl
 - `resolve_checkpoint_model_identity(build)`：产出的是写进 checkpoint 元数据的可序列化 dict，算法独立成模块；做成 `ModelBuild` 方法只能是转发。
 - `require_training_config(cfg)`：parse + 跨节规则 + 精度策略三件事的入口；`BuiltConfigs.from_cfg` 调它。
 - 多调用方的纯函数：`resolve_model_root`、`resolve_metadata_path`、`normalize_precision`、`normalize_fsdp_parameter_dtype`、`resolve_echo_video_dimensions`。
+
+## 11. eval 脚本共享骨架（2026-10-09）
+
+内联单调用方函数不会减少代码；评估脚本之间真正的重复是三份同构的工具
+（Wan 2.1 HPSv3、Wan 2.2 Kling、Cosmos Kling）各自复制了同一套数据类和循环。
+本轮把这套骨架收进 `vrl/scripts/eval/_checkpoint_comparison.py`：
+
+- `GeneratedVideo.from_file` / `artifact_id`：一张网格格子的记录（三个工具共用，
+  cosmos 原来自带一份 `path: Path` 的变体和 `_artifact_id`）。
+- `load_wan_run_config`、`reward_worker_config`：训练 run 的配置和奖励 worker
+  配置（原来 5 处手写 `RewardInferenceArtifact.from_cli_values` / parking pop）。
+- `CheckpointComparison.from_args` + `generate_arm`：参数校验、模型构建、
+  checkpoint 兼容性检查、提示词/采样协议、按格子生成（两份 Wan 工具的
+  `generate_grid` 前 60 行和 `_generate_arm` 逐字相同）。
+- `score_rows` / `score_video`：按 sha 重校验、可选 scores.jsonl 缓存、
+  惰性建模的打分循环（Wan 2.2 的版本带缓存，HPSv3 的不带，其余相同）。
+- `score_report.summarize_prompt_level`：以 prompt 为单位的配对统计，从
+  Wan 2.2 的 `score_grid` 内部搬出。
+- `vrl.utils.json_files.write_csv`：三份手写 `csv.DictWriter` 收口；
+  `write_scores` 改走 `write_jsonl` + `write_csv`；cosmos 的
+  `_summarize_scores` 改走 `score_statistics.distribution`。
+
+净变化：工具与测试 -504 / +185 行，另加 346 行共享模块（原来分散在三份工具里
+的同一段代码只剩一份）。

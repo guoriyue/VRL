@@ -31,7 +31,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from vrl.utils.json_files import write_json
+from vrl.utils.json_files import write_csv, write_json, write_jsonl
 from vrl.utils.score_statistics import bootstrap_mean_interval, distribution
 
 
@@ -107,13 +107,53 @@ def summarize_paired_scores(
 def write_scores(rows: Sequence[dict[str, Any]], output_dir: Path) -> None:
     """Publish scores.jsonl and scores.csv side by side."""
 
-    with (output_dir / "scores.jsonl").open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, sort_keys=True) + "\n")
-    with (output_dir / "scores.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=sorted({key for row in rows for key in row}))
-        writer.writeheader()
-        writer.writerows(rows)
+    write_jsonl(output_dir / "scores.jsonl", rows)
+    write_csv(output_dir / "scores.csv", rows)
+
+
+def summarize_prompt_level(
+    rows: Sequence[dict[str, Any]],
+    *,
+    score_keys: Sequence[str],
+    base_label: str,
+) -> dict[str, Any]:
+    """Paired deltas with the PROMPT as the unit: seeds of one prompt are correlated.
+
+    Per arm and key: average the samples of each prompt, difference against the
+    base arm's same-prompt average, then report mean / stderr / win rate over
+    prompts. This is the statistic a learning claim rests on.
+    """
+
+    by_arm: dict[str, dict[int, dict[str, list[float]]]] = {}
+    for row in rows:
+        arm = by_arm.setdefault(str(row["checkpoint_label"]), {})
+        prompt = arm.setdefault(int(row["prompt_index"]), {key: [] for key in score_keys})
+        for key in score_keys:
+            prompt[key].append(float(row[f"r_{key}"]))
+    base = by_arm[base_label]
+    prompt_level: dict[str, Any] = {}
+    for label, prompts in by_arm.items():
+        if label == base_label:
+            continue
+        if set(prompts) != set(base):
+            raise ValueError(f"arm {label!r} covers different prompts than the base arm")
+        per_key: dict[str, Any] = {}
+        for key in score_keys:
+            deltas = [
+                statistics.fmean(prompts[p][key]) - statistics.fmean(base[p][key])
+                for p in sorted(base)
+            ]
+            n = len(deltas)
+            per_key[key] = {
+                "prompts": n,
+                "base_mean": statistics.fmean(statistics.fmean(base[p][key]) for p in base),
+                "arm_mean": statistics.fmean(statistics.fmean(prompts[p][key]) for p in base),
+                "delta_mean": statistics.fmean(deltas),
+                "delta_stderr": statistics.stdev(deltas) / n**0.5 if n > 1 else float("nan"),
+                "win_rate": sum(d > 0 for d in deltas) / n,
+            }
+        prompt_level[label] = per_key
+    return prompt_level
 
 
 def write_curve_report(
