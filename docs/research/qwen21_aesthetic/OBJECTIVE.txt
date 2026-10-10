@@ -1,0 +1,16 @@
+ Determine whether SigLIP Aesthetic Predictor V2.5 can guide RL to make Qwen-Image-2.1 outputs more visually appealing without reducing prompt
+  adherence or diversity.
+
+  1. Validate the scorer: Run real pretrained inference and confirm repeatable, finite scores.
+  2. Qualify its rankings: Generate 64 diverse prompts × 8 seeds. Blindly compare aesthetic-selected images against random candidates from the same groups,
+     rating appeal and prompt correctness separately.
+
+  3. Training gate: Proceed only if aesthetic selection improves blind preference with a paired 95% confidence interval above chance and no meaningful loss
+     of prompt adherence.
+
+  4. Short RL pilot: Train a separate LoRA with aesthetic reward and frozen-base KL regularization. Save and evaluate checkpoints regularly.
+  5. Independent verdict: Compare base and checkpoints on 120 unseen prompts with matched seeds. Report blind preference, prompt adherence, diversity, and
+     aesthetic scores.
+
+  Success means independently judged visual improvement—not merely a higher training reward. Keep this experiment separate from the editing work; deliver a
+  reproducible report and image comparisons even if the result is negative.

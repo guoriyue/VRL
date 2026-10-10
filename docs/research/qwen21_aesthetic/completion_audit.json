@@ -1,0 +1,13 @@
+{
+  "objective_file_sha256": "fa359daafaab5bc7960953c5803850875207555a17731b38c43d410709727fa8",
+  "requirements": {
+    "1_validate_scorer": "verified: 512 finite scores x2; max repeat range 0; smoke report also passed",
+    "2_64x8_blind_rankings": "verified: 512 hashed images; 64 saved blind AI judgments and comparison gallery; appeal and adherence separate",
+    "3_training_gate": "verified: predeclared paired CI lower bound 0.4609 <=0.5; gate does not pass",
+    "4_short_rl_pilot": "conditional stage not entered because user training gate failed; no training authorized under this result",
+    "5_120_checkpoint_verdict": "conditional on trained checkpoint; not entered; 120 test prompts frozen, no post-RL improvement or diversity claim",
+    "reproducible_report_and_comparisons": "verified REPORT.md, results.json, scripts/config/prompts/labels, all HTML image links exist",
+    "separate_from_editing": "all new repository work under docs/research/qwen21_aesthetic and separate outputs directory; no editing code modified"
+  },
+  "outcome": "Completed negative qualification branch of the conditional experiment. General aesthetic-RL efficacy remains unproven."
+}
