@@ -114,20 +114,65 @@ def test_disk_parking_moves_frozen_shards_to_files_and_restores_them(
     parking.park_training_state()
 
     files = sorted(path for path in nvme.rglob("*.bin"))
-    assert len(files) == 2  # frozen weight and bias, one file each
+    assert len(files) == 4  # both frozen and trainable weight/bias are reclaimable
     assert (
         model[0].weight is frozen_weight
         and model[0].weight.data_ptr() != before["0.weight"].data_ptr()
     )
-    assert model[1].weight is trainable_weight  # trainable rows stay in host RAM
+    assert model[1].weight is trainable_weight  # storage changes, identity does not
     for name, tensor in model.state_dict().items():
         assert torch.equal(tensor, before[name]), name
 
     parking.restore()
-
     assert not list(nvme.iterdir())
     for name, tensor in model.state_dict().items():
         assert torch.equal(tensor, before[name]), name
+
+
+def test_disk_parking_preserves_full_model_adam_update(tmp_path) -> None:
+    """Real master/moment/gradient mappings must survive the next optimizer step."""
+    from vrl.trainers.optimizer import FP32MasterWeightOptimizer
+
+    torch.manual_seed(9)
+    model = torch.nn.Linear(4, 2, dtype=torch.bfloat16)
+    reference = torch.nn.Linear(4, 2, dtype=torch.bfloat16)
+    reference.load_state_dict(model.state_dict())
+
+    def optimizer(module):
+        return FP32MasterWeightOptimizer(
+            module.parameters(), lambda p: torch.optim.AdamW(p, lr=1e-3)
+        )
+
+    opt, ref_opt = optimizer(model), optimizer(reference)
+    x = torch.ones(2, 4, dtype=torch.bfloat16)
+
+    def step(module, optim):
+        optim.zero_grad(set_to_none=True)
+        module(x).float().square().mean().backward()
+        optim.prepare_gradients()
+        optim.step()
+
+    step(model, opt)
+    step(reference, ref_opt)
+    state = TrainingMemoryState(model, None, opt, None, None, torch.device("cpu"))
+    identities = [id(p) for p in model.parameters()] + [id(p) for p in opt.parameters()]
+    parking = TrainingStateParking(state, parking_directory=str(tmp_path))
+    parking.park_training_state()
+    # Every large optimizer tensor has file-backed storage, including masters.
+    tensors = list(opt.parameters())
+    tensors += [v for s in opt.state.values() for v in s.values() if isinstance(v, torch.Tensor)]
+    assert tensors
+    for tensor in tensors:
+        assert tensor.untyped_storage().filename is not None
+    parking.restore()
+    assert not list(tmp_path.iterdir())
+    assert identities == [id(p) for p in model.parameters()] + [id(p) for p in opt.parameters()]
+    step(model, opt)
+    step(reference, ref_opt)
+    for actual, expected in zip(model.parameters(), reference.parameters(), strict=True):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    for actual, expected in zip(opt.parameters(), ref_opt.parameters(), strict=True):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
 def test_partial_file_mapping_failure_can_restore_and_clean_up(tmp_path, monkeypatch) -> None:

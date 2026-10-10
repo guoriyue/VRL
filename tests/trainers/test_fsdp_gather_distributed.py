@@ -113,6 +113,34 @@ def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
         )
         selective = set(gathered) == trainable and full_tensor_calls == len(trainable)
 
+        # Saving still enters the same collectives on every rank, but only the
+        # writer should retain a full model in host memory.
+        primary_snapshot = gather_checkpoint_state_dict(model, rank0_only=True)
+        if rank == 0:
+            torch.testing.assert_close(primary_snapshot, gathered, rtol=0, atol=0)
+        else:
+            assert primary_snapshot == {}
+
+        # Resume verification must still see every key on every rank. Only
+        # the save-specific strategy entrypoint may return an empty rank tree.
+        from types import SimpleNamespace
+
+        from vrl.trainers.strategy import FSDPStrategy
+
+        strategy = FSDPStrategy(
+            ctx,
+            mesh_dims=["dp_shard"],
+            precision_policy="none",
+            reshard_after_forward=True,
+            cpu_offload=False,
+        )
+        bundle = SimpleNamespace(trainable_modules={"transformer": model})
+        torch.testing.assert_close(
+            strategy.export_checkpoint_state(bundle), {"transformer": gathered}, rtol=0, atol=0
+        )
+        saved = strategy.export_checkpoint_state_for_save(bundle)
+        assert set(saved["transformer"]) == (trainable if rank == 0 else set())
+
         replacement = {name: torch.full_like(value, 9.0) for name, value in gathered.items()}
         load_checkpoint_state_dict(model, replacement, strict=True)
         restored = gather_checkpoint_state_dict(model)

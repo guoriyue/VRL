@@ -332,7 +332,17 @@ class TrainingCheckpoint:
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"training checkpoint file not found: {checkpoint_path}")
         meta = read_checkpoint_meta(checkpoint_dir)
-        payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        # Full-model optimizer checkpoints can exceed 100 GB. Mapping the ZIP
+        # storages lets ranks share reclaimable file pages instead of each
+        # allocating an anonymous copy. Keep legacy torch.save files readable.
+        import zipfile
+
+        payload = torch.load(
+            checkpoint_path,
+            map_location="cpu",
+            weights_only=False,
+            mmap=zipfile.is_zipfile(checkpoint_path),
+        )
         if not isinstance(payload, dict):
             raise TypeError(f"{checkpoint_path} must contain a dict payload")
         schema_version = TrainingCheckpoint._read_schema_version(
@@ -449,12 +459,29 @@ class TrainingCheckpoint:
         )
         trainer.load_state_dict(self.trainer_state, strict=strict)
         if strict and "optimizer" in self.trainer_state:
-            restored_trainer = trainer.state_dict()
-            _require_equal_tensor_tree(
-                self.trainer_state["optimizer"],
-                restored_trainer.get("optimizer"),
-                label="restored optimizer state",
-            )
+            # Verification must not gather a full Adam/master tree onto EVERY
+            # rank. The checkpoint exporter gathers all shards, retaining the
+            # result only on the writer; its verdict is shared with all peers.
+            exporter = getattr(trainer, "checkpoint_state_dict", None)
+            primary_only = callable(exporter) and strategy is not None
+            restored_trainer = exporter() if callable(exporter) else trainer.state_dict()
+            failure: BaseException | None = None
+            if not primary_only or strategy.context.is_primary:
+                try:
+                    _require_equal_tensor_tree(
+                        self.trainer_state["optimizer"],
+                        restored_trainer.get("optimizer"),
+                        label="restored optimizer state",
+                    )
+                except BaseException as error:
+                    failure = error
+            agree = strategy.collectives.succeeded if primary_only else bool
+            if not agree(failure is None):
+                if failure is not None:
+                    raise failure
+                raise RuntimeError(
+                    "restored optimizer state verification failed on the primary rank"
+                )
 
     def restore_model(
         self,
@@ -1025,7 +1052,9 @@ def save_training_checkpoint(
     if all_export_ema == all_skip_ema:
         raise RuntimeError("checkpoint ranks disagree on EMA export decision")
     export_checkpoint = (
-        strategy.export_checkpoint_state if strategy is not None else export_checkpoint_state
+        getattr(strategy, "export_checkpoint_state_for_save", strategy.export_checkpoint_state)
+        if strategy is not None
+        else export_checkpoint_state
     )
     # Collectives on ALL ranks (FSDP all-gathers) — before the is_primary gate:
     # the checkpoint-state gather, and trainer.state_dict() (whose optimizer

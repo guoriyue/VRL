@@ -787,15 +787,23 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
             gradient.mul_(clip_coefficient)
         return total_norm
 
-    def export_checkpoint_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
+    def export_checkpoint_state(
+        self, bundle: Any, *, rank0_only: bool = False
+    ) -> dict[str, dict[str, Any]]:
         from vrl.models.weight_utils import unwrap_compile_and_ddp
         from vrl.trainers.fsdp import gather_checkpoint_state_dict
 
         modules = require_trainable_modules(bundle)
         return {
-            name: gather_checkpoint_state_dict(unwrap_compile_and_ddp(module))
+            name: gather_checkpoint_state_dict(
+                unwrap_compile_and_ddp(module), rank0_only=rank0_only
+            )
             for name, module in modules.items()
         }
+
+    def export_checkpoint_state_for_save(self, bundle: Any) -> dict[str, dict[str, Any]]:
+        """Only the writer retains weights; restore verification still needs all ranks."""
+        return self.export_checkpoint_state(bundle, rank0_only=True)
 
     def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
         from vrl.models.weight_utils import unwrap_compile_and_ddp

@@ -10,7 +10,8 @@ validation and file lifetime, not device moves. ``cumem`` (:class:`CumemPool`)
 requires model allocations to be created inside its pool, which it backs up to
 pinned RAM and unmaps while preserving virtual addresses; it has no disk
 destination. :class:`TrainingStateParking` extends ``move`` to optimizer,
-gradient, EMA and scaler state.
+gradient, EMA and scaler state, including disk backing for that mutable state
+while training is quiescent.
 
 The session raises typed failures and keeps no phase policy. Whether a failure
 quarantines the owner, rolls back every rank, or is retried belongs to the
@@ -63,6 +64,8 @@ class ModelParking:
     owns the GPU; trainable storage stays in host RAM.
     """
 
+    _park_mutable_to_disk = False
+
     def __init__(self, *, parking_directory: str | None = None) -> None:
         self._modules: list[tuple[Any, Any]] = []
         self._tensors: list[tuple[torch.Tensor, torch.device]] = []
@@ -113,7 +116,10 @@ class ModelParking:
         if callable(move_frozen):
             move_frozen("cpu")
         if self._disk_store is not None and callable(getattr(model, "parameters", None)):
-            self._disk_store.store(model.parameters())
+            tensors = (
+                self.module_tensors(model) if self._park_mutable_to_disk else model.parameters()
+            )
+            self._disk_store.store(tensors, include_trainable=self._park_mutable_to_disk)
             # Storage replacement requires FSDP to refresh its local shard views.
             self._move_module(model, "cpu")
             self._disk_store.release_unused_host_memory()
@@ -130,6 +136,8 @@ class ModelParking:
             if device.type != "cpu":
                 self._tensors.append((value, device))
                 self._move_tensor(value, torch.device("cpu"))
+            if self._disk_store is not None and self._park_mutable_to_disk:
+                self._disk_store.store((value,), include_trainable=True)
         elif isinstance(value, Mapping):
             for child in value.values():
                 self.park_tensors(child)
@@ -262,6 +270,11 @@ class TrainingStateParking(ModelParking):
     """The trainer's ``move`` ledger: model parking plus optimizer, gradient,
     EMA and scaler storage."""
 
+    # Training is quiescent for the whole parked phase. Model shards, FP32
+    # masters and Adam moments can therefore all use reclaimable NVMe mappings.
+    # Parking only frozen weights provides no relief for full-parameter runs.
+    _park_mutable_to_disk = True
+
     def __init__(
         self,
         state: TrainingMemoryState,
@@ -298,6 +311,8 @@ class TrainingStateParking(ModelParking):
         if state.grad_scaler is not None:
             for attr in ("_scale", "_growth_tracker", "_per_optimizer_states"):
                 self.park_tensors(getattr(state.grad_scaler, attr, None))
+        if self._disk_store is not None:
+            self._disk_store.release_unused_host_memory()
 
     def restore(self) -> None:
         super().restore()

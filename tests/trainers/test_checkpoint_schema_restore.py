@@ -22,6 +22,70 @@ from vrl.trainers.checkpointing import (
 )
 
 
+@pytest.mark.parametrize("zip_format", [True, False])
+def test_checkpoint_mapping_preserves_file_and_legacy_load(tmp_path, monkeypatch, zip_format):
+    path = tmp_path / TRAINING_CHECKPOINT_NAME
+    torch.save(
+        _v1_payload({"weight": torch.arange(8.0)}),
+        path,
+        _use_new_zipfile_serialization=zip_format,
+    )
+    original = torch.load
+    calls = []
+
+    def load(*args, **kwargs):
+        calls.append(kwargs.get("mmap"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(torch, "load", load)
+    checkpoint = TrainingCheckpoint.load(path)
+    checkpoint.payload["model"]["trainable_modules"]["module"]["weight"].add_(10)
+    again = TrainingCheckpoint.load(path)
+    torch.testing.assert_close(
+        again.payload["model"]["trainable_modules"]["module"]["weight"], torch.arange(8.0)
+    )
+    assert calls == [zip_format, zip_format]
+
+
+@pytest.mark.parametrize("primary", [True, False])
+@pytest.mark.parametrize("matches", [True, False])
+def test_strict_resume_verifies_primary_optimizer_snapshot(
+    tmp_path, monkeypatch, primary, matches
+):
+    from types import SimpleNamespace
+
+    payload = _v1_payload({"weight": torch.ones(1)})
+    payload["trainer"]["optimizer"] = {"moment": torch.ones(2)}
+    checkpoint = _training_checkpoint(tmp_path, payload)
+    monkeypatch.setattr(TrainingCheckpoint, "restore_model", lambda *a, **k: None)
+    agreements = []
+
+    def agree(success):
+        agreements.append(success)
+        return success and matches
+
+    class Trainer(_Trainer):
+        _strategy = SimpleNamespace(
+            context=SimpleNamespace(is_primary=primary),
+            collectives=SimpleNamespace(succeeded=agree),
+        )
+
+        def state_dict(self):
+            raise AssertionError("must not replicate optimizer state on every rank")
+
+        def checkpoint_state_dict(self):
+            return {
+                "optimizer": {"moment": torch.ones(2) * (1 if matches else 2)} if primary else {}
+            }
+
+    if matches:
+        checkpoint.restore_training(trainer=Trainer(), bundle=None, family="unit")
+    else:
+        with pytest.raises((ValueError, RuntimeError), match="restored optimizer"):
+            checkpoint.restore_training(trainer=Trainer(), bundle=None, family="unit")
+    assert agreements == [matches if primary else True]
+
+
 def test_checkpoint_compatibility_rejects_schema_v2_without_saved_family(tmp_path) -> None:
     checkpoint = TrainingCheckpoint(
         checkpoint_dir=tmp_path,

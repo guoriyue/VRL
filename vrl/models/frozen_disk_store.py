@@ -27,9 +27,11 @@ class FrozenDiskStore:
         self._directory = directory
         self._directories = []
 
-    def store(self, parameters: Iterable[Any]) -> None:
+    def store(self, parameters: Iterable[Any], *, include_trainable: bool = False) -> None:
         """Disk-backed frozen shards; bytes and parameter aliases stay intact.
 
+        ``include_trainable`` is only for quiescent training-state parking:
+        those tensors must be restored before the optimizer runs again.
         Anonymous CPU copies of every parked role can exceed host RAM. Shared
         file mappings let Linux reclaim inactive frozen shards while generation
         owns the GPUs. This is storage relocation only.
@@ -45,11 +47,11 @@ class FrozenDiskStore:
         self._directories.append(directory)
         with torch.no_grad():
             for index, parameter in enumerate(parameters):
-                if parameter.requires_grad:
+                if parameter.requires_grad and not include_trainable:
                     continue
                 local = getattr(parameter, "_local_tensor", parameter)
                 if local.device.type != "cpu" or not local.is_contiguous():
-                    raise RuntimeError("disk parking requires contiguous CPU frozen shards")
+                    raise RuntimeError("disk parking requires contiguous CPU shards")
                 if local.numel() == 0:
                     continue
                 mapped = torch.from_file(

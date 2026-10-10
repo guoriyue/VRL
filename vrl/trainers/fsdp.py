@@ -290,13 +290,14 @@ def gather_trainable_state_dict(
     )
 
 
-def gather_checkpoint_state_dict(module: nn.Module) -> dict[str, Any]:
+def gather_checkpoint_state_dict(module: nn.Module, *, rank0_only: bool = False) -> dict[str, Any]:
     """Gather exactly trainable plus registered checkpoint-owned state.
 
     DCP exposes the sharded state mapping without materializing full tensors.
     Selection happens before ``DTensor.full_tensor()``, so frozen base weights
     never enter an all-gather while registered frozen mutable state is still
-    checkpointed.
+    checkpointed. With ``rank0_only=True``, all ranks participate but only the
+    checkpoint writer retains the full CPU tensors.
     """
 
     from torch.distributed.checkpoint.state_dict import (
@@ -321,10 +322,13 @@ def gather_checkpoint_state_dict(module: nn.Module) -> dict[str, Any]:
             ignore_frozen_params=not has_registered_frozen_state,
         ),
     )
+    import torch.distributed as dist
+
+    keep = not rank0_only or not dist.is_initialized() or dist.get_rank() == 0
     return _gather_named_full_cpu(
         sharded_state,
         owned_names,
-        keep=True,
+        keep=keep,
         what="checkpoint-owned state",
     )
 
