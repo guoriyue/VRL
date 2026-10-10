@@ -188,10 +188,10 @@ def test_prepare_videophy_i2v_dataset_writes_source_backed_manifest(tmp_path: Pa
 
 
 def test_for_experiment_flags_videophy_i2v_population_command(tmp_path: Path) -> None:
-    """Missing VideoPhy I2V manifests leave the plan not ready and point every step at the
+    """Missing VideoPhy I2V manifests leave the experiment not ready and point every file at the
     ``videophy-i2v`` command.
     """
-    plan = bootstrap.resolve_experiment_dataset_plan(
+    experiment = bootstrap.ExperimentDataFiles.from_data(
         {
             "loader": "prompt_image_manifest",
             "manifest": "data/external/videophy_i2v/manifests/train.jsonl",
@@ -200,12 +200,12 @@ def test_for_experiment_flags_videophy_i2v_population_command(tmp_path: Path) ->
         repo_root=tmp_path,
     )
 
-    assert plan["ready"] is False
-    assert all("videophy-i2v" in step["get"] for step in plan["steps"])
+    assert experiment.ready is False
+    assert all("videophy-i2v" in f.fetch_command for f in experiment.files)
 
 
 def test_for_experiment_rejects_partial_videophy_i2v_smoke_data(tmp_path: Path) -> None:
-    """A manifest with fewer rows than its prompt file is incomplete: the plan stays not ready
+    """A manifest with fewer rows than its prompt file is incomplete: the experiment stays not ready
     with the shortfall reported, while the complete eval split passes.
     """
     split_root = tmp_path / "manifests" / "videophy"
@@ -217,7 +217,7 @@ def test_for_experiment_rejects_partial_videophy_i2v_smoke_data(tmp_path: Path) 
     (manifest_root / "train.jsonl").write_text('{"caption":"prompt a"}\n', encoding="utf-8")
     (manifest_root / "eval.jsonl").write_text('{"caption":"prompt c"}\n', encoding="utf-8")
 
-    plan = bootstrap.resolve_experiment_dataset_plan(
+    experiment = bootstrap.ExperimentDataFiles.from_data(
         {
             "loader": "prompt_image_manifest",
             "manifest": "data/external/videophy_i2v/manifests/train.jsonl",
@@ -226,11 +226,11 @@ def test_for_experiment_rejects_partial_videophy_i2v_smoke_data(tmp_path: Path) 
         repo_root=tmp_path,
     )
 
-    train_step = next(step for step in plan["steps"] if step["role"] == "manifest")
-    eval_step = next(step for step in plan["steps"] if step["role"] == "eval_manifest")
-    assert plan["ready"] is False
-    assert train_step["rows"] == 1
-    assert train_step["expected_rows"] == 2
-    assert train_step["complete"] is False
-    assert "videophy-i2v" in train_step["get"]
-    assert eval_step["complete"] is True
+    train_file = next(f for f in experiment.files if f.role == "manifest")
+    eval_file = next(f for f in experiment.files if f.role == "eval_manifest")
+    assert experiment.ready is False
+    assert train_file.rows == 1
+    assert train_file.expected_rows == 2
+    assert train_file.complete is False
+    assert "videophy-i2v" in train_file.fetch_command
+    assert eval_file.complete is True

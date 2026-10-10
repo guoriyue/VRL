@@ -123,7 +123,7 @@ def test_setup_cli_derives_and_validates_text_video_manifests(tmp_path: Path) ->
 
 
 def test_bootstrap_returns_canonical_derived_manifest_command(tmp_path: Path) -> None:
-    plan = bootstrap.resolve_experiment_dataset_plan(
+    experiment = bootstrap.ExperimentDataFiles.from_data(
         {
             "loader": "prompt_manifest",
             "manifest": ("data/external/video_world/manifests/droid_full_targets_t2v_train.jsonl"),
@@ -137,8 +137,8 @@ def test_bootstrap_returns_canonical_derived_manifest_command(tmp_path: Path) ->
         repo_root=tmp_path,
     )
 
-    commands = {step["get"] for step in plan["steps"]}
-    assert plan["ready"] is False
+    commands = {f.fetch_command for f in experiment.files}
+    assert experiment.ready is False
     assert len(commands) == 1
     command = commands.pop()
     assert command.startswith(

@@ -150,8 +150,8 @@ def test_runtime_data_loader_rejects_mixture_count_over_manifest_size(tmp_path: 
 
 
 def test_for_experiment_plan_covers_every_mixture_source(tmp_path: Path) -> None:
-    """Each source of a manifest mixture gets its own present/populate step."""
-    plan = bootstrap.resolve_experiment_dataset_plan(
+    """Each source of a manifest mixture is its own file with a present/populate status."""
+    experiment = bootstrap.ExperimentDataFiles.from_data(
         {
             "loader": "prompt_manifest",
             "manifest": {
@@ -162,11 +162,11 @@ def test_for_experiment_plan_covers_every_mixture_source(tmp_path: Path) -> None
         repo_root=tmp_path,
     )
 
-    assert [step["path"] for step in plan["steps"]] == [
+    assert [f.path for f in experiment.files] == [
         "manifests/danbooru/safety/train_c_adherence.jsonl",
         "manifests/danbooru/safety/train.jsonl",
     ]
-    assert plan["ready"] is False
+    assert experiment.ready is False
 
 
 def test_runtime_data_loader_rejects_explicit_format_conflict() -> None:
@@ -281,40 +281,40 @@ def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path
 
 
 def test_for_experiment_plan_marks_committed_manifest_ready(tmp_path: Path) -> None:
-    """A committed prompt manifest marks the experiment's dataset plan ready, with its row count
+    """A committed prompt manifest marks the experiment's files ready, with its row count
     and no fetch command.
     """
     manifest_dir = tmp_path / "manifests" / "pickscore_sfw"
     manifest_dir.mkdir(parents=True)
     (manifest_dir / "train.txt").write_text("a\nb\nc\n", encoding="utf-8")
 
-    plan = bootstrap.resolve_experiment_dataset_plan(
+    experiment = bootstrap.ExperimentDataFiles.from_data(
         {"loader": "prompt_manifest", "manifest": "manifests/pickscore_sfw/train.txt"},
         repo_root=tmp_path,
     )
 
-    assert plan["ready"] is True
-    assert plan["steps"][0]["present"] is True
-    assert plan["steps"][0]["rows"] == 3
-    assert plan["steps"][0]["get"] == ""
+    assert experiment.ready is True
+    assert experiment.files[0].present is True
+    assert experiment.files[0].rows == 3
+    assert experiment.files[0].fetch_command == ""
 
 
 def test_for_experiment_plan_flags_pickapic_download(tmp_path: Path) -> None:
-    """Checks for experiment plan flags Pick-a-Pic download."""
-    plan = bootstrap.resolve_experiment_dataset_plan(
+    """The experiment's files flag the Pick-a-Pic download."""
+    experiment = bootstrap.ExperimentDataFiles.from_data(
         {"loader": "pickapic_preference"},
         repo_root=tmp_path,
     )
 
-    assert plan["ready"] is False
-    assert any("pickapic --with-images" in step["get"] for step in plan["steps"])
+    assert experiment.ready is False
+    assert any("pickapic --with-images" in f.fetch_command for f in experiment.files)
 
 
 def test_for_experiment_plan_flags_missing_manifest_with_command(tmp_path: Path) -> None:
-    """A missing Danbooru manifest leaves the plan not ready and names the ``anime-safety-prompts``
+    """A missing Danbooru manifest leaves the experiment not ready and names the ``anime-safety-prompts``
     command that produces it.
     """
-    plan = bootstrap.resolve_experiment_dataset_plan(
+    experiment = bootstrap.ExperimentDataFiles.from_data(
         {
             "loader": "prompt_manifest",
             "manifest": "manifests/danbooru/safety/train.jsonl",
@@ -322,13 +322,13 @@ def test_for_experiment_plan_flags_missing_manifest_with_command(tmp_path: Path)
         repo_root=tmp_path,
     )
 
-    assert plan["ready"] is False
-    assert "anime-safety-prompts" in plan["steps"][0]["get"]
+    assert experiment.ready is False
+    assert "anime-safety-prompts" in experiment.files[0].fetch_command
 
 
 def test_for_experiment_resolves_real_wan_experiment(capsys) -> None:
     """``for-experiment`` on the real Wan Kling experiment reports the config's loader and
-    manifest and finds every step present and complete.
+    manifest and finds every file present and complete.
     """
     from vrl.config.loading import load_config
 
@@ -343,8 +343,8 @@ def test_for_experiment_resolves_real_wan_experiment(capsys) -> None:
     assert out["loader"] == data.loader
     # Resolver behavior contract (the real point of the test), not a config literal:
     assert out["ready"] is True
-    assert all(step["present"] and step["complete"] and step["get"] == "" for step in out["steps"])
-    assert any(step["path"] == data.manifest for step in out["steps"])
+    assert all(f["present"] and f["complete"] and f["fetch_command"] == "" for f in out["files"])
+    assert any(f["path"] == data.manifest for f in out["files"])
 
 
 @pytest.mark.parametrize("source_fps", [0, -1, float("nan"), float("inf")])
