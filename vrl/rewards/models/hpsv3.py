@@ -43,6 +43,7 @@ from vrl.rewards.assets.hpsv3_prompts import (
 )
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.hub import relocate_checkpoint_keys, worker_model_root
+from vrl.rewards.models.media import decode_artifact_frames
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -243,21 +244,8 @@ class HPSv3Model:
         prompt = artifact.prompt
         if not prompt:
             raise ValueError("HPSv3 scoring requires the artifact prompt")
-        return self._score_frames(self._frames(artifact), prompt)
-
-    def _frames(self, artifact: RewardInferenceArtifact) -> torch.Tensor:
-        """The video as ``[T,H,W,3]`` unit-range floats, from media or a file."""
-
-        from vrl.utils.media import read_video_frames
-
-        if artifact.media is not None or artifact.path.endswith(".pt"):
-            media = artifact.as_media()
-            if not isinstance(media, torch.Tensor):
-                raise TypeError(
-                    f"HPSv3 expects an image or video tensor artifact, got {type(media).__name__}"
-                )
-            return _tensor_frames(media, self.num_frames)
-        return read_video_frames(artifact.as_path(), self.num_frames)
+        # HPSv3 is an image preference model: a still image is one frame.
+        return self._score_frames(decode_artifact_frames(artifact, self.num_frames), prompt)
 
     def _score_frames(self, frames: torch.Tensor, prompt: str) -> dict[str, float]:
         from PIL import Image
@@ -322,21 +310,6 @@ class HPSv3Model:
             return_tensors="pt",
         )
         return batch.to(self.device)
-
-
-def _tensor_frames(media: torch.Tensor, num_frames: int | None) -> torch.Tensor:
-    """``[T,H,W,3]`` unit-range frames from a ``[C,H,W]`` image or a ``[C,T,H,W]`` video tensor.
-
-    HPSv3 is an image preference model; a still image is scored as a
-    one-frame video, so text-to-image rollouts use the same path as video.
-    """
-
-    from vrl.utils.media import frames_thwc_to_float, sample_frames, video_tensor_to_uint8_frames
-
-    if media.ndim == 3:
-        media = media.unsqueeze(1)
-    frames = frames_thwc_to_float(torch.from_numpy(video_tensor_to_uint8_frames(media)))
-    return sample_frames(frames, num_frames)
 
 
 def _aggregate_frame_scores(scores: list[float], top_fraction: float) -> dict[str, float]:

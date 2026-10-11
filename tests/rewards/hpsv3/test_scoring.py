@@ -16,7 +16,7 @@ from vrl.rewards.assets.hpsv3_prompts import (
     HPSV3_REWARD_SPECIAL_TOKEN,
     build_hpsv3_frame_prompt,
 )
-from vrl.rewards.models.hpsv3 import _aggregate_frame_scores, _tensor_frames
+from vrl.rewards.models.hpsv3 import _aggregate_frame_scores
 from vrl.rewards.models.hub import relocate_checkpoint_keys
 
 
@@ -113,16 +113,3 @@ class TestPromptBuild:
         assert "**Visual Quality:**" in text
         assert "**Text Alignment:**" in text
         assert text.rstrip().endswith("END")
-
-
-class TestTensorFrames:
-    def test_still_image_scores_as_one_frame(self) -> None:
-        """Text-to-image rollouts hand the judge a [C,H,W] tensor, not a video."""
-        image = torch.zeros(3, 4, 5, dtype=torch.uint8)
-        image[0] = 255
-        frames = _tensor_frames(image, None)
-        assert frames.shape == (1, 4, 5, 3)
-        assert frames[0, 0, 0].tolist() == [1.0, 0.0, 0.0]
-
-    def test_video_keeps_its_frames(self) -> None:
-        assert _tensor_frames(torch.zeros(3, 6, 4, 5), None).shape == (6, 4, 5, 3)

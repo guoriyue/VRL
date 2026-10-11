@@ -27,3 +27,21 @@ def test_inline_uint8_video_reaches_reward_as_original_normalized_pixels() -> No
     expected = video.permute(1, 2, 3, 0).float() / 255.0
     assert decoded.dtype == torch.float32
     torch.testing.assert_close(decoded, expected, rtol=0.0, atol=0.0)
+
+
+def test_inline_image_is_one_frame() -> None:
+    """Text-to-image rollouts hand rewards a ``[C,H,W]`` tensor, not a video."""
+
+    image = torch.zeros(3, 4, 5, dtype=torch.uint8)
+    image[0] = 255
+    artifact = RewardInferenceArtifact(
+        artifact_id="inline-image",
+        sample_id="sample-inline-image",
+        path="",
+        media=image,
+    )
+
+    decoded = decode_artifact_frames(artifact)
+
+    assert decoded.shape == (1, 4, 5, 3)
+    assert decoded[0, 0, 0].tolist() == [1.0, 0.0, 0.0]
