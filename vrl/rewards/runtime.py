@@ -40,9 +40,9 @@ from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
 )
-from vrl.rewards.launch_contract import RewardRuntimeLaunchContract
 from vrl.rewards.protocols import RewardScorer
 from vrl.rewards.types import RewardOutput, RewardSample
+from vrl.rewards.worker_config import RewardWorkerConfig
 from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import release_cuda_memory_for_parking
 from vrl.utils.deadline import OperationDeadline
@@ -175,8 +175,8 @@ class RewardParking:
     and therefore count.
     """
 
-    def __init__(self, launch: RewardRuntimeLaunchContract) -> None:
-        self._launch = launch
+    def __init__(self, worker_config: RewardWorkerConfig) -> None:
+        self._worker_config = worker_config
         self._session: ParkingSession | None = None
         self._broken_reason: str | None = None
 
@@ -191,7 +191,7 @@ class RewardParking:
     def required(self) -> bool:
         """Whether topology/config requires this runtime to release GPU pages."""
 
-        return self._launch.sleep_offload
+        return self._worker_config.sleep_offload
 
     @property
     def pool(self) -> CumemPool | None:
@@ -207,9 +207,11 @@ class RewardParking:
         # (from_pretrained, .to(device), buffers) is tagged and sleep/wake can
         # release/restore it wholesale. PyTorch's pool scope captures the
         # current device, not .to() targets.
-        session = ParkingSession("reward runtime", required=True, device=self._launch.device)
+        session = ParkingSession(
+            "reward runtime", required=True, device=self._worker_config.device
+        )
         try:
-            model = session.build(factory, mechanism=self._launch.parking_mechanism)
+            model = session.build(factory, mechanism=self._worker_config.parking_mechanism)
         except CumemBroken as error:
             # A failed pool close is just as terminal as a partial sleep/wake.
             # Retain the session and avoid touching the corrupted allocator.
@@ -287,7 +289,7 @@ class RewardParking:
         self._session = None
 
     def _release_device_cache(self) -> None:
-        release_cuda_memory_for_parking(self._launch.device)
+        release_cuda_memory_for_parking(self._worker_config.device)
 
 
 class InProcessRewardScorer:
@@ -304,9 +306,9 @@ class InProcessRewardScorer:
         media_temp_dir: str | None = None,
     ) -> None:
         # Typed runtime contract; the verbatim bag still feeds the factory.
-        self._launch = RewardRuntimeLaunchContract.from_mapping(worker_config)
-        self._parking = RewardParking(self._launch)
-        if model is not None and self._launch.sleep_offload:
+        self._worker_config = RewardWorkerConfig.from_mapping(worker_config)
+        self._parking = RewardParking(self._worker_config)
+        if model is not None and self._worker_config.sleep_offload:
             raise ValueError(
                 "sleep_offload requires the runtime to build the model itself "
                 "(worker_config.model_factory) so it can capture the pre-load "
@@ -345,7 +347,7 @@ class InProcessRewardScorer:
         if self._model is None:
             self._model = self._parking.restore()
         if self._model is None:
-            if not self._launch.model_factory:
+            if not self._worker_config.model_factory:
                 raise ValueError(
                     "InProcessRewardScorer requires worker_config.model_factory "
                     "(import path to a RewardModel factory) or an explicit model",
@@ -369,8 +371,8 @@ class InProcessRewardScorer:
         devices = list(range(torch.cuda.device_count())) if torch.cuda.is_initialized() else []
         try:
             with torch.random.fork_rng(devices=devices):
-                factory = import_from_path(self._launch.model_factory)
-                model = factory(self._launch.component_config)
+                factory = import_from_path(self._worker_config.model_factory)
+                model = factory(self._worker_config.component_config)
                 prepare = getattr(model, "prepare_for_inference", None)
                 if callable(prepare):
                     prepare()
@@ -439,7 +441,7 @@ class InProcessRewardScorer:
         ``model`` stays Any because the factory is unvalidated plugin input.
         """
 
-        reward_model_version = self._launch.reward_model_version
+        reward_model_version = self._worker_config.reward_model_version
 
         def build_result(
             artifact: RewardInferenceArtifact,

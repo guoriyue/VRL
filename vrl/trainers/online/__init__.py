@@ -1,1 +1,1 @@
-"""Online training loop: trainer, config and batch plan live in their own modules."""
+"""Online training loop: the trainer and its config live in their own modules."""

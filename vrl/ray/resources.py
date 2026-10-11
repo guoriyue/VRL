@@ -1,8 +1,8 @@
 """Role-level resource resolution for distributed VRL runs.
 
 Resolves the ``distributed.resources`` config into concrete per-role CUDA
-ordinals (``ResourcePlan``) and the topology-derived release
-plan (``RayLifecyclePlan``).
+ordinals (``ResourcePlan``) and the topology-derived role
+lifecycle (``RoleLifecycle``): which role parks its GPU at which handoff.
 Deliberately Ray-free: resolution runs before ``ray.init()`` (see
 ``vrl/scripts/common/online.py``), so everything here is static arithmetic
 over config and visible GPUs; live-cluster checks belong to
@@ -242,7 +242,7 @@ class RewardResourceConfig(_RoleResourceBase):
     component's ``device`` override, or a CPU-only reward class). ``devices``
     (public key: distributed.resources.reward.devices) pins the one CUDA
     ordinal the reward reserves. Left unset, a GPU reward follows the trainer's
-    card with no reservation of its own and the lifecycle plan parks around it.
+    card with no reservation of its own and the role lifecycle parks around it.
     """
 
     role: ClassVar[str] = "reward"
@@ -262,13 +262,13 @@ class DistributedResourceConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class RayLifecyclePlan:
+class RoleLifecycle:
     """Which role gives up its GPU when, read straight off the device sets.
 
     Stores each role's resolved GPU set; every offload decision is a property
     over them, so nothing can drift from the placement that implies it. Built
     by :class:`ResourcePlan`; the launcher, collector and
-    reward runtime read this plan instead of re-deriving releases.
+    reward runtime read it instead of re-deriving releases.
 
     The three ``offload_*`` bits are the public vocabulary (they match miles'
     ``--offload-train`` / ``--offload-rollout``): a role offloads when it
@@ -360,7 +360,7 @@ class ResourcePlan:
     # Named view over release decisions: lease mode per role plus the per-boundary
     # handoff. The launcher/collector/reward read this instead of re-deriving from
     # device sets.
-    lifecycle: RayLifecyclePlan
+    lifecycle: RoleLifecycle
     # How the rollout and reward park when ``lifecycle`` makes them yield
     # (distributed.resources.<role>.parking, mechanism resolved). The trainer's
     # strategy reads its own parking straight off the config.
@@ -640,7 +640,7 @@ class ResourcePlan:
         )
 
         # Offload scheduling is read straight off the resolved device sets.
-        lifecycle = RayLifecyclePlan(
+        lifecycle = RoleLifecycle(
             trainer=tuple(trainer_devices),
             rollout=tuple(rollout_devices),
             reward=tuple(reward_execution_devices),
@@ -979,6 +979,6 @@ def _is_auto(value: Any) -> bool:
 
 __all__ = [
     "DistributedResourceConfig",
-    "RayLifecyclePlan",
     "ResourcePlan",
+    "RoleLifecycle",
 ]

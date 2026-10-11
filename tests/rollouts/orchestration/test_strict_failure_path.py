@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from tests.rollouts.collector._helpers import CollectorBench, Trace, real_collector, trainer_side
-from vrl.ray.resources import RayLifecyclePlan
+from vrl.ray.resources import RoleLifecycle
 from vrl.rollouts.orchestration.rollout_runtime import (
     RolloutPhaseCleanupError,
 )
@@ -33,7 +33,7 @@ def _schedule(
     # The lifecycle plan drives whether the coordinator parks the trainer at
     # phase entry: a rollout on the trainer GPU is the shared-GPU fact.
     lifecycle = (
-        RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=()) if trainer_shares_gpu else None
+        RoleLifecycle(trainer=(0,), rollout=(0,), reward=()) if trainer_shares_gpu else None
     )
     bench = real_collector(monkeypatch, tmp_path, lifecycle=lifecycle)
     trainer = trainer_side(bench, initialized=True)

@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 import torch
 
-from tests.generation.execution._helpers import launch_contract
+from tests.generation.execution._helpers import launch_config
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import GenerationBatchEnvelope
 from vrl.generation.execution.worker import GenerationWorkerCore
@@ -57,7 +57,7 @@ class _SlotModel:
 
 
 class _PlainModel:
-    """RuntimeModel without slot methods; its family launches an in-place contract."""
+    """RuntimeModel without slot methods; its family launches with in-place weight sync."""
 
     device = "cpu"
 
@@ -93,9 +93,9 @@ def _core(
     *,
     versioned_weight_sync: bool = True,
 ) -> GenerationWorkerCore:
-    contract = launch_contract(policy_version=1, versioned_weight_sync=versioned_weight_sync)
+    config = launch_config(policy_version=1, versioned_weight_sync=versioned_weight_sync)
     executor = _Executor(model)
-    core = GenerationWorkerCore("rollout-0", contract)
+    core = GenerationWorkerCore("rollout-0", config)
     core.executor = executor  # bypass load_policy() build
     return core
 

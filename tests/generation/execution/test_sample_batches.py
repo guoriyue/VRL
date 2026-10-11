@@ -61,8 +61,7 @@ def test_execute_generation_batches_splits_oom_until_success() -> None:
 
 
 @pytest.mark.parametrize("width", [0, -1, 1.5, True, "2"])
-def test_engine_plan_rejects_invalid_explicit_width(width):
-    from vrl.generation.execution.planner import EnginePlan
+def test_sample_batches_reject_invalid_explicit_width(width):
     from vrl.generation.types import GenerationRequest
 
     request = GenerationRequest(
@@ -73,7 +72,7 @@ def test_engine_plan_rejects_invalid_explicit_width(width):
         samples_per_prompt=2,
     )
     with pytest.raises(ValueError, match="samples_per_generation_batch must be >= 1"):
-        EnginePlan.from_request(replace(request, samples_per_generation_batch=width))
+        replace(request, samples_per_generation_batch=width).sample_batches()
 
 
 @pytest.mark.parametrize("field", ["prompt_index", "sample_start", "sample_count"])

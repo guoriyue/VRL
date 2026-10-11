@@ -10,7 +10,7 @@ import vrl.models.parking as parking
 import vrl.rewards.runtime as runtime
 from vrl.config.builders import RewardRuntimeConfig
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.launch_contract import RewardRuntimeLaunchContract
+from vrl.rewards.worker_config import RewardWorkerConfig
 
 
 @pytest.mark.asyncio
@@ -145,9 +145,9 @@ async def test_reload_preload_release_failure_prevents_build_and_can_retry(monke
 
 def test_reload_requires_explicit_parking_and_supported_mode():
     with pytest.raises(ValueError, match="requires sleep_offload"):
-        RewardRuntimeLaunchContract.from_mapping({"parking_mechanism": "reload"})
+        RewardWorkerConfig.from_mapping({"parking_mechanism": "reload"})
     with pytest.raises(ValueError, match="must be 'cumem' or 'reload'"):
-        RewardRuntimeLaunchContract.from_mapping({"parking_mechanism": "unknown"})
+        RewardWorkerConfig.from_mapping({"parking_mechanism": "unknown"})
     # The mechanism is a resource choice, never a component kwarg.
     for key in ("parking_mechanism", "memory_parking_mode"):
         with pytest.raises(ValueError, match=r"distributed\.resources\.reward\.parking"):

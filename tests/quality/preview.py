@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from vrl.generation.execution.planner import EnginePlan
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
 # Stable test-fixture values make repeated config previews directly comparable.
@@ -144,9 +143,8 @@ def generate_rollout_preview(
         seed = _PREVIEW_BASE_SEED + index
         request = build_preview_request(request_builder, example, seed=seed)
         request.request_id = f"{entry.family}-rollout-preview-{index}"
-        plan = EnginePlan.from_request(request)
         with torch.inference_mode():
-            output = executor.forward_plan(request, plan)
+            output = executor.forward_request(request)
 
         file_name = f"{index:03d}.png"
         write_preview_image(

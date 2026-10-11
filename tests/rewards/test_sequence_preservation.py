@@ -5,11 +5,11 @@ import copy
 import pytest
 
 from vrl.rewards.evaluation import Evaluation
-from vrl.rewards.sequences import EditSequenceSpec
+from vrl.rewards.sequences import EditSequence
 
 
 def test_staged_requirements_expose_regression_even_when_final_state_is_repaired():
-    spec = EditSequenceSpec.model_validate(
+    sequence = EditSequence.model_validate(
         {
             "sequence_id": "dialogue-edit",
             "samples": ["initial", "added", "damaged", "repaired"],
@@ -26,7 +26,9 @@ def test_staged_requirements_expose_regression_even_when_final_state_is_repaired
         }
     )
     evaluation = Evaluation("test", {"revision": "fixed"}, {})
-    for sample, text, damage in zip(spec.samples, (0, 1, 0, 1), (0.8, 0.0, 0.2, 0.0), strict=True):
+    for sample, text, damage in zip(
+        sequence.samples, (0, 1, 0, 1), (0.8, 0.0, 0.2, 0.0), strict=True
+    ):
         evaluation.records[sample] = {
             "input": {
                 "sample_id": sample,
@@ -38,7 +40,7 @@ def test_staged_requirements_expose_regression_even_when_final_state_is_repaired
             "status": "success",
             "result": {"scores": {"text": text, "damage": damage}},
         }
-    report = spec.report(evaluation)
+    report = sequence.report(evaluation)
     assert report["final_requirements_met"] and report["coverage_complete"]
     assert report["requirements"]["first-bubble"]["first_satisfied_step"] == 1
     assert report["requirements"]["first-bubble"]["regression_steps"] == [2]
@@ -48,11 +50,11 @@ def test_staged_requirements_expose_regression_even_when_final_state_is_repaired
     changed = copy.deepcopy(evaluation)
     changed.records["damaged"]["input"]["metadata"]["target"] = "Goodbye"
     with pytest.raises(ValueError, match="specification changed"):
-        spec.report(changed)
+        sequence.report(changed)
 
 
 def test_missing_axis_and_failed_scoring_are_unknown_not_regressions_or_zero_rewards():
-    spec = EditSequenceSpec.model_validate(
+    sequence = EditSequence.model_validate(
         {
             "sequence_id": "partial",
             "samples": ["a", "b", "c", "d"],
@@ -68,7 +70,7 @@ def test_missing_axis_and_failed_scoring_are_unknown_not_regressions_or_zero_rew
     for sample, row in records.items():
         row["input"] = {"sample_id": sample, "sha256": sample, "prompt": "fixed"}
     evaluation = Evaluation("partial", {}, records)
-    report = spec.report(evaluation)
+    report = sequence.report(evaluation)
     assert report["final_requirements_met"] is None and not report["coverage_complete"]
     assert report["requirements"]["text"]["unknown_steps"] == [1, 3]
     assert report["requirements"]["text"]["regression_steps"] == []
@@ -76,12 +78,12 @@ def test_missing_axis_and_failed_scoring_are_unknown_not_regressions_or_zero_rew
     assert report["states"][1]["requirements"]["text"]["value"] is None
     records["d"]["result"]["scores"]["text"] = float("nan")
     with pytest.raises(ValueError, match="finite numbers"):
-        spec.report(evaluation)
+        sequence.report(evaluation)
 
 
 def test_invalid_sequence_cannot_reuse_one_score_as_multiple_steps():
     with pytest.raises(ValueError, match="unique"):
-        EditSequenceSpec.model_validate(
+        EditSequence.model_validate(
             {
                 "sequence_id": "copy",
                 "samples": ["same", "same"],
@@ -89,7 +91,7 @@ def test_invalid_sequence_cannot_reuse_one_score_as_multiple_steps():
             }
         )
     with pytest.raises(ValueError, match="outside the sequence"):
-        EditSequenceSpec.model_validate(
+        EditSequence.model_validate(
             {
                 "sequence_id": "never",
                 "samples": ["a", "b"],

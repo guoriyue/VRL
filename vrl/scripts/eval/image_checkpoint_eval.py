@@ -54,8 +54,8 @@ class EvalPrompt:
 
 
 @dataclass(frozen=True, slots=True)
-class EvaluationPlan:
-    """One resolved generation and scoring contract, also bound to retries."""
+class CheckpointEvaluation:
+    """Everything one checkpoint evaluation generates and scores with, bound to retries."""
 
     entry: ModelFamilyEntry
     model_build: ModelBuild
@@ -244,13 +244,165 @@ class EvaluationPlan:
             release_cuda_memory()
         return rows
 
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> CheckpointEvaluation:
+        """Resolve the run, checkpoints, prompts, sampling and reward named on the CLI."""
+
+        from vrl.config.loading import load_config
+        from vrl.config.precision import PrecisionPolicy
+        from vrl.config.schema import RewardConfig
+        from vrl.models.families.registry import get_model_family_entry
+        from vrl.scripts.eval._device import resolve_eval_device
+        from vrl.trainers.checkpointing import CheckpointTarget
+        from vrl.trainers.data.prompts import load_prompt_dataset_index
+
+        if (
+            any(
+                value is not None and value < 1
+                for value in (args.width, args.height, args.num_steps)
+            )
+            or args.samples_per_prompt < 1
+            or args.seed < 0
+            or args.bootstrap_resamples < 1
+            or not math.isfinite(args.tie_epsilon)
+            or args.tie_epsilon < 0
+        ):
+            raise ValueError("invalid sampling/statistics options")
+        from vrl.trainers.checkpointing import RESOLVED_CONFIG_NAME, load_resolved_run_config
+
+        config_path = user_path(args.run_dir) / RESOLVED_CONFIG_NAME
+        _, root = load_resolved_run_config(args.run_dir)
+        if root.model is None:
+            raise ValueError("checkpoint evaluation requires a model config")
+        entry = get_model_family_entry(root.model.family)
+        if entry.task != "t2i" or entry.policy_semantics.generation_regime != "full_sequence":
+            raise ValueError(
+                "image checkpoint evaluation requires a full-sequence denoise text-to-image family"
+            )
+        if args.base_only:
+            # A baseline (e.g. checking a reward against a benchmark before any
+            # training): the untrained model is the only arm.
+            if args.checkpoint or args.epochs:
+                raise ValueError("--base-only takes no --checkpoint or --epochs")
+            targets = (CheckpointTarget.base(),)
+        else:
+            targets = discover_targets(
+                config_path.parent,
+                checkpoint_specs=args.checkpoint,
+                epochs=args.epochs or (),
+                uses_lora=bool(root.model.use_lora),
+            )
+        model_build = entry.resolve_model_build(
+            root,
+            resolve_eval_device(args.device),
+            precision=PrecisionPolicy.from_section(root.precision),
+            for_rollout=True,
+        )
+        model_identity = model_build.checkpoint_identity()
+        for target in targets[1:]:
+            target.validate_compatibility(
+                family=entry.family,
+                expected_model_identity=model_identity,
+            )
+
+        # Only reward/data are projected from this independent policy. Its model,
+        # trainer and sampling fields never replace the saved generation contract.
+        policy = load_config(
+            args.eval_policy_config or config_path, overrides=args.eval_policy_override
+        )
+        manifest = args.manifest or OmegaConf.select(policy, "data.eval_manifest", default=None)
+        if not manifest:
+            raise ValueError("supply --manifest or data.eval_manifest in the evaluation policy")
+        manifest_path = user_path(manifest)
+        raw_reward = OmegaConf.select(policy, "reward", default=None)
+        reward = (
+            OmegaConf.to_container(raw_reward, resolve=True) if raw_reward is not None else None
+        )
+        if not isinstance(reward, dict) or not reward.get("components"):
+            raise ValueError("evaluation policy must select reward.components")
+        reward = {key: reward.get(key) or {} for key in ("components", "kwargs", "inference")}
+        RewardConfig.model_validate(reward)
+        if "total" in reward["components"]:
+            raise ValueError("reward component name 'total' is reserved for the weighted score")
+        # Keep destinations out of the semantic policy. Evaluation owns every debug
+        # and transport file it creates, never the training reward directories.
+        for name, settings in reward["kwargs"].items():
+            reward["kwargs"][name] = dict(settings or {})
+        pending = [("reward.kwargs", reward["kwargs"])]
+        while pending:
+            path, settings = pending.pop()
+            for key in ("debug_dir", "scored_rollout_dir", "artifact_dir"):
+                settings.pop(key, None)
+            # Composite rewards pass nested configs to their children. Check the
+            # declared grouping contract without changing a judge's comparison mode
+            # or silently carrying training rollout geometry into checkpoint eval.
+            expected = settings.get("expected_group_size", 0)
+            if expected and expected != len(targets):
+                raise ValueError(
+                    f"{path}.expected_group_size must match the {len(targets)} evaluation arms"
+                )
+            per_call = settings.get("images_per_call", 1)
+            if not isinstance(per_call, int) or per_call < 1 or 1 < per_call < len(targets):
+                raise ValueError(
+                    f"{path}.images_per_call must be 1 or cover all {len(targets)} evaluation arms"
+                )
+            pending.extend(
+                (f"{path}.{key}", value)
+                for key, value in settings.items()
+                if isinstance(value, dict)
+            )
+        roots = RootedPaths.data_root(allow_absolute=True)
+        prompts = select_prompts(
+            [
+                example.with_resolved_references(roots)
+                for example in load_prompt_dataset_index(manifest_path)
+            ],
+            limit=args.limit,
+            per_stratum=args.per_stratum,
+            strata=args.strata,
+        )
+        if any(prompt.example.reference_images for prompt in prompts):
+            from vrl.generation.bindings.full_sequence import ReferenceConditionedBatches
+            from vrl.utils.config import import_from_path
+
+            if not issubclass(import_from_path(entry.executor_cls), ReferenceConditionedBatches):
+                raise ValueError(f"{entry.family} does not take reference images")
+        return cls(
+            entry,
+            model_build,
+            model_identity,
+            targets,
+            prompts,
+            # Only geometry and step count may differ from training; the guidance
+            # scale and prompt length stay the run's own.
+            ImageSampling.from_root(
+                root,
+                overrides={
+                    "width": args.width,
+                    "height": args.height,
+                    "num_steps": args.num_steps,
+                },
+            ),
+            reward,
+            args.samples_per_prompt,
+            args.seed,
+            args.blind_seed,
+            args.negative_prompt,
+            str(resolve_eval_device(args.reward_device)),
+            args.tie_epsilon,
+            args.bootstrap_resamples,
+            sha256_file(config_path),
+            sha256_file(manifest_path),
+            tuple(root.reward.components) if root.reward else (),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class EvaluationArchive:
     """Own the generation/retry boundary and atomically published report."""
 
     directory: Path
-    plan: EvaluationPlan
+    evaluation: CheckpointEvaluation
 
     def check_tree(self) -> None:
         if self.directory.is_symlink() or not self.directory.is_dir():
@@ -262,7 +414,7 @@ class EvaluationArchive:
         from PIL import Image
 
         self.check_tree()
-        expected = list(self.plan.cells())
+        expected = list(self.evaluation.cells())
         if not isinstance(rows, list) or len(rows) != len(expected):
             raise ValueError("generated image grid is incomplete")
         for row, cell in zip(rows, expected, strict=True):
@@ -281,8 +433,8 @@ class EvaluationArchive:
                 raise ValueError(f"generated image failed integrity check: {path}")
             with Image.open(path) as image:
                 if image.format != "PNG" or image.size != (
-                    self.plan.sampling.width,
-                    self.plan.sampling.height,
+                    self.evaluation.sampling.width,
+                    self.evaluation.sampling.height,
                 ):
                     raise ValueError(f"generated PNG geometry differs: {path}")
                 image.verify()
@@ -299,7 +451,7 @@ class EvaluationArchive:
         self.validate_images(rows)
         write_json(
             self.directory / "generation_manifest.json",
-            {"protocol": self.plan.record(), "images": rows},
+            {"protocol": self.evaluation.record(), "images": rows},
         )
 
     def load_generation(self) -> list[dict[str, Any]]:
@@ -308,7 +460,7 @@ class EvaluationArchive:
         if not path.is_file():
             raise ValueError("output has no committed generation stage; use a fresh --output-dir")
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("protocol") != self.plan.record():
+        if payload.get("protocol") != self.evaluation.record():
             raise ValueError("saved generation belongs to a different evaluation protocol")
         return self.validate_images(payload.get("images"))
 
@@ -331,9 +483,9 @@ class EvaluationArchive:
             summary = write_curve_report(
                 rows,
                 staging,
-                tie_epsilon=self.plan.tie_epsilon,
-                bootstrap_resamples=self.plan.bootstrap_resamples,
-                seed=self.plan.seed,
+                tie_epsilon=self.evaluation.tie_epsilon,
+                bootstrap_resamples=self.evaluation.bootstrap_resamples,
+                seed=self.evaluation.seed,
             )
             # Blinded contact sheets: one PNG per prompt, arms in a seeded
             # shuffled order, with the key written beside them.
@@ -343,17 +495,17 @@ class EvaluationArchive:
             }
             sheet_dir = staging / "contact_sheets"
             sheet_dir.mkdir()
-            orders = self.plan.blind_orders()
+            orders = self.evaluation.blind_orders()
             manifest = []
             for prompt_index, labels in orders.items():
                 tile, header = 256, 24
                 canvas = Image.new(
                     "RGB",
-                    (len(labels) * tile, self.plan.samples_per_prompt * (tile + header)),
+                    (len(labels) * tile, self.evaluation.samples_per_prompt * (tile + header)),
                     "white",
                 )
                 draw = ImageDraw.Draw(canvas)
-                for sample_index in range(self.plan.samples_per_prompt):
+                for sample_index in range(self.evaluation.samples_per_prompt):
                     for cell, label in enumerate(labels):
                         row = by_key[label, prompt_index, sample_index]
                         x, y = cell * tile, sample_index * (tile + header)
@@ -369,8 +521,8 @@ class EvaluationArchive:
                     {
                         "sheet": filename,
                         "prompt_index": prompt_index,
-                        "manifest_index": self.plan.prompts[prompt_index].manifest_index,
-                        "prompt": self.plan.prompts[prompt_index].example.prompt,
+                        "manifest_index": self.evaluation.prompts[prompt_index].manifest_index,
+                        "prompt": self.evaluation.prompts[prompt_index].example.prompt,
                     }
                 )
             write_json(sheet_dir / "manifest.json", manifest)
@@ -381,10 +533,10 @@ class EvaluationArchive:
             write_json(
                 staging / "provenance.json",
                 {
-                    "protocol": self.plan.record(),
+                    "protocol": self.evaluation.record(),
                     "training_reward_overlap": sorted(
-                        set(self.plan.reward["components"])
-                        & set(self.plan.training_reward_components)
+                        set(self.evaluation.reward["components"])
+                        & set(self.evaluation.training_reward_components)
                     ),
                     "interpretation": "Held-out reward gains are not independent human-quality proof; review the blinded images.",
                 },
@@ -476,147 +628,8 @@ def select_prompts(
     return tuple(selected)
 
 
-def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
-    from vrl.config.loading import load_config
-    from vrl.config.precision import PrecisionPolicy
-    from vrl.config.schema import RewardConfig
-    from vrl.models.families.registry import get_model_family_entry
-    from vrl.scripts.eval._device import resolve_eval_device
-    from vrl.trainers.checkpointing import CheckpointTarget
-    from vrl.trainers.data.prompts import load_prompt_dataset_index
-
-    if (
-        any(value is not None and value < 1 for value in (args.width, args.height, args.num_steps))
-        or args.samples_per_prompt < 1
-        or args.seed < 0
-        or args.bootstrap_resamples < 1
-        or not math.isfinite(args.tie_epsilon)
-        or args.tie_epsilon < 0
-    ):
-        raise ValueError("invalid sampling/statistics options")
-    from vrl.trainers.checkpointing import RESOLVED_CONFIG_NAME, load_resolved_run_config
-
-    config_path = user_path(args.run_dir) / RESOLVED_CONFIG_NAME
-    _, root = load_resolved_run_config(args.run_dir)
-    if root.model is None:
-        raise ValueError("checkpoint evaluation requires a model config")
-    entry = get_model_family_entry(root.model.family)
-    if entry.task != "t2i" or entry.policy_semantics.generation_regime != "full_sequence":
-        raise ValueError(
-            "image checkpoint evaluation requires a full-sequence denoise text-to-image family"
-        )
-    if args.base_only:
-        # A baseline (e.g. checking a reward against a benchmark before any
-        # training): the untrained model is the only arm.
-        if args.checkpoint or args.epochs:
-            raise ValueError("--base-only takes no --checkpoint or --epochs")
-        targets = (CheckpointTarget.base(),)
-    else:
-        targets = discover_targets(
-            config_path.parent,
-            checkpoint_specs=args.checkpoint,
-            epochs=args.epochs or (),
-            uses_lora=bool(root.model.use_lora),
-        )
-    model_build = entry.resolve_model_build(
-        root,
-        resolve_eval_device(args.device),
-        precision=PrecisionPolicy.from_section(root.precision),
-        for_rollout=True,
-    )
-    model_identity = model_build.checkpoint_identity()
-    for target in targets[1:]:
-        target.validate_compatibility(
-            family=entry.family,
-            expected_model_identity=model_identity,
-        )
-
-    # Only reward/data are projected from this independent policy. Its model,
-    # trainer and sampling fields never replace the saved generation contract.
-    policy = load_config(
-        args.eval_policy_config or config_path, overrides=args.eval_policy_override
-    )
-    manifest = args.manifest or OmegaConf.select(policy, "data.eval_manifest", default=None)
-    if not manifest:
-        raise ValueError("supply --manifest or data.eval_manifest in the evaluation policy")
-    manifest_path = user_path(manifest)
-    raw_reward = OmegaConf.select(policy, "reward", default=None)
-    reward = OmegaConf.to_container(raw_reward, resolve=True) if raw_reward is not None else None
-    if not isinstance(reward, dict) or not reward.get("components"):
-        raise ValueError("evaluation policy must select reward.components")
-    reward = {key: reward.get(key) or {} for key in ("components", "kwargs", "inference")}
-    RewardConfig.model_validate(reward)
-    if "total" in reward["components"]:
-        raise ValueError("reward component name 'total' is reserved for the weighted score")
-    # Keep destinations out of the semantic policy. Evaluation owns every debug
-    # and transport file it creates, never the training reward directories.
-    for name, settings in reward["kwargs"].items():
-        reward["kwargs"][name] = dict(settings or {})
-    pending = [("reward.kwargs", reward["kwargs"])]
-    while pending:
-        path, settings = pending.pop()
-        for key in ("debug_dir", "scored_rollout_dir", "artifact_dir"):
-            settings.pop(key, None)
-        # Composite rewards pass nested configs to their children. Check the
-        # declared grouping contract without changing a judge's comparison mode
-        # or silently carrying training rollout geometry into checkpoint eval.
-        expected = settings.get("expected_group_size", 0)
-        if expected and expected != len(targets):
-            raise ValueError(
-                f"{path}.expected_group_size must match the {len(targets)} evaluation arms"
-            )
-        per_call = settings.get("images_per_call", 1)
-        if not isinstance(per_call, int) or per_call < 1 or 1 < per_call < len(targets):
-            raise ValueError(
-                f"{path}.images_per_call must be 1 or cover all {len(targets)} evaluation arms"
-            )
-        pending.extend(
-            (f"{path}.{key}", value) for key, value in settings.items() if isinstance(value, dict)
-        )
-    roots = RootedPaths.data_root(allow_absolute=True)
-    prompts = select_prompts(
-        [
-            example.with_resolved_references(roots)
-            for example in load_prompt_dataset_index(manifest_path)
-        ],
-        limit=args.limit,
-        per_stratum=args.per_stratum,
-        strata=args.strata,
-    )
-    if any(prompt.example.reference_images for prompt in prompts):
-        from vrl.generation.bindings.full_sequence import ReferenceConditionedBatches
-        from vrl.utils.config import import_from_path
-
-        if not issubclass(import_from_path(entry.executor_cls), ReferenceConditionedBatches):
-            raise ValueError(f"{entry.family} does not take reference images")
-    return EvaluationPlan(
-        entry,
-        model_build,
-        model_identity,
-        targets,
-        prompts,
-        # Only geometry and step count may differ from training; the guidance
-        # scale and prompt length stay the run's own.
-        ImageSampling.from_root(
-            root,
-            overrides={"width": args.width, "height": args.height, "num_steps": args.num_steps},
-        ),
-        reward,
-        args.samples_per_prompt,
-        args.seed,
-        args.blind_seed,
-        args.negative_prompt,
-        str(resolve_eval_device(args.reward_device)),
-        args.tie_epsilon,
-        args.bootstrap_resamples,
-        sha256_file(config_path),
-        sha256_file(manifest_path),
-        tuple(root.reward.components) if root.reward else (),
-    )
-
-
 async def score_images(
-    plan: EvaluationPlan, rows: list[dict[str, Any]], output_dir: Path
+    evaluation: CheckpointEvaluation, rows: list[dict[str, Any]], output_dir: Path
 ) -> list[dict[str, Any]]:
     import numpy as np
     import torch
@@ -635,10 +648,11 @@ async def score_images(
     )
 
     kwargs = {
-        name: dict(plan.reward["kwargs"].get(name) or {}) for name in plan.reward["components"]
+        name: dict(evaluation.reward["kwargs"].get(name) or {})
+        for name in evaluation.reward["components"]
     }
     deployments = RewardRuntimeConfig.from_section(
-        RewardConfig.model_validate(plan.reward),
+        RewardConfig.model_validate(evaluation.reward),
     ).inference_configs
     # Generation is complete before evaluation scores saved images. Local
     # judges run here, without pretending to own the training Ray placement;
@@ -651,19 +665,19 @@ async def score_images(
         "Offline reward deployments: %s", {name: cfg.kind for name, cfg in deployments.items()}
     )
     scorer = MultiReward.from_mapping(
-        plan.reward["components"],
-        device=plan.reward_device,
+        evaluation.reward["components"],
+        device=evaluation.reward_device,
         reward_kwargs=kwargs,
         inference_configs=deployments,
     )
     by_key = {
         (row["checkpoint_label"], row["prompt_index"], row["sample_index"]): row for row in rows
     }
-    orders = plan.blind_orders()
+    orders = evaluation.blind_orders()
     scored = []
     try:
-        for prompt_index, prompt in enumerate(plan.prompts):
-            for sample_index in range(plan.samples_per_prompt):
+        for prompt_index, prompt in enumerate(evaluation.prompts):
+            for sample_index in range(evaluation.samples_per_prompt):
                 batch_rows, samples, diagnostics = [], [], []
                 for cell, label in enumerate(orders[prompt_index]):
                     row = by_key[label, prompt_index, sample_index]
@@ -705,7 +719,7 @@ async def score_images(
                     scored.append(row)
     finally:
         await scorer.shutdown()
-    if plan.samples_per_prompt > 1:
+    if evaluation.samples_per_prompt > 1:
         groups = defaultdict(list)
         for row in scored:
             groups[row["checkpoint_label"], row["prompt_index"]].append(row)
@@ -761,22 +775,22 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
     args = build_parser().parse_args(argv)
-    plan = resolve_plan(args)
+    evaluation = CheckpointEvaluation.from_args(args)
     if args.dry_run:
-        print(json.dumps(plan.record(), indent=2, sort_keys=True))
+        print(json.dumps(evaluation.record(), indent=2, sort_keys=True))
         return
     output_dir = (
         (args.output_dir or args.run_dir / "checkpoint_evaluation").expanduser().absolute()
     )
-    archive = EvaluationArchive(output_dir, plan)
+    archive = EvaluationArchive(output_dir, evaluation)
     if output_dir.exists():
         rows = archive.load_generation()
         archive.reject_completed()
     else:
         output_dir.mkdir(parents=True)
-        rows = plan.generate(output_dir)
+        rows = evaluation.generate(output_dir)
         archive.publish_generation(rows)
-    scored = asyncio.run(score_images(plan, rows, output_dir))
+    scored = asyncio.run(score_images(evaluation, rows, output_dir))
     summary = archive.publish_report(scored)
     print(json.dumps({"output_dir": str(output_dir), "summary": summary}, indent=2))
 

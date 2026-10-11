@@ -14,7 +14,7 @@ from typing import Any
 import torch
 
 from vrl.models.parking import TrainingMemoryState
-from vrl.ray.resources import RayLifecyclePlan
+from vrl.ray.resources import RoleLifecycle
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.strategy import SingleProcessStrategy
@@ -53,7 +53,7 @@ def _coordinator(model: _FakeDriverModel) -> RolloutRuntimeCoordinator:
         def __init__(self, runtime: Any) -> None:
             self.generation_runtime = runtime
             # Rollout on the trainer GPU: the plan parks the trainer for generation.
-            self.lifecycle = RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=())
+            self.lifecycle = RoleLifecycle(trainer=(0,), rollout=(0,), reward=())
 
         async def activate_generation_runtime(self) -> None:
             return None

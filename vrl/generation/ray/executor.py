@@ -1,6 +1,6 @@
 """Ray-backed generation executor that gathers batch results.
 
-The per-request slice of the Ray adapter: split one ``EnginePlan`` across the
+The per-request slice of the Ray adapter: split one request's sample batches across the
 engine fleet, await the batch RPCs under stall deadlines, and reassemble outputs through the model-free gatherer,
 driver-side for per-batch dispatch or on a finalizer actor for the per-request
 path. It deliberately owns no lifecycle — admission, terminal failure, and
@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
-from vrl.generation.execution.planner import EnginePlan
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
     GenerationBatchEnvelope,
     GenerationBatchResult,
@@ -121,17 +121,17 @@ class RayGenerationExecutor:
 
         _gen_start = time.perf_counter()
         with profile_range("engine.plan"):
-            engine_plan = EnginePlan.from_request(request)
+            sample_batches = request.sample_batches()
         pipelined_oom: RequestBatchOutOfMemory | None = None
-        if self.pipelined and len(engine_plan.sample_batches) >= 2:
+        if self.pipelined and len(sample_batches) >= 2:
             pipelined_result = await self._execute_request_batches(
                 request,
-                engine_plan,
+                sample_batches,
             )
             if isinstance(pipelined_result, GenerationOutput):
                 logger.info(
                     "generation wall: path=per_request_pipelined batches=%d wall_s=%.3f",
-                    len(engine_plan.sample_batches),
+                    len(sample_batches),
                     time.perf_counter() - _gen_start,
                 )
                 return pipelined_result
@@ -149,7 +149,7 @@ class RayGenerationExecutor:
         schedule_rows: list[dict[str, Any]] = []
         envelope_by_batch_key: dict[str, GenerationBatchEnvelope] = {}
 
-        for job_index, batch in enumerate(engine_plan.sample_batches):
+        for job_index, batch in enumerate(sample_batches):
             engine = self.engines[job_index % len(self.engines)]
             envelope = GenerationBatchEnvelope(request=request, batch=batch)
             envelope_by_batch_key[batch.batch_key] = envelope
@@ -174,10 +174,10 @@ class RayGenerationExecutor:
 
         results = [result for _, result in sorted(result_pairs, key=lambda pair: pair[0])]
 
-        if len(results) != len(engine_plan.sample_batches):
+        if len(results) != len(sample_batches):
             raise RuntimeError(
                 "distributed rollout returned wrong number of batches: "
-                f"{len(results)} != {len(engine_plan.sample_batches)}",
+                f"{len(results)} != {len(sample_batches)}",
             )
 
         for result in results:
@@ -238,7 +238,7 @@ class RayGenerationExecutor:
                     "queue_wait_s": by_index[job_index]["queue_wait_s"],
                     "execution_s": by_index[job_index]["execution_s"],
                 }
-                for job_index, batch in enumerate(engine_plan.sample_batches)
+                for job_index, batch in enumerate(sample_batches)
                 if job_index in by_index
             ]
         if runtime_debug_on:
@@ -284,7 +284,7 @@ class RayGenerationExecutor:
                 if pipelined_oom is not None
                 else "per_batch_dispatch"
             ),
-            len(engine_plan.sample_batches),
+            len(sample_batches),
             time.perf_counter() - _gen_start,
         )
         return output
@@ -292,7 +292,7 @@ class RayGenerationExecutor:
     async def _execute_request_batches(
         self,
         request: GenerationRequest,
-        engine_plan: EnginePlan,
+        sample_batches: tuple[GenerationSampleBatch, ...],
     ) -> GenerationOutput | RequestBatchOutOfMemory:
         """Per-request path (opt-in, ``pipelined=True``).
 
@@ -306,7 +306,7 @@ class RayGenerationExecutor:
         discard upstream, never trained off-policy.
         """
 
-        engine_batches = self._engine_batch_subsets(engine_plan)
+        engine_batches = self._engine_batch_subsets(sample_batches)
         pairs = await self.actor_dispatcher.run(
             [
                 RayActorJob(
@@ -317,7 +317,7 @@ class RayGenerationExecutor:
                         combine=self._select_request_rank_result,
                     ),
                     payload=request,
-                    keyword_args={"engine_plan": EnginePlan(sample_batches=batches)},
+                    keyword_args={"sample_batches": batches},
                 )
                 for job_index, (engine, batches) in enumerate(engine_batches)
             ],
@@ -354,21 +354,21 @@ class RayGenerationExecutor:
             if result.batch_keys != expected_keys:
                 raise RuntimeError(
                     f"pipelined engine {engine.engine_id!r} staged batches "
-                    f"{result.batch_keys} for plan {expected_keys}",
+                    f"{result.batch_keys}, expected {expected_keys}",
                 )
             refs_by_key.update(zip(result.batch_keys, result.batch_refs, strict=True))
-        ordered_refs = [refs_by_key[batch.batch_key] for batch in engine_plan.sample_batches]
+        ordered_refs = [refs_by_key[batch.batch_key] for batch in sample_batches]
         return await self._finalize_request(request, ordered_refs)
 
     def _engine_batch_subsets(
         self,
-        engine_plan: EnginePlan,
+        sample_batches: tuple[GenerationSampleBatch, ...],
     ) -> list[tuple[RayGenerationEngine, tuple[Any, ...]]]:
-        """Round-robin the plan's batches over the engines; skip idle engines."""
+        """Round-robin the request's batches over the engines; skip idle engines."""
 
         subsets: list[tuple[RayGenerationEngine, tuple[Any, ...]]] = []
         for index, engine in enumerate(self.engines):
-            batches = tuple(engine_plan.sample_batches[index :: len(self.engines)])
+            batches = tuple(sample_batches[index :: len(self.engines)])
             if batches:
                 subsets.append((engine, batches))
         return subsets

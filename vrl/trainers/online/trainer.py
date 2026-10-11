@@ -319,7 +319,7 @@ class _TrainingMicrobatch:
         advantages: torch.Tensor,
         training_microbatch_size: int,
     ) -> list[_TrainingMicrobatch]:
-        """Split a prompt group using the validated plan; zero keeps it whole.
+        """Split a prompt group using the validated batch config; zero keeps it whole.
 
         Slice weights preserve the original full-group loss contribution.
         """
@@ -869,7 +869,7 @@ class OnlineTrainer:
         if iteration is None:
             iteration = await self.rollout_schedule.next_iteration(
                 prompts,
-                group_size=cfg.batch_plan.n_samples_per_prompt,
+                group_size=cfg.batch_config.n_samples_per_prompt,
                 runtime_debug=runtime_debug_collect,
                 next_prompts=next_prompts,
             )
@@ -1213,7 +1213,7 @@ class OnlineTrainer:
 
         cfg = self.config
         loss_scale = int(total_groups) * len(train_indices)
-        training_microbatch_size = cfg.batch_plan.training_microbatch_size
+        training_microbatch_size = cfg.batch_config.training_microbatch_size
         # An objective whose per-sample weight is normalized over the update
         # (Flash-GRPO's rectification) fixes its denominator here, from the
         # recorded timesteps of every sample it is about to train on, before
@@ -1295,7 +1295,7 @@ class OnlineTrainer:
         without samples. The permutation is seeded from the optimizer-step
         counter and rank, so a resumed run deals the same way.
         """
-        steps = self.config.batch_plan.optimizer_steps_per_batch
+        steps = self.config.batch_config.optimizer_steps_per_batch
 
         if steps <= 1:
             return [(batches, advantages)]

@@ -2,10 +2,10 @@
 
 The ranks of one engine cooperate through torch.distributed collectives
 (sequence-parallel attention exchanges activations, weight installs broadcast
-per rank). This module owns the rendezvous spec that crosses the Ray launch
+per rank). This module owns the process group config that crosses the Ray launch
 boundary and the engine's ``EngineProcessGroup``, which the rank program opens
 before model build and shuts down when unloading the policy. A single-rank
-engine carries no spec and never touches torch.distributed.
+engine carries no process group config and never touches torch.distributed.
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class RankGroupSpec:
-    """Rendezvous contract for one rank of one engine's process group.
+class ProcessGroupConfig:
+    """Where, and as which rank, one process joins its engine's process group.
 
     ``master_addr`` is reachable by every rank of the engine; engine groups are
     single-node (PACK placement), so the launcher hands out a loopback address.
@@ -64,25 +64,25 @@ class EngineProcessGroup(DefaultProcessGroup):
     """
 
     @classmethod
-    def open(cls, spec: RankGroupSpec) -> EngineProcessGroup:
+    def open(cls, config: ProcessGroupConfig) -> EngineProcessGroup:
         owner = cls._create(
-            backend=spec.backend,
-            init_method=f"tcp://{spec.master_addr}:{spec.master_port}",
-            rank=spec.group_rank,
-            world_size=spec.group_world_size,
+            backend=config.backend,
+            init_method=f"tcp://{config.master_addr}:{config.master_port}",
+            rank=config.group_rank,
+            world_size=config.group_world_size,
         )
         logger.info(
             "rank process group up: backend=%s rank=%d/%d rendezvous=%s:%d",
-            spec.backend,
-            spec.group_rank,
-            spec.group_world_size,
-            spec.master_addr,
-            spec.master_port,
+            config.backend,
+            config.group_rank,
+            config.group_world_size,
+            config.master_addr,
+            config.master_port,
         )
         return owner
 
 
 __all__ = [
     "EngineProcessGroup",
-    "RankGroupSpec",
+    "ProcessGroupConfig",
 ]

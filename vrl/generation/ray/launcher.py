@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from functools import partial
 
-from vrl.generation.execution.rank_group import RankGroupSpec
+from vrl.generation.execution.rank_group import ProcessGroupConfig
 from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
@@ -103,7 +103,7 @@ class RayGenerationLauncher:
         # The same registry-owned gatherer serves the driver executor and the
         # single-engine pipelined path. Ray serializes it to each rank actor;
         # ranks never re-resolve family identity from the neutral execution layer.
-        # Multi-rank engines additionally get a per-rank rendezvous spec: one
+        # Multi-rank engines additionally get a per-rank process group config: one
         # process-group port per engine, loopback address (engine groups are
         # single-node; PACK affinity is enforced at placement).
         if gpus_per_engine == 1:
@@ -112,7 +112,7 @@ class RayGenerationLauncher:
             rank_configs = [
                 replace(
                     launch_inputs,
-                    rank_group=RankGroupSpec(
+                    process_group_config=ProcessGroupConfig(
                         master_addr="127.0.0.1",
                         master_port=engine_port,
                         group_rank=rank_idx,
@@ -268,7 +268,7 @@ class RayGenerationLauncher:
             runtime = RayGenerationRuntime(
                 session=session,
                 session_factory=session_factory,
-                initial_policy_version=launch_inputs.launch_contract.policy_version,
+                initial_policy_version=launch_inputs.launch_config.policy_version,
             )
             return runtime
         except BaseException as error:

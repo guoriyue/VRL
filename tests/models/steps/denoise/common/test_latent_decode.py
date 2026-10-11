@@ -5,7 +5,6 @@ import torch
 
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    LatentDecodePlan,
 )
 
 
@@ -22,13 +21,11 @@ def test_chunked_latent_decoder_decodes_in_batch_chunks(batch_size, expected_row
         return batch + 10
 
     decoder = ChunkedLatentDecoder(
-        LatentDecodePlan(
-            prepare_latents=lambda x: x * 2,
-            vae_decode=decode,
-            postprocess=lambda x: x - 1,
-            output_layout="image_bchw",
-            decode_batch_size=batch_size,
-        )
+        prepare_latents=lambda x: x * 2,
+        vae_decode=decode,
+        postprocess=lambda x: x - 1,
+        output_layout="image_bchw",
+        decode_batch_size=batch_size,
     )
 
     latents = torch.arange(3.0).view(3, 1, 1, 1)
@@ -39,16 +36,14 @@ def test_chunked_latent_decoder_decodes_in_batch_chunks(batch_size, expected_row
 
 
 def test_chunked_latent_decoder_standardizes_video_layout() -> None:
-    """A ``video_btchw`` plan's postprocess permute is undone by the decoder, so callers always
+    """A ``video_btchw`` decoder undoes its postprocess permute, so callers always
     get [B,C,T,H,W] back whatever layout the VAE postprocess emits.
     """
     decoder = ChunkedLatentDecoder(
-        LatentDecodePlan(
-            prepare_latents=lambda x: x,
-            vae_decode=lambda x: x,
-            postprocess=lambda x: x.permute(0, 2, 1, 3, 4),
-            output_layout="video_btchw",
-        )
+        prepare_latents=lambda x: x,
+        vae_decode=lambda x: x,
+        postprocess=lambda x: x.permute(0, 2, 1, 3, 4),
+        output_layout="video_btchw",
     )
 
     latents = torch.zeros(2, 3, 4, 1, 1)

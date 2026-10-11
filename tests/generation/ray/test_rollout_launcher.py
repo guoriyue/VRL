@@ -87,7 +87,7 @@ async def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(
         runtime = ray_run.runtime
 
         assert isinstance(runtime, RayGenerationRuntime)
-        # The launch contract's version: the checkpoint the run starts from.
+        # The launch config's version: the checkpoint the run starts from.
         assert runtime.current_policy_version == 0
         session = runtime._session
         assert session is not None
@@ -106,7 +106,7 @@ async def test_pipelined_runtime_stages_batches_and_merges_on_the_finalizer(
 ) -> None:
     """Per-request path end to end on real actors: the rank stages each batch in
     the object store, the finalizer merges the references, and the driver gets
-    the gathered output in plan order."""
+    the gathered output in batch order."""
 
     async with ray_sana_runtime(
         monkeypatch,

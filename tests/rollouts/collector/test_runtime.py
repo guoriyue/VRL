@@ -17,7 +17,7 @@ from tests.rollouts.collector._helpers import (
 )
 from vrl.generation import GenerationInput, GenerationOutput
 from vrl.models.families.registry import get_model_family_entry
-from vrl.ray.resources import RayLifecyclePlan
+from vrl.ray.resources import RoleLifecycle
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.base import RewardCleanupError
 from vrl.rollouts.collector.batch_builder import (
@@ -175,7 +175,7 @@ def test_collector_offloads_runtime_memory_before_reward_scoring(monkeypatch, tm
     bench = real_collector(
         monkeypatch,
         tmp_path,
-        lifecycle=RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=(0,)),
+        lifecycle=RoleLifecycle(trainer=(0,), rollout=(0,), reward=(0,)),
     )
 
     asyncio.run(collect_scored(bench.collector, ["p0"], group_size=1))
@@ -201,7 +201,7 @@ def test_collector_does_not_offload_runtime_before_independent_reward(
     bench = real_collector(
         monkeypatch,
         tmp_path,
-        lifecycle=RayLifecyclePlan(trainer=(0,), rollout=(1,), reward=(2,)),
+        lifecycle=RoleLifecycle(trainer=(0,), rollout=(1,), reward=(2,)),
     )
 
     asyncio.run(collect_scored(bench.collector, ["p0"], group_size=1))
@@ -228,7 +228,7 @@ def test_collector_derives_reward_generation_overlap_from_topology(
     trainer_handoff: bool,
     expected: bool,
 ) -> None:
-    lifecycle = RayLifecyclePlan(
+    lifecycle = RoleLifecycle(
         trainer=(0,),
         rollout=(1,),
         reward=((1,) if rollout_handoff else ()) + ((0,) if trainer_handoff else ()),
@@ -263,7 +263,7 @@ def test_collector_blocks_trainer_handoff_when_reward_parking_fails(monkeypatch,
     bench = real_collector(
         monkeypatch,
         tmp_path,
-        lifecycle=RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=(0,)),
+        lifecycle=RoleLifecycle(trainer=(0,), rollout=(0,), reward=(0,)),
     )
     bench.trace.fail("reward_park", "reward park failed")
     bench.trace.fail("reward_park", "reward park failed")
@@ -290,7 +290,7 @@ def test_collector_phase_final_gate_retries_reward_parking(monkeypatch, tmp_path
     bench = real_collector(
         monkeypatch,
         tmp_path,
-        lifecycle=RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=(0,)),
+        lifecycle=RoleLifecycle(trainer=(0,), rollout=(0,), reward=(0,)),
     )
     bench.trace.fail("reward_park", "transient reward park failure")
 
@@ -311,7 +311,7 @@ def test_collector_aggregates_rollout_offload_and_owed_reward_park_failures(
     bench = real_collector(
         monkeypatch,
         tmp_path,
-        lifecycle=RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=(0,)),
+        lifecycle=RoleLifecycle(trainer=(0,), rollout=(0,), reward=(0,)),
     )
     bench.trace.fail("reward_park", "reward park failed")
     bench.trace.fail("reward_park", "reward park failed")
@@ -333,7 +333,7 @@ def test_collector_reports_rollout_offload_failure_alone_when_the_park_succeeds(
     bench = real_collector(
         monkeypatch,
         tmp_path,
-        lifecycle=RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=(0,)),
+        lifecycle=RoleLifecycle(trainer=(0,), rollout=(0,), reward=(0,)),
     )
     bench.trace.fail("offload", "rollout offload failed")
 

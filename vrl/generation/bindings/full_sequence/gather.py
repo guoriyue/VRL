@@ -1,7 +1,7 @@
 """Pure gatherer for full-sequence denoise batch payloads.
 
 Reassembly runs driver-side without a model instance. The gatherer crosses the
-Ray launch contract as a serializable object (see ``GenerationBatchGatherer``
+Ray launch config as a serializable object (see ``GenerationBatchGatherer``
 in ``vrl/generation/protocols.py``). Its result annotation uses a TYPE_CHECKING
 import; the parent package's public exports still import the executor module.
 """

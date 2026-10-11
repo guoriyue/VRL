@@ -44,7 +44,6 @@ from vrl.models.steps.denoise.common import (
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
-    LatentDecodePlan,
     expand_batch_timestep,
     pack_eval_timestep,
     set_mu_shifted_timesteps,
@@ -426,16 +425,14 @@ class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
             return unpacked.to(pipe.vae.dtype) / scaling_factor + shift_factor
 
         decoder = ChunkedLatentDecoder(
-            LatentDecodePlan(
-                prepare_latents=_transform,
-                vae_decode=lambda batch: pipe.vae.decode(batch, return_dict=False)[0],
-                postprocess=lambda image: pipe.image_processor.postprocess(
-                    image,
-                    output_type="pt",
-                ),
-                output_layout="image_bchw",
-                decode_batch_size=getattr(pipe, "decode_batch_size", None),
+            prepare_latents=_transform,
+            vae_decode=lambda batch: pipe.vae.decode(batch, return_dict=False)[0],
+            postprocess=lambda image: pipe.image_processor.postprocess(
+                image,
+                output_type="pt",
             ),
+            output_layout="image_bchw",
+            decode_batch_size=getattr(pipe, "decode_batch_size", None),
         )
         return decoder(latents)
 

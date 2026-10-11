@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from tests.generation.execution._helpers import launch_contract
+from tests.generation.execution._helpers import launch_config
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
     BatchMemoryReading,
@@ -75,9 +75,9 @@ class _MemoryExecutor:
 
 
 def test_worker_forwards_batch_memory_without_runtime_debug() -> None:
-    contract = launch_contract(policy_version=1)
+    config = launch_config(policy_version=1)
     executor = _MemoryExecutor()
-    core = GenerationWorkerCore("rollout-0", contract)
+    core = GenerationWorkerCore("rollout-0", config)
     core.executor = executor
     request = GenerationRequest(
         request_id="req-1",

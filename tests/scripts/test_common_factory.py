@@ -245,7 +245,7 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     pickscore = reward.rewards[1][2]
     # Online rewards run as Ray actors; the resolved device travels in
     # the actor's worker_config.
-    assert pickscore.scorer._launch.device == "cpu"
+    assert pickscore.scorer._worker_config.device == "cpu"
 
 
 def test_sana_family_defaults_to_native_fp16() -> None:
@@ -268,7 +268,7 @@ def test_sana_family_defaults_to_native_fp16() -> None:
     assert built.precision.stages_match
     assert built.root.rollout is not None
     assert (
-        built.trainer.batch_plan.training_microbatch_size
+        built.trainer.batch_config.training_microbatch_size
         == built.root.rollout.samples_per_generation_batch
     )
     assert build.parameter_dtype is torch.float16
@@ -322,8 +322,8 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
         parse_config(cfg),
         ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"),
     )
-    aesthetic_config = reward.rewards[0][2].scorer._launch.component_config
-    pickscore_config = reward.rewards[1][2].scorer._launch.component_config
+    aesthetic_config = reward.rewards[0][2].scorer._worker_config.component_config
+    pickscore_config = reward.rewards[1][2].scorer._worker_config.component_config
     assert aesthetic_config["model_revision"] == cfg.reward.kwargs.aesthetic.model_revision
     assert pickscore_config["device"] == "cpu"
     assert pickscore_config["processor_revision"] == cfg.reward.kwargs.pickscore.processor_revision

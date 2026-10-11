@@ -52,7 +52,7 @@ class TorchCompileScope(StrEnum):
 class PipelineOffloadMode(StrEnum):
     """Diffusers/Accelerate residency hook for a full generation pipeline.
 
-    Same shape as ``TorchCompileScope``: the Ray launch contract carries the
+    Same shape as ``TorchCompileScope``: the Ray launch config carries the
     rollout block as a primitive mapping and reads this field before anyone
     rebuilds the typed ``RolloutBuildOptions`` from it, so the wire path and the
     typed path validate through this one enum.
@@ -240,7 +240,7 @@ class ModelBuild:
     # Resolved base transformer parameter dtype selected by the public role.
     parameter_dtype: Any
     # Canonical registry identity. Both driver replay and Ray rollout builds
-    # require it; the worker restores it from the launch contract.
+    # require it; the worker restores it from the launch config.
     family: str
     # The selected training or rollout role is the single precision source for
     # base compute, outer autocast, selective quantization, and process-local

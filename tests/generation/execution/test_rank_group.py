@@ -1,6 +1,6 @@
 """Process-group smoke for multi-rank engines — CPU + gloo, no GPU needed.
 
-Two real OS processes rendezvous through the same RankGroupSpec the launcher
+Two real OS processes rendezvous through the same ProcessGroupConfig the launcher
 stamps, exchange tensors through all_gather, and leave the group cleanly.
 This exercises CPU rendezvous and collective lifecycle; it does not verify
 NCCL collectives or GPU placement.
@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vrl.generation.execution.rank_group import EngineProcessGroup, RankGroupSpec
+from vrl.generation.execution.rank_group import EngineProcessGroup, ProcessGroupConfig
 
 
 def _free_port() -> int:
@@ -28,14 +28,14 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
         import torch
         import torch.distributed as dist
 
-        spec = RankGroupSpec(
+        config = ProcessGroupConfig(
             master_addr="127.0.0.1",
             master_port=port,
             group_rank=rank,
             group_world_size=world,
             backend="gloo",
         )
-        process_group = EngineProcessGroup.open(spec)
+        process_group = EngineProcessGroup.open(config)
         assert process_group.world is dist.group.WORLD
         try:
             # gloo lacks all_to_all (an nccl primitive); all_gather moves the
@@ -50,12 +50,11 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
             # Rank-local RNGs deliberately differ before every request.
             import random
 
-            from vrl.generation.execution.planner import EnginePlan
             from vrl.generation.execution.worker import GenerationWorkerCore
             from vrl.generation.types import GenerationRequest
 
             core = object.__new__(GenerationWorkerCore)
-            core.rank_group_spec = spec
+            core.process_group_config = config
             core._memory_parking = SimpleNamespace(require_active=lambda *args, **kwargs: None)
             core.load_policy = lambda: None
             core._uses_versioned_slots = False
@@ -70,7 +69,7 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
                 random.seed(rank + iteration * 100)
                 output = core.execute_request_batches(
                     GenerationRequest("r", "sd3_5", "t2i", ["p"], 1),
-                    EnginePlan(sample_batches=()),
+                    (),
                 )
                 peer_outputs = [torch.empty_like(output) for _ in range(world)]
                 dist.all_gather(peer_outputs, output)
@@ -112,13 +111,13 @@ def test_two_ranks_rendezvous_all_gather_and_leave() -> None:
 
 def test_spec_rejects_degenerate_and_out_of_range_shapes() -> None:
     with pytest.raises(ValueError, match="multi-rank"):
-        RankGroupSpec("127.0.0.1", 29500, 0, 1)
+        ProcessGroupConfig("127.0.0.1", 29500, 0, 1)
     with pytest.raises(ValueError, match="outside world"):
-        RankGroupSpec("127.0.0.1", 29500, 2, 2)
+        ProcessGroupConfig("127.0.0.1", 29500, 2, 2)
     with pytest.raises(ValueError, match="backend"):
-        RankGroupSpec("127.0.0.1", 29500, 0, 2, backend="mpi")
+        ProcessGroupConfig("127.0.0.1", 29500, 0, 2, backend="mpi")
     with pytest.raises(ValueError, match="master_port"):
-        RankGroupSpec("127.0.0.1", 0, 0, 2)
+        ProcessGroupConfig("127.0.0.1", 0, 0, 2)
 
 
 @pytest.mark.parametrize("field", ["master_port", "group_rank", "group_world_size"])
@@ -127,10 +126,10 @@ def test_spec_requires_integer_rendezvous_fields(field, value) -> None:
     settings = dict(master_addr="127.0.0.1", master_port=29500, group_rank=0, group_world_size=2)
     settings[field] = value
     with pytest.raises(ValueError, match=field + " must be an integer"):
-        RankGroupSpec(**settings)
+        ProcessGroupConfig(**settings)
 
 
 @pytest.mark.parametrize("address", [123, True, b"127.0.0.1", ["127.0.0.1"]])
 def test_spec_rejects_nonstring_rendezvous_address(address) -> None:
     with pytest.raises(ValueError, match="master_addr"):
-        RankGroupSpec(address, 29500, 0, 2)
+        ProcessGroupConfig(address, 29500, 0, 2)

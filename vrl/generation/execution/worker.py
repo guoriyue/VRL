@@ -8,11 +8,11 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from vrl.generation.execution.memory_parking import GenerationWorkerParking, executor_device
-from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.rank_group import (
     EngineProcessGroup,
-    RankGroupSpec,
+    ProcessGroupConfig,
 )
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
     BatchMemoryReading,
     GenerationBatchEnvelope,
@@ -20,7 +20,7 @@ from vrl.generation.execution.types import (
     RequestBatchOutOfMemory,
     WorkerMemoryParkingSnapshot,
 )
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.launch_config import GenerationLaunchConfig
 from vrl.generation.protocols import (
     GenerationBatchExecutor,
 )
@@ -37,42 +37,42 @@ logger = init_logger(__name__)
 
 
 class GenerationWorkerCore:
-    """Own one generation executor and execute plan-aware batches."""
+    """Own one generation executor and execute a request's sample batches."""
 
     def __init__(
         self,
         worker_id: str,
-        launch_contract: GenerationRuntimeLaunchContract,
-        rank_group: RankGroupSpec | None = None,
+        launch_config: GenerationLaunchConfig,
+        process_group_config: ProcessGroupConfig | None = None,
     ) -> None:
         self.worker_id = worker_id
-        # None for single-rank engines. A spec makes this rank join its
+        # None for single-rank engines. A process group config makes this rank join its
         # engine's process group around the model lifetime (load -> release).
-        self.rank_group_spec = rank_group
+        self.process_group_config = process_group_config
         self._rank_process_group: EngineProcessGroup | None = None
-        self.launch_contract = launch_contract
+        self.launch_config = launch_config
         from vrl.models.families.registry import get_model_family_entry
 
-        self.family_entry = get_model_family_entry(launch_contract.family)
+        self.family_entry = get_model_family_entry(launch_config.family)
         self.executor: GenerationBatchExecutor | None = None
         self._memory_parking = GenerationWorkerParking(
             worker_id,
-            launch_contract,
+            launch_config,
         )
-        self._policy_version: int = self.launch_contract.policy_version
-        # Flipped on by the first weight install of a run whose launch contract
+        self._policy_version: int = self.launch_config.policy_version
+        # Flipped on by the first weight install of a run whose launch config
         # chose versioned_weight_sync; from then on execute_batch activates the
         # slot for each request's stamped version instead of comparing against
         # one global version (which is what makes a non-draining sync safe).
         # Before that install only the launch weights exist, served unversioned.
         self._uses_versioned_slots = False
         self._profiler_config = TorchProfilerConfig(
-            **dict(self.launch_contract.torch_profiler),
+            **dict(self.launch_config.torch_profiler),
         )
         self._profiler_step = 0
 
     def load_policy(self) -> None:
-        """Build the family executor from the serialized launch contract."""
+        """Build the family executor from the serialized launch config."""
 
         if self.executor is not None:
             self._memory_parking.validate_loaded(self.executor)
@@ -83,15 +83,15 @@ class GenerationWorkerCore:
 
         host_memory.log(f"generation_worker:{self.worker_id}:before_load_policy")
         try:
-            if self.rank_group_spec is not None:
-                self._rank_process_group = EngineProcessGroup.open(self.rank_group_spec)
+            if self.process_group_config is not None:
+                self._rank_process_group = EngineProcessGroup.open(self.process_group_config)
             self.executor = self._memory_parking.build(self._build_executor)
             if (
                 self.executor.family != self.family_entry.family
                 or self.executor.task != self.family_entry.task
             ):
                 raise ValueError(
-                    "executor identity does not match launch contract: "
+                    "executor identity does not match launch config: "
                     f"{self.executor.family}/{self.executor.task} != "
                     f"{self.family_entry.family}/{self.family_entry.task}",
                 )
@@ -119,7 +119,7 @@ class GenerationWorkerCore:
             self.executor = None
         # A cold rebuild restores the launch checkpoint, not the last installed
         # weights or their retained slots. Sleep/wake keeps both with the model.
-        self._policy_version = self.launch_contract.policy_version
+        self._policy_version = self.launch_config.policy_version
         self._uses_versioned_slots = False
         if self._rank_process_group is not None:
             self._rank_process_group.shutdown()
@@ -156,7 +156,7 @@ class GenerationWorkerCore:
     def update_weights(self, trainable_state: Any, policy_version: int) -> int:
         """Install weights and return the policy version as the commit ACK.
 
-        When the launch contract chose ``versioned_weight_sync``, install the new
+        When the launch config chose ``versioned_weight_sync``, install the new
         version as a retained slot WITHOUT overwriting the slots older in-flight
         requests still depend on (the non-draining-sync path); ``execute_batch``
         then activates the right slot per request. Otherwise keep the single
@@ -170,7 +170,7 @@ class GenerationWorkerCore:
         )
         self.load_policy()
         policy_obj = getattr(self.executor, "model", None)
-        versioned = self.launch_contract.versioned_weight_sync
+        versioned = self.launch_config.versioned_weight_sync
         try:
             if versioned:
                 model = require_runtime_model(
@@ -273,7 +273,7 @@ class GenerationWorkerCore:
     def execute_request_batches(
         self,
         request: GenerationRequest,
-        engine_plan: EnginePlan,
+        sample_batches: tuple[GenerationSampleBatch, ...],
         *,
         stage_batch_result: Callable[[Any], Any] | None = None,
     ) -> list[Any] | RequestBatchOutOfMemory:
@@ -329,7 +329,7 @@ class GenerationWorkerCore:
         try:
             return forward_batches(
                 request,
-                engine_plan.sample_batches,
+                sample_batches,
                 stage_batch_result=stage_batch_result,
             )
         except RuntimeError as error:
@@ -482,7 +482,7 @@ class GenerationWorkerCore:
         then reseeds python and torch RNGs identically.
         """
 
-        if self.rank_group_spec is None:
+        if self.process_group_config is None:
             return
         import random
 
@@ -501,10 +501,10 @@ class GenerationWorkerCore:
             torch.cuda.manual_seed_all(shared)
 
     def _build_executor(self) -> GenerationBatchExecutor:
-        launch_contract = self.launch_contract
+        launch_config = self.launch_config
         from vrl.models.interfaces.runtime import ModelBuild
 
-        build_payload = dict(launch_contract.model_build)
+        build_payload = dict(launch_config.model_build)
         build_payload["family"] = self.family_entry.family
         device = build_payload.get("device")
         if isinstance(device, str):
@@ -516,7 +516,7 @@ class GenerationWorkerCore:
         build = ModelBuild(**build_payload)
         # The driver's replay identity: this worker must load the same checkpoint.
         bundle = self.family_entry.build_rollout(
-            build, expected_identity=launch_contract.expected_model_identity
+            build, expected_identity=launch_config.expected_model_identity
         )
         model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
         # No backstop for "the builder forgot to quantize" any more: every
@@ -524,12 +524,12 @@ class GenerationWorkerCore:
         # (``apply_rollout_optimizations``), which fails loud on a zero-match swap
         # and on a pass that misses a declared policy core. The forgotten-wiring
         # failure it guarded against is now structurally unreachable.
-        if self.rank_group_spec is not None:
+        if self.process_group_config is not None:
             self._install_sequence_parallel(model)
         executor_cls = import_from_path(self.family_entry.executor_cls)
         # Ranks only produce batches; merging runs driver-side on the registry
         # gatherer, so the rank's executor is built without one.
-        return executor_cls(model, **launch_contract.executor_kwargs)
+        return executor_cls(model, **launch_config.executor_kwargs)
 
 
 __all__ = ["GenerationWorkerCore"]

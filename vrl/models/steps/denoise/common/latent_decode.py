@@ -12,8 +12,12 @@ LatentOutputLayout = Literal["image_bchw", "video_btchw"]
 
 
 @dataclass(slots=True)
-class LatentDecodePlan:
-    """All family-owned callables needed for chunked latent decoding."""
+class ChunkedLatentDecoder:
+    """Apply family normalization, VAE decode, postprocess, and layout policy.
+
+    The family supplies the callables; the decoder owns the chunking and the
+    output layout.
+    """
 
     prepare_latents: Callable[[torch.Tensor], torch.Tensor]
     vae_decode: Callable[[torch.Tensor], torch.Tensor]
@@ -22,15 +26,8 @@ class LatentDecodePlan:
     decode_batch_size: int | None = None
     prepare_decoded: Callable[[torch.Tensor], torch.Tensor] | None = None
 
-
-class ChunkedLatentDecoder:
-    """Apply family normalization, VAE decode, postprocess, and layout policy."""
-
-    def __init__(self, plan: LatentDecodePlan) -> None:
-        self.plan = plan
-
     def __call__(self, latents: torch.Tensor) -> torch.Tensor:
-        size = self.plan.decode_batch_size
+        size = self.decode_batch_size
         batches = (
             (latents,)
             if size is None or size <= 0 or size >= latents.shape[0]
@@ -38,16 +35,16 @@ class ChunkedLatentDecoder:
         )
         decoded = [self._decode_chunk(batch) for batch in batches]
         output = decoded[0] if len(decoded) == 1 else torch.cat(decoded, dim=0)
-        if self.plan.output_layout == "video_btchw":
+        if self.output_layout == "video_btchw":
             return output.permute(0, 2, 1, 3, 4)
         return output
 
     def _decode_chunk(self, latents: torch.Tensor) -> torch.Tensor:
-        prepared = self.plan.prepare_latents(latents)
-        decoded = self.plan.vae_decode(prepared)
-        if self.plan.prepare_decoded is not None:
-            decoded = self.plan.prepare_decoded(decoded)
-        return self.plan.postprocess(decoded)
+        prepared = self.prepare_latents(latents)
+        decoded = self.vae_decode(prepared)
+        if self.prepare_decoded is not None:
+            decoded = self.prepare_decoded(decoded)
+        return self.postprocess(decoded)
 
 
 class VaeDecodeMixin:
@@ -90,13 +87,11 @@ class VaeDecodeMixin:
             return pipe.image_processor.postprocess(decoded, output_type="pt")
 
         decoder = ChunkedLatentDecoder(
-            LatentDecodePlan(
-                prepare_latents=lambda batch: batch.to(vae.dtype) / scaling_factor + shift_factor,
-                vae_decode=lambda batch: vae.decode(batch, return_dict=False)[0],
-                postprocess=postprocess,
-                output_layout=self._decode_output_layout,
-                decode_batch_size=getattr(pipe, "decode_batch_size", None),
-            ),
+            prepare_latents=lambda batch: batch.to(vae.dtype) / scaling_factor + shift_factor,
+            vae_decode=lambda batch: vae.decode(batch, return_dict=False)[0],
+            postprocess=postprocess,
+            output_layout=self._decode_output_layout,
+            decode_batch_size=getattr(pipe, "decode_batch_size", None),
         )
         return decoder(latents)
 

@@ -1,4 +1,4 @@
-"""The minimal launch contract the worker-core tests share.
+"""The minimal launch config the worker-core tests share.
 
 The contract is pure data and identical across these files; what differs per
 test (which executor the core gets, versioned slots, sleep offload) stays at the
@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.launch_config import GenerationLaunchConfig
 
 
-def launch_contract(family: str = "sd3_5", **overrides: Any) -> GenerationRuntimeLaunchContract:
+def launch_config(family: str = "sd3_5", **overrides: Any) -> GenerationLaunchConfig:
     kwargs: dict[str, Any] = {
         "family": family,
         "model_build": {},
         "expected_model_identity": {"schema": "test"},
     }
     kwargs.update(overrides)
-    return GenerationRuntimeLaunchContract(**kwargs)
+    return GenerationLaunchConfig(**kwargs)

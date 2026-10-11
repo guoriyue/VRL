@@ -27,7 +27,6 @@ from vrl.models.steps.denoise.common import (
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
-    LatentDecodePlan,
     expand_tensor_to_batch,
     replay_tensor,
     shared_replay_tensor,
@@ -431,25 +430,23 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         latents_std = pipe.latents_std.to(latents.device, latents.dtype)
         frame_count = int((latents.shape[2] - 1) * pipe.vae_scale_factor_temporal + 1)
         decoder = ChunkedLatentDecoder(
-            LatentDecodePlan(
-                prepare_latents=lambda batch: (batch * latents_std + latents_mean).to(
-                    pipe.vae.dtype,
-                ),
-                vae_decode=lambda batch: pipe.vae.decode(
-                    batch,
-                    return_dict=False,
-                )[0],
-                prepare_decoded=lambda video: pipe._match_num_frames(
-                    video,
-                    frame_count,
-                ),
-                postprocess=lambda video: pipe.video_processor.postprocess_video(
-                    video,
-                    output_type="pt",
-                ),
-                output_layout="video_btchw",
-                decode_batch_size=getattr(pipe, "decode_batch_size", None),
+            prepare_latents=lambda batch: (batch * latents_std + latents_mean).to(
+                pipe.vae.dtype,
             ),
+            vae_decode=lambda batch: pipe.vae.decode(
+                batch,
+                return_dict=False,
+            )[0],
+            prepare_decoded=lambda video: pipe._match_num_frames(
+                video,
+                frame_count,
+            ),
+            postprocess=lambda video: pipe.video_processor.postprocess_video(
+                video,
+                output_type="pt",
+            ),
+            output_layout="video_btchw",
+            decode_batch_size=getattr(pipe, "decode_batch_size", None),
         )
         return decoder(latents)
 

@@ -67,7 +67,7 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.core.types import EMAConfig, OptimConfig
 from vrl.trainers.distributed import DistributedTrainingContext, TrainerProcessGroup
-from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+from vrl.trainers.online.config import OnlineBatchConfig, TrainerConfig
 from vrl.trainers.online.trainer import OnlineTrainer
 from vrl.trainers.strategy import ContextParallelStrategy
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
@@ -591,7 +591,7 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
                 if p.requires_grad
             },
             config=TrainerConfig(
-                batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
+                batch_config=OnlineBatchConfig(prompts_per_batch=1, n_samples_per_prompt=2),
                 timestep_fraction=1.0,
                 drop_zero_advantage=False,
                 optim=OptimConfig(lr=1e-4),

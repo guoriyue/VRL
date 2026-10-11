@@ -23,7 +23,6 @@ import torch
 import vrl.generation.ray.launcher as launcher_module
 from tests.generation.ray._helpers import RaySanaRuntime, ray_sana_runtime
 from tests.rollouts.collector._helpers import Trace
-from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
     GenerationBatchEnvelope,
@@ -84,10 +83,10 @@ def _rank_worker(
                 result = replace(result, policy_version=8)
             return result
 
-        def execute_request_batches(self, request: Any, engine_plan: Any) -> Any:
+        def execute_request_batches(self, request: Any, sample_batches: Any) -> Any:
             self._in_request = True
             try:
-                return super().execute_request_batches(request, engine_plan)
+                return super().execute_request_batches(request, sample_batches)
             finally:
                 self._in_request = False
 
@@ -317,14 +316,12 @@ async def test_pipeline_combiner_retains_nonprimary_oom_payload(
     ):
         engine = RayGenerationEngine("engine-0", handles)
         request = replace(run.request(["p"], group_size=4), policy_version=0)
-        plan = EnginePlan(
-            sample_batches=(GenerationSampleBatch(0, 0, 2), GenerationSampleBatch(0, 2, 2))
-        )
+        sample_batches = (GenerationSampleBatch(0, 0, 2), GenerationSampleBatch(0, 2, 2))
 
         result = await engine.remote(
             "execute_request_batches",
             combine=RayGenerationExecutor._select_request_rank_result,
-        )(request, plan)
+        )(request, sample_batches)
 
         assert isinstance(result, RequestBatchOutOfMemory)
         assert result.worker_id == "rollout-1"

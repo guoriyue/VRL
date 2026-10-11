@@ -434,9 +434,9 @@ async def test_run_online_recipe_shutdowns_owner_after_success(
     (launch,) = [args for event, args in roles.calls if event == "launch"]
     _launcher, _resources, worker_config, launch_inputs = launch
     assert worker_config.cpus_per_worker == 0.5
-    # The launch contract carries the identity the real evidence record froze.
+    # The launch config carries the identity the real evidence record froze.
     (evidence,) = run.evidence()
-    assert launch_inputs.launch_contract.expected_model_identity == evidence["model_identity"]
+    assert launch_inputs.launch_config.expected_model_identity == evidence["model_identity"]
     assert evidence["resumed"] is False
     # Once the trainer exists, the recipe releases the rollout pipeline through
     # the schedule alone; the schedule cascades into the collector, which

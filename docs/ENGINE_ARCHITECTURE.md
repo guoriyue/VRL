@@ -94,7 +94,7 @@ capacity remains a resource requirement. GPU sharing in
 | `RolePlacement`, `GlobalRayPlacementOwner` | Placement-group lifecycle per role (create/probe/assign/remove). |
 | `RoleResourceConfig` → `RolloutResourceConfig`; `RewardResourceConfig` | Typed per-role resource schema: rollout is the only worker-replica role; reward is one optional pinned GPU (`devices`); whether it needs a GPU at all comes from the reward components. |
 | `DistributedResourceConfig`, `ResourcePlan`, `BundleLayout` | User schema → resolved topology → placement bundles. |
-| `RayLifecyclePlan` | Derived once from GPU topology. Stores each role's resolved device set; `offload_train` / `offload_rollout` / `offload_reward` (a role shares a GPU with any other) and the finer `park_<role>_for_<phase>` boundary views are properties over them, so no stored flag can drift. The collector reads this plan; the runtimes never decide it themselves. |
+| `RoleLifecycle` | Derived once from GPU topology. Stores each role's resolved device set; `offload_train` / `offload_rollout` / `offload_reward` (a role shares a GPU with any other) and the finer `park_<role>_for_<phase>` boundary views are properties over them, so no stored flag can drift. The collector reads it; the runtimes never decide it themselves. |
 
 ---
 
@@ -112,7 +112,7 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 |---|---|---|
 | `GenerationRuntime` | `current_policy_version`, `activate/generate/update_weights/offload/shutdown` | The engine's only face toward vrl/rollouts (dual of `RewardRuntime`); the collector is typed against it, and tests/rollouts/test_runtime_protocol_contract.py pins the Ray runtime to it structurally. |
 | `GenerationBatchExecutor` | `family`, `task`, `forward_batch`, `gather_batches` | The model-family plugin contract; keeps `if family == ...` out of neutral execution code. |
-| `GenerationBatchGatherer` | `gather_batches` | The model-free slice of the executor: reassembly runs driver-side where no model is loaded, so it ships separately in the launch contract. |
+| `GenerationBatchGatherer` | `gather_batches` | The model-free slice of the executor: reassembly runs driver-side where no model is loaded, so it ships separately in the launch config. |
 | `BatchPayload = Any` | — | Deliberate: the payload's shape is owned by the binding that produced it (diffusion latents vs AR tokens share nothing useful). |
 
 ### 2.2 Driver side (`ray/`)
@@ -121,22 +121,22 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 |---|---|
 | `RayGenerationRuntime` | The public lifecycle: admission, which failure is terminal, staged policy installs while inactive (`_PendingPolicyInstall`), activate/offload semantics. Implements `GenerationRuntime`. |
 | `RayGenerationSession` | The concrete resources of one launched fleet: worker handles, sleep/wake (memory parking with validated `WorkerMemoryParkingSnapshot` evidence), graceful policy release, kill-and-retain cleanup. Owns no public lifecycle. |
-| `RayGenerationLauncher` / `RayGenerationLaunchInputs` | Building the fleet: placement, actor construction from the launch contract. |
+| `RayGenerationLauncher` / `RayGenerationLaunchInputs` | Building the fleet: placement, actor construction from the launch config. |
 | `RayGenerationExecutor` | Driver-side dispatch of sample batches to worker actors (through `RayActorDispatcher`), including the per-request path (`pipelined`: each engine runs its share of a request in one call and stages payloads in the object store) and OOM-split handling. |
 | `RayGenerationFinalizer` (`ray/finalizer.py`) | CPU actor, one per engine, that merges a request's staged batch references through the gatherer (rows minted from the request) and boxes reward media, off the GPU rank's critical path. |
 | `RayGenerationWeightSync` | Pushing trainer state into rollout workers (`push_to_rollout_workers(state_ref, policy_version)`), versioned slots for continuous mode. |
 | `RolloutWorkerConfig` | Typed `distributed.rollout` worker knobs for the fleet; the launcher takes it beside the resource plan. |
-| `GenerationRuntimeLaunchContract` (`launch_contract.py`) | The serializable recipe a Ray actor rebuilds its executor from: `family`, `model_build`, `expected_model_identity`, `executor_kwargs`, `policy_version`, profiler and offload flags. `__post_init__` enforces primitives-only/picklable content so a live driver object fails on the driver, not inside actor deserialization. Twin: `RewardWorkerLaunchContract`. |
+| `GenerationLaunchConfig` (`launch_config.py`) | The serializable recipe a Ray actor rebuilds its executor from: `family`, `model_build`, `expected_model_identity`, `executor_kwargs`, `policy_version`, profiler and offload flags. `__post_init__` enforces primitives-only/picklable content so a live driver object fails on the driver, not inside actor deserialization. Reward counterpart: `RewardWorkerConfig`. |
 
 ### 2.3 Worker side (`execution/`)
 
 | Class | Role |
 |---|---|
 | `RayGenerationWorker` (`ray/worker.py`) | The Ray actor shell; delegates to the core. |
-| `GenerationWorkerCore` | Worker-process brain: validates the launch contract, builds the family executor, runs forward calls. |
+| `GenerationWorkerCore` | Worker-process brain: validates the launch config, builds the family executor, runs forward calls. |
 | `GenerationWorkerParking` | The generation worker's parking owner (vocabulary in §1 Parking): phase tracking plus `WorkerMemoryParkingSnapshot` evidence the driver validates. Picks the mechanism from residency, not the family: a parking-required rank whose model is resident on CUDA uses `cumem`; under `pipeline_offload_mode` or with a model built off CUDA it uses `move`. Destination is always RAM. |
 | `RayGenerationExecutor` (`ray/executor.py`) | Assigns sample batches to engines in round-robin order when creating dispatch jobs. |
-| `EnginePlan` (`execution/planner.py`) | The shared per-request sample batch plan consumed by direct and Ray executors. |
+| `GenerationRequest.sample_batches()` (`types.py`) | The one per-request batch split consumed by direct and Ray executors. |
 | `GenerationSampleBatch`, `SampleAlignedValues`, `BatchResultWithIdentity` (`sample_batches.py`) | The batch coordinate system: a batch is a slice of samples (`prompt_index`, `sample_start`, `sample_count`), not a time segment. `SampleAlignedValues` slices per-sample tensors consistently. |
 | `GenerationBatchEnvelope` / `GenerationBatchResult` (`execution/types.py`) | The wire pair around one dispatched batch. |
 | `BatchMemoryReading` | Per-batch memory telemetry: the measured denoise/decode peaks the driver logs for each batch. |
@@ -200,7 +200,7 @@ engine.
 | | `ArtifactRetainingError` | Error capability: `retain_reward_artifacts` declared by transport errors whose scoring state is unknown — the artifact owner keeps shared files alive. `RemoteRewardServiceError` satisfies it. |
 | `inference.py` | `RewardInferenceArtifact`, `RewardInferenceRequest`, `RewardInferenceResult` | The schema both transports exchange; the service wire format derives its field sets from these dataclasses. `RewardInferenceRequest.validate_and_order_results()` is the identity guard, run once at the `InferenceRewardFunction` seam for every transport: one typed, finite result per artifact, restored to request order. |
 | `artifacts.py` | `MediaType`, `ArtifactFormat`, `RewardArtifactStore` (protocol), `InMemoryRewardArtifactStore`, `DiskRewardArtifactStore` | The store seam: `materialize` builds artifacts; exactly one of `release`/`retain` runs at a terminal state. Tensors or boxed references are the default. The disk store is explicitly selected for archives or file-backed inputs and tracks ownership; scoring transport does not imply a driver-side file. |
-| `launch_contract.py` | `RewardWorkerLaunchContract` | The typed closed key set the runtime branches on, parsed once from `worker_config` by both processes that read it (in-process scorer, standalone service). Twin: `GenerationRuntimeLaunchContract`. |
+| `worker_config.py` | `RewardWorkerConfig` | The typed closed key set the runtime branches on, parsed once from `worker_config` by both processes that read it (in-process scorer, standalone service). Generation counterpart: `GenerationLaunchConfig`. |
 | `types.py` | `RewardSample`, `RewardOutput` | Collector-facing input/output pair. |
 
 ### 3.2 The RewardFunction ladder (`base.py`)
@@ -271,10 +271,10 @@ classDiagram
 |---|---|
 | `RewardFunctionRuntime` (`runtime.py`) | Implements `RewardRuntime` around the configured `RewardFunction`: lifecycle FSM, deadlines, parking gate (`validate_parking_residual`). What `RayGenerationRuntime` is to generation. |
 | `RewardParking` (`runtime.py`) | The reward's parking owner (vocabulary in §1 Parking): a `ParkingSession` on the configured device whose mechanism is `distributed.resources.reward.parking.mechanism` (`cumem`, or `reload`: drop the model and trim host allocations at each handoff, rebuild it at the next activation), and the terminal device-cache release every runtime needs. |
-| `InProcessRewardScorer` (`runtime.py`) | `RewardScorer` + `MemoryParkingScorer` implementation: builds the model from `RewardRuntimeLaunchContract.model_factory` through `RewardParking`. `_score_artifacts` resolves media and owns model-required temporary files; `_infer` runs the batch hook or per-artifact loop. Remote scoring processes reuse it. |
+| `InProcessRewardScorer` (`runtime.py`) | `RewardScorer` + `MemoryParkingScorer` implementation: builds the model from `RewardWorkerConfig.model_factory` through `RewardParking`. `_score_artifacts` resolves media and owns model-required temporary files; `_infer` runs the batch hook or per-artifact loop. Remote scoring processes reuse it. |
 | `build_reward_scorer` (`runtime.py`) | Factory: worker config or `RewardInferenceConfig` → in-process or HTTP scorer. |
 | `HttpRewardScorer` (`service/client.py`) | `RewardScorer` + `RemoteReadyScorer` over HTTP: checks service identity/capabilities at `ensure_ready` and uploads tensor media, with explicit shared-file inputs also supported. Ambiguous failures retain borrowed/shared artifacts where applicable. |
-| `RewardService`, `RewardServiceConfig` (`service/server.py`) | The standalone scoring process: parses the same launch contract, re-verifies artifact integrity (`sha256_file`); result identity is checked by the calling reward function. |
+| `RewardService`, `RewardServiceConfig` (`service/server.py`) | The standalone scoring process: parses the same launch config, re-verifies artifact integrity (`sha256_file`); result identity is checked by the calling reward function. |
 | `RewardScoringThread` (`service/owner.py`) | Runs every runtime operation on one dedicated event-loop thread inside the service. |
 | `RewardServiceInfo`, `RewardServiceErrorCode`, `RewardServiceProtocolError(ValueError)`, `RemoteRewardServiceError(RuntimeError)` (`service/protocol.py`) | The wire protocol vocabulary; `RemoteRewardServiceError` carries `retain_reward_artifacts` (typed ctor field) and thereby satisfies `ArtifactRetainingError`. |
 
@@ -288,14 +288,14 @@ classDiagram
 | `TorchRewardModel` | `LazyTorchModule` | Adds the media-scoring loop (`score_media`). |
 | `AestheticRewardModel`, `PickScoreRewardModel` | `TorchRewardModel` | SigLIP aesthetic and CLIP preference scorers. |
 | `MotionDynamicsModel`, `TargetDinoSimilarityModel` | `LazyTorchModule` | RAFT optical flow; DINO similarity. |
-| `KlingVideoRewardModel` (+ `KlingQwen2VLRewardModel(Qwen2VLForConditionalGeneration)`), `RoboticsVideoRewardModel`, `UnifiedRewardVideoModel`, `VideoConPhysicsModel`, `OCRRewardModel`, `NSFWSafetyRewardModel` | plain classes | Satisfy `RewardModel` structurally; built by `model_factory` dotted paths from the launch contract. |
+| `KlingVideoRewardModel` (+ `KlingQwen2VLRewardModel(Qwen2VLForConditionalGeneration)`), `RoboticsVideoRewardModel`, `UnifiedRewardVideoModel`, `VideoConPhysicsModel`, `OCRRewardModel`, `NSFWSafetyRewardModel` | plain classes | Satisfy `RewardModel` structurally; built by `model_factory` dotted paths from the launch config. |
 
 ---
 
 ## 4. Orchestration consumers (`vrl/rollouts`)
 
 vrl/rollouts holds no engine code — it drives both engines through their
-protocols and owns the GPU handoff choreography that `RayLifecyclePlan`
+protocols and owns the GPU handoff choreography that `RoleLifecycle`
 prescribes.
 
 | Class | Role |
@@ -317,11 +317,11 @@ prescribes.
 | Consumer-facing protocol | `GenerationRuntime` | `RewardRuntime` |
 | Runtime implementation | `RayGenerationRuntime` | `RewardFunctionRuntime` |
 | Transport/executor seam | `GenerationBatchExecutor` (+ Ray dispatch) | `RewardScorer` (in-process / HTTP) |
-| Launch boundary | `GenerationRuntimeLaunchContract` | `RewardWorkerLaunchContract` |
+| Launch boundary | `GenerationLaunchConfig` | `RewardWorkerConfig` |
 | Result identity guard | gatherer reassembly over batch identities | `RewardInferenceRequest.validate_and_order_results()` |
 | Memory lease vocabulary | `activate` / `offload` (park workers) | `activate` / `park_memory` |
 | Lifecycle | `activate → generate → offload → shutdown` | `preflight → activate → score → park_memory → shutdown` |
-| Shared machinery | `RuntimeLifecycle` FSM, `OperationDeadline`, `CumemPool`, `RayLifecyclePlan` | same |
+| Shared machinery | `RuntimeLifecycle` FSM, `OperationDeadline`, `CumemPool`, `RoleLifecycle` | same |
 
 The intentional asymmetry: generation always crosses a Ray process boundary
 (GPU workers), while reward scores **in the driver process** by default and

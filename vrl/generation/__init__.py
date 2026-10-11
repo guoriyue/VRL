@@ -4,7 +4,7 @@ This package owns generation execution contracts and runtime helpers. RL
 rollout collection, rewards, and trainer-ready batches live outside this layer.
 """
 
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.launch_config import GenerationLaunchConfig
 from vrl.generation.protocols import (
     BatchPayload,
     GenerationBatchExecutor,
@@ -23,9 +23,9 @@ __all__ = [
     "GenerationBatchExecutor",
     "GenerationBatchGatherer",
     "GenerationInput",
+    "GenerationLaunchConfig",
     "GenerationOutput",
     "GenerationRequest",
     "GenerationRuntime",
-    "GenerationRuntimeLaunchContract",
     "GenerationSampleRow",
 ]

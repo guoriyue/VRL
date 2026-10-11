@@ -4,7 +4,7 @@ Every schedule here is ``ContinuousRolloutSchedule.from_section`` on the real
 ``RolloutCollector`` (tiny SANA family, ``InProcessGenerationRuntime``), the
 real trainer side (replay bundle, ``SingleProcessStrategy``) and the real
 ``RayRuntimeWeightSyncer``. Versioned slots (non-draining weight sync) come
-from the run's own launch contract: a LoRA continuous run on this family.
+from the run's own launch config: a LoRA continuous run on this family.
 """
 
 from __future__ import annotations
@@ -485,7 +485,7 @@ async def test_draining_barrier_reports_mode_zero(monkeypatch, tmp_path) -> None
 
 @pytest.mark.asyncio
 async def test_non_draining_sync_skips_inflight_wait(monkeypatch, tmp_path) -> None:
-    """The whole point of versioned slots: when the launch contract allows
+    """The whole point of versioned slots: when the launch config allows
     non-draining sync, after_train_step must NOT wait for in-flight
     generation/reward. It syncs and returns while the gated reward is still
     blocked; the in-flight request keeps its own version's slot."""

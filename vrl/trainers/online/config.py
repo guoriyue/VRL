@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
-class OnlineBatchPlan:
+class OnlineBatchConfig:
     """Canonical geometry and memory bounds for one online optimizer update."""
 
     prompts_per_batch: int
@@ -41,7 +41,7 @@ class OnlineBatchPlan:
 
     @classmethod
     def required_public_paths(cls, root: RootConfig) -> list[str]:
-        """Public inputs with no value in ``root`` (the plan cannot be built)."""
+        """Public inputs with no value in ``root`` (the config cannot be built)."""
 
         rollout = root.rollout
         return [
@@ -51,8 +51,8 @@ class OnlineBatchPlan:
         ]
 
     @classmethod
-    def from_root(cls, root: RootConfig) -> OnlineBatchPlan:
-        """Project public batch inputs into one canonical optimizer batch plan."""
+    def from_root(cls, root: RootConfig) -> OnlineBatchConfig:
+        """Project the public batch inputs into one canonical batch config."""
 
         missing = cls.required_public_paths(root)
         if missing:
@@ -165,13 +165,13 @@ class TrainerConfig:
 
     Every field is a projection of the public ``actor`` / ``trainer`` section
     of the same name (``vrl.config.schema.ActorSection`` / ``TrainerSection``
-    own the YAML keys and types), except ``batch_plan`` and
+    own the YAML keys and types), except ``batch_config`` and
     ``versioned_weight_sync``, which :meth:`from_root` computes.
     """
 
     # --- required: experiment-semantic decisions ---
     optim: OptimConfig
-    batch_plan: OnlineBatchPlan
+    batch_config: OnlineBatchConfig
     # Fraction of denoise timesteps that receive loss (gradient estimator
     # coverage) — an experiment decision, not a tuning knob.
     timestep_fraction: float
@@ -241,11 +241,11 @@ class TrainerConfig:
             "actor": ActorSection.model_fields,
             "trainer": TrainerSection.model_fields,
         }
-        bridged = {"batch_plan", "versioned_weight_sync"}
+        bridged = {"batch_config", "versioned_weight_sync"}
 
         hints = get_type_hints(cls)
         payload: dict[str, Any] = {}
-        missing = OnlineBatchPlan.required_public_paths(root)
+        missing = OnlineBatchConfig.required_public_paths(root)
         for f in fields(cls):
             if not f.init or f.name in bridged:
                 continue
@@ -286,7 +286,7 @@ class TrainerConfig:
         # The precision policy is a pure projection of root.precision; the
         # trainer fields that depend on it are derived from it here.
         precision = PrecisionPolicy.from_section(root.precision)
-        payload.update(batch_plan=OnlineBatchPlan.from_root(root))
+        payload.update(batch_config=OnlineBatchConfig.from_root(root))
         # The trace directory is a run-level decision: an unset value lands
         # under the run's output directory, resolved here once so every
         # capture reads a final path.
@@ -352,14 +352,14 @@ class TrainerConfig:
                 f"actor.timestep_fraction={self.timestep_fraction} would be "
                 "silently ignored — leave it at 1.0",
             )
-        if self.ema.step_per_microbatch and self.batch_plan.collections_per_update > 1:
+        if self.ema.step_per_microbatch and self.batch_config.collections_per_update > 1:
             raise ValueError(
                 "actor.ema.step_per_microbatch steps the shadow after every replay "
                 "microbatch and once more after the optimizer step, which needs the "
                 "update's last microbatch to be known: collect the update in one "
                 "collection (prompts_per_collection=0 or =prompts_per_batch)",
             )
-        if self.batch_plan.streaming and int(self.ppo_epochs) != 1:
+        if self.batch_config.streaming and int(self.ppo_epochs) != 1:
             raise ValueError(
                 "actor.ppo_epochs must be 1 when streaming accumulation is on "
                 "(prompts_per_collection>0): a "
@@ -373,7 +373,7 @@ class TrainerConfig:
                 "the behavior policy under actor.ppo_epochs=1, one optimizer step per "
                 f"batch and no continuous staleness; got ppo_epochs={self.ppo_epochs}, "
                 "optimizer_steps_per_batch="
-                f"{self.batch_plan.optimizer_steps_per_batch}, "
+                f"{self.batch_config.optimizer_steps_per_batch}, "
                 f"schedule_mode={self.rollout_orchestration.schedule_mode!r}. Use 'off' "
                 "(bypass) with the TIS/RS for off-policy replay.",
             )
@@ -389,9 +389,9 @@ class TrainerConfig:
 
         return (
             int(self.ppo_epochs) > 1
-            or int(self.batch_plan.optimizer_steps_per_batch) > 1
+            or int(self.batch_config.optimizer_steps_per_batch) > 1
             or self.rollout_orchestration.schedule_mode == "continuous"
         )
 
 
-__all__ = ["OnlineBatchPlan", "TrainerConfig"]
+__all__ = ["OnlineBatchConfig", "TrainerConfig"]

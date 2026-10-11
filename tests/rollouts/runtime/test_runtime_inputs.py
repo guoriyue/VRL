@@ -11,12 +11,12 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from tests.generation.execution._helpers import launch_contract
+from tests.generation.execution._helpers import launch_config
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
 from vrl.generation.bindings.full_sequence import DenoiseBatchGatherer
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.launch_config import GenerationLaunchConfig
 from vrl.generation.protocols import GenerationBatchExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.models.families.registry import (
@@ -41,7 +41,7 @@ class _UnpickleableGatherer(_TestGatherer):
 def test_ray_launch_inputs_reject_unpickleable_gatherer_state() -> None:
     with pytest.raises(TypeError, match="must be pickle-serializable"):
         RayGenerationLaunchInputs(
-            launch_contract=launch_contract(family="test"),
+            launch_config=launch_config(family="test"),
             gatherer=_UnpickleableGatherer(),
         )
 
@@ -79,7 +79,7 @@ def test_every_registry_entry_has_pickle_safe_ray_launch_inputs(
 ) -> None:
     """Every registry binding, including entries without presets, crosses Ray."""
     inputs = RayGenerationLaunchInputs(
-        launch_contract=GenerationRuntimeLaunchContract(
+        launch_config=GenerationLaunchConfig(
             family=family,
             model_build={"device": "cpu"},
             expected_model_identity={"model_path": f"registry://{family}"},
@@ -95,7 +95,7 @@ def test_every_registry_entry_has_pickle_safe_ray_launch_inputs(
     restored = pickle.loads(pickle.dumps(inputs))
 
     assert isinstance(restored, RayGenerationLaunchInputs)
-    assert restored.launch_contract == inputs.launch_contract
+    assert restored.launch_config == inputs.launch_config
     assert (
         f"{type(restored.gatherer).__module__}:{type(restored.gatherer).__qualname__}"
         == entry.gatherer_cls
@@ -145,20 +145,20 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     assert isinstance(inputs, RayGenerationLaunchInputs)
     restored = pickle.loads(pickle.dumps(inputs))
     assert isinstance(restored, RayGenerationLaunchInputs)
-    assert restored.launch_contract == inputs.launch_contract
-    assert restored.launch_contract.family == family
-    assert restored.launch_contract.expected_model_identity == expected_model_identity
+    assert restored.launch_config == inputs.launch_config
+    assert restored.launch_config.family == family
+    assert restored.launch_config.expected_model_identity == expected_model_identity
     # Family identity lives once in the outer contract; worker-side executor
     # wiring comes from the registry, while this nested payload is per-run data.
-    assert "family" not in restored.launch_contract.model_build
-    assert restored.launch_contract.policy_version == 0
+    assert "family" not in restored.launch_config.model_build
+    assert restored.launch_config.policy_version == 0
     # Batch width is per-request data (request.sampling), never executor wiring.
-    assert "samples_per_generation_batch" not in restored.launch_contract.executor_kwargs
+    assert "samples_per_generation_batch" not in restored.launch_config.executor_kwargs
     assert isinstance(restored.gatherer, expected_gatherer)
     assert not isinstance(restored.gatherer, GenerationBatchExecutor)
 
 
-def test_rollout_profiler_is_resolved_before_launch_contract_serialization() -> None:
+def test_rollout_profiler_is_resolved_before_launch_config_serialization() -> None:
     cfg = load_config(
         "experiment/sd3_5/online_grpo_ocr",
         overrides=[
@@ -178,7 +178,7 @@ def test_rollout_profiler_is_resolved_before_launch_contract_serialization() -> 
         get_model_family_entry("sd3_5"),
     )
 
-    profiler = inputs.launch_contract.torch_profiler
+    profiler = inputs.launch_config.torch_profiler
     assert profiler["enabled"] is True
     assert profiler["activities"] == ("cuda",)
     # An unset trace directory follows the trainer's rule: under the run output.
@@ -186,10 +186,10 @@ def test_rollout_profiler_is_resolved_before_launch_contract_serialization() -> 
 
     cfg.rollout.torch_profiler.output_dir = "/traces/rollout"
     inputs, _ = _capture_launch_inputs(cfg, get_model_family_entry("sd3_5"))
-    assert inputs.launch_contract.torch_profiler["output_dir"] == "/traces/rollout"
+    assert inputs.launch_config.torch_profiler["output_dir"] == "/traces/rollout"
 
 
-def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> None:
+def test_diffusion_launch_config_uses_resolved_config_parameter_dtype() -> None:
     """The worker payload derives ordinary parameter dtype from rollout precision."""
     cfg = load_config(
         "experiment/sd3_5/online_grpo_ocr",
@@ -207,9 +207,9 @@ def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> Non
     )
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
-    assert inputs.launch_contract.model_build["device"] == "cuda"
-    assert inputs.launch_contract.model_build["parameter_dtype"] == "bfloat16"
-    assert inputs.launch_contract.model_build["precision"] == {
+    assert inputs.launch_config.model_build["device"] == "cuda"
+    assert inputs.launch_config.model_build["parameter_dtype"] == "bfloat16"
+    assert inputs.launch_config.model_build["precision"] == {
         "dtype": "bf16",
         "float32_precision": "tf32",
         "quantization": None,
@@ -217,7 +217,7 @@ def test_diffusion_launch_contract_uses_resolved_config_parameter_dtype() -> Non
     }
 
 
-def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
+def test_sana_launch_config_carries_parameter_and_rollout_precision() -> None:
     """SANA's native FP16 policy and separate BF16 Gemma survive the Ray boundary."""
     cfg = load_config(
         "experiment/sana/online_grpo_aesthetic",
@@ -234,7 +234,7 @@ def test_sana_launch_contract_carries_parameter_and_rollout_precision() -> None:
         get_model_family_entry("sana"),
     )
 
-    model_build = inputs.launch_contract.model_build
+    model_build = inputs.launch_config.model_build
     assert model_build["parameter_dtype"] == "float16"
     assert model_build["precision"] == {
         "dtype": "fp16",
@@ -267,7 +267,7 @@ def test_sana_fp8_rollout_keeps_native_policy_and_bf16_prompt_encoder() -> None:
         get_model_family_entry("sana"),
     )
 
-    model_build = inputs.launch_contract.model_build
+    model_build = inputs.launch_config.model_build
     assert model_build["parameter_dtype"] == "float16"
     assert model_build["precision"] == {
         "dtype": "fp16",
@@ -299,7 +299,7 @@ def test_generation_batch_width_reaches_the_request_not_the_executor() -> None:
         get_model_family_entry("sd3_5"),
     )
 
-    assert "samples_per_generation_batch" not in inputs.launch_contract.executor_kwargs
+    assert "samples_per_generation_batch" not in inputs.launch_config.executor_kwargs
     collector = RolloutCollectorConfig.from_root(parse_config(cfg))
     assert collector.samples_per_generation_batch == 3
     assert "samples_per_generation_batch" not in collector.request_sampling
@@ -343,7 +343,7 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
     )
 
     assert entry.policy_semantics.generation_regime == "full_sequence"
-    model_config = inputs.launch_contract.model_build["model_config"]
+    model_config = inputs.launch_config.model_build["model_config"]
     assert model_config["torch_compile"] == {
         "enable": True,
         "mode": "default",
@@ -351,7 +351,7 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
 
 
 def test_executor_kwargs_use_configured_chunk_size() -> None:
-    """The public config is the only batch-size input to the launch contract."""
+    """The public config is the only batch-size input to the launch config."""
     cfg = load_config(
         "experiment/sd3_5/online_grpo_ocr",
         overrides=[
@@ -369,7 +369,7 @@ def test_executor_kwargs_use_configured_chunk_size() -> None:
     )
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
-    assert "samples_per_generation_batch" not in inputs.launch_contract.executor_kwargs
+    assert "samples_per_generation_batch" not in inputs.launch_config.executor_kwargs
     collector = RolloutCollectorConfig.from_root(parse_config(cfg))
     assert collector.samples_per_generation_batch == 8
     assert "samples_per_generation_batch" not in collector.request_sampling

@@ -84,7 +84,7 @@ def test_video_reward_derives_internal_model_factory_from_reward_name() -> None:
     )
 
     assert isinstance(reward.scorer, InProcessRewardScorer)
-    assert reward.scorer._launch.component_config == {
+    assert reward.scorer._worker_config.component_config == {
         "model_path": "",
         "dtype": "bfloat16",
         "model_factory": KlingVideoReward.model_factory,

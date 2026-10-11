@@ -1,7 +1,7 @@
 """End-to-end equivalence: running a request's batches through
 ``execute_request_batches`` (a pinned CPU copy after each batch, as the Ray
 workers do) and merging them produces the SAME gathered output as the serial
-``forward_plan``, on a real EnginePlan with real tensors through the real stage
+``forward_request``, on a request's real sample batches through the real stage
 chain + gather. This is the executor-level
 correctness run; the ``real_cover`` label names the gpu-lane twin that owns the
 mechanism's bit-exactness."""
@@ -18,7 +18,6 @@ from vrl.generation.bindings.full_sequence.executor import (  # noqa: E402
     DenoiseBatchExecutorBase,
 )
 from vrl.generation.execution.executor_base import BatchExecutorBase  # noqa: E402
-from vrl.generation.execution.planner import EnginePlan  # noqa: E402
 from vrl.generation.types import GenerationRequest  # noqa: E402
 
 
@@ -62,16 +61,16 @@ def _request(num_samples: int) -> GenerationRequest:
         "gpu-lane file drives it for real"
     ),
 )
-def test_forward_plan_pipelined_matches_serial_forward_plan() -> None:
+def test_pipelined_request_batches_match_serial_forward_request() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ex = _RealChunkExecutor(device)
     request = _request(6)
-    plan = EnginePlan.from_request(request)
-    assert len(plan.sample_batches) >= 2
+    sample_batches = request.sample_batches()
+    assert len(sample_batches) >= 2
 
-    serial = DenoiseBatchExecutorBase.forward_plan(ex, request, plan)
+    serial = DenoiseBatchExecutorBase.forward_request(ex, request)
     pipelined = ex.merge_generation_batches(
-        request, ex.execute_request_batches(request, plan.sample_batches)
+        request, ex.execute_request_batches(request, sample_batches)
     )
 
     assert len(pipelined.output) == len(serial.output)

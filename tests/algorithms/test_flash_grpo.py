@@ -257,10 +257,10 @@ def test_flash_grpo_kind_dispatches_to_its_config() -> None:
 
 def _trainer_config(**overrides):
     from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig
-    from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+    from vrl.trainers.online.config import OnlineBatchConfig, TrainerConfig
 
     base = dict(
-        batch_plan=OnlineBatchPlan(prompts_per_batch=1, n_samples_per_prompt=2),
+        batch_config=OnlineBatchConfig(prompts_per_batch=1, n_samples_per_prompt=2),
         timestep_fraction=1.0,
         drop_zero_advantage=False,
         output_dir="outputs/",

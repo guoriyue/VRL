@@ -48,7 +48,6 @@ from vrl.models.steps.denoise.common import (
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
-    LatentDecodePlan,
     denormalize_video_vae_latents,
     expand_batch_timestep,
     pack_eval_timestep,
@@ -538,17 +537,15 @@ class QwenImage21Model(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
             return rgb * alpha + (1.0 - alpha)
 
         decoder = ChunkedLatentDecoder(
-            LatentDecodePlan(
-                prepare_latents=_transform,
-                vae_decode=lambda batch: vae.decode(batch, return_dict=False)[0],
-                # Video-style VAE returns [B, 4, 1, H, W]; drop the temporal frame.
-                prepare_decoded=lambda decoded: decoded[:, :, 0],
-                postprocess=lambda image: _composite_over_white(
-                    pipe.image_processor.postprocess(image, output_type="pt"),
-                ),
-                output_layout="image_bchw",
-                decode_batch_size=getattr(pipe, "decode_batch_size", None),
+            prepare_latents=_transform,
+            vae_decode=lambda batch: vae.decode(batch, return_dict=False)[0],
+            # Video-style VAE returns [B, 4, 1, H, W]; drop the temporal frame.
+            prepare_decoded=lambda decoded: decoded[:, :, 0],
+            postprocess=lambda image: _composite_over_white(
+                pipe.image_processor.postprocess(image, output_type="pt"),
             ),
+            output_layout="image_bchw",
+            decode_batch_size=getattr(pipe, "decode_batch_size", None),
         )
         return decoder(latents)
 

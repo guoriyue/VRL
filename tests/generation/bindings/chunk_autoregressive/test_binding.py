@@ -13,7 +13,6 @@ from vrl.generation.bindings.chunk_autoregressive import (
     ChunkAutoregressiveDenoiseGatherer,
     ChunkAutoregressiveDenoiseResult,
 )
-from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
 from vrl.rollouts.collector.batch_builder import (
@@ -141,7 +140,7 @@ def test_gatherer_rejects_mismatched_batch_context() -> None:
 
 
 class _GenericChunkExecutor(ChunkAutoregressiveDenoiseExecutorBase):
-    """Minimal Base subclass exercising forward_plan delegation."""
+    """Minimal Base subclass exercising forward_request delegation."""
 
     family = "causvid"
     task = "t2v"
@@ -155,8 +154,7 @@ def test_generic_executor_delegates_temporal_generation_to_model() -> None:
         gatherer=ChunkAutoregressiveDenoiseGatherer(),
     )
 
-    plan = EnginePlan.from_request(replace(request, samples_per_generation_batch=1))
-    output = executor.forward_plan(request, plan)
+    output = executor.forward_request(replace(request, samples_per_generation_batch=1))
 
     assert model.calls == [(0, 0, 1), (0, 1, 1)]
     assert torch.equal(output.output[:, 0], torch.tensor([0.0, 1.0]))

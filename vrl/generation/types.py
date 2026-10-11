@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
+    from vrl.generation.execution.sample_batches import GenerationSampleBatch
     from vrl.generation.steps.denoise.config import DenoiseRequestOptions
     from vrl.trajectory.storage import TrajectoryStoragePolicy
     from vrl.trajectory.types import TrajectoryBatch
@@ -85,7 +86,7 @@ class GenerationRequest:
 
     request_id: str
     # display/provenance-only: names the fleet this request was built for. The
-    # worker verifies its executor against the launch contract, not against
+    # worker verifies its executor against the launch config, not against
     # this token; ``task`` is behavior-consumed (reward modality selection).
     family: str
     task: str
@@ -219,6 +220,26 @@ class GenerationRequest:
                     )
                 )
         return rows
+
+    def sample_batches(self) -> tuple[GenerationSampleBatch, ...]:
+        """Split this request's samples into the batches every executor runs.
+
+        THE single batch-width resolution: ``samples_per_generation_batch``,
+        else ``samples_per_prompt`` (the whole group in one batch). Every
+        executor, Ray placement and in-process alike, goes through this one
+        fallback.
+        """
+
+        from vrl.generation.execution.sample_batches import GenerationSampleBatch
+        from vrl.utils.profiling import profile_range
+
+        width = self.samples_per_generation_batch
+        with profile_range("engine.plan"):
+            return GenerationSampleBatch.plan_generation_batches(
+                len(self.inputs),
+                samples_per_prompt=self.samples_per_prompt,
+                max_samples_per_batch=width if width is not None else self.samples_per_prompt,
+            )
 
     def validate_batch_range(
         self,

@@ -1,6 +1,6 @@
 """Worker-side rollout checkpoint identity gates.
 
-Each test hands ``GenerationWorkerCore`` the launch contract the real driver
+Each test hands ``GenerationWorkerCore`` the launch config the real driver
 builds (``RayGenerationLaunchInputs.from_run``) for the tiny SANA snapshot,
 so the identity is the real local-directory hash and the executor is the real
 family executor; the Hub load is the only double.
@@ -47,7 +47,7 @@ def _launch_inputs(
 
 
 def _worker(inputs: RayGenerationLaunchInputs) -> GenerationWorkerCore:
-    return GenerationWorkerCore("rollout-0", inputs.launch_contract)
+    return GenerationWorkerCore("rollout-0", inputs.launch_config)
 
 
 def test_worker_accepts_matching_identity_before_and_after_model_build(
@@ -72,7 +72,7 @@ def test_worker_rehydrates_generation_memory_before_family_build(monkeypatch, tm
         tmp_path,
         overrides=("model.memory.vae_decode.tiling=true", "model.memory.vae_decode.slicing=false"),
     )
-    assert inputs.launch_contract.model_build["generation_memory"] == {
+    assert inputs.launch_config.model_build["generation_memory"] == {
         "vae_decode": {"tiling": True, "slicing": False},
         "cpu_resident": (),
     }
@@ -97,15 +97,15 @@ def test_worker_rejects_cross_node_identity_mismatch_before_model_build(
         tmp_path / "driver",
         on_snapshot=lambda snapshot: (snapshot / "provenance.txt").write_text("other checkout"),
     )
-    assert driver_inputs.launch_contract.expected_model_identity != (
-        inputs.launch_contract.expected_model_identity
+    assert driver_inputs.launch_config.expected_model_identity != (
+        inputs.launch_config.expected_model_identity
     )
     worker = _worker(
         replace(
             inputs,
-            launch_contract=replace(
-                inputs.launch_contract,
-                expected_model_identity=driver_inputs.launch_contract.expected_model_identity,
+            launch_config=replace(
+                inputs.launch_config,
+                expected_model_identity=driver_inputs.launch_config.expected_model_identity,
             ),
         ),
     )

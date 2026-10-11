@@ -33,7 +33,7 @@ The execution path is the registered production rollout path:
 - family, task, model builder, and executor come from `FAMILY_REGISTRY`;
 - sampling values come from the composed `rollout` and `sampling` YAML blocks;
 - prompts and per-row overrides come from the configured training manifest;
-- generation uses the registered executor's `plan()` and `forward_plan()` path.
+- generation uses the registered executor's `forward_request()` path.
 
 There is no SANA adapter or second family support table. Any registered `t2i`
 family with a usable experiment YAML uses the same preview. Video and

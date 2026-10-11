@@ -33,10 +33,10 @@ class _FakePrecision:
 
 
 @pytest.fixture
-def plan(tmp_path):
+def evaluation(tmp_path):
     _checkpoint(tmp_path / "checkpoint-3", 3)
     _checkpoint(tmp_path / "checkpoint-8", 8)
-    return checkpoint_eval.EvaluationPlan(
+    return checkpoint_eval.CheckpointEvaluation(
         entry=SimpleNamespace(family="test"),
         model_build=SimpleNamespace(
             device="cpu",
@@ -72,15 +72,15 @@ def plan(tmp_path):
 
 
 @pytest.fixture
-def generation(tmp_path, plan):
+def generation(tmp_path, evaluation):
     directory = tmp_path / "evaluation"
-    rows = list(plan.cells())
+    rows = list(evaluation.cells())
     for row in rows:
         path = directory / row["image_path"]
         path.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (8, 8), (row["epoch"], row["sample_index"], 0)).save(path)
         row["image_sha256"] = checkpoint_eval.sha256_file(path)
-    archive = checkpoint_eval.EvaluationArchive(directory, plan)
+    archive = checkpoint_eval.EvaluationArchive(directory, evaluation)
     archive.publish_generation(rows)
     return archive, rows
 
@@ -121,7 +121,7 @@ def test_explicit_lora_export_uses_parent_checkpoint_and_rejects_wrong_mode(tmp_
         )
 
 
-def test_prompt_selection_uses_user_strata_and_preserves_reward_metadata(plan):
+def test_prompt_selection_uses_user_strata_and_preserves_reward_metadata(evaluation):
     examples = [
         PromptExample(
             prompt=f"{scene} {index}",
@@ -146,7 +146,7 @@ def test_prompt_selection_uses_user_strata_and_preserves_reward_metadata(plan):
     # Reference-image edits are selected; generation routes them through the family
     # executor, and every grid cell carries the references for the edit reward.
     edit = checkpoint_eval.select_prompts([PromptExample("scene", reference_images=["input.png"])])
-    edit_cell = next(replace(plan, prompts=tuple(edit)).cells())
+    edit_cell = next(replace(evaluation, prompts=tuple(edit)).cells())
     assert edit_cell["reward_metadata"]["reference_images"] == ["input.png"]
     for example in (
         PromptExample("scene", request_overrides={"width": 64}),
@@ -157,7 +157,7 @@ def test_prompt_selection_uses_user_strata_and_preserves_reward_metadata(plan):
     assert checkpoint_eval.select_prompts([PromptExample("scene", task_type="text_to_image")])
 
 
-def test_independent_policy_does_not_replace_run_sampling(tmp_path, plan, monkeypatch):
+def test_independent_policy_does_not_replace_run_sampling(tmp_path, evaluation, monkeypatch):
     manifest = tmp_path / "eval.jsonl"
     manifest.write_text(
         '{"prompt":"A sign.","target_text":"OPEN","metadata":{"scene":"shop"}}\n', encoding="utf-8"
@@ -202,7 +202,7 @@ def test_independent_policy_does_not_replace_run_sampling(tmp_path, plan, monkey
     )
     monkeypatch.setattr(
         "vrl.models.families.registry.ModelFamilyEntry.resolve_model_build",
-        lambda *_args, **_kwargs: plan.model_build,
+        lambda *_args, **_kwargs: evaluation.model_build,
     )
     monkeypatch.setattr(
         "vrl.trainers.checkpointing.CheckpointTarget.validate_compatibility",
@@ -212,34 +212,34 @@ def test_independent_policy_does_not_replace_run_sampling(tmp_path, plan, monkey
     args = parser.parse_args(
         ["--run-dir", str(tmp_path), "--eval-policy-config", str(policy_path)]
     )
-    resolved = checkpoint_eval.resolve_plan(args)
+    resolved = checkpoint_eval.CheckpointEvaluation.from_args(args)
     assert resolved.sampling.num_steps == 7
     assert resolved.reward["components"] == {"fake": 1.0, "observation": 0.0}
     assert resolved.reward["kwargs"]["fake"] == {"rubric": "lighting", "ocr": {}, "guard": {}}
     assert resolved.training_reward_components == ("ocr",)
     assert next(resolved.cells())["reward_metadata"] == {"scene": "shop", "target_text": "OPEN"}
     args.eval_policy_override = ["sampling.num_steps=40"]
-    assert checkpoint_eval.resolve_plan(args).record() == resolved.record()
+    assert checkpoint_eval.CheckpointEvaluation.from_args(args).record() == resolved.record()
     args.eval_policy_override = ["reward.kwargs.fake.rubric=color"]
-    assert checkpoint_eval.resolve_plan(args).record() != resolved.record()
+    assert checkpoint_eval.CheckpointEvaluation.from_args(args).record() != resolved.record()
     for key, value in (("images_per_call", 2), ("expected_group_size", 8)):
         args.eval_policy_override = [f"reward.kwargs.fake.guard.{key}={value}"]
         with pytest.raises(ValueError, match=key):
-            checkpoint_eval.resolve_plan(args)
+            checkpoint_eval.CheckpointEvaluation.from_args(args)
     assert OmegaConf.load(run_config).reward.components == {"ocr": 1.0}
 
     # CLI geometry/schedule flags override the run; unset ones keep it.
     args.eval_policy_override = []
     args.width, args.height, args.num_steps = 16, 24, 40
-    sized = checkpoint_eval.resolve_plan(args).sampling
+    sized = checkpoint_eval.CheckpointEvaluation.from_args(args).sampling
     assert (sized.width, sized.height, sized.num_steps) == (16, 24, 40)
     assert (sized.guidance_scale, sized.max_sequence_length) == (2.0, 8)
     args.width = 0
     with pytest.raises(ValueError, match="invalid sampling"):
-        checkpoint_eval.resolve_plan(args)
+        checkpoint_eval.CheckpointEvaluation.from_args(args)
 
 
-def test_base_disables_adapter_before_checkpoint_restores(tmp_path, plan, monkeypatch):
+def test_base_disables_adapter_before_checkpoint_restores(tmp_path, evaluation, monkeypatch):
     events = []
 
     class FakeModel:
@@ -257,7 +257,7 @@ def test_base_disables_adapter_before_checkpoint_restores(tmp_path, plan, monkey
                 self.adapter_enabled = True
 
     model = FakeModel()
-    plan.entry.build_rollout = lambda *_args, **_kwargs: SimpleNamespace(model=model)
+    evaluation.entry.build_rollout = lambda *_args, **_kwargs: SimpleNamespace(model=model)
 
     def generate(_model, **kwargs):
         events.append(("generate", model.adapter_enabled, kwargs["seed"]))
@@ -267,7 +267,7 @@ def test_base_disables_adapter_before_checkpoint_restores(tmp_path, plan, monkey
         checkpoint = SimpleNamespace(next_epoch=int(path.name.rsplit("-", 1)[1]))
 
         def restore(**kwargs):
-            assert kwargs["expected_model_identity"] == plan.model_identity
+            assert kwargs["expected_model_identity"] == evaluation.model_identity
             events.append(("restore", checkpoint.next_epoch))
 
         checkpoint.restore_model = restore
@@ -276,7 +276,7 @@ def test_base_disables_adapter_before_checkpoint_restores(tmp_path, plan, monkey
     monkeypatch.setattr(checkpoint_eval, "generate_images", generate)
     monkeypatch.setattr("vrl.trainers.checkpointing.TrainingCheckpoint.load", load)
     monkeypatch.setattr("vrl.utils.cuda_memory.release_cuda_memory", lambda: None)
-    rows = plan.generate(tmp_path / "generated")
+    rows = evaluation.generate(tmp_path / "generated")
     assert events == [
         ("generate", False, 17),
         ("generate", False, 18),
@@ -313,8 +313,8 @@ def test_reward_batches_are_blinded_consistently_across_seeds(generation, monkey
         "vrl.rewards.functions.registry.MultiReward.from_mapping",
         build_reward,
     )
-    scored = asyncio.run(checkpoint_eval.score_images(archive.plan, rows, archive.directory))
-    order = archive.plan.blind_orders()[0]
+    scored = asyncio.run(checkpoint_eval.score_images(archive.evaluation, rows, archive.directory))
+    order = archive.evaluation.blind_orders()[0]
     for sample_index, batch in enumerate(batches):
         scored_sample = [row for row in scored if row["sample_index"] == sample_index]
         assert [row["checkpoint_label"] for row in scored_sample] == order
@@ -330,14 +330,16 @@ def test_reward_batches_are_blinded_consistently_across_seeds(generation, monkey
 
 def test_failed_scoring_reuses_verified_images_without_materialization(generation, monkeypatch):
     archive, rows = generation
-    monkeypatch.setattr(checkpoint_eval, "resolve_plan", lambda _args: archive.plan)
     monkeypatch.setattr(
-        checkpoint_eval.EvaluationPlan,
+        checkpoint_eval.CheckpointEvaluation, "from_args", lambda _args: archive.evaluation
+    )
+    monkeypatch.setattr(
+        checkpoint_eval.CheckpointEvaluation,
         "generate",
         lambda *_args: pytest.fail("must reuse generation"),
     )
 
-    async def fail_scoring(_plan, saved, _directory):
+    async def fail_scoring(_evaluation, saved, _directory):
         assert saved == rows
         raise RuntimeError("reward unavailable")
 
@@ -360,7 +362,7 @@ def test_failed_scoring_reuses_verified_images_without_materialization(generatio
 def test_generation_archive_rejects_changed_inputs_or_files(generation, tmp_path, change):
     archive, rows = generation
     if change == "protocol":
-        archive = replace(archive, plan=replace(archive.plan, config_sha256="f" * 64))
+        archive = replace(archive, evaluation=replace(archive.evaluation, config_sha256="f" * 64))
     elif change == "image":
         Image.new("RGB", (8, 8), "white").save(archive.directory / rows[0]["image_path"])
     elif change == "extra":

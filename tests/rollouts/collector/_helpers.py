@@ -22,7 +22,7 @@ from tests.generation._in_process_runtime import InProcessGenerationRuntime
 from tests.scripts.eval.fixtures import TinySanaStack, tiny_sana_stack
 from vrl.generation import GenerationRequest
 from vrl.models.parking import TrainingMemoryState
-from vrl.ray.resources import RayLifecyclePlan
+from vrl.ray.resources import RoleLifecycle
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.runtime import RewardFunctionRuntime
@@ -184,7 +184,7 @@ def trainer_side(bench: CollectorBench, *, initialized: bool = False) -> Trainer
 
 
 # Versioned trainable-state slots: a continuous LoRA run on a family that can
-# hold two versions, so the launch contract allows non-draining weight sync.
+# hold two versions, so the launch config allows non-draining weight sync.
 _VERSIONED_SLOTS = (
     "model.use_lora=true",
     "trainer.rollout_orchestration.schedule_mode=continuous",
@@ -197,7 +197,7 @@ def real_collector(
     tmp_path: Any,
     *,
     reward: RewardFunction | None = None,
-    lifecycle: RayLifecyclePlan | None = None,
+    lifecycle: RoleLifecycle | None = None,
     attach_runtime: bool = True,
     versioned_slots: bool = False,
     overrides: tuple[str, ...] = (),

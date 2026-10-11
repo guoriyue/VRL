@@ -20,7 +20,6 @@ import pytest
 
 import vrl.ray.actor_pool as actor_pool_module
 from tests.generation.ray._helpers import RaySanaRuntime, install_slow_workers, ray_sana_runtime
-from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import GenerationBatchEnvelope
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
@@ -86,7 +85,7 @@ def _busy_request(ray_run: RaySanaRuntime, **kwargs: Any) -> Any:
 
 
 def _envelope(request: Any) -> GenerationBatchEnvelope:
-    (batch,) = EnginePlan.from_request(request).sample_batches
+    (batch,) = request.sample_batches()
     return GenerationBatchEnvelope(request=request, batch=batch)
 
 

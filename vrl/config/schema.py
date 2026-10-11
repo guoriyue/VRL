@@ -365,7 +365,7 @@ class RolloutConfig(ConfigBase):
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
-    # Strict: a bool is not a batch dimension (OnlineBatchPlan rejects it too).
+    # Strict: a bool is not a batch dimension (OnlineBatchConfig rejects it too).
     n_samples_per_prompt: StrictInt | None = None
     prompts_per_batch: StrictInt | None = None
     # reader: vrl/generation/bindings/full_sequence/layout.py
@@ -381,7 +381,7 @@ class RolloutConfig(ConfigBase):
         default=None,
         json_schema_extra={"runtime_owner": "generation_request"},
     )
-    # reader: generation planner (execution/planner.py) + diffusion layout. int =
+    # reader: GenerationRequest.sample_batches + diffusion layout. int =
     # fixed batch size; null = samples_per_prompt.
     samples_per_generation_batch: int | None = Field(
         default=None,
@@ -442,7 +442,7 @@ class ActorSection(ConfigBase):
     max_norm: float | None = None
     timestep_selection: Literal["strided", "random", "stratified", "sde_window"] | None = None
     ppo_epochs: StrictInt | None = None
-    # OnlineBatchPlan: accumulation divides prompts into collection batches;
+    # OnlineBatchConfig: accumulation divides prompts into collection batches;
     # training_microbatch_size separately splits samples within each prompt group.
     prompts_per_collection: StrictInt | None = None
     training_microbatch_size: StrictInt | None = None

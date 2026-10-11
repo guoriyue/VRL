@@ -15,7 +15,6 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
-from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.types import GenerationBatchEnvelope, StaleSlotDiscard
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
@@ -31,10 +30,10 @@ class InProcessGenerationRuntime:
     actor, the worker body executes one call at a time on a worker thread, so
     the driver's event loop stays free and a prefetched request queues behind
     the running one. Whether a weight sync may skip the drain is the launch
-    contract's versioned-slot decision, exactly as for a Ray fleet: the worker
+    config's versioned-slot decision, exactly as for a Ray fleet: the worker
     core then installs each version into its own slot and serves every request
     from the slot of the version it was stamped with. ``activate`` loads or
-    wakes the policy; ``offload`` parks it only when the launch contract asks
+    wakes the policy; ``offload`` parks it only when the launch config asks
     for a shared-GPU lease, otherwise the model stays resident like a
     dedicated rollout worker.
     """
@@ -45,10 +44,10 @@ class InProcessGenerationRuntime:
         *,
         worker_id: str = "rollout-0",
     ) -> None:
-        contract = launch_inputs.launch_contract
-        self._core = GenerationWorkerCore(worker_id, contract)
+        launch_config = launch_inputs.launch_config
+        self._core = GenerationWorkerCore(worker_id, launch_config)
         self._gatherer = launch_inputs.gatherer
-        self.current_policy_version: int = contract.policy_version
+        self.current_policy_version: int = launch_config.policy_version
         self._parked = False
         # The actor's one-call-at-a-time execution.
         self._actor = threading.Lock()
@@ -80,9 +79,8 @@ class InProcessGenerationRuntime:
         return await self._call(self._generate, request)
 
     def _generate(self, request: GenerationRequest) -> GenerationOutput:
-        plan = EnginePlan.from_request(request)
         payloads = []
-        for batch in plan.sample_batches:
+        for batch in request.sample_batches():
             result = self._core.execute_batch(
                 GenerationBatchEnvelope(request=request, batch=batch)
             )
@@ -106,7 +104,7 @@ class InProcessGenerationRuntime:
     def _offload(self) -> None:
         if self._parked or self._core.executor is None:
             return
-        if not self._core.launch_contract.sleep_offload:
+        if not self._core.launch_config.sleep_offload:
             return
         self._core.sleep()
         self._parked = True

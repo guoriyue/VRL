@@ -6,11 +6,9 @@ per-batch payloads; merging belongs to the finalizer."""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
-from tests.generation.execution._helpers import launch_contract
+from tests.generation.execution._helpers import launch_config
 from vrl.generation.execution.memory_parking import GenerationWorkerParking
 from vrl.generation.execution.types import (
     RequestBatchOutOfMemory,
@@ -19,7 +17,7 @@ from vrl.generation.execution.types import (
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.types import GenerationRequest
 
-_PLAN = SimpleNamespace(sample_batches=("b0", "b1"))
+_SAMPLE_BATCHES = ("b0", "b1")
 
 
 class _Model:
@@ -62,7 +60,7 @@ class _Executor:
 def _core(*, executor, uses_slots: bool, policy_version: int | None):
     core = GenerationWorkerCore.__new__(GenerationWorkerCore)
     core.executor = executor
-    core.rank_group_spec = None
+    core.process_group_config = None
     core.worker_id = "w0"
     # Payload injection, not a double: these tests start from a worker that is
     # ALREADY in slot mode. How the flag is actually derived is asserted against a
@@ -72,7 +70,7 @@ def _core(*, executor, uses_slots: bool, policy_version: int | None):
     core._policy_version = policy_version
     core._memory_parking = GenerationWorkerParking(
         "w0",
-        launch_contract(),
+        launch_config(),
     )
     core.load_policy = lambda: None  # type: ignore[method-assign]
     return core
@@ -87,7 +85,7 @@ def test_slot_mode_with_live_slot_activates_and_runs() -> None:
     ex = _Executor(model)
     core = _core(executor=ex, uses_slots=True, policy_version=9)
 
-    out = GenerationWorkerCore.execute_request_batches(core, _request(7), _PLAN)
+    out = GenerationWorkerCore.execute_request_batches(core, _request(7), _SAMPLE_BATCHES)
 
     assert out == [("produced", "b0"), ("produced", "b1")]
     assert model.activated == [7]  # served from the REQUEST's version slot, not 9
@@ -110,7 +108,7 @@ def test_worker_core_forwards_the_stage_hook() -> None:
     output = GenerationWorkerCore.execute_request_batches(
         core,
         _request(5),
-        _PLAN,
+        _SAMPLE_BATCHES,
         stage_batch_result=stage,
     )
 
@@ -124,7 +122,7 @@ def test_slot_mode_with_evicted_slot_raises_stale_discard_and_does_not_run() -> 
     core = _core(executor=ex, uses_slots=True, policy_version=9)
 
     with pytest.raises(StaleSlotDiscard):
-        GenerationWorkerCore.execute_request_batches(core, _request(7), _PLAN)
+        GenerationWorkerCore.execute_request_batches(core, _request(7), _SAMPLE_BATCHES)
     assert ex.calls == []  # never ran => never trained off-policy
 
 
@@ -133,7 +131,7 @@ def test_non_slot_version_mismatch_raises_and_does_not_run() -> None:
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
     with pytest.raises(RuntimeError, match="policy_version mismatch"):
-        GenerationWorkerCore.execute_request_batches(core, _request(6), _PLAN)
+        GenerationWorkerCore.execute_request_batches(core, _request(6), _SAMPLE_BATCHES)
     assert ex.calls == []
 
 
@@ -141,7 +139,7 @@ def test_non_slot_matching_version_runs() -> None:
     ex = _Executor(_Model(set()))
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
-    out = GenerationWorkerCore.execute_request_batches(core, _request(5), _PLAN)
+    out = GenerationWorkerCore.execute_request_batches(core, _request(5), _SAMPLE_BATCHES)
     assert out == [("produced", "b0"), ("produced", "b1")]
     assert len(ex.calls) == 1
 
@@ -150,7 +148,7 @@ def test_no_expected_version_runs_unconditionally() -> None:
     ex = _Executor(_Model(set()))
     core = _core(executor=ex, uses_slots=False, policy_version=5)
 
-    out = GenerationWorkerCore.execute_request_batches(core, _request(None), _PLAN)
+    out = GenerationWorkerCore.execute_request_batches(core, _request(None), _SAMPLE_BATCHES)
     assert out == [("produced", "b0"), ("produced", "b1")]
 
 
@@ -169,7 +167,7 @@ def test_cuda_oom_clears_worker_state_and_returns_typed_retry(monkeypatch) -> No
     result = GenerationWorkerCore.execute_request_batches(
         core,
         _request(5),
-        _PLAN,
+        _SAMPLE_BATCHES,
     )
 
     assert result == RequestBatchOutOfMemory(
@@ -193,7 +191,7 @@ def test_non_oom_pipeline_error_propagates_without_cleanup(monkeypatch) -> None:
         GenerationWorkerCore.execute_request_batches(
             core,
             _request(5),
-            _PLAN,
+            _SAMPLE_BATCHES,
         )
 
     assert cleanup_calls == []

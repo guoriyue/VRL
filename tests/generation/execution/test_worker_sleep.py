@@ -24,7 +24,7 @@ import torch
 
 from vrl.generation.execution.memory_parking import executor_device
 from vrl.generation.execution.worker import GenerationWorkerCore
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.launch_config import GenerationLaunchConfig
 from vrl.generation.types import GenerationRequest
 from vrl.utils.cuda_memory import CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
 
@@ -98,7 +98,7 @@ class _Executor:
         raise NotImplementedError
 
 
-_PLAN = SimpleNamespace(sample_batches=("b0",))
+_SAMPLE_BATCHES = ("b0",)
 
 
 class _PipelinedExecutor(_Executor):
@@ -171,7 +171,7 @@ def _core(
         pipeline_offload_mode = (
             "sequential" if bool(getattr(model, "uses_pipeline_cpu_offload", False)) else "none"
         )
-    contract = GenerationRuntimeLaunchContract(
+    config = GenerationLaunchConfig(
         family=family,
         model_build=(
             {"rollout": {"pipeline_offload_mode": pipeline_offload_mode}}
@@ -183,7 +183,7 @@ def _core(
         sleep_offload=sleep_offload,
         parking_mechanism="move" if pipeline_offload_mode != "none" else "cumem",
     )
-    core = GenerationWorkerCore("rollout-0", contract)
+    core = GenerationWorkerCore("rollout-0", config)
     core.executor = (
         _Executor(model, family=family, task=core.family_entry.task) if model is not None else None
     )
@@ -191,7 +191,7 @@ def _core(
 
 
 def _build_executor(core: GenerationWorkerCore, model: Any) -> _Executor:
-    """Return a fake whose identity matches the worker launch contract."""
+    """Return a fake whose identity matches the worker launch config."""
 
     return _Executor(
         model,
@@ -325,11 +325,11 @@ def test_parked_worker_rejects_execution_until_wake() -> None:
 
     core.sleep()
     with pytest.raises(RuntimeError, match=r"parked.*refusing execute_request_batches"):
-        core.execute_request_batches(request, _PLAN)
+        core.execute_request_batches(request, _SAMPLE_BATCHES)
 
     core.wake()
-    assert core.execute_request_batches(request, _PLAN) == [
-        (request, _PLAN.sample_batches),
+    assert core.execute_request_batches(request, _SAMPLE_BATCHES) == [
+        (request, _SAMPLE_BATCHES),
     ]
 
 
@@ -646,7 +646,7 @@ def test_pipelined_oom_resets_pipeline_hooks_before_typed_retry() -> None:
         policy_version=1,
     )
 
-    result = core.execute_request_batches(request, _PLAN)
+    result = core.execute_request_batches(request, _SAMPLE_BATCHES)
 
     assert isinstance(result, RequestBatchOutOfMemory)
     assert model.reset_calls == 1
@@ -815,9 +815,9 @@ def test_generation_execution_does_not_reenter_one_shot_cumem_scope(
     core.load_policy()
     request = GenerationRequest("r", "sd3_5", "t2i", ["p"], 1, policy_version=1)
 
-    result = core.execute_request_batches(request, _PLAN)
+    result = core.execute_request_batches(request, _SAMPLE_BATCHES)
 
-    assert result == [(request, _PLAN.sample_batches)]
+    assert result == [(request, _SAMPLE_BATCHES)]
     assert fake.pool_tags == ["vrl:generation:rollout-0:weights"]
 
 
@@ -1317,7 +1317,7 @@ def test_real_cumem_one_shot_scope_sleep_wake_in_subprocess() -> None:
 def test_worker_releases_only_its_own_rank_group(monkeypatch, already_initialized):
     import torch.distributed as dist
 
-    from vrl.generation.execution.rank_group import RankGroupSpec
+    from vrl.generation.execution.rank_group import ProcessGroupConfig
 
     initialized = already_initialized
     destroyed = []
@@ -1338,7 +1338,7 @@ def test_worker_releases_only_its_own_rank_group(monkeypatch, already_initialize
     monkeypatch.setattr(dist, "init_process_group", initialize)
     monkeypatch.setattr(dist, "destroy_process_group", destroy)
     core = _core(None)
-    core.rank_group_spec = RankGroupSpec("127.0.0.1", 29500, 0, 2, backend="gloo")
+    core.process_group_config = ProcessGroupConfig("127.0.0.1", 29500, 0, 2, backend="gloo")
     monkeypatch.setattr(core._memory_parking, "release_scope", contextlib.nullcontext)
 
     def fail_build():
@@ -1361,17 +1361,17 @@ def test_worker_releases_only_its_own_rank_group(monkeypatch, already_initialize
 
 def test_failed_cold_load_does_not_enter_rank_rng_collective(monkeypatch):
     import vrl.generation.execution.worker as worker_module
-    from vrl.generation.execution.rank_group import RankGroupSpec
+    from vrl.generation.execution.rank_group import ProcessGroupConfig
 
     core = _core(None)
-    core.rank_group_spec = RankGroupSpec("127.0.0.1", 29500, 0, 2, backend="gloo")
+    core.process_group_config = ProcessGroupConfig("127.0.0.1", 29500, 0, 2, backend="gloo")
     calls = []
     group_handle = SimpleNamespace()
     group_handle.shutdown = lambda: calls.append("destroy")
     monkeypatch.setattr(
         worker_module.EngineProcessGroup,
         "open",
-        lambda spec: (calls.append("init"), group_handle)[1],
+        lambda config: (calls.append("init"), group_handle)[1],
     )
     monkeypatch.setattr(core, "_synchronize_rank_rng", lambda: calls.append("rng"))
     monkeypatch.setattr(core._memory_parking, "release_scope", contextlib.nullcontext)

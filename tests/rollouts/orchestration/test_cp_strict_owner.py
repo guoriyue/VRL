@@ -14,7 +14,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 
 from tests.rollouts.collector._helpers import Trace, real_collector, trainer_side
-from vrl.ray.resources import RayLifecyclePlan
+from vrl.ray.resources import RoleLifecycle
 from vrl.rollouts.orchestration.strict_on_policy import (
     ContextParallelStrictRolloutSchedule,
     StrictOnPolicyRolloutSchedule,
@@ -56,7 +56,7 @@ def _worker(rank, rendezvous, spool):
         else:
             assert phase.events == []
         if bench is not None and groups.dp_rank == 0:
-            bench.collector.lifecycle = RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=())
+            bench.collector.lifecycle = RoleLifecycle(trainer=(0,), rollout=(0,), reward=())
         with pytest.raises(RuntimeError, match="disjoint"):
             asyncio.run(schedule.next_iteration([], group_size=2))
 

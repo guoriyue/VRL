@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from tests.rollouts.collector._helpers import Trace, real_collector, trainer_side
-from vrl.ray.resources import RayLifecyclePlan
+from vrl.ray.resources import RoleLifecycle
 from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
 from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.weight_sync import flatten_trainable_module_state
@@ -57,9 +57,9 @@ def _parking_schedule(
     # Either the rollout or the reward sits on the trainer GPU; both shapes park
     # the trainer at phase entry.
     lifecycle = (
-        RayLifecyclePlan(trainer=(0,), rollout=(1,), reward=(0,))
+        RoleLifecycle(trainer=(0,), rollout=(1,), reward=(0,))
         if reward_uses_trainer
-        else RayLifecyclePlan(trainer=(0,), rollout=(0,), reward=(2,))
+        else RoleLifecycle(trainer=(0,), rollout=(0,), reward=(2,))
     )
     bench = real_collector(monkeypatch, tmp_path, lifecycle=lifecycle)
     trainer = trainer_side(bench, initialized=True)

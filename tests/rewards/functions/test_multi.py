@@ -431,7 +431,7 @@ def test_gpu_resource_allows_component_cpu_downgrade() -> None:
     runtimes = {name: fn.scorer for name, _, fn in reward.rewards}
     runtime = runtimes["kling_video_reward"]
     assert isinstance(runtime, InProcessRewardScorer)
-    assert runtime._launch.component_config["device"] == "cpu"
+    assert runtime._worker_config.component_config["device"] == "cpu"
     assert runtime.requires_memory_parking is False
     assert runtimes["aesthetic"].requires_memory_parking is True
 
@@ -649,9 +649,9 @@ def test_ray_ocr_reward_gets_an_actor_scorer_with_its_knobs(tmp_path) -> None:
     assert isinstance(component, ModelRewardFunction)
     scorer = component.scorer
     assert isinstance(scorer, RayRewardScorer)
-    assert scorer._launch.model_factory == "vrl.rewards.models.ocr:OCRRewardModel"
-    assert scorer._launch.component_config["debug_dir"] == str(tmp_path / "ocr_debug")
-    assert scorer._launch.device == "cpu"
+    assert scorer._worker_config.model_factory == "vrl.rewards.models.ocr:OCRRewardModel"
+    assert scorer._worker_config.component_config["debug_dir"] == str(tmp_path / "ocr_debug")
+    assert scorer._worker_config.device == "cpu"
 
 
 def test_ray_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:
@@ -666,8 +666,8 @@ def test_ray_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:
     )
     scorer = reward.rewards[0][2].scorer
     assert isinstance(scorer, RayRewardScorer)
-    assert scorer._launch.sleep_offload is True
-    assert scorer._launch.device == "cuda:0"
+    assert scorer._worker_config.sleep_offload is True
+    assert scorer._worker_config.device == "cuda:0"
     assert scorer.requires_memory_parking is True
 
 
@@ -721,8 +721,8 @@ def test_every_model_reward_can_run_as_a_ray_actor(tmp_path, name, device, kwarg
     assert isinstance(component, ModelRewardFunction)
     scorer = component.scorer
     assert isinstance(scorer, RayRewardScorer)
-    assert scorer._launch.model_factory == type(component).model_factory
-    assert scorer._launch.device == type(component).resolve_execution_device(
+    assert scorer._worker_config.model_factory == type(component).model_factory
+    assert scorer._worker_config.device == type(component).resolve_execution_device(
         device=device, kwargs=kwargs
     )
 

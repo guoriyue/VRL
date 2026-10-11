@@ -16,7 +16,7 @@ import pytest
 import torch
 
 from tests.rollouts.collector._helpers import CollectorBench, IndexReward, real_collector
-from vrl.ray.resources import RayLifecyclePlan
+from vrl.ray.resources import RoleLifecycle
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rollouts.collector.core import (
     PromptCollectionCleanupError,
@@ -28,7 +28,7 @@ from vrl.trainers.data.prompts import PromptExample
 
 # The reward shares the rollout GPU: scoring needs a handoff, so the collector
 # generates every group first and scores all of them in one call.
-_SHARED_REWARD = RayLifecyclePlan(trainer=(0,), rollout=(1,), reward=(1,))
+_SHARED_REWARD = RoleLifecycle(trainer=(0,), rollout=(1,), reward=(1,))
 
 
 async def _collect(
@@ -324,7 +324,7 @@ async def test_reward_handoff_keeps_generation_and_scoring_serial(
     bench = real_collector(
         monkeypatch,
         tmp_path,
-        lifecycle=RayLifecyclePlan(trainer=(0,), rollout=(1,), reward=reward_devices),
+        lifecycle=RoleLifecycle(trainer=(0,), rollout=(1,), reward=reward_devices),
     )
 
     await _collect(bench, [PromptExample(prompt="p0"), PromptExample(prompt="p1")])

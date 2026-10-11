@@ -440,3 +440,22 @@ wan 的 `_config_value` 留着：它的测试替身 pipeline 的 config 既有 d
 `vrl/scripts/data/setup.py` 的 init-dirs 为 pickapic 建缓存目录时又拼了一遍 `repo_root() / "data" / "cache" / "hf"`，这个目录必须与 pickapic `--cache-dir` 的默认值相同，改为调 `default_cache_dir()`。
 
 替换前逐个核对过每个 `parents[N]` 与 `repo_root()` 是同一目录，行为不变。唯一可见的差别：`default_cache_dir()` 多做一次 `resolve()`，只有 `data` 是符号链接时，init-dirs 打印的路径会显示链接目标，建出的目录不变。`tests/conftest.py` 用 `os.path` 算仓库根是为了在导入 vrl 之前设置 `sys.path`，不在此列。
+
+## 22. Contract / Plan / Requirement 类名（2026-10-10）
+
+词汇只留三种（`*Config`、对象、`typing.Protocol`）。九个类名里带 Contract / Plan / Requirement，逐个看它实际是什么之后：
+
+| 原来 | 现在 | 理由 |
+|---|---|---|
+| `RayLifecyclePlan` | `RoleLifecycle` | 三个角色的 GPU 集合和由此推出的 park / offload 决定；实例本来就叫 `lifecycle` |
+| `RewardRuntimeLaunchContract`（`rewards/launch_contract.py`） | `RewardWorkerConfig`（`rewards/worker_config.py`） | 它就是 reward 组件的 `worker_config` 解析一次后的类型化形式 |
+| `GenerationRuntimeLaunchContract`（`generation/launch_contract.py`） | `GenerationLaunchConfig`（`generation/launch_config.py`） | 生成 worker 启动时拿到的配置；不叫 `GenerationWorkerConfig`，因为 `RolloutWorkerConfig` 管的是同一批 worker 的驱动端设置 |
+| `OnlineBatchPlan`，字段 `batch_plan` | `OnlineBatchConfig`，字段 `batch_config` | 在线一次更新的批次几何与内存上限，从 `rollout.*` / `actor.*` 解析一次 |
+| `EvaluationPlan` 和自由函数 `resolve_plan(args)` | `CheckpointEvaluation` 和 `CheckpointEvaluation.from_args(args)` | 一次 checkpoint 评测的全部输入；产出实例的自由函数按 §2 并成构造方法 |
+| `LatentDecodePlan` | 并进 `ChunkedLatentDecoder` | 它只是解码器的构造参数，每次都直接写在 `ChunkedLatentDecoder(...)` 里，只有解码器读它 |
+| `EnginePlan` | 删除；`GenerationRequest.sample_batches()`，进程内入口 `forward_plan(request, plan)` 改为 `forward_request(request)` | 只包一个批次元组的外壳，所有使用处只读那一个字段；切批只读请求自己的字段，和 `sample_rows()` 放在一起；进程内入口原来要调用方传同一个请求切出的批次，这个参数可以从请求推出 |
+| `ReplayRequestContract` | 这里不改名 | 只有 `DenoiseModelBase` 继承它；replay 模型层次重做时整个并进 `DenoiseModelBase`（§25），单独起新名没有意义 |
+| `SequenceRequirement` | 不改 | 编辑序列要满足的条件，YAML 键和报告里都叫 `requirements`；只改类名反而让模块内不一致，改键会改输入格式 |
+
+历史 sprint 和 research 文档保留当时的类名，按上表对照；`docs/ENGINE_ARCHITECTURE.md` 改成现名，并顺手更正它把 reward 那个类写成不存在的 `RewardWorkerLaunchContract`。
+

@@ -38,7 +38,6 @@ from vrl.models.steps.denoise.common import (
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
-    LatentDecodePlan,
     broadcast_spatial_timestep,
     expand_tensor_to_batch,
     replay_tensor,
@@ -583,19 +582,17 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersPipelineModelBase):
             return x * latents_std / sigma_data + latents_mean
 
         decoder = ChunkedLatentDecoder(
-            LatentDecodePlan(
-                prepare_latents=_transform,
-                vae_decode=lambda batch: pipe.vae.decode(
-                    batch,
-                    return_dict=False,
-                )[0],
-                postprocess=lambda video: pipe.video_processor.postprocess_video(
-                    video,
-                    output_type="pt",
-                ),
-                output_layout="video_btchw",
-                decode_batch_size=getattr(pipe, "decode_batch_size", None),
+            prepare_latents=_transform,
+            vae_decode=lambda batch: pipe.vae.decode(
+                batch,
+                return_dict=False,
+            )[0],
+            postprocess=lambda video: pipe.video_processor.postprocess_video(
+                video,
+                output_type="pt",
             ),
+            output_layout="video_btchw",
+            decode_batch_size=getattr(pipe, "decode_batch_size", None),
         )
         return decoder(latents)
 

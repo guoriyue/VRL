@@ -29,7 +29,6 @@ from aiohttp import web
 from pydantic import ConfigDict, Field, StrictInt, ValidationError, field_validator
 
 from vrl.config.base import ConfigBase
-from vrl.rewards.launch_contract import RewardRuntimeLaunchContract
 from vrl.rewards.service.owner import RewardScoringThread
 from vrl.rewards.service.protocol import (
     RewardServiceErrorCode,
@@ -44,6 +43,7 @@ from vrl.rewards.service.wire import (
     score_response_to_wire,
     status_to_wire,
 )
+from vrl.rewards.worker_config import RewardWorkerConfig
 from vrl.utils.artifacts import PathOutsideRootsError, RootedPaths, sha256_file
 from vrl.utils.logging import init_logger
 
@@ -131,8 +131,8 @@ class RewardService:
         if not isinstance(raw, Mapping):
             raise TypeError("reward service config must be a mapping")
         cfg = RewardServiceConfig.from_mapping(raw)
-        launch = RewardRuntimeLaunchContract.from_mapping(cfg.worker_config)
-        if launch.sleep_offload:
+        worker_config = RewardWorkerConfig.from_mapping(cfg.worker_config)
+        if worker_config.sleep_offload:
             raise ValueError(
                 "worker_config.sleep_offload is not supported by the standalone service: "
                 "a service stays resident; run a shared-GPU reward as a Ray actor instead",
@@ -142,12 +142,14 @@ class RewardService:
             for path in cfg.artifact_roots
         ]
         return cls(
-            InProcessRewardScorer(launch.component_config),
+            InProcessRewardScorer(worker_config.component_config),
             artifact_roots=roots,
             host=str(cfg.host),
             port=int(cfg.port),
-            model_name=str(cfg.model_name or launch.reward_model_name or launch.model_factory),
-            model_version=str(cfg.model_version or launch.reward_model_version),
+            model_name=str(
+                cfg.model_name or worker_config.reward_model_name or worker_config.model_factory
+            ),
+            model_version=str(cfg.model_version or worker_config.reward_model_version),
             max_pending_requests=int(cfg.max_pending_requests),
             max_cached_requests=int(cfg.max_cached_requests),
             max_request_bytes=int(cfg.max_request_bytes),

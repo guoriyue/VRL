@@ -17,7 +17,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.launch_config import GenerationLaunchConfig
 from vrl.models import parking
 from vrl.models.interfaces.runtime import PipelineOffloadMode
 from vrl.models.parking import CumemBroken, ModelParking, ParkingBroken, ParkingSession
@@ -50,7 +50,7 @@ class _ParkingPhase(Enum):
 class GenerationWorkerParking:
     """Own one worker's parking session and the policy around it.
 
-    The Ray launch contract carries only the topology-derived requirement to
+    The Ray launch config carries only the topology-derived requirement to
     yield the GPU. This owner combines it with the resolved rollout residency
     mode before model construction, then keeps the session for idempotent
     sleep, wake, and teardown and quarantines the worker when a failure made
@@ -60,11 +60,11 @@ class GenerationWorkerParking:
     def __init__(
         self,
         worker_id: str,
-        launch_contract: GenerationRuntimeLaunchContract,
+        launch_config: GenerationLaunchConfig,
     ) -> None:
         if not worker_id:
             raise ValueError("worker memory parking requires a non-empty worker_id")
-        rollout = launch_contract.model_build.get("rollout")
+        rollout = launch_config.model_build.get("rollout")
         pipeline_offload_mode = "none"
         if isinstance(rollout, Mapping):
             pipeline_offload_mode = str(
@@ -75,9 +75,9 @@ class GenerationWorkerParking:
         # writing the vocabulary check a second time.
         PipelineOffloadMode(pipeline_offload_mode)
         self.worker_id = worker_id
-        self._required = launch_contract.sleep_offload
+        self._required = launch_config.sleep_offload
         # The launch contract already refused cumem under pipeline CPU offload.
-        self._mechanism = launch_contract.parking_mechanism
+        self._mechanism = launch_config.parking_mechanism
         self._session: ParkingSession | None = None
         self._phase = _ParkingPhase.ACTIVE
         # Persist only a lightweight quarantine reason. Exception tracebacks can

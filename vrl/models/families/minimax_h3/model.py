@@ -58,7 +58,7 @@ from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     ReplayRolloutStubs,
 )
-from vrl.models.steps.denoise.common import ChunkedLatentDecoder, LatentDecodePlan
+from vrl.models.steps.denoise.common import ChunkedLatentDecoder
 from vrl.utils.logging import init_logger, kv
 from vrl.utils.tensors import expand_tensor_to_batch
 
@@ -727,15 +727,13 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
             vae_scale_factor=int(vae.spatial_compression_ratio), do_normalize=False
         )
         decoder = ChunkedLatentDecoder(
-            LatentDecodePlan(
-                prepare_latents=lambda batch: batch.to(torch.float32) * latents_std + latents_mean,
-                vae_decode=_vae_decode,
-                postprocess=lambda video: video_processor.postprocess_video(
-                    (video.float() * pixel_std + pixel_mean).clamp(0, 1),
-                    output_type="pt",
-                ),
-                output_layout="video_btchw",
+            prepare_latents=lambda batch: batch.to(torch.float32) * latents_std + latents_mean,
+            vae_decode=_vae_decode,
+            postprocess=lambda video: video_processor.postprocess_video(
+                (video.float() * pixel_std + pixel_mean).clamp(0, 1),
+                output_type="pt",
             ),
+            output_layout="video_btchw",
         )
         return decoder(latents).to(output_device)
 

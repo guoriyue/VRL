@@ -6,7 +6,7 @@ from typing import Any
 
 import ray
 
-from vrl.generation.execution.planner import EnginePlan
+from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
     GenerationBatchEnvelope,
     GenerationBatchResult,
@@ -37,8 +37,8 @@ class RayGenerationWorker:
         register_tensor_wire_serializer()
         self.core = GenerationWorkerCore(
             worker_id,
-            launch_inputs.launch_contract,
-            rank_group=launch_inputs.rank_group,
+            launch_inputs.launch_config,
+            process_group_config=launch_inputs.process_group_config,
         )
 
     def load_policy(self) -> None:
@@ -75,15 +75,15 @@ class RayGenerationWorker:
 
     @property
     def _is_primary_rank(self) -> bool:
-        rank_group = self.core.rank_group_spec
-        return rank_group is None or rank_group.group_rank == 0
+        config = self.core.process_group_config
+        return config is None or config.group_rank == 0
 
     def execute_request_batches(
         self,
         request: GenerationRequest,
-        engine_plan: EnginePlan,
+        sample_batches: tuple[GenerationSampleBatch, ...],
     ) -> StagedBatchRefs | RequestBatchOutOfMemory | StaleSlotDiscard:
-        """Run all of the plan's batches on this rank in one call.
+        """Run this rank's share of a request's batches in one call.
 
         Each batch payload is staged into the object store right after its host
         copy, so the returned value carries only references and this rank is
@@ -96,12 +96,12 @@ class RayGenerationWorker:
         """
 
         request_id = str(request.request_id)
-        total_batches = len(engine_plan.sample_batches)
+        total_batches = len(sample_batches)
         primary = self._is_primary_rank
         try:
             staged = self.core.execute_request_batches(
                 request,
-                engine_plan,
+                sample_batches,
                 # Non-primary ranks keep nothing: the engine result is the primary's.
                 stage_batch_result=ray.put if primary else (lambda payload: None),
             )
@@ -112,7 +112,7 @@ class RayGenerationWorker:
         if len(staged) != total_batches:
             raise RuntimeError(
                 f"pipelined worker {self.core.worker_id} staged {len(staged)} batches "
-                f"for a {total_batches}-batch plan",
+                f"of the {total_batches} it was given",
             )
         if not primary:
             return StagedBatchRefs(
@@ -124,7 +124,7 @@ class RayGenerationWorker:
         return StagedBatchRefs(
             request_id=request_id,
             worker_id=self.core.worker_id,
-            batch_keys=tuple(batch.batch_key for batch in engine_plan.sample_batches),
+            batch_keys=tuple(batch.batch_key for batch in sample_batches),
             batch_refs=tuple(staged),
         )
 

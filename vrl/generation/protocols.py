@@ -21,7 +21,7 @@ engine — none exists for taste. One request flows as::
   cosmos, ...); keeps ``if family == ...`` branches out of neutral execution.
 - ``GenerationBatchGatherer``: the model-free slice of the executor, split out because
   reassembly runs driver-side where no model is loaded; it ships across the
-  Ray launch contract as a serializable object.
+  Ray launch config as a serializable object.
 - ``BatchPayload``: deliberately ``Any`` — the batch payload's shape is owned by
   the binding that produced it (diffusion latents vs AR token results share no
   useful common structure); the alias documents that ownership in signatures.
@@ -61,12 +61,12 @@ class GenerationRuntime(Protocol):
     Three callers drive it: the rollout coordinator issues the phase commands
     (``activate`` / ``offload`` / ``shutdown``), the collector calls
     ``generate``, and the trainer's weight syncer calls ``update_weights``.
-    Everything fixed before launch lives in the launch contract instead.
+    Everything fixed before launch lives in the launch config instead.
     The runtime is a transport boundary: schedules explicitly activate it before
     generation and offload it at a shared-GPU handoff. Whether the trainer parks
     for generation, or generation offloads before reward scoring, is not the
     runtime's decision — both are derived once from GPU topology into the
-    ``RayLifecyclePlan`` and read by the collector (see vrl/ray/resources.py).
+    ``RoleLifecycle`` and read by the collector (see vrl/ray/resources.py).
     """
 
     # The version of the weights serving new requests: the launch checkpoint's

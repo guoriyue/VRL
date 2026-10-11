@@ -79,7 +79,7 @@ class DenoiseFamilyBuild:
     # family surface, while this hook owns checkpoint/component construction.
     rollout_runtime_builder: str | None = None
     # Driver-side normalization for deployment inputs that must be resolved
-    # before ModelBuild is serialized into a Ray launch contract.
+    # before ModelBuild is serialized into a Ray launch config.
     model_build_normalizer: str | None = None
     # Generation-only denoise families retain their concrete reason so trainer
     # construction can fail before importing an upstream runtime or weights.

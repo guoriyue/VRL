@@ -24,7 +24,6 @@ from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig, parse_config
 from vrl.generation import GenerationOutput, GenerationRequest
-from vrl.generation.execution.planner import EnginePlan
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.ray.resources import ResourcePlan
@@ -423,7 +422,7 @@ class _DirectExecutorGenerationRuntime:
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         with torch.no_grad():
-            return self.executor.forward_plan(request, EnginePlan.from_request(request))
+            return self.executor.forward_request(request)
 
     async def offload(self) -> None:
         self._move_frozen(torch.device("cpu"))

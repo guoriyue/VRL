@@ -1,15 +1,15 @@
-"""Serializable generation runtime launch contract.
+"""The config a generation worker is launched with.
 
 The one object the driver (vrl/run.py) hands a Ray generation actor at
 construction: everything a worker process needs to rebuild the family
 executor on its own GPU. It lives apart from both runtimes because the two
 sides of that process boundary share no other runtime code — only this
-contract. Construction validates pickle-serializability and primitives-only
+config. Construction validates pickle-serializability and primitives-only
 content so a live driver object (callable, model, tensor) fails fast on the
 driver instead of inside actor deserialization.
 
-The reward-side twin is ``RewardRuntimeLaunchContract``
-(vrl/rewards/launch_contract.py).
+The reward side's counterpart is ``RewardWorkerConfig``
+(vrl/rewards/worker_config.py), a reward component's typed ``worker_config``.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from vrl.utils.validation import require_int
 
 
 @dataclass(frozen=True, slots=True)
-class GenerationRuntimeLaunchContract:
-    """Worker-side executor construction contract for generation runtimes.
+class GenerationLaunchConfig:
+    """Everything a generation worker builds its executor and lifecycle from.
 
     The canonical family identifies worker wiring. Only per-run primitive model,
     expected model identity, executor, profiler, and lifecycle values cross the
@@ -51,7 +51,7 @@ class GenerationRuntimeLaunchContract:
 
     def __post_init__(self) -> None:
         if not isinstance(self.family, str) or not self.family:
-            raise ValueError("GenerationRuntimeLaunchContract.family must be a non-empty string")
+            raise ValueError("GenerationLaunchConfig.family must be a non-empty string")
         object.__setattr__(
             self,
             "model_build",
@@ -63,7 +63,7 @@ class GenerationRuntimeLaunchContract:
         )
         if not expected_model_identity:
             raise ValueError(
-                "GenerationRuntimeLaunchContract.expected_model_identity must be non-empty",
+                "GenerationLaunchConfig.expected_model_identity must be non-empty",
             )
         object.__setattr__(
             self,
@@ -106,7 +106,7 @@ class GenerationRuntimeLaunchContract:
             pickle.dumps(self)
         except Exception as exc:
             raise TypeError(
-                "GenerationRuntimeLaunchContract must be pickle-serializable",
+                "GenerationLaunchConfig must be pickle-serializable",
             ) from exc
 
     @classmethod
@@ -143,4 +143,4 @@ class GenerationRuntimeLaunchContract:
         )
 
 
-__all__ = ["GenerationRuntimeLaunchContract"]
+__all__ = ["GenerationLaunchConfig"]

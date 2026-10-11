@@ -56,7 +56,7 @@ from vrl.trainers.distributed import (
     run_on_primary_rank,
 )
 from vrl.trainers.metrics_io import OnlineMetricsCSV
-from vrl.trainers.online.config import OnlineBatchPlan
+from vrl.trainers.online.config import OnlineBatchConfig
 from vrl.trainers.online.trainer import (
     OnlineTrainer,
     _compute_rollout_advantages,
@@ -301,16 +301,16 @@ class _OnlineRecipeLifecycle:
 
 
 def _log_rollout_memory_plan(
-    batch_plan: OnlineBatchPlan,
+    batch_config: OnlineBatchConfig,
     *,
     samples_per_generation_batch: int | None,
 ) -> None:
     """Log how many rollout tensors one optimizer update can hold at once."""
 
-    prompts_per_batch = batch_plan.prompts_per_batch
-    samples_per_prompt = batch_plan.n_samples_per_prompt
+    prompts_per_batch = batch_config.prompts_per_batch
+    samples_per_prompt = batch_config.n_samples_per_prompt
     target_samples = prompts_per_batch * samples_per_prompt
-    replay_width = batch_plan.training_microbatch_size
+    replay_width = batch_config.training_microbatch_size
 
     def describe_batch_width(value: int | None) -> str:
         size = int(value or 0)
@@ -318,9 +318,9 @@ def _log_rollout_memory_plan(
 
     generation_batch_text = describe_batch_width(samples_per_generation_batch)
     replay_batch_text = describe_batch_width(replay_width)
-    collection_count = batch_plan.collections_per_update
-    if batch_plan.streaming:
-        collection_prompts = batch_plan.prompts_per_collection
+    collection_count = batch_config.collections_per_update
+    if batch_config.streaming:
+        collection_prompts = batch_config.prompts_per_collection
         collection_samples = collection_prompts * samples_per_prompt
         logger.info(
             "Rollout memory plan: streaming accumulation enabled "
@@ -360,18 +360,18 @@ def _log_rollout_memory_plan(
 
 
 def _log_global_std_streaming_scope(
-    batch_plan: OnlineBatchPlan,
+    batch_config: OnlineBatchConfig,
     *,
     global_std: bool,
 ) -> None:
     """Make update-wide normalization and its temporary disk requirement visible."""
-    if not batch_plan.streaming or not global_std:
+    if not batch_config.streaming or not global_std:
         return
     logger.info(
         "global_std streaming: normalize all %d prompt groups before clipping/filtering; "
         "temporarily spool trajectories under trainer.output_dir and replay %d groups at a time",
-        batch_plan.prompts_per_batch,
-        batch_plan.prompts_per_collection,
+        batch_config.prompts_per_batch,
+        batch_config.prompts_per_collection,
     )
 
 
@@ -438,8 +438,8 @@ async def _run_global_std_streaming_update(
     next_example_batch: list[Any] | None,
 ) -> Any:
     """Compute update-wide advantages before replay, keeping trajectories on disk."""
-    batch_plan = trainer.config.batch_plan
-    micro = batch_plan.prompts_per_collection
+    batch_config = trainer.config.batch_config
+    micro = batch_config.prompts_per_collection
     microbatches = [example_batch[k : k + micro] for k in range(0, len(example_batch), micro)]
     output = Path(trainer.config.output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -460,15 +460,15 @@ async def _run_global_std_streaming_update(
             )
             iteration = await trainer.rollout_schedule.next_iteration(
                 prompts,
-                group_size=batch_plan.n_samples_per_prompt,
+                group_size=batch_config.n_samples_per_prompt,
                 runtime_debug=bool(trainer.config.debug.first_step and trainer.state.step == 0),
                 next_prompts=lookahead,
             )
-            if batch_plan.host_memory_budget_fraction > 0:
+            if batch_config.host_memory_budget_fraction > 0:
                 _check_host_memory_budget(
-                    batch_plan.host_memory_budget_fraction,
+                    batch_config.host_memory_budget_fraction,
                     collection_prompts=len(prompts),
-                    n_samples_per_prompt=batch_plan.n_samples_per_prompt,
+                    n_samples_per_prompt=batch_config.n_samples_per_prompt,
                 )
             # Prompt indices restart in each collect call; disjoint optimizer
             # groups must not accidentally share a centering mean across slices.
@@ -572,15 +572,15 @@ async def _run_streaming_optimizer_update(
     checked against the host-RAM budget and the run fails fast if it is already
     over budget (SPRINT_memory_budgeted_microbatch T2).
     """
-    batch_plan = trainer.config.batch_plan
-    if not batch_plan.streaming:
-        raise ValueError("_run_streaming_optimizer_update requires a streaming batch plan")
-    collection_size = batch_plan.prompts_per_collection
+    batch_config = trainer.config.batch_config
+    if not batch_config.streaming:
+        raise ValueError("_run_streaming_optimizer_update requires a streaming batch config")
+    collection_size = batch_config.prompts_per_collection
     collection_batches = [
         example_batch[k : k + collection_size]
         for k in range(0, len(example_batch), collection_size)
     ]
-    total_groups = batch_plan.prompts_per_batch if _total_groups is None else _total_groups
+    total_groups = batch_config.prompts_per_batch if _total_groups is None else _total_groups
 
     if _prepared is None and trainer.algorithm.config.global_std:
         return await _run_global_std_streaming_update(
@@ -593,7 +593,7 @@ async def _run_streaming_optimizer_update(
     reward_mean_w = reward_std_w = adv_mean_w = adv_zero_w = adv_sat_w = 0.0
     weight_total = 0
     trained_prompt_num = 0
-    group_size = float(batch_plan.n_samples_per_prompt)
+    group_size = float(batch_config.n_samples_per_prompt)
     reward_component_values: dict[str, list[float]] = {}
     for collection_index, collection_batch in enumerate(collection_batches):
         if collection_index + 1 < len(collection_batches):
@@ -618,16 +618,16 @@ async def _run_streaming_optimizer_update(
         try:
             # Host-RAM fail-fast on the first collection batch: one slice is the host
             # peak under streaming, so if it is already over budget, stop now.
-            if batch_plan.host_memory_budget_fraction > 0.0 and collection_index == 0:
+            if batch_config.host_memory_budget_fraction > 0.0 and collection_index == 0:
                 _check_host_memory_budget(
-                    batch_plan.host_memory_budget_fraction,
+                    batch_config.host_memory_budget_fraction,
                     collection_prompts=len(collection_batch),
-                    n_samples_per_prompt=batch_plan.n_samples_per_prompt,
+                    n_samples_per_prompt=batch_config.n_samples_per_prompt,
                 )
             trainer.backward_on_training_batch(batch, total_groups=total_groups)
             # Sample-count-weighted aggregation of this collection batch's pre-filter stats
             # so the one metric row reflects ALL samples, not the last collection batch.
-            weight = max(1, len(collection_batch) * batch_plan.n_samples_per_prompt)
+            weight = max(1, len(collection_batch) * batch_config.n_samples_per_prompt)
             reward_mean_w += batch.pre_filter_reward_mean * weight
             reward_std_w += batch.pre_filter_reward_std * weight
             adv_mean_w += batch.pre_filter_adv_mean * weight
@@ -749,16 +749,16 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     trainer_config = built.trainer
     if trainer_config is None:
         raise ValueError("online recipe cannot use an offline-only trainer config")
-    batch_plan = trainer_config.batch_plan
+    batch_config = trainer_config.batch_config
     _log_rollout_memory_plan(
-        batch_plan,
+        batch_config,
         samples_per_generation_batch=(
             built.root.rollout.samples_per_generation_batch
             if built.root.rollout is not None
             else None
         ),
     )
-    _log_global_std_streaming_scope(batch_plan, global_std=built.algorithm.global_std)
+    _log_global_std_streaming_scope(batch_config, global_std=built.algorithm.global_std)
     if trainer_config.profile:
         os.environ["VRL_PROFILE"] = "1"
 
@@ -1063,10 +1063,10 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             family_entry.family,
             run_config.total_epochs,
             len(examples),
-            batch_plan.n_samples_per_prompt,
+            batch_config.n_samples_per_prompt,
         )
 
-        rank_batch = batch_plan.prompts_per_batch
+        rank_batch = batch_config.prompts_per_batch
         prompt_sampler = PromptBatchSampler(
             generator=rng,
             num_examples=len(examples),
@@ -1087,7 +1087,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             # optimizer step, and the post-step rollout weight sync. It is the
             # denominator for update-level barrier attribution in nsys traces.
             with profile_range("trainer.optimizer_update"):
-                if batch_plan.streaming:
+                if batch_config.streaming:
                     # Streaming accumulation: split the optimizer-target batch into
                     # collection batches collected/trained/released one at a time so host
                     # RAM does not have to hold the whole batch at once.

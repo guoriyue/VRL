@@ -6,7 +6,7 @@ format derives its field sets from them, so these dataclasses are the single
 schema source. Stays importable without torch or aiohttp (torch loads lazily
 inside ``as_media``) because the wire module and the artifact store need it.
 The scorer capability protocols live in protocols.py, the artifact stores in
-artifacts.py, and the worker launch contract in launch_contract.py.
+artifacts.py, and the component's typed worker config in worker_config.py.
 """
 
 from __future__ import annotations

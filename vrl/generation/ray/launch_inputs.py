@@ -7,8 +7,8 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from vrl.generation.execution.rank_group import RankGroupSpec
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.execution.rank_group import ProcessGroupConfig
+from vrl.generation.launch_config import GenerationLaunchConfig
 from vrl.generation.protocols import GenerationBatchGatherer
 
 if TYPE_CHECKING:
@@ -19,17 +19,17 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class RayGenerationLaunchInputs:
-    """Serializable rank build contract plus registry-owned batch gatherer.
+    """One rank's serializable launch config plus its registry-owned batch gatherer.
 
     The driver executor and single-engine pipelined path receive the same
     binding; neither side re-resolves family identity after composition.
-    ``rank_group`` is None for single-rank engines; the launcher stamps a
-    per-rank rendezvous spec when an engine spans multiple GPUs.
+    ``process_group_config`` is None for single-rank engines; the launcher stamps one per
+    rank when an engine spans multiple GPUs.
     """
 
-    launch_contract: GenerationRuntimeLaunchContract
+    launch_config: GenerationLaunchConfig
     gatherer: GenerationBatchGatherer
-    rank_group: RankGroupSpec | None = None
+    process_group_config: ProcessGroupConfig | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -107,7 +107,7 @@ class RayGenerationLaunchInputs:
             )
 
         return cls(
-            launch_contract=GenerationRuntimeLaunchContract(
+            launch_config=GenerationLaunchConfig(
                 family=family.family,
                 model_build=model_build_payload,
                 expected_model_identity=model_identity,

@@ -28,7 +28,7 @@ class SequenceRequirement(ConfigBase):
         return value
 
 
-class EditSequenceSpec(ConfigBase):
+class EditSequence(ConfigBase):
     """Ordered sample identities and the requirements to check across them."""
 
     sequence_id: str = Field(min_length=1)
@@ -36,7 +36,7 @@ class EditSequenceSpec(ConfigBase):
     requirements: list[SequenceRequirement] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def validate_sequence(self) -> EditSequenceSpec:
+    def validate_sequence(self) -> EditSequence:
         if any(not sample for sample in self.samples) or len(set(self.samples)) != len(
             self.samples
         ):
@@ -147,4 +147,4 @@ class EditSequenceSpec(ConfigBase):
         }
 
 
-__all__ = ["EditSequenceSpec", "SequenceRequirement"]
+__all__ = ["EditSequence", "SequenceRequirement"]

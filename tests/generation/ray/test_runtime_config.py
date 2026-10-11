@@ -1,4 +1,4 @@
-"""Tests for the Ray generation runtime's configuration, launch contract and launch.
+"""Tests for the Ray generation runtime's configuration, launch config and launch.
 
 Launch-contract projections resolve a real tiny run -- the SANA online recipe
 on its tiny snapshot, or the tiny Wan snapshot for Wan-only knobs -- and read
@@ -24,7 +24,7 @@ from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
 from vrl.config.validation import compile_conflicts
-from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation.launch_config import GenerationLaunchConfig
 from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
@@ -40,22 +40,22 @@ _CONTINUOUS = (
 )
 
 
-# ------------------------------------------------------- launch contract values
+# ------------------------------------------------------- launch config values
 
 
 @pytest.mark.parametrize("family", ["", None, True, 123, ["unit"], {"name": "unit"}])
-def test_launch_contract_rejects_invalid_registry_identity(family) -> None:
+def test_launch_config_rejects_invalid_registry_identity(family) -> None:
     with pytest.raises(ValueError, match=r"family must be a non-empty string"):
-        GenerationRuntimeLaunchContract(
+        GenerationLaunchConfig(
             family=family,
             model_build={},
             expected_model_identity=_TEST_MODEL_IDENTITY,
         )
 
 
-def test_launch_contract_rejects_empty_model_identity() -> None:
+def test_launch_config_rejects_empty_model_identity() -> None:
     with pytest.raises(ValueError, match=r"expected_model_identity must be non-empty"):
-        GenerationRuntimeLaunchContract(
+        GenerationLaunchConfig(
             family="unit",
             model_build={},
             expected_model_identity={},
@@ -63,9 +63,9 @@ def test_launch_contract_rejects_empty_model_identity() -> None:
 
 
 @pytest.mark.parametrize("policy_version", [True, 1.9, "1", -1])
-def test_launch_contract_rejects_invalid_policy_version(policy_version) -> None:
+def test_launch_config_rejects_invalid_policy_version(policy_version) -> None:
     with pytest.raises(ValueError, match="policy_version must be"):
-        GenerationRuntimeLaunchContract(
+        GenerationLaunchConfig(
             family="unit",
             model_build={},
             expected_model_identity=_TEST_MODEL_IDENTITY,
@@ -78,13 +78,13 @@ def test_launch_contract_refuses_cumem_under_pipeline_offload() -> None:
 
     offloaded = {"rollout": {"pipeline_offload_mode": "sequential"}}
     with pytest.raises(ValueError, match=r"parking\.mechanism: move"):
-        GenerationRuntimeLaunchContract(
+        GenerationLaunchConfig(
             family="unit",
             model_build=offloaded,
             expected_model_identity=_TEST_MODEL_IDENTITY,
             sleep_offload=True,
         )
-    GenerationRuntimeLaunchContract(
+    GenerationLaunchConfig(
         family="unit",
         model_build=offloaded,
         expected_model_identity=_TEST_MODEL_IDENTITY,
@@ -226,7 +226,7 @@ async def test_pipelined_launch_adds_one_finalizer_per_engine(
         assert output.output.shape[0] == 2
 
 
-# ------------------------------------------------------- launch contract projection
+# ------------------------------------------------------- launch config projection
 
 
 def _sana_launch(tmp_path: Path, *overrides: str) -> tuple[RayGenerationLaunchInputs, Any]:
@@ -263,7 +263,7 @@ def test_generation_launch_inputs_project_model_compile_and_precision(tmp_path) 
         "precision.rollout.prompt_encoders.dtype=fp16",
     )
 
-    contract = launch_inputs.launch_contract
+    contract = launch_inputs.launch_config
     model_build = contract.model_build
     assert contract.family == "sana"
     assert contract.expected_model_identity == replay_identity
@@ -283,7 +283,7 @@ def test_generation_launch_inputs_project_model_compile_and_precision(tmp_path) 
 
 
 def test_generation_launch_inputs_project_resolved_generation_memory(tmp_path) -> None:
-    """The launch contract carries typed memory values, not raw model config."""
+    """The launch config carries typed memory values, not raw model config."""
 
     launch_inputs, _ = _sana_launch(
         tmp_path,
@@ -291,7 +291,7 @@ def test_generation_launch_inputs_project_resolved_generation_memory(tmp_path) -
         "model.memory.vae_decode.slicing=false",
     )
 
-    model_build = launch_inputs.launch_contract.model_build
+    model_build = launch_inputs.launch_config.model_build
     assert model_build["generation_memory"] == {
         "vae_decode": {"tiling": True, "slicing": False},
         "cpu_resident": (),
@@ -331,7 +331,7 @@ def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(tmp_pa
 
     model_build = RayGenerationLaunchInputs.from_run(
         built, resources, replay_build, replay_identity
-    ).launch_contract.model_build
+    ).launch_config.model_build
 
     assert model_build["rollout"]["pipeline_offload_mode"] == "sequential"
     assert "offload_mode" not in model_build["model_config"]
@@ -364,7 +364,7 @@ def test_generation_launch_inputs_preserve_disabled_model_compile_config(tmp_pat
 
     launch_inputs, _ = _sana_launch(tmp_path, "model.revision=driver-config")
 
-    model_build = launch_inputs.launch_contract.model_build
+    model_build = launch_inputs.launch_config.model_build
     assert model_build["revision"] == "driver-config"
     model_config = model_build["model_config"]
     assert "revision" not in model_config
@@ -376,9 +376,9 @@ def test_generation_launch_inputs_derive_versioned_sync_from_schedule(tmp_path) 
     continuous_fullparam, _ = _sana_launch(tmp_path / "fullparam", *_CONTINUOUS)
     continuous_lora, _ = _sana_launch(tmp_path / "lora", "model.use_lora=true", *_CONTINUOUS)
 
-    assert strict.launch_contract.versioned_weight_sync is False
-    assert continuous_fullparam.launch_contract.versioned_weight_sync is False
-    assert continuous_lora.launch_contract.versioned_weight_sync is True
+    assert strict.launch_config.versioned_weight_sync is False
+    assert continuous_fullparam.launch_config.versioned_weight_sync is False
+    assert continuous_lora.launch_config.versioned_weight_sync is True
 
 
 def test_generation_launch_inputs_thread_resolved_base_weight_sync(tmp_path) -> None:
@@ -387,7 +387,7 @@ def test_generation_launch_inputs_thread_resolved_base_weight_sync(tmp_path) -> 
 
     launch_inputs, _ = _sana_launch(tmp_path)
 
-    model_build = launch_inputs.launch_contract.model_build
+    model_build = launch_inputs.launch_config.model_build
     assert model_build["model_config"].get("use_lora", False) is False
     assert model_build["rollout"]["base_weight_sync"] is True
 
@@ -397,7 +397,7 @@ def test_generation_launch_inputs_mark_lora_as_adapter_only_sync(tmp_path) -> No
 
     launch_inputs, _ = _sana_launch(tmp_path, "model.use_lora=true")
 
-    assert launch_inputs.launch_contract.model_build["rollout"]["base_weight_sync"] is False
+    assert launch_inputs.launch_config.model_build["rollout"]["base_weight_sync"] is False
 
 
 def test_compile_on_an_uncompilable_family_is_a_config_conflict() -> None:
@@ -553,7 +553,7 @@ async def test_deferred_activation_reuses_factory_launcher(
 
     ((launched_resources, launched_worker, launched_inputs, launched_placement),) = calls
     assert launched_resources is resources and launched_worker is worker
-    assert launch_inputs.launch_contract.sleep_offload is True
+    assert launch_inputs.launch_config.sleep_offload is True
     assert launched_inputs is launch_inputs
     assert launched_placement is placement
     assert runtime.lifecycle.phase is RuntimePhase.TERMINATED

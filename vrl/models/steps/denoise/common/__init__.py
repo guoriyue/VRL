@@ -8,7 +8,6 @@ from vrl.models.steps.denoise.common.backbone import (
 from vrl.models.steps.denoise.common.cfg import DenoiseBranch
 from vrl.models.steps.denoise.common.latent_decode import (
     ChunkedLatentDecoder,
-    LatentDecodePlan,
     VaeDecodeMixin,
     denormalize_video_vae_latents,
 )
@@ -30,7 +29,6 @@ __all__ = [
     "DenoiseBackboneInput",
     "DenoiseBackboneRunnerBase",
     "DenoiseBranch",
-    "LatentDecodePlan",
     "VaeDecodeMixin",
     "broadcast_spatial_timestep",
     "denormalize_video_vae_latents",

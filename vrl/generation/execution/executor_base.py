@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.sample_batches import (
     GenerationSampleBatch,
     execute_generation_batches,
@@ -24,11 +23,11 @@ class BatchExecutorBase:
     differ in how ONE batch is produced, never
     in how a request's batches are driven or assembled, so that half lives here:
 
-    - ``forward_plan`` is the in-process request entry (local tools, family
+    - ``forward_request`` is the in-process request entry (local tools, family
       tests, single-process e2e): the same ``forward_batch`` batch step
       and the same gather as the Ray dispatch, with a local OOM-split retry.
-      Production drives batches through the Ray dispatcher instead; planning is
-      shared via ``EnginePlan.from_request``'s single width fallback.
+      Production drives batches through the Ray dispatcher instead; both split
+      the request through ``GenerationRequest.sample_batches``.
     - ``execute_request_batches`` runs ALL of a request's batches on one
       worker in one call, copying each result to pinned CPU memory (and
       staging it, when asked) before the next batch is produced. Ray uses
@@ -46,13 +45,9 @@ class BatchExecutorBase:
     def __init__(self, *, gatherer: GenerationBatchGatherer | None = None) -> None:
         self._gatherer = gatherer
 
-    def forward_plan(
-        self,
-        request: GenerationRequest,
-        plan: EnginePlan,
-    ) -> GenerationOutput:
+    def forward_request(self, request: GenerationRequest) -> GenerationOutput:
         batches = execute_generation_batches(
-            plan.sample_batches,
+            request.sample_batches(),
             lambda batch: self.forward_batch(request, batch),
         )
         return self.merge_generation_batches(request, batches)

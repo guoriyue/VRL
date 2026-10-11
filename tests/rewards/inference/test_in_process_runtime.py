@@ -263,7 +263,7 @@ async def test_failed_pooled_preparation_rolls_back_before_retry(monkeypatch) ->
         {
             "sleep_offload": True,
             # First build fails mid-prepare (the transient cause), the retry
-            # succeeds; the launch contract is frozen at construction, so the
+            # succeeds; the worker config is frozen at construction, so the
             # retry goes through the same factory path.
             "model_factory": f"{__name__}:_flaky_prepare_factory",
         },

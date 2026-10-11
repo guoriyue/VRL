@@ -3,7 +3,7 @@
 The one place the two engine protocols meet: ``RolloutCollector`` drives
 ``GenerationRuntime.generate`` and ``RewardRuntime.score`` for a prompt group
 and owns the phase seam between them — reading the topology-derived
-``RayLifecyclePlan`` (``vrl/ray/resources.py``) to decide which role must park
+``RoleLifecycle`` (``vrl/ray/resources.py``) to decide which role must park
 its GPU before the next phase, and exposing those decisions as capabilities
 (overlap, continuous execution) instead of letting schedules re-derive them.
 Prompt grouping, deferred scoring, task cleanup, and result accounting also
@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 import torch
 
 if TYPE_CHECKING:
-    from vrl.ray.resources import RayLifecyclePlan
+    from vrl.ray.resources import RoleLifecycle
 
 from vrl.generation import GenerationInput, GenerationOutput, GenerationRuntime
 from vrl.models.families.registry import ModelFamilyEntry
@@ -129,7 +129,7 @@ class RolloutCollector:
         *,
         request_builder: GenerationRequestBuilder,
         reward_runtime: RewardRuntime,
-        lifecycle: RayLifecyclePlan,
+        lifecycle: RoleLifecycle,
     ) -> None:
         self.request_builder = request_builder
         self.reward_runtime = reward_runtime
@@ -148,7 +148,7 @@ class RolloutCollector:
         *,
         reward_runtime: RewardRuntime,
         config: RolloutCollectorConfig,
-        lifecycle: RayLifecyclePlan,
+        lifecycle: RoleLifecycle,
     ) -> RolloutCollector:
         """Build a rollout collector from an already resolved family entry."""
 

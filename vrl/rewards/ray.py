@@ -29,7 +29,7 @@ from vrl.ray.operation_deadline import (
 )
 from vrl.ray.placement import RolePlacement, actor_scheduling_strategy, require_actor_gpu_ids
 from vrl.rewards.inference import RewardInferenceRequest, RewardInferenceResult
-from vrl.rewards.launch_contract import RewardRuntimeLaunchContract
+from vrl.rewards.worker_config import RewardWorkerConfig
 from vrl.runtime_errors import TerminalRuntimeError
 from vrl.utils.config import import_from_path
 from vrl.utils.deadline import require_timeout
@@ -203,9 +203,9 @@ class RayRewardScorer:
         placement: RayRewardPlacement | None = None,
         timeout_s: float = 1800.0,
     ) -> None:
-        self._launch = RewardRuntimeLaunchContract.from_mapping(worker_config)
-        self._cuda = self._launch.device.startswith("cuda")
-        if self._launch.device not in ("", "cpu") and not self._cuda:
+        self._worker_config = RewardWorkerConfig.from_mapping(worker_config)
+        self._cuda = self._worker_config.device.startswith("cuda")
+        if self._worker_config.device not in ("", "cpu") and not self._cuda:
             raise ValueError("Ray rewards support only CPU or planner-owned CUDA devices")
         self._placement = placement if self._cuda else None
         if self._cuda:
@@ -221,7 +221,7 @@ class RayRewardScorer:
                     raise ValueError("shared reward GPU must be a non-negative physical ordinal")
                 if not self._placement.node_id:
                     raise ValueError("shared Ray rewards require an explicit node_id")
-                if not self._launch.sleep_offload:
+                if not self._worker_config.sleep_offload:
                     raise ValueError("shared Ray rewards require sleep_offload for the GPU lease")
             elif role is None:
                 raise ValueError("dedicated CUDA Ray rewards require a reserved placement bundle")
@@ -242,7 +242,7 @@ class RayRewardScorer:
 
     @property
     def requires_memory_parking(self) -> bool:
-        return self._launch.sleep_offload
+        return self._worker_config.sleep_offload
 
     def _actor_options(self) -> dict[str, Any]:
         options: dict[str, Any] = {
@@ -293,7 +293,7 @@ class RayRewardScorer:
             ray.remote(_RewardActor)
             .options(**self._actor_options())
             .remote(
-                dict(self._launch.component_config),
+                dict(self._worker_config.component_config),
                 shared_gpu_id=(None if self._placement is None else self._placement.shared_gpu_id),
                 media_directory_token=self._media_directory_token,
             )

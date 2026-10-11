@@ -22,7 +22,7 @@ from tests.trainers.online._helpers import TrainerBench, real_trainer
 from vrl.rollouts.batch import RolloutBatch
 from vrl.scripts.common.online import _run_streaming_optimizer_update
 from vrl.trainers.data.prompts import PromptExample
-from vrl.trainers.online.config import OnlineBatchPlan
+from vrl.trainers.online.config import OnlineBatchConfig
 
 # One replay epoch and per-group std keep the streaming and full-batch paths
 # comparable: streaming refuses multi-epoch updates, and a global std would
@@ -435,8 +435,8 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
 
     from vrl.scripts.common.online import _log_rollout_memory_plan
 
-    def _plan(rbs: int, gas: int) -> OnlineBatchPlan:
-        return OnlineBatchPlan(
+    def _batch_config(rbs: int, gas: int) -> OnlineBatchConfig:
+        return OnlineBatchConfig(
             prompts_per_batch=rbs,
             n_samples_per_prompt=2,
             prompts_per_collection=(rbs // gas) if gas else 0,
@@ -445,7 +445,7 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     logger_name = "vrl.scripts.common.online"
     with caplog.at_level(logging.INFO, logger=logger_name):
         _log_rollout_memory_plan(
-            _plan(4, 4),
+            _batch_config(4, 4),
             samples_per_generation_batch=2,
         )
     streaming_messages = [record.getMessage() for record in caplog.records]
@@ -458,7 +458,7 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     caplog.clear()
     with caplog.at_level(logging.INFO, logger=logger_name):
         _log_rollout_memory_plan(
-            _plan(4, 0),
+            _batch_config(4, 0),
             samples_per_generation_batch=2,
         )
     legacy_messages = [record.getMessage() for record in caplog.records]
@@ -477,8 +477,8 @@ def test_global_std_streaming_scope_logging(caplog) -> None:
 
     from vrl.scripts.common.online import _log_global_std_streaming_scope
 
-    def _plan(rbs: int, gas: int) -> OnlineBatchPlan:
-        return OnlineBatchPlan(
+    def _batch_config(rbs: int, gas: int) -> OnlineBatchConfig:
+        return OnlineBatchConfig(
             prompts_per_batch=rbs,
             n_samples_per_prompt=2,
             prompts_per_collection=(rbs // gas) if gas else 0,
@@ -492,12 +492,12 @@ def test_global_std_streaming_scope_logging(caplog) -> None:
             _log_global_std_streaming_scope(plan, global_std=global_std)
         return any("global_std streaming:" in r.getMessage() for r in caplog.records)
 
-    assert _warns(_plan(8, 4), global_std=True)
-    assert _warns(_plan(8, 8), global_std=True)
+    assert _warns(_batch_config(8, 4), global_std=True)
+    assert _warns(_batch_config(8, 8), global_std=True)
     # Exempt: global_std=false (per-group std is streaming-equivalent).
-    assert not _warns(_plan(8, 4), global_std=False)
+    assert not _warns(_batch_config(8, 4), global_std=False)
     # Exempt: legacy full-batch (gas=0, no streaming).
-    assert not _warns(_plan(8, 0), global_std=True)
+    assert not _warns(_batch_config(8, 0), global_std=True)
 
 
 def test_host_memory_budget_fail_fast(monkeypatch) -> None:

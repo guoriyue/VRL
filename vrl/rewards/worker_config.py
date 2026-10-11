@@ -1,13 +1,13 @@
-"""Serializable reward runtime launch contract.
+"""A reward component's ``worker_config``, typed.
 
-The reward twin of ``GenerationRuntimeLaunchContract``
-(vrl/generation/launch_contract.py): the typed, closed key set the runtime
-itself branches on, parsed once from a reward component config. It lives apart
-from runtime.py and the service because both sides of the process boundary
-(in-process runtime, standalone service launch parsing) share only this
-contract. The verbatim mapping still reaches the model factory as its open
-plugin bag (models read their own keys — model names, thresholds, debug dirs
-— which are genuinely unvalidated user input).
+The closed key set the reward runtime itself branches on, parsed once from
+the component's ``worker_config`` mapping. It lives apart from runtime.py and
+the service because both sides of the process boundary (in-process runtime,
+standalone service launch parsing) share only this class. The generation
+side's counterpart is ``GenerationLaunchConfig``
+(vrl/generation/launch_config.py). The verbatim mapping still reaches the
+model factory as its open plugin bag (models read their own keys — model
+names, thresholds, debug dirs — which are genuinely unvalidated user input).
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ from typing import Any, Literal
 
 
 @dataclass(frozen=True, slots=True)
-class RewardRuntimeLaunchContract:
-    """Runtime-owned keys parsed once from a reward component config."""
+class RewardWorkerConfig:
+    """Runtime-owned keys of a reward component's ``worker_config``, parsed once."""
 
     model_factory: str
     device: str
@@ -34,7 +34,7 @@ class RewardRuntimeLaunchContract:
     def from_mapping(
         cls,
         component_config: Mapping[str, Any] | None,
-    ) -> RewardRuntimeLaunchContract:
+    ) -> RewardWorkerConfig:
         if component_config is not None and not isinstance(component_config, Mapping):
             raise TypeError("reward component_config must be a mapping or None")
         cfg = {} if component_config is None else dict(component_config)
@@ -57,4 +57,4 @@ class RewardRuntimeLaunchContract:
         )
 
 
-__all__ = ["RewardRuntimeLaunchContract"]
+__all__ = ["RewardWorkerConfig"]

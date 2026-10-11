@@ -23,7 +23,7 @@ from tests.rollouts.collector._helpers import IndexReward, Trace
 from tests.trainers.online._helpers import TrainerBench, real_trainer
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.trainers.online import trainer as trainer_module
-from vrl.trainers.online.config import OnlineBatchPlan
+from vrl.trainers.online.config import OnlineBatchConfig
 
 _GROUP = 4
 
@@ -129,7 +129,7 @@ def test_dealing_is_deterministic_for_a_resumed_counter(monkeypatch, tmp_path) -
 
 def test_streaming_rejects_several_steps_per_batch() -> None:
     with pytest.raises(ValueError, match="optimizer_steps_per_batch>1"):
-        OnlineBatchPlan(
+        OnlineBatchConfig(
             prompts_per_batch=4,
             n_samples_per_prompt=2,
             prompts_per_collection=2,

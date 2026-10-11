@@ -138,12 +138,12 @@ def _fault_worker(
                 result = replace(result, memory=memory_reading)
             return result
 
-        def execute_request_batches(self, request: Any, engine_plan: Any) -> Any:
+        def execute_request_batches(self, request: Any, sample_batches: Any) -> Any:
             self.request_calls.append(request.request_id)
-            self.request_batches.append([batch.batch_key for batch in engine_plan.sample_batches])
+            self.request_batches.append([batch.batch_key for batch in sample_batches])
             self._in_request = True
             try:
-                result = super().execute_request_batches(request, engine_plan)
+                result = super().execute_request_batches(request, sample_batches)
             finally:
                 self._in_request = False
             if "pipeline_request_id" in corrupt:
@@ -454,7 +454,7 @@ async def test_pipelined_splits_batches_over_engines_and_merges_once(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
     """Every engine runs its round-robin share in one call; one finalizer merges
-    all the references in plan order regardless of which engine staged them."""
+    all the references in batch order regardless of which engine staged them."""
 
     async with _fleet(
         monkeypatch,

@@ -142,7 +142,7 @@ async def _on_demand(
     runtime = RayGenerationRuntime(
         session=None,
         session_factory=launch_session,
-        initial_policy_version=launch_inputs.launch_contract.policy_version,
+        initial_policy_version=launch_inputs.launch_config.policy_version,
     )
     try:
         yield _OnDemand(

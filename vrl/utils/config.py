@@ -12,7 +12,7 @@ def plain_mapping(value: Any, *, field_name: str) -> dict[str, Any]:
 
     OmegaConf is checked first: a ``DictConfig`` is itself a ``Mapping``, so a
     shallow ``dict(value)`` would leave nested ``ListConfig``/``DictConfig``
-    values intact, which downstream serialization (the Ray launch contract)
+    values intact, which downstream serialization (the Ray launch config)
     rejects. ``to_container`` recurses to plain list/dict. Pydantic models use
     ``exclude_unset`` so omitted defaults stay absent while explicit false,
     zero, and null values retain their presence semantics.

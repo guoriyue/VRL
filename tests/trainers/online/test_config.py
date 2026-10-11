@@ -9,7 +9,7 @@ from omegaconf import OmegaConf
 
 from vrl.config.schema import ActorSection, TrainerSection, parse_config
 from vrl.trainers.core.types import OptimConfig, ReplayParityConfig
-from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
+from vrl.trainers.online.config import OnlineBatchConfig, TrainerConfig
 
 
 def test_replay_parity_rejects_invalid_limits() -> None:
@@ -19,7 +19,7 @@ def test_replay_parity_rejects_invalid_limits() -> None:
 
 def test_trainer_config_fields_are_declared_by_exactly_one_public_section() -> None:
     """The projection reads each field from the section that declares its name."""
-    bridged = {"batch_plan", "versioned_weight_sync"}
+    bridged = {"batch_config", "versioned_weight_sync"}
     for trainer_field in fields(TrainerConfig):
         if trainer_field.name in bridged:
             continue
@@ -29,10 +29,10 @@ def test_trainer_config_fields_are_declared_by_exactly_one_public_section() -> N
             if trainer_field.name in section.model_fields
         ]
         assert len(owners) == 1, trainer_field.name
-    for plan_field in fields(OnlineBatchPlan):
-        if plan_field.name in ("prompts_per_batch", "n_samples_per_prompt"):
+    for config_field in fields(OnlineBatchConfig):
+        if config_field.name in ("prompts_per_batch", "n_samples_per_prompt"):
             continue
-        assert plan_field.name in ActorSection.model_fields, plan_field.name
+        assert config_field.name in ActorSection.model_fields, config_field.name
 
 
 def _public_batch_config(
@@ -54,10 +54,10 @@ def _public_batch_config(
     )
 
 
-def _trainer_config(batch_plan: OnlineBatchPlan, *, ppo_epochs: int = 1) -> TrainerConfig:
+def _trainer_config(batch_config: OnlineBatchConfig, *, ppo_epochs: int = 1) -> TrainerConfig:
     return TrainerConfig(
         optim=OptimConfig(lr=1e-4),
-        batch_plan=batch_plan,
+        batch_config=batch_config,
         timestep_fraction=0.5,
         output_dir="x",
         drop_zero_advantage=False,
@@ -65,26 +65,26 @@ def _trainer_config(batch_plan: OnlineBatchPlan, *, ppo_epochs: int = 1) -> Trai
     )
 
 
-def test_batch_plan_derives_collection_count() -> None:
-    plan = OnlineBatchPlan.from_root(_public_batch_config(prompts_per_collection=4))
-    assert plan.collections_per_update == 8
-    assert plan.prompts_per_collection == 4
-    assert plan.streaming is True
+def test_batch_config_derives_collection_count() -> None:
+    config = OnlineBatchConfig.from_root(_public_batch_config(prompts_per_collection=4))
+    assert config.collections_per_update == 8
+    assert config.prompts_per_collection == 4
+    assert config.streaming is True
 
 
 def test_online_plan_rejects_retired_accumulation_setting() -> None:
     with pytest.raises(ValueError, match="only supported by offline DPO"):
-        OnlineBatchPlan.from_root(_public_batch_config(gradient_accumulation_steps=8))
+        OnlineBatchConfig.from_root(_public_batch_config(gradient_accumulation_steps=8))
 
 
-def test_unsplit_batch_plan_derives_the_full_batch_size() -> None:
-    plan = OnlineBatchPlan.from_root(_public_batch_config())
+def test_unsplit_batch_config_derives_the_full_batch_size() -> None:
+    config = OnlineBatchConfig.from_root(_public_batch_config())
 
-    assert plan.collections_per_update == 1
-    assert plan.prompts_per_collection == 0
-    assert plan.host_memory_budget_fraction == 0.0
-    assert isinstance(plan.host_memory_budget_fraction, float)
-    assert plan.streaming is False
+    assert config.collections_per_update == 1
+    assert config.prompts_per_collection == 0
+    assert config.host_memory_budget_fraction == 0.0
+    assert isinstance(config.host_memory_budget_fraction, float)
+    assert config.streaming is False
 
 
 @pytest.mark.parametrize(
@@ -95,12 +95,12 @@ def test_unsplit_batch_plan_derives_the_full_batch_size() -> None:
         ({"training_microbatch_size": -1}, "training_microbatch_size"),
     ],
 )
-def test_batch_plan_rejects_invalid_public_geometry(
+def test_batch_config_rejects_invalid_public_geometry(
     actor: dict[str, object],
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        OnlineBatchPlan.from_root(_public_batch_config(**actor))
+        OnlineBatchConfig.from_root(_public_batch_config(**actor))
 
 
 @pytest.mark.parametrize(
@@ -110,16 +110,16 @@ def test_batch_plan_rejects_invalid_public_geometry(
         ({"n_samples_per_prompt": 0}, "n_samples_per_prompt"),
     ],
 )
-def test_batch_plan_rejects_non_positive_batch_dimensions(
+def test_batch_config_rejects_non_positive_batch_dimensions(
     rollout: dict[str, object],
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        OnlineBatchPlan.from_root(_public_batch_config(**rollout))
+        OnlineBatchConfig.from_root(_public_batch_config(**rollout))
 
 
 def test_streaming_plan_requires_one_ppo_epoch() -> None:
-    streaming = OnlineBatchPlan(
+    streaming = OnlineBatchConfig(
         prompts_per_batch=4,
         n_samples_per_prompt=2,
         prompts_per_collection=2,
@@ -129,21 +129,21 @@ def test_streaming_plan_requires_one_ppo_epoch() -> None:
     with pytest.raises(ValueError, match="ppo_epochs"):
         _trainer_config(streaming, ppo_epochs=2)
 
-    unsplit = OnlineBatchPlan(prompts_per_batch=4, n_samples_per_prompt=2)
+    unsplit = OnlineBatchConfig(prompts_per_batch=4, n_samples_per_prompt=2)
     assert _trainer_config(unsplit, ppo_epochs=2).ppo_epochs == 2
 
 
 def test_host_memory_budget_requires_streaming() -> None:
-    plan = OnlineBatchPlan(
+    config = OnlineBatchConfig(
         prompts_per_batch=4,
         n_samples_per_prompt=2,
         prompts_per_collection=1,
         host_memory_budget_fraction=0.9,
     )
 
-    assert plan.host_memory_budget_fraction == 0.9
+    assert config.host_memory_budget_fraction == 0.9
     with pytest.raises(ValueError, match="requires streaming"):
-        OnlineBatchPlan(
+        OnlineBatchConfig(
             prompts_per_batch=4,
             n_samples_per_prompt=2,
             host_memory_budget_fraction=0.9,
@@ -153,7 +153,7 @@ def test_host_memory_budget_requires_streaming() -> None:
 @pytest.mark.parametrize("budget", [-0.1, float("nan")])
 def test_host_memory_budget_rejects_invalid_values(budget: object) -> None:
     with pytest.raises(ValueError, match="host_memory_budget_fraction"):
-        OnlineBatchPlan(
+        OnlineBatchConfig(
             prompts_per_batch=4,
             n_samples_per_prompt=2,
             prompts_per_collection=1,
