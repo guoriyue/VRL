@@ -25,7 +25,7 @@ from tests.trainers._strategy_policies import (
 )
 from vrl.config.schema import DDPConfig, RootConfig
 from vrl.models.interfaces.runtime import register_checkpoint_owned_state
-from vrl.trainers.distributed import DistributedTrainingContext
+from vrl.trainers.distributed import DistributedTrainingContext, TrainerProcessGroup
 from vrl.trainers.strategy import (
     DDPStrategy,
     SingleProcessStrategy,
@@ -108,10 +108,7 @@ def test_ddp_wraps_resolved_device_after_per_rank_mask(monkeypatch) -> None:
         device=torch.device("cuda:0"),
     )
     wrap_calls: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        "vrl.trainers.strategy.init_training_process_group",
-        lambda _context: None,
-    )
+    monkeypatch.setattr(TrainerProcessGroup, "require", staticmethod(lambda _context: None))
     # Placement would move the toy roots onto a CUDA device this lane does not
     # have; the assertion is about the device index DDP receives, not the move.
     monkeypatch.setattr(DDPStrategy, "place_trainable_roots", lambda self, model: None)

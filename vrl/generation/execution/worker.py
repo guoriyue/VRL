@@ -5,17 +5,13 @@ from __future__ import annotations
 import os
 import traceback
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from torch.distributed import ProcessGroup
+from typing import Any
 
 from vrl.generation.execution.memory_parking import GenerationWorkerParking, executor_device
 from vrl.generation.execution.planner import EnginePlan
 from vrl.generation.execution.rank_group import (
+    EngineProcessGroup,
     RankGroupSpec,
-    destroy_rank_process_group,
-    init_rank_process_group,
 )
 from vrl.generation.execution.types import (
     BatchMemoryReading,
@@ -53,7 +49,7 @@ class GenerationWorkerCore:
         # None for single-rank engines. A spec makes this rank join its
         # engine's process group around the model lifetime (load -> release).
         self.rank_group_spec = rank_group
-        self._rank_process_group: ProcessGroup | None = None
+        self._rank_process_group: EngineProcessGroup | None = None
         self.launch_contract = launch_contract
         from vrl.models.families.registry import get_model_family_entry
 
@@ -88,7 +84,7 @@ class GenerationWorkerCore:
         host_memory.log(f"generation_worker:{self.worker_id}:before_load_policy")
         try:
             if self.rank_group_spec is not None:
-                self._rank_process_group = init_rank_process_group(self.rank_group_spec)
+                self._rank_process_group = EngineProcessGroup.open(self.rank_group_spec)
             self.executor = self._memory_parking.build(self._build_executor)
             if (
                 self.executor.family != self.family_entry.family
@@ -126,7 +122,7 @@ class GenerationWorkerCore:
         self._policy_version = self.launch_contract.policy_version
         self._uses_versioned_slots = False
         if self._rank_process_group is not None:
-            destroy_rank_process_group(self._rank_process_group)
+            self._rank_process_group.shutdown()
             self._rank_process_group = None
 
     def sleep(self) -> WorkerMemoryParkingSnapshot:

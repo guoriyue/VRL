@@ -31,11 +31,9 @@ from vrl.models.parking_disk_store import ParkingDiskStore
 from vrl.trainers.distributed import (
     ContextParallelPeerGroup,
     DistributedTrainingContext,
+    TrainerProcessGroup,
     TrainingCollectives,
-    cpu_coordination_group,
     create_context_parallel_peer_group,
-    init_training_process_group,
-    shutdown_training_process_group,
 )
 from vrl.trainers.weight_sync import require_trainable_modules
 
@@ -246,10 +244,11 @@ class TrainerParking:
 
 
 class _ProcessGroupStrategy:
-    """Shared behavior of strategies that own a torch process group.
+    """Shared behavior of strategies that run over a torch process group.
 
-    Keep DDP/FSDP process-group teardown identical. Communication operations
-    belong to the shared TrainingCollectives instance.
+    The process owns the group (``TrainerProcessGroup``); a strategy only
+    uses it. Communication operations belong to the shared TrainingCollectives
+    instance.
     """
 
     context: DistributedTrainingContext
@@ -259,15 +258,15 @@ class _ProcessGroupStrategy:
         import torch.distributed as dist
 
         states = [None] * self.context.world_size
-        group = cpu_coordination_group()
+        group = TrainerProcessGroup.cpu_group()
         if group is None:
             raise RuntimeError("checkpoint RNG gather requires the CPU coordination group")
         dist.all_gather_object(states, state, group=group)
         return states
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
+        # Nothing to release: the process group belongs to the process.
         del restore_parked
-        shutdown_training_process_group()
 
 
 class _UnshardedStateStrategy:
@@ -535,14 +534,11 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
         # Validate the trainable handles BEFORE touching the process group so a bad
         # model fails fast (mirrors DDPStrategy; the guard tests need no live PG).
         handles = _trainable_module_handles(model)
-        # Create the process group + bind this rank's cuda device up front, exactly
-        # like DDPStrategy. init_device_mesh would lazily auto-init a default group,
-        # but it would NOT bind the process's resolved rank-local CUDA device first,
-        # so the NCCL group and per-block fully_shard could bind the wrong card on a
-        # single-node multi-GPU box. Doing it here keeps the two strategies symmetric
-        # and the device choice explicit. No-op for single_process and when a group
-        # already exists (the CPU gloo test fixture pre-inits one).
-        init_training_process_group(self.context)
+        # The run opened a TrainerProcessGroup, which bound this rank's CUDA
+        # device before creating the NCCL group. Requiring it here keeps
+        # init_device_mesh from lazily auto-initializing a default group on the
+        # wrong card of a single-node multi-GPU box.
+        TrainerProcessGroup.require(self.context)
         mesh = self._ensure_mesh()
 
         # A rank that built the replay model without weights (``materialize_weights``
@@ -653,7 +649,7 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
             for name, tensor in (*handle.named_parameters(), *handle.named_buffers())
         ]
         payload = [names_and_dtypes if self.context.is_primary else None]
-        dist.broadcast_object_list(payload, src=0, group=cpu_coordination_group())
+        dist.broadcast_object_list(payload, src=0, group=TrainerProcessGroup.cpu_group())
         expected = dict(payload[0])
         local = dict(names_and_dtypes)
         if set(expected) != set(local):
@@ -690,7 +686,7 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
                 for buffer in wrapped.buffers():
                     buffer.data = buffer.data.to(self.context.device)
         load_full_state_dict(wrapped, source, strict=True)
-        group = cpu_coordination_group()
+        group = TrainerProcessGroup.cpu_group()
         for buffer in wrapped.buffers():
             staged = buffer.detach().to("cpu")
             dist.broadcast(staged, src=0, group=group)
@@ -909,10 +905,7 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
             raise failure
 
     def shutdown(self, *, restore_parked: bool = True) -> None:
-        try:
-            TrainerParking.shutdown(self, restore_parked=restore_parked)
-        finally:
-            super().shutdown(restore_parked=restore_parked)
+        TrainerParking.shutdown(self, restore_parked=restore_parked)
 
 
 class ContextParallelStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
@@ -963,12 +956,7 @@ class ContextParallelStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
             or float32_precision_state()["matmul"] != "ieee"
         ):
             raise ValueError("CP CUDA strategy requires strict deterministic IEEE compute")
-        init_training_process_group(self.context)
-        if (
-            dist.get_rank() != self.context.rank
-            or dist.get_world_size() != self.context.world_size
-        ):
-            raise ValueError("CP process group does not match training context")
+        TrainerProcessGroup.require(self.context)
         self.groups = create_context_parallel_groups(self.cp_size)
         for tensor in (*handle.parameters(), *handle.buffers()):
             dist.broadcast(tensor.detach(), src=0)
@@ -1074,7 +1062,7 @@ class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
         # model fails fast (and the guard tests need no live PG).
         handles = _trainable_module_handles(model)
         self.place_trainable_roots(model)
-        init_training_process_group(self.context)
+        TrainerProcessGroup.require(self.context)
         device_ids = None
         if self.context.device.type == "cuda":
             if self.context.device.index is None:

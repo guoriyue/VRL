@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import random
+from contextlib import ExitStack
 from datetime import timedelta
 
 import numpy as np
@@ -21,8 +22,7 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.distributed import (
     DistributedTrainingContext,
-    init_training_process_group,
-    shutdown_training_process_group,
+    TrainerProcessGroup,
 )
 from vrl.trainers.strategy import DDPStrategy
 
@@ -51,10 +51,12 @@ def _rng_rank(rank, rendezvous, output, backend="gloo", world_size=2):
         world_size=world_size,
         device=torch.device(f"cuda:{rank}" if backend == "nccl" else "cpu"),
     )
+    # This worker process owns its group, whichever way it creates it.
+    process = ExitStack()
     if backend == "nccl":
         os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ["MASTER_PORT"] = str(rendezvous)
-        init_training_process_group(context)
+        process.enter_context(TrainerProcessGroup.open(context))
     else:
         dist.init_process_group(
             "gloo",
@@ -63,6 +65,7 @@ def _rng_rank(rank, rendezvous, output, backend="gloo", world_size=2):
             world_size=world_size,
             timeout=timedelta(seconds=60),
         )
+        process.callback(dist.destroy_process_group)
     try:
         strategy = DDPStrategy(
             context,
@@ -105,7 +108,7 @@ def _rng_rank(rank, rendezvous, output, backend="gloo", world_size=2):
             torch.equal(left, right) for left, right in zip(expected[4], actual[4], strict=True)
         )
     finally:
-        shutdown_training_process_group()
+        process.close()
 
 
 def test_two_rank_rng_checkpoint_round_trip(tmp_path, monkeypatch):

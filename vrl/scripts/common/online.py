@@ -51,7 +51,11 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.data.prompt_sampler import PromptBatchSampler
 from vrl.trainers.data.prompts import load_prompt_examples_from_config
-from vrl.trainers.distributed import DistributedTrainingContext, run_on_primary_rank
+from vrl.trainers.distributed import (
+    DistributedTrainingContext,
+    TrainerProcessGroup,
+    run_on_primary_rank,
+)
 from vrl.trainers.metrics_io import OnlineMetricsCSV
 from vrl.trainers.online.config import OnlineBatchPlan
 from vrl.trainers.online.trainer import (
@@ -199,6 +203,7 @@ class _OnlineRecipeLifecycle:
 
     placement_owner: GlobalRayPlacementOwner
     strategy: Strategy
+    process_group: TrainerProcessGroup | None = None
     ray_session: _RayClusterSession | None = None
     reward_runtime: RewardRuntime | None = None
     collector: RolloutCollector | None = None
@@ -243,15 +248,18 @@ class _OnlineRecipeLifecycle:
         await self._shutdown_one("placement_owner", self.placement_owner)
 
         # A failed role cleanup leaves shared-GPU ownership unknown. The
-        # strategy must still destroy process groups, but it may not restore a
-        # parked trainer into memory whose release was not proven.
+        # strategy may not restore a parked trainer into memory whose release
+        # was not proven.
         await self._shutdown_one(
             "strategy",
             self.strategy,
             call_kwargs={"restore_parked": pipeline_released},
         )
-        # Ray is last: actor and placement cleanup above still need its client.
+        # Ray follows: actor and placement cleanup above still need its client.
         await self._shutdown_one("ray_session", self.ray_session)
+        # The process group is last: every role above may still coordinate
+        # over it while it shuts down.
+        await self._shutdown_one("process_group", self.process_group)
         self._closed = True
 
         if not self._shutdown_errors:
@@ -893,6 +901,9 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     )
     run_error: BaseException | None = None
     try:
+        # Preflight is over: this process owns its training process group from
+        # here until the lifecycle shuts it down after every other role.
+        lifecycle.process_group = TrainerProcessGroup.open(training_context)
         lifecycle.ray_session = _RayClusterSession.connect(
             ray,
             cross_node=resources.cross_node,

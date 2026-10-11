@@ -19,6 +19,7 @@ import json
 import os
 import random
 import time
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
@@ -63,7 +64,7 @@ from vrl.trainers.checkpointing import (
     save_training_checkpoint,
 )
 from vrl.trainers.core.types import EMAConfig, OptimConfig
-from vrl.trainers.distributed import DistributedTrainingContext, init_training_process_group
+from vrl.trainers.distributed import DistributedTrainingContext, TrainerProcessGroup
 from vrl.trainers.online.config import OnlineBatchPlan, TrainerConfig
 from vrl.trainers.online.trainer import OnlineTrainer
 from vrl.trainers.strategy import ContextParallelStrategy
@@ -273,6 +274,8 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
             asyncio.run(trainer.rollout_schedule.shutdown())
         strategy.shutdown()
         monkeypatch.undo()
+        # This worker process created the group, so it destroys it.
+        dist.destroy_process_group()
 
 
 class _PromptCollectionShell:
@@ -465,10 +468,12 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
     device = torch.device("cuda", rank) if cuda else torch.device("cpu")
     rollout_device = torch.device("cuda", 2) if cuda and rank == 0 else torch.device("cpu")
     context = DistributedTrainingContext("context_parallel", rank, 2, device, cp_size=2)
+    # This worker process owns its group, whichever way it creates it.
+    process = ExitStack()
     if cuda:
         os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ["MASTER_PORT"] = str(rendezvous)
-        init_training_process_group(context)
+        process.enter_context(TrainerProcessGroup.open(context))
     else:
         dist.init_process_group(
             "gloo",
@@ -477,6 +482,7 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
             world_size=2,
             timeout=timedelta(seconds=120),
         )
+        process.callback(dist.destroy_process_group)
     strategy = ContextParallelStrategy(context)
     trainer = None
     try:
@@ -718,9 +724,12 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
                 + "\n"
             )
     finally:
-        if trainer is not None:
-            asyncio.run(trainer.rollout_schedule.shutdown())
-        strategy.shutdown()
+        try:
+            if trainer is not None:
+                asyncio.run(trainer.rollout_schedule.shutdown())
+            strategy.shutdown()
+        finally:
+            process.close()
 
 
 def test_native_cosmos_cp_online_step(tmp_path):

@@ -14,11 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vrl.generation.execution.rank_group import (
-    RankGroupSpec,
-    destroy_rank_process_group,
-    init_rank_process_group,
-)
+from vrl.generation.execution.rank_group import EngineProcessGroup, RankGroupSpec
 
 
 def _free_port() -> int:
@@ -39,8 +35,8 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
             group_world_size=world,
             backend="gloo",
         )
-        process_group = init_rank_process_group(spec)
-        assert process_group is dist.group.WORLD
+        process_group = EngineProcessGroup.open(spec)
+        assert process_group.world is dist.group.WORLD
         try:
             # gloo lacks all_to_all (an nccl primitive); all_gather moves the
             # same bytes, and the CPU numeric tests for sequence parallelism
@@ -80,7 +76,7 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
                 dist.all_gather(peer_outputs, output)
                 assert all(torch.equal(output, peer) for peer in peer_outputs)
         finally:
-            destroy_rank_process_group(process_group)
+            process_group.shutdown()
             assert not dist.is_initialized()
         queue.put((rank, received))
     except BaseException as error:  # pragma: no cover - transported to parent

@@ -30,7 +30,7 @@ from tests.trainers._strategy_policies import (
 )
 from vrl.config.schema import FSDPConfig, RootConfig, parse_config
 from vrl.models.interfaces.runtime import register_checkpoint_owned_state
-from vrl.trainers.distributed import DistributedTrainingContext, init_training_process_group
+from vrl.trainers.distributed import DistributedTrainingContext, TrainerProcessGroup
 from vrl.trainers.fsdp import (
     apply_fsdp,
     build_fsdp_mesh,
@@ -802,33 +802,39 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
     assert any(isinstance(parameter, DTensor) for parameter in bundle.model.parameters())
 
 
-def test_fsdp_prepare_model_initializes_process_group(cpu_process_group, monkeypatch) -> None:
-    """prepare_model explicitly owns PG init + device bind, symmetric with DDP.
+def test_fsdp_prepare_model_requires_the_process_group(cpu_process_group, monkeypatch) -> None:
+    """prepare_model checks the process's group up front, symmetric with DDP.
 
-    init_device_mesh would lazily auto-init a default group, but it would NOT call
-    torch.cuda.set_device(context.device) first, so the NCCL group and per-block
-    fully_shard could bind the wrong card on a single-node multi-GPU box.
-    FSDPStrategy.prepare_model therefore calls init_training_process_group up front.
-    Spy on it to lock the wiring in (the gloo PG already exists here, so the real
-    init is a no-op — we assert the call on the CPU context).
+    init_device_mesh would lazily auto-init a default group without binding the
+    rank-local CUDA device first, so the NCCL group and per-block fully_shard
+    could bind the wrong card on a single-node multi-GPU box. The strategy never
+    creates the group; it requires the one the process owns.
     """
 
-    import vrl.trainers.strategy as strategy_mod
-
     calls: list[tuple] = []
-    real = strategy_mod.init_training_process_group
+    real = TrainerProcessGroup.require
 
     def _spy(context):
         calls.append((context.strategy, context.device.type))
         return real(context)
 
-    monkeypatch.setattr(strategy_mod, "init_training_process_group", _spy)
+    monkeypatch.setattr(TrainerProcessGroup, "require", staticmethod(_spy))
 
     policy = FakePolicy(ToyTransformer())
     _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
 
-    # The backend follows the context device: a CPU context forms a gloo group.
     assert calls == [("fsdp", "cpu")]
+
+
+def test_fsdp_prepare_model_without_a_process_group_is_refused(monkeypatch) -> None:
+    import torch.distributed as dist
+
+    monkeypatch.setattr(dist, "is_initialized", lambda: False)
+
+    with pytest.raises(RuntimeError, match="open TrainerProcessGroup"):
+        _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(
+            FakePolicy(ToyTransformer())
+        )
 
 
 def test_process_group_binds_resolved_device_after_per_rank_mask(monkeypatch) -> None:
@@ -847,8 +853,9 @@ def test_process_group_binds_resolved_device_after_per_rank_mask(monkeypatch) ->
     monkeypatch.setattr(dist, "is_initialized", lambda: False)
     monkeypatch.setattr(torch.cuda, "set_device", bound_devices.append)
     monkeypatch.setattr(dist, "init_process_group", lambda **kwargs: init_calls.append(kwargs))
+    monkeypatch.setattr(dist, "new_group", lambda **kwargs: None)
 
-    init_training_process_group(context)
+    TrainerProcessGroup.open(context).shutdown()
 
     assert bound_devices == [torch.device("cuda:0")]
     assert init_calls == [{"backend": "nccl", "rank": 3, "world_size": 4}]
@@ -1000,37 +1007,34 @@ def test_fsdp_shutdown_consumes_parked_state_before_group_cleanup(
     state = TrainingMemoryState(Model(2, 2), None, None, None, None, torch.device("cpu"))
     strategy.park_training_state(state)
     calls.clear()
-    monkeypatch.setattr(
-        "vrl.trainers.strategy.shutdown_training_process_group", lambda: calls.append("group")
-    )
 
     strategy.shutdown(restore_parked=restore_parked)
     strategy.restore_training_state(state)
 
-    assert calls == (["move", "group"] if restore_parked else ["group"])
+    assert calls == (["move"] if restore_parked else [])
     assert strategy._parking is None
 
 
-def test_fsdp_shutdown_cleans_process_group_when_restore_fails(monkeypatch) -> None:
+def test_fsdp_shutdown_leaves_the_process_group_to_the_process(monkeypatch) -> None:
+    import torch.distributed as dist
+
     from vrl.models.parking import TrainingMemoryState
 
     strategy = _fsdp_strategy(_cpu_fsdp_context())
     state = TrainingMemoryState(nn.Linear(2, 2), None, None, None, None, torch.device("cpu"))
     strategy.park_training_state(state)
-    calls = []
+    destroyed = []
     failure = RuntimeError("restore failed")
 
     def fail_restore(_state):
         raise failure
 
     monkeypatch.setattr(strategy, "restore_training_state", fail_restore)
-    monkeypatch.setattr(
-        "vrl.trainers.strategy.shutdown_training_process_group", lambda: calls.append("group")
-    )
+    monkeypatch.setattr(dist, "destroy_process_group", lambda *a, **k: destroyed.append(a))
     with pytest.raises(RuntimeError) as caught:
         strategy.shutdown()
     assert caught.value is failure
-    assert calls == ["group"]
+    assert destroyed == []
 
 
 def test_build_strategy_fsdp_rejects_train_compile() -> None:

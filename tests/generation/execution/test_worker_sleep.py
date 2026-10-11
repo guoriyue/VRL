@@ -1365,14 +1365,12 @@ def test_failed_cold_load_does_not_enter_rank_rng_collective(monkeypatch):
     core = _core(None)
     core.rank_group_spec = RankGroupSpec("127.0.0.1", 29500, 0, 2, backend="gloo")
     calls = []
-    group_handle = object()
+    group_handle = SimpleNamespace()
+    group_handle.shutdown = lambda: calls.append("destroy")
     monkeypatch.setattr(
-        worker_module,
-        "init_rank_process_group",
+        worker_module.EngineProcessGroup,
+        "open",
         lambda spec: (calls.append("init"), group_handle)[1],
-    )
-    monkeypatch.setattr(
-        worker_module, "destroy_rank_process_group", lambda group: calls.append("destroy")
     )
     monkeypatch.setattr(core, "_synchronize_rank_rng", lambda: calls.append("rng"))
     monkeypatch.setattr(core._memory_parking, "release_scope", contextlib.nullcontext)
@@ -1390,22 +1388,18 @@ def test_failed_cold_load_does_not_enter_rank_rng_collective(monkeypatch):
 def test_worker_retains_group_handle_until_release_succeeds(monkeypatch):
     from unittest.mock import Mock
 
-    import vrl.generation.execution.worker as worker_module
-
     core = _core(None)
-    group_handle = object()
+    group_handle = Mock()
+    group_handle.shutdown.side_effect = [RuntimeError("release failed"), None]
     core._rank_process_group = group_handle
-    destroy = Mock(side_effect=[RuntimeError("release failed"), None])
-    monkeypatch.setattr(worker_module, "destroy_rank_process_group", destroy)
     monkeypatch.setattr(core._memory_parking, "release_scope", contextlib.nullcontext)
 
     with pytest.raises(RuntimeError, match="release failed"):
         core.release_policy()
     assert core._rank_process_group is group_handle
-    destroy.assert_called_once_with(group_handle)
+    group_handle.shutdown.assert_called_once_with()
 
     core.release_policy()
     assert core._rank_process_group is None
     core.release_policy()
-    assert destroy.call_count == 2
-    destroy.assert_called_with(group_handle)
+    assert group_handle.shutdown.call_count == 2

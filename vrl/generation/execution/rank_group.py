@@ -3,21 +3,17 @@
 The ranks of one engine cooperate through torch.distributed collectives
 (sequence-parallel attention exchanges activations, weight installs broadcast
 per rank). This module owns the rendezvous spec that crosses the Ray launch
-boundary and the init/destroy pair the rank program calls around its model
-lifetime. A single-rank engine carries no spec and never touches
-torch.distributed. Multi-rank workers initialize the group before model build
-and destroy it when unloading the policy.
+boundary and the engine's ``EngineProcessGroup``, which the rank program opens
+before model build and shuts down when unloading the policy. A single-rank
+engine carries no spec and never touches torch.distributed.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from torch.distributed import ProcessGroup
-
+from vrl.utils.process_group import DefaultProcessGroup
 from vrl.utils.validation import require_int
 
 logger = logging.getLogger(__name__)
@@ -59,51 +55,34 @@ class RankGroupSpec:
             raise ValueError(f"unsupported rank group backend: {self.backend!r}")
 
 
-def init_rank_process_group(spec: RankGroupSpec) -> ProcessGroup:
-    """Initialize and return this engine's default process-group handle.
+class EngineProcessGroup(DefaultProcessGroup):
+    """The process group of one multi-GPU generation engine's ranks.
 
-    Called by the rank program before model build so collectives are available
-    for the whole model lifetime. Double init means two owners disagree about
-    the engine lifecycle — fail loud instead of silently reusing the group.
+    The rank program owns it for one policy load: opened before model build
+    so collectives are available for the whole model lifetime, shut down
+    when the policy is unloaded.
     """
 
-    import torch.distributed as dist
-
-    if dist.is_initialized():
-        raise RuntimeError(
-            "rank process group already initialized; the engine lifecycle owns "
-            "exactly one init/destroy pair per policy load",
+    @classmethod
+    def open(cls, spec: RankGroupSpec) -> EngineProcessGroup:
+        owner = cls._create(
+            backend=spec.backend,
+            init_method=f"tcp://{spec.master_addr}:{spec.master_port}",
+            rank=spec.group_rank,
+            world_size=spec.group_world_size,
         )
-    dist.init_process_group(
-        backend=spec.backend,
-        init_method=f"tcp://{spec.master_addr}:{spec.master_port}",
-        rank=spec.group_rank,
-        world_size=spec.group_world_size,
-    )
-    logger.info(
-        "rank process group up: backend=%s rank=%d/%d rendezvous=%s:%d",
-        spec.backend,
-        spec.group_rank,
-        spec.group_world_size,
-        spec.master_addr,
-        spec.master_port,
-    )
-
-    process_group = dist.group.WORLD
-    assert process_group is not None
-    return process_group
-
-
-def destroy_rank_process_group(process_group: ProcessGroup) -> None:
-    """Release the saved group handle, including subgroups when it is WORLD."""
-
-    import torch.distributed as dist
-
-    dist.destroy_process_group(process_group)
+        logger.info(
+            "rank process group up: backend=%s rank=%d/%d rendezvous=%s:%d",
+            spec.backend,
+            spec.group_rank,
+            spec.group_world_size,
+            spec.master_addr,
+            spec.master_port,
+        )
+        return owner
 
 
 __all__ = [
+    "EngineProcessGroup",
     "RankGroupSpec",
-    "destroy_rank_process_group",
-    "init_rank_process_group",
 ]
