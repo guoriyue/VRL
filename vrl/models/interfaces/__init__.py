@@ -7,7 +7,6 @@ from vrl.models.interfaces.generation_memory import (
 from vrl.models.interfaces.replay import (
     ReplayModel,
     ReplayRequest,
-    ReplayRequestContract,
     ReplayResult,
     ReplaySegmentResult,
     RuntimeModel,
@@ -27,7 +26,6 @@ __all__ = [
     "ModelBuild",
     "ReplayModel",
     "ReplayRequest",
-    "ReplayRequestContract",
     "ReplayResult",
     "ReplaySegmentResult",
     "RolloutBuildOptions",

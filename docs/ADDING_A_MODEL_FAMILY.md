@@ -43,28 +43,39 @@ builders that only forward constants to `vrl.models.steps.denoise.build`.
 
 ## 2. Implement the denoise model contract
 
-The rollout model normally subclasses `DiffusionModelBase` or
-`DiffusersPipelineModelBase` and implements these generation methods:
+A family has two classes. The model class is what the trainer replays. It
+subclasses `DiffusersModelBase` (or `DenoiseModelBase` when the family has no
+diffusers transformer) and holds the transformer, the scheduler and the
+per-step math:
+
+- `forward_step`: run one trainable transformer step without stepping the
+  scheduler.
+- `restore_eval_state`: rebuild the private state from trajectory tensors for
+  replay.
+
+The sampling class subclasses the pipeline base and the model class, as in
+`class MyPipelineModel(DiffusersPipelineModelBase, MyModel)` (or
+`DenoisePipelineModelBase` when the family has no diffusers pipeline), and adds
+what only sampling needs:
 
 - `from_build`: load the generation pipeline and freeze generation-only modules.
 - `encode_prompt`: return the conditioning tensors used by the family.
 - `prepare_sampling`: return a private state containing at least `latents`,
   `timesteps`, and `scheduler`.
-- `forward_step`: run one trainable transformer step without stepping the
-  scheduler.
 - `decode_latents`: decode final latents to an image or video tensor.
-- `export_batch_context`, `export_replay_tensors`, and `restore_eval_state`:
-  project private rollout state into the shared trajectory contract and rebuild
-  it for replay.
+- `export_batch_context` and `export_replay_tensors`: project private rollout
+  state into the shared trajectory contract that `restore_eval_state` reads
+  back.
 
-The trainer replay model should load only the trainable transformer and scheduler,
-not prompt encoders, a VAE, or the full pipeline. `SD3_5ReplayModel` shows the
-usual pattern: reuse the rollout model's math while replacing generation-only
-ownership with a minimal constructor.
+The replay builder constructs the model class from the transformer and
+scheduler alone; `SD3_5Model` and `SD3_5PipelineModel` show the usual pair.
+Replay therefore never loads prompt encoders, a VAE or the pipeline, and
+never inherits a sampling member it would have to switch off.
 
-`DiffusionModelBase.replay_forward` rebuilds the recorded denoise state and calls
+`DenoiseModelBase.replay_forward` rebuilds the recorded denoise state and calls
 the current transformer. This replay path is the RL correctness boundary: its
 distribution must match rollout-time sampling so `old_log_prob` remains valid.
+Sampling and replay run the same `forward_step`, inherited from the model class.
 Do not add algorithm code for a model family.
 
 ## 3. Register a descriptor-driven full-sequence denoise family
@@ -77,8 +88,8 @@ _register_model_family(
         family="my_model",
         task="t2i",
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.my_model.model:MyModel",
-            replay_cls="vrl.models.families.my_model.model:MyReplayModel",
+            model_cls="vrl.models.families.my_model.model:MyPipelineModel",
+            replay_cls="vrl.models.families.my_model.model:MyModel",
             transformer_classname="MyTransformer2DModel",
         ),
     ),

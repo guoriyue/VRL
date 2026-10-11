@@ -60,7 +60,7 @@ class TinySanaPipeline:
 
     Everything the shared loader and the eval scripts touch is genuine -- a
     ``SanaTransformer2DModel``, an ``AutoencoderKL``, a frozen text-encoder
-    module, the official DPM-Solver++ scheduler -- so ``SanaModel.from_build``,
+    module, the official DPM-Solver++ scheduler -- so ``SanaPipelineModel.from_build``,
     the rollout bundle, checkpoint save/restore and the local identity hash all
     run for real. Only ``__call__`` (diffusers' denoising loop, which needs the
     Gemma encoder) is a double: it records the call and paints a solid image

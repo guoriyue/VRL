@@ -25,8 +25,8 @@ from tests.models.steps.denoise.registry import (
     architectures_with_tiny_pipeline,
     load_tiny_pipeline,
 )
-from vrl.models.families.sd3_5.model import SD3_5Model, SD3SamplingState
-from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel, WanT2VSamplingState
+from vrl.models.families.sd3_5.model import SD3_5PipelineModel, SD3SamplingState
+from vrl.models.families.wan_2_1.model import WanT2VPipelineModel, WanT2VSamplingState
 
 
 @pytest.mark.parametrize("arch", architectures_with_tiny_pipeline())
@@ -56,7 +56,7 @@ def test_wan_wrapper_runs_on_real_loaded_pipeline() -> None:
 
     # The production wrapper must accept a genuinely-loaded pipeline and step it.
     tf = pipe.transformer
-    model = WanT2VDiffusersModel(
+    model = WanT2VPipelineModel(
         pipeline=SimpleNamespace(transformer=tf, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
@@ -89,7 +89,7 @@ def test_sd3_wrapper_runs_on_real_loaded_pipeline() -> None:
         pytest.skip(str(exc))
 
     tf = pipe.transformer
-    model = SD3_5Model(
+    model = SD3_5PipelineModel(
         pipeline=SimpleNamespace(transformer=tf, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )

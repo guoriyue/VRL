@@ -5,6 +5,12 @@ flow is:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
+``WanT2VPipelineModel`` and ``WanI2VPipelineModel`` run that flow.
+``WanT2VModel`` and ``WanI2VModel`` — the expert transformers, their scheduler
+and ``forward_step`` — are what replay runs; the pipeline classes add the text
+and image encoders, latent preparation, VAE decode and the offload lifecycle on
+top of them.
+
 The collector owns the scheduler step / SDE step. ``forward_step`` does only
 one transformer forward (with optional batched CFG concat) and returns noise
 predictions.
@@ -46,10 +52,9 @@ from vrl.models.families.wan_2_1.config import (
 from vrl.models.interfaces.runtime import ModelBuild, PipelineOffloadMode
 from vrl.models.peft_adapter import temporarily_disable_lora
 from vrl.models.steps.denoise import (
-    DenoiseModelBase,
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
     GuidedDenoiseSamplingStateBase,
-    ReplayRolloutStubs,
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
@@ -83,7 +88,7 @@ class WanT2VSamplingState(GuidedDenoiseSamplingStateBase):
     boundary_ratio: float | None = None
     num_train_timesteps: int | None = None
     # Host copy of ``timesteps``, filled on first expert routing; see
-    # ``WanT2VDiffusersModel._transformer_for_step``.
+    # ``WanT2VPipelineModel._transformer_for_step``.
     host_timesteps: torch.Tensor | None = field(default=None, init=False, repr=False)
 
 
@@ -100,19 +105,18 @@ class WanI2VSamplingState(GuidedDenoiseSamplingStateBase):
     boundary_ratio: float | None = None
     num_train_timesteps: int | None = None
     # Host copy of ``timesteps``, filled on first expert routing; see
-    # ``WanT2VDiffusersModel._transformer_for_step``.
+    # ``WanT2VPipelineModel._transformer_for_step``.
     host_timesteps: torch.Tensor | None = field(default=None, init=False, repr=False)
 
 
-class WanT2VDiffusersModel(
-    DiffusersPipelineModelBase,
-    DenoiseBackboneRunnerBase,
-):
-    """Diffusers-backed Wan 2.1 T2V model (1.3B variant).
+class WanT2VModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+    """Wan T2V transformers, scheduler and per-step math: the model replay runs.
 
     Implements the backbone-runner protocol itself (batched CFG over the T5
-    text embeds); the I2V subclass overrides ``build_branch`` with its
-    channel-wise conditioning concat.
+    text embeds); the I2V model overrides ``build_branch`` with its
+    channel-wise conditioning concat. A Wan 2.2 dual-stage checkpoint carries
+    a second expert, ``transformer_2``, which ``forward_step`` routes to by
+    timestep against ``boundary_ratio``.
     """
 
     cfg_mode = "batched_cfg"
@@ -136,24 +140,49 @@ class WanT2VDiffusersModel(
     def __init__(
         self,
         *,
-        pipeline: Any,
+        transformer: Any,
+        scheduler: Any,
         device: Any = None,
+        transformer_2: Any = None,
+        boundary_ratio: float | None = None,
         trainable_transformers: tuple[WanTransformerName, ...] | None = None,
-        expert_lifecycle_profiling: bool = False,
     ) -> None:
-        super().__init__(pipeline=pipeline, device=device)
-        self._pipeline_offload: PipelineOffloadMode | _PipelineOffloadFailure = (
-            PipelineOffloadMode.NONE
-        )
-        self.transformer_2 = getattr(pipeline, "transformer_2", None)
+        super().__init__(transformer=transformer, scheduler=scheduler, device=device)
+        self.transformer_2 = transformer_2
         self._init_wan_state(
-            boundary_ratio=normalize_wan_boundary_ratio(
-                _config_value(getattr(pipeline, "config", None), "boundary_ratio"),
-                field_name="pipeline boundary_ratio",
-            ),
+            boundary_ratio=boundary_ratio,
             trainable_transformers=trainable_transformers,
-            expert_lifecycle_profiling=expert_lifecycle_profiling,
+            expert_lifecycle_profiling=False,
         )
+
+    def prepare_replay(self, build: ModelBuild) -> None:
+        """Finish the multi-transformer replay setup with the build in hand.
+
+        The generic replay loader constructs only the primary transformer +
+        scheduler; Wan2.2 dual-stage checkpoints carry a second transformer
+        whose presence is decided by the canonical build topology. Late-load it
+        here and apply the already-normalized policy ownership.
+        """
+        boundary_ratio, trainable_transformers = wan_topology_from_build(build)
+        if boundary_ratio is not None and self.transformer_2 is None:
+            from vrl.models.loader import load_diffusers_transformer
+
+            self.transformer_2 = load_diffusers_transformer(
+                build,
+                "WanTransformer3DModel",
+                subfolder="transformer_2",
+            )
+        self._boundary_ratio = boundary_ratio
+        self._trainable_transformer_names = trainable_transformers
+        self._expert_lifecycle_profiling = bool(
+            (build.model_config or {}).get("expert_lifecycle_profiling", False),
+        )
+        for module in self._wan_transformers().values():
+            module.requires_grad_(False)
+
+    def _set_transformer_2(self, transformer: Any) -> None:
+        """The second expert's writer; the pipeline class also syncs the pipeline's handle."""
+        self.transformer_2 = transformer
 
     def _init_wan_state(
         self,
@@ -164,10 +193,10 @@ class WanT2VDiffusersModel(
     ) -> None:
         """The Wan-owned state every constructor must establish.
 
-        The pipeline-backed and the replay-only constructors set up different
-        module roots, but the expert topology and profiling
-        state are the same object graph; one initializer keeps a field added
-        here from being missed by the other constructor.
+        The model's constructor and the pipeline class's set up different
+        module roots, but the expert topology and profiling state are the same
+        object graph; one initializer keeps a field added here from being
+        missed by the other constructor.
 
         ``trainable_transformers`` is the canonical tuple from
         ``wan_topology_from_build``; None selects the topology default.
@@ -184,102 +213,15 @@ class WanT2VDiffusersModel(
         for module in self._wan_transformers().values():
             module.requires_grad_(False)
 
-    def _set_transformer_2(self, transformer: Any) -> None:
-        self.transformer_2 = transformer
-        self.pipeline.transformer_2 = transformer
-
     @property
     def boundary_ratio(self) -> float | None:
         return self._boundary_ratio
-
-    # -- backend ownership (called by runtime, not by collectors) -------
-
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> WanT2VDiffusersModel:
-        """Load the diffusers WanPipeline + freeze non-trainable modules."""
-        _, trainable_transformers = wan_topology_from_build(build)
-        from diffusers import WanPipeline
-
-        eager_module_dtypes = {
-            "vae": torch.float32,
-            "text_encoder": build.parameter_dtype,
-        }
-        pipeline = WanPipeline.from_pretrained(
-            build.model_name_or_path,
-            torch_dtype={"default": build.parameter_dtype, **eager_module_dtypes},
-            **build.pretrained_kwargs,
-        )
-        pipeline.vae.requires_grad_(False)
-        pipeline.text_encoder.requires_grad_(False)
-        offload_mode = build.require_rollout().pipeline_offload_mode
-        _stage_eager_wan_modules(
-            pipeline,
-            build,
-            offload_mode=offload_mode,
-            eager_module_dtypes=eager_module_dtypes,
-        )
-        return cls(
-            pipeline=pipeline,
-            device=build.device,
-            trainable_transformers=trainable_transformers,
-            expert_lifecycle_profiling=bool(
-                (build.model_config or {}).get("expert_lifecycle_profiling", False),
-            ),
-        )
 
     def _wan_transformers(self) -> dict[str, Any]:
         modules = {"transformer": self.transformer}
         if self.transformer_2 is not None:
             modules["transformer_2"] = self.transformer_2
         return modules
-
-    def apply_full_finetune(self, build: ModelBuild) -> None:
-        for module in self.trainable_modules.values():
-            module.requires_grad_(True)
-            if build.rollout is None:
-                # Replay: FSDP normalizes storage dtype right before sharding.
-                # Touching the full parameter set here defeats block-wise
-                # construction.
-                continue
-            # Rollout: normalize the CPU storage now so trainer payloads and
-            # rollout parameters share one exact dtype. The builder places the
-            # module afterwards (or Accelerate's hooks own residency).
-            module.to(dtype=build.parameter_dtype)
-
-    @property
-    def uses_pipeline_cpu_offload(self) -> bool:
-        """Whether this model is configured for Accelerate-owned residency."""
-
-        return self._pipeline_offload is not PipelineOffloadMode.NONE
-
-    @property
-    def pipeline_cpu_offload_healthy(self) -> bool:
-        """Whether configured pipeline hooks are installed and reusable."""
-
-        return self._pipeline_offload is not _PipelineOffloadFailure.BROKEN
-
-    def apply_generation_offload(self, build: ModelBuild) -> None:
-        """Install pipeline offload hooks after LoRA has changed the module tree."""
-
-        mode = build.rollout.pipeline_offload_mode
-        state = self._pipeline_offload
-        if state is _PipelineOffloadFailure.BROKEN:
-            raise RuntimeError("Wan pipeline CPU offload is not reusable")
-        loaded_mode = state.value
-        if state is not PipelineOffloadMode.NONE and mode is not state:
-            raise RuntimeError(
-                "Wan pipeline offload mode changed during rollout construction: "
-                f"loaded={loaded_mode!r}, final={mode!r}",
-            )
-        if mode is PipelineOffloadMode.NONE:
-            return
-        if state is mode:
-            return
-        # Initial installation is transactional too. A partial hook graph must
-        # never be published as a reusable rollout model.
-        self._pipeline_offload = _PipelineOffloadFailure.BROKEN
-        self._enable_pipeline_offload(mode)
-        self._pipeline_offload = mode
 
     @property
     def policy_cores(self) -> dict[str, Any]:
@@ -294,10 +236,11 @@ class WanT2VDiffusersModel(
         return self._wan_transformers()
 
     def set_module_root(self, name: str, module: Any) -> None:
-        """Route a replaced expert back to both the attribute and the pipeline.
+        """Route a replaced expert to its writer.
 
         One override serves every caller: rollout compile walks all experts,
-        FSDP/DDP walks only the trained ones, and both land here.
+        FSDP/DDP walks only the trained ones, and both land here. The pipeline
+        class's writers also update the pipeline's handles.
         """
 
         self._set_wan_transformer(name, module)
@@ -314,126 +257,20 @@ class WanT2VDiffusersModel(
                 stack.enter_context(temporarily_disable_lora(module))
             yield
 
+    def apply_full_finetune(self, build: ModelBuild) -> None:
+        """Mark every trained expert trainable and leave the storage dtype alone.
+
+        FSDP normalizes the dtype right before sharding; touching the full
+        parameter set here would defeat its block-wise construction.
+        """
+        del build
+        for module in self.trainable_modules.values():
+            module.requires_grad_(True)
+
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
-        validated = self._validate_wan_trainable_state(state_dict)
-        if not self.uses_pipeline_cpu_offload:
-            return self._load_validated_wan_trainable_state(validated)
-
-        return self._with_pipeline_cpu_offload_suspended(
-            lambda: self._load_validated_wan_trainable_state(validated),
-            operation="trainable weight sync",
+        return self._load_validated_wan_trainable_state(
+            self._validate_wan_trainable_state(state_dict),
         )
-
-    def reset_pipeline_cpu_offload(self) -> None:
-        """Return every component to CPU and reinstall fresh streaming hooks.
-
-        Accelerate post-forward hooks do not run when a module forward raises,
-        and model-level offload deliberately leaves the final component on the
-        execution device. Cycling Diffusers' public hook API is the common
-        phase-parking and error-recovery boundary for both cases.
-        """
-
-        if not self.uses_pipeline_cpu_offload:
-            return
-        self._with_pipeline_cpu_offload_suspended(
-            lambda: None,
-            operation="pipeline residency reset",
-        )
-
-    def _with_pipeline_cpu_offload_suspended(
-        self,
-        operation_fn: Callable[[], Any],
-        *,
-        operation: str,
-    ) -> Any:
-        """Run one CPU-resident operation and transactionally re-arm hooks."""
-
-        if not self.pipeline_cpu_offload_healthy:
-            raise RuntimeError(
-                "Wan pipeline CPU offload is not reusable: its hook lifecycle "
-                "is incomplete or previously failed",
-            )
-
-        if not self.uses_pipeline_cpu_offload:
-            return operation_fn()
-        state = self._pipeline_offload
-        # Publish the transition before touching hooks. Partial removal, hook
-        # reinstall, or weight mutation must leave one terminal state.
-        self._pipeline_offload = _PipelineOffloadFailure.BROKEN
-
-        try:
-            self._disable_pipeline_offload(operation=operation)
-        except BaseException as remove_error:
-            raise RuntimeError(
-                f"Wan pipeline CPU offload hook removal failed during {operation}; "
-                "the rollout model is no longer reusable",
-            ) from remove_error
-
-        result: Any = None
-        operation_error: BaseException | None = None
-        try:
-            result = operation_fn()
-        except BaseException as error:
-            operation_error = error
-
-        try:
-            self._enable_pipeline_offload(state)
-        except BaseException as reinstall_error:
-            detail = f"Wan pipeline CPU offload hook reinstall failed during {operation}"
-            if operation_error is not None:
-                detail += f" after operation failure {operation_error!r}"
-            raise RuntimeError(
-                f"{detail}; the rollout model is no longer reusable",
-            ) from reinstall_error
-
-        if operation_error is not None:
-            # A state-dict copy can fail after mutating an arbitrary prefix. Fresh
-            # hooks make teardown safe, but they cannot make partially updated
-            # policy weights valid. Never publish this model as reusable.
-            raise RuntimeError(
-                f"Wan {operation} failed after pipeline hooks were removed; "
-                "the rollout model may contain partial state and is no longer reusable",
-            ) from operation_error
-
-        self._pipeline_offload = state
-        return result
-
-    def _enable_pipeline_offload(self, mode: PipelineOffloadMode) -> None:
-        """Install residency hooks after adapters and wrappers are final."""
-
-        # Diffusers exposes two mutually exclusive accelerate hooks here:
-        # sequential streams per layer and is the 32 GB Wan I2V escape hatch; model
-        # offload stages full modules and only works when the transformer fits.
-        gpu_id = getattr(self.device, "index", None) or 0
-        if mode is PipelineOffloadMode.SEQUENTIAL:
-            self.pipeline.enable_sequential_cpu_offload(gpu_id=gpu_id)
-            return
-        if mode is PipelineOffloadMode.MODEL:
-            self.pipeline.enable_model_cpu_offload(gpu_id=gpu_id)
-
-    def _disable_pipeline_offload(self, *, operation: str) -> None:
-        """Strip the residency hooks ``_enable_pipeline_offload`` installed.
-
-        The model's own transformer roots may be PEFT wrapped; their Accelerate
-        hooks are detached child-first before the pipeline's own cleanup runs.
-        """
-
-        remove_hooks = getattr(self.pipeline, "remove_all_hooks", None)
-        if not callable(remove_hooks):
-            raise RuntimeError(
-                f"Wan pipeline CPU offload requires pipeline.remove_all_hooks() for {operation}",
-            )
-        from accelerate.hooks import remove_hook_from_module
-
-        # PEFT delegates attributes to its child, so Accelerate's hasattr
-        # traversal can detach a child's hook against the wrong owner. Remove
-        # explicitly owned hooks child-first before pipeline cleanup.
-        for owned in self._wan_transformers().values():
-            if isinstance(owned, torch.nn.Module):
-                for module in reversed(list(owned.modules())):
-                    if "_hf_hook" in vars(module) or "_old_forward" in vars(module):
-                        remove_hook_from_module(module, recurse=False)
-        remove_hooks()
 
     def _load_validated_wan_trainable_state(
         self,
@@ -615,6 +452,276 @@ class WanT2VDiffusersModel(
         logger.info("WAN_EXPERT_LIFECYCLE %s", json.dumps(record, sort_keys=True))
         self._last_expert_name = expert_name
 
+    # -- forward_step --------------------------------------------------
+
+    def _backbone_extra(self, state: Any, dtype: torch.dtype) -> dict[str, Any]:
+        """Extra transformer inputs beyond latents, timestep and prompts; none for T2V."""
+
+        del state, dtype
+        return {}
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> WanT2VSamplingState:
+        """Rebuild SamplingState for the eval forward path from a batch slice."""
+        ts = replay_tensors["timesteps"]
+        # Pack as [1, B] so forward_step's state.timesteps[0] returns [B].
+        timesteps = pack_eval_timestep(ts, step_idx)
+        return WanT2VSamplingState(
+            latents=latents,
+            timesteps=timesteps,
+            scheduler=None,
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"]
+            and _uses_cfg(
+                batch_context["guidance_scale"],
+                batch_context.get("guidance_scale_2"),
+            ),
+            guidance_scale_2=batch_context.get("guidance_scale_2"),
+            boundary_ratio=batch_context.get("boundary_ratio"),
+            num_train_timesteps=_scheduler_num_train_timesteps(self.scheduler),
+        )
+
+
+class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
+    """Wan T2V plus the diffusers pipeline that sampling needs.
+
+    The pipeline brings prompt encoding, latent preparation, VAE encode and
+    decode, and the Accelerate CPU-offload lifecycle; this class also
+    exports the trajectory tensors replay reads back.
+    """
+
+    def __init__(
+        self,
+        *,
+        pipeline: Any,
+        device: Any = None,
+        trainable_transformers: tuple[WanTransformerName, ...] | None = None,
+        expert_lifecycle_profiling: bool = False,
+    ) -> None:
+        super().__init__(pipeline=pipeline, device=device)
+        self._pipeline_offload: PipelineOffloadMode | _PipelineOffloadFailure = (
+            PipelineOffloadMode.NONE
+        )
+        self.transformer_2 = getattr(pipeline, "transformer_2", None)
+        self._init_wan_state(
+            boundary_ratio=normalize_wan_boundary_ratio(
+                _config_value(getattr(pipeline, "config", None), "boundary_ratio"),
+                field_name="pipeline boundary_ratio",
+            ),
+            trainable_transformers=trainable_transformers,
+            expert_lifecycle_profiling=expert_lifecycle_profiling,
+        )
+
+    def _set_transformer_2(self, transformer: Any) -> None:
+        self.transformer_2 = transformer
+        self.pipeline.transformer_2 = transformer
+
+    # -- backend ownership (called by runtime, not by collectors) -------
+
+    @classmethod
+    def from_build(cls, build: ModelBuild) -> WanT2VPipelineModel:
+        """Load the diffusers WanPipeline + freeze non-trainable modules."""
+        _, trainable_transformers = wan_topology_from_build(build)
+        from diffusers import WanPipeline
+
+        eager_module_dtypes = {
+            "vae": torch.float32,
+            "text_encoder": build.parameter_dtype,
+        }
+        pipeline = WanPipeline.from_pretrained(
+            build.model_name_or_path,
+            torch_dtype={"default": build.parameter_dtype, **eager_module_dtypes},
+            **build.pretrained_kwargs,
+        )
+        pipeline.vae.requires_grad_(False)
+        pipeline.text_encoder.requires_grad_(False)
+        offload_mode = build.require_rollout().pipeline_offload_mode
+        _stage_eager_wan_modules(
+            pipeline,
+            build,
+            offload_mode=offload_mode,
+            eager_module_dtypes=eager_module_dtypes,
+        )
+        return cls(
+            pipeline=pipeline,
+            device=build.device,
+            trainable_transformers=trainable_transformers,
+            expert_lifecycle_profiling=bool(
+                (build.model_config or {}).get("expert_lifecycle_profiling", False),
+            ),
+        )
+
+    def apply_full_finetune(self, build: ModelBuild) -> None:
+        # Normalize the CPU storage now so trainer payloads and rollout
+        # parameters share one exact dtype. The builder places the module
+        # afterwards (or Accelerate's hooks own residency).
+        super().apply_full_finetune(build)
+        for module in self.trainable_modules.values():
+            module.to(dtype=build.parameter_dtype)
+
+    @property
+    def uses_pipeline_cpu_offload(self) -> bool:
+        """Whether this model is configured for Accelerate-owned residency."""
+
+        return self._pipeline_offload is not PipelineOffloadMode.NONE
+
+    @property
+    def pipeline_cpu_offload_healthy(self) -> bool:
+        """Whether configured pipeline hooks are installed and reusable."""
+
+        return self._pipeline_offload is not _PipelineOffloadFailure.BROKEN
+
+    def apply_generation_offload(self, build: ModelBuild) -> None:
+        """Install pipeline offload hooks after LoRA has changed the module tree."""
+
+        mode = build.rollout.pipeline_offload_mode
+        state = self._pipeline_offload
+        if state is _PipelineOffloadFailure.BROKEN:
+            raise RuntimeError("Wan pipeline CPU offload is not reusable")
+        loaded_mode = state.value
+        if state is not PipelineOffloadMode.NONE and mode is not state:
+            raise RuntimeError(
+                "Wan pipeline offload mode changed during rollout construction: "
+                f"loaded={loaded_mode!r}, final={mode!r}",
+            )
+        if mode is PipelineOffloadMode.NONE:
+            return
+        if state is mode:
+            return
+        # Initial installation is transactional too. A partial hook graph must
+        # never be published as a reusable rollout model.
+        self._pipeline_offload = _PipelineOffloadFailure.BROKEN
+        self._enable_pipeline_offload(mode)
+        self._pipeline_offload = mode
+
+    def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
+        validated = self._validate_wan_trainable_state(state_dict)
+        if not self.uses_pipeline_cpu_offload:
+            return self._load_validated_wan_trainable_state(validated)
+
+        return self._with_pipeline_cpu_offload_suspended(
+            lambda: self._load_validated_wan_trainable_state(validated),
+            operation="trainable weight sync",
+        )
+
+    def reset_pipeline_cpu_offload(self) -> None:
+        """Return every component to CPU and reinstall fresh streaming hooks.
+
+        Accelerate post-forward hooks do not run when a module forward raises,
+        and model-level offload deliberately leaves the final component on the
+        execution device. Cycling Diffusers' public hook API is the common
+        phase-parking and error-recovery boundary for both cases.
+        """
+
+        if not self.uses_pipeline_cpu_offload:
+            return
+        self._with_pipeline_cpu_offload_suspended(
+            lambda: None,
+            operation="pipeline residency reset",
+        )
+
+    def _with_pipeline_cpu_offload_suspended(
+        self,
+        operation_fn: Callable[[], Any],
+        *,
+        operation: str,
+    ) -> Any:
+        """Run one CPU-resident operation and transactionally re-arm hooks."""
+
+        if not self.pipeline_cpu_offload_healthy:
+            raise RuntimeError(
+                "Wan pipeline CPU offload is not reusable: its hook lifecycle "
+                "is incomplete or previously failed",
+            )
+
+        if not self.uses_pipeline_cpu_offload:
+            return operation_fn()
+        state = self._pipeline_offload
+        # Publish the transition before touching hooks. Partial removal, hook
+        # reinstall, or weight mutation must leave one terminal state.
+        self._pipeline_offload = _PipelineOffloadFailure.BROKEN
+
+        try:
+            self._disable_pipeline_offload(operation=operation)
+        except BaseException as remove_error:
+            raise RuntimeError(
+                f"Wan pipeline CPU offload hook removal failed during {operation}; "
+                "the rollout model is no longer reusable",
+            ) from remove_error
+
+        result: Any = None
+        operation_error: BaseException | None = None
+        try:
+            result = operation_fn()
+        except BaseException as error:
+            operation_error = error
+
+        try:
+            self._enable_pipeline_offload(state)
+        except BaseException as reinstall_error:
+            detail = f"Wan pipeline CPU offload hook reinstall failed during {operation}"
+            if operation_error is not None:
+                detail += f" after operation failure {operation_error!r}"
+            raise RuntimeError(
+                f"{detail}; the rollout model is no longer reusable",
+            ) from reinstall_error
+
+        if operation_error is not None:
+            # A state-dict copy can fail after mutating an arbitrary prefix. Fresh
+            # hooks make teardown safe, but they cannot make partially updated
+            # policy weights valid. Never publish this model as reusable.
+            raise RuntimeError(
+                f"Wan {operation} failed after pipeline hooks were removed; "
+                "the rollout model may contain partial state and is no longer reusable",
+            ) from operation_error
+
+        self._pipeline_offload = state
+        return result
+
+    def _enable_pipeline_offload(self, mode: PipelineOffloadMode) -> None:
+        """Install residency hooks after adapters and wrappers are final."""
+
+        # Diffusers exposes two mutually exclusive accelerate hooks here:
+        # sequential streams per layer and is the 32 GB Wan I2V escape hatch; model
+        # offload stages full modules and only works when the transformer fits.
+        gpu_id = getattr(self.device, "index", None) or 0
+        if mode is PipelineOffloadMode.SEQUENTIAL:
+            self.pipeline.enable_sequential_cpu_offload(gpu_id=gpu_id)
+            return
+        if mode is PipelineOffloadMode.MODEL:
+            self.pipeline.enable_model_cpu_offload(gpu_id=gpu_id)
+
+    def _disable_pipeline_offload(self, *, operation: str) -> None:
+        """Strip the residency hooks ``_enable_pipeline_offload`` installed.
+
+        The model's own transformer roots may be PEFT wrapped; their Accelerate
+        hooks are detached child-first before the pipeline's own cleanup runs.
+        """
+
+        remove_hooks = getattr(self.pipeline, "remove_all_hooks", None)
+        if not callable(remove_hooks):
+            raise RuntimeError(
+                f"Wan pipeline CPU offload requires pipeline.remove_all_hooks() for {operation}",
+            )
+        from accelerate.hooks import remove_hook_from_module
+
+        # PEFT delegates attributes to its child, so Accelerate's hasattr
+        # traversal can detach a child's hook against the wrong owner. Remove
+        # explicitly owned hooks child-first before pipeline cleanup.
+        for owned in self._wan_transformers().values():
+            if isinstance(owned, torch.nn.Module):
+                for module in reversed(list(owned.modules())):
+                    if "_hf_hook" in vars(module) or "_old_forward" in vars(module):
+                        remove_hook_from_module(module, recurse=False)
+        remove_hooks()
+
     # -- encode_prompt -------------------------------------------------
 
     def encode_prompt(
@@ -712,14 +819,6 @@ class WanT2VDiffusersModel(
             num_train_timesteps=_scheduler_num_train_timesteps(scheduler),
         )
 
-    # -- forward_step --------------------------------------------------
-
-    def _backbone_extra(self, state: Any, dtype: torch.dtype) -> dict[str, Any]:
-        """Extra transformer inputs beyond latents, timestep and prompts; none for T2V."""
-
-        del state, dtype
-        return {}
-
     # -- collector boundary --------------------------------------------
 
     def export_batch_context(self, state: WanT2VSamplingState) -> dict[str, Any]:
@@ -738,34 +837,6 @@ class WanT2VDiffusersModel(
             "negative_prompt_embeds": state.negative_prompt_embeds,
             "latents_clean": state.latents.detach(),
         }
-
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> WanT2VSamplingState:
-        """Rebuild SamplingState for the eval forward path from a batch slice."""
-        ts = replay_tensors["timesteps"]
-        # Pack as [1, B] so forward_step's state.timesteps[0] returns [B].
-        timesteps = pack_eval_timestep(ts, step_idx)
-        return WanT2VSamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=None,
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"]
-            and _uses_cfg(
-                batch_context["guidance_scale"],
-                batch_context.get("guidance_scale_2"),
-            ),
-            guidance_scale_2=batch_context.get("guidance_scale_2"),
-            boundary_ratio=batch_context.get("boundary_ratio"),
-            num_train_timesteps=_scheduler_num_train_timesteps(self.scheduler),
-        )
 
     # -- decode_latents ------------------------------------------------
 
@@ -835,86 +906,8 @@ class WanT2VDiffusersModel(
         return decoder(latents)
 
 
-class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
-    """Replay-only Wan model that owns no text encoder, VAE, or pipeline."""
-
-    @property
-    def uses_pipeline_cpu_offload(self) -> bool:
-        """Replay has no pipeline residency lifecycle."""
-        return False
-
-    @property
-    def pipeline_cpu_offload_healthy(self) -> bool:
-        """No generation hooks exist or need recovery on replay."""
-        return True
-
-    def __init__(
-        self,
-        *,
-        transformer: Any,
-        scheduler: Any,
-        device: Any = None,
-        transformer_2: Any = None,
-        boundary_ratio: float | None = None,
-        trainable_transformers: tuple[WanTransformerName, ...] | None = None,
-    ) -> None:
-        DenoiseModelBase.__init__(self)
-        self.transformer = transformer
-        self.transformer_2 = transformer_2
-        self._scheduler = scheduler
-        self._device = device
-        self._init_wan_state(
-            boundary_ratio=boundary_ratio,
-            trainable_transformers=trainable_transformers,
-            expert_lifecycle_profiling=False,
-        )
-
-    def prepare_replay(self, build: ModelBuild) -> None:
-        """Finish the multi-transformer replay setup with the build in hand.
-
-        The generic replay loader constructs only the primary transformer +
-        scheduler; Wan2.2 dual-stage checkpoints carry a second transformer
-        whose presence is decided by the canonical build topology. Late-load it
-        here and apply the already-normalized policy ownership.
-        """
-        boundary_ratio, trainable_transformers = wan_topology_from_build(build)
-        if boundary_ratio is not None and self.transformer_2 is None:
-            from vrl.models.loader import load_diffusers_transformer
-
-            self.transformer_2 = load_diffusers_transformer(
-                build,
-                "WanTransformer3DModel",
-                subfolder="transformer_2",
-            )
-        self._boundary_ratio = boundary_ratio
-        self._trainable_transformer_names = trainable_transformers
-        self._expert_lifecycle_profiling = bool(
-            (build.model_config or {}).get("expert_lifecycle_profiling", False),
-        )
-        for module in self._wan_transformers().values():
-            module.requires_grad_(False)
-
-    @property
-    def pipeline(self) -> Any:
-        raise RuntimeError("WanT2VReplayModel does not own a diffusers pipeline")
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
-
-    def _set_transformer_2(self, transformer: Any) -> None:
-        self.transformer_2 = transformer
-
-    @property
-    def scheduler(self) -> Any:
-        return self._scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return None
-
-
-class WanI2VDiffusersModel(WanT2VDiffusersModel):
-    """Diffusers-backed Wan 2.1 I2V model (14B 480P variant)."""
+class WanI2VModel(WanT2VModel):
+    """Wan I2V per-step math: the channel-wise image conditioning and CLIP image embeds."""
 
     def build_branch(
         self,
@@ -968,8 +961,55 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             extra_kwargs=extra_kwargs,
         )
 
+    def _backbone_extra(self, state: WanI2VSamplingState, dtype: torch.dtype) -> dict[str, Any]:
+        """I2V conditions the transformer on the first-frame latent and image embeds."""
+
+        return {
+            "condition": state.condition.to(dtype),
+            "image_embeds": None if state.image_embeds is None else state.image_embeds.to(dtype),
+        }
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> WanI2VSamplingState:
+        """Rebuild SamplingState for the eval forward path from a batch slice."""
+        ts = replay_tensors["timesteps"]
+        timesteps = pack_eval_timestep(ts, step_idx)
+        return WanI2VSamplingState(
+            latents=latents,
+            timesteps=timesteps,
+            scheduler=None,
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
+            image_embeds=replay_tensors.get("image_embeds"),
+            condition=replay_tensors["condition"],
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"]
+            and _uses_cfg(
+                batch_context["guidance_scale"],
+                batch_context.get("guidance_scale_2"),
+            ),
+            guidance_scale_2=batch_context.get("guidance_scale_2"),
+            boundary_ratio=batch_context.get("boundary_ratio"),
+            num_train_timesteps=_scheduler_num_train_timesteps(self.scheduler),
+        )
+
+
+class WanI2VPipelineModel(WanT2VPipelineModel, WanI2VModel):
+    """Wan I2V plus the diffusers pipeline: image encoding, conditioning latents, export.
+
+    The I2V math (``build_branch`` / ``_backbone_extra`` / ``restore_eval_state``)
+    comes from ``WanI2VModel`` and the pipeline plumbing (constructor, offload
+    lifecycle, second-expert sync) from ``WanT2VPipelineModel``. Neither base
+    defines the other's members, so their order does not change what resolves.
+    """
+
     @classmethod
-    def from_build(cls, build: ModelBuild) -> WanI2VDiffusersModel:
+    def from_build(cls, build: ModelBuild) -> WanI2VPipelineModel:
         """Load WanImageToVideoPipeline + freeze generation-only modules."""
         _, trainable_transformers = wan_topology_from_build(build)
         from diffusers import WanImageToVideoPipeline
@@ -1127,14 +1167,6 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             num_train_timesteps=_scheduler_num_train_timesteps(scheduler),
         )
 
-    def _backbone_extra(self, state: WanI2VSamplingState, dtype: torch.dtype) -> dict[str, Any]:
-        """I2V conditions the transformer on the first-frame latent and image embeds."""
-
-        return {
-            "condition": state.condition.to(dtype),
-            "image_embeds": None if state.image_embeds is None else state.image_embeds.to(dtype),
-        }
-
     def export_batch_context(self, state: WanI2VSamplingState) -> dict[str, Any]:
         """Project SamplingState -> RolloutBatch.context (shared metadata)."""
         return {
@@ -1155,35 +1187,6 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             "latents_clean": state.latents.detach(),
         }
 
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> WanI2VSamplingState:
-        """Rebuild SamplingState for the eval forward path from a batch slice."""
-        ts = replay_tensors["timesteps"]
-        timesteps = pack_eval_timestep(ts, step_idx)
-        return WanI2VSamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=None,
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
-            image_embeds=replay_tensors.get("image_embeds"),
-            condition=replay_tensors["condition"],
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"]
-            and _uses_cfg(
-                batch_context["guidance_scale"],
-                batch_context.get("guidance_scale_2"),
-            ),
-            guidance_scale_2=batch_context.get("guidance_scale_2"),
-            boundary_ratio=batch_context.get("boundary_ratio"),
-            num_train_timesteps=_scheduler_num_train_timesteps(self.scheduler),
-        )
-
     def _encode_image_embeds(self, reference_image: Any) -> torch.Tensor | None:
         # Only a transformer whose config carries ``image_dim`` consumes image
         # embeds; a PEFT wrapper keeps that config on its base model.
@@ -1202,19 +1205,6 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         with torch.no_grad():
             image_embeds = self.pipeline.encode_image(reference_image, self.device)
         return image_embeds.to(self.transformer.dtype)
-
-
-class WanI2VReplayModel(WanT2VReplayModel, WanI2VDiffusersModel):
-    """Replay-only Wan I2V model that owns no text, image, VAE, or pipeline modules.
-
-    Base order is the whole design: ``WanT2VReplayModel`` (first) supplies the
-    replay plumbing -- constructor, dual-stage ``prepare_replay``, the
-    pipeline-less ``pipeline`` / ``scheduler`` / ``_set_transformer`` -- and
-    ``WanI2VDiffusersModel`` (second) supplies the I2V forward math
-    (``forward_step`` / ``restore_eval_state`` / ``export_replay_tensors``),
-    which the C3 order puts ahead of the T2V versions. Pinned in
-    tests/models/steps/denoise/test_family_mro.py.
-    """
 
 
 def _stage_eager_wan_modules(
@@ -1279,10 +1269,10 @@ def _config_value(config: Any, name: str, default: Any = None) -> Any:
 
 
 __all__ = [
-    "WanI2VDiffusersModel",
-    "WanI2VReplayModel",
+    "WanI2VModel",
+    "WanI2VPipelineModel",
     "WanI2VSamplingState",
-    "WanT2VDiffusersModel",
-    "WanT2VReplayModel",
+    "WanT2VModel",
+    "WanT2VPipelineModel",
     "WanT2VSamplingState",
 ]

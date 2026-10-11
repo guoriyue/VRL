@@ -36,11 +36,11 @@ def build_cosmos3_replay_runtime_bundle(
     """Cosmos3 replay loads real weights on every rank; no skeleton path yet."""
 
     del materialize_weights
-    from vrl.models.families.cosmos.cosmos3.model import Cosmos3ReplayModel
+    from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
     from vrl.models.steps.denoise.build import assemble_replay_bundle
 
     logger.info("Building cosmos3 replay runtime bundle from %s", build.model_name_or_path)
-    return assemble_replay_bundle(Cosmos3ReplayModel.from_build(build), build)
+    return assemble_replay_bundle(Cosmos3Model.from_build(build), build)
 
 
 class Cosmos3BatchExecutor(DenoiseBatchExecutorBase):

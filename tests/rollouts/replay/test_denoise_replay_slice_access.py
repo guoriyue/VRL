@@ -152,18 +152,9 @@ class _ReplayModel(DenoiseModelBase):
     family = "test"
     device = torch.device("cpu")
 
-    def encode_prompt(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        raise NotImplementedError
-
-    def prepare_sampling(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError
-
     def forward_step(self, state: Any, step_idx: int) -> dict[str, torch.Tensor]:
         del step_idx
         return {"noise_pred": torch.zeros_like(state.latents)}
-
-    def decode_latents(self, latents: Any) -> Any:
-        return latents
 
     def export_batch_context(self, state: Any) -> dict[str, Any]:
         return {}

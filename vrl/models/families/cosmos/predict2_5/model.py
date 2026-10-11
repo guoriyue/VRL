@@ -17,8 +17,8 @@ from vrl.models.families.cosmos import (
 )
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
@@ -111,8 +111,89 @@ class CosmosPredict25SamplingState(GuidedDenoiseSamplingStateBase):
     fps: int
 
 
-class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
-    """Cosmos-Predict2.5 PredictBase model behind the shared denoise runtime."""
+class CosmosPredict25Model(CosmosReplayForward, DiffusersModelBase):
+    """Cosmos-Predict2.5 PredictBase transformer, scheduler and per-step math: the model replay runs."""
+
+    def forward_step(
+        self,
+        state: CosmosPredict25SamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        transformer_dtype = state.prompt_embeds.dtype
+        state.scheduler.sigmas = state.scheduler.sigmas.to(state.latents.device)
+        # Slice the step's sigma on the device: a host round trip here would
+        # synchronise the stream once per denoise step for a value that is
+        # only ever consumed on the device.
+        sigma_t = (
+            state.scheduler.sigmas[step_idx]
+            .detach()
+            .to(torch.float32)
+            .reshape(1)
+            .to(device=state.latents.device, dtype=transformer_dtype)
+        )
+        output = DenoiseBackboneCaller(
+            self.transformer,
+            CosmosPredict25DenoiseBackboneRunner(sigma=sigma_t),
+        )(
+            DenoiseBackboneInput(
+                hidden_states=state.latents,
+                timestep=sigma_t,
+                prompt_embeds=state.prompt_embeds,
+                negative_prompt_embeds=state.negative_prompt_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=transformer_dtype,
+                extra={
+                    "cond_latent": state.cond_latent,
+                    "cond_mask": state.cond_mask,
+                    "cond_indicator": state.cond_indicator,
+                    "padding_mask": state.padding_mask,
+                    "transformer_dtype": transformer_dtype,
+                },
+            ),
+        )
+        return output.as_dict()
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> CosmosPredict25SamplingState:
+        del step_idx
+        cond_latent = torch.zeros_like(latents)
+        return CosmosPredict25SamplingState(
+            latents=latents,
+            timesteps=self.scheduler.timesteps,
+            scheduler=self.scheduler,
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
+            cond_latent=cond_latent,
+            cond_mask=replay_tensor(replay_tensors, batch_context, "cond_mask"),
+            cond_indicator=replay_tensor(replay_tensors, batch_context, "cond_indicator"),
+            padding_mask=shared_replay_tensor(
+                replay_tensors,
+                batch_context,
+                "padding_mask",
+            ),
+            height=batch_context["height"],
+            width=batch_context["width"],
+            num_frames=batch_context["num_frames"],
+            fps=batch_context["fps"],
+        )
+
+
+class CosmosPredict25PipelineModel(DiffusersPipelineModelBase, CosmosPredict25Model):
+    """Cosmos-Predict2.5 plus the diffusers pipeline that sampling needs.
+
+    The pipeline brings prompt encoding (or synthetic prompt embeds when the
+    text encoder is skipped), conditioning-video encoding, latent
+    preparation and video VAE decode; this class also exports the
+    trajectory tensors replay reads back.
+    """
 
     def __init__(
         self,
@@ -125,7 +206,7 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         self.synthetic_prompt_embeds = bool(synthetic_prompt_embeds)
 
     @classmethod
-    def from_build(cls, build: ModelBuild) -> CosmosPredict25Model:
+    def from_build(cls, build: ModelBuild) -> CosmosPredict25PipelineModel:
         import diffusers.pipelines.cosmos.pipeline_cosmos2_5_predict as _predict_mod
         from diffusers import Cosmos2_5_PredictBasePipeline
 
@@ -305,46 +386,6 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             fps=request.fps or 16,
         )
 
-    def forward_step(
-        self,
-        state: CosmosPredict25SamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        transformer_dtype = state.prompt_embeds.dtype
-        state.scheduler.sigmas = state.scheduler.sigmas.to(state.latents.device)
-        # Slice the step's sigma on the device: a host round trip here would
-        # synchronise the stream once per denoise step for a value that is
-        # only ever consumed on the device.
-        sigma_t = (
-            state.scheduler.sigmas[step_idx]
-            .detach()
-            .to(torch.float32)
-            .reshape(1)
-            .to(device=state.latents.device, dtype=transformer_dtype)
-        )
-        output = DenoiseBackboneCaller(
-            self.transformer,
-            CosmosPredict25DenoiseBackboneRunner(sigma=sigma_t),
-        )(
-            DenoiseBackboneInput(
-                hidden_states=state.latents,
-                timestep=sigma_t,
-                prompt_embeds=state.prompt_embeds,
-                negative_prompt_embeds=state.negative_prompt_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=transformer_dtype,
-                extra={
-                    "cond_latent": state.cond_latent,
-                    "cond_mask": state.cond_mask,
-                    "cond_indicator": state.cond_indicator,
-                    "padding_mask": state.padding_mask,
-                    "transformer_dtype": transformer_dtype,
-                },
-            ),
-        )
-        return output.as_dict()
-
     def export_batch_context(self, state: CosmosPredict25SamplingState) -> dict[str, Any]:
         return {
             "guidance_scale": state.guidance_scale,
@@ -372,37 +413,6 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
                 state.padding_mask, state.latents.shape[0], materialize=True
             ),
         }
-
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> CosmosPredict25SamplingState:
-        del step_idx
-        cond_latent = torch.zeros_like(latents)
-        return CosmosPredict25SamplingState(
-            latents=latents,
-            timesteps=self.scheduler.timesteps,
-            scheduler=self.scheduler,
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
-            cond_latent=cond_latent,
-            cond_mask=replay_tensor(replay_tensors, batch_context, "cond_mask"),
-            cond_indicator=replay_tensor(replay_tensors, batch_context, "cond_indicator"),
-            padding_mask=shared_replay_tensor(
-                replay_tensors,
-                batch_context,
-                "padding_mask",
-            ),
-            height=batch_context["height"],
-            width=batch_context["width"],
-            num_frames=batch_context["num_frames"],
-            fps=batch_context["fps"],
-        )
 
     def encode_video_to_latents(self, video: torch.Tensor) -> torch.Tensor:
         """Encode clean [0, 1] video into this checkpoint's latent domain.
@@ -451,34 +461,8 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         return decoder(latents)
 
 
-class CosmosPredict25ReplayModel(DiffusersReplayModelBase, CosmosPredict25Model):
-    """Replay-only Cosmos Predict2.5 model without text encoder, VAE, or pipeline."""
-
-    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
-        DiffusersReplayModelBase.__init__(
-            self,
-            transformer=transformer,
-            scheduler=scheduler,
-            device=device,
-        )
-        self.synthetic_prompt_embeds = False
-
-    # apply_lora is inherited from DenoiseModelBase: it walks
-    # trainable_modules, which this replay model owns directly (no pipeline).
-    # torch_compile_transformer is inherited from DenoiseModelBase: it calls
-    # self._set_transformer, which the replay base owns.
-
-    # set_num_steps is inherited from DiffusersPipelineModelBase: it reads
-    # self.scheduler (overridden below to this replay model's own scheduler)
-    # and UniPC has no dynamic shifting, so the base body is exact.
-
-    # restore_eval_state is inherited from CosmosPredict25Model: it reads
-    # ``self.scheduler``, which this replay model overrides to return its own
-    # ``self._scheduler`` (the parent's property resolves to pipeline.scheduler).
-
-
 __all__ = [
     "CosmosPredict25Model",
-    "CosmosPredict25ReplayModel",
+    "CosmosPredict25PipelineModel",
     "CosmosPredict25SamplingState",
 ]

@@ -22,7 +22,7 @@ from types import SimpleNamespace
 import pytest
 from torch import nn
 
-from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
+from vrl.models.families.wan_2_1.model import WanT2VPipelineModel
 from vrl.nn.optimization import QuantizationPass
 from vrl.nn.quantization import QuantizedLinear
 
@@ -60,10 +60,10 @@ class _TinyExpert(nn.Module):
         self.ffn.net = nn.Linear(1024, 1024, bias=False)
 
 
-def _dual_stage_model() -> WanT2VDiffusersModel:
+def _dual_stage_model() -> WanT2VPipelineModel:
     """A Wan model with both experts present (boundary_ratio makes it dual-stage)."""
 
-    return WanT2VDiffusersModel(
+    return WanT2VPipelineModel(
         pipeline=SimpleNamespace(
             transformer=_TinyExpert(),
             transformer_2=_TinyExpert(),
@@ -117,7 +117,7 @@ def test_wan_policy_cores_declares_both_experts() -> None:
 def test_wan_single_expert_model_still_quantizes() -> None:
     """A t2v-1.3B checkpoint has no transformer_2; the walk must not require one."""
 
-    model = WanT2VDiffusersModel(
+    model = WanT2VPipelineModel(
         pipeline=SimpleNamespace(
             transformer=_TinyExpert(),
             config={},

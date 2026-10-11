@@ -40,8 +40,8 @@ from vrl.generation.types import DenoiseRequest
 from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.utils.logging import init_logger, kv
@@ -77,16 +77,213 @@ class Cosmos3SamplingState(GuidedDenoiseSamplingStateBase):
     uncond_input_ids: list[int] = field(default_factory=list)
 
 
-class Cosmos3Model(CosmosReplayForward, DiffusersPipelineModelBase):
-    """Cosmos3 Omni T2V generator wrapped for the vrl diffusion RL seam."""
+class Cosmos3Model(CosmosReplayForward, DiffusersModelBase):
+    """Cosmos3 Omni vision-generation transformer, scheduler and per-step math: the model replay runs.
+
+    Replay rebuilds the packed conditioning with the upstream segment
+    builders and needs only the VAE's temporal compression factor, never the
+    VAE weights or a tokenizer: the trajectory already holds token ids and
+    latents.
+    """
+
+    def __init__(
+        self,
+        *,
+        transformer: Any,
+        scheduler: Any,
+        vae_scale_factor_temporal: int,
+        device: Any = None,
+    ) -> None:
+        super().__init__(transformer=transformer, scheduler=scheduler, device=device)
+        self._vae_scale_factor_temporal = vae_scale_factor_temporal
+
+    @property
+    def vae_scale_factor_temporal(self) -> int:
+        return self._vae_scale_factor_temporal
+
+    @classmethod
+    def from_build(cls, build: ModelBuild) -> Cosmos3Model:
+        from diffusers import AutoencoderKLWan
+
+        from vrl.models.loader import load_diffusers_scheduler, load_diffusers_transformer
+
+        build.require_replay()
+        # Packing needs only the temporal compression factor, never VAE weights
+        # or a tokenizer: the trajectory already contains token IDs and latents.
+        vae_config = AutoencoderKLWan.load_config(
+            build.model_name_or_path, subfolder="vae", **build.pretrained_kwargs
+        )
+        transformer = load_diffusers_transformer(build, "Cosmos3OmniTransformer")
+        transformer.to(build.device, dtype=build.parameter_dtype)
+        return cls(
+            transformer=transformer,
+            scheduler=load_diffusers_scheduler(build, "UniPCMultistepScheduler"),
+            vae_scale_factor_temporal=vae_config["scale_factor_temporal"],
+            device=build.device,
+        )
+
+    # ---- the per-step transformer call -> flow velocity ----
+    def forward_step(
+        self,
+        state: Cosmos3SamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        from diffusers import Cosmos3OmniPipeline
+
+        device = state.latents.device
+        dtype = self.transformer.dtype
+        timestep = float(state.timesteps[step_idx].item())
+        vision_tokens = state.latents.to(device=device, dtype=dtype)
+        vision_timesteps = torch.full(
+            (state.num_noisy_vision_tokens,),
+            timestep,
+            device=device,
+        )
+
+        def _run(pack: dict[str, Any]) -> torch.Tensor:
+            preds_vision, _sound, _action = self.transformer(
+                input_ids=pack["input_ids"],
+                text_indexes=pack["text_indexes"],
+                position_ids=pack["position_ids"],
+                und_len=pack["und_len"],
+                sequence_length=pack["sequence_length"],
+                vision_tokens=[vision_tokens],
+                vision_token_shapes=pack["vision_token_shapes"],
+                vision_sequence_indexes=pack["vision_sequence_indexes"],
+                vision_mse_loss_indexes=pack["vision_mse_loss_indexes"],
+                vision_timesteps=vision_timesteps,
+                vision_noisy_frame_indexes=pack["vision_noisy_frame_indexes"],
+                # diffusers 0.40 wraps the three lists in Cosmos3OmniTransformerOutput by default.
+                return_dict=False,
+            )
+            velocity, _s, _a = Cosmos3OmniPipeline._mask_velocity_predictions(
+                preds_vision,
+                None,
+                [state.vision_condition_mask],
+            )
+            return velocity
+
+        cond = _run(state.cond_packed_static)
+        if state.do_cfg:
+            uncond = _run(state.uncond_packed_static)
+            combined = uncond + state.guidance_scale * (cond - uncond)
+        else:
+            uncond = torch.zeros_like(cond)
+            combined = cond
+        # RAW flow velocity -> sde_step_with_logprob (UniPC sigmas in [0,1]).
+        return {
+            "noise_pred": combined.to(torch.float32),
+            "noise_pred_cond": cond,
+            "noise_pred_uncond": uncond,
+        }
+
+    @staticmethod
+    def _unpack_single_token_sequence(value: Any, *, name: str) -> list[int]:
+        """Unwrap one ragged replay row at Cosmos3's enforced batch-one boundary."""
+
+        if not isinstance(value, (list, tuple)) or len(value) != 1:
+            raise ValueError(f"Cosmos3 replay {name} must contain exactly one sample row")
+        row = value[0]
+        if not isinstance(row, (list, tuple)):
+            raise TypeError(f"Cosmos3 replay {name} row must be a token-id sequence")
+        return [
+            require_int(token_id, path=f"Cosmos3 replay {name}[{index}]", minimum=0)
+            for index, token_id in enumerate(row)
+        ]
+
+    @staticmethod
+    def _build_packed_conditioning(text: dict[str, Any], vision: dict[str, Any]) -> dict[str, Any]:
+        """Merge text+vision segments into the transformer-facing packed_static, MINUS
+        the step-varying ``vision_tokens`` / ``vision_timesteps`` (spliced per step).
+        Mirrors the inline assembly in ``Cosmos3OmniPipeline.__call__``."""
+        position_ids = torch.cat([text["text_mrope_ids"], vision["vision_mrope_ids"]], dim=1)
+        return {
+            **text,
+            **vision,
+            "position_ids": position_ids,
+            "sequence_length": text["und_len"] + vision["num_vision_tokens"],
+        }
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> Cosmos3SamplingState:
+        del step_idx  # cosmos indexes sigmas[step_idx] live in forward_step
+        from diffusers import Cosmos3OmniPipeline
+
+        device = self.device
+        fps = int(batch_context.get("fps", _DEFAULT_FPS))
+        vision_condition_mask = replay_tensors["vision_condition_mask"]
+        cond_input_ids = self._unpack_single_token_sequence(
+            replay_tensors["cond_input_ids"],
+            name="cond_input_ids",
+        )
+        uncond_input_ids = self._unpack_single_token_sequence(
+            replay_tensors["uncond_input_ids"],
+            name="uncond_input_ids",
+        )
+        cond_text = Cosmos3OmniPipeline._prepare_text_segment(self, cond_input_ids, device)
+        uncond_text = Cosmos3OmniPipeline._prepare_text_segment(self, uncond_input_ids, device)
+        mrope_offset = cond_text["vision_start_temporal_offset"]
+        cond_idx = torch.nonzero(vision_condition_mask[:, 0, 0] > 0, as_tuple=False).flatten()
+        has_img = bool(cond_idx.numel() > 0)
+        cond_frames = [int(i) for i in cond_idx.tolist()] or None
+        cond_vision = Cosmos3OmniPipeline._prepare_vision_segment(
+            self,
+            latents,
+            has_img,
+            mrope_offset,
+            float(fps),
+            curr=cond_text["und_len"],
+            device=device,
+            condition_frame_indexes=cond_frames,
+        )
+        uncond_vision = Cosmos3OmniPipeline._prepare_vision_segment(
+            self,
+            latents,
+            has_img,
+            mrope_offset,
+            float(fps),
+            curr=uncond_text["und_len"],
+            device=device,
+            condition_frame_indexes=cond_frames,
+        )
+        return Cosmos3SamplingState(
+            latents=latents,
+            timesteps=self.scheduler.timesteps,
+            scheduler=self.scheduler,
+            cond_packed_static=self._build_packed_conditioning(cond_text, cond_vision),
+            uncond_packed_static=self._build_packed_conditioning(uncond_text, uncond_vision),
+            vision_condition_mask=vision_condition_mask,
+            num_noisy_vision_tokens=int(cond_vision["num_noisy_vision_tokens"]),
+            guidance_scale=float(batch_context["guidance_scale"]),
+            do_cfg=bool(batch_context["cfg"]),
+            height=int(batch_context["height"]),
+            width=int(batch_context["width"]),
+            num_frames=int(batch_context["num_frames"]),
+            fps=fps,
+            cond_input_ids=cond_input_ids,
+            uncond_input_ids=uncond_input_ids,
+        )
+
+
+class Cosmos3PipelineModel(DiffusersPipelineModelBase, Cosmos3Model):
+    """Cosmos3 Omni T2V plus the diffusers pipeline that sampling needs.
+
+    The pipeline brings prompt tokenization, latent preparation and VAE
+    decode, and reports the temporal compression factor; this class also
+    exports the trajectory tensors replay reads back.
+    """
 
     @property
     def vae_scale_factor_temporal(self) -> int:
         return self.pipeline.vae_scale_factor_temporal
 
-    # ---- properties (mirror predict2_5) ----
     @classmethod
-    def from_build(cls, build: ModelBuild) -> Cosmos3Model:
+    def from_build(cls, build: ModelBuild) -> Cosmos3PipelineModel:
         # Lazy: the optional cosmos extra must not be imported at module load.
         from diffusers import Cosmos3OmniPipeline
 
@@ -226,61 +423,6 @@ class Cosmos3Model(CosmosReplayForward, DiffusersPipelineModelBase):
             uncond_input_ids=list(encoded["uncond_input_ids"]),
         )
 
-    # ---- the per-step transformer call -> flow velocity ----
-    def forward_step(
-        self,
-        state: Cosmos3SamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        from diffusers import Cosmos3OmniPipeline
-
-        device = state.latents.device
-        dtype = self.transformer.dtype
-        timestep = float(state.timesteps[step_idx].item())
-        vision_tokens = state.latents.to(device=device, dtype=dtype)
-        vision_timesteps = torch.full(
-            (state.num_noisy_vision_tokens,),
-            timestep,
-            device=device,
-        )
-
-        def _run(pack: dict[str, Any]) -> torch.Tensor:
-            preds_vision, _sound, _action = self.transformer(
-                input_ids=pack["input_ids"],
-                text_indexes=pack["text_indexes"],
-                position_ids=pack["position_ids"],
-                und_len=pack["und_len"],
-                sequence_length=pack["sequence_length"],
-                vision_tokens=[vision_tokens],
-                vision_token_shapes=pack["vision_token_shapes"],
-                vision_sequence_indexes=pack["vision_sequence_indexes"],
-                vision_mse_loss_indexes=pack["vision_mse_loss_indexes"],
-                vision_timesteps=vision_timesteps,
-                vision_noisy_frame_indexes=pack["vision_noisy_frame_indexes"],
-                # diffusers 0.40 wraps the three lists in Cosmos3OmniTransformerOutput by default.
-                return_dict=False,
-            )
-            velocity, _s, _a = Cosmos3OmniPipeline._mask_velocity_predictions(
-                preds_vision,
-                None,
-                [state.vision_condition_mask],
-            )
-            return velocity
-
-        cond = _run(state.cond_packed_static)
-        if state.do_cfg:
-            uncond = _run(state.uncond_packed_static)
-            combined = uncond + state.guidance_scale * (cond - uncond)
-        else:
-            uncond = torch.zeros_like(cond)
-            combined = cond
-        # RAW flow velocity -> sde_step_with_logprob (UniPC sigmas in [0,1]).
-        return {
-            "noise_pred": combined.to(torch.float32),
-            "noise_pred_cond": cond,
-            "noise_pred_uncond": uncond,
-        }
-
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Denorm with the vae latents_mean/inv_std then decode (mirrors the
         pipeline's final-step decode)."""
@@ -317,137 +459,5 @@ class Cosmos3Model(CosmosReplayForward, DiffusersPipelineModelBase):
             "vision_condition_mask": state.vision_condition_mask,
         }
 
-    @staticmethod
-    def _unpack_single_token_sequence(value: Any, *, name: str) -> list[int]:
-        """Unwrap one ragged replay row at Cosmos3's enforced batch-one boundary."""
 
-        if not isinstance(value, (list, tuple)) or len(value) != 1:
-            raise ValueError(f"Cosmos3 replay {name} must contain exactly one sample row")
-        row = value[0]
-        if not isinstance(row, (list, tuple)):
-            raise TypeError(f"Cosmos3 replay {name} row must be a token-id sequence")
-        return [
-            require_int(token_id, path=f"Cosmos3 replay {name}[{index}]", minimum=0)
-            for index, token_id in enumerate(row)
-        ]
-
-    @staticmethod
-    def _build_packed_conditioning(text: dict[str, Any], vision: dict[str, Any]) -> dict[str, Any]:
-        """Merge text+vision segments into the transformer-facing packed_static, MINUS
-        the step-varying ``vision_tokens`` / ``vision_timesteps`` (spliced per step).
-        Mirrors the inline assembly in ``Cosmos3OmniPipeline.__call__``."""
-        position_ids = torch.cat([text["text_mrope_ids"], vision["vision_mrope_ids"]], dim=1)
-        return {
-            **text,
-            **vision,
-            "position_ids": position_ids,
-            "sequence_length": text["und_len"] + vision["num_vision_tokens"],
-        }
-
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> Cosmos3SamplingState:
-        del step_idx  # cosmos indexes sigmas[step_idx] live in forward_step
-        from diffusers import Cosmos3OmniPipeline
-
-        device = self.device
-        fps = int(batch_context.get("fps", _DEFAULT_FPS))
-        vision_condition_mask = replay_tensors["vision_condition_mask"]
-        cond_input_ids = self._unpack_single_token_sequence(
-            replay_tensors["cond_input_ids"],
-            name="cond_input_ids",
-        )
-        uncond_input_ids = self._unpack_single_token_sequence(
-            replay_tensors["uncond_input_ids"],
-            name="uncond_input_ids",
-        )
-        cond_text = Cosmos3OmniPipeline._prepare_text_segment(self, cond_input_ids, device)
-        uncond_text = Cosmos3OmniPipeline._prepare_text_segment(self, uncond_input_ids, device)
-        mrope_offset = cond_text["vision_start_temporal_offset"]
-        cond_idx = torch.nonzero(vision_condition_mask[:, 0, 0] > 0, as_tuple=False).flatten()
-        has_img = bool(cond_idx.numel() > 0)
-        cond_frames = [int(i) for i in cond_idx.tolist()] or None
-        cond_vision = Cosmos3OmniPipeline._prepare_vision_segment(
-            self,
-            latents,
-            has_img,
-            mrope_offset,
-            float(fps),
-            curr=cond_text["und_len"],
-            device=device,
-            condition_frame_indexes=cond_frames,
-        )
-        uncond_vision = Cosmos3OmniPipeline._prepare_vision_segment(
-            self,
-            latents,
-            has_img,
-            mrope_offset,
-            float(fps),
-            curr=uncond_text["und_len"],
-            device=device,
-            condition_frame_indexes=cond_frames,
-        )
-        return Cosmos3SamplingState(
-            latents=latents,
-            timesteps=self.scheduler.timesteps,
-            scheduler=self.scheduler,
-            cond_packed_static=self._build_packed_conditioning(cond_text, cond_vision),
-            uncond_packed_static=self._build_packed_conditioning(uncond_text, uncond_vision),
-            vision_condition_mask=vision_condition_mask,
-            num_noisy_vision_tokens=int(cond_vision["num_noisy_vision_tokens"]),
-            guidance_scale=float(batch_context["guidance_scale"]),
-            do_cfg=bool(batch_context["cfg"]),
-            height=int(batch_context["height"]),
-            width=int(batch_context["width"]),
-            num_frames=int(batch_context["num_frames"]),
-            fps=fps,
-            cond_input_ids=cond_input_ids,
-            uncond_input_ids=uncond_input_ids,
-        )
-
-
-class Cosmos3ReplayModel(DiffusersReplayModelBase, Cosmos3Model):
-    """Transformer-only replay using upstream segment builders without a pipeline."""
-
-    def __init__(
-        self,
-        *,
-        transformer: Any,
-        scheduler: Any,
-        vae_scale_factor_temporal: int,
-        device: Any = None,
-    ) -> None:
-        super().__init__(transformer=transformer, scheduler=scheduler, device=device)
-        self._vae_scale_factor_temporal = vae_scale_factor_temporal
-
-    @property
-    def vae_scale_factor_temporal(self) -> int:
-        return self._vae_scale_factor_temporal
-
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> Cosmos3ReplayModel:
-        from diffusers import AutoencoderKLWan
-
-        from vrl.models.loader import load_diffusers_scheduler, load_diffusers_transformer
-
-        build.require_replay()
-        # Packing needs only the temporal compression factor, never VAE weights
-        # or a tokenizer: the trajectory already contains token IDs and latents.
-        vae_config = AutoencoderKLWan.load_config(
-            build.model_name_or_path, subfolder="vae", **build.pretrained_kwargs
-        )
-        transformer = load_diffusers_transformer(build, "Cosmos3OmniTransformer")
-        transformer.to(build.device, dtype=build.parameter_dtype)
-        return cls(
-            transformer=transformer,
-            scheduler=load_diffusers_scheduler(build, "UniPCMultistepScheduler"),
-            vae_scale_factor_temporal=vae_config["scale_factor_temporal"],
-            device=build.device,
-        )
-
-
-__all__ = ["Cosmos3Model", "Cosmos3ReplayModel", "Cosmos3SamplingState"]
+__all__ = ["Cosmos3Model", "Cosmos3PipelineModel", "Cosmos3SamplingState"]

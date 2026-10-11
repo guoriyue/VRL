@@ -79,7 +79,7 @@ def test_echo_rollout_checkpoint_uses_optional_model_revision(
     revision: str | None,
 ) -> None:
     """Rollout resolves the merged checkpoint at the configured revision."""
-    from vrl.models.families.echo.model import EchoModel
+    from vrl.models.families.echo.model import EchoPipelineModel
 
     wrapper_calls: list[dict[str, Any]] = []
     _patch_echo_dependencies(monkeypatch, wrapper_calls)
@@ -95,7 +95,7 @@ def test_echo_rollout_checkpoint_uses_optional_model_revision(
 
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_hub_download)
 
-    EchoModel.from_build(_build(str(gemma_path), revision))
+    EchoPipelineModel.from_build(_build(str(gemma_path), revision))
 
     expected = {
         "repo_id": "jdopensource/JoyAI-Echo",
@@ -150,7 +150,7 @@ def test_echo_replay_checkpoint_uses_optional_model_revision(
 
 
 def test_echo_build_rejects_sampling_dimensions_before_checkpoint_loading(tmp_path) -> None:
-    from vrl.models.families.echo.model import EchoModel
+    from vrl.models.families.echo.model import EchoPipelineModel
 
     gemma_path = tmp_path / "gemma"
     gemma_path.mkdir()
@@ -161,11 +161,11 @@ def test_echo_build_rejects_sampling_dimensions_before_checkpoint_loading(tmp_pa
         ValueError,
         match=r"sampling\.height=96.*model\.video_height=64",
     ):
-        EchoModel.from_build(build)
+        EchoPipelineModel.from_build(build)
 
 
 def test_echo_direct_build_rejects_invalid_model_dimensions_before_loading(tmp_path) -> None:
-    from vrl.models.families.echo.model import EchoModel
+    from vrl.models.families.echo.model import EchoPipelineModel
 
     gemma_path = tmp_path / "gemma"
     gemma_path.mkdir()
@@ -177,7 +177,7 @@ def test_echo_direct_build_rejects_invalid_model_dimensions_before_loading(tmp_p
         ValueError,
         match=r"model\.video_width must be a positive multiple of 32, got 65",
     ):
-        EchoModel.from_build(build)
+        EchoPipelineModel.from_build(build)
 
 
 @pytest.mark.parametrize("revision", [None, "gemma-immutable-revision"])

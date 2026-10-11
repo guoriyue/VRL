@@ -5,6 +5,10 @@ The generation helper flow mirrors every diffusion family:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
+``SanaPipelineModel`` runs that flow. ``SanaModel`` — the transformer, its
+scheduler and ``forward_step`` — is what replay runs; the pipeline class adds
+the text encoder, latent preparation and VAE decode on top of it.
+
 SANA specifics vs SD3 (the reference family):
 - Single Gemma-2 text encoder: ``encode_prompt`` returns a SEQUENCE embed plus
   an attention mask and NO pooled vector; the mask threads through the
@@ -35,8 +39,8 @@ import torch
 from vrl.generation.types import DenoiseRequest
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
@@ -66,12 +70,8 @@ class SanaSamplingState(GuidedDenoiseSamplingStateBase):
     do_cfg: bool
 
 
-class SanaModel(
-    VaeDecodeMixin,
-    DiffusersPipelineModelBase,
-    DenoiseBackboneRunnerBase,
-):
-    """Diffusers-backed SANA t2i model.
+class SanaModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+    """SANA t2i transformer, scheduler and per-step math: the model replay runs.
 
     Implements the backbone-runner protocol itself. Both CFG branches pad to
     the same sequence length (Gemma-2 encode at ``max_sequence_length``), so
@@ -100,6 +100,122 @@ class SanaModel(
             encoder_hidden_states=embeds,
             extra_kwargs={"encoder_attention_mask": mask},
         )
+
+    # -- forward_step --------------------------------------------------
+
+    def forward_step(
+        self,
+        state: SanaSamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        """Transformer forward + batched CFG."""
+        t = state.timesteps[step_idx]
+        bsz = state.latents.shape[0]
+        td = self._transformer_dtype()
+
+        latent_input = state.latents.to(td)
+        # SanaPipeline multiplies the raw timestep by config.timestep_scale and
+        # keeps it in fp32; the time embedding owns its internal conversion. The
+        # config lives on the module itself, behind any DDP/compile wrapper.
+        config = unwrap_compile_and_ddp(self.transformer).config
+        timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device) * float(
+            getattr(config, "timestep_scale", 1.0)
+        )
+        negative_embeds = (
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
+        )
+        output = DenoiseBackboneCaller(
+            self.transformer,
+            self,
+        )(
+            DenoiseBackboneInput(
+                hidden_states=latent_input,
+                timestep=timestep_batch,
+                prompt_embeds=state.prompt_embeds.to(td),
+                negative_prompt_embeds=negative_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                # SanaPipeline promotes each transformer branch before CFG.
+                # Keeping this fp32 also feeds the protected scheduler/log-prob
+                # path without a lossy fp16 round trip.
+                output_dtype=torch.float32,
+                extra={
+                    "encoder_attention_mask": state.prompt_attention_mask,
+                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
+                },
+            ),
+        )
+        return output.as_dict()
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> SanaSamplingState:
+        """Rebuild the sampling state from a batch slice for eval forward."""
+        negative_prompt_embeds = replay_tensors.get("negative_prompt_embeds")
+        return SanaSamplingState(
+            latents=latents,
+            timesteps=pack_eval_timestep(replay_tensors["timesteps"], step_idx),
+            # forward_step never calls scheduler.step, so replay needs none.
+            scheduler=None,
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_prompt_attention_mask=replay_tensors.get("negative_prompt_attention_mask"),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
+        )
+
+    # -- backend ownership (called by runtime, not by collectors) -------
+
+    @staticmethod
+    def _apply_fp16_saturation_clamp(transformer: Any) -> None:
+        """Reapply SANA's fp16 attention saturation on a non-fp16 transformer.
+
+        The published fp16 checkpoint was calibrated WITH diffusers'
+        ``SanaLinearAttnProcessor2_0`` output clip to the fp16 range, but that
+        clip is dtype-conditional (``if original_dtype == torch.float16``).
+        Running the same weights in fp32/bf16 skips it, and the un-saturated
+        linear-attention outputs corrupt every image. It must be reapplied at
+        each linear-attention layer (not the transformer's final output), so it
+        rides ``set_attn_processor`` rather than ``forward_step``. Verified
+        2026-07-18: the official pipeline in fp32 reproduces the corruption, and
+        fp32 plus this clamp matches fp16 quality
+        (outputs/quality_preflight/sana_fp32_probe).
+        """
+
+        from diffusers.models.attention_processor import SanaLinearAttnProcessor2_0
+
+        class _SaturatedLinearAttnProcessor(SanaLinearAttnProcessor2_0):
+            def __call__(self, *args: Any, **kwargs: Any) -> torch.Tensor:
+                return super().__call__(*args, **kwargs).clip(-65504, 65504)
+
+        transformer.set_attn_processor(
+            {
+                name: (
+                    _SaturatedLinearAttnProcessor()
+                    if type(processor) is SanaLinearAttnProcessor2_0
+                    else processor
+                )
+                for name, processor in transformer.attn_processors.items()
+            },
+        )
+
+    def prepare_replay(self, build: ModelBuild) -> None:
+        """Replay forwards need the same non-fp16 saturation clamp as rollout."""
+        if build.parameter_dtype != torch.float16:
+            self._apply_fp16_saturation_clamp(self.transformer)
+
+
+class SanaPipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, SanaModel):
+    """SANA plus the diffusers pipeline that sampling needs.
+
+    The pipeline brings prompt encoding, latent preparation and VAE decode;
+    this class also exports the trajectory tensors replay reads back.
+    """
 
     # -- encode_prompt -------------------------------------------------
 
@@ -197,52 +313,6 @@ class SanaModel(
             do_cfg=request.guidance_scale > 1.0 and negative_prompt_embeds is not None,
         )
 
-    # -- forward_step --------------------------------------------------
-
-    def forward_step(
-        self,
-        state: SanaSamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """Transformer forward + batched CFG."""
-        t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        td = self._transformer_dtype()
-
-        latent_input = state.latents.to(td)
-        # SanaPipeline multiplies the raw timestep by config.timestep_scale and
-        # keeps it in fp32; the time embedding owns its internal conversion. The
-        # config lives on the module itself, behind any DDP/compile wrapper.
-        config = unwrap_compile_and_ddp(self.transformer).config
-        timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device) * float(
-            getattr(config, "timestep_scale", 1.0)
-        )
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        output = DenoiseBackboneCaller(
-            self.transformer,
-            self,
-        )(
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                # SanaPipeline promotes each transformer branch before CFG.
-                # Keeping this fp32 also feeds the protected scheduler/log-prob
-                # path without a lossy fp16 round trip.
-                output_dtype=torch.float32,
-                extra={
-                    "encoder_attention_mask": state.prompt_attention_mask,
-                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
-                },
-            ),
-        )
-        return output.as_dict()
-
     # -- trajectory boundary -------------------------------------------
     # Masks and negative embeds are exported only when present, so the no-CFG
     # path stays tensor-free and restore reads them back with ``.get``.
@@ -273,65 +343,8 @@ class SanaModel(
                 tensors[name] = value
         return tensors
 
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> SanaSamplingState:
-        """Rebuild the sampling state from a batch slice for eval forward."""
-        negative_prompt_embeds = replay_tensors.get("negative_prompt_embeds")
-        return SanaSamplingState(
-            latents=latents,
-            timesteps=pack_eval_timestep(replay_tensors["timesteps"], step_idx),
-            # forward_step never calls scheduler.step, so replay needs none.
-            scheduler=None,
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
-            negative_prompt_embeds=negative_prompt_embeds,
-            negative_prompt_attention_mask=replay_tensors.get("negative_prompt_attention_mask"),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
-        )
-
-    # -- backend ownership (called by runtime, not by collectors) -------
-
-    @staticmethod
-    def _apply_fp16_saturation_clamp(transformer: Any) -> None:
-        """Reapply SANA's fp16 attention saturation on a non-fp16 transformer.
-
-        The published fp16 checkpoint was calibrated WITH diffusers'
-        ``SanaLinearAttnProcessor2_0`` output clip to the fp16 range, but that
-        clip is dtype-conditional (``if original_dtype == torch.float16``).
-        Running the same weights in fp32/bf16 skips it, and the un-saturated
-        linear-attention outputs corrupt every image. It must be reapplied at
-        each linear-attention layer (not the transformer's final output), so it
-        rides ``set_attn_processor`` rather than ``forward_step``. Verified
-        2026-07-18: the official pipeline in fp32 reproduces the corruption, and
-        fp32 plus this clamp matches fp16 quality
-        (outputs/quality_preflight/sana_fp32_probe).
-        """
-
-        from diffusers.models.attention_processor import SanaLinearAttnProcessor2_0
-
-        class _SaturatedLinearAttnProcessor(SanaLinearAttnProcessor2_0):
-            def __call__(self, *args: Any, **kwargs: Any) -> torch.Tensor:
-                return super().__call__(*args, **kwargs).clip(-65504, 65504)
-
-        transformer.set_attn_processor(
-            {
-                name: (
-                    _SaturatedLinearAttnProcessor()
-                    if type(processor) is SanaLinearAttnProcessor2_0
-                    else processor
-                )
-                for name, processor in transformer.attn_processors.items()
-            },
-        )
-
     @classmethod
-    def from_build(cls, build: ModelBuild) -> SanaModel:
+    def from_build(cls, build: ModelBuild) -> SanaPipelineModel:
         """Shared pipeline load, then SANA's two deviations: flow-match scheduler + fp16 clamp.
 
         The freeze / placement sequence (frozen encoder at the rollout prompt
@@ -361,14 +374,5 @@ class SanaModel(
             cls._apply_fp16_saturation_clamp(pipeline.transformer)
         return model
 
-    def prepare_replay(self, build: ModelBuild) -> None:
-        """Replay forwards need the same non-fp16 saturation clamp as rollout."""
-        if build.parameter_dtype != torch.float16:
-            self._apply_fp16_saturation_clamp(self.transformer)
 
-
-class SanaReplayModel(DiffusersReplayModelBase, SanaModel):
-    """Replay-only SANA model that owns no prompt encoder, VAE, or pipeline."""
-
-
-__all__ = ["SanaModel", "SanaReplayModel", "SanaSamplingState"]
+__all__ = ["SanaModel", "SanaPipelineModel", "SanaSamplingState"]

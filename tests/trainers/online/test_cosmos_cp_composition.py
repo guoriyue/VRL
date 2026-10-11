@@ -45,7 +45,7 @@ from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.families.cosmos.predict2_5.model import (
     CosmosPredict25Model,
-    CosmosPredict25ReplayModel,
+    CosmosPredict25PipelineModel,
     CosmosPredict25SamplingState,
 )
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
@@ -536,7 +536,7 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
             float32_precision="ieee",
             outer_autocast=bool(released_model),
         )
-        model = CosmosPredict25ReplayModel(
+        model = CosmosPredict25Model(
             transformer=transformer.to(device), scheduler=scheduler, device=device
         )
         model.precision = precision
@@ -561,7 +561,7 @@ def _worker(rank, rendezvous, root, cuda=False, phase=None, released_model=None)
         )
         rollout_scheduler = UniPCMultistepScheduler.from_config(scheduler.config)
         rollout_scheduler.set_timesteps(20 if released_model else 4, device=rollout_device)
-        rollout = CosmosPredict25Model(
+        rollout = CosmosPredict25PipelineModel(
             pipeline=SimpleNamespace(
                 transformer=copy.deepcopy(model.transformer).to(rollout_device),
                 scheduler=rollout_scheduler,

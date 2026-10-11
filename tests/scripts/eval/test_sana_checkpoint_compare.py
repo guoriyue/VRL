@@ -18,7 +18,7 @@ from tests.scripts.eval.fixtures import (
 )
 from tests.trainers._checkpoint_helpers import _Trainer
 from vrl.config.precision import PrecisionPolicy, RolePrecision
-from vrl.models.families.sana.model import SanaModel
+from vrl.models.families.sana.model import SanaPipelineModel
 from vrl.scripts.eval import sana_checkpoint_compare as checkpoint_compare
 from vrl.scripts.eval import sana_inference
 from vrl.trainers.checkpointing import load_resolved_run_config, save_training_checkpoint
@@ -40,11 +40,11 @@ def _effective_ieee_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _real_model(*, precision: RolePrecision = SANA_PRECISION) -> SanaModel:
-    """A real ``SanaModel`` over tiny real modules at SANA's native dtype boundary."""
+def _real_model(*, precision: RolePrecision = SANA_PRECISION) -> SanaPipelineModel:
+    """A real ``SanaPipelineModel`` over tiny real modules at SANA's native dtype boundary."""
 
     pipeline = TinySanaPipeline()
-    model = SanaModel(pipeline=pipeline, device=torch.device("cpu"))
+    model = SanaPipelineModel(pipeline=pipeline, device=torch.device("cpu"))
     model.transformer.half()
     pipeline.text_encoder.to(torch.bfloat16)
     model.precision = precision

@@ -16,7 +16,7 @@ import torch
 
 from tests.models.steps.denoise.fixtures import RecordingModule, build_tiny_transformer
 from vrl.config.precision import RolePrecision
-from vrl.models.families.sana.model import SanaModel
+from vrl.models.families.sana.model import SanaPipelineModel
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
 pytest.importorskip("diffusers")
@@ -57,7 +57,7 @@ def _load(monkeypatch: pytest.MonkeyPatch, parameter_dtype: torch.dtype) -> tupl
         return pipeline
 
     monkeypatch.setattr(DiffusionPipeline, "from_pretrained", staticmethod(fake_from_pretrained))
-    model = SanaModel.from_build(_build(parameter_dtype))
+    model = SanaPipelineModel.from_build(_build(parameter_dtype))
     return model, pipeline, calls
 
 

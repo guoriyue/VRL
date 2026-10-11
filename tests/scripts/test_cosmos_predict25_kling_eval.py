@@ -170,11 +170,11 @@ def _save_real_checkpoint(path: Path, *, entry, build, identity, fill: float) ->
 
 
 def _spy_from_build(monkeypatch, on_built=None):
-    """Record every real CosmosPredict25Model.from_build call (a spy, not a fake)."""
+    """Record every real CosmosPredict25PipelineModel.from_build call (a spy, not a fake)."""
 
-    from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25Model
+    from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25PipelineModel
 
-    real = CosmosPredict25Model.from_build.__func__
+    real = CosmosPredict25PipelineModel.from_build.__func__
     built: list[weakref.ReferenceType] = []
 
     def from_build(cls, build):
@@ -184,7 +184,7 @@ def _spy_from_build(monkeypatch, on_built=None):
             on_built(model)
         return model
 
-    monkeypatch.setattr(CosmosPredict25Model, "from_build", classmethod(from_build))
+    monkeypatch.setattr(CosmosPredict25PipelineModel, "from_build", classmethod(from_build))
     return built
 
 

@@ -32,8 +32,8 @@ from vrl.models.families.echo.config import resolve_echo_video_dimensions
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise.base import (
     DenoiseModelBase,
+    DenoisePipelineModelBase,
     DenoiseSamplingStateBase,
-    ReplayRolloutStubs,
 )
 
 # LTX-2 latent channel dimension (transformer in/out channels). The other latent
@@ -101,29 +101,24 @@ class EchoSamplingState(DenoiseSamplingStateBase):
 
 
 class EchoModel(DenoiseModelBase):
-    """Diffusers-free JoyAI-Echo video flow-matching policy."""
+    """JoyAI-Echo LTX velocity transformer, scheduler and per-step math: the model replay runs.
 
-    def __init__(
-        self,
-        *,
-        echo: Any,  # LTX2DiffusionWrapper
-        text_encoder: Any,  # GemmaTextEncoderWrapper
-        video_vae: Any,  # VideoVAEWrapper
-        scheduler: Any,
-        dtype: torch.dtype,
-        device: Any = None,
-    ) -> None:
+    Diffusers-free: the LTX wrapper owns the X0Model and runs the forward.
+    """
+
+    def __init__(self, *, echo: Any, scheduler: Any, device: Any = None) -> None:
         super().__init__()
         # The wrapper owns the X0Model; expose it as ``self.transformer`` so the
         # shared base (LoRA attach, weight sync, trainable_modules) operates on the
         # real nn.Module, and keep the two in sync in ``_set_transformer``.
         object.__setattr__(self, "_echo", echo)
-        object.__setattr__(self, "_text_encoder", text_encoder)
-        object.__setattr__(self, "_video_vae", video_vae)
         self.transformer = echo.model
         self._scheduler = scheduler
-        self._dtype = dtype
         self._device = device
+
+    @property
+    def raw_handle(self) -> Any:
+        return None
 
     @property
     def device(self) -> Any:
@@ -136,22 +131,6 @@ class EchoModel(DenoiseModelBase):
     @property
     def scheduler(self) -> Any:
         return self._scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return self._echo
-
-    @property
-    def video_height(self) -> int:
-        """Fixed pixel height used to construct the Echo latent-grid wrapper."""
-
-        return int(self._echo.video_height)
-
-    @property
-    def video_width(self) -> int:
-        """Fixed pixel width used to construct the Echo latent-grid wrapper."""
-
-        return int(self._echo.video_width)
 
     def enable_gradient_checkpointing(self) -> None:
         """Turn on activation checkpointing in the LTX velocity blocks.
@@ -171,13 +150,130 @@ class EchoModel(DenoiseModelBase):
             "Echo transformer exposes no set_gradient_checkpointing module",
         )
 
+    def set_num_steps(self, n: int) -> None:
+        self._scheduler.set_timesteps(int(n), device=self.device)
+
+    # -- forward_step --------------------------------------------------
+
+    @staticmethod
+    def _sigma_from_timestep(
+        t: torch.Tensor,
+        num_train_timesteps: int,
+        like: torch.Tensor,
+    ) -> torch.Tensor:
+        """Normalize the flow timestep in fp32 with a positive floor for velocity."""
+
+        sigma = torch.as_tensor(t, device=like.device, dtype=torch.float32) / float(
+            num_train_timesteps
+        )
+        return sigma.clamp_min(1e-6)
+
+    def forward_step(self, state: EchoSamplingState, step_idx: int) -> dict[str, Any]:
+        """One Echo velocity forward: predict x0, convert to flow-matching velocity.
+
+        Echo returns x0; the executor/evaluator both consume a velocity
+        ``noise_pred`` (rectified-flow ``v = (x_t - x0)/sigma``). sigma is derived from the
+        flow-match timestep so rollout and replay agree without sharing scheduler
+        state.
+        """
+
+        td = self._transformer_dtype()
+        latents = state.latents.to(td)
+        t = state.timesteps[step_idx]
+        sigma = self._sigma_from_timestep(t, state.num_train_timesteps, latents)
+        # Echo's wrapper takes sigma directly (its Modality.sigma), broadcast per batch.
+        echo_sigma = sigma.reshape(-1).to(td)
+        if echo_sigma.numel() == 1:
+            echo_sigma = echo_sigma.expand(latents.shape[0])
+
+        # Move context to the transformer's device (not just dtype) so a
+        # CPU-offloaded prompt encoder's embeds still land where the denoiser runs.
+        conditional_dict = {
+            "video_context": state.video_context.to(device=latents.device, dtype=td),
+            "audio_context": None,
+            "attention_mask": state.attention_mask,
+        }
+        x0, _audio = self._echo.forward(
+            noisy_image_or_video=latents,
+            conditional_dict=conditional_dict,
+            timestep=echo_sigma,
+            noisy_audio=None,
+        )
+        # v = (x_t - x0) / sigma, in fp32 for the downstream SDE log-prob math.
+        sigma_b = sigma.float().reshape(-1, *[1] * (latents.dim() - 1))
+        velocity = (latents.float() - x0.float()) / sigma_b
+        return {"noise_pred": velocity}
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> EchoSamplingState:
+        """Rebuild state for the trainer replay forward (no scheduler.step here)."""
+
+        ts = replay_tensors["timesteps"]
+        # Pack as [1, B] so state.timesteps[0] is the per-sample timestep [B],
+        # matching the eval-path convention (the executor calls forward_step with
+        # step_idx=0 on the restored single-step state).
+        if isinstance(ts, torch.Tensor) and ts.ndim >= 1:
+            timesteps = ts[:, step_idx].reshape(1, -1) if ts.ndim > 1 else ts.reshape(1, -1)
+        else:
+            timesteps = torch.as_tensor(ts).reshape(1, -1)
+        return EchoSamplingState(
+            latents=latents,
+            timesteps=timesteps,
+            scheduler=None,
+            video_context=replay_tensors["video_context"],
+            attention_mask=replay_tensors.get("attention_mask"),
+            num_train_timesteps=int(self._scheduler.config.num_train_timesteps),
+        )
+
+
+class EchoPipelineModel(DenoisePipelineModelBase, EchoModel):
+    """JoyAI-Echo plus the Gemma text encoder and video VAE that sampling needs.
+
+    This class also exports the trajectory tensors replay reads back.
+    """
+
+    def __init__(
+        self,
+        *,
+        echo: Any,  # LTX2DiffusionWrapper
+        text_encoder: Any,  # GemmaTextEncoderWrapper
+        video_vae: Any,  # VideoVAEWrapper
+        scheduler: Any,
+        dtype: torch.dtype,
+        device: Any = None,
+    ) -> None:
+        super().__init__(echo=echo, scheduler=scheduler, device=device)
+        object.__setattr__(self, "_text_encoder", text_encoder)
+        object.__setattr__(self, "_video_vae", video_vae)
+        self._dtype = dtype
+
+    @property
+    def raw_handle(self) -> Any:
+        return self._echo
+
+    @property
+    def video_height(self) -> int:
+        """Fixed pixel height used to construct the Echo latent-grid wrapper."""
+
+        return int(self._echo.video_height)
+
+    @property
+    def video_width(self) -> int:
+        """Fixed pixel width used to construct the Echo latent-grid wrapper."""
+
+        return int(self._echo.video_width)
+
     def move_frozen_components(self, device: Any) -> None:
         """Move the frozen prompt encoder + VAE to ``device``.
 
-        Echo owns no diffusers pipeline, so the base (pipeline-derived) version is
-        a no-op for it. Implementing it lets Echo participate in the generic
-        frozen-component offload the rollout lifecycle already drives — park on
-        CPU while idle, restore on use. This is **device-driven**, not tied to any
+        Echo owns no diffusers pipeline; implementing this lets it participate
+        in the generic frozen-component offload the rollout lifecycle already
+        drives — park on CPU while idle, restore on use. This is **device-driven**, not tied to any
         specific card's VRAM: the same code offloads on a 32GB card and stays put
         on a big one (the lifecycle decides). The trainable transformer is never
         touched here.
@@ -194,13 +290,10 @@ class EchoModel(DenoiseModelBase):
             if hasattr(wrapper, "device"):
                 wrapper.device = device
 
-    def set_num_steps(self, n: int) -> None:
-        self._scheduler.set_timesteps(int(n), device=self.device)
-
     # -- backend ownership ---------------------------------------------
 
     @classmethod
-    def from_build(cls, build: ModelBuild) -> EchoModel:
+    def from_build(cls, build: ModelBuild) -> EchoPipelineModel:
         """Build Echo's text encoder + LTX transformer + video VAE from a build.
 
         ``build.model_name_or_path`` is the merged Echo safetensors checkpoint;
@@ -359,57 +452,6 @@ class EchoModel(DenoiseModelBase):
             num_train_timesteps=int(self._scheduler.config.num_train_timesteps),
         )
 
-    # -- forward_step --------------------------------------------------
-
-    @staticmethod
-    def _sigma_from_timestep(
-        t: torch.Tensor,
-        num_train_timesteps: int,
-        like: torch.Tensor,
-    ) -> torch.Tensor:
-        """Normalize the flow timestep in fp32 with a positive floor for velocity."""
-
-        sigma = torch.as_tensor(t, device=like.device, dtype=torch.float32) / float(
-            num_train_timesteps
-        )
-        return sigma.clamp_min(1e-6)
-
-    def forward_step(self, state: EchoSamplingState, step_idx: int) -> dict[str, Any]:
-        """One Echo velocity forward: predict x0, convert to flow-matching velocity.
-
-        Echo returns x0; the executor/evaluator both consume a velocity
-        ``noise_pred`` (rectified-flow ``v = (x_t - x0)/sigma``). sigma is derived from the
-        flow-match timestep so rollout and replay agree without sharing scheduler
-        state.
-        """
-
-        td = self._transformer_dtype()
-        latents = state.latents.to(td)
-        t = state.timesteps[step_idx]
-        sigma = self._sigma_from_timestep(t, state.num_train_timesteps, latents)
-        # Echo's wrapper takes sigma directly (its Modality.sigma), broadcast per batch.
-        echo_sigma = sigma.reshape(-1).to(td)
-        if echo_sigma.numel() == 1:
-            echo_sigma = echo_sigma.expand(latents.shape[0])
-
-        # Move context to the transformer's device (not just dtype) so a
-        # CPU-offloaded prompt encoder's embeds still land where the denoiser runs.
-        conditional_dict = {
-            "video_context": state.video_context.to(device=latents.device, dtype=td),
-            "audio_context": None,
-            "attention_mask": state.attention_mask,
-        }
-        x0, _audio = self._echo.forward(
-            noisy_image_or_video=latents,
-            conditional_dict=conditional_dict,
-            timestep=echo_sigma,
-            noisy_audio=None,
-        )
-        # v = (x_t - x0) / sigma, in fp32 for the downstream SDE log-prob math.
-        sigma_b = sigma.float().reshape(-1, *[1] * (latents.dim() - 1))
-        velocity = (latents.float() - x0.float()) / sigma_b
-        return {"noise_pred": velocity}
-
     # -- collector boundary --------------------------------------------
 
     def export_batch_context(self, state: EchoSamplingState) -> dict[str, Any]:
@@ -424,32 +466,6 @@ class EchoModel(DenoiseModelBase):
             "latents_clean": state.latents.detach(),
         }
 
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> EchoSamplingState:
-        """Rebuild state for the trainer replay forward (no scheduler.step here)."""
-
-        ts = replay_tensors["timesteps"]
-        # Pack as [1, B] so state.timesteps[0] is the per-sample timestep [B],
-        # matching the eval-path convention (the executor calls forward_step with
-        # step_idx=0 on the restored single-step state).
-        if isinstance(ts, torch.Tensor) and ts.ndim >= 1:
-            timesteps = ts[:, step_idx].reshape(1, -1) if ts.ndim > 1 else ts.reshape(1, -1)
-        else:
-            timesteps = torch.as_tensor(ts).reshape(1, -1)
-        return EchoSamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=None,
-            video_context=replay_tensors["video_context"],
-            attention_mask=replay_tensors.get("attention_mask"),
-            num_train_timesteps=int(self._scheduler.config.num_train_timesteps),
-        )
-
     # -- decode_latents ------------------------------------------------
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
@@ -461,33 +477,4 @@ class EchoModel(DenoiseModelBase):
         return ((pixels + 1.0) / 2.0).clamp_(0.0, 1.0)
 
 
-class EchoReplayModel(ReplayRolloutStubs, EchoModel):
-    """Replay-only Echo model: the velocity transformer + a flow scheduler.
-
-    Owns no text encoder, VAE, or sampling pipeline — the trainer only needs the
-    velocity forward to recompute log-probs.
-    """
-
-    def __init__(
-        self,
-        *,
-        echo: Any,
-        scheduler: Any,
-        dtype: torch.dtype,
-        device: Any = None,
-    ) -> None:
-        DenoiseModelBase.__init__(self)
-        object.__setattr__(self, "_echo", echo)
-        object.__setattr__(self, "_text_encoder", None)
-        object.__setattr__(self, "_video_vae", None)
-        self.transformer = echo.model
-        self._scheduler = scheduler
-        self._dtype = dtype
-        self._device = device
-
-    @property
-    def raw_handle(self) -> Any:
-        return None
-
-
-__all__ = ["EchoModel", "EchoReplayModel", "EchoSamplingState"]
+__all__ = ["EchoModel", "EchoPipelineModel", "EchoSamplingState"]

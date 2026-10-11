@@ -11,7 +11,7 @@ from omegaconf import OmegaConf
 from tests.scripts.eval.fixtures import TinySanaPipeline, write_tiny_sana_snapshot
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
-from vrl.models.families.sana.model import SanaModel
+from vrl.models.families.sana.model import SanaPipelineModel
 from vrl.scripts.perf.common.diffusion_runtime import (
     build_runtime,
     prepare_sampling_state,
@@ -47,7 +47,7 @@ def test_build_runtime_returns_the_family_rollout_bundle(monkeypatch, tmp_path) 
 
     bundle = build_runtime(root, torch.device("cpu"), precision=precision)
 
-    assert isinstance(bundle.model, SanaModel)
+    assert isinstance(bundle.model, SanaPipelineModel)
     assert bundle.model.pipeline is pipeline
     assert pipeline.loads == 1
     assert bundle.model.transformer.dtype is torch.float32

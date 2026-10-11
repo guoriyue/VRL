@@ -14,7 +14,7 @@ from tests.models.steps.denoise.fixtures import (
 )
 from vrl.generation.bindings.full_sequence.gather import DenoiseBatchGatherer
 from vrl.generation.types import GenerationInput, GenerationRequest
-from vrl.models.families.qwen_image_21.model import QwenImage21Model
+from vrl.models.families.qwen_image_21.model import QwenImage21PipelineModel
 from vrl.models.families.qwen_image_21.runtime import QwenImage21BatchExecutor
 
 
@@ -69,7 +69,7 @@ def test_edit_executor_encodes_rgba_references_once_per_batch_and_preserves_outp
         image_processor=SimpleNamespace(size={"shortest_edge": 1024, "longest_edge": 1048576})
     )
     pipe.encode_prompt = encode_prompt
-    model = QwenImage21Model(pipeline=pipe, device=torch.device("cpu"))
+    model = QwenImage21PipelineModel(pipeline=pipe, device=torch.device("cpu"))
     stamp_model_precision(model)
     executor = QwenImage21BatchExecutor(model, gatherer=DenoiseBatchGatherer())
     source, leaf = tmp_path / "source.png", tmp_path / "leaf.png"

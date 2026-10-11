@@ -23,7 +23,7 @@ from tests.models.steps.denoise.fixtures import (
 )
 from vrl.models.families.lumina2.model import (
     Lumina2Model,
-    Lumina2ReplayModel,
+    Lumina2PipelineModel,
     Lumina2SamplingState,
 )
 
@@ -31,8 +31,8 @@ _TEXT_LEN = 5
 _NUM_TRAIN_TIMESTEPS = 1000
 
 
-def _model(transformer: torch.nn.Module) -> Lumina2Model:
-    model = Lumina2Model(
+def _model(transformer: torch.nn.Module) -> Lumina2PipelineModel:
+    model = Lumina2PipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
@@ -127,7 +127,7 @@ def test_lumina2_replay_roundtrip_restores_equivalent_state() -> None:
     context = model.export_batch_context(state)
     replay["timesteps"] = torch.full((TINY_LUMINA2_LATENT_SHAPE[0],), 400.0)
 
-    restored = Lumina2ReplayModel(
+    restored = Lumina2Model(
         transformer=transformer,
         scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=_NUM_TRAIN_TIMESTEPS),
     ).restore_eval_state(replay, context, state.latents, 0)

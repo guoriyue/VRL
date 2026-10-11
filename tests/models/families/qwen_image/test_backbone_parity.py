@@ -21,15 +21,15 @@ from tests.models.steps.denoise.fixtures import (
 )
 from vrl.models.families.qwen_image.model import (
     QwenImageModel,
-    QwenImageReplayModel,
+    QwenImagePipelineModel,
     QwenImageSamplingState,
 )
 
 _SEQ = 16  # packed latent token count (lh * lw, lh = lw = 4)
 
 
-def _model(transformer: torch.nn.Module) -> QwenImageModel:
-    model = QwenImageModel(
+def _model(transformer: torch.nn.Module) -> QwenImagePipelineModel:
+    model = QwenImagePipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
@@ -112,7 +112,7 @@ def test_qwen_forward_step_runs_separate_cfg_with_uneven_seq_lengths() -> None:
 def test_qwen_replay_model_restores_state_without_a_pipeline() -> None:
     """The pipeline-less replay model rebuilds img_shapes and runs forward_step."""
     transformer = build_tiny_transformer("qwen_image")
-    model = QwenImageReplayModel(
+    model = QwenImageModel(
         transformer=transformer,
         scheduler=None,
         device=torch.device("cpu"),
@@ -167,7 +167,7 @@ def test_qwen_prepare_replay_sets_the_rollout_timestep_grid() -> None:
     # 512 px -> 64x64 latent cells, 2x2 patch pack -> 1024 tokens.
     expected = rollout._set_dynamic_timesteps(num_steps, 1024, torch.device("cpu")).clone()
 
-    replay = QwenImageReplayModel(
+    replay = QwenImageModel(
         transformer=build_tiny_transformer("qwen_image"),
         scheduler=FlowMatchEulerDiscreteScheduler.from_config(config),
         device=torch.device("cpu"),

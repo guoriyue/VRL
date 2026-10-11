@@ -24,7 +24,7 @@ from tests.models.steps.denoise.fixtures import (
     stamp_model_precision,
 )
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
-from vrl.models.families.sd3_5.model import SD3_5Model, SD3_5ReplayModel, SD3SamplingState
+from vrl.models.families.sd3_5.model import SD3_5Model, SD3_5PipelineModel, SD3SamplingState
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.builders import build_diffusion_trajectory
 
@@ -34,8 +34,8 @@ _BATCH = TINY_SD3_LATENT_SHAPE[0]
 _GUIDANCE = 2.0
 
 
-def _model(transformer: torch.nn.Module) -> SD3_5Model:
-    model = SD3_5Model(
+def _model(transformer: torch.nn.Module) -> SD3_5PipelineModel:
+    model = SD3_5PipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
@@ -163,7 +163,7 @@ def test_replay_tensors_carry_the_final_latent_for_the_forward_process_objective
     assert exported["latents_clean"].requires_grad is False
 
 
-def _replay_model(trainable: str) -> SD3_5ReplayModel:
+def _replay_model(trainable: str) -> SD3_5Model:
     """A replay model (no pipeline) whose trainable weights are a LoRA adapter or the DiT."""
 
     base = build_tiny_transformer("sd3")
@@ -179,7 +179,7 @@ def _replay_model(trainable: str) -> SD3_5ReplayModel:
         )
     else:
         base.requires_grad_(True)
-    return SD3_5ReplayModel(transformer=base, scheduler=None, device="cpu")
+    return SD3_5Model(transformer=base, scheduler=None, device="cpu")
 
 
 def test_reference_policy_is_the_base_under_an_adapter_and_a_snapshot_otherwise() -> None:

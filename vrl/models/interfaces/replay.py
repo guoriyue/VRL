@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Protocol, cast, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,56 +103,6 @@ class RuntimeModel(ReplayModel, Protocol):
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
         """Load the flattened trainable-state payload pushed to rollout workers."""
         ...
-
-
-class ReplayRequestContract:
-    """Per-type replay request contract: which segments a model can replay and
-    whether it indexes a timestep axis.
-
-    Both were literals at each ``replay_forward`` call site with the model's own
-    ``type(self).__name__`` threaded in as ``owner=`` — the ownership signal
-    from the placement rules, since the type owns both facts. Declaring them
-    makes "what can this family replay?" answerable from the class header, and
-    the identity is read where it lives instead of passed around.
-
-    Segment selection and timestep selection are independent: causal-chunk
-    replay validates its segment but replays the whole trajectory at once.
-    """
-
-    # No default: a replay model that forgets to declare its segments raises
-    # AttributeError at the first validation instead of silently accepting any
-    # selection.
-    replay_segments: ClassVar[tuple[str, ...]]
-    # Full-sequence denoise indexes timesteps; causal-chunk replay runs the
-    # whole trajectory and has no individual timestep to select.
-    replay_indexes_timesteps: ClassVar[bool] = True
-
-    def reject_replay_timestep_selection(self, timestep_idx: int) -> None:
-        """No-op for families that do index timesteps."""
-
-        if self.replay_indexes_timesteps or timestep_idx == 0:
-            return
-        raise ValueError(
-            f"{type(self).__name__} replay has no timestep axis; "
-            f"timestep_idx must be 0, got {timestep_idx}",
-        )
-
-    def reject_unsupported_replay_segments(
-        self,
-        request: ReplayRequest | None,
-    ) -> None:
-        """Validate selection against the model's declared replay segments."""
-
-        if request is None or request.segment_names is None:
-            return
-        supported = self.replay_segments
-        requested = request.segment_names
-        unsupported = tuple(name for name in requested if name not in supported)
-        if requested and not unsupported:
-            return
-        raise ValueError(
-            f"{type(self).__name__} replay supports segments {supported!r}; got {requested!r}",
-        )
 
 
 def _require_protocol(value: Any, proto: Any, *, owner: str) -> Any:

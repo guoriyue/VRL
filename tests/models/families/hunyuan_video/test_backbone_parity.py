@@ -23,15 +23,15 @@ from tests.models.steps.denoise.fixtures import (
 )
 from vrl.models.families.hunyuan_video.model import (
     HunyuanVideoModel,
-    HunyuanVideoReplayModel,
+    HunyuanVideoPipelineModel,
     HunyuanVideoSamplingState,
 )
 
 _TEXT_LEN = 5
 
 
-def _model(transformer: torch.nn.Module) -> HunyuanVideoModel:
-    model = HunyuanVideoModel(
+def _model(transformer: torch.nn.Module) -> HunyuanVideoPipelineModel:
+    model = HunyuanVideoPipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
@@ -115,7 +115,7 @@ def test_hunyuan_video_replay_roundtrip_restores_equivalent_state() -> None:
     context = model.export_batch_context(state)
     replay["timesteps"] = torch.full((TINY_HUNYUAN_VIDEO_LATENT_SHAPE[0],), 500.0)
 
-    restored = HunyuanVideoReplayModel(
+    restored = HunyuanVideoModel(
         transformer=transformer,
         scheduler=None,
     ).restore_eval_state(replay, context, state.latents, 0)

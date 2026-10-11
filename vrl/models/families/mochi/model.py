@@ -5,6 +5,10 @@ The generation helper flow mirrors every diffusion family:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
+``MochiPipelineModel`` runs that flow. ``MochiModel`` — the transformer, its
+scheduler and ``forward_step`` — is what replay runs; the pipeline class adds
+the text encoder, latent preparation and video VAE decode on top of it.
+
 Mochi specifics vs Wan (the reference video family):
 - Single T5-XXL encoder (~9.5 GB bf16, parked on CPU) returning sequence
   embeds + a BOOL attention mask; true batched CFG with uncond rows first.
@@ -37,8 +41,8 @@ import torch
 from vrl.generation.types import DenoiseRequest
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
@@ -92,11 +96,8 @@ class MochiSamplingState(GuidedDenoiseSamplingStateBase):
     num_train_timesteps: int
 
 
-class MochiModel(
-    DiffusersPipelineModelBase,
-    DenoiseBackboneRunnerBase,
-):
-    """Diffusers-backed Mochi-1 t2v model.
+class MochiModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+    """Mochi-1 t2v transformer, scheduler and per-step math: the model replay runs.
 
     Implements the backbone-runner protocol itself. Both CFG branches pad to
     the same sequence length (T5 encode at ``max_sequence_length``), so they
@@ -125,6 +126,104 @@ class MochiModel(
             encoder_hidden_states=embeds,
             extra_kwargs={"encoder_attention_mask": mask},
         )
+
+    # -- forward_step --------------------------------------------------
+
+    def forward_step(
+        self,
+        state: MochiSamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        """Transformer forward + batched CFG."""
+        t = state.timesteps[step_idx]
+        bsz = state.latents.shape[0]
+        td = self._transformer_dtype()
+
+        latent_input = state.latents.to(td)
+        # Standard clock t descends 1000->0; Mochi's native clock ascends, so
+        # the transformer sees num_train_timesteps - t.
+        timestep_batch = float(state.num_train_timesteps) - expand_batch_timestep(t, bsz).to(
+            device=latent_input.device, dtype=td
+        )
+        negative_embeds = (
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
+        )
+        output = DenoiseBackboneCaller(
+            self.transformer,
+            self,
+        )(
+            DenoiseBackboneInput(
+                hidden_states=latent_input,
+                timestep=timestep_batch,
+                prompt_embeds=state.prompt_embeds.to(td),
+                negative_prompt_embeds=negative_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=td,
+                extra={
+                    "encoder_attention_mask": state.prompt_attention_mask,
+                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
+                },
+            ),
+        )
+        return output.as_dict()
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> MochiSamplingState:
+        """Rebuild the sampling state from a batch slice for eval forward."""
+        negative_prompt_embeds = replay_tensors.get("negative_prompt_embeds")
+        return MochiSamplingState(
+            latents=latents,
+            timesteps=pack_eval_timestep(replay_tensors["timesteps"], step_idx),
+            # forward_step never calls scheduler.step, so replay needs none.
+            scheduler=None,
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_prompt_attention_mask=replay_tensors.get("negative_prompt_attention_mask"),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
+            num_train_timesteps=int(self.scheduler.config.num_train_timesteps),
+        )
+
+    def postprocess_branch(
+        self,
+        request: DenoiseBackboneInput,
+        branch: DenoiseBranch,
+        raw_output: torch.Tensor,
+    ) -> torch.Tensor:
+        """Negate: a velocity in Mochi's reversed time axis is -v_standard."""
+        del request, branch
+        return -raw_output
+
+    def prepare_replay(self, build: ModelBuild) -> None:
+        """Standardize the replay scheduler onto Mochi's descending-sigma domain.
+
+        The generic replay loader builds the scheduler from the shipped config
+        (``invert_sigmas: true`` — ascending time), but the trajectory buffers
+        and the SDE log-prob math live in the standard descending domain; the
+        replay scheduler must carry the same table the rollout used.
+        """
+        num_steps = build.num_steps
+        if num_steps is not None:
+            self._scheduler = standard_mochi_scheduler(
+                self._scheduler.config,
+                num_steps,
+                build.device,
+            )
+
+
+class MochiPipelineModel(DiffusersPipelineModelBase, MochiModel):
+    """Mochi-1 plus the diffusers pipeline that sampling needs.
+
+    The pipeline brings prompt encoding, latent preparation and video VAE decode;
+    this class also exports the trajectory tensors replay reads back.
+    """
 
     # -- encode_prompt -------------------------------------------------
 
@@ -225,47 +324,6 @@ class MochiModel(
             num_train_timesteps=int(scheduler.config.num_train_timesteps),
         )
 
-    # -- forward_step --------------------------------------------------
-
-    def forward_step(
-        self,
-        state: MochiSamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """Transformer forward + batched CFG."""
-        t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        td = self._transformer_dtype()
-
-        latent_input = state.latents.to(td)
-        # Standard clock t descends 1000->0; Mochi's native clock ascends, so
-        # the transformer sees num_train_timesteps - t.
-        timestep_batch = float(state.num_train_timesteps) - expand_batch_timestep(t, bsz).to(
-            device=latent_input.device, dtype=td
-        )
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        output = DenoiseBackboneCaller(
-            self.transformer,
-            self,
-        )(
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "encoder_attention_mask": state.prompt_attention_mask,
-                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
-                },
-            ),
-        )
-        return output.as_dict()
-
     # -- trajectory boundary -------------------------------------------
     # Masks and negative embeds are exported only when present, so the no-CFG
     # path stays tensor-free and restore reads them back with ``.get``.
@@ -293,39 +351,6 @@ class MochiModel(
                 tensors[name] = value
         return tensors
 
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> MochiSamplingState:
-        """Rebuild the sampling state from a batch slice for eval forward."""
-        negative_prompt_embeds = replay_tensors.get("negative_prompt_embeds")
-        return MochiSamplingState(
-            latents=latents,
-            timesteps=pack_eval_timestep(replay_tensors["timesteps"], step_idx),
-            # forward_step never calls scheduler.step, so replay needs none.
-            scheduler=None,
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
-            negative_prompt_embeds=negative_prompt_embeds,
-            negative_prompt_attention_mask=replay_tensors.get("negative_prompt_attention_mask"),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
-            num_train_timesteps=int(self.scheduler.config.num_train_timesteps),
-        )
-
-    def postprocess_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: DenoiseBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        """Negate: a velocity in Mochi's reversed time axis is -v_standard."""
-        del request, branch
-        return -raw_output
-
     # -- decode_latents ------------------------------------------------
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
@@ -352,29 +377,9 @@ class MochiModel(
         return decoder(latents)
 
 
-class MochiReplayModel(DiffusersReplayModelBase, MochiModel):
-    """Replay-only Mochi model that owns no prompt encoder, VAE, or pipeline."""
-
-    def prepare_replay(self, build: ModelBuild) -> None:
-        """Standardize the replay scheduler onto Mochi's descending-sigma domain.
-
-        The generic replay loader builds the scheduler from the shipped config
-        (``invert_sigmas: true`` — ascending time), but the trajectory buffers
-        and the SDE log-prob math live in the standard descending domain; the
-        replay scheduler must carry the same table the rollout used.
-        """
-        num_steps = build.num_steps
-        if num_steps is not None:
-            self._scheduler = standard_mochi_scheduler(
-                self._scheduler.config,
-                num_steps,
-                build.device,
-            )
-
-
 __all__ = [
     "MochiModel",
-    "MochiReplayModel",
+    "MochiPipelineModel",
     "MochiSamplingState",
     "standard_mochi_scheduler",
 ]

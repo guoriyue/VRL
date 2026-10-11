@@ -5,6 +5,11 @@ The generation helper flow mirrors every diffusion family:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
+``CogVideoXPipelineModel`` runs that flow. ``CogVideoXModel`` — the
+transformer, its scheduler and ``forward_step`` — is what replay runs; the
+pipeline class adds the text encoder, latent preparation and video VAE decode
+on top of it.
+
 CogVideoX specifics vs Wan (the reference video family):
 - NOT flow-matching: a v-prediction DDPM ladder (CogVideoXDDIMScheduler with
   snr_shift + zero-SNR rescale). Rollout/replay log-probs run through
@@ -37,8 +42,8 @@ import torch
 
 from vrl.generation.types import DenoiseRequest
 from vrl.models.steps.denoise import (
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
@@ -119,8 +124,8 @@ class CogVideoXSamplingState(GuidedDenoiseSamplingStateBase):
     vae_scale_factor_spatial: int
 
 
-class CogVideoXModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
-    """Diffusers-backed CogVideoX t2v model (v-prediction DDPM family)."""
+class CogVideoXModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+    """CogVideoX t2v transformer, scheduler and per-step math (v-prediction DDPM): the model replay runs."""
 
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
@@ -138,6 +143,87 @@ class CogVideoXModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
             encoder_hidden_states=embeds,
             extra_kwargs={"image_rotary_emb": request.extra.get("image_rotary_emb")},
         )
+
+    # -- forward_step --------------------------------------------------
+
+    def forward_step(
+        self,
+        state: CogVideoXSamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        """CogVideoX transformer forward (batched CFG, external RoPE)."""
+        t = state.timesteps[step_idx]
+        bsz = state.latents.shape[0]
+        td = self._transformer_dtype()
+
+        latent_input = state.latents.to(td)
+        # Raw integer timestep — the sinusoidal proj consumes it directly.
+        timestep_batch = expand_batch_timestep(t, bsz).to(
+            device=latent_input.device,
+        )
+        rope = cogvideox_rotary_embeds(
+            self.transformer.config,
+            height=state.height,
+            width=state.width,
+            num_latent_frames=state.latents.shape[1],
+            vae_scale_factor_spatial=state.vae_scale_factor_spatial,
+            device=latent_input.device,
+        )
+        negative_embeds = (
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
+        )
+        output = DenoiseBackboneCaller(
+            self.transformer,
+            self,
+        )(
+            DenoiseBackboneInput(
+                hidden_states=latent_input,
+                timestep=timestep_batch,
+                prompt_embeds=state.prompt_embeds.to(td),
+                negative_prompt_embeds=negative_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=td,
+                extra={"image_rotary_emb": rope},
+            ),
+        )
+        return output.as_dict()
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> CogVideoXSamplingState:
+        """Rebuild CogVideoXSamplingState from a batch slice for the eval path.
+
+        RoPE freqs are NOT stored: ``forward_step`` recomputes them from the
+        transformer config + the shape carried in batch context.
+        """
+        ts = replay_tensors["timesteps"]
+        timesteps = pack_eval_timestep(ts, step_idx)
+        return CogVideoXSamplingState(
+            latents=latents,
+            timesteps=timesteps,
+            scheduler=None,  # not needed for forward_step (no scheduler.step here)
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"]
+            and replay_tensors.get("negative_prompt_embeds") is not None,
+            height=int(batch_context["height"]),
+            width=int(batch_context["width"]),
+            vae_scale_factor_spatial=int(batch_context["vae_scale_factor_spatial"]),
+        )
+
+
+class CogVideoXPipelineModel(DiffusersPipelineModelBase, CogVideoXModel):
+    """CogVideoX plus the diffusers pipeline that sampling needs.
+
+    The pipeline brings prompt encoding, latent preparation and video VAE decode;
+    this class also exports the trajectory tensors replay reads back.
+    """
 
     # -- encode_prompt -------------------------------------------------
 
@@ -236,51 +322,6 @@ class CogVideoXModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
             vae_scale_factor_spatial=int(pipe.vae_scale_factor_spatial),
         )
 
-    # -- forward_step --------------------------------------------------
-
-    def forward_step(
-        self,
-        state: CogVideoXSamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """CogVideoX transformer forward (batched CFG, external RoPE)."""
-        t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        td = self._transformer_dtype()
-
-        latent_input = state.latents.to(td)
-        # Raw integer timestep — the sinusoidal proj consumes it directly.
-        timestep_batch = expand_batch_timestep(t, bsz).to(
-            device=latent_input.device,
-        )
-        rope = cogvideox_rotary_embeds(
-            self.transformer.config,
-            height=state.height,
-            width=state.width,
-            num_latent_frames=state.latents.shape[1],
-            vae_scale_factor_spatial=state.vae_scale_factor_spatial,
-            device=latent_input.device,
-        )
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        output = DenoiseBackboneCaller(
-            self.transformer,
-            self,
-        )(
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={"image_rotary_emb": rope},
-            ),
-        )
-        return output.as_dict()
-
     # -- collector boundary --------------------------------------------
 
     def export_batch_context(self, state: CogVideoXSamplingState) -> dict[str, Any]:
@@ -302,34 +343,6 @@ class CogVideoXModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         if state.negative_prompt_embeds is not None:
             tensors["negative_prompt_embeds"] = state.negative_prompt_embeds
         return tensors
-
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> CogVideoXSamplingState:
-        """Rebuild CogVideoXSamplingState from a batch slice for the eval path.
-
-        RoPE freqs are NOT stored: ``forward_step`` recomputes them from the
-        transformer config + the shape carried in batch context.
-        """
-        ts = replay_tensors["timesteps"]
-        timesteps = pack_eval_timestep(ts, step_idx)
-        return CogVideoXSamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=None,  # not needed for forward_step (no scheduler.step here)
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"]
-            and replay_tensors.get("negative_prompt_embeds") is not None,
-            height=int(batch_context["height"]),
-            width=int(batch_context["width"]),
-            vae_scale_factor_spatial=int(batch_context["vae_scale_factor_spatial"]),
-        )
 
     # -- decode_latents ------------------------------------------------
 
@@ -356,13 +369,9 @@ class CogVideoXModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         return decoder(latents)
 
 
-class CogVideoXReplayModel(DiffusersReplayModelBase, CogVideoXModel):
-    """Replay-only CogVideoX model that owns no prompt encoder, VAE, or pipeline."""
-
-
 __all__ = [
     "CogVideoXModel",
-    "CogVideoXReplayModel",
+    "CogVideoXPipelineModel",
     "CogVideoXSamplingState",
     "cogvideox_rotary_embeds",
 ]

@@ -5,6 +5,10 @@ The generation helper flow is:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
+``SD3_5PipelineModel`` runs that flow. ``SD3_5Model`` — the transformer, its
+scheduler and ``forward_step`` — is what replay runs; the pipeline class adds
+the text encoders, latent preparation and VAE decode on top of it.
+
 The collector owns the scheduler step / SDE step. ``forward_step`` does only
 one transformer forward (with optional batched CFG concat) and returns noise
 predictions.
@@ -37,8 +41,8 @@ import torch
 
 from vrl.generation.types import DenoiseRequest
 from vrl.models.steps.denoise import (
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
@@ -74,12 +78,8 @@ class SD3SamplingState(GuidedDenoiseSamplingStateBase):
             )
 
 
-class SD3_5Model(
-    VaeDecodeMixin,
-    DiffusersPipelineModelBase,
-    DenoiseBackboneRunnerBase,
-):
-    """Diffusers-backed SD 3.5 t2i model.
+class SD3_5Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
+    """SD 3.5 transformer, scheduler and per-step math: the model replay runs.
 
     The model implements the backbone-runner protocol itself (``cfg_mode`` /
     ``build_branch``): "how to call MY transformer" is model knowledge, so
@@ -88,6 +88,114 @@ class SD3_5Model(
 
     cfg_mode = "batched_cfg"
     cfg_base = "uncond"
+
+    # -- backbone runner protocol ---------------------------------------
+
+    def build_branch(
+        self,
+        request: DenoiseBackboneInput,
+        branch: str,
+    ) -> DenoiseBranch:
+        """Map SD3 transformer kwargs into the shared backbone contract."""
+        if branch == "cond":
+            embeds = request.prompt_embeds
+            pooled = request.extra["pooled_prompt_embeds"]
+        else:
+            embeds = request.negative_prompt_embeds
+            pooled = request.extra["negative_pooled_prompt_embeds"]
+        return DenoiseBranch(
+            hidden_states=request.hidden_states,
+            timestep=request.timestep,
+            encoder_hidden_states=embeds,
+            extra_kwargs={"pooled_projections": pooled},
+        )
+
+    # -- forward_step --------------------------------------------------
+
+    def forward_step(
+        self,
+        state: SD3SamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        """SD3 transformer forward + optional batched CFG.
+
+        Returns noise_pred plus the un/conditional branches; the caller owns
+        scheduler.step / SDE.
+        """
+        t = state.timesteps[step_idx]
+        bsz = state.latents.shape[0]
+        td = self._transformer_dtype()
+
+        latent_input = state.latents.to(td)
+        # SD3 timestep is broadcast across batch as the raw float (not /1000).
+        # If t is already shape [B] (eval path packs timesteps as [1, B]),
+        # Tensor.expand(bsz) is a no-op on the equal-sized dim.
+        timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td)
+        prompt_embeds = state.prompt_embeds.to(td)
+        pooled_prompt_embeds = state.pooled_prompt_embeds.to(td)
+        negative_prompt_embeds = (
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
+        )
+        negative_pooled_prompt_embeds = (
+            None
+            if state.negative_pooled_prompt_embeds is None
+            else state.negative_pooled_prompt_embeds.to(td)
+        )
+        output = DenoiseBackboneCaller(
+            self.transformer,
+            self,
+        )(
+            DenoiseBackboneInput(
+                hidden_states=latent_input,
+                timestep=timestep_batch,
+                prompt_embeds=prompt_embeds,
+                negative_prompt_embeds=negative_prompt_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=td,
+                extra={
+                    "pooled_prompt_embeds": pooled_prompt_embeds,
+                    "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
+                },
+            ),
+        )
+        return output.as_dict()
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> SD3SamplingState:
+        """Rebuild SD3SamplingState from a batch slice for the eval forward path.
+
+        Packs timesteps as ``[1, B]`` so ``state.timesteps[0]`` is ``[B]`` —
+        matches the eval-path convention documented in the class docstring.
+        """
+        ts = replay_tensors["timesteps"]
+        timesteps = pack_eval_timestep(ts, step_idx)
+        return SD3SamplingState(
+            latents=latents,
+            timesteps=timesteps,
+            scheduler=None,  # not needed for forward_step (no scheduler.step here)
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            pooled_prompt_embeds=replay_tensors["pooled_prompt_embeds"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
+            negative_pooled_prompt_embeds=replay_tensors.get(
+                "negative_pooled_prompt_embeds",
+            ),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
+        )
+
+
+class SD3_5PipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, SD3_5Model):
+    """SD 3.5 plus the diffusers pipeline that sampling needs.
+
+    The pipeline brings the three text encoders, latent preparation and VAE
+    decode; this class also exports the trajectory tensors replay reads back.
+    """
 
     # -- encode_prompt -------------------------------------------------
 
@@ -194,78 +302,6 @@ class SD3_5Model(
             do_cfg=do_cfg,
         )
 
-    # -- backbone runner protocol ---------------------------------------
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map SD3 transformer kwargs into the shared backbone contract."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            pooled = request.extra["pooled_prompt_embeds"]
-        else:
-            embeds = request.negative_prompt_embeds
-            pooled = request.extra["negative_pooled_prompt_embeds"]
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs={"pooled_projections": pooled},
-        )
-
-    # -- forward_step --------------------------------------------------
-
-    def forward_step(
-        self,
-        state: SD3SamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """SD3 transformer forward + optional batched CFG.
-
-        Returns noise_pred plus the un/conditional branches; the caller owns
-        scheduler.step / SDE.
-        """
-        t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        td = self._transformer_dtype()
-
-        latent_input = state.latents.to(td)
-        # SD3 timestep is broadcast across batch as the raw float (not /1000).
-        # If t is already shape [B] (eval path packs timesteps as [1, B]),
-        # Tensor.expand(bsz) is a no-op on the equal-sized dim.
-        timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td)
-        prompt_embeds = state.prompt_embeds.to(td)
-        pooled_prompt_embeds = state.pooled_prompt_embeds.to(td)
-        negative_prompt_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        negative_pooled_prompt_embeds = (
-            None
-            if state.negative_pooled_prompt_embeds is None
-            else state.negative_pooled_prompt_embeds.to(td)
-        )
-        output = DenoiseBackboneCaller(
-            self.transformer,
-            self,
-        )(
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=prompt_embeds,
-                negative_prompt_embeds=negative_prompt_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "pooled_prompt_embeds": pooled_prompt_embeds,
-                    "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
-                },
-            ),
-        )
-        return output.as_dict()
-
     # -- collector boundary --------------------------------------------
 
     def export_batch_context(self, state: SD3SamplingState) -> dict[str, Any]:
@@ -290,41 +326,5 @@ class SD3_5Model(
             "latents_clean": state.latents.detach(),
         }
 
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> SD3SamplingState:
-        """Rebuild SD3SamplingState from a batch slice for the eval forward path.
 
-        Packs timesteps as ``[1, B]`` so ``state.timesteps[0]`` is ``[B]`` —
-        matches the eval-path convention documented in the class docstring.
-        """
-        ts = replay_tensors["timesteps"]
-        timesteps = pack_eval_timestep(ts, step_idx)
-        return SD3SamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=None,  # not needed for forward_step (no scheduler.step here)
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            pooled_prompt_embeds=replay_tensors["pooled_prompt_embeds"],
-            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
-            negative_pooled_prompt_embeds=replay_tensors.get(
-                "negative_pooled_prompt_embeds",
-            ),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
-        )
-
-
-class SD3_5ReplayModel(DiffusersReplayModelBase, SD3_5Model):
-    """Replay-only SD3.5 model that owns no prompt encoders, VAE, or pipeline.
-
-    ``DiffusersReplayModelBase`` precedes ``SD3_5Model`` in the MRO, so the ctor
-    and the non-syncing ``_set_transformer`` both resolve to the replay base.
-    """
-
-
-__all__ = ["SD3SamplingState", "SD3_5Model", "SD3_5ReplayModel"]
+__all__ = ["SD3SamplingState", "SD3_5Model", "SD3_5PipelineModel"]

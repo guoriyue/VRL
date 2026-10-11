@@ -2,18 +2,18 @@
 
 from vrl.models.steps.denoise.base import (
     DenoiseModelBase,
+    DenoisePipelineModelBase,
     DenoiseSamplingStateBase,
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
-    ReplayRolloutStubs,
 )
 
 __all__ = [
     "DenoiseModelBase",
+    "DenoisePipelineModelBase",
     "DenoiseSamplingStateBase",
+    "DiffusersModelBase",
     "DiffusersPipelineModelBase",
-    "DiffusersReplayModelBase",
     "GuidedDenoiseSamplingStateBase",
-    "ReplayRolloutStubs",
 ]

@@ -8,11 +8,11 @@ from vrl.utils.config import import_from_path
 # Custom replay construction is the only place the registry cannot derive the
 # concrete replay class from the generic descriptor.
 _CUSTOM_REPLAY_MODEL_CLASSES = {
-    "causvid": "vrl.models.families.causvid.model:CausVidReplayModel",
-    "cosmos3": "vrl.models.families.cosmos.cosmos3.model:Cosmos3ReplayModel",
-    "echo": "vrl.models.families.echo.model:EchoReplayModel",
-    "minimax_h3": "vrl.models.families.minimax_h3.model:MiniMaxH3ReplayModel",
-    "vdn_h3": "vrl.models.families.vdn_h3.model:VDNH3ReplayModel",
+    "causvid": "vrl.models.families.causvid.model:CausVidModel",
+    "cosmos3": "vrl.models.families.cosmos.cosmos3.model:Cosmos3Model",
+    "echo": "vrl.models.families.echo.model:EchoModel",
+    "minimax_h3": "vrl.models.families.minimax_h3.model:MiniMaxH3Model",
+    "vdn_h3": "vrl.models.families.vdn_h3.model:VDNH3Model",
 }
 
 

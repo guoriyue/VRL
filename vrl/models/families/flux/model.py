@@ -5,6 +5,10 @@ generation helper flow mirrors every diffusion family:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
+``FluxPipelineModel`` runs that flow. ``FluxModel`` — the transformer, its
+scheduler and ``forward_step`` — is what replay runs; the pipeline class adds
+the text encoders, latent packing and VAE decode on top of it.
+
 The collector owns the scheduler step / SDE step. ``forward_step`` does one
 guidance-distilled transformer forward and returns the noise prediction.
 
@@ -34,8 +38,8 @@ import torch
 
 from vrl.generation.types import DenoiseRequest
 from vrl.models.steps.denoise import (
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
@@ -63,8 +67,8 @@ class FluxSamplingState(GuidedDenoiseSamplingStateBase):
     width: int
 
 
-class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
-    """Diffusers-backed FLUX.1 t2i model.
+class FluxModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+    """FLUX.1 t2i transformer, scheduler and per-step math: the model replay runs.
 
     Implements the backbone-runner protocol itself. FLUX.1-dev is
     guidance-distilled: a single transformer forward conditioned on a
@@ -99,20 +103,6 @@ class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
             encoder_hidden_states=request.prompt_embeds,
             extra_kwargs=extra_kwargs,
         )
-
-    def __init__(
-        self,
-        *,
-        pipeline: Any,
-        device: Any = None,
-    ) -> None:
-        super().__init__(pipeline=pipeline, device=device)
-        # decode_latents only receives the packed latent tensor; the executor runs
-        # prepare -> denoise -> decode sequentially on this one model instance per
-        # batch (no concurrency), so prepare_sampling records the spatial shape it
-        # must unpack to here. Defaults are overwritten on the first prepare call.
-        self._decode_height = 1024
-        self._decode_width = 1024
 
     def packed_token_count(self, height: int, width: int) -> int:
         """FLUX packs an 8x VAE + 2x2 patch grid: ``(H // 16) * (W // 16)`` tokens."""
@@ -160,6 +150,134 @@ class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
             )[None, :]
         )
         return latent_image_ids.reshape(height * width, 3)
+
+    # -- forward_step --------------------------------------------------
+
+    def forward_step(
+        self,
+        state: FluxSamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        """FLUX transformer forward (single guidance-distilled branch).
+
+        Returns noise_pred (packed) plus the cond/uncond placeholder branches; the
+        caller owns scheduler.step / SDE.
+        """
+        t = state.timesteps[step_idx]
+        bsz = state.latents.shape[0]
+        td = self._transformer_dtype()
+
+        latent_input = state.latents.to(td)
+        # The transformer multiplies its timestep input by 1000, so feed t / 1000
+        # (matches diffusers FluxPipeline). If t is already [B] (eval path packs
+        # [1, B]) expand is a no-op.
+        timestep_batch = (
+            expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td) / 1000.0
+        )
+        guidance = None
+        if state.guidance_embeds:
+            guidance = torch.full(
+                (bsz,),
+                float(state.guidance_scale),
+                device=latent_input.device,
+                dtype=td,
+            )
+        output = DenoiseBackboneCaller(
+            self.transformer,
+            self,
+        )(
+            DenoiseBackboneInput(
+                hidden_states=latent_input,
+                timestep=timestep_batch,
+                prompt_embeds=state.prompt_embeds.to(td),
+                negative_prompt_embeds=None,
+                guidance_scale=state.guidance_scale,
+                do_cfg=False,
+                output_dtype=td,
+                extra={
+                    "pooled_projections": state.pooled_prompt_embeds.to(td),
+                    # Rotary position ids stay float32 (computed in float).
+                    "img_ids": state.latent_image_ids.to(
+                        device=latent_input.device,
+                        dtype=torch.float32,
+                    ),
+                    "txt_ids": state.text_ids.to(
+                        device=latent_input.device,
+                        dtype=torch.float32,
+                    ),
+                    "guidance": guidance,
+                },
+            ),
+        )
+        return output.as_dict()
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> FluxSamplingState:
+        """Rebuild FluxSamplingState from a batch slice for the eval forward path.
+
+        Rebuilds the batch-shared position grids deterministically: ``text_ids``
+        is zeros sized to the stored prompt sequence length, ``latent_image_ids``
+        from the stored spatial shape — pipeline-free, so the replay model never
+        touches a FluxPipeline.
+        """
+        ts = replay_tensors["timesteps"]
+        timesteps = pack_eval_timestep(ts, step_idx)
+        prompt_embeds = replay_tensors["prompt_embeds"]
+        height = batch_context["height"]
+        width = batch_context["width"]
+        vae_scale_factor = int(batch_context["vae_scale_factor"])
+        device = prompt_embeds.device
+
+        text_seq_len = prompt_embeds.shape[1]
+        text_ids = torch.zeros(text_seq_len, 3, device=device, dtype=torch.float32)
+        latent_h = 2 * (int(height) // (vae_scale_factor * 2))
+        latent_w = 2 * (int(width) // (vae_scale_factor * 2))
+        latent_image_ids = self._build_latent_image_ids(
+            latent_h // 2,
+            latent_w // 2,
+            device,
+            torch.float32,
+        )
+        return FluxSamplingState(
+            latents=latents,
+            timesteps=timesteps,
+            scheduler=None,  # not needed for forward_step (no scheduler.step here)
+            prompt_embeds=prompt_embeds,
+            pooled_prompt_embeds=replay_tensors["pooled_prompt_embeds"],
+            text_ids=text_ids,
+            latent_image_ids=latent_image_ids,
+            guidance_scale=batch_context["guidance_scale"],
+            guidance_embeds=batch_context["guidance_embeds"],
+            height=height,
+            width=width,
+        )
+
+
+class FluxPipelineModel(DiffusersPipelineModelBase, FluxModel):
+    """FLUX.1 plus the diffusers pipeline that sampling needs.
+
+    The pipeline brings prompt encoding, latent preparation and VAE decode;
+    this class also exports the trajectory tensors replay reads back.
+    """
+
+    def __init__(
+        self,
+        *,
+        pipeline: Any,
+        device: Any = None,
+    ) -> None:
+        super().__init__(pipeline=pipeline, device=device)
+        # decode_latents only receives the packed latent tensor; the executor runs
+        # prepare -> denoise -> decode sequentially on this one model instance per
+        # batch (no concurrency), so prepare_sampling records the spatial shape it
+        # must unpack to here. Defaults are overwritten on the first prepare call.
+        self._decode_height = 1024
+        self._decode_width = 1024
 
     # -- encode_prompt -------------------------------------------------
 
@@ -271,66 +389,6 @@ class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
             width=int(request.width),
         )
 
-    # -- forward_step --------------------------------------------------
-
-    def forward_step(
-        self,
-        state: FluxSamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """FLUX transformer forward (single guidance-distilled branch).
-
-        Returns noise_pred (packed) plus the cond/uncond placeholder branches; the
-        caller owns scheduler.step / SDE.
-        """
-        t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        td = self._transformer_dtype()
-
-        latent_input = state.latents.to(td)
-        # The transformer multiplies its timestep input by 1000, so feed t / 1000
-        # (matches diffusers FluxPipeline). If t is already [B] (eval path packs
-        # [1, B]) expand is a no-op.
-        timestep_batch = (
-            expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td) / 1000.0
-        )
-        guidance = None
-        if state.guidance_embeds:
-            guidance = torch.full(
-                (bsz,),
-                float(state.guidance_scale),
-                device=latent_input.device,
-                dtype=td,
-            )
-        output = DenoiseBackboneCaller(
-            self.transformer,
-            self,
-        )(
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=None,
-                guidance_scale=state.guidance_scale,
-                do_cfg=False,
-                output_dtype=td,
-                extra={
-                    "pooled_projections": state.pooled_prompt_embeds.to(td),
-                    # Rotary position ids stay float32 (computed in float).
-                    "img_ids": state.latent_image_ids.to(
-                        device=latent_input.device,
-                        dtype=torch.float32,
-                    ),
-                    "txt_ids": state.text_ids.to(
-                        device=latent_input.device,
-                        dtype=torch.float32,
-                    ),
-                    "guidance": guidance,
-                },
-            ),
-        )
-        return output.as_dict()
-
     # -- collector boundary --------------------------------------------
 
     def export_batch_context(self, state: FluxSamplingState) -> dict[str, Any]:
@@ -363,52 +421,6 @@ class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
             "latents_clean": state.latents.detach(),
         }
 
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> FluxSamplingState:
-        """Rebuild FluxSamplingState from a batch slice for the eval forward path.
-
-        Rebuilds the batch-shared position grids deterministically: ``text_ids``
-        is zeros sized to the stored prompt sequence length, ``latent_image_ids``
-        from the stored spatial shape — pipeline-free, so the replay model never
-        touches a FluxPipeline.
-        """
-        ts = replay_tensors["timesteps"]
-        timesteps = pack_eval_timestep(ts, step_idx)
-        prompt_embeds = replay_tensors["prompt_embeds"]
-        height = batch_context["height"]
-        width = batch_context["width"]
-        vae_scale_factor = int(batch_context["vae_scale_factor"])
-        device = prompt_embeds.device
-
-        text_seq_len = prompt_embeds.shape[1]
-        text_ids = torch.zeros(text_seq_len, 3, device=device, dtype=torch.float32)
-        latent_h = 2 * (int(height) // (vae_scale_factor * 2))
-        latent_w = 2 * (int(width) // (vae_scale_factor * 2))
-        latent_image_ids = self._build_latent_image_ids(
-            latent_h // 2,
-            latent_w // 2,
-            device,
-            torch.float32,
-        )
-        return FluxSamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=None,  # not needed for forward_step (no scheduler.step here)
-            prompt_embeds=prompt_embeds,
-            pooled_prompt_embeds=replay_tensors["pooled_prompt_embeds"],
-            text_ids=text_ids,
-            latent_image_ids=latent_image_ids,
-            guidance_scale=batch_context["guidance_scale"],
-            guidance_embeds=batch_context["guidance_embeds"],
-            height=height,
-            width=width,
-        )
-
     # -- decode_latents ------------------------------------------------
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
@@ -437,8 +449,4 @@ class FluxModel(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         return decoder(latents)
 
 
-class FluxReplayModel(DiffusersReplayModelBase, FluxModel):
-    """Replay-only FLUX model that owns no prompt encoders, VAE, or pipeline."""
-
-
-__all__ = ["FluxModel", "FluxReplayModel", "FluxSamplingState"]
+__all__ = ["FluxModel", "FluxPipelineModel", "FluxSamplingState"]

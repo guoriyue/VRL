@@ -38,7 +38,7 @@ def load_h3_replay_components(
     block_devices: tuple[int, ...] | None = None,
     materialize_weights: bool = True,
 ) -> dict[str, Any]:
-    """Transformer + the two H3 schedulers as ``MiniMaxH3ReplayModel`` kwargs.
+    """Transformer + the two H3 schedulers as ``MiniMaxH3Model`` kwargs.
 
     Shared with VDN-H3, whose replay model is the same construction plus the
     hybrid-attention graft applied afterwards. ``materialize_weights=False``
@@ -86,7 +86,7 @@ def build_minimax_h3_replay_runtime_bundle(
 ) -> RuntimeBundle:
     """Transformer + the two H3 schedulers; no VAE, no conditioner."""
 
-    from vrl.models.families.minimax_h3.model import MiniMaxH3ReplayModel
+    from vrl.models.families.minimax_h3.model import MiniMaxH3Model
     from vrl.models.steps.denoise.build import assemble_replay_bundle
 
     logger.info("Building minimax_h3 replay runtime bundle from %s", build.model_name_or_path)
@@ -95,7 +95,7 @@ def build_minimax_h3_replay_runtime_bundle(
         block_devices=block_devices,
         materialize_weights=materialize_weights,
     )
-    model = MiniMaxH3ReplayModel(**components)
+    model = MiniMaxH3Model(**components)
     num_steps = build.num_steps
     if num_steps is not None:
         model.set_num_steps(num_steps)

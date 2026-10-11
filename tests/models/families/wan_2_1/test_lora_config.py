@@ -9,7 +9,7 @@ import torch
 from torch import nn
 
 from tests.models.steps.denoise.fixtures import lora_test_build
-from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
+from vrl.models.families.wan_2_1.model import WanT2VPipelineModel
 
 pytest.importorskip("peft")
 
@@ -20,8 +20,8 @@ class _TinyTransformer(nn.Module):
         self.proj = nn.Linear(2, 2, bias=False)
 
 
-def _model() -> WanT2VDiffusersModel:
-    return WanT2VDiffusersModel(
+def _model() -> WanT2VPipelineModel:
+    return WanT2VPipelineModel(
         pipeline=SimpleNamespace(
             transformer=_TinyTransformer(),
             config={},

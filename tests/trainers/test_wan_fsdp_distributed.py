@@ -35,7 +35,7 @@ from tests.trainers._strategy_policies import free_port
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import FSDPConfig
 from vrl.models.families.wan_2_1.model import (
-    WanI2VReplayModel,
+    WanI2VModel,
     WanI2VSamplingState,
 )
 from vrl.models.interfaces.runtime import ModelBuild
@@ -149,8 +149,8 @@ def _fsdp_strategy(
     )
 
 
-def _build_policy(seed: int = 0) -> WanI2VReplayModel:
-    policy = WanI2VReplayModel(
+def _build_policy(seed: int = 0) -> WanI2VModel:
+    policy = WanI2VModel(
         transformer=build_tiny_transformer("wan_i2v", seed=seed),
         scheduler=None,
         device=torch.device("cpu"),
@@ -176,8 +176,8 @@ def _build_policy(seed: int = 0) -> WanI2VReplayModel:
     return policy
 
 
-def _build_dual_policy(seed: int = 0) -> WanI2VReplayModel:
-    policy = WanI2VReplayModel(
+def _build_dual_policy(seed: int = 0) -> WanI2VModel:
+    policy = WanI2VModel(
         transformer=build_tiny_transformer("wan_i2v", seed=seed),
         transformer_2=build_tiny_transformer("wan_i2v", seed=seed + 1),
         scheduler=None,
@@ -244,12 +244,12 @@ def _input_state(
     return state
 
 
-def _bundle(policy: WanI2VReplayModel) -> SimpleNamespace:
+def _bundle(policy: WanI2VModel) -> SimpleNamespace:
     return SimpleNamespace(trainable_modules=policy.trainable_modules)
 
 
 def _train_once(
-    policy: WanI2VReplayModel,
+    policy: WanI2VModel,
     strategy: FSDPStrategy,
     optimizer: torch.optim.Optimizer,
     *,

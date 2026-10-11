@@ -30,7 +30,7 @@ from vrl.generation.types import DenoiseRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.families.minimax_h3.model import (
     MiniMaxH3Model,
-    MiniMaxH3ReplayModel,
+    MiniMaxH3PipelineModel,
     MiniMaxH3SamplingState,
     audio_euler_step,
     build_flow_scheduler_class,
@@ -48,8 +48,8 @@ _LAYOUT_KWARGS = frozenset(
 )
 
 
-def _model(**vae_stats: float) -> MiniMaxH3Model:
-    model = MiniMaxH3Model(
+def _model(**vae_stats: float) -> MiniMaxH3PipelineModel:
+    model = MiniMaxH3PipelineModel(
         pipeline=build_tiny_minimax_h3_components(**vae_stats), device=torch.device("cpu")
     )
     stamp_model_precision(model)
@@ -70,7 +70,9 @@ def _request(**overrides: Any) -> DenoiseRequest:
     return DenoiseRequest(**fields)
 
 
-def _sampling_state(model: MiniMaxH3Model, prompt: str = "a cat video") -> MiniMaxH3SamplingState:
+def _sampling_state(
+    model: MiniMaxH3PipelineModel, prompt: str = "a cat video"
+) -> MiniMaxH3SamplingState:
     encoded = model.encode_prompt(
         prompt, None, guidance_scale=1.0, max_sequence_length=_MAX_TEXT_TOKENS
     )
@@ -78,7 +80,7 @@ def _sampling_state(model: MiniMaxH3Model, prompt: str = "a cat video") -> MiniM
 
 
 def _rollout(
-    model: MiniMaxH3Model,
+    model: MiniMaxH3PipelineModel,
 ) -> tuple[MiniMaxH3SamplingState, list[torch.Tensor], list[torch.Tensor]]:
     """Drive the shared SDE step over the state the way the denoise loop does."""
 
@@ -332,7 +334,7 @@ def test_replay_restores_every_step_bit_exactly_from_the_exported_tensors() -> N
     state, observations, noise_preds = _rollout(model)
     context = model.export_batch_context(state)
     replay_tensors = model.export_replay_tensors(state)
-    replay = MiniMaxH3ReplayModel(
+    replay = MiniMaxH3Model(
         transformer=model.transformer,
         scheduler=build_flow_scheduler_class()(shift=12.0),
         audio_scheduler=MiniMaxH3Scheduler(shift=3.0),
@@ -367,7 +369,7 @@ def test_replay_refuses_a_micro_batch_that_mixes_prompt_lengths() -> None:
     state, observations, _ = _rollout(model)
     context = model.export_batch_context(state)
     replay_tensors = model.export_replay_tensors(state)
-    replay = MiniMaxH3ReplayModel(
+    replay = MiniMaxH3Model(
         transformer=model.transformer,
         scheduler=build_flow_scheduler_class()(shift=12.0),
         audio_scheduler=MiniMaxH3Scheduler(shift=3.0),

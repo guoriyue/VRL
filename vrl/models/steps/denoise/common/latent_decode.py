@@ -55,7 +55,7 @@ class VaeDecodeMixin:
     layout and whether the VAE ships a ``shift_factor``.
 
     OPT IN BY LISTING THIS MIXIN FIRST in the bases. ``decode_latents`` is an
-    ``@abstractmethod`` on ``DenoiseModelBase``, so a mixin placed after
+    ``@abstractmethod`` on ``DenoisePipelineModelBase``, so a mixin placed after
     ``DiffusersPipelineModelBase`` loses the MRO race, the abstract method
     survives, and the class raises ``TypeError`` at instantiation.
 

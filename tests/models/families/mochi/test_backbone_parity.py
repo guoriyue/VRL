@@ -23,7 +23,7 @@ from tests.models.steps.denoise.fixtures import (
 )
 from vrl.models.families.mochi.model import (
     MochiModel,
-    MochiReplayModel,
+    MochiPipelineModel,
     MochiSamplingState,
     standard_mochi_scheduler,
 )
@@ -32,8 +32,8 @@ _TEXT_LEN = 5
 _NUM_TRAIN_TIMESTEPS = 1000
 
 
-def _model(transformer: torch.nn.Module) -> MochiModel:
-    model = MochiModel(
+def _model(transformer: torch.nn.Module) -> MochiPipelineModel:
+    model = MochiPipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
@@ -130,7 +130,7 @@ def test_mochi_replay_roundtrip_restores_equivalent_state() -> None:
     context = model.export_batch_context(state)
     replay["timesteps"] = torch.full((TINY_MOCHI_LATENT_SHAPE[0],), 400.0)
 
-    restored = MochiReplayModel(
+    restored = MochiModel(
         transformer=transformer,
         scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=_NUM_TRAIN_TIMESTEPS),
     ).restore_eval_state(replay, context, state.latents, 0)

@@ -23,7 +23,7 @@ from tests.models.steps.denoise.fixtures import (
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.families.cosmos.predict2_5.model import (
     CosmosPredict25Model,
-    CosmosPredict25ReplayModel,
+    CosmosPredict25PipelineModel,
     CosmosPredict25SamplingState,
 )
 from vrl.rollouts.batch import RolloutBatch
@@ -65,7 +65,7 @@ def test_cosmos_predict25_forward_step_runs_real_unbatched_cfg() -> None:
     """
     transformer = build_tiny_transformer("cosmos")
     calls = record_forward_calls(transformer)
-    model = CosmosPredict25Model(
+    model = CosmosPredict25PipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
@@ -88,7 +88,7 @@ def test_cosmos_predict25_forward_step_runs_real_unbatched_cfg() -> None:
 def test_predict25_full_finetune_supports_real_forward_backward() -> None:
     transformer = build_tiny_transformer("cosmos")
     transformer.requires_grad_(False)
-    model = CosmosPredict25ReplayModel(transformer=transformer, scheduler=object(), device="cpu")
+    model = CosmosPredict25Model(transformer=transformer, scheduler=object(), device="cpu")
     build = lora_test_build({}, family="cosmos-predict2.5")
     build.model_config = {"use_lora": False}
     model.apply_full_finetune(build)
@@ -122,7 +122,7 @@ def test_replay_forward_on_caller_latents_feeds_the_step_sigma() -> None:
     step_idx = 2
     transformer = build_tiny_transformer("cosmos")
     calls = record_forward_calls(transformer)
-    model = CosmosPredict25ReplayModel(transformer=transformer, scheduler=scheduler, device="cpu")
+    model = CosmosPredict25Model(transformer=transformer, scheduler=scheduler, device="cpu")
     stamp_model_precision(model)
 
     steps = len(scheduler.timesteps)

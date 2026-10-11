@@ -107,9 +107,9 @@ def test_the_two_views_are_not_the_same_key_set() -> None:
 
     from types import SimpleNamespace
 
-    from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
+    from vrl.models.families.wan_2_1.model import WanT2VPipelineModel
 
-    model = WanT2VDiffusersModel(
+    model = WanT2VPipelineModel(
         pipeline=SimpleNamespace(
             transformer=nn.Linear(4, 4),
             transformer_2=nn.Linear(4, 4),

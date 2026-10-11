@@ -44,7 +44,7 @@ from vrl.models.interfaces import (
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.precision import model_autocast
 from vrl.models.source_integrity import runtime_source_tree_sha256
-from vrl.models.steps.denoise.base import DenoiseModelBase
+from vrl.models.steps.denoise.base import DenoiseModelBase, DenoisePipelineModelBase
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.paths import repo_root
 
@@ -353,8 +353,12 @@ class _OfficialCausVidBackend:
         return (noisy.double() - sigma * flow.double()).to(flow.dtype)
 
 
-class _CausVidPolicyModel(DenoiseModelBase):
-    """Shared trainable causal transformer surface for rollout and replay."""
+class CausVidModel(DenoiseModelBase):
+    """CausVid causal transformer, its causal schedule and grouped replay: the model replay runs.
+
+    The backend it is built with carries only the transformer; the sampling
+    class adds the prompt encoder and VAE through a generation backend.
+    """
 
     # Grouped replay: every [chunk, transition] action is replayed in ONE call,
     # so there is no timestep axis to select (unlike the denoise-family default
@@ -367,14 +371,18 @@ class _CausVidPolicyModel(DenoiseModelBase):
         backend: Any,
         geometry: CausVidGeometry = OFFICIAL_CAUSVID_GEOMETRY,
         schedule: CausVidSchedule = OFFICIAL_CAUSVID_SCHEDULE,
-        generation_enabled: bool,
     ) -> None:
         super().__init__()
         object.__setattr__(self, "_backend", backend)
         self.transformer = backend.transformer
         self.geometry = geometry
         self._schedule = schedule
-        self._generation_enabled = generation_enabled
+
+    @classmethod
+    def from_build(cls, build: ModelBuild) -> CausVidModel:
+        build.require_replay()
+        backend = _load_official_backend(build, generation=False)
+        return cls(backend=backend)
 
     @property
     def device(self) -> Any:
@@ -388,7 +396,7 @@ class _CausVidPolicyModel(DenoiseModelBase):
 
     @property
     def raw_handle(self) -> Any:
-        return self._backend if self._generation_enabled else None
+        return None
 
     def _set_transformer(self, transformer: Any) -> None:
         self.transformer = transformer
@@ -409,39 +417,11 @@ class _CausVidPolicyModel(DenoiseModelBase):
         if int(n) != 3:
             raise ValueError("released CausVid support requires sampling.num_steps=3")
 
-    # These methods preserve the denoise-family ABC shape. The custom causal
-    # executor owns generation as one grouped trajectory, so generic single-step
-    # prepare/forward entry points are intentionally unreachable.
-    def prepare_sampling(self, *args: Any, **kwargs: Any) -> Any:
-        raise RuntimeError("CausVid sampling must use CausVidBatchExecutor")
-
+    # ``DenoiseModelBase`` requires a single-step forward; grouped replay scores
+    # the whole trajectory in ``replay_forward`` and never takes one.
     def forward_step(self, state: Any, step_idx: int) -> dict[str, Any]:
         del state, step_idx
         raise RuntimeError("CausVid replay is trajectory-grouped, not single-step")
-
-    def encode_prompt(
-        self,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        del kwargs
-        if not self._generation_enabled:
-            raise RuntimeError(f"{type(self).__name__} cannot encode prompts")
-        if negative_prompt not in (None, "", []):
-            raise ValueError("released CausVid does not support negative prompts or CFG")
-        prompts = [prompt] if isinstance(prompt, str) else list(prompt)
-        return {"prompt_embeds": self._backend.encode_prompts(prompts)}
-
-    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        if not self._generation_enabled:
-            raise RuntimeError(f"{type(self).__name__} cannot decode latents")
-        return self._backend.decode_latents(latents)
-
-    def move_frozen_components(self, device: Any) -> None:
-        mover = getattr(self._backend, "move_frozen_components", None)
-        if callable(mover):
-            mover(device)
 
     def replay_forward(
         self,
@@ -613,25 +593,45 @@ class _CausVidPolicyModel(DenoiseModelBase):
         return batch_size, chunk_count, transition_count
 
 
-class CausVidModel(_CausVidPolicyModel):
-    """Full CausVid rollout model: prompt encoder, causal policy, and VAE."""
+class CausVidPipelineModel(DenoisePipelineModelBase, CausVidModel):
+    """Full CausVid rollout model: prompt encoder, causal policy, and VAE.
 
-    def __init__(
+    Built with a generation backend. The custom causal executor drives
+    ``generate_chunk_autoregressive``, so the single-step sampling entry point
+    stays unreachable.
+    """
+
+    @property
+    def raw_handle(self) -> Any:
+        return self._backend
+
+    # ``DenoisePipelineModelBase`` requires a single-step sampling entry; the
+    # causal executor generates the whole grouped trajectory instead.
+    def prepare_sampling(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("CausVid sampling must use CausVidBatchExecutor")
+
+    def encode_prompt(
         self,
-        *,
-        backend: Any,
-        geometry: CausVidGeometry = OFFICIAL_CAUSVID_GEOMETRY,
-        schedule: CausVidSchedule = OFFICIAL_CAUSVID_SCHEDULE,
-    ) -> None:
-        super().__init__(
-            backend=backend,
-            geometry=geometry,
-            schedule=schedule,
-            generation_enabled=True,
-        )
+        prompt: str | list[str],
+        negative_prompt: str | list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        del kwargs
+        if negative_prompt not in (None, "", []):
+            raise ValueError("released CausVid does not support negative prompts or CFG")
+        prompts = [prompt] if isinstance(prompt, str) else list(prompt)
+        return {"prompt_embeds": self._backend.encode_prompts(prompts)}
+
+    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        return self._backend.decode_latents(latents)
+
+    def move_frozen_components(self, device: Any) -> None:
+        mover = getattr(self._backend, "move_frozen_components", None)
+        if callable(mover):
+            mover(device)
 
     @classmethod
-    def from_build(cls, build: ModelBuild) -> CausVidModel:
+    def from_build(cls, build: ModelBuild) -> CausVidPipelineModel:
         build.require_rollout()
         backend = _load_official_backend(build, generation=True)
         return cls(backend=backend)
@@ -718,30 +718,6 @@ class CausVidModel(_CausVidPolicyModel):
                 generator.manual_seed(int(seed) + flat_sample_index)
             generators.append(generator)
         return tuple(generators)
-
-
-class CausVidReplayModel(_CausVidPolicyModel):
-    """Transformer-only trainer model for grouped differentiable replay."""
-
-    def __init__(
-        self,
-        *,
-        backend: Any,
-        geometry: CausVidGeometry = OFFICIAL_CAUSVID_GEOMETRY,
-        schedule: CausVidSchedule = OFFICIAL_CAUSVID_SCHEDULE,
-    ) -> None:
-        super().__init__(
-            backend=backend,
-            geometry=geometry,
-            schedule=schedule,
-            generation_enabled=False,
-        )
-
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> CausVidReplayModel:
-        build.require_replay()
-        backend = _load_official_backend(build, generation=False)
-        return cls(backend=backend)
 
 
 def _require_noncommercial_license(model_config: Mapping[str, Any]) -> None:
@@ -1108,6 +1084,6 @@ __all__ = [
     "CAUSVID_SOURCE_REVISION",
     "CausVidCache",
     "CausVidModel",
-    "CausVidReplayModel",
+    "CausVidPipelineModel",
     "CausVidResolvedArtifacts",
 ]

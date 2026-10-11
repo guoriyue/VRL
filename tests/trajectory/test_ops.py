@@ -103,12 +103,12 @@ def test_select_rejects_ambiguous_selectors(selector) -> None:
 def test_sample_selection_preserves_minimax_exported_vae_geometry() -> None:
     from types import SimpleNamespace
 
-    from vrl.models.families.minimax_h3.model import MiniMaxH3Model
+    from vrl.models.families.minimax_h3.model import MiniMaxH3PipelineModel
 
     model = SimpleNamespace(_vae_geometry=lambda: (4, 2, 8))
     state = SimpleNamespace(height=32, width=32, num_frames=4, fps=24, timesteps=torch.ones(2))
     trajectory = _trajectory(samples=3)
-    trajectory.context = MiniMaxH3Model.export_batch_context(model, state)
+    trajectory.context = MiniMaxH3PipelineModel.export_batch_context(model, state)
     selected = trajectory.select_samples([2, 0])
     assert selected.context["vae_geometry"] == [4, 2, 8]
     assert len(selected.sample_rows) == 2

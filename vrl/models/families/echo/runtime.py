@@ -48,7 +48,7 @@ def build_echo_replay_runtime_bundle(
     from diffusers import FlowMatchEulerDiscreteScheduler
 
     from vrl.models.families.echo.model import (
-        EchoReplayModel,
+        EchoModel,
         _resolve_echo_checkpoint,
         _resolve_gemma_dir,
     )
@@ -82,10 +82,9 @@ def build_echo_replay_runtime_bundle(
     # the standard flow-matching SDE. num_train_timesteps=1000 is Echo/LTX's
     # train-time discretization (sigma = t / num_train_timesteps), and it MUST match the
     # rollout value so replay log-prob recompute reads the identical sigma table.
-    model = EchoReplayModel(
+    model = EchoModel(
         echo=echo,
         scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000),
-        dtype=dtype,
         device=device,
     )
     # The replay scheduler feeds the SDE log-prob evaluator, which maps each

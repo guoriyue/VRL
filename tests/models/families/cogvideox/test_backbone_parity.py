@@ -22,14 +22,14 @@ from tests.models.steps.denoise.fixtures import (
 )
 from vrl.models.families.cogvideox.model import (
     CogVideoXModel,
-    CogVideoXReplayModel,
+    CogVideoXPipelineModel,
     CogVideoXSamplingState,
     cogvideox_rotary_embeds,
 )
 
 
-def _model(transformer: torch.nn.Module) -> CogVideoXModel:
-    model = CogVideoXModel(
+def _model(transformer: torch.nn.Module) -> CogVideoXPipelineModel:
+    model = CogVideoXPipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
@@ -122,7 +122,7 @@ def test_cogvideox_replay_roundtrip_restores_equivalent_state() -> None:
     context = model.export_batch_context(state)
     replay["timesteps"] = torch.full((TINY_COGVIDEOX_LATENT_SHAPE[0],), 499)
 
-    restored = CogVideoXReplayModel(
+    restored = CogVideoXModel(
         transformer=transformer,
         scheduler=None,
     ).restore_eval_state(replay, context, state.latents, 0)

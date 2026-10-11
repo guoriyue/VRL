@@ -201,7 +201,7 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The Wan runtime must carry model-build memory knobs all the way to the VAE."""
-    family, model_class_name = "wan_2_1_i2v", "WanI2VDiffusersModel"
+    family, model_class_name = "wan_2_1_i2v", "WanI2VPipelineModel"
 
     class _FakeModel:
         def __init__(self) -> None:
@@ -264,12 +264,12 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
         # its model class from the registry recipe, keyed by build.family.
         (
             "vrl.models.families.sd3_5.model",
-            "SD3_5Model",
+            "SD3_5PipelineModel",
             "sd3_5",
         ),
         (
             "vrl.models.families.sana.model",
-            "SanaModel",
+            "SanaPipelineModel",
             "sana",
         ),
     ],
@@ -376,8 +376,8 @@ def test_targetless_model_passes_when_nothing_configured() -> None:
 @pytest.mark.parametrize(
     ("family", "model_module_name", "model_class_name"),
     [
-        ("causvid", "vrl.models.families.causvid.model", "CausVidModel"),
-        ("echo", "vrl.models.families.echo.model", "EchoModel"),
+        ("causvid", "vrl.models.families.causvid.model", "CausVidPipelineModel"),
+        ("echo", "vrl.models.families.echo.model", "EchoPipelineModel"),
     ],
 )
 def test_targetless_in_process_runtime_rejects_direct_model_build_memory(

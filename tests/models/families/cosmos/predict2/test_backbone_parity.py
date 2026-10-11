@@ -20,7 +20,7 @@ from tests.models.steps.denoise.fixtures import (
     stamp_model_precision,
 )
 from vrl.models.families.cosmos.predict2.model import (
-    CosmosPredict2Model,
+    CosmosPredict2PipelineModel,
     CosmosPredict2SamplingState,
 )
 
@@ -57,7 +57,7 @@ def test_cosmos_predict2_forward_step_runs_real_unbatched_cfg() -> None:
     """
     transformer = build_tiny_transformer("cosmos")
     calls = record_forward_calls(transformer)
-    model = CosmosPredict2Model(
+    model = CosmosPredict2PipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )

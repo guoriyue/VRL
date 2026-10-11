@@ -5,6 +5,11 @@ The generation helper flow mirrors every diffusion family:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
+``QwenImage21PipelineModel`` runs that flow. ``QwenImage21Model`` — the
+transformer, its scheduler and ``forward_step`` — is what replay runs; the
+pipeline class adds the text and reference-image encoding, latent packing and
+VAE decode on top of it.
+
 Qwen-Image-2.1 specifics vs the 20B ``qwen_image`` family:
 - Latents are packed by a plain spatial flatten ``[B, h*w, C]`` with ``C=64``
   (``patch_size=1``): one token per 16x16 pixel tile. ``decode_latents`` unpacks
@@ -38,8 +43,8 @@ import torch
 
 from vrl.generation.types import DenoiseRequest
 from vrl.models.steps.denoise import (
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
@@ -77,8 +82,8 @@ class QwenImage21SamplingState(GuidedDenoiseSamplingStateBase):
     reference_shapes: tuple[tuple[int, int, int], ...] = ()
 
 
-class QwenImage21Model(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
-    """Diffusers-backed Qwen-Image-2.1 text and reference-conditioned model.
+class QwenImage21Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
+    """Qwen-Image-2.1 transformer, scheduler and per-step math: the model replay runs.
 
     Implements the backbone-runner protocol itself. True CFG with cond/uncond
     prompts of DIFFERENT token lengths cannot be packed into one batched call,
@@ -133,20 +138,6 @@ class QwenImage21Model(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         target_tokens = request.extra["target_tokens"]
         return raw_output[:, -target_tokens:]
 
-    def __init__(
-        self,
-        *,
-        pipeline: Any,
-        device: Any = None,
-    ) -> None:
-        super().__init__(pipeline=pipeline, device=device)
-        # decode_latents only receives the packed latent tensor; prepare_sampling
-        # records the spatial shape it must unpack to (single model instance runs
-        # prepare -> denoise -> decode sequentially per batch).
-        self._decode_height = 1024
-        self._decode_width = 1024
-        self._output_mode = "rgb"
-
     def packed_token_count(self, height: int, width: int) -> int:
         """2.1 packs the 16x VAE grid unpatched, each side rounded to 2 latent cells.
 
@@ -176,6 +167,123 @@ class QwenImage21Model(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         )
         scheduler.set_timesteps(num_steps, device=device, sigmas=sigmas, mu=mu)
         return scheduler.timesteps
+
+    # -- forward_step --------------------------------------------------
+
+    def _img_shapes(self, state: QwenImage21SamplingState, bsz: int) -> list:
+        vsf = state.vae_scale_factor
+        return [[*state.reference_shapes, (1, state.height // vsf, state.width // vsf)]] * bsz
+
+    @staticmethod
+    def _joint_img_mask(text_mask: torch.Tensor, latent_tokens: int) -> torch.Tensor:
+        """Text-side vision slots plus one ``True`` slot per 2x2 group of target latents."""
+        text_mask = text_mask.bool()
+        target = text_mask.new_ones(
+            text_mask.shape[0], latent_tokens // _LATENT_TOKENS_PER_MASK_SLOT
+        )
+        return torch.cat([text_mask, target], dim=1)
+
+    def forward_step(
+        self,
+        state: QwenImage21SamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        """Qwen-Image-2.1 transformer forward (true-CFG separate branches when do_cfg)."""
+        t = state.timesteps[step_idx]
+        bsz, latent_tokens = state.latents.shape[0], state.latents.shape[1]
+        td = self._transformer_dtype()
+
+        latent_input = state.latents.to(td)
+        if state.reference_latents is not None:
+            latent_input = torch.cat([state.reference_latents.to(td), latent_input], dim=1)
+        timestep_batch = (
+            expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td) / 1000.0
+        )
+        negative_embeds = (
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
+        )
+        negative_img_mask = (
+            None
+            if state.negative_image_pad_mask is None
+            else self._joint_img_mask(state.negative_image_pad_mask, latent_tokens)
+        )
+        output = DenoiseBackboneCaller(
+            self.transformer,
+            self,
+        )(
+            DenoiseBackboneInput(
+                hidden_states=latent_input,
+                timestep=timestep_batch,
+                prompt_embeds=state.prompt_embeds.to(td),
+                negative_prompt_embeds=negative_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=td,
+                extra={
+                    "target_tokens": latent_tokens,
+                    "encoder_hidden_states_mask": state.prompt_embeds_mask,
+                    "negative_encoder_hidden_states_mask": state.negative_prompt_embeds_mask,
+                    "img_shapes": self._img_shapes(state, bsz),
+                    "img_mask": self._joint_img_mask(state.image_pad_mask, latent_tokens),
+                    "negative_img_mask": negative_img_mask,
+                },
+            ),
+        )
+        return output.as_dict()
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> QwenImage21SamplingState:
+        """Rebuild QwenImage21SamplingState from a batch slice for the eval forward path."""
+        ts = replay_tensors["timesteps"]
+        timesteps = pack_eval_timestep(ts, step_idx)
+        negative_prompt_embeds = replay_tensors.get("negative_prompt_embeds")
+        return QwenImage21SamplingState(
+            latents=latents,
+            timesteps=timesteps,
+            scheduler=None,  # not needed for forward_step (no scheduler.step here)
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            prompt_embeds_mask=replay_tensors.get("prompt_embeds_mask"),
+            image_pad_mask=replay_tensors["image_pad_mask"],
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_prompt_embeds_mask=replay_tensors.get("negative_prompt_embeds_mask"),
+            negative_image_pad_mask=replay_tensors.get("negative_image_pad_mask"),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
+            height=batch_context["height"],
+            width=batch_context["width"],
+            vae_scale_factor=int(batch_context["vae_scale_factor"]),
+            reference_latents=replay_tensors.get("reference_latents"),
+            reference_shapes=tuple(
+                tuple(shape) for shape in batch_context.get("reference_shapes", ())
+            ),
+        )
+
+
+class QwenImage21PipelineModel(DiffusersPipelineModelBase, QwenImage21Model):
+    """Qwen-Image-2.1 plus the diffusers pipeline that sampling needs.
+
+    The pipeline brings prompt encoding, latent preparation and VAE decode;
+    this class also exports the trajectory tensors replay reads back.
+    """
+
+    def __init__(
+        self,
+        *,
+        pipeline: Any,
+        device: Any = None,
+    ) -> None:
+        super().__init__(pipeline=pipeline, device=device)
+        # decode_latents only receives the packed latent tensor; prepare_sampling
+        # records the spatial shape it must unpack to (single model instance runs
+        # prepare -> denoise -> decode sequentially per batch).
+        self._decode_height = 1024
+        self._decode_width = 1024
+        self._output_mode = "rgb"
 
     # -- encode_prompt -------------------------------------------------
 
@@ -345,69 +453,6 @@ class QwenImage21Model(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
             reference_shapes=encoded.get("reference_shapes", ()),
         )
 
-    # -- forward_step --------------------------------------------------
-
-    def _img_shapes(self, state: QwenImage21SamplingState, bsz: int) -> list:
-        vsf = state.vae_scale_factor
-        return [[*state.reference_shapes, (1, state.height // vsf, state.width // vsf)]] * bsz
-
-    @staticmethod
-    def _joint_img_mask(text_mask: torch.Tensor, latent_tokens: int) -> torch.Tensor:
-        """Text-side vision slots plus one ``True`` slot per 2x2 group of target latents."""
-        text_mask = text_mask.bool()
-        target = text_mask.new_ones(
-            text_mask.shape[0], latent_tokens // _LATENT_TOKENS_PER_MASK_SLOT
-        )
-        return torch.cat([text_mask, target], dim=1)
-
-    def forward_step(
-        self,
-        state: QwenImage21SamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """Qwen-Image-2.1 transformer forward (true-CFG separate branches when do_cfg)."""
-        t = state.timesteps[step_idx]
-        bsz, latent_tokens = state.latents.shape[0], state.latents.shape[1]
-        td = self._transformer_dtype()
-
-        latent_input = state.latents.to(td)
-        if state.reference_latents is not None:
-            latent_input = torch.cat([state.reference_latents.to(td), latent_input], dim=1)
-        timestep_batch = (
-            expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td) / 1000.0
-        )
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        negative_img_mask = (
-            None
-            if state.negative_image_pad_mask is None
-            else self._joint_img_mask(state.negative_image_pad_mask, latent_tokens)
-        )
-        output = DenoiseBackboneCaller(
-            self.transformer,
-            self,
-        )(
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "target_tokens": latent_tokens,
-                    "encoder_hidden_states_mask": state.prompt_embeds_mask,
-                    "negative_encoder_hidden_states_mask": state.negative_prompt_embeds_mask,
-                    "img_shapes": self._img_shapes(state, bsz),
-                    "img_mask": self._joint_img_mask(state.image_pad_mask, latent_tokens),
-                    "negative_img_mask": negative_img_mask,
-                },
-            ),
-        )
-        return output.as_dict()
-
     # -- collector boundary --------------------------------------------
 
     def export_batch_context(self, state: QwenImage21SamplingState) -> dict[str, Any]:
@@ -444,38 +489,6 @@ class QwenImage21Model(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         if state.negative_image_pad_mask is not None:
             tensors["negative_image_pad_mask"] = state.negative_image_pad_mask.to(torch.int64)
         return tensors
-
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> QwenImage21SamplingState:
-        """Rebuild QwenImage21SamplingState from a batch slice for the eval forward path."""
-        ts = replay_tensors["timesteps"]
-        timesteps = pack_eval_timestep(ts, step_idx)
-        negative_prompt_embeds = replay_tensors.get("negative_prompt_embeds")
-        return QwenImage21SamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=None,  # not needed for forward_step (no scheduler.step here)
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            prompt_embeds_mask=replay_tensors.get("prompt_embeds_mask"),
-            image_pad_mask=replay_tensors["image_pad_mask"],
-            negative_prompt_embeds=negative_prompt_embeds,
-            negative_prompt_embeds_mask=replay_tensors.get("negative_prompt_embeds_mask"),
-            negative_image_pad_mask=replay_tensors.get("negative_image_pad_mask"),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
-            height=batch_context["height"],
-            width=batch_context["width"],
-            vae_scale_factor=int(batch_context["vae_scale_factor"]),
-            reference_latents=replay_tensors.get("reference_latents"),
-            reference_shapes=tuple(
-                tuple(shape) for shape in batch_context.get("reference_shapes", ())
-            ),
-        )
 
     # -- encode_video_to_latents ---------------------------------------
 
@@ -550,8 +563,4 @@ class QwenImage21Model(DiffusersPipelineModelBase, DenoiseBackboneRunnerBase):
         return decoder(latents)
 
 
-class QwenImage21ReplayModel(DiffusersReplayModelBase, QwenImage21Model):
-    """Replay-only Qwen-Image-2.1 model that owns no prompt encoder, VAE, or pipeline."""
-
-
-__all__ = ["QwenImage21Model", "QwenImage21ReplayModel", "QwenImage21SamplingState"]
+__all__ = ["QwenImage21Model", "QwenImage21PipelineModel", "QwenImage21SamplingState"]

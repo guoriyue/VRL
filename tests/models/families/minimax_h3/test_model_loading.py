@@ -17,7 +17,7 @@ import torch
 
 from tests.models.steps.denoise.fixtures import build_tiny_minimax_h3_transformer
 from vrl.config.precision import RolePrecision
-from vrl.models.families.minimax_h3.model import MiniMaxH3Model
+from vrl.models.families.minimax_h3.model import MiniMaxH3PipelineModel
 from vrl.models.families.minimax_h3.runtime import (
     MiniMaxH3BatchExecutor,
     build_minimax_h3_replay_runtime_bundle,
@@ -102,7 +102,7 @@ def test_from_build_loads_the_t2va_workflow_and_freezes_the_generation_modules(
         rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.bfloat16),
     )
 
-    model = MiniMaxH3Model.from_build(build)
+    model = MiniMaxH3PipelineModel.from_build(build)
 
     assert isinstance(model.transformer, MiniMaxH3Transformer3DModel)
     assert model.transformer.dtype == torch.float32
@@ -164,8 +164,7 @@ def test_replay_builder_loads_transformer_and_both_schedulers_only(monkeypatch) 
     model = bundle.model
     assert model.scheduler.timesteps.numel() == 4
     assert model.audio_scheduler.timesteps.numel() == 4
-    with pytest.raises(RuntimeError, match="cannot decode"):
-        model.decode_latents(torch.zeros(1))
+    assert not hasattr(model, "decode_latents")
 
 
 def test_batch_executor_pins_one_sample_and_carries_only_the_prompt() -> None:

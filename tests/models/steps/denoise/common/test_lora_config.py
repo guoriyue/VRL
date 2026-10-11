@@ -25,16 +25,7 @@ class _Policy(DenoiseModelBase):
         self.transformer = _TinyTransformer()
         self.device = "cpu"
 
-    def encode_prompt(self, prompt, negative_prompt=None, **kwargs):  # pragma: no cover
-        raise NotImplementedError
-
-    def prepare_sampling(self, request, encoded, **kwargs):  # pragma: no cover
-        raise NotImplementedError
-
     def forward_step(self, state, step_idx):  # pragma: no cover
-        raise NotImplementedError
-
-    def decode_latents(self, latents):  # pragma: no cover
         raise NotImplementedError
 
 

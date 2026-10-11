@@ -391,8 +391,7 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
         assert loaded_builds[-1].parameter_dtype is torch.float16
     assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"transformer"}
-    with pytest.raises(RuntimeError, match="pipeline"):
-        _ = bundle.model.pipeline
+    assert not hasattr(bundle.model, "pipeline")
 
     # ModelBuild rejects a missing identity before any registry dispatch.
     with pytest.raises(ValueError, match=r"ModelBuild\.family"):
@@ -490,7 +489,7 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
 ) -> None:
     """The i2v registry entry's replay_cls selects the I2V replay model."""
     from vrl.models.families.registry import get_model_family_entry
-    from vrl.models.families.wan_2_1.model import WanI2VReplayModel
+    from vrl.models.families.wan_2_1.model import WanI2VModel
     from vrl.models.steps.denoise import build as _shared_build
 
     monkeypatch.setattr(
@@ -504,7 +503,7 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
         _build(family="wan_2_1_i2v"), expected_identity=None
     )
 
-    assert isinstance(bundle.model, WanI2VReplayModel)
+    assert isinstance(bundle.model, WanI2VModel)
 
 
 def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
@@ -571,7 +570,7 @@ def test_cosmos_predict25_replay_builder_is_pipeline_free(
     )
     monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", _diffusers_scheduler)
     monkeypatch.setattr(
-        predict25_model.CosmosPredict25ReplayModel,
+        predict25_model.CosmosPredict25Model,
         "apply_lora",
         lambda self, _build: self.transformer.requires_grad_(True),
     )
@@ -587,5 +586,4 @@ def test_cosmos_predict25_replay_builder_is_pipeline_free(
 
     assert bundle.raw_handle is None
     assert callable(bundle.model.replay_forward_with_latents)
-    with pytest.raises(RuntimeError, match="pipeline"):
-        _ = bundle.model.pipeline
+    assert not hasattr(bundle.model, "pipeline")

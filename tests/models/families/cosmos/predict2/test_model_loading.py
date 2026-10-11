@@ -90,7 +90,7 @@ def test_cosmos_predict2_from_build_swaps_safety_checker_and_restores_grad(
     import diffusers.pipelines.cosmos.pipeline_cosmos2_video2world as v2w_mod
     from diffusers import Cosmos2VideoToWorldPipeline
 
-    from vrl.models.families.cosmos.predict2.model import CosmosPredict2Model
+    from vrl.models.families.cosmos.predict2.model import CosmosPredict2PipelineModel
 
     original_safety_checker = v2w_mod.CosmosSafetyChecker
 
@@ -123,7 +123,7 @@ def test_cosmos_predict2_from_build_swaps_safety_checker_and_restores_grad(
     )
 
     with torch.set_grad_enabled(True):
-        model = CosmosPredict2Model.from_build(build)
+        model = CosmosPredict2PipelineModel.from_build(build)
 
         # Wrapper wraps the fake pipeline and forwards only the model name + dtype.
         assert model.pipeline is pipeline
@@ -165,13 +165,13 @@ def test_cosmos_predict2_from_build_swaps_safety_checker_and_restores_grad(
 def test_custom_cosmos_loaders_apply_component_dtypes(monkeypatch) -> None:
     import diffusers
 
-    from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
-    from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25Model
+    from vrl.models.families.cosmos.cosmos3.model import Cosmos3PipelineModel
+    from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25PipelineModel
     from vrl.models.interfaces.runtime import RolloutBuildOptions
 
     for model_class, pipeline_name, has_encoder in (
-        (CosmosPredict25Model, "Cosmos2_5_PredictBasePipeline", True),
-        (Cosmos3Model, "Cosmos3OmniPipeline", False),
+        (CosmosPredict25PipelineModel, "Cosmos2_5_PredictBasePipeline", True),
+        (Cosmos3PipelineModel, "Cosmos3OmniPipeline", False),
     ):
         pipeline = _FakePipeline()
         calls = []
@@ -219,15 +219,18 @@ def test_custom_cosmos_loaders_apply_component_dtypes(monkeypatch) -> None:
 def test_cosmos_load_preserves_caller_grad_mode(monkeypatch, family, grad_enabled, fail_load):
     import diffusers
 
-    from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
-    from vrl.models.families.cosmos.predict2.model import CosmosPredict2Model
-    from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25Model
+    from vrl.models.families.cosmos.cosmos3.model import Cosmos3PipelineModel
+    from vrl.models.families.cosmos.predict2.model import CosmosPredict2PipelineModel
+    from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25PipelineModel
 
     model_class, pipeline_name = {
-        "predict2": (CosmosPredict2Model, "Cosmos2VideoToWorldPipeline"),
-        "predict2_5": (CosmosPredict25Model, "Cosmos2_5_PredictBasePipeline"),
-        "cosmos3": (Cosmos3Model, "Cosmos3OmniPipeline"),
-        "predict2_5_without_encoder": (CosmosPredict25Model, "Cosmos2_5_PredictBasePipeline"),
+        "predict2": (CosmosPredict2PipelineModel, "Cosmos2VideoToWorldPipeline"),
+        "predict2_5": (CosmosPredict25PipelineModel, "Cosmos2_5_PredictBasePipeline"),
+        "cosmos3": (Cosmos3PipelineModel, "Cosmos3OmniPipeline"),
+        "predict2_5_without_encoder": (
+            CosmosPredict25PipelineModel,
+            "Cosmos2_5_PredictBasePipeline",
+        ),
     }[family]
     failure = RuntimeError("loader failed after changing grad mode")
 

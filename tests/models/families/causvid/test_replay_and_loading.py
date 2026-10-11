@@ -20,7 +20,7 @@ from vrl.generation.types import GenerationRequest
 from vrl.models.families.causvid.model import (
     CAUSVID_SOURCE_REVISION,
     CausVidModel,
-    CausVidReplayModel,
+    CausVidPipelineModel,
     CausVidResolvedArtifacts,
     _load_generator_state_dict,
     _OfficialCausVidBackend,
@@ -208,7 +208,7 @@ def _run_behavior(backend: _ReplayParityBackend) -> Any:
 def test_full_prefix_replay_matches_rollout_and_backpropagates() -> None:
     backend = _ReplayParityBackend()
     behavior = _run_behavior(backend)
-    replay_model = CausVidReplayModel(
+    replay_model = CausVidModel(
         backend=backend,
         geometry=REPLAY_GEOMETRY,
         schedule=OFFICIAL_CAUSVID_SCHEDULE,
@@ -627,7 +627,7 @@ class _GenerationBackend(_ReplayParityBackend):
 
 def test_generation_executor_builds_trainable_chunk_trajectory() -> None:
     backend = _GenerationBackend()
-    model = CausVidModel(
+    model = CausVidPipelineModel(
         backend=backend,
         geometry=REPLAY_GEOMETRY,
         schedule=OFFICIAL_CAUSVID_SCHEDULE,

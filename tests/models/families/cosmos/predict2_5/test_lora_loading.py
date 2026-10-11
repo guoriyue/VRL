@@ -7,7 +7,7 @@ from torch import nn
 
 from tests.models.steps.denoise.fixtures import lora_test_build
 from vrl.models.families.cosmos.predict2_5.model import (
-    CosmosPredict25ReplayModel,
+    CosmosPredict25Model,
 )
 
 
@@ -38,7 +38,7 @@ def test_predict25_warm_start_validates_effective_topology(
         "vrl.models.peft_adapter.load_trainable_lora_adapter",
         fake_load,
     )
-    model = CosmosPredict25ReplayModel(
+    model = CosmosPredict25Model(
         transformer=_Base(),
         scheduler=object(),
         device="cpu",
@@ -81,7 +81,7 @@ def test_predict25_warm_start_validation_failure_keeps_raw_transformer(
         "vrl.models.peft_adapter.load_trainable_lora_adapter",
         reject,
     )
-    model = CosmosPredict25ReplayModel(
+    model = CosmosPredict25Model(
         transformer=_Base(),
         scheduler=object(),
         device="cpu",

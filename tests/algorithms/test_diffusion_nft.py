@@ -36,7 +36,7 @@ from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.config.precision import RolePrecision
-from vrl.generation.types import DenoiseRequest, GenerationRequest, GenerationSampleRow
+from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.steps.denoise import DenoiseModelBase
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.builders import build_diffusion_trajectory
@@ -104,22 +104,6 @@ class _NFTModel(DenoiseModelBase):
         self.transformer = transformer
         self.device = torch.device("cpu")
 
-    def encode_prompt(
-        self,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        raise NotImplementedError
-
-    def prepare_sampling(
-        self,
-        request: DenoiseRequest,
-        encoded: dict[str, Any],
-        **kwargs: Any,
-    ) -> Any:
-        raise NotImplementedError
-
     def restore_eval_state(
         self,
         replay_tensors: dict[str, Any],
@@ -148,9 +132,6 @@ class _NFTModel(DenoiseModelBase):
             return_dict=False,
         )[0]
         return {"noise_pred": prediction}
-
-    def decode_latents(self, latents: Any) -> Any:
-        raise NotImplementedError
 
 
 def _build_model(trainable: str = "lora") -> _NFTModel:

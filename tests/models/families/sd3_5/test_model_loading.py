@@ -6,7 +6,7 @@ import torch
 
 from tests.models.steps.denoise.fixtures import RecordingModule
 from vrl.config.precision import RolePrecision
-from vrl.models.families.sd3_5.model import SD3_5Model
+from vrl.models.families.sd3_5.model import SD3_5PipelineModel
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
 
@@ -62,7 +62,7 @@ def test_sd3_fp32_runtime_loads_frozen_components_without_fp32_peak(monkeypatch)
         ),
     )
 
-    model = SD3_5Model.from_build(build)
+    model = SD3_5PipelineModel.from_build(build)
 
     assert model.pipeline is pipeline
     assert len(calls) == 1

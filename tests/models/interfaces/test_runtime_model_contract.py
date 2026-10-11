@@ -57,20 +57,9 @@ class _DiffusionModelBaseStub(DenoiseModelBase):
         self.transformer = nn.Linear(2, 1, bias=True)
         self.transformer.bias.requires_grad_(False)
 
-    def encode_prompt(self, prompt, negative_prompt=None, **kwargs):
-        del prompt, negative_prompt, kwargs
-        return {}
-
-    def prepare_sampling(self, request, encoded, **kwargs):
-        del request, encoded, kwargs
-        return None
-
     def forward_step(self, state, step_idx):
         del state, step_idx
         return {}
-
-    def decode_latents(self, latents):
-        return latents
 
     @classmethod
     def from_build(cls, build):

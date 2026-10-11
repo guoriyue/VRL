@@ -21,7 +21,7 @@ from vrl.generation.execution.sample_batches import (
     gather_replay_tensors,
 )
 from vrl.generation.types import GenerationRequest
-from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
+from vrl.models.families.cosmos.cosmos3.model import Cosmos3PipelineModel
 
 
 class _PureGatherer:
@@ -194,8 +194,8 @@ def test_cosmos3_keeps_prompt_ids_out_of_shared_batch_context() -> None:
         )
 
     states = [state([1, 2]), state([3, 4, 5])]
-    contexts = [Cosmos3Model.export_batch_context(object(), value) for value in states]
-    replay = [Cosmos3Model.export_replay_tensors(object(), value) for value in states]
+    contexts = [Cosmos3PipelineModel.export_batch_context(object(), value) for value in states]
+    replay = [Cosmos3PipelineModel.export_replay_tensors(object(), value) for value in states]
 
     assert gather_batch_context(contexts) == contexts[0]
     gathered = gather_replay_tensors(replay, sample_counts=[1, 1])

@@ -19,13 +19,13 @@ from tests.models.steps.denoise.fixtures import (
     record_forward_calls,
     stamp_model_precision,
 )
-from vrl.models.families.sd3_5.model import SD3_5Model, SD3SamplingState
+from vrl.models.families.sd3_5.model import SD3_5PipelineModel, SD3SamplingState
 
 _TEXT_LEN = 3
 
 
-def _model(transformer: torch.nn.Module) -> SD3_5Model:
-    model = SD3_5Model(
+def _model(transformer: torch.nn.Module) -> SD3_5PipelineModel:
+    model = SD3_5PipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )

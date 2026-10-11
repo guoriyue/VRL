@@ -21,7 +21,7 @@ from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import DenoiseRequest, GenerationRequest
 from vrl.models.families.echo.model import (
     EchoModel,
-    EchoReplayModel,
+    EchoPipelineModel,
     EchoSamplingState,
 )
 from vrl.models.families.echo.runtime import EchoBatchExecutor
@@ -66,9 +66,9 @@ class _FakeTextEncoder:
         }
 
 
-def _build_model() -> tuple[EchoModel, _FakeEcho]:
+def _build_model() -> tuple[EchoPipelineModel, _FakeEcho]:
     echo = _FakeEcho()
-    model = EchoModel(
+    model = EchoPipelineModel(
         echo=echo,
         text_encoder=_FakeTextEncoder(),
         video_vae=None,
@@ -283,7 +283,7 @@ def test_move_frozen_components_offloads_wrappers_device_driven() -> None:
 
     echo = _FakeEcho()
     te, vae = _Wrap(), _Wrap()
-    model = EchoModel(
+    model = EchoPipelineModel(
         echo=echo,
         text_encoder=te,
         video_vae=vae,
@@ -303,23 +303,18 @@ def test_move_frozen_components_offloads_wrappers_device_driven() -> None:
 def test_replay_model_is_transformer_only_and_runs_velocity_forward() -> None:
     """The trainer replay model owns the velocity transformer, no rollout surface."""
 
-    import pytest
-
     echo = _FakeEcho()
-    replay = EchoReplayModel(
+    replay = EchoModel(
         echo=echo,
         scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000),
-        dtype=torch.float32,
         device=torch.device("cpu"),
     )
     stamp_model_precision(replay)
     assert replay.raw_handle is None
     assert replay.trainable_modules == {"transformer": echo.model}
-    # Rollout-only surface raises (ReplayRolloutStubs) — replay never encodes/decodes.
-    with pytest.raises(RuntimeError):
-        replay.encode_prompt("x")
-    with pytest.raises(RuntimeError):
-        replay.decode_latents(torch.zeros(1, 1, 128, 8, 8))
+    # The replay model has no rollout surface at all: it never encodes or decodes.
+    assert not hasattr(replay, "encode_prompt")
+    assert not hasattr(replay, "decode_latents")
 
     # The velocity forward (what GRPO replay calls) works.
     latents = torch.randn(2, 4, 128, 8, 8)

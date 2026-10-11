@@ -28,7 +28,7 @@ from tests.models.steps.denoise.fixtures import build_tiny_transformer
 from tests.trainers._strategy_policies import free_port
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import FSDPConfig
-from vrl.models.families.sd3_5.model import SD3_5ReplayModel
+from vrl.models.families.sd3_5.model import SD3_5Model
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.strategy import FSDPStrategy
@@ -48,13 +48,13 @@ def _build(repo: str) -> ModelBuild:
     )
 
 
-def _policy(repo: str, *, materialize_weights: bool) -> SD3_5ReplayModel:
+def _policy(repo: str, *, materialize_weights: bool) -> SD3_5Model:
     """The replay model exactly as the family builder assembles it, LoRA attached."""
     from tests.models.steps.denoise.fixtures import stamp_model_precision
     from vrl.models.loader import load_diffusers_transformer
 
     build = _build(repo)
-    policy = SD3_5ReplayModel(
+    policy = SD3_5Model(
         transformer=load_diffusers_transformer(
             build, "SD3Transformer2DModel", materialize_weights=materialize_weights
         ),

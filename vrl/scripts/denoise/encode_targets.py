@@ -210,7 +210,7 @@ def main(argv: list[str] | None = None) -> None:
     if not callable(encode):
         raise NotImplementedError(
             f"{type(model).__name__} exposes no encode_video_to_latents; add "
-            "the family's VAE-encode inverse (see CosmosPredict2Model) before "
+            "the family's VAE-encode inverse (see CosmosPredict2PipelineModel) before "
             "encoding sft latents for it",
         )
 

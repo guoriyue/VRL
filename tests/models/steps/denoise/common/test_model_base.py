@@ -17,14 +17,13 @@ from tests.models.steps.denoise.fixtures import (
 )
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.generation.types import DenoiseRequest
 from vrl.models.families.cosmos import CosmosReplayForward
-from vrl.models.families.cosmos.predict2.model import CosmosPredict2Model
-from vrl.models.families.flux.model import FluxModel
-from vrl.models.families.mochi.model import MochiModel
-from vrl.models.families.sana.model import SanaModel
-from vrl.models.families.sd3_5.model import SD3_5Model
-from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
+from vrl.models.families.cosmos.predict2.model import CosmosPredict2PipelineModel
+from vrl.models.families.flux.model import FluxPipelineModel
+from vrl.models.families.mochi.model import MochiPipelineModel
+from vrl.models.families.sana.model import SanaPipelineModel
+from vrl.models.families.sd3_5.model import SD3_5PipelineModel
+from vrl.models.families.wan_2_1.model import WanT2VPipelineModel
 from vrl.models.interfaces import GenerationMemoryPolicy, ReplayResult
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 from vrl.models.steps.denoise import DenoiseModelBase
@@ -94,24 +93,6 @@ class _ModelBaseStub(DenoiseModelBase):
         self.transformer = transformer
         self.pipeline.transformer = transformer
 
-    def encode_prompt(
-        self,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        del prompt, negative_prompt, kwargs
-        return {}
-
-    def prepare_sampling(
-        self,
-        request: DenoiseRequest,
-        encoded: dict[str, Any],
-        **kwargs: Any,
-    ) -> Any:
-        del request, encoded, kwargs
-        return object()
-
     def forward_step(
         self,
         state: Any,
@@ -121,9 +102,6 @@ class _ModelBaseStub(DenoiseModelBase):
         self.forward_models.append(self.transformer)
         self.forward_step_indices.append(step_idx)
         return {"noise_pred": torch.ones(1)}
-
-    def decode_latents(self, latents: Any) -> Any:
-        return latents
 
     def restore_eval_state(
         self,
@@ -194,7 +172,7 @@ def _load_pipeline(monkeypatch: Any, pipeline: Any) -> None:
 def test_freeze_pipeline_components_does_not_move_or_cast_modules() -> None:
     pipeline = _LoadedPipeline()
 
-    MochiModel.freeze_pipeline_components(pipeline)
+    MochiPipelineModel.freeze_pipeline_components(pipeline)
 
     assert pipeline.transformer.requires_grad_enabled is None
     assert pipeline.vae.requires_grad_enabled is False
@@ -207,7 +185,7 @@ def test_freeze_pipeline_components_does_not_move_or_cast_modules() -> None:
 def test_place_pipeline_components_does_not_change_gradients() -> None:
     pipeline = _LoadedPipeline()
 
-    cpu_resident = MochiModel.place_pipeline_components(
+    cpu_resident = MochiPipelineModel.place_pipeline_components(
         pipeline,
         _bare_build(cpu_resident=("text_encoder",)),
         prompt_encoder_dtype=torch.float16,
@@ -225,7 +203,7 @@ def test_shared_from_build_places_frozen_components_on_the_compute_device(monkey
     pipeline = _LoadedPipeline()
     _load_pipeline(monkeypatch, pipeline)
 
-    model = MochiModel.from_build(_bare_build())
+    model = MochiPipelineModel.from_build(_bare_build())
 
     assert model.pipeline is pipeline
     assert pipeline.text_encoder.requires_grad_enabled is False
@@ -239,7 +217,7 @@ def test_shared_from_build_keeps_cpu_resident_components_on_the_host(monkeypatch
     pipeline = _LoadedPipeline()
     _load_pipeline(monkeypatch, pipeline)
 
-    model = MochiModel.from_build(_bare_build(cpu_resident=("text_encoder",)))
+    model = MochiPipelineModel.from_build(_bare_build(cpu_resident=("text_encoder",)))
 
     assert pipeline.text_encoder.to_calls == [("cpu", torch.float16)]
     # The VAE never follows the encoder: fp32 on the compute device.
@@ -251,7 +229,7 @@ def test_shared_from_build_rejects_an_unknown_cpu_resident_component(monkeypatch
     _load_pipeline(monkeypatch, _LoadedPipeline())
 
     with pytest.raises(ValueError, match="cpu_resident names component"):
-        MochiModel.from_build(_bare_build(cpu_resident=("text_encoder_2",)))
+        MochiPipelineModel.from_build(_bare_build(cpu_resident=("text_encoder_2",)))
 
 
 def test_shared_from_build_freezes_every_module_component_but_the_transformer(
@@ -276,7 +254,7 @@ def test_shared_from_build_freezes_every_module_component_but_the_transformer(
     )
     _load_pipeline(monkeypatch, pipeline)
 
-    model = SD3_5Model.from_build(_bare_build())
+    model = SD3_5PipelineModel.from_build(_bare_build())
 
     assert model.pipeline is pipeline
     assert pipeline.transformer.requires_grad_enabled is None
@@ -326,7 +304,7 @@ def test_sana_swaps_the_shipped_dpm_solver_for_flow_match_and_keeps_its_shift(
         staticmethod(lambda *args, **kwargs: pipeline),
     )
 
-    model = SanaModel.from_build(_sana_build(torch.float16))
+    model = SanaPipelineModel.from_build(_sana_build(torch.float16))
 
     assert isinstance(model.scheduler, FlowMatchEulerDiscreteScheduler)
     assert float(model.scheduler.config.shift) == 3.0
@@ -342,7 +320,7 @@ def test_sana_applies_the_saturation_clamp_only_off_fp16(monkeypatch) -> None:
 
     clamped: list[type] = []
     monkeypatch.setattr(
-        SanaModel,
+        SanaPipelineModel,
         "_apply_fp16_saturation_clamp",
         classmethod(lambda cls, transformer: clamped.append(transformer)),
     )
@@ -352,17 +330,17 @@ def test_sana_applies_the_saturation_clamp_only_off_fp16(monkeypatch) -> None:
         staticmethod(lambda *args, **kwargs: _sana_pipeline()),
     )
 
-    fp16_model = SanaModel.from_build(_sana_build(torch.float16))
+    fp16_model = SanaPipelineModel.from_build(_sana_build(torch.float16))
     assert clamped == []
 
-    bf16_model = SanaModel.from_build(_sana_build(torch.bfloat16))
+    bf16_model = SanaPipelineModel.from_build(_sana_build(torch.bfloat16))
     assert clamped == [bf16_model.transformer]
     assert fp16_model is not bf16_model
 
 
 def test_pipeline_model_base_discovers_primary_encoder_device() -> None:
     pipeline = _BackendPipelineStub()
-    runtime = SD3_5Model(pipeline=pipeline, device=torch.device("meta"))
+    runtime = SD3_5PipelineModel(pipeline=pipeline, device=torch.device("meta"))
 
     assert runtime._encoder_device() == torch.device("cpu")
 
@@ -370,7 +348,7 @@ def test_pipeline_model_base_discovers_primary_encoder_device() -> None:
 def test_pipeline_model_base_falls_back_for_parameterless_encoder() -> None:
     pipeline = _BackendPipelineStub()
     pipeline.text_encoder = nn.Identity()
-    runtime = SD3_5Model(pipeline=pipeline, device=torch.device("meta"))
+    runtime = SD3_5PipelineModel(pipeline=pipeline, device=torch.device("meta"))
 
     assert runtime._encoder_device() == torch.device("meta")
 
@@ -386,7 +364,7 @@ def test_pipeline_model_base_falls_back_for_parameterless_encoder() -> None:
 def test_pipeline_model_base_reads_guidance_embeds(config: Any, expected: bool) -> None:
     pipeline = _BackendPipelineStub()
     pipeline.transformer.config = config
-    runtime = SD3_5Model(pipeline=pipeline, device=torch.device("cpu"))
+    runtime = SD3_5PipelineModel(pipeline=pipeline, device=torch.device("cpu"))
 
     assert runtime._guidance_embeds is expected
 
@@ -394,7 +372,7 @@ def test_pipeline_model_base_reads_guidance_embeds(config: Any, expected: bool) 
 def test_flux_encoder_device_prefers_second_encoder() -> None:
     pipeline = _BackendPipelineStub()
     pipeline.text_encoder_2 = nn.Linear(2, 2, device="meta")
-    runtime = FluxModel(pipeline=pipeline, device=torch.device("cpu"))
+    runtime = FluxPipelineModel(pipeline=pipeline, device=torch.device("cpu"))
 
     assert runtime._encoder_device() == torch.device("meta")
 
@@ -439,7 +417,7 @@ def test_diffusion_model_base_registers_only_transformer_child() -> None:
 
 @pytest.mark.parametrize(
     "runtime_cls",
-    [SD3_5Model, WanT2VDiffusersModel, CosmosPredict2Model],
+    [SD3_5PipelineModel, WanT2VPipelineModel, CosmosPredict2PipelineModel],
 )
 def test_concrete_diffusion_runtimes_register_only_transformer(
     runtime_cls: type[DenoiseModelBase],
@@ -461,7 +439,7 @@ def test_concrete_diffusion_runtimes_register_only_transformer(
 
 @pytest.mark.parametrize(
     "runtime_cls",
-    [SD3_5Model, WanT2VDiffusersModel, CosmosPredict2Model],
+    [SD3_5PipelineModel, WanT2VPipelineModel, CosmosPredict2PipelineModel],
 )
 def test_concrete_diffusion_runtimes_keep_pipeline_transformer_in_sync(
     runtime_cls: type[DenoiseModelBase],

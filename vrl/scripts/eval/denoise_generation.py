@@ -21,7 +21,11 @@ if TYPE_CHECKING:
     from PIL import Image
 
     from vrl.config.schema import RootConfig
-    from vrl.models.steps.denoise.base import DenoiseModelBase, DenoiseSamplingStateBase
+    from vrl.models.steps.denoise.base import (
+        DenoiseModelBase,
+        DenoisePipelineModelBase,
+        DenoiseSamplingStateBase,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +138,7 @@ def seed_for(
 
 
 def generate_one_video(
-    model: DenoiseModelBase,
+    model: DenoisePipelineModelBase,
     *,
     prompt: str,
     seed: int,
@@ -183,7 +187,7 @@ def generate_one_video(
 
 
 def generate_images(
-    model: DenoiseModelBase,
+    model: DenoisePipelineModelBase,
     *,
     prompt: str,
     negative_prompt: str,

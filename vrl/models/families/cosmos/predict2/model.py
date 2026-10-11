@@ -5,6 +5,11 @@ generation helper flow is:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
+``CosmosPredict2PipelineModel`` runs that flow. ``CosmosPredict2Model`` — the
+transformer, its scheduler and ``forward_step`` — is what replay runs; the
+pipeline class adds the text encoder, conditioning-video encoding, latent
+preparation and video VAE decode on top of it.
+
 The collector owns the scheduler step / SDE step. ``forward_step`` does
 only one transformer forward (with optional CFG branch) and returns noise
 predictions; it does NOT mutate ``state.latents``.
@@ -28,8 +33,8 @@ from vrl.generation.types import DenoiseRequest
 from vrl.models.families.cosmos import CosmosReplayForward, no_safety_checker
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
@@ -164,19 +169,141 @@ class CosmosPredict2SamplingState(GuidedDenoiseSamplingStateBase):
             )
 
 
-class CosmosPredict2Model(CosmosReplayForward, DiffusersPipelineModelBase):
-    """Diffusers-backed Cosmos Predict2 Video2World model (RL path).
+class CosmosPredict2Model(CosmosReplayForward, DiffusersModelBase):
+    """Cosmos Predict2 Video2World transformer, scheduler and per-step math: the model replay runs."""
 
-    The pipeline is constructed by the family runtime
-    (the registry-descriptor build path in ``vrl.models.steps.denoise.build``)
-    and passed in. Scripts must NOT instantiate the diffusers pipeline
-    directly.
+    # -- forward_step --------------------------------------------------
+
+    def forward_step(
+        self,
+        state: CosmosPredict2SamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        """One Cosmos Predict2 transformer forward + optional CFG.
+
+        Mirrors the diffusers Cosmos2VideoToWorldPipeline denoising loop:
+        sigma scaling (c_in/c_skip/c_out), spatial timestep blending via
+        ``cond_indicator``, and post-transformer conditioning re-application.
+        Returns ``{"noise_pred", "noise_pred_cond", "noise_pred_uncond"}``.
+        NO scheduler step happens here.
+        """
+        batch_size = state.latents.shape[0]
+        transformer_dtype = state.prompt_embeds.dtype
+
+        # Sigma scaling coefficients from the scheduler.
+        current_sigma = state.scheduler.sigmas[step_idx]
+        current_t = current_sigma / (current_sigma + 1)
+
+        # Spatial timestep tensor [B, 1, T, 1, 1]
+        timestep = broadcast_spatial_timestep(
+            current_t,
+            batch_size=batch_size,
+            frames=state.latents.size(2),
+        )
+
+        # Expand cond/uncond fields to runtime batch (prepare_latents may
+        # return [1,...] but the collector may have stacked groups).
+        cond_mask = state.cond_mask.expand(batch_size, -1, -1, -1, -1)
+        uncond_mask = (
+            state.uncond_mask.expand(batch_size, -1, -1, -1, -1)
+            if state.uncond_mask is not None
+            else None
+        )
+        # padding_mask kept at [1, 1, H, W] — transformer repeats internally.
+        padding_mask = state.padding_mask
+        init_latents = state.init_latents.expand(batch_size, -1, -1, -1, -1)
+        cond_indicator = state.cond_indicator.expand(batch_size, -1, -1, -1, -1)
+        uncond_indicator = (
+            state.uncond_indicator.expand(batch_size, -1, -1, -1, -1)
+            if state.uncond_indicator is not None
+            else None
+        )
+
+        output = DenoiseBackboneCaller(
+            self.transformer,
+            CosmosPredict2DenoiseBackboneRunner(current_sigma=current_sigma),
+        )(
+            DenoiseBackboneInput(
+                hidden_states=state.latents,
+                timestep=timestep,
+                prompt_embeds=state.prompt_embeds,
+                negative_prompt_embeds=state.negative_prompt_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=transformer_dtype,
+                extra={
+                    "init_latents": init_latents,
+                    "cond_mask": cond_mask,
+                    "uncond_mask": uncond_mask,
+                    "padding_mask": padding_mask,
+                    "cond_indicator": cond_indicator,
+                    "uncond_indicator": uncond_indicator,
+                    "fps": state.fps,
+                    "transformer_dtype": transformer_dtype,
+                },
+            ),
+        )
+        return output.as_dict()
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> CosmosPredict2SamplingState:
+        """Rebuild SamplingState for the eval forward path from a batch slice.
+
+        IMPORTANT: Cosmos's ``forward_step`` indexes BOTH
+        ``state.timesteps[step_idx]`` AND ``state.scheduler.sigmas[step_idx]``
+        for sigma scaling, so the eval path passes through the actual
+        ``step_idx`` (NOT 0 like sd3/wan). We hand back the model's
+        own scheduler + its full timesteps array so that indexing stays
+        consistent with the rollout-time scheduler state.
+        """
+        # ``step_idx`` is consumed by the caller's ``forward_step`` call,
+        # not here — but we accept it in the signature for parity with
+        # the base contract and to allow defensive checks if needed.
+        del step_idx
+        return CosmosPredict2SamplingState(
+            latents=latents,
+            timesteps=self.scheduler.timesteps,
+            scheduler=self.scheduler,
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
+            init_latents=replay_tensors["init_latents"],
+            cond_mask=replay_tensor(replay_tensors, batch_context, "cond_mask"),
+            # CFG off: prepare_latents hands back no uncond mask/indicator, the
+            # export carries None, and the trajectory builder drops None replay
+            # tensors -- so these keys are absent rather than present-and-None.
+            uncond_mask=replay_tensors.get("uncond_mask"),
+            padding_mask=shared_replay_tensor(
+                replay_tensors,
+                batch_context,
+                "padding_mask",
+            ),
+            cond_indicator=replay_tensor(replay_tensors, batch_context, "cond_indicator"),
+            uncond_indicator=replay_tensors.get("uncond_indicator"),
+            fps=batch_context["fps"],
+        )
+
+
+class CosmosPredict2PipelineModel(DiffusersPipelineModelBase, CosmosPredict2Model):
+    """Cosmos Predict2 plus the diffusers pipeline that sampling needs.
+
+    The pipeline is constructed by the family runtime (the registry-descriptor
+    build path in ``vrl.models.steps.denoise.build``) and passed in. Scripts
+    must NOT instantiate the diffusers pipeline directly. It brings prompt
+    encoding, conditioning-video encoding, latent preparation and video VAE
+    decode; this class also exports the trajectory tensors replay reads back.
     """
 
     # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
-    def from_build(cls, build: ModelBuild) -> CosmosPredict2Model:
+    def from_build(cls, build: ModelBuild) -> CosmosPredict2PipelineModel:
         """Load Cosmos2VideoToWorldPipeline + freeze non-trainable modules.
 
         Patches the diffusers safety checker with a passthrough during load
@@ -343,79 +470,6 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersPipelineModelBase):
             fps=request.fps or 16,
         )
 
-    # -- forward_step --------------------------------------------------
-
-    def forward_step(
-        self,
-        state: CosmosPredict2SamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """One Cosmos Predict2 transformer forward + optional CFG.
-
-        Mirrors the diffusers Cosmos2VideoToWorldPipeline denoising loop:
-        sigma scaling (c_in/c_skip/c_out), spatial timestep blending via
-        ``cond_indicator``, and post-transformer conditioning re-application.
-        Returns ``{"noise_pred", "noise_pred_cond", "noise_pred_uncond"}``.
-        NO scheduler step happens here.
-        """
-        batch_size = state.latents.shape[0]
-        transformer_dtype = state.prompt_embeds.dtype
-
-        # Sigma scaling coefficients from the scheduler.
-        current_sigma = state.scheduler.sigmas[step_idx]
-        current_t = current_sigma / (current_sigma + 1)
-
-        # Spatial timestep tensor [B, 1, T, 1, 1]
-        timestep = broadcast_spatial_timestep(
-            current_t,
-            batch_size=batch_size,
-            frames=state.latents.size(2),
-        )
-
-        # Expand cond/uncond fields to runtime batch (prepare_latents may
-        # return [1,...] but the collector may have stacked groups).
-        cond_mask = state.cond_mask.expand(batch_size, -1, -1, -1, -1)
-        uncond_mask = (
-            state.uncond_mask.expand(batch_size, -1, -1, -1, -1)
-            if state.uncond_mask is not None
-            else None
-        )
-        # padding_mask kept at [1, 1, H, W] — transformer repeats internally.
-        padding_mask = state.padding_mask
-        init_latents = state.init_latents.expand(batch_size, -1, -1, -1, -1)
-        cond_indicator = state.cond_indicator.expand(batch_size, -1, -1, -1, -1)
-        uncond_indicator = (
-            state.uncond_indicator.expand(batch_size, -1, -1, -1, -1)
-            if state.uncond_indicator is not None
-            else None
-        )
-
-        output = DenoiseBackboneCaller(
-            self.transformer,
-            CosmosPredict2DenoiseBackboneRunner(current_sigma=current_sigma),
-        )(
-            DenoiseBackboneInput(
-                hidden_states=state.latents,
-                timestep=timestep,
-                prompt_embeds=state.prompt_embeds,
-                negative_prompt_embeds=state.negative_prompt_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=transformer_dtype,
-                extra={
-                    "init_latents": init_latents,
-                    "cond_mask": cond_mask,
-                    "uncond_mask": uncond_mask,
-                    "padding_mask": padding_mask,
-                    "cond_indicator": cond_indicator,
-                    "uncond_indicator": uncond_indicator,
-                    "fps": state.fps,
-                    "transformer_dtype": transformer_dtype,
-                },
-            ),
-        )
-        return output.as_dict()
-
     # -- collector boundary --------------------------------------------
 
     def export_batch_context(
@@ -474,50 +528,6 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersPipelineModelBase):
                 else None
             ),
         }
-
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> CosmosPredict2SamplingState:
-        """Rebuild SamplingState for the eval forward path from a batch slice.
-
-        IMPORTANT: Cosmos's ``forward_step`` indexes BOTH
-        ``state.timesteps[step_idx]`` AND ``state.scheduler.sigmas[step_idx]``
-        for sigma scaling, so the eval path passes through the actual
-        ``step_idx`` (NOT 0 like sd3/wan). We hand back the model's
-        own scheduler + its full timesteps array so that indexing stays
-        consistent with the rollout-time scheduler state.
-        """
-        # ``step_idx`` is consumed by the caller's ``forward_step`` call,
-        # not here — but we accept it in the signature for parity with
-        # the base contract and to allow defensive checks if needed.
-        del step_idx
-        return CosmosPredict2SamplingState(
-            latents=latents,
-            timesteps=self.scheduler.timesteps,
-            scheduler=self.scheduler,
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
-            init_latents=replay_tensors["init_latents"],
-            cond_mask=replay_tensor(replay_tensors, batch_context, "cond_mask"),
-            # CFG off: prepare_latents hands back no uncond mask/indicator, the
-            # export carries None, and the trajectory builder drops None replay
-            # tensors -- so these keys are absent rather than present-and-None.
-            uncond_mask=replay_tensors.get("uncond_mask"),
-            padding_mask=shared_replay_tensor(
-                replay_tensors,
-                batch_context,
-                "padding_mask",
-            ),
-            cond_indicator=replay_tensor(replay_tensors, batch_context, "cond_indicator"),
-            uncond_indicator=replay_tensors.get("uncond_indicator"),
-            fps=batch_context["fps"],
-        )
 
     # -- decode_latents ------------------------------------------------
 
@@ -597,16 +607,8 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersPipelineModelBase):
         return decoder(latents)
 
 
-class CosmosPredict2ReplayModel(DiffusersReplayModelBase, CosmosPredict2Model):
-    """Replay-only Cosmos Predict2 model without pipeline-only modules."""
-
-    # restore_eval_state is inherited from CosmosPredict2Model: it reads
-    # ``self.scheduler``, which this replay model overrides to return its own
-    # ``self._scheduler`` (the parent's property resolves to pipeline.scheduler).
-
-
 __all__ = [
     "CosmosPredict2Model",
-    "CosmosPredict2ReplayModel",
+    "CosmosPredict2PipelineModel",
     "CosmosPredict2SamplingState",
 ]

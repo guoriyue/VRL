@@ -16,7 +16,7 @@ import torch
 from tests.models.steps.denoise.fixtures import record_forward_calls, stamp_model_precision
 from vrl.models.families.pixart_sigma.model import (
     PixArtSigmaModel,
-    PixArtSigmaReplayModel,
+    PixArtSigmaPipelineModel,
     PixArtSigmaSamplingState,
     pixart_ddim_scheduler,
 )
@@ -51,8 +51,8 @@ def build_tiny_pixart_transformer(*, seed: int = 0) -> Any:
     )
 
 
-def _model(transformer: torch.nn.Module) -> PixArtSigmaModel:
-    model = PixArtSigmaModel(
+def _model(transformer: torch.nn.Module) -> PixArtSigmaPipelineModel:
+    model = PixArtSigmaPipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
@@ -169,7 +169,7 @@ def test_pixart_replay_roundtrip_restores_equivalent_state() -> None:
         dtype=torch.int64,
     )
 
-    restored = PixArtSigmaReplayModel(
+    restored = PixArtSigmaModel(
         transformer=transformer,
         scheduler=None,
     ).restore_eval_state(replay, context, state.latents, 0)

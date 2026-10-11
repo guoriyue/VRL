@@ -25,8 +25,8 @@ from tests.models.steps.denoise.fixtures import (
     stamp_model_precision,
 )
 from vrl.generation.types import DenoiseRequest
-from vrl.models.families.minimax_h3.model import MiniMaxH3Model
-from vrl.models.families.vdn_h3.model import VDNH3Model, VDNH3ReplayModel
+from vrl.models.families.minimax_h3.model import MiniMaxH3PipelineModel
+from vrl.models.families.vdn_h3.model import VDNH3Model, VDNH3PipelineModel
 from vrl.models.families.vdn_h3.vendor import load_vdn
 
 pytest.importorskip("src.models.hybrid_attention")
@@ -48,7 +48,7 @@ def _request() -> DenoiseRequest:
     )
 
 
-def _state(model: VDNH3Model):
+def _state(model: VDNH3PipelineModel):
     encoded = model.encode_prompt("a cat video", None, max_sequence_length=_MAX_TEXT_TOKENS)
     return model.prepare_sampling(_request(), encoded)
 
@@ -104,7 +104,7 @@ def test_the_packed_geometry_reaches_every_hybrid_before_the_forward() -> None:
     layouts = [attn.layout for attn in vendor.iter_hybrids(model.transformer)]
     assert layouts and all(item is layouts[0] for item in layouts)
     layout, packed = layouts[0], state.layout
-    _, patch_h, patch_w = model.pipeline.patch_size
+    _, patch_h, patch_w = model.patch_size
     grid = (packed.latent_height // patch_h, packed.latent_width // patch_w)
     assert layout.seq_len == int(packed.position_ids.shape[0])
     assert layout.num_frames == packed.num_latent_frames
@@ -120,7 +120,7 @@ def test_the_hybrid_changes_the_prediction_it_wraps() -> None:
     through the hybrid differ, and upstream's ``teacher_mode`` recovers the base."""
     vendor = load_vdn()
     components = build_tiny_minimax_h3_components()
-    dense = MiniMaxH3Model(pipeline=components, device=torch.device("cpu"))
+    dense = MiniMaxH3PipelineModel(pipeline=components, device=torch.device("cpu"))
     stamp_model_precision(dense)
     state = _state(dense)
     with torch.no_grad():
@@ -129,7 +129,7 @@ def test_the_hybrid_changes_the_prediction_it_wraps() -> None:
     # Graft in place, so both paths share one set of backbone weights.
     vendor.apply_hybrid_attention_transform(components.transformer, TINY_VDN_H3_TRANSFORM_CONFIG)
     vendor.set_softmax_backend(components.transformer, "ref")
-    hybrid = VDNH3Model(pipeline=components, device=torch.device("cpu"))
+    hybrid = VDNH3PipelineModel(pipeline=components, device=torch.device("cpu"))
     stamp_model_precision(hybrid)
     hybrid_state = _state(hybrid)
     with torch.no_grad():
@@ -179,15 +179,16 @@ def test_a_missing_vdn_checkpoint_is_refused_with_the_dense_alternative() -> Non
         model.install_hybrid_attention(build)
 
 
-def test_replay_takes_its_forward_from_vdn_and_its_plumbing_from_minimax_h3() -> None:
-    """Base order is load-bearing: the replay plumbing must win while the forward
-    and the layout hand-off still resolve to the VDN class."""
+def test_sampling_runs_the_vdn_forward_that_replay_runs() -> None:
+    """The sampling class takes the forward and layout hand-off from ``VDNH3Model``.
+
+    Replay builds ``VDNH3Model`` itself; if sampling resolved the forward to the
+    dense MiniMax-H3 model instead, the recorded log-probs would describe a
+    different policy than the one replay recomputes.
+    """
 
     def owner(cls: type, name: str) -> type | None:
         return next((klass for klass in cls.__mro__ if name in klass.__dict__), None)
 
-    from vrl.models.families.minimax_h3.model import MiniMaxH3ReplayModel
-
     for name in ("forward_step", "set_hybrid_layout", "install_hybrid_attention"):
-        assert owner(VDNH3ReplayModel, name) is VDNH3Model, name
-    assert owner(VDNH3ReplayModel, "__init__") is MiniMaxH3ReplayModel
+        assert owner(VDNH3PipelineModel, name) is VDNH3Model, name

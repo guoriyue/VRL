@@ -1,9 +1,12 @@
-"""Shared denoising model base for diffusion and flow-matching RL runtimes.
+"""Shared denoising model bases for diffusion and flow-matching RL runtimes.
 
-The public trainer-facing replay interface is ``vrl.models.interfaces.ReplayModel``.
-This base class only factors shared diffusion model behavior: generation
-primitives, replay-state projection helpers, and trainable transformer weight
-loading for diffusion families.
+``DenoiseModelBase`` is the trainable model the trainer replays: one denoise
+step, replay-state projection, trainable roots and weight loading. A family's
+sampling class adds prompt encoding, sampling state and decoding on top of it
+(``DenoisePipelineModelBase``). For diffusers families ``DiffusersModelBase``
+holds the transformer and scheduler, and ``DiffusersPipelineModelBase`` adds
+the pipeline. The public trainer-facing replay interface is
+``vrl.models.interfaces.ReplayModel``.
 """
 
 from __future__ import annotations
@@ -21,7 +24,6 @@ import torch.nn as nn
 from vrl.generation.types import DenoiseRequest
 from vrl.models.interfaces import (
     ReplayRequest,
-    ReplayRequestContract,
     ReplayResult,
     ReplaySegmentResult,
 )
@@ -61,10 +63,16 @@ class GuidedDenoiseSamplingStateBase(DenoiseSamplingStateBase):
     guidance_scale: float
 
 
-class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
+class DenoiseModelBase(nn.Module, ABC):
     """Shared denoising and replay operations for diffusion and flow-matching families."""
 
+    # What replay this model type supports, declared on the class and checked
+    # where a replay request arrives (the shape of vLLM's ``Supports*`` model
+    # interfaces): the segments it can replay, and whether replay indexes a
+    # timestep axis. Full-sequence denoise does; causal-chunk replay runs the
+    # whole trajectory at once and has no individual timestep to select.
     replay_segments: ClassVar[tuple[str, ...]] = ("denoise",)
+    replay_indexes_timesteps: ClassVar[bool] = True
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Run every concrete ``forward_step`` under its role precision.
@@ -88,34 +96,6 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
 
             wrapped.__vrl_outer_autocast__ = True
             cls.forward_step = wrapped
-
-    @abstractmethod
-    def encode_prompt(
-        self,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Encode prompt and optional negative prompt into embedding tensors."""
-
-    @abstractmethod
-    def prepare_sampling(
-        self,
-        request: DenoiseRequest,
-        encoded: dict[str, Any],
-        *,
-        initial_latents: torch.Tensor | None = None,
-        **kwargs: Any,
-    ) -> Any:
-        """Build a private per-family sampling state for the denoise loop.
-
-        ``initial_latents`` is the batch's starting latent in this family's own
-        state form (row-expanded from a latent this same method produced for
-        the same request geometry). When given, the family uses it verbatim in
-        place of its noise draw; when ``None`` it draws from ``request.seed``.
-        Which rows share a start is the rollout layer's decision (per-sample
-        seeds on the request); the family only executes it.
-        """
 
     @abstractmethod
     def forward_step(
@@ -145,34 +125,6 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
 
         return values["noise_pred"]
 
-    def _reject_unsupported_negative_prompt(
-        self,
-        negative_prompt: str | list[str] | None,
-    ) -> None:
-        """Fail when a single-branch family receives ignored conditioning."""
-
-        if negative_prompt not in (None, "", []):
-            raise ValueError(f"{type(self).__name__} does not support negative prompts")
-
-    @abstractmethod
-    def decode_latents(self, latents: Any) -> Any:
-        """Decode latents to a frame tensor."""
-
-    def export_batch_context(self, state: Any) -> dict[str, Any]:
-        """Project private sampling state into shared trajectory context."""
-        raise NotImplementedError
-
-    def export_replay_tensors(self, state: Any) -> dict[str, Any]:
-        """Project private sampling state into per-sample trajectory tensors.
-
-        Every family exports ``latents_clean`` as ``state.latents.detach()``:
-        the final latent exactly as decoded, which forward-process objectives
-        (DiffusionNFT, V-GRPO) re-noise. The action buffer may have rounded
-        that step to a lower dtype, so the export reads the state, not the
-        buffer.
-        """
-        raise NotImplementedError
-
     def restore_eval_state(
         self,
         replay_tensors: dict[str, Any],
@@ -186,11 +138,38 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
     def prepare_replay(self, build: ModelBuild) -> None:
         """Family hook run once by the replay builder right after construction.
 
-        Default no-op. ``DiffusersPipelineModelBase`` rebuilds a dynamic-shift
-        replay grid here; other families re-standardize their replay scheduler.
+        Default no-op. ``DiffusersModelBase`` rebuilds a dynamic-shift replay
+        grid here; other families re-standardize their replay scheduler.
         """
         del build
         return None
+
+    def reject_replay_timestep_selection(self, timestep_idx: int) -> None:
+        """No-op for families that do index timesteps."""
+
+        if self.replay_indexes_timesteps or timestep_idx == 0:
+            return
+        raise ValueError(
+            f"{type(self).__name__} replay has no timestep axis; "
+            f"timestep_idx must be 0, got {timestep_idx}",
+        )
+
+    def reject_unsupported_replay_segments(
+        self,
+        request: ReplayRequest | None,
+    ) -> None:
+        """Validate selection against the model's declared replay segments."""
+
+        if request is None or request.segment_names is None:
+            return
+        supported = self.replay_segments
+        requested = request.segment_names
+        unsupported = tuple(name for name in requested if name not in supported)
+        if requested and not unsupported:
+            return
+        raise ValueError(
+            f"{type(self).__name__} replay supports segments {supported!r}; got {requested!r}",
+        )
 
     def replay_forward(
         self,
@@ -504,11 +483,9 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
     def _set_transformer(self, transformer: Any) -> None:
         """Register a replacement trainable transformer (LoRA wrap, compile, …).
 
-        Default: ``self.transformer`` is the only handle. Families that keep a
-        second reference to the same module — a diffusers pipeline, Echo's LTX
-        wrapper, CausVid's backend — override to keep both in sync, and a
-        pipeline-less replay subclass of such a family must override BACK to
-        this default (its ``pipeline`` raises).
+        Default: ``self.transformer`` is the only handle. Classes that keep a
+        second reference to the same module — the diffusers pipeline base,
+        Echo's LTX wrapper, CausVid's backend — override to keep both in sync.
         """
 
         self.transformer = transformer
@@ -613,80 +590,189 @@ class DenoiseModelBase(ReplayRequestContract, nn.Module, ABC):
     def raw_handle(self) -> Any:  # pragma: no cover
         raise NotImplementedError
 
+
+class DenoisePipelineModelBase(DenoiseModelBase):
+    """A denoise model that can also sample: prompt encoding, sampling state, decode.
+
+    The trainer replays the model class alone. Generation also needs what
+    surrounds it — prompt encoders, latent preparation, a decoder — so a
+    family's sampling class adds these to its model class, instead of the model
+    class carrying them and a replay subclass stubbing them out again.
+    """
+
+    @abstractmethod
+    def encode_prompt(
+        self,
+        prompt: str | list[str],
+        negative_prompt: str | list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Encode prompt and optional negative prompt into embedding tensors."""
+
+    @abstractmethod
+    def prepare_sampling(
+        self,
+        request: DenoiseRequest,
+        encoded: dict[str, Any],
+        *,
+        initial_latents: torch.Tensor | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Build a private per-family sampling state for the denoise loop.
+
+        ``initial_latents`` is the batch's starting latent in this family's own
+        state form (row-expanded from a latent this same method produced for
+        the same request geometry). When given, the family uses it verbatim in
+        place of its noise draw; when ``None`` it draws from ``request.seed``.
+        Which rows share a start is the rollout layer's decision (per-sample
+        seeds on the request); the family only executes it.
+        """
+
+    @abstractmethod
+    def decode_latents(self, latents: Any) -> Any:
+        """Decode latents to a frame tensor."""
+
+    def export_batch_context(self, state: Any) -> dict[str, Any]:
+        """Project private sampling state into shared trajectory context."""
+        raise NotImplementedError
+
+    def export_replay_tensors(self, state: Any) -> dict[str, Any]:
+        """Project private sampling state into per-sample trajectory tensors.
+
+        Every family exports ``latents_clean`` as ``state.latents.detach()``:
+        the final latent exactly as decoded, which forward-process objectives
+        (DiffusionNFT, V-GRPO) re-noise. The action buffer may have rounded
+        that step to a lower dtype, so the export reads the state, not the
+        buffer.
+        """
+        raise NotImplementedError
+
+    def _reject_unsupported_negative_prompt(
+        self,
+        negative_prompt: str | list[str] | None,
+    ) -> None:
+        """Fail when a single-branch family receives ignored conditioning."""
+
+        if negative_prompt not in (None, "", []):
+            raise ValueError(f"{type(self).__name__} does not support negative prompts")
+
     def generation_memory_targets(self) -> dict[str, Any]:
         """Named modules the generation memory policy may configure.
 
-        Every diffusers-backed family carries its VAE on ``pipeline.vae``; a
-        family without a pipeline carries ``self.vae``.
-        Custom backends whose VAE does not implement this memory protocol keep
-        it behind a family-specific attribute and expose no target. Replay
-        models likewise own no VAE. In either case, the policy fails loud if
-        config still asks for one.
+        None by default: a sampling model whose VAE does not implement this
+        memory protocol keeps it behind a family-specific attribute, and the
+        policy fails loud if config still asks for one. The diffusers pipeline
+        base exposes ``pipeline.vae``.
         """
 
-        pipeline = getattr(self, "pipeline", None)
-        vae = (
-            getattr(pipeline, "vae", None) if pipeline is not None else getattr(self, "vae", None)
-        )
-        return {} if vae is None else {"vae_decode": vae}
+        return {}
 
-    def move_frozen_components(self, device: Any) -> None:
-        """Move frozen pipeline components (VAE / text encoders) onto ``device``.
 
-        ``nn.Module.to`` moves only *registered* submodules — for these families
-        just the transformer — but the diffusers pipeline is attached
-        unregistered (``object.__setattr__``), so its frozen VAE / text encoders
-        stay resident unless moved explicitly. This is the offload-and-restore
-        discipline for non-trainable components: parking them on CPU during the
-        rollout window frees GPU without discarding and reloading them from disk.
-        Device-only — dtype is preserved (frozen VAE stays fp32, encoders keep
-        their frozen dtype).
+class DiffusersModelBase(DenoiseModelBase):
+    """A diffusers transformer and its scheduler: the model replay runs.
 
-        The set is derived from the diffusers pipeline — every nn.Module
-        component not already registered on this model — so it tracks whatever
-        ``from_build`` froze instead of a hand-kept name list. Families that attach
-        no diffusers pipeline (single-file checkpoints, replay models) move
-        nothing.
+    Holds what a diffusers family's per-step math reads — device, scheduler,
+    distilled-guidance detection, the timestep grid (static or resolution
+    shifted) — and nothing about prompt encoders or the VAE. The replay builder
+    constructs it from the transformer and scheduler alone; a family's sampling
+    class adds the pipeline through ``DiffusersPipelineModelBase``.
+    """
+
+    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
+        super().__init__()
+        self.transformer = transformer
+        self._scheduler = scheduler
+        self._device = device
+
+    @property
+    def device(self) -> Any:
+        return self._device
+
+    @property
+    def scheduler(self) -> Any:
+        return self._scheduler
+
+    @property
+    def raw_handle(self) -> Any:
+        return None
+
+    @property
+    def _guidance_embeds(self) -> bool:
+        """Whether the checkpoint embeds a distilled-guidance scalar."""
+
+        return bool(getattr(self.transformer.config, "guidance_embeds", False))
+
+    def set_num_steps(self, n: int) -> None:
+        """Initialize the scheduler timesteps for sampling.
+
+        Dynamic-shifting FlowMatch schedulers (FLUX, Qwen-Image) derive their
+        schedule from a resolution-dependent ``mu`` unknown at build time, so
+        the real set is deferred to ``prepare_sampling``; static schedulers
+        are set eagerly. Reads ``self.scheduler``, which a sampling class
+        resolves to its pipeline's scheduler.
         """
-
-        pipeline = getattr(self, "pipeline", None)
-        if pipeline is None:
+        scheduler = self.scheduler
+        if getattr(scheduler.config, "use_dynamic_shifting", False):
             return
-        components = getattr(pipeline, "components", None)
-        if not isinstance(components, Mapping):
-            raise TypeError("diffusion pipeline.components must be a mapping for frozen offload")
-        registered = {id(module) for module in self.modules()}
-        cpu_resident = getattr(self, "_cpu_resident", frozenset())
-        moved: set[int] = set()
-        for name, module in components.items():
-            if not isinstance(module, nn.Module) or id(module) in registered:
-                continue
-            if name in cpu_resident:
-                continue
-            if id(module) not in moved:
-                moved.add(id(module))
-                module.to(device)
+        scheduler.set_timesteps(n, device=self.device)
+
+    def prepare_replay(self, build: ModelBuild) -> None:
+        """Give a dynamic-shifting replay scheduler the rollout's timestep grid.
+
+        ``set_num_steps`` defers dynamic-shifting schedulers because ``mu``
+        depends on the packed latent length. Rollout sets the grid in
+        ``prepare_sampling``; replay never samples, but the SDE log-prob math
+        indexes ``scheduler.sigmas`` by timestep, so the grid must exist and
+        match. Resolution is fixed per run, so the replay rebuilds it from the
+        sampling block through the family's ``packed_token_count``.
+        """
+        if not getattr(self.scheduler.config, "use_dynamic_shifting", False):
+            return
+        sampling = build.sampling_config or {}
+        num_steps = build.num_steps
+        height, width = sampling.get("height"), sampling.get("width")
+        if num_steps is None or not height or not width:
+            return
+        self._set_dynamic_timesteps(
+            num_steps, self.packed_token_count(int(height), int(width)), build.device
+        )
+
+    def packed_token_count(self, height: int, width: int) -> int:
+        """Packed latent length of one ``height x width`` image (dynamic-shift families)."""
+        raise NotImplementedError(
+            f"{type(self).__name__} runs a dynamic-shifting scheduler and must declare "
+            "packed_token_count so its replay rebuilds the rollout timestep grid"
+        )
+
+    def _set_dynamic_timesteps(self, num_steps: int, image_seq_len: int, device: Any) -> Any:
+        """Set the resolution-shifted grid exactly as the family's diffusers pipeline does."""
+        raise NotImplementedError(
+            f"{type(self).__name__} runs a dynamic-shifting scheduler and must declare "
+            "_set_dynamic_timesteps"
+        )
 
 
-class DiffusersPipelineModelBase(DenoiseModelBase):
-    """Shared shape for families backed by ONE diffusers pipeline + ONE
-    trainable transformer (sd3_5, flux, qwen_image, cosmos, wan's primary).
+class DiffusersPipelineModelBase(DenoisePipelineModelBase, DiffusersModelBase):
+    """A diffusers model plus the pipeline that samples with it.
 
-    Factors the members that were byte-identical across those families:
-    pipeline/device/scheduler/raw_handle access, frozen encoder device discovery,
-    distilled-guidance detection, transformer swap, scheduler timestep init, and
-    ``from_build`` — the pipeline load plus the freeze/placement of VAE and
-    prompt encoders, driven by the three class declarations below. A family
-    overrides only where it genuinely differs (FLUX's dual-encoder discovery,
-    SANA's scheduler swap, wan's multi-transformer ``trainable_modules``/LoRA).
-    Families NOT backed by a diffusers pipeline (echo's LTX wrapper) stay on
-    ``DenoiseModelBase`` directly.
+    A family's sampling class lists this before its model class. The pipeline
+    owns the scheduler and a second handle to the transformer, so this class
+    reads the scheduler and device back from it and writes a replaced
+    transformer to both handles. It also owns what only sampling needs: frozen
+    encoder device discovery, the VAE memory target, moving the frozen
+    components, and ``from_build`` — the pipeline load plus the freeze and
+    placement of the VAE and prompt encoders. A family overrides only where it
+    genuinely differs (FLUX's dual-encoder discovery, SANA's scheduler swap).
+    Families not backed by a diffusers pipeline (Echo's LTX wrapper, CausVid's
+    backend) build on ``DenoisePipelineModelBase`` directly.
     """
 
     def __init__(self, *, pipeline: Any, device: Any = None) -> None:
-        super().__init__()
-        # Bypass nn.Module attribute registration: the pipeline is a frozen
-        # container, not a trainable submodule.
+        # The pipeline owns the scheduler (``scheduler`` reads it back), so
+        # ``DiffusersModelBase``'s transformer-and-scheduler constructor does
+        # not run. The transformer is registered as the trainable child; the
+        # pipeline is attached unregistered, as a frozen container.
+        DenoiseModelBase.__init__(self)
         object.__setattr__(self, "_pipeline", pipeline)
         self.transformer = pipeline.transformer
         self._device = device
@@ -715,18 +801,48 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
         return self.device
 
     @property
-    def _guidance_embeds(self) -> bool:
-        """Whether the checkpoint embeds a distilled-guidance scalar."""
-
-        return bool(getattr(self.transformer.config, "guidance_embeds", False))
-
-    @property
     def scheduler(self) -> Any:
         return self.pipeline.scheduler
 
     @property
     def raw_handle(self) -> Any:
         return self.pipeline
+
+    def generation_memory_targets(self) -> dict[str, Any]:
+        """The pipeline's VAE, when it ships one, is the decode-memory target."""
+
+        vae = getattr(self.pipeline, "vae", None)
+        return {} if vae is None else {"vae_decode": vae}
+
+    def move_frozen_components(self, device: Any) -> None:
+        """Move frozen pipeline components (VAE / text encoders) onto ``device``.
+
+        ``nn.Module.to`` moves only *registered* submodules — for these families
+        just the transformer — but the pipeline is attached unregistered, so its
+        frozen VAE / text encoders stay resident unless moved explicitly. This
+        is the offload-and-restore discipline for non-trainable components:
+        parking them on CPU during the rollout window frees GPU without
+        discarding and reloading them from disk. Device-only — dtype is
+        preserved (frozen VAE stays fp32, encoders keep their frozen dtype).
+
+        The set is derived from the pipeline — every nn.Module component not
+        already registered on this model — so it tracks whatever ``from_build``
+        froze instead of a hand-kept name list.
+        """
+
+        components = getattr(self.pipeline, "components", None)
+        if not isinstance(components, Mapping):
+            raise TypeError("diffusion pipeline.components must be a mapping for frozen offload")
+        registered = {id(module) for module in self.modules()}
+        moved: set[int] = set()
+        for name, module in components.items():
+            if not isinstance(module, nn.Module) or id(module) in registered:
+                continue
+            if name in self._cpu_resident:
+                continue
+            if id(module) not in moved:
+                moved.add(id(module))
+                module.to(device)
 
     # -- backend ownership -------------------------------------------------
     # The pipeline class comes from the checkpoint's ``model_index.json``
@@ -846,118 +962,12 @@ class DiffusersPipelineModelBase(DenoiseModelBase):
         model._cpu_resident = cpu_resident
         return model
 
-    def set_num_steps(self, n: int) -> None:
-        """Initialize the scheduler timesteps for sampling.
-
-        Dynamic-shifting FlowMatch schedulers (FLUX, Qwen-Image) derive their
-        schedule from a resolution-dependent ``mu`` unknown at build time, so
-        the real set is deferred to ``prepare_sampling``; static schedulers
-        are set eagerly. Reads ``self.scheduler`` (not ``pipeline.scheduler``)
-        so pipeline-less replay subclasses can set their replay scheduler too.
-        """
-        scheduler = self.scheduler
-        if getattr(scheduler.config, "use_dynamic_shifting", False):
-            return
-        scheduler.set_timesteps(n, device=self.device)
-
-    def prepare_replay(self, build: ModelBuild) -> None:
-        """Give a dynamic-shifting replay scheduler the rollout's timestep grid.
-
-        ``set_num_steps`` defers dynamic-shifting schedulers because ``mu``
-        depends on the packed latent length. Rollout sets the grid in
-        ``prepare_sampling``; replay never samples, but the SDE log-prob math
-        indexes ``scheduler.sigmas`` by timestep, so the grid must exist and
-        match. Resolution is fixed per run, so the replay rebuilds it from the
-        sampling block through the family's ``packed_token_count``.
-        """
-        if not getattr(self.scheduler.config, "use_dynamic_shifting", False):
-            return
-        sampling = build.sampling_config or {}
-        num_steps = build.num_steps
-        height, width = sampling.get("height"), sampling.get("width")
-        if num_steps is None or not height or not width:
-            return
-        self._set_dynamic_timesteps(
-            num_steps, self.packed_token_count(int(height), int(width)), build.device
-        )
-
-    def packed_token_count(self, height: int, width: int) -> int:
-        """Packed latent length of one ``height x width`` image (dynamic-shift families)."""
-        raise NotImplementedError(
-            f"{type(self).__name__} runs a dynamic-shifting scheduler and must declare "
-            "packed_token_count so its replay rebuilds the rollout timestep grid"
-        )
-
-    def _set_dynamic_timesteps(self, num_steps: int, image_seq_len: int, device: Any) -> Any:
-        """Set the resolution-shifted grid exactly as the family's diffusers pipeline does."""
-        raise NotImplementedError(
-            f"{type(self).__name__} runs a dynamic-shifting scheduler and must declare "
-            "_set_dynamic_timesteps"
-        )
-
-
-class ReplayRolloutStubs:
-    """Rollout-only surface stubs shared by replay models.
-
-    Replay models load only the modules needed to recompute log-probs, so the
-    rollout-side ABC methods are unreachable by construction. They raise with
-    the concrete class name here instead of each family re-writing the stub.
-    """
-
-    def generation_memory_targets(self) -> dict[str, Any]:
-        """Replay owns no VAE or generation-only memory targets."""
-        return {}
-
-    def move_frozen_components(self, device: Any) -> None:
-        """Replay owns no frozen pipeline components to move."""
-        del device
-
-    def encode_prompt(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        raise RuntimeError(f"{type(self).__name__} cannot encode prompts")
-
-    def prepare_sampling(self, *args: Any, **kwargs: Any) -> Any:
-        raise RuntimeError(f"{type(self).__name__} cannot run rollout sampling")
-
-    def decode_latents(self, *args: Any, **kwargs: Any) -> Any:
-        raise RuntimeError(f"{type(self).__name__} cannot decode latents")
-
-
-class DiffusersReplayModelBase(ReplayRolloutStubs):
-    """Shared shape for transformer-only replay models (no diffusers pipeline).
-
-    Factors the byte-identical members of the per-family ``*ReplayModel``
-    classes: the transformer/scheduler/device ctor, the no-pipeline guard, the
-    transformer swap, and the scheduler/raw_handle accessors. A family
-    overrides only where it genuinely differs (mochi/pixart_sigma/sana
-    re-standardize their replay scheduler in ``prepare_replay``).
-    """
-
-    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
-        DenoiseModelBase.__init__(self)
-        self.transformer = transformer
-        self._scheduler = scheduler
-        self._device = device
-
-    @property
-    def pipeline(self) -> Any:
-        raise RuntimeError(f"{type(self).__name__} does not own a diffusers pipeline")
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
-
-    @property
-    def scheduler(self) -> Any:
-        return self._scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return None
-
 
 __all__ = [
     "DenoiseModelBase",
+    "DenoisePipelineModelBase",
     "DenoiseSamplingStateBase",
+    "DiffusersModelBase",
     "DiffusersPipelineModelBase",
-    "DiffusersReplayModelBase",
     "GuidedDenoiseSamplingStateBase",
 ]

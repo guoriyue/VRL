@@ -5,6 +5,11 @@ MMDiT). The generation helper flow mirrors every diffusion family:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
+``HunyuanImagePipelineModel`` runs that flow. ``HunyuanImageModel`` — the
+transformer, its scheduler and ``forward_step`` — is what replay runs; the
+pipeline class adds the text encoders, latent preparation and VAE decode on top
+of it.
+
 HunyuanImage specifics vs Qwen-Image (the reference t2i CFG family):
 - TWO text streams: Qwen2.5-VL-7B produces the main sequence embeds + mask,
   a byT5 glyph encoder produces a second embed/mask pair (zero-filled by the
@@ -50,8 +55,8 @@ import torch
 
 from vrl.generation.types import DenoiseRequest
 from vrl.models.steps.denoise import (
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
@@ -81,12 +86,8 @@ class HunyuanImageSamplingState(GuidedDenoiseSamplingStateBase):
     guidance_embeds: bool
 
 
-class HunyuanImageModel(
-    VaeDecodeMixin,
-    DiffusersPipelineModelBase,
-    DenoiseBackboneRunnerBase,
-):
-    """Diffusers-backed HunyuanImage-2.1 t2i model (true CFG, dual text streams).
+class HunyuanImageModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+    """HunyuanImage-2.1 t2i transformer, scheduler and per-step math: the model replay runs.
 
     Implements the backbone-runner protocol itself. Cond/uncond prompts carry
     branch-specific masks and glyph streams (the byT5 pair may be zeros on one
@@ -125,6 +126,104 @@ class HunyuanImageModel(
                 "guidance": request.extra["guidance"],
             },
         )
+
+    # -- forward_step --------------------------------------------------
+
+    def forward_step(
+        self,
+        state: HunyuanImageSamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        """HunyuanImage transformer forward (true-CFG separate branches when do_cfg)."""
+        t = state.timesteps[step_idx]
+        bsz = state.latents.shape[0]
+        td = self._transformer_dtype()
+
+        latent_input = state.latents.to(td)
+        # Raw scheduler t expanded to batch (pipeline parity: no /1000).
+        timestep_batch = expand_batch_timestep(t, bsz).to(
+            device=latent_input.device,
+            dtype=td,
+        )
+        guidance = None
+        if state.guidance_embeds:
+            # Distilled variants embed the scale x1000 (pipeline parity); the
+            # 2.1 community base checkpoint has guidance_embeds=False -> None.
+            guidance = torch.full(
+                (bsz,),
+                float(state.guidance_scale) * 1000.0,
+                device=latent_input.device,
+                dtype=td,
+            )
+        negative_embeds = (
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
+        )
+        output = DenoiseBackboneCaller(
+            self.transformer,
+            self,
+        )(
+            DenoiseBackboneInput(
+                hidden_states=latent_input,
+                timestep=timestep_batch,
+                prompt_embeds=state.prompt_embeds.to(td),
+                negative_prompt_embeds=negative_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=td,
+                extra={
+                    "encoder_attention_mask": state.prompt_embeds_mask,
+                    "encoder_hidden_states_2": state.prompt_embeds_2.to(td),
+                    "encoder_attention_mask_2": state.prompt_embeds_mask_2,
+                    "negative_encoder_attention_mask": state.negative_prompt_embeds_mask,
+                    "negative_encoder_hidden_states_2": (
+                        None
+                        if state.negative_prompt_embeds_2 is None
+                        else state.negative_prompt_embeds_2.to(td)
+                    ),
+                    "negative_encoder_attention_mask_2": state.negative_prompt_embeds_mask_2,
+                    "guidance": guidance,
+                },
+            ),
+        )
+        return output.as_dict()
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> HunyuanImageSamplingState:
+        """Rebuild HunyuanImageSamplingState from a batch slice for the eval path."""
+        ts = replay_tensors["timesteps"]
+        timesteps = pack_eval_timestep(ts, step_idx)
+        return HunyuanImageSamplingState(
+            latents=latents,
+            timesteps=timesteps,
+            scheduler=None,  # not needed for forward_step (no scheduler.step here)
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            prompt_embeds_mask=replay_tensors["prompt_embeds_mask"],
+            prompt_embeds_2=replay_tensors["prompt_embeds_2"],
+            prompt_embeds_mask_2=replay_tensors["prompt_embeds_mask_2"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
+            negative_prompt_embeds_mask=replay_tensors.get("negative_prompt_embeds_mask"),
+            negative_prompt_embeds_2=replay_tensors.get("negative_prompt_embeds_2"),
+            negative_prompt_embeds_mask_2=replay_tensors.get(
+                "negative_prompt_embeds_mask_2",
+            ),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"]
+            and replay_tensors.get("negative_prompt_embeds") is not None,
+            guidance_embeds=batch_context["guidance_embeds"],
+        )
+
+
+class HunyuanImagePipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, HunyuanImageModel):
+    """HunyuanImage-2.1 plus the diffusers pipeline that sampling needs.
+
+    The pipeline brings prompt encoding, latent preparation and VAE decode;
+    this class also exports the trajectory tensors replay reads back.
+    """
 
     # -- encode_prompt -------------------------------------------------
 
@@ -250,66 +349,6 @@ class HunyuanImageModel(
             guidance_embeds=self._guidance_embeds,
         )
 
-    # -- forward_step --------------------------------------------------
-
-    def forward_step(
-        self,
-        state: HunyuanImageSamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """HunyuanImage transformer forward (true-CFG separate branches when do_cfg)."""
-        t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        td = self._transformer_dtype()
-
-        latent_input = state.latents.to(td)
-        # Raw scheduler t expanded to batch (pipeline parity: no /1000).
-        timestep_batch = expand_batch_timestep(t, bsz).to(
-            device=latent_input.device,
-            dtype=td,
-        )
-        guidance = None
-        if state.guidance_embeds:
-            # Distilled variants embed the scale x1000 (pipeline parity); the
-            # 2.1 community base checkpoint has guidance_embeds=False -> None.
-            guidance = torch.full(
-                (bsz,),
-                float(state.guidance_scale) * 1000.0,
-                device=latent_input.device,
-                dtype=td,
-            )
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        output = DenoiseBackboneCaller(
-            self.transformer,
-            self,
-        )(
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "encoder_attention_mask": state.prompt_embeds_mask,
-                    "encoder_hidden_states_2": state.prompt_embeds_2.to(td),
-                    "encoder_attention_mask_2": state.prompt_embeds_mask_2,
-                    "negative_encoder_attention_mask": state.negative_prompt_embeds_mask,
-                    "negative_encoder_hidden_states_2": (
-                        None
-                        if state.negative_prompt_embeds_2 is None
-                        else state.negative_prompt_embeds_2.to(td)
-                    ),
-                    "negative_encoder_attention_mask_2": state.negative_prompt_embeds_mask_2,
-                    "guidance": guidance,
-                },
-            ),
-        )
-        return output.as_dict()
-
     # -- collector boundary --------------------------------------------
 
     def export_batch_context(self, state: HunyuanImageSamplingState) -> dict[str, Any]:
@@ -345,43 +384,9 @@ class HunyuanImageModel(
             tensors["negative_prompt_embeds_mask_2"] = state.negative_prompt_embeds_mask_2
         return tensors
 
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> HunyuanImageSamplingState:
-        """Rebuild HunyuanImageSamplingState from a batch slice for the eval path."""
-        ts = replay_tensors["timesteps"]
-        timesteps = pack_eval_timestep(ts, step_idx)
-        return HunyuanImageSamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=None,  # not needed for forward_step (no scheduler.step here)
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            prompt_embeds_mask=replay_tensors["prompt_embeds_mask"],
-            prompt_embeds_2=replay_tensors["prompt_embeds_2"],
-            prompt_embeds_mask_2=replay_tensors["prompt_embeds_mask_2"],
-            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
-            negative_prompt_embeds_mask=replay_tensors.get("negative_prompt_embeds_mask"),
-            negative_prompt_embeds_2=replay_tensors.get("negative_prompt_embeds_2"),
-            negative_prompt_embeds_mask_2=replay_tensors.get(
-                "negative_prompt_embeds_mask_2",
-            ),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"]
-            and replay_tensors.get("negative_prompt_embeds") is not None,
-            guidance_embeds=batch_context["guidance_embeds"],
-        )
-
-
-class HunyuanImageReplayModel(DiffusersReplayModelBase, HunyuanImageModel):
-    """Replay-only HunyuanImage model owning no prompt encoders, VAE, or pipeline."""
-
 
 __all__ = [
     "HunyuanImageModel",
-    "HunyuanImageReplayModel",
+    "HunyuanImagePipelineModel",
     "HunyuanImageSamplingState",
 ]

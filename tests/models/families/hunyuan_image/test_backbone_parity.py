@@ -19,7 +19,7 @@ import torch
 from tests.models.steps.denoise.fixtures import record_forward_calls, stamp_model_precision
 from vrl.models.families.hunyuan_image.model import (
     HunyuanImageModel,
-    HunyuanImageReplayModel,
+    HunyuanImagePipelineModel,
     HunyuanImageSamplingState,
 )
 
@@ -61,8 +61,8 @@ def build_tiny_hunyuan_image_transformer(*, seed: int = 0) -> Any:
     )
 
 
-def _model(transformer: torch.nn.Module) -> HunyuanImageModel:
-    model = HunyuanImageModel(
+def _model(transformer: torch.nn.Module) -> HunyuanImagePipelineModel:
+    model = HunyuanImagePipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
@@ -179,7 +179,7 @@ def test_hunyuan_image_replay_roundtrip_restores_equivalent_state() -> None:
     context = model.export_batch_context(state)
     replay["timesteps"] = torch.full((TINY_HUNYUAN_IMAGE_LATENT_SHAPE[0],), 500.0)
 
-    restored = HunyuanImageReplayModel(
+    restored = HunyuanImageModel(
         transformer=transformer,
         scheduler=None,
     ).restore_eval_state(replay, context, state.latents, 0)

@@ -29,10 +29,10 @@ from tests.models.steps.denoise.fixtures import (
     stamp_model_precision,
 )
 from vrl.models.families.wan_2_1.model import (
-    WanI2VDiffusersModel,
+    WanI2VPipelineModel,
     WanI2VSamplingState,
-    WanT2VDiffusersModel,
-    WanT2VReplayModel,
+    WanT2VModel,
+    WanT2VPipelineModel,
     WanT2VSamplingState,
 )
 
@@ -65,7 +65,7 @@ def _model(
 def test_wan_t2v_forward_step_runs_real_batched_cfg() -> None:
     transformer = build_tiny_transformer("wan")
     calls = record_forward_calls(transformer)
-    model = _model(WanT2VDiffusersModel, transformer)
+    model = _model(WanT2VPipelineModel, transformer)
     state = WanT2VSamplingState(
         latents=torch.randn(_LATENT_SHAPE),
         timesteps=torch.tensor([5.0]),
@@ -93,7 +93,7 @@ def test_wan_t2v_forward_step_casts_replay_tensors_to_transformer_dtype() -> Non
     """Checks bf16 rollout tensors replay cleanly through an fp32 transformer."""
     transformer = build_tiny_transformer("wan")
     calls = record_forward_calls(transformer)
-    model = _model(WanT2VDiffusersModel, transformer)
+    model = _model(WanT2VPipelineModel, transformer)
     state = WanT2VSamplingState(
         latents=torch.randn(_LATENT_SHAPE, dtype=torch.bfloat16),
         timesteps=torch.tensor([5.0], dtype=torch.bfloat16),
@@ -118,7 +118,7 @@ def test_wan_i2v_forward_step_threads_condition_and_image_embeds() -> None:
     """
     transformer = build_tiny_transformer("wan_i2v")
     calls = record_forward_calls(transformer)
-    model = _model(WanI2VDiffusersModel, transformer)
+    model = _model(WanI2VPipelineModel, transformer)
     state = WanI2VSamplingState(
         latents=torch.randn(_LATENT_SHAPE),
         timesteps=torch.tensor([5.0]),
@@ -152,7 +152,7 @@ def test_wan_i2v_dual_stage_routes_by_diffusers_boundary() -> None:
     high_calls = record_forward_calls(high)
     low_calls = record_forward_calls(low)
     model = _model(
-        WanI2VDiffusersModel,
+        WanI2VPipelineModel,
         high,
         transformer_2=low,
         boundary_ratio=0.5,
@@ -193,7 +193,7 @@ def test_wan_i2v_dual_stage_routes_by_diffusers_boundary() -> None:
 def test_wan_dual_expert_slot_install_rejects_partial_state_before_mutation() -> None:
     high = torch.nn.Linear(2, 2)
     low = torch.nn.Linear(2, 2)
-    model = WanT2VReplayModel(
+    model = WanT2VModel(
         transformer=high,
         transformer_2=low,
         scheduler=None,
@@ -219,7 +219,7 @@ def test_wan_dual_expert_slot_install_rejects_partial_state_before_mutation() ->
 def test_wan_i2v_replay_state_roundtrip_keeps_conditioning_tensors() -> None:
     # Pure state plumbing (no forward): export -> restore must preserve the
     # conditioning tensors and slice the per-step timestep.
-    model = _model(WanI2VDiffusersModel, build_tiny_transformer("wan_i2v"))
+    model = _model(WanI2VPipelineModel, build_tiny_transformer("wan_i2v"))
     state = WanI2VSamplingState(
         latents=torch.zeros(_LATENT_SHAPE),
         timesteps=torch.tensor([9.0, 7.0]),

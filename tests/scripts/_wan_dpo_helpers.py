@@ -89,11 +89,11 @@ def install_local_pickapic(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, An
 
 
 def spy_wan_from_build(monkeypatch: pytest.MonkeyPatch, on_built=None) -> list[Any]:
-    """Record every real ``WanT2VDiffusersModel.from_build`` result (a spy, not a fake)."""
+    """Record every real ``WanT2VPipelineModel.from_build`` result (a spy, not a fake)."""
 
-    from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
+    from vrl.models.families.wan_2_1.model import WanT2VPipelineModel
 
-    real = WanT2VDiffusersModel.from_build.__func__
+    real = WanT2VPipelineModel.from_build.__func__
     built: list[Any] = []
 
     def from_build(cls, build):
@@ -103,5 +103,5 @@ def spy_wan_from_build(monkeypatch: pytest.MonkeyPatch, on_built=None) -> list[A
             on_built(model)
         return model
 
-    monkeypatch.setattr(WanT2VDiffusersModel, "from_build", classmethod(from_build))
+    monkeypatch.setattr(WanT2VPipelineModel, "from_build", classmethod(from_build))
     return built

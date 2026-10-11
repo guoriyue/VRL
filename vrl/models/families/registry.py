@@ -471,8 +471,8 @@ _register_model_family(
         model_section_cls="vrl.models.families.sd3_5.config:SD3_5ModelSection",
         sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.sd3_5.model:SD3_5Model",
-            replay_cls="vrl.models.families.sd3_5.model:SD3_5ReplayModel",
+            model_cls="vrl.models.families.sd3_5.model:SD3_5PipelineModel",
+            replay_cls="vrl.models.families.sd3_5.model:SD3_5Model",
             transformer_classname="SD3Transformer2DModel",
         ),
         # MMDiT joint attention has a verified Ulysses install (numeric
@@ -494,7 +494,7 @@ _register_model_family(
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.causvid.runtime:CausVidBatchExecutor",
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.causvid.model:CausVidModel",
+            model_cls="vrl.models.families.causvid.model:CausVidPipelineModel",
             replay_runtime_builder=(
                 "vrl.models.families.causvid.runtime:build_causvid_replay_runtime_bundle"
             ),
@@ -534,8 +534,8 @@ _register_model_family(
         model_section_cls="vrl.models.families.flux.config:FluxModelSection",
         sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.flux.model:FluxModel",
-            replay_cls="vrl.models.families.flux.model:FluxReplayModel",
+            model_cls="vrl.models.families.flux.model:FluxPipelineModel",
+            replay_cls="vrl.models.families.flux.model:FluxModel",
             transformer_classname="FluxTransformer2DModel",
         ),
     ),
@@ -551,8 +551,8 @@ _register_model_family(
         # vrl.models.steps.denoise.build read the recipe below, so qwen_image ships
         # no per-family builder/resolver functions.
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.qwen_image.model:QwenImageModel",
-            replay_cls="vrl.models.families.qwen_image.model:QwenImageReplayModel",
+            model_cls="vrl.models.families.qwen_image.model:QwenImagePipelineModel",
+            replay_cls="vrl.models.families.qwen_image.model:QwenImageModel",
             transformer_classname="QwenImageTransformer2DModel",
         ),
     ),
@@ -568,8 +568,8 @@ _register_model_family(
         # Qwen-Image-2.1: 7B single-stream DiT (diffusers ``QwenImage21*``), a
         # different transformer/VAE/pipeline from the 20B ``qwen_image`` MMDiT.
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.qwen_image_21.model:QwenImage21Model",
-            replay_cls="vrl.models.families.qwen_image_21.model:QwenImage21ReplayModel",
+            model_cls="vrl.models.families.qwen_image_21.model:QwenImage21PipelineModel",
+            replay_cls="vrl.models.families.qwen_image_21.model:QwenImage21Model",
             transformer_classname="QwenImage21Transformer2DModel",
         ),
     ),
@@ -582,8 +582,8 @@ _register_model_family(
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.sana.model:SanaModel",
-            replay_cls="vrl.models.families.sana.model:SanaReplayModel",
+            model_cls="vrl.models.families.sana.model:SanaPipelineModel",
+            replay_cls="vrl.models.families.sana.model:SanaModel",
             transformer_classname="SanaTransformer2DModel",
         ),
     ),
@@ -596,8 +596,8 @@ _register_model_family(
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.lumina2.model:Lumina2Model",
-            replay_cls="vrl.models.families.lumina2.model:Lumina2ReplayModel",
+            model_cls="vrl.models.families.lumina2.model:Lumina2PipelineModel",
+            replay_cls="vrl.models.families.lumina2.model:Lumina2Model",
             transformer_classname="Lumina2Transformer2DModel",
         ),
     ),
@@ -610,8 +610,8 @@ _register_model_family(
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoModel",
-            replay_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoReplayModel",
+            model_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoPipelineModel",
+            replay_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoModel",
             transformer_classname="HunyuanVideoTransformer3DModel",
         ),
     ),
@@ -624,8 +624,8 @@ _register_model_family(
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.mochi.model:MochiModel",
-            replay_cls="vrl.models.families.mochi.model:MochiReplayModel",
+            model_cls="vrl.models.families.mochi.model:MochiPipelineModel",
+            replay_cls="vrl.models.families.mochi.model:MochiModel",
             transformer_classname="MochiTransformer3DModel",
         ),
     ),
@@ -638,8 +638,8 @@ _register_model_family(
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls=DENOISE_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.hunyuan_image.model:HunyuanImageModel",
-            replay_cls="vrl.models.families.hunyuan_image.model:HunyuanImageReplayModel",
+            model_cls="vrl.models.families.hunyuan_image.model:HunyuanImagePipelineModel",
+            replay_cls="vrl.models.families.hunyuan_image.model:HunyuanImageModel",
             transformer_classname="HunyuanImageTransformer2DModel",
         ),
     ),
@@ -652,8 +652,8 @@ _register_model_family(
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.pixart_sigma.model:PixArtSigmaModel",
-            replay_cls="vrl.models.families.pixart_sigma.model:PixArtSigmaReplayModel",
+            model_cls="vrl.models.families.pixart_sigma.model:PixArtSigmaPipelineModel",
+            replay_cls="vrl.models.families.pixart_sigma.model:PixArtSigmaModel",
             transformer_classname="PixArtTransformer2DModel",
             # Epsilon DDPM family (sde_type=ddim): load a DDIMScheduler so the
             # shipped beta config survives into prepare_replay, which rebuilds
@@ -670,8 +670,8 @@ _register_model_family(
         model_section_cls=SHARED_MODEL_SECTION_CLS,
         sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.cogvideox.model:CogVideoXModel",
-            replay_cls="vrl.models.families.cogvideox.model:CogVideoXReplayModel",
+            model_cls="vrl.models.families.cogvideox.model:CogVideoXPipelineModel",
+            replay_cls="vrl.models.families.cogvideox.model:CogVideoXModel",
             transformer_classname="CogVideoXTransformer3DModel",
             # v-prediction DDPM family: replay recomputes log-probs on the
             # same ladder the rollout sampled (sde_type=ddim).
@@ -691,8 +691,8 @@ _register_model_family(
         # dual-stage transformer_2 late-load lives in the replay model's
         # prepare_replay, so replay is generic too.
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.wan_2_1.model:WanT2VDiffusersModel",
-            replay_cls="vrl.models.families.wan_2_1.model:WanT2VReplayModel",
+            model_cls="vrl.models.families.wan_2_1.model:WanT2VPipelineModel",
+            replay_cls="vrl.models.families.wan_2_1.model:WanT2VModel",
             transformer_classname="WanTransformer3DModel",
             # Replay recomputes log-probs on the schedule the rollout sampled.
             scheduler_classname="UniPCMultistepScheduler",
@@ -711,8 +711,8 @@ _register_model_family(
         sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.wan_2_1.runtime:Wan_2_1I2VBatchExecutor",
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.wan_2_1.model:WanI2VDiffusersModel",
-            replay_cls="vrl.models.families.wan_2_1.model:WanI2VReplayModel",
+            model_cls="vrl.models.families.wan_2_1.model:WanI2VPipelineModel",
+            replay_cls="vrl.models.families.wan_2_1.model:WanI2VModel",
             transformer_classname="WanTransformer3DModel",
             scheduler_classname="UniPCMultistepScheduler",
             model_build_normalizer=(
@@ -730,8 +730,8 @@ _register_model_family(
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosBatchExecutor",
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.cosmos.predict2.model:CosmosPredict2Model",
-            replay_cls="vrl.models.families.cosmos.predict2.model:CosmosPredict2ReplayModel",
+            model_cls="vrl.models.families.cosmos.predict2.model:CosmosPredict2PipelineModel",
+            replay_cls="vrl.models.families.cosmos.predict2.model:CosmosPredict2Model",
             transformer_classname="CosmosTransformer3DModel",
         ),
     ),
@@ -749,8 +749,8 @@ _register_model_family(
             "vrl.models.families.cosmos.predict2_5.runtime:CosmosPredict25BatchExecutor"
         ),
         build=DenoiseFamilyBuild(
-            model_cls=("vrl.models.families.cosmos.predict2_5.model:CosmosPredict25Model"),
-            replay_cls=("vrl.models.families.cosmos.predict2_5.model:CosmosPredict25ReplayModel"),
+            model_cls=("vrl.models.families.cosmos.predict2_5.model:CosmosPredict25PipelineModel"),
+            replay_cls=("vrl.models.families.cosmos.predict2_5.model:CosmosPredict25Model"),
             transformer_classname="CosmosTransformer3DModel",
             # Upstream ships UniPC; replay must recompute log-probs under the
             # same schedule the rollout sampled with.
@@ -767,7 +767,7 @@ _register_model_family(
         sampling_section_cls="vrl.config.sampling_schema:MiniMaxH3SamplingSection",
         executor_cls="vrl.models.families.vdn_h3.runtime:VDNH3BatchExecutor",
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.vdn_h3.model:VDNH3Model",
+            model_cls="vrl.models.families.vdn_h3.model:VDNH3PipelineModel",
             replay_runtime_builder=(
                 "vrl.models.families.vdn_h3.runtime:build_vdn_h3_replay_runtime_bundle"
             ),
@@ -783,7 +783,7 @@ _register_model_family(
         sampling_section_cls="vrl.config.sampling_schema:MiniMaxH3SamplingSection",
         executor_cls="vrl.models.families.minimax_h3.runtime:MiniMaxH3BatchExecutor",
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.minimax_h3.model:MiniMaxH3Model",
+            model_cls="vrl.models.families.minimax_h3.model:MiniMaxH3PipelineModel",
             replay_runtime_builder=(
                 "vrl.models.families.minimax_h3.runtime:build_minimax_h3_replay_runtime_bundle"
             ),
@@ -799,7 +799,7 @@ _register_model_family(
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.cosmos3.runtime:Cosmos3BatchExecutor",
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.cosmos.cosmos3.model:Cosmos3Model",
+            model_cls="vrl.models.families.cosmos.cosmos3.model:Cosmos3PipelineModel",
             replay_runtime_builder=(
                 "vrl.models.families.cosmos.cosmos3.runtime:build_cosmos3_replay_runtime_bundle"
             ),
@@ -815,7 +815,7 @@ _register_model_family(
         sampling_section_cls="vrl.config.sampling_schema:EchoSamplingSection",
         executor_cls="vrl.models.families.echo.runtime:EchoBatchExecutor",
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.echo.model:EchoModel",
+            model_cls="vrl.models.families.echo.model:EchoPipelineModel",
             replay_runtime_builder=(
                 "vrl.models.families.echo.runtime:build_echo_replay_runtime_bundle"
             ),

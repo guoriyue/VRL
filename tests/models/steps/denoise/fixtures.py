@@ -577,7 +577,7 @@ def build_tiny_cosmos3_pipeline(
 ) -> Any:
     """Tiny real ``Cosmos3OmniPipeline``: real transformer + VAE + scheduler + tokenizer.
 
-    ``enable_safety_checker=False`` mirrors ``Cosmos3Model.from_build`` and keeps
+    ``enable_safety_checker=False`` mirrors ``Cosmos3PipelineModel.from_build`` and keeps
     the cosmos_guardrail dependency out; the pipeline still registers the two
     ``None`` slots (``sound_tokenizer`` / ``safety_checker``) in ``.components``.
     """
@@ -877,7 +877,7 @@ TINY_VDN_H3_TRANSFORM_CONFIG: dict[str, Any] = {
 
 
 def build_tiny_vdn_h3_model(*, seed: int = 0, softmax_backend: str = "ref") -> Any:
-    """A tiny real ``VDNH3Model``: the tiny H3 components with the vendored hybrid
+    """A tiny real ``VDNH3PipelineModel``: the tiny H3 components with the vendored hybrid
     attention grafted on, exactly as ``install_hybrid_attention`` does it minus the
     checkpoint read (there are no tiny VDN weights to load).
 
@@ -887,11 +887,11 @@ def build_tiny_vdn_h3_model(*, seed: int = 0, softmax_backend: str = "ref") -> A
 
     import torch
 
-    from vrl.models.families.vdn_h3.model import VDNH3Model
+    from vrl.models.families.vdn_h3.model import VDNH3PipelineModel
     from vrl.models.families.vdn_h3.vendor import load_vdn
 
     vendor = load_vdn()
-    model = VDNH3Model(
+    model = VDNH3PipelineModel(
         pipeline=build_tiny_minimax_h3_components(seed=seed), device=torch.device("cpu")
     )
     stamp_model_precision(model)

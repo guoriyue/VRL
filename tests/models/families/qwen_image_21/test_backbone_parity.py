@@ -22,7 +22,7 @@ from tests.models.steps.denoise.fixtures import (
 )
 from vrl.models.families.qwen_image_21.model import (
     QwenImage21Model,
-    QwenImage21ReplayModel,
+    QwenImage21PipelineModel,
     QwenImage21SamplingState,
 )
 
@@ -32,8 +32,8 @@ _VSF = 16
 _SEQ = (_H // _VSF) * (_W // _VSF)
 
 
-def _model(transformer: torch.nn.Module) -> QwenImage21Model:
-    model = QwenImage21Model(
+def _model(transformer: torch.nn.Module) -> QwenImage21PipelineModel:
+    model = QwenImage21PipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
@@ -118,7 +118,7 @@ def test_qwen21_replay_model_restores_state_without_a_pipeline() -> None:
     state = _state(txt_len=3)
     expected = rollout.forward_step(state, 0)["noise_pred"]
 
-    replay = QwenImage21ReplayModel(
+    replay = QwenImage21Model(
         transformer=transformer,
         scheduler=None,
         device=torch.device("cpu"),
@@ -167,7 +167,7 @@ def test_qwen21_prepare_replay_sets_the_rollout_timestep_grid() -> None:
     # 512 px -> 32x32 latent cells, packed unpatched -> 1024 tokens.
     expected = rollout._set_dynamic_timesteps(num_steps, 1024, torch.device("cpu")).clone()
 
-    replay = QwenImage21ReplayModel(
+    replay = QwenImage21Model(
         transformer=build_tiny_transformer("qwen_image_21"),
         scheduler=FlowMatchEulerDiscreteScheduler.from_config(config),
         device=torch.device("cpu"),
@@ -216,7 +216,7 @@ def _decode_pipeline(transformer: torch.nn.Module) -> SimpleNamespace:
 
 def test_qwen21_decode_composites_alpha_over_white_unless_rgba() -> None:
     """RGB mode flattens the decoded alpha onto white; RGBA mode keeps four channels."""
-    model = QwenImage21Model(
+    model = QwenImage21PipelineModel(
         pipeline=_decode_pipeline(build_tiny_transformer("qwen_image_21")),
         device=torch.device("cpu"),
     )

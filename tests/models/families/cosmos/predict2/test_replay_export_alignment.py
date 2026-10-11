@@ -30,11 +30,11 @@ import pytest
 import torch
 
 from vrl.models.families.cosmos.predict2.model import (
-    CosmosPredict2Model,
+    CosmosPredict2PipelineModel,
     CosmosPredict2SamplingState,
 )
 from vrl.models.families.cosmos.predict2_5.model import (
-    CosmosPredict25Model,
+    CosmosPredict25PipelineModel,
     CosmosPredict25SamplingState,
 )
 
@@ -85,8 +85,8 @@ def _predict25_state(batch_size: int) -> CosmosPredict25SamplingState:
 # export_replay_tensors is invoked via object.__new__ (transformer-free, pure
 # state plumbing) so this stays cheap and CPU-only.
 _CASES: list[tuple[str, type, Callable[[int], Any]]] = [
-    ("predict2", CosmosPredict2Model, _predict2_state),
-    ("predict2_5", CosmosPredict25Model, _predict25_state),
+    ("predict2", CosmosPredict2PipelineModel, _predict2_state),
+    ("predict2_5", CosmosPredict25PipelineModel, _predict25_state),
 ]
 
 
@@ -129,7 +129,7 @@ def test_predict2_restore_tolerates_the_absent_uncond_bundle_when_cfg_is_off() -
     state.guidance_scale = 1.0
     state.uncond_mask = None
     state.uncond_indicator = None
-    model = object.__new__(CosmosPredict2Model)
+    model = object.__new__(CosmosPredict2PipelineModel)
     object.__setattr__(
         model,
         "_pipeline",
@@ -153,7 +153,7 @@ def test_predict2_restore_tolerates_the_absent_uncond_bundle_when_cfg_is_off() -
 
 
 def test_cosmos3_export_keeps_temporal_mask_without_batch_expansion():
-    from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
+    from vrl.models.families.cosmos.cosmos3.model import Cosmos3PipelineModel
 
     temporal_mask = torch.tensor([0, 1, 0]).reshape(3, 1, 1)
     state = SimpleNamespace(
@@ -162,6 +162,8 @@ def test_cosmos3_export_keeps_temporal_mask_without_batch_expansion():
         uncond_input_ids=[0],
         vision_condition_mask=temporal_mask,
     )
-    exported = Cosmos3Model.export_replay_tensors(object.__new__(Cosmos3Model), state)
+    exported = Cosmos3PipelineModel.export_replay_tensors(
+        object.__new__(Cosmos3PipelineModel), state
+    )
     assert exported["vision_condition_mask"] is temporal_mask
     assert exported["vision_condition_mask"].shape == (3, 1, 1)

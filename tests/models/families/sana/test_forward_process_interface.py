@@ -20,7 +20,7 @@ from tests.models.steps.denoise.fixtures import (
     stamp_model_precision,
 )
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
-from vrl.models.families.sana.model import SanaModel, SanaSamplingState
+from vrl.models.families.sana.model import SanaPipelineModel, SanaSamplingState
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.builders import build_diffusion_trajectory
 
@@ -29,8 +29,8 @@ _BATCH = TINY_SANA_LATENT_SHAPE[0]
 _GUIDANCE = 4.5
 
 
-def _model() -> SanaModel:
-    model = SanaModel(
+def _model() -> SanaPipelineModel:
+    model = SanaPipelineModel(
         pipeline=SimpleNamespace(transformer=build_tiny_transformer("sana"), device="cpu"),
         device=torch.device("cpu"),
     )

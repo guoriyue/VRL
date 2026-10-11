@@ -15,7 +15,7 @@ from tests.models.steps.denoise.fixtures import (
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.families.qwen_image_21.model import (
     QwenImage21Model,
-    QwenImage21ReplayModel,
+    QwenImage21PipelineModel,
     QwenImage21SamplingState,
 )
 
@@ -27,7 +27,7 @@ def test_two_reference_cfg_replay_matches_rollout_logprob_and_backpropagates() -
     calls = record_forward_calls(transformer)
     scheduler = FlowMatchEulerDiscreteScheduler()
     scheduler.set_timesteps(3)
-    model = QwenImage21Model(
+    model = QwenImage21PipelineModel(
         pipeline=SimpleNamespace(transformer=transformer), device=torch.device("cpu")
     )
     stamp_model_precision(model)
@@ -60,7 +60,7 @@ def test_two_reference_cfg_replay_matches_rollout_logprob_and_backpropagates() -
     negative = transformer(**calls[1])[0][:, -16:]
     torch.testing.assert_close(pred, negative + 2 * (direct - negative))
     step = sde_step_with_logprob(scheduler, pred, state.timesteps[:1], state.latents, step_index=0)
-    replay = QwenImage21ReplayModel(
+    replay = QwenImage21Model(
         transformer=transformer, scheduler=scheduler, device=torch.device("cpu")
     )
     stamp_model_precision(replay)

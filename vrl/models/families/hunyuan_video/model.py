@@ -5,6 +5,11 @@ The generation helper flow mirrors every diffusion family:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
+``HunyuanVideoPipelineModel`` runs that flow. ``HunyuanVideoModel`` — the
+transformer, its scheduler and ``forward_step`` — is what replay runs; the
+pipeline class adds the text encoders, latent preparation and video VAE decode
+on top of it.
+
 HunyuanVideo specifics vs Wan (the reference video family):
 - GUIDANCE-DISTILLED, like FLUX: a single transformer forward conditioned on a
   ``guidance`` embedding (``guidance_scale * 1000``), no unconditional branch
@@ -34,8 +39,8 @@ import torch
 
 from vrl.generation.types import DenoiseRequest
 from vrl.models.steps.denoise import (
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
@@ -58,18 +63,11 @@ class HunyuanVideoSamplingState(GuidedDenoiseSamplingStateBase):
     pooled_prompt_embeds: torch.Tensor
 
 
-class HunyuanVideoModel(
-    VaeDecodeMixin,
-    DiffusersPipelineModelBase,
-    DenoiseBackboneRunnerBase,
-):
-    """Diffusers-backed HunyuanVideo t2v model (guidance-distilled)."""
+class HunyuanVideoModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+    """HunyuanVideo t2v transformer, scheduler and per-step math (guidance-distilled): the model replay runs."""
 
     cfg_mode = "single_branch"
     cfg_base = "cond"
-    # The causal video VAE decodes 5D latents; the shared decoder permutes the
-    # frame axis back to [B, C, T, H, W].
-    _decode_output_layout = "video_btchw"
 
     def build_branch(
         self,
@@ -89,6 +87,81 @@ class HunyuanVideoModel(
                 "guidance": request.extra["guidance"],
             },
         )
+
+    # -- forward_step --------------------------------------------------
+
+    def forward_step(
+        self,
+        state: HunyuanVideoSamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        """HunyuanVideo transformer forward (distilled guidance, single branch)."""
+        t = state.timesteps[step_idx]
+        bsz = state.latents.shape[0]
+        td = self._transformer_dtype()
+
+        latent_input = state.latents.to(td)
+        timestep_batch = expand_batch_timestep(t, bsz).to(
+            device=latent_input.device,
+            dtype=td,
+        )
+        guidance = torch.full(
+            (bsz,),
+            float(state.guidance_scale) * 1000.0,
+            device=latent_input.device,
+            dtype=td,
+        )
+        output = DenoiseBackboneCaller(
+            self.transformer,
+            self,
+        )(
+            DenoiseBackboneInput(
+                hidden_states=latent_input,
+                timestep=timestep_batch,
+                prompt_embeds=state.prompt_embeds.to(td),
+                guidance_scale=state.guidance_scale,
+                do_cfg=False,
+                output_dtype=td,
+                extra={
+                    "encoder_attention_mask": state.prompt_attention_mask,
+                    "pooled_projections": state.pooled_prompt_embeds.to(td),
+                    "guidance": guidance,
+                },
+            ),
+        )
+        return output.as_dict()
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> HunyuanVideoSamplingState:
+        """Rebuild HunyuanVideoSamplingState from a batch slice for the eval path."""
+        ts = replay_tensors["timesteps"]
+        timesteps = pack_eval_timestep(ts, step_idx)
+        return HunyuanVideoSamplingState(
+            latents=latents,
+            timesteps=timesteps,
+            scheduler=None,  # not needed for forward_step (no scheduler.step here)
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
+            pooled_prompt_embeds=replay_tensors["pooled_prompt_embeds"],
+            guidance_scale=batch_context["guidance_scale"],
+        )
+
+
+class HunyuanVideoPipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, HunyuanVideoModel):
+    """HunyuanVideo plus the diffusers pipeline that sampling needs.
+
+    The pipeline brings prompt encoding, latent preparation and video VAE decode;
+    this class also exports the trajectory tensors replay reads back.
+    """
+
+    # The causal video VAE decodes 5D latents; the shared decoder permutes the
+    # frame axis back to [B, C, T, H, W].
+    _decode_output_layout = "video_btchw"
 
     # -- encode_prompt -------------------------------------------------
 
@@ -179,49 +252,6 @@ class HunyuanVideoModel(
             guidance_scale=request.guidance_scale,
         )
 
-    # -- forward_step --------------------------------------------------
-
-    def forward_step(
-        self,
-        state: HunyuanVideoSamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """HunyuanVideo transformer forward (distilled guidance, single branch)."""
-        t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        td = self._transformer_dtype()
-
-        latent_input = state.latents.to(td)
-        timestep_batch = expand_batch_timestep(t, bsz).to(
-            device=latent_input.device,
-            dtype=td,
-        )
-        guidance = torch.full(
-            (bsz,),
-            float(state.guidance_scale) * 1000.0,
-            device=latent_input.device,
-            dtype=td,
-        )
-        output = DenoiseBackboneCaller(
-            self.transformer,
-            self,
-        )(
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                guidance_scale=state.guidance_scale,
-                do_cfg=False,
-                output_dtype=td,
-                extra={
-                    "encoder_attention_mask": state.prompt_attention_mask,
-                    "pooled_projections": state.pooled_prompt_embeds.to(td),
-                    "guidance": guidance,
-                },
-            ),
-        )
-        return output.as_dict()
-
     # -- collector boundary --------------------------------------------
 
     def export_batch_context(self, state: HunyuanVideoSamplingState) -> dict[str, Any]:
@@ -242,33 +272,9 @@ class HunyuanVideoModel(
             tensors["prompt_attention_mask"] = state.prompt_attention_mask
         return tensors
 
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> HunyuanVideoSamplingState:
-        """Rebuild HunyuanVideoSamplingState from a batch slice for the eval path."""
-        ts = replay_tensors["timesteps"]
-        timesteps = pack_eval_timestep(ts, step_idx)
-        return HunyuanVideoSamplingState(
-            latents=latents,
-            timesteps=timesteps,
-            scheduler=None,  # not needed for forward_step (no scheduler.step here)
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
-            pooled_prompt_embeds=replay_tensors["pooled_prompt_embeds"],
-            guidance_scale=batch_context["guidance_scale"],
-        )
-
-
-class HunyuanVideoReplayModel(DiffusersReplayModelBase, HunyuanVideoModel):
-    """Replay-only HunyuanVideo model owning no prompt encoders, VAE, or pipeline."""
-
 
 __all__ = [
     "HunyuanVideoModel",
-    "HunyuanVideoReplayModel",
+    "HunyuanVideoPipelineModel",
     "HunyuanVideoSamplingState",
 ]

@@ -24,7 +24,7 @@ from tests.models.steps.denoise.fixtures import (
 from vrl.generation.types import DenoiseRequest
 from vrl.models.families.cosmos.cosmos3.model import (
     Cosmos3Model,
-    Cosmos3ReplayModel,
+    Cosmos3PipelineModel,
     Cosmos3SamplingState,
 )
 
@@ -62,8 +62,8 @@ def test_replay_rejects_invalid_token_ids_before_segment_building(name, token_id
         model.restore_eval_state(replay, {}, torch.zeros(1), 0)
 
 
-def _model(**vae_stats: float) -> Cosmos3Model:
-    model = Cosmos3Model(
+def _model(**vae_stats: float) -> Cosmos3PipelineModel:
+    model = Cosmos3PipelineModel(
         pipeline=build_tiny_cosmos3_pipeline(**vae_stats), device=torch.device("cpu")
     )
     stamp_model_precision(model)
@@ -92,7 +92,7 @@ def test_minimal_replay_loads_without_vae_weights_and_matches_rollout(tmp_path) 
     )
     bundle = build_cosmos3_replay_runtime_bundle(build)
     replay = bundle.model
-    rollout = Cosmos3Model(pipeline=pipeline, device=torch.device("cpu"))
+    rollout = Cosmos3PipelineModel(pipeline=pipeline, device=torch.device("cpu"))
     stamp_model_precision(rollout)
     stamp_model_precision(replay)
     state = _sampling_state(rollout)
@@ -113,11 +113,11 @@ def test_minimal_replay_loads_without_vae_weights_and_matches_rollout(tmp_path) 
     torch.testing.assert_close(actual, expected)
     actual.square().mean().backward()
     assert any(parameter.grad is not None for parameter in replay.transformer.parameters())
-    assert replay.generation_memory_targets() == {}
+    assert not hasattr(replay, "generation_memory_targets")
 
 
 def _sampling_state(
-    model: Cosmos3Model, *, guidance_scale: float = _GUIDANCE
+    model: Cosmos3PipelineModel, *, guidance_scale: float = _GUIDANCE
 ) -> Cosmos3SamplingState:
     encoded = model.encode_prompt(
         "a cat video",
@@ -219,7 +219,7 @@ def test_replay_model_sets_its_own_scheduler_through_the_shared_set_num_steps() 
     from diffusers import UniPCMultistepScheduler
 
     pipe = build_tiny_cosmos3_pipeline()
-    replay = Cosmos3ReplayModel(
+    replay = Cosmos3Model(
         transformer=pipe.transformer,
         vae_scale_factor_temporal=pipe.vae_scale_factor_temporal,
         scheduler=UniPCMultistepScheduler(),

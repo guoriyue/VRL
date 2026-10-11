@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
-from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
+from vrl.models.families.wan_2_1.model import WanT2VPipelineModel
 
 
 class _IdentityVAE:
@@ -33,7 +33,7 @@ def test_encode_video_to_latents_inverts_wan_decode_normalization() -> None:
         config=SimpleNamespace(boundary_ratio=None),
         vae=_IdentityVAE(mean, std),
     )
-    model = WanT2VDiffusersModel(pipeline=pipeline, device=torch.device("cpu"))
+    model = WanT2VPipelineModel(pipeline=pipeline, device=torch.device("cpu"))
     video = torch.rand(2, 3, 2, 4, 4)
 
     latents = model.encode_video_to_latents(video)

@@ -9,10 +9,10 @@ import torch
 from diffusers import UniPCMultistepScheduler
 
 from vrl.generation.types import DenoiseRequest
-from vrl.models.families.wan_2_1.model import WanI2VDiffusersModel, WanT2VDiffusersModel
+from vrl.models.families.wan_2_1.model import WanI2VPipelineModel, WanT2VPipelineModel
 
 
-@pytest.mark.parametrize("model_cls", [WanT2VDiffusersModel, WanI2VDiffusersModel])
+@pytest.mark.parametrize("model_cls", [WanT2VPipelineModel, WanI2VPipelineModel])
 def test_batch_history_is_released_and_repeated_sampling_matches_shared_scheduler(model_cls):
     template = UniPCMultistepScheduler(
         prediction_type="flow_prediction", use_flow_sigmas=True, flow_shift=3.0
@@ -35,7 +35,7 @@ def test_batch_history_is_released_and_repeated_sampling_matches_shared_schedule
         scheduler=template,
         vae=SimpleNamespace(config=SimpleNamespace(z_dim=4)),
         video_processor=SimpleNamespace(preprocess=lambda image, **kwargs: image),
-        prepare_latents=prepare_i2v if model_cls is WanI2VDiffusersModel else prepare_t2v,
+        prepare_latents=prepare_i2v if model_cls is WanI2VPipelineModel else prepare_t2v,
     )
     model = model_cls(pipeline=pipe, device=torch.device("cpu"))
     encoded = {

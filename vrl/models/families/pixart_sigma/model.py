@@ -5,6 +5,11 @@ The generation helper flow mirrors every diffusion family:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
+``PixArtSigmaPipelineModel`` runs that flow. ``PixArtSigmaModel`` — the
+transformer, its scheduler and ``forward_step`` — is what replay runs; the
+pipeline class adds the text encoder, latent preparation and VAE decode on top
+of it.
+
 PixArt-Sigma specifics vs SANA (the reference single-encoder t2i family):
 - NOT flow-matching: an epsilon-prediction DDPM ladder. Rollout/replay
   log-probs run through ``sde_type="ddim"`` (``vrl/math/denoise/ddim.py``)
@@ -43,8 +48,8 @@ import torch
 from vrl.generation.types import DenoiseRequest
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
@@ -108,12 +113,8 @@ class PixArtSigmaSamplingState(GuidedDenoiseSamplingStateBase):
     do_cfg: bool
 
 
-class PixArtSigmaModel(
-    VaeDecodeMixin,
-    DiffusersPipelineModelBase,
-    DenoiseBackboneRunnerBase,
-):
-    """Diffusers-backed PixArt-Sigma t2i model (epsilon DDPM family).
+class PixArtSigmaModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+    """PixArt-Sigma t2i transformer, scheduler and per-step math (epsilon DDPM): the model replay runs.
 
     Implements the backbone-runner protocol itself. Both CFG branches pad to
     the same sequence length (T5 encode at ``max_sequence_length``), so they
@@ -147,6 +148,107 @@ class PixArtSigmaModel(
                 "added_cond_kwargs": _ADDED_COND_KWARGS,
             },
         )
+
+    # -- forward_step --------------------------------------------------
+
+    def forward_step(
+        self,
+        state: PixArtSigmaSamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        """Transformer forward + batched CFG (raw integer timestep, no scaling)."""
+        t = state.timesteps[step_idx]
+        bsz = state.latents.shape[0]
+        td = self._transformer_dtype()
+
+        latent_input = state.latents.to(td)
+        timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device)
+        negative_embeds = (
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
+        )
+        output = DenoiseBackboneCaller(
+            self.transformer,
+            self,
+        )(
+            DenoiseBackboneInput(
+                hidden_states=latent_input,
+                timestep=timestep_batch,
+                prompt_embeds=state.prompt_embeds.to(td),
+                negative_prompt_embeds=negative_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=td,
+                extra={
+                    "encoder_attention_mask": state.prompt_attention_mask,
+                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
+                },
+            ),
+        )
+        return output.as_dict()
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> PixArtSigmaSamplingState:
+        """Rebuild the sampling state from a batch slice for eval forward."""
+        negative_prompt_embeds = replay_tensors.get("negative_prompt_embeds")
+        return PixArtSigmaSamplingState(
+            latents=latents,
+            timesteps=pack_eval_timestep(replay_tensors["timesteps"], step_idx),
+            # forward_step never calls scheduler.step, so replay needs none.
+            scheduler=None,
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_prompt_attention_mask=replay_tensors.get("negative_prompt_attention_mask"),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
+        )
+
+    def postprocess_branch(
+        self,
+        request: DenoiseBackboneInput,
+        branch: DenoiseBranch,
+        raw_output: torch.Tensor,
+    ) -> torch.Tensor:
+        """Batch the learned-sigma output down to the epsilon prediction.
+
+        The transformer outputs ``2 * latent_channels`` (learned variance in
+        the second half). Chunking per branch before the CFG combine is
+        equivalent to the pipeline's batch-after-combine (both are linear).
+        """
+        del branch
+        latent_channels = request.hidden_states.shape[1]
+        if raw_output.shape[1] == 2 * latent_channels:
+            return raw_output.chunk(2, dim=1)[0]
+        return raw_output
+
+    def prepare_replay(self, build: ModelBuild) -> None:
+        """Standardize the replay scheduler onto the rollout's DDIM ladder.
+
+        The generic replay loader builds the scheduler from the shipped config
+        (DPM-Solver ODE — no per-step Gaussian), but the trajectory buffers and
+        the ddim log-prob math live on the DDIM ladder the rollout used; the
+        replay scheduler must carry the same timestep/alphas_cumprod table.
+        """
+        num_steps = build.num_steps
+        if num_steps is not None:
+            self._scheduler = pixart_ddim_scheduler(
+                self._scheduler.config,
+                num_steps,
+                build.device,
+            )
+
+
+class PixArtSigmaPipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, PixArtSigmaModel):
+    """PixArt-Sigma plus the diffusers pipeline that sampling needs.
+
+    The pipeline brings prompt encoding, latent preparation and VAE decode;
+    this class also exports the trajectory tensors replay reads back.
+    """
 
     # -- encode_prompt -------------------------------------------------
 
@@ -245,43 +347,6 @@ class PixArtSigmaModel(
             do_cfg=request.guidance_scale > 1.0 and negative_prompt_embeds is not None,
         )
 
-    # -- forward_step --------------------------------------------------
-
-    def forward_step(
-        self,
-        state: PixArtSigmaSamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """Transformer forward + batched CFG (raw integer timestep, no scaling)."""
-        t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        td = self._transformer_dtype()
-
-        latent_input = state.latents.to(td)
-        timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device)
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        output = DenoiseBackboneCaller(
-            self.transformer,
-            self,
-        )(
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "encoder_attention_mask": state.prompt_attention_mask,
-                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
-                },
-            ),
-        )
-        return output.as_dict()
-
     # -- trajectory boundary -------------------------------------------
     # Masks and negative embeds are exported only when present, so the no-CFG
     # path stays tensor-free and restore reads them back with ``.get``.
@@ -306,70 +371,10 @@ class PixArtSigmaModel(
                 tensors[name] = value
         return tensors
 
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> PixArtSigmaSamplingState:
-        """Rebuild the sampling state from a batch slice for eval forward."""
-        negative_prompt_embeds = replay_tensors.get("negative_prompt_embeds")
-        return PixArtSigmaSamplingState(
-            latents=latents,
-            timesteps=pack_eval_timestep(replay_tensors["timesteps"], step_idx),
-            # forward_step never calls scheduler.step, so replay needs none.
-            scheduler=None,
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
-            negative_prompt_embeds=negative_prompt_embeds,
-            negative_prompt_attention_mask=replay_tensors.get("negative_prompt_attention_mask"),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
-        )
-
-    def postprocess_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: DenoiseBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        """Batch the learned-sigma output down to the epsilon prediction.
-
-        The transformer outputs ``2 * latent_channels`` (learned variance in
-        the second half). Chunking per branch before the CFG combine is
-        equivalent to the pipeline's batch-after-combine (both are linear).
-        """
-        del branch
-        latent_channels = request.hidden_states.shape[1]
-        if raw_output.shape[1] == 2 * latent_channels:
-            return raw_output.chunk(2, dim=1)[0]
-        return raw_output
-
-
-class PixArtSigmaReplayModel(DiffusersReplayModelBase, PixArtSigmaModel):
-    """Replay-only PixArt-Sigma model that owns no prompt encoder, VAE, or pipeline."""
-
-    def prepare_replay(self, build: ModelBuild) -> None:
-        """Standardize the replay scheduler onto the rollout's DDIM ladder.
-
-        The generic replay loader builds the scheduler from the shipped config
-        (DPM-Solver ODE — no per-step Gaussian), but the trajectory buffers and
-        the ddim log-prob math live on the DDIM ladder the rollout used; the
-        replay scheduler must carry the same timestep/alphas_cumprod table.
-        """
-        num_steps = build.num_steps
-        if num_steps is not None:
-            self._scheduler = pixart_ddim_scheduler(
-                self._scheduler.config,
-                num_steps,
-                build.device,
-            )
-
 
 __all__ = [
     "PixArtSigmaModel",
-    "PixArtSigmaReplayModel",
+    "PixArtSigmaPipelineModel",
     "PixArtSigmaSamplingState",
     "pixart_ddim_scheduler",
 ]

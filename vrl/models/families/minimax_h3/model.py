@@ -53,10 +53,9 @@ from vrl.generation.types import DenoiseRequest
 from vrl.models.families.cosmos import CosmosReplayForward
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise import (
-    DenoiseModelBase,
     DenoiseSamplingStateBase,
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    ReplayRolloutStubs,
 )
 from vrl.models.steps.denoise.common import ChunkedLatentDecoder
 from vrl.utils.logging import init_logger, kv
@@ -236,14 +235,6 @@ class MiniMaxH3Components:
             "text_encoder": self.text_encoder,
         }
 
-    @property
-    def patch_size(self) -> tuple[int, int, int]:
-        return tuple(int(p) for p in self.transformer.config.patch_size)
-
-    @property
-    def canvas_multiple(self) -> int:
-        return int(self.vae.spatial_compression_ratio) * self.patch_size[2]
-
 
 @dataclass
 class MiniMaxH3Layout:
@@ -298,8 +289,286 @@ class MiniMaxH3SamplingState(DenoiseSamplingStateBase):
     audio_rows_by_step: list[torch.Tensor] = field(default_factory=list)
 
 
-class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
-    """MiniMax-H3 text-to-video(+audio) generator wrapped for the vrl diffusion RL seam."""
+class MiniMaxH3Model(CosmosReplayForward, DiffusersModelBase):
+    """MiniMax-H3 joint video+audio transformer, its two schedulers and per-step math: the model replay runs.
+
+    Replay owns no VAE and no conditioner: the batch context carries the VAE
+    geometry the packed layout was built for, and the trajectory carries
+    the prompt embeds and every step's audio input.
+    """
+
+    def __init__(
+        self, *, transformer: Any, scheduler: Any, audio_scheduler: Any, device: Any = None
+    ) -> None:
+        super().__init__(transformer=transformer, scheduler=scheduler, device=device)
+        self._audio_scheduler = audio_scheduler
+
+    @property
+    def audio_scheduler(self) -> Any:
+        return self._audio_scheduler
+
+    @property
+    def patch_size(self) -> tuple[int, int, int]:
+        return tuple(int(p) for p in self.transformer.config.patch_size)
+
+    # ---- schedule ----
+    def set_num_steps(self, n: int) -> None:
+        """``n`` model evaluations: the H3 grid holds ``n + 1`` sigmas (terminal 0 included)."""
+
+        self.scheduler.set_timesteps(int(n) + 1, device=self.device)
+        self.audio_scheduler.set_timesteps(int(n) + 1, device=self.device)
+
+    def _latent_geometry(
+        self,
+        height: int,
+        width: int,
+        num_frames: int,
+        *,
+        vae_geometry: tuple[int, int, int],
+    ) -> tuple[int, int, int, int]:
+        """Validate a canvas against the VAE geometry and return the latent/audio row counts.
+
+        Refuses what the VAE cannot decode instead of rounding: a frame count
+        off the ``17n + 5`` grid would silently change the duration the reward
+        and the prompt manifest describe. ``vae_geometry`` is read off the VAE
+        in rollout and off the batch context in replay (which owns no VAE).
+        """
+
+        _, _, align_num_frames, audio_latent_num_frames, video_latent_num_frames = (
+            _import_h3_layout()
+        )
+        frames_per_chunk, latents_per_chunk, ratio = (int(v) for v in vae_geometry)
+        multiple = ratio * self.patch_size[2]
+        if height % multiple or width % multiple:
+            raise ValueError(
+                f"MiniMax-H3 canvases must be multiples of {multiple}, got {height}x{width}"
+            )
+        aligned = align_num_frames(int(num_frames), frames_per_chunk, latents_per_chunk)
+        if aligned != int(num_frames):
+            raise ValueError(
+                f"MiniMax-H3 frame counts must be {frames_per_chunk} * n + {latents_per_chunk}; "
+                f"{num_frames} is not, the next valid count is {aligned}"
+            )
+        return (
+            int(video_latent_num_frames(aligned, frames_per_chunk, latents_per_chunk)),
+            height // ratio,
+            width // ratio,
+            int(audio_latent_num_frames(aligned, MINIMAX_H3_FPS)),
+        )
+
+    def _build_layout(
+        self,
+        *,
+        num_text_tokens: int,
+        num_latent_frames: int,
+        latent_height: int,
+        latent_width: int,
+        num_audio_latents: int,
+    ) -> MiniMaxH3Layout:
+        """The t2va ``[text | audio | video]`` layout plus the per-step row-timestep plan.
+
+        Both come from the diffusers block statics so the rows, rotary grid and
+        per-row timestep table are the reference's, not a re-derivation. The
+        plan is built for the schedules the two schedulers currently hold.
+        """
+
+        layout_step, timesteps_step, *_ = _import_h3_layout()
+        device = self.device
+        text_token_tags = torch.full((num_text_tokens,), _TEXT_TAG, dtype=torch.long)
+        (
+            position_ids,
+            token_tags,
+            video_indices,
+            audio_indices,
+            text_indices,
+            cond_video,
+            cond_audio,
+        ) = layout_step.build_packed_sequence(
+            text_token_tags,
+            num_latent_frames,
+            latent_height,
+            latent_width,
+            num_audio_latents,
+            self.patch_size,
+            _AUDIO_CHANNELS,
+            _AUDIO_TAG,
+            _VIDEO_TAG,
+            (),
+        )
+        video_timesteps = self.scheduler.timesteps
+        audio_timesteps = self.audio_scheduler.timesteps
+        if video_timesteps.numel() != audio_timesteps.numel():
+            raise RuntimeError(
+                "MiniMax-H3 video and audio schedules must hold the same step count"
+            )
+        plan = [
+            tuple(
+                tensor.to(device)
+                for tensor in timesteps_step.build_row_timesteps(
+                    video_indices,
+                    audio_indices,
+                    cond_video,
+                    cond_audio,
+                    num_text_tokens,
+                    float(video_t),
+                    float(audio_t),
+                    max(float(video_t), _KEYFRAME_NOISE_AUG),
+                    1.0,
+                )
+            )
+            for video_t, audio_t in zip(
+                video_timesteps.tolist(), audio_timesteps.tolist(), strict=True
+            )
+        ]
+        return MiniMaxH3Layout(
+            position_ids=position_ids.to(device),
+            token_tags=token_tags.to(device),
+            video_indices=video_indices.to(device),
+            audio_indices=audio_indices.to(device),
+            text_indices=text_indices.to(device),
+            num_latent_frames=num_latent_frames,
+            latent_height=latent_height,
+            latent_width=latent_width,
+            num_audio_latents=num_audio_latents,
+            num_text_tokens=num_text_tokens,
+            row_timestep_plan=plan,
+        )
+
+    # ---- the per-step transformer call ----
+    def forward_step(self, state: MiniMaxH3SamplingState, step_idx: int) -> dict[str, Any]:
+        """One joint forward: video velocity out as ``noise_pred`` (flow convention),
+        audio rows advanced to the next step as a side effect.
+
+        Re-entrant per step: a second call at the same ``step_idx`` (the frozen
+        reference forward under ``disable_adapter``) sees the same audio input.
+        A call that skips a step means the loop did not run the forward in
+        between, so the audio trajectory is stale; that is refused rather than
+        silently continued.
+        """
+
+        self._advance_audio(state, step_idx)
+        layout = state.layout
+        patch = self.patch_size
+        batch = state.latents.shape[0]
+        if state.prompt_embeds.shape[0] not in (1, batch):
+            raise ValueError(
+                f"prompt_embeds batch {state.prompt_embeds.shape[0]} does not match latents batch {batch}"
+            )
+        video_rows = patchify_video_latents(state.latents.to(torch.float32), patch)
+        unique_timesteps, timestep_indices = layout.row_timestep_plan[step_idx]
+        prompt_embeds = state.prompt_embeds
+        if prompt_embeds.shape[0] == 1 and batch > 1:
+            prompt_embeds = prompt_embeds.expand(batch, -1, -1)
+        audio_rows = state.audio_rows
+        if audio_rows.shape[0] == 1 and batch > 1:
+            audio_rows = audio_rows.expand(batch, -1, -1)
+        video_out, audio_out = self.transformer(
+            hidden_states=video_rows,
+            audio_hidden_states=audio_rows.to(torch.float32),
+            encoder_hidden_states=prompt_embeds,
+            timestep=unique_timesteps,
+            timestep_indices=timestep_indices,
+            return_dict=False,
+            **layout.transformer_kwargs(),
+        )
+        h3_velocity = unpatchify_video_rows(
+            video_out.to(torch.float32),
+            channels=state.latents.shape[1],
+            frames=layout.num_latent_frames,
+            height=layout.latent_height,
+            width=layout.latent_width,
+            patch_size=patch,
+        )
+        audio_velocity = audio_out.to(torch.float32)
+        state.audio_rows_next = audio_euler_step(
+            state.audio_rows,
+            audio_velocity[:1] if state.audio_rows.shape[0] == 1 else audio_velocity,
+            timestep=state.audio_scheduler.timesteps[step_idx],
+            sigma=state.audio_scheduler.sigmas[step_idx],
+            sigma_next=state.audio_scheduler.sigmas[step_idx + 1],
+        )
+        # Data-ward H3 velocity -> the ``noise - x0`` velocity the shared SDE expects.
+        return {
+            "noise_pred": -h3_velocity,
+            "audio_velocity": audio_velocity,
+        }
+
+    @staticmethod
+    def _advance_audio(state: MiniMaxH3SamplingState, step_idx: int) -> None:
+        if step_idx == state.audio_step:
+            pass
+        elif step_idx == state.audio_step + 1 and state.audio_rows_next is not None:
+            state.audio_rows = state.audio_rows_next
+            state.audio_rows_next = None
+            state.audio_step = step_idx
+        else:
+            raise RuntimeError(
+                "MiniMax-H3 audio side stream is out of step with the denoise loop "
+                f"(audio at step {state.audio_step}, forward requested at {step_idx}); "
+                "every step must run forward_step exactly in order (TeaCache is unsupported)"
+            )
+        if len(state.audio_rows_by_step) == step_idx:
+            state.audio_rows_by_step.append(state.audio_rows.detach())
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> MiniMaxH3SamplingState:
+        """Rebuild the packed layout from the recorded geometry and put the audio
+        side stream at ``step_idx``; the forward then indexes the full schedule
+        (``CosmosReplayForward``)."""
+
+        num_steps = int(batch_context["num_steps"])
+        self.set_num_steps(num_steps)
+        lengths = replay_tensors["num_text_tokens"].reshape(-1).tolist()
+        if any(int(n) != int(lengths[0]) for n in lengths):
+            raise ValueError(
+                "MiniMax-H3 replay micro-batches must share one prompt length "
+                f"(one packed layout per forward); got {lengths}"
+            )
+        num_text_tokens = int(lengths[0])
+        prompt_embeds = replay_tensors["prompt_embeds"][:, :num_text_tokens]
+        audio_rows = replay_tensors["audio_rows_by_step"][:, step_idx]
+        geometry = self._latent_geometry(
+            int(batch_context["height"]),
+            int(batch_context["width"]),
+            int(batch_context["num_frames"]),
+            vae_geometry=tuple(batch_context["vae_geometry"]),
+        )
+        num_latent_frames, latent_height, latent_width, num_audio_latents = geometry
+        layout = self._build_layout(
+            num_text_tokens=num_text_tokens,
+            num_latent_frames=num_latent_frames,
+            latent_height=latent_height,
+            latent_width=latent_width,
+            num_audio_latents=num_audio_latents,
+        )
+        return MiniMaxH3SamplingState(
+            latents=latents,
+            timesteps=self.scheduler.timesteps,
+            scheduler=self.scheduler,
+            audio_scheduler=self.audio_scheduler,
+            prompt_embeds=prompt_embeds,
+            layout=layout,
+            audio_rows=audio_rows,
+            audio_step=int(step_idx),
+            height=int(batch_context["height"]),
+            width=int(batch_context["width"]),
+            num_frames=int(batch_context["num_frames"]),
+            fps=int(batch_context.get("fps", MINIMAX_H3_FPS)),
+        )
+
+
+class MiniMaxH3PipelineModel(DiffusersPipelineModelBase, MiniMaxH3Model):
+    """MiniMax-H3 text-to-video(+audio) plus the modular pipeline that sampling needs.
+
+    The pipeline (a ``MiniMaxH3Components`` shell) brings the Qwen3-VL
+    conditioner, the video and audio VAEs and the noise draw; this class
+    also exports the trajectory tensors replay reads back.
+    """
 
     # ``from_build`` is family-owned (modular pipeline, not ``DiffusionPipeline``);
     # the declaration below is what it applies to the frozen conditioner.
@@ -309,7 +578,7 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
     _prompt_encoder_on_cpu: bool = False
 
     @classmethod
-    def from_build(cls, build: ModelBuild) -> MiniMaxH3Model:
+    def from_build(cls, build: ModelBuild) -> MiniMaxH3PipelineModel:
         from diffusers import ModularPipeline
 
         prompt_encoder_dtype, load_kwargs = cls._pipeline_load_dtypes(build)
@@ -348,13 +617,6 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
             kv(path=build.model_name_or_path, device=build.device, dtype=build.parameter_dtype),
         )
         return cls(pipeline=components, device=build.device)
-
-    # ---- schedule ----
-    def set_num_steps(self, n: int) -> None:
-        """``n`` model evaluations: the H3 grid holds ``n + 1`` sigmas (terminal 0 included)."""
-
-        self.scheduler.set_timesteps(int(n) + 1, device=self.device)
-        self.audio_scheduler.set_timesteps(int(n) + 1, device=self.device)
 
     @property
     def audio_scheduler(self) -> Any:
@@ -494,200 +756,6 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
             int(vae.spatial_compression_ratio),
         )
 
-    def _latent_geometry(
-        self,
-        height: int,
-        width: int,
-        num_frames: int,
-        *,
-        vae_geometry: tuple[int, int, int],
-    ) -> tuple[int, int, int, int]:
-        """Validate a canvas against the VAE geometry and return the latent/audio row counts.
-
-        Refuses what the VAE cannot decode instead of rounding: a frame count
-        off the ``17n + 5`` grid would silently change the duration the reward
-        and the prompt manifest describe. ``vae_geometry`` is read off the VAE
-        in rollout and off the batch context in replay (which owns no VAE).
-        """
-
-        _, _, align_num_frames, audio_latent_num_frames, video_latent_num_frames = (
-            _import_h3_layout()
-        )
-        frames_per_chunk, latents_per_chunk, ratio = (int(v) for v in vae_geometry)
-        multiple = ratio * self.pipeline.patch_size[2]
-        if height % multiple or width % multiple:
-            raise ValueError(
-                f"MiniMax-H3 canvases must be multiples of {multiple}, got {height}x{width}"
-            )
-        aligned = align_num_frames(int(num_frames), frames_per_chunk, latents_per_chunk)
-        if aligned != int(num_frames):
-            raise ValueError(
-                f"MiniMax-H3 frame counts must be {frames_per_chunk} * n + {latents_per_chunk}; "
-                f"{num_frames} is not, the next valid count is {aligned}"
-            )
-        return (
-            int(video_latent_num_frames(aligned, frames_per_chunk, latents_per_chunk)),
-            height // ratio,
-            width // ratio,
-            int(audio_latent_num_frames(aligned, MINIMAX_H3_FPS)),
-        )
-
-    def _build_layout(
-        self,
-        *,
-        num_text_tokens: int,
-        num_latent_frames: int,
-        latent_height: int,
-        latent_width: int,
-        num_audio_latents: int,
-    ) -> MiniMaxH3Layout:
-        """The t2va ``[text | audio | video]`` layout plus the per-step row-timestep plan.
-
-        Both come from the diffusers block statics so the rows, rotary grid and
-        per-row timestep table are the reference's, not a re-derivation. The
-        plan is built for the schedules the two schedulers currently hold.
-        """
-
-        layout_step, timesteps_step, *_ = _import_h3_layout()
-        components = self.pipeline
-        device = self.device
-        text_token_tags = torch.full((num_text_tokens,), _TEXT_TAG, dtype=torch.long)
-        (
-            position_ids,
-            token_tags,
-            video_indices,
-            audio_indices,
-            text_indices,
-            cond_video,
-            cond_audio,
-        ) = layout_step.build_packed_sequence(
-            text_token_tags,
-            num_latent_frames,
-            latent_height,
-            latent_width,
-            num_audio_latents,
-            components.patch_size,
-            _AUDIO_CHANNELS,
-            _AUDIO_TAG,
-            _VIDEO_TAG,
-            (),
-        )
-        video_timesteps = self.scheduler.timesteps
-        audio_timesteps = self.audio_scheduler.timesteps
-        if video_timesteps.numel() != audio_timesteps.numel():
-            raise RuntimeError(
-                "MiniMax-H3 video and audio schedules must hold the same step count"
-            )
-        plan = [
-            tuple(
-                tensor.to(device)
-                for tensor in timesteps_step.build_row_timesteps(
-                    video_indices,
-                    audio_indices,
-                    cond_video,
-                    cond_audio,
-                    num_text_tokens,
-                    float(video_t),
-                    float(audio_t),
-                    max(float(video_t), _KEYFRAME_NOISE_AUG),
-                    1.0,
-                )
-            )
-            for video_t, audio_t in zip(
-                video_timesteps.tolist(), audio_timesteps.tolist(), strict=True
-            )
-        ]
-        return MiniMaxH3Layout(
-            position_ids=position_ids.to(device),
-            token_tags=token_tags.to(device),
-            video_indices=video_indices.to(device),
-            audio_indices=audio_indices.to(device),
-            text_indices=text_indices.to(device),
-            num_latent_frames=num_latent_frames,
-            latent_height=latent_height,
-            latent_width=latent_width,
-            num_audio_latents=num_audio_latents,
-            num_text_tokens=num_text_tokens,
-            row_timestep_plan=plan,
-        )
-
-    # ---- the per-step transformer call ----
-    def forward_step(self, state: MiniMaxH3SamplingState, step_idx: int) -> dict[str, Any]:
-        """One joint forward: video velocity out as ``noise_pred`` (flow convention),
-        audio rows advanced to the next step as a side effect.
-
-        Re-entrant per step: a second call at the same ``step_idx`` (the frozen
-        reference forward under ``disable_adapter``) sees the same audio input.
-        A call that skips a step means the loop did not run the forward in
-        between, so the audio trajectory is stale; that is refused rather than
-        silently continued.
-        """
-
-        self._advance_audio(state, step_idx)
-        layout = state.layout
-        components = self.pipeline
-        patch = components.patch_size
-        batch = state.latents.shape[0]
-        if state.prompt_embeds.shape[0] not in (1, batch):
-            raise ValueError(
-                f"prompt_embeds batch {state.prompt_embeds.shape[0]} does not match latents batch {batch}"
-            )
-        video_rows = patchify_video_latents(state.latents.to(torch.float32), patch)
-        unique_timesteps, timestep_indices = layout.row_timestep_plan[step_idx]
-        prompt_embeds = state.prompt_embeds
-        if prompt_embeds.shape[0] == 1 and batch > 1:
-            prompt_embeds = prompt_embeds.expand(batch, -1, -1)
-        audio_rows = state.audio_rows
-        if audio_rows.shape[0] == 1 and batch > 1:
-            audio_rows = audio_rows.expand(batch, -1, -1)
-        video_out, audio_out = self.transformer(
-            hidden_states=video_rows,
-            audio_hidden_states=audio_rows.to(torch.float32),
-            encoder_hidden_states=prompt_embeds,
-            timestep=unique_timesteps,
-            timestep_indices=timestep_indices,
-            return_dict=False,
-            **layout.transformer_kwargs(),
-        )
-        h3_velocity = unpatchify_video_rows(
-            video_out.to(torch.float32),
-            channels=state.latents.shape[1],
-            frames=layout.num_latent_frames,
-            height=layout.latent_height,
-            width=layout.latent_width,
-            patch_size=patch,
-        )
-        audio_velocity = audio_out.to(torch.float32)
-        state.audio_rows_next = audio_euler_step(
-            state.audio_rows,
-            audio_velocity[:1] if state.audio_rows.shape[0] == 1 else audio_velocity,
-            timestep=state.audio_scheduler.timesteps[step_idx],
-            sigma=state.audio_scheduler.sigmas[step_idx],
-            sigma_next=state.audio_scheduler.sigmas[step_idx + 1],
-        )
-        # Data-ward H3 velocity -> the ``noise - x0`` velocity the shared SDE expects.
-        return {
-            "noise_pred": -h3_velocity,
-            "audio_velocity": audio_velocity,
-        }
-
-    @staticmethod
-    def _advance_audio(state: MiniMaxH3SamplingState, step_idx: int) -> None:
-        if step_idx == state.audio_step:
-            pass
-        elif step_idx == state.audio_step + 1 and state.audio_rows_next is not None:
-            state.audio_rows = state.audio_rows_next
-            state.audio_rows_next = None
-            state.audio_step = step_idx
-        else:
-            raise RuntimeError(
-                "MiniMax-H3 audio side stream is out of step with the denoise loop "
-                f"(audio at step {state.audio_step}, forward requested at {step_idx}); "
-                "every step must run forward_step exactly in order (TeaCache is unsupported)"
-            )
-        if len(state.audio_rows_by_step) == step_idx:
-            state.audio_rows_by_step.append(state.audio_rows.detach())
-
     def final_audio_rows(self, state: MiniMaxH3SamplingState) -> torch.Tensor:
         """The fully denoised audio rows after the last loop step (``sigma = 0``)."""
 
@@ -805,95 +873,13 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersPipelineModelBase):
             "audio_rows_by_step": expand_tensor_to_batch(audio_by_step, batch, materialize=True),
         }
 
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> MiniMaxH3SamplingState:
-        """Rebuild the packed layout from the recorded geometry and put the audio
-        side stream at ``step_idx``; the forward then indexes the full schedule
-        (``CosmosReplayForward``)."""
-
-        num_steps = int(batch_context["num_steps"])
-        self.set_num_steps(num_steps)
-        lengths = replay_tensors["num_text_tokens"].reshape(-1).tolist()
-        if any(int(n) != int(lengths[0]) for n in lengths):
-            raise ValueError(
-                "MiniMax-H3 replay micro-batches must share one prompt length "
-                f"(one packed layout per forward); got {lengths}"
-            )
-        num_text_tokens = int(lengths[0])
-        prompt_embeds = replay_tensors["prompt_embeds"][:, :num_text_tokens]
-        audio_rows = replay_tensors["audio_rows_by_step"][:, step_idx]
-        geometry = self._latent_geometry(
-            int(batch_context["height"]),
-            int(batch_context["width"]),
-            int(batch_context["num_frames"]),
-            vae_geometry=tuple(batch_context["vae_geometry"]),
-        )
-        num_latent_frames, latent_height, latent_width, num_audio_latents = geometry
-        layout = self._build_layout(
-            num_text_tokens=num_text_tokens,
-            num_latent_frames=num_latent_frames,
-            latent_height=latent_height,
-            latent_width=latent_width,
-            num_audio_latents=num_audio_latents,
-        )
-        return MiniMaxH3SamplingState(
-            latents=latents,
-            timesteps=self.scheduler.timesteps,
-            scheduler=self.scheduler,
-            audio_scheduler=self.audio_scheduler,
-            prompt_embeds=prompt_embeds,
-            layout=layout,
-            audio_rows=audio_rows,
-            audio_step=int(step_idx),
-            height=int(batch_context["height"]),
-            width=int(batch_context["width"]),
-            num_frames=int(batch_context["num_frames"]),
-            fps=int(batch_context.get("fps", MINIMAX_H3_FPS)),
-        )
-
-
-class MiniMaxH3ReplayModel(ReplayRolloutStubs, MiniMaxH3Model):
-    """Trainer-side replay model: the transformer and the two schedulers, no pipeline.
-
-    Holds the same ``MiniMaxH3Components`` shell as the rollout model with the
-    generation-only slots left empty, so the layout/plan builders and the
-    ``scheduler`` / ``audio_scheduler`` accessors are shared verbatim while
-    ``decode_latents`` / ``encode_prompt`` stay stubbed.
-    """
-
-    def __init__(
-        self, *, transformer: Any, scheduler: Any, audio_scheduler: Any, device: Any = None
-    ) -> None:
-        DenoiseModelBase.__init__(self)
-        object.__setattr__(
-            self,
-            "_pipeline",
-            MiniMaxH3Components(
-                transformer=transformer,
-                vae=None,
-                audio_vae=None,
-                text_encoder=None,
-                tokenizer=None,
-                processor=None,
-                scheduler=scheduler,
-                audio_scheduler=audio_scheduler,
-            ),
-        )
-        self.transformer = transformer
-        self._device = device
-
 
 __all__ = [
     "MINIMAX_H3_FPS",
     "MiniMaxH3Components",
     "MiniMaxH3Layout",
     "MiniMaxH3Model",
-    "MiniMaxH3ReplayModel",
+    "MiniMaxH3PipelineModel",
     "MiniMaxH3SamplingState",
     "audio_euler_step",
     "build_flow_scheduler_class",

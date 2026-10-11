@@ -20,14 +20,14 @@ from tests.models.steps.denoise.fixtures import (
     record_forward_calls,
     stamp_model_precision,
 )
-from vrl.models.families.flux.model import FluxModel, FluxReplayModel, FluxSamplingState
+from vrl.models.families.flux.model import FluxModel, FluxPipelineModel, FluxSamplingState
 
 _TEXT_LEN = 3
 _SEQ = 16  # packed latent token count (h//2 * w//2)
 
 
-def _model(transformer: torch.nn.Module) -> FluxModel:
-    model = FluxModel(
+def _model(transformer: torch.nn.Module) -> FluxPipelineModel:
+    model = FluxPipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
@@ -35,7 +35,7 @@ def _model(transformer: torch.nn.Module) -> FluxModel:
     return model
 
 
-def _state(model: FluxModel, *, guidance_embeds: bool) -> FluxSamplingState:
+def _state(model: FluxPipelineModel, *, guidance_embeds: bool) -> FluxSamplingState:
     return FluxSamplingState(
         latents=torch.randn(2, _SEQ, TINY_FLUX_IN_CHANNELS),
         timesteps=torch.tensor([500.0]),
@@ -143,7 +143,7 @@ def test_flux_forward_step_casts_replay_tensors_to_transformer_dtype() -> None:
 def test_flux_replay_model_restores_state_without_a_pipeline() -> None:
     """The pipeline-less replay model rebuilds position grids and runs forward_step."""
     transformer = build_tiny_transformer("flux", guidance_embeds=True)
-    model = FluxReplayModel(transformer=transformer, scheduler=None, device=torch.device("cpu"))
+    model = FluxModel(transformer=transformer, scheduler=None, device=torch.device("cpu"))
     stamp_model_precision(model)
 
     replay_tensors = {
@@ -205,7 +205,7 @@ def test_flux_prepare_replay_sets_the_rollout_timestep_grid() -> None:
     # 512 px -> 64x64 latent cells, 2x2 patch pack -> 1024 tokens.
     expected = rollout._set_dynamic_timesteps(10, 1024, torch.device("cpu")).clone()
 
-    replay = FluxReplayModel(
+    replay = FluxModel(
         transformer=build_tiny_transformer("flux"),
         scheduler=_fixture_scheduler("flux"),
         device=torch.device("cpu"),
@@ -220,7 +220,7 @@ def test_dynamic_shift_replay_without_a_token_count_fails_loud() -> None:
 
     from vrl.models.steps.denoise import DiffusersPipelineModelBase
 
-    class Forgetful(FluxReplayModel):
+    class Forgetful(FluxModel):
         packed_token_count = DiffusersPipelineModelBase.packed_token_count
 
     replay = Forgetful(

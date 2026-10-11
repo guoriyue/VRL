@@ -68,16 +68,7 @@ class _LoraPolicy(DenoiseModelBase):
         self.transformer = _TrackingTransformer(events)
         self.device = "cpu"
 
-    def encode_prompt(self, prompt, negative_prompt=None, **kwargs):  # pragma: no cover
-        raise NotImplementedError
-
-    def prepare_sampling(self, request, encoded, **kwargs):  # pragma: no cover
-        raise NotImplementedError
-
     def forward_step(self, state, step_idx):  # pragma: no cover
-        raise NotImplementedError
-
-    def decode_latents(self, latents):  # pragma: no cover
         raise NotImplementedError
 
 
@@ -114,7 +105,7 @@ def _build_sd35_rollout(
     from vrl.models.families.registry import get_model_family_entry
     from vrl.models.families.sd3_5 import model as sd35_model
 
-    monkeypatch.setattr(sd35_model, "SD3_5Model", model_cls)
+    monkeypatch.setattr(sd35_model, "SD3_5PipelineModel", model_cls)
     return get_model_family_entry("sd3_5").build_rollout(build, expected_identity=None)
 
 

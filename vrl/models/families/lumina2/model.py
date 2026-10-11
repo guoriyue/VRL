@@ -5,6 +5,10 @@ The generation helper flow mirrors every diffusion family:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
+``Lumina2PipelineModel`` runs that flow. ``Lumina2Model`` — the transformer,
+its scheduler and ``forward_step`` — is what replay runs; the pipeline class
+adds the text encoder, latent preparation and VAE decode on top of it.
+
 Lumina2 specifics vs SD3 (the reference family):
 - Single Gemma-2 text encoder returning sequence embeds + attention mask (no
   pooled). The encoder prepends a system prompt ("... <Prompt Start> ...");
@@ -37,8 +41,8 @@ import torch
 
 from vrl.generation.types import DenoiseRequest
 from vrl.models.steps.denoise import (
+    DiffusersModelBase,
     DiffusersPipelineModelBase,
-    DiffusersReplayModelBase,
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
@@ -71,12 +75,8 @@ class Lumina2SamplingState(GuidedDenoiseSamplingStateBase):
     num_train_timesteps: int
 
 
-class Lumina2Model(
-    VaeDecodeMixin,
-    DiffusersPipelineModelBase,
-    DenoiseBackboneRunnerBase,
-):
-    """Diffusers-backed Lumina-Image-2.0 t2i model."""
+class Lumina2Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
+    """Lumina-Image-2.0 t2i transformer, scheduler and per-step math: the model replay runs."""
 
     cfg_mode = "separate_cfg"
     cfg_base = "uncond"
@@ -102,6 +102,93 @@ class Lumina2Model(
             encoder_hidden_states=embeds,
             extra_kwargs={"encoder_attention_mask": mask},
         )
+
+    # -- forward_step --------------------------------------------------
+
+    def forward_step(
+        self,
+        state: Lumina2SamplingState,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        """Transformer forward + separate-branch CFG."""
+        t = state.timesteps[step_idx]
+        bsz = state.latents.shape[0]
+        td = self._transformer_dtype()
+
+        latent_input = state.latents.to(td)
+        # Lumina uses t=0 as noise and t=1 as the image; the transformer sees
+        # the reversed normalized time while the scheduler steps on raw t.
+        timestep_batch = 1.0 - expand_batch_timestep(t, bsz).to(
+            device=latent_input.device, dtype=td
+        ) / float(state.num_train_timesteps)
+        negative_embeds = (
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
+        )
+        output = DenoiseBackboneCaller(
+            self.transformer,
+            self,
+        )(
+            DenoiseBackboneInput(
+                hidden_states=latent_input,
+                timestep=timestep_batch,
+                prompt_embeds=state.prompt_embeds.to(td),
+                negative_prompt_embeds=negative_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=td,
+                extra={
+                    "encoder_attention_mask": state.prompt_attention_mask,
+                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
+                },
+            ),
+        )
+        return output.as_dict()
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> Lumina2SamplingState:
+        """Rebuild the sampling state from a batch slice for eval forward."""
+        negative_prompt_embeds = replay_tensors.get("negative_prompt_embeds")
+        return Lumina2SamplingState(
+            latents=latents,
+            timesteps=pack_eval_timestep(replay_tensors["timesteps"], step_idx),
+            # forward_step never calls scheduler.step, so replay needs none.
+            scheduler=None,
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_prompt_attention_mask=replay_tensors.get("negative_prompt_attention_mask"),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
+            num_train_timesteps=int(self.scheduler.config.num_train_timesteps),
+        )
+
+    def postprocess_branch(
+        self,
+        request: DenoiseBackboneInput,
+        branch: DenoiseBranch,
+        raw_output: torch.Tensor,
+    ) -> torch.Tensor:
+        """Negate the raw prediction: Lumina predicts the reversed-time velocity.
+
+        diffusers negates AFTER the CFG combine; negating per branch is
+        equivalent (linear combine, magnitude-based rescale) and keeps every
+        exported branch tensor in the sign the flow-match SDE step expects.
+        """
+        del request, branch
+        return -raw_output
+
+
+class Lumina2PipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, Lumina2Model):
+    """Lumina-Image-2.0 plus the diffusers pipeline that sampling needs.
+
+    The pipeline brings prompt encoding, latent preparation and VAE decode;
+    this class also exports the trajectory tensors replay reads back.
+    """
 
     # -- encode_prompt -------------------------------------------------
 
@@ -199,47 +286,6 @@ class Lumina2Model(
             num_train_timesteps=int(scheduler.config.num_train_timesteps),
         )
 
-    # -- forward_step --------------------------------------------------
-
-    def forward_step(
-        self,
-        state: Lumina2SamplingState,
-        step_idx: int,
-    ) -> dict[str, Any]:
-        """Transformer forward + separate-branch CFG."""
-        t = state.timesteps[step_idx]
-        bsz = state.latents.shape[0]
-        td = self._transformer_dtype()
-
-        latent_input = state.latents.to(td)
-        # Lumina uses t=0 as noise and t=1 as the image; the transformer sees
-        # the reversed normalized time while the scheduler steps on raw t.
-        timestep_batch = 1.0 - expand_batch_timestep(t, bsz).to(
-            device=latent_input.device, dtype=td
-        ) / float(state.num_train_timesteps)
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        output = DenoiseBackboneCaller(
-            self.transformer,
-            self,
-        )(
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "encoder_attention_mask": state.prompt_attention_mask,
-                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
-                },
-            ),
-        )
-        return output.as_dict()
-
     # -- trajectory boundary -------------------------------------------
     # Masks and negative embeds are exported only when present, so the no-CFG
     # path stays tensor-free and restore reads them back with ``.get``.
@@ -267,47 +313,5 @@ class Lumina2Model(
                 tensors[name] = value
         return tensors
 
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> Lumina2SamplingState:
-        """Rebuild the sampling state from a batch slice for eval forward."""
-        negative_prompt_embeds = replay_tensors.get("negative_prompt_embeds")
-        return Lumina2SamplingState(
-            latents=latents,
-            timesteps=pack_eval_timestep(replay_tensors["timesteps"], step_idx),
-            # forward_step never calls scheduler.step, so replay needs none.
-            scheduler=None,
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
-            negative_prompt_embeds=negative_prompt_embeds,
-            negative_prompt_attention_mask=replay_tensors.get("negative_prompt_attention_mask"),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
-            num_train_timesteps=int(self.scheduler.config.num_train_timesteps),
-        )
 
-    def postprocess_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: DenoiseBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        """Negate the raw prediction: Lumina predicts the reversed-time velocity.
-
-        diffusers negates AFTER the CFG combine; negating per branch is
-        equivalent (linear combine, magnitude-based rescale) and keeps every
-        exported branch tensor in the sign the flow-match SDE step expects.
-        """
-        del request, branch
-        return -raw_output
-
-
-class Lumina2ReplayModel(DiffusersReplayModelBase, Lumina2Model):
-    """Replay-only Lumina2 model that owns no prompt encoder, VAE, or pipeline."""
-
-
-__all__ = ["Lumina2Model", "Lumina2ReplayModel", "Lumina2SamplingState"]
+__all__ = ["Lumina2Model", "Lumina2PipelineModel", "Lumina2SamplingState"]

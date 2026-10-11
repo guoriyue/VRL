@@ -1,15 +1,13 @@
-"""Where each diffusion family resolves its shared base members.
+"""Where each diffusion family's classes resolve their shared members.
 
-Two of these members are silent-wrong-answer traps, which is why they are
-pinned by MRO owner rather than by behavior:
+A family's replay model is its base class and its sampling class adds the
+pipeline on top, so a replay model never inherits a pipeline member it would
+have to switch off again; the replay test pins that shape. The others pin
+MRO facts whose failure is a silent wrong answer rather than an error:
 
-- ``_set_transformer`` on ``DiffusersPipelineModelBase`` also writes
-  ``pipeline.transformer``. A pipeline-less replay model sits BELOW that class
-  in the MRO, so deleting its own override resolves back to the syncing version
-  and every LoRA attach / torch.compile on the replay path raises "does not own
-  a diffusers pipeline" — on the FSDP/DDP trainer path, far from the edit.
 - ``from_build`` on ``DiffusersPipelineModelBase`` is the shared diffusers
   loader; a family not backed by a diffusers pipeline must own its own.
+- The Wan I2V sampling class must run the I2V math the I2V replay model runs.
 """
 
 from __future__ import annotations
@@ -20,17 +18,17 @@ import pytest
 
 from vrl.models.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild
 from vrl.models.steps.denoise import DenoiseModelBase
-from vrl.models.steps.denoise.base import DiffusersPipelineModelBase
+from vrl.models.steps.denoise.base import DenoisePipelineModelBase, DiffusersPipelineModelBase
 from vrl.utils.config import import_from_path
 
 # Families whose registry entry declares a replay BUILDER instead of a replay
 # class, so the class cannot be reached through ``DenoiseFamilyBuild``.
 _UNREGISTERED_REPLAY_CLASSES = (
-    "vrl.models.families.echo.model:EchoReplayModel",
-    "vrl.models.families.causvid.model:CausVidReplayModel",
-    "vrl.models.families.cosmos.cosmos3.model:Cosmos3ReplayModel",
-    "vrl.models.families.minimax_h3.model:MiniMaxH3ReplayModel",
-    "vrl.models.families.vdn_h3.model:VDNH3ReplayModel",
+    "vrl.models.families.echo.model:EchoModel",
+    "vrl.models.families.causvid.model:CausVidModel",
+    "vrl.models.families.cosmos.cosmos3.model:Cosmos3Model",
+    "vrl.models.families.minimax_h3.model:MiniMaxH3Model",
+    "vrl.models.families.vdn_h3.model:VDNH3Model",
 )
 
 
@@ -76,39 +74,34 @@ def test_family_without_a_diffusers_pipeline_owns_from_build(
         assert _owner(model_cls, "from_build") is model_cls
 
 
-def test_wan_i2v_replay_takes_forward_math_from_i2v_and_plumbing_from_t2v_replay() -> None:
-    """The I2V replay's base order is load-bearing.
+def test_wan_i2v_pipeline_takes_forward_math_from_i2v_and_plumbing_from_t2v() -> None:
+    """Sampling I2V runs the I2V math that the I2V replay model runs.
 
-    ``WanT2VReplayModel`` must come first so the replay plumbing (constructor,
-    dual-stage ``prepare_replay``, pipeline-less accessors) wins, while the I2V
-    forward math (``_backbone_extra``, the image conditioning the shared
-    ``forward_step`` folds in) must still resolve to ``WanI2VDiffusersModel``,
-    not the T2V class further down the MRO. Reversing the bases keeps every
-    test that only constructs the model green and silently swaps the forward.
+    ``WanI2VPipelineModel`` takes ``build_branch`` / ``_backbone_extra`` /
+    ``restore_eval_state`` from ``WanI2VModel`` and its constructor, offload
+    lifecycle and second-expert sync from ``WanT2VPipelineModel``. If the I2V
+    math moved onto the pipeline class, replay would silently run the T2V math.
     """
     from vrl.models.families.wan_2_1.model import (
-        WanI2VDiffusersModel,
-        WanI2VReplayModel,
-        WanT2VReplayModel,
+        WanI2VModel,
+        WanI2VPipelineModel,
+        WanT2VPipelineModel,
     )
 
-    for name in ("_backbone_extra", "restore_eval_state", "export_replay_tensors"):
-        assert _owner(WanI2VReplayModel, name) is WanI2VDiffusersModel, name
-    for name in ("__init__", "prepare_replay", "pipeline", "scheduler", "_set_transformer"):
-        assert _owner(WanI2VReplayModel, name) is WanT2VReplayModel, name
+    for name in ("build_branch", "_backbone_extra", "restore_eval_state"):
+        assert _owner(WanI2VPipelineModel, name) is WanI2VModel, name
+    for name in ("__init__", "_set_transformer_2", "load_trainable_state", "apply_full_finetune"):
+        assert _owner(WanI2VPipelineModel, name) is WanT2VPipelineModel, name
 
 
 @pytest.mark.parametrize("replay_cls", _replay_model_classes())
-def test_pipeline_less_replay_models_never_inherit_the_pipeline_sync(
-    replay_cls: type,
-) -> None:
-    """A replay model that has no pipeline must not resolve to the syncing setter."""
+def test_replay_models_carry_no_sampling_surface(replay_cls: type) -> None:
+    """A replay model is its family's base class, never a sampling class.
 
-    if _owner(replay_cls, "pipeline") is DiffusersPipelineModelBase:
-        # Cosmos3 replay wraps a pipeline SHELL, so the syncing setter is correct.
-        return
-    assert _owner(replay_cls, "_set_transformer") is not DiffusersPipelineModelBase, (
-        f"{replay_cls.__name__} owns no diffusers pipeline; it must keep (or "
-        "inherit from DenoiseModelBase/DiffusersReplayModelBase) a "
-        "_set_transformer that does not touch self.pipeline"
-    )
+    The trainer replays it with only the transformer and scheduler loaded. A
+    replay model that subclassed the sampling class would inherit the
+    pipeline-backed writer and the sampling methods, and would have to stub
+    them out again.
+    """
+
+    assert not issubclass(replay_cls, DenoisePipelineModelBase)

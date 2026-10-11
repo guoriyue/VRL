@@ -36,11 +36,11 @@ def build_vdn_h3_replay_runtime_bundle(
 
     del materialize_weights
 
-    from vrl.models.families.vdn_h3.model import VDNH3ReplayModel
+    from vrl.models.families.vdn_h3.model import VDNH3Model
     from vrl.models.steps.denoise.build import assemble_replay_bundle
 
     logger.info("Building vdn_h3 replay runtime bundle from %s", build.model_name_or_path)
-    model = VDNH3ReplayModel(**load_h3_replay_components(build))
+    model = VDNH3Model(**load_h3_replay_components(build))
     # Same graft as the rollout policy, before LoRA attach or FSDP wrapping:
     # the transform replaces every block's attention module, so anything that
     # holds a reference to the old one must be built after it.

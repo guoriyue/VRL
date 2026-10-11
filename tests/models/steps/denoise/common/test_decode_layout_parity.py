@@ -21,10 +21,10 @@ import torch
 from tests.models.steps.denoise.fixtures import (
     build_tiny_transformer,
 )
-from vrl.models.families.cosmos.predict2.model import CosmosPredict2Model
-from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25Model
-from vrl.models.families.sd3_5.model import SD3_5Model
-from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
+from vrl.models.families.cosmos.predict2.model import CosmosPredict2PipelineModel
+from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25PipelineModel
+from vrl.models.families.sd3_5.model import SD3_5PipelineModel
+from vrl.models.families.wan_2_1.model import WanT2VPipelineModel
 
 
 class _IdentityDecodeVAE:
@@ -66,7 +66,7 @@ def test_sd3_decode_latents_uses_shared_chunked_decoder_and_keeps_layout() -> No
         device=torch.device("cpu"),
         decode_batch_size=1,
     )
-    model = SD3_5Model(pipeline=pipeline, device=torch.device("cpu"))
+    model = SD3_5PipelineModel(pipeline=pipeline, device=torch.device("cpu"))
     latents = torch.arange(8.0).view(2, 1, 2, 2)
 
     image = model.decode_latents(latents)
@@ -90,7 +90,7 @@ def test_wan_decode_latents_preserves_bcthw_layout() -> None:
         video_processor=_VideoProcessor(),
         device=torch.device("cpu"),
     )
-    model = WanT2VDiffusersModel(pipeline=pipeline, device=torch.device("cpu"))
+    model = WanT2VPipelineModel(pipeline=pipeline, device=torch.device("cpu"))
     latents = torch.arange(16.0).view(2, 1, 2, 2, 2)
 
     video = model.decode_latents(latents)
@@ -113,7 +113,7 @@ def test_cosmos_predict2_decode_latents_applies_sigma_data_and_layout() -> None:
         video_processor=_VideoProcessor(),
         device=torch.device("cpu"),
     )
-    model = CosmosPredict2Model(pipeline=pipeline, device=torch.device("cpu"))
+    model = CosmosPredict2PipelineModel(pipeline=pipeline, device=torch.device("cpu"))
     latents = torch.arange(16.0).view(2, 1, 2, 2, 2)
 
     video = model.decode_latents(latents)
@@ -144,7 +144,7 @@ def test_cosmos_predict25_decode_latents_matches_frames_and_layout() -> None:
         _match_num_frames=match_num_frames,
         device=torch.device("cpu"),
     )
-    model = CosmosPredict25Model(pipeline=pipeline, device=torch.device("cpu"))
+    model = CosmosPredict25PipelineModel(pipeline=pipeline, device=torch.device("cpu"))
     latents = torch.arange(16.0).view(2, 1, 2, 2, 2)
 
     video = model.decode_latents(latents)

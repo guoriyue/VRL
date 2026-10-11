@@ -13,7 +13,7 @@ from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
-from vrl.models.families.vdn_h3.model import VDNH3ReplayModel
+from vrl.models.families.vdn_h3.model import VDNH3Model
 from vrl.models.families.vdn_h3.runtime import VDNH3BatchExecutor
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 
@@ -23,7 +23,7 @@ pytest.importorskip("src.models.hybrid_attention")
 def test_native_rollout_replay_grpo_reward_direction_and_optimizer_update():
     rollout = build_tiny_vdn_h3_model(seed=0)
     components = build_tiny_vdn_h3_model(seed=1).pipeline
-    replay = VDNH3ReplayModel(
+    replay = VDNH3Model(
         transformer=components.transformer,
         scheduler=components.scheduler,
         audio_scheduler=components.audio_scheduler,

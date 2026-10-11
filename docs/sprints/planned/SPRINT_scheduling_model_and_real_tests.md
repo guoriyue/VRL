@@ -485,3 +485,33 @@ wan 的 `_config_value` 留着：它的测试替身 pipeline 的 config 既有 d
 | FlashGRPO 继承来的 `sft_weight` | 维持现状：YAML 和构造都写不进去，只剩一个恒为 0、没人读的属性 |
 
 收尾核对时，对 `vrl/` 和 `tests/` 之外的顶层包（`reward/`、`tools/`、`manifests/`）也解析了全部 vrl 导入：`reward/` 的命令行和分析模块仍引用 `EditSequenceSpec`，已并入那次改名；`tools/magi_1/preflight_test.py` 自 `ce86ba996` 起还在导入已并掉的 `_probe_runtime_environment`，改为调用接替它的 `Magi1SubprocessConfig.load_official_config`（这个 Bazel 测试需要专门构建的 MAGI-1 解释器，本机未运行）。
+
+## 25. replay 模型做家族基类，采样类在上面加 pipeline（2026-10-11）
+
+原结构是 `XReplayModel(DiffusersReplayModelBase, XModel)`：replay 继承整个采样类，再用 `DiffusersReplayModelBase` 和 `ReplayRolloutStubs` 把 pipeline、同步写入和采样方法逐个挡掉。现在反过来：`XModel` 是基类（transformer、scheduler、每步计算），`XPipelineModel(DiffusersPipelineModelBase, XModel)` 在它上面加 pipeline，只做加法。两边仍共用同一份 `forward_step`。
+
+共享层：`DenoiseModelBase` 只剩 `forward_step` 一个抽象方法；采样接口（`encode_prompt`、`prepare_sampling`、`decode_latents`、两个导出钩子、显存目标）移到 `DenoisePipelineModelBase`；`DiffusersModelBase` 持有 transformer、scheduler 和两侧共用成员；`DiffusersPipelineModelBase` 加 pipeline。`DiffusersReplayModelBase`、`ReplayRolloutStubs`，以及 replay 类上只为不碰 pipeline 而重写的 `_set_transformer`，一起删除。`ReplayRequestContract`（§22 里没改名的那个）只有 `DenoiseModelBase` 一个继承者，它的两个类属性（`replay_segments`、`replay_indexes_timesteps`）和两个请求检查并入 `DenoiseModelBase` 后删除。
+
+| 家族 | 采样类（原 → 新） | replay/基类（原 → 新） |
+|---|---|---|
+| sd3_5 | `SD3_5Model` → `SD3_5PipelineModel` | `SD3_5ReplayModel` → `SD3_5Model` |
+| flux | `FluxModel` → `FluxPipelineModel` | `FluxReplayModel` → `FluxModel` |
+| qwen_image | `QwenImageModel` → `QwenImagePipelineModel` | `QwenImageReplayModel` → `QwenImageModel` |
+| qwen_image_21 | `QwenImage21Model` → `QwenImage21PipelineModel` | `QwenImage21ReplayModel` → `QwenImage21Model` |
+| sana | `SanaModel` → `SanaPipelineModel` | `SanaReplayModel` → `SanaModel` |
+| lumina2 | `Lumina2Model` → `Lumina2PipelineModel` | `Lumina2ReplayModel` → `Lumina2Model` |
+| hunyuan_image | `HunyuanImageModel` → `HunyuanImagePipelineModel` | `HunyuanImageReplayModel` → `HunyuanImageModel` |
+| hunyuan_video | `HunyuanVideoModel` → `HunyuanVideoPipelineModel` | `HunyuanVideoReplayModel` → `HunyuanVideoModel` |
+| mochi | `MochiModel` → `MochiPipelineModel` | `MochiReplayModel` → `MochiModel` |
+| pixart_sigma | `PixArtSigmaModel` → `PixArtSigmaPipelineModel` | `PixArtSigmaReplayModel` → `PixArtSigmaModel` |
+| cogvideox | `CogVideoXModel` → `CogVideoXPipelineModel` | `CogVideoXReplayModel` → `CogVideoXModel` |
+| cosmos-predict2 | `CosmosPredict2Model` → `CosmosPredict2PipelineModel` | `CosmosPredict2ReplayModel` → `CosmosPredict2Model` |
+| cosmos-predict2.5 | `CosmosPredict25Model` → `CosmosPredict25PipelineModel` | `CosmosPredict25ReplayModel` → `CosmosPredict25Model` |
+| cosmos3 | `Cosmos3Model` → `Cosmos3PipelineModel` | `Cosmos3ReplayModel` → `Cosmos3Model` |
+| wan_2_1 | `WanT2VDiffusersModel` / `WanI2VDiffusersModel` → `WanT2VPipelineModel` / `WanI2VPipelineModel` | `WanT2VReplayModel` / `WanI2VReplayModel` → `WanT2VModel` / `WanI2VModel` |
+| minimax_h3 | `MiniMaxH3Model` → `MiniMaxH3PipelineModel` | `MiniMaxH3ReplayModel` → `MiniMaxH3Model` |
+| vdn_h3 | `VDNH3Model` → `VDNH3PipelineModel` | `VDNH3ReplayModel` → `VDNH3Model` |
+| echo | `EchoModel` → `EchoPipelineModel` | `EchoReplayModel` → `EchoModel` |
+| causvid | `CausVidModel` → `CausVidPipelineModel` | `CausVidReplayModel`（及 `_CausVidPolicyModel`）→ `CausVidModel` |
+
+行为变化：Wan 的 `apply_full_finetune` 和 `load_trainable_state` 原来按 rollout/replay 分支，现在按类分开；Echo 的 replay 构造不再收只给解码用的 `dtype`；CausVid 去掉 `generation_enabled` 标志；MiniMax-H3 replay 不再造空槽位的组件外壳，外壳上的 `patch_size`（移到基类）和无人使用的 `canvas_multiple` 删除；Wan I2V 与 VDN-H3 的采样类不再依赖基类顺序。MAGI-1 不是 denoise 体系的类，没有 replay，不在此列。

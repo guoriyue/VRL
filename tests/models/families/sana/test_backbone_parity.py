@@ -21,15 +21,15 @@ from tests.models.steps.denoise.fixtures import (
 )
 from vrl.models.families.sana.model import (
     SanaModel,
-    SanaReplayModel,
+    SanaPipelineModel,
     SanaSamplingState,
 )
 
 _TEXT_LEN = 5
 
 
-def _model(transformer: torch.nn.Module) -> SanaModel:
-    model = SanaModel(
+def _model(transformer: torch.nn.Module) -> SanaPipelineModel:
+    model = SanaPipelineModel(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),
     )
@@ -181,7 +181,7 @@ def test_sana_replay_roundtrip_restores_equivalent_state() -> None:
     context = model.export_batch_context(state)
     replay["timesteps"] = torch.full((TINY_SANA_LATENT_SHAPE[0],), 5.0)
 
-    restored = SanaReplayModel(
+    restored = SanaModel(
         transformer=transformer,
         scheduler=None,
     ).restore_eval_state(replay, context, state.latents, 0)

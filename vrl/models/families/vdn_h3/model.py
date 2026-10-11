@@ -43,7 +43,7 @@ import torch
 
 from vrl.models.families.minimax_h3.model import (
     MiniMaxH3Model,
-    MiniMaxH3ReplayModel,
+    MiniMaxH3PipelineModel,
     MiniMaxH3SamplingState,
 )
 from vrl.models.families.vdn_h3.vendor import VDNEntryPoints, load_vdn
@@ -58,21 +58,12 @@ _DEFAULT_SOFTMAX_BACKEND = "auto"
 
 
 class VDNH3Model(MiniMaxH3Model):
-    """MiniMax-H3 policy carrying VDN-H3's hybrid attention."""
+    """MiniMax-H3 carrying VDN-H3's hybrid attention: the model replay runs.
 
-    @classmethod
-    def from_build(cls, build: ModelBuild) -> VDNH3Model:
-        """Load the MiniMax-H3 base, then graft the VDN artifact onto it.
-
-        The order is upstream's (``src/inference/assemble.py``): base, transform,
-        branch weights, folded adapters. What this deliberately does not do is
-        upstream's inference overlay -- no ``set_inference_mode``, no fp8 -- because
-        the policy is trained through this module.
-        """
-
-        model = super().from_build(build)
-        model.install_hybrid_attention(build)
-        return model
+    The replay builder grafts the same hybrid attention onto it
+    (``install_hybrid_attention``) that sampling's loader does, or the
+    recomputed log-probs would describe a different model.
+    """
 
     # -- loading -----------------------------------------------------------
 
@@ -146,7 +137,7 @@ class VDNH3Model(MiniMaxH3Model):
 
         vendor = load_vdn()
         layout = state.layout
-        _, patch_h, patch_w = self.pipeline.patch_size
+        _, patch_h, patch_w = self.patch_size
         grid_h = layout.latent_height // patch_h
         grid_w = layout.latent_width // patch_w
         vendor.set_layout(
@@ -162,16 +153,26 @@ class VDNH3Model(MiniMaxH3Model):
         )
 
 
-class VDNH3ReplayModel(MiniMaxH3ReplayModel, VDNH3Model):
-    """Trainer-side replay model: the hybrid transformer and the two schedulers.
+class VDNH3PipelineModel(MiniMaxH3PipelineModel, VDNH3Model):
+    """VDN-H3 plus the MiniMax-H3 pipeline that sampling needs.
 
-    Base order is load-bearing, as for Wan I2V: ``MiniMaxH3ReplayModel`` first so
-    the replay plumbing (constructor, pipeline-shell accessors) wins, while
-    ``forward_step`` and the layout hand-off still resolve to ``VDNH3Model``.
-    The replay policy must carry the same graft as the rollout policy or the
-    recomputed log-probs describe a different model, so the replay builder calls
-    ``install_hybrid_attention`` too.
+    The forward and the layout hand-off come from ``VDNH3Model``; the MiniMax-H3
+    pipeline class adds only pipeline members, so the two bases never compete.
     """
 
+    @classmethod
+    def from_build(cls, build: ModelBuild) -> VDNH3PipelineModel:
+        """Load the MiniMax-H3 base, then graft the VDN artifact onto it.
 
-__all__ = ["VDNEntryPoints", "VDNH3Model", "VDNH3ReplayModel"]
+        The order is upstream's (``src/inference/assemble.py``): base, transform,
+        branch weights, folded adapters. What this deliberately does not do is
+        upstream's inference overlay -- no ``set_inference_mode``, no fp8 -- because
+        the policy is trained through this module.
+        """
+
+        model = super().from_build(build)
+        model.install_hybrid_attention(build)
+        return model
+
+
+__all__ = ["VDNEntryPoints", "VDNH3Model", "VDNH3PipelineModel"]

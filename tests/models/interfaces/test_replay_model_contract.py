@@ -10,13 +10,13 @@ from tests.models.interfaces import registered_replay_model_classes
 from vrl.models.interfaces import (
     ReplayModel,
     ReplayRequest,
-    ReplayRequestContract,
     ReplayResult,
     ReplaySegmentResult,
     RuntimeModel,
     require_replay_model,
     require_runtime_model,
 )
+from vrl.models.steps.denoise.base import DenoiseModelBase
 
 # ReplayModel's required surface. Derived from the protocol's
 # ``__protocol_attrs__``, so a method add/rename auto-widens the contract check.
@@ -45,23 +45,27 @@ def test_replay_request_requires_non_empty_segment_names() -> None:
         ReplayRequest(segment_names=("",))
 
 
-class _DenoiseOnlyContract(ReplayRequestContract):
-    replay_segments = ("denoise",)
+class _WholeTrajectoryReplay(DenoiseModelBase):
+    """Replays the denoise segment only, and has no timestep axis to select."""
+
     replay_indexes_timesteps = False
+
+    def forward_step(self, state, step_idx):
+        raise NotImplementedError
 
 
 def test_replay_segment_guard_rejects_unsupported_selection() -> None:
     with pytest.raises(ValueError, match="supports segments"):
-        _DenoiseOnlyContract().reject_unsupported_replay_segments(
+        _WholeTrajectoryReplay().reject_unsupported_replay_segments(
             ReplayRequest(segment_names=("unsupported",)),
         )
 
 
 def test_replay_timestep_guard_rejects_nonzero_index() -> None:
-    contract = _DenoiseOnlyContract()
-    contract.reject_replay_timestep_selection(0)
+    model = _WholeTrajectoryReplay()
+    model.reject_replay_timestep_selection(0)
     with pytest.raises(ValueError, match="timestep_idx must be 0"):
-        contract.reject_replay_timestep_selection(1)
+        model.reject_replay_timestep_selection(1)
 
 
 @pytest.mark.parametrize(
