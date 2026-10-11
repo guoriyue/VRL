@@ -208,7 +208,7 @@ class HealthGateConfig:
             )
 
     @classmethod
-    def from_cli(
+    def from_args(
         cls,
         args: argparse.Namespace,
         *,
@@ -998,7 +998,7 @@ def main(argv: list[str] | None = None) -> None:
                 "to an offline trainer that writes no metrics.csv",
             )
         try:
-            health = HealthGateConfig.from_cli(
+            health = HealthGateConfig.from_args(
                 args,
                 schedule=trainer.rollout_orchestration,
                 replay_parity=trainer.replay_parity,

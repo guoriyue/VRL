@@ -13,7 +13,7 @@ import yaml
 from pydantic import ValidationError
 
 from vrl.config.base import ConfigBase
-from vrl.scripts.data.common import repo_root
+from vrl.utils.artifacts import repo_root
 
 ANIME_SAFETY_PROMPTS_COMMAND = "anime-safety-prompts"
 

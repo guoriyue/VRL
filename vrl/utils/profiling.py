@@ -136,7 +136,7 @@ class ProfilerActivitySelection:
     torch_activities: tuple[Any, ...]
 
     @classmethod
-    def from_config(
+    def from_section(
         cls,
         config: TorchProfilerConfig,
         *,
@@ -258,7 +258,7 @@ def capture_torch_trace(
 
     import torch
 
-    selection = ProfilerActivitySelection.from_config(config)
+    selection = ProfilerActivitySelection.from_section(config)
     if selection.missing:
         raise RuntimeError(
             "Torch profiler requested unsupported activities "

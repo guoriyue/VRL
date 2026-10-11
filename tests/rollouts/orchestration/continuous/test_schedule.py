@@ -1,6 +1,6 @@
 """The continuous rollout schedule over the real coordinator, collector and runtime.
 
-Every schedule here is ``ContinuousRolloutSchedule.from_config`` on the real
+Every schedule here is ``ContinuousRolloutSchedule.from_section`` on the real
 ``RolloutCollector`` (tiny SANA family, ``InProcessGenerationRuntime``), the
 real trainer side (replay bundle, ``SingleProcessStrategy``) and the real
 ``RayRuntimeWeightSyncer``. Versioned slots (non-draining weight sync) come
@@ -63,7 +63,7 @@ def _build(
     initially_initialized: bool = False,
 ) -> ContinuousRolloutSchedule:
     trainer = trainer_side(bench, initialized=initially_initialized)
-    return ContinuousRolloutSchedule.from_config(
+    return ContinuousRolloutSchedule.from_section(
         config,
         lifecycle=trainer.coordinator(bench),
         versioned_weight_sync=bench.stack.built.trainer.versioned_weight_sync,
@@ -193,7 +193,7 @@ async def test_initialized_runtime_does_not_receive_redundant_initial_push(
     trainer = trainer_side(bench, initialized=True)
     await bench.runtime.update_weights(trainer.export(), 7)
     pushes_before = _pushes(bench)
-    schedule = ContinuousRolloutSchedule.from_config(
+    schedule = ContinuousRolloutSchedule.from_section(
         _continuous_config(),
         lifecycle=trainer.coordinator(bench),
         versioned_weight_sync=bench.stack.built.trainer.versioned_weight_sync,

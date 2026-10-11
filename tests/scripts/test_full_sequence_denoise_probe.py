@@ -32,7 +32,7 @@ def test_probe_uses_existing_cosmos_lora_preset():
     preset = (
         Path(__file__).resolve().parents[2] / "vrl/config/presets/model/cosmos/predict2_5_2b.yaml"
     )
-    args = generate._build_arg_parser().parse_args(
+    args = generate.build_parser().parse_args(
         [
             "--family",
             "cosmos-predict2.5",
@@ -81,7 +81,7 @@ def test_generate_rejects_non_full_sequence_family_before_build(
 
 
 def test_probe_model_build_uses_family_parameter_and_public_precision_policy() -> None:
-    args = generate._build_arg_parser().parse_args(
+    args = generate.build_parser().parse_args(
         [
             "--family",
             "sana",
@@ -112,7 +112,7 @@ def test_probe_model_build_uses_family_parameter_and_public_precision_policy() -
 
 
 def test_probe_model_build_uses_explicit_precision_without_family_override() -> None:
-    args = generate._build_arg_parser().parse_args(
+    args = generate.build_parser().parse_args(
         [
             "--family",
             "sana",
@@ -140,7 +140,7 @@ def test_probe_model_build_uses_explicit_precision_without_family_override() -> 
 def test_probe_model_build_derives_quantization_from_role_precision(
     quantization_format: str,
 ) -> None:
-    args = generate._build_arg_parser().parse_args(
+    args = generate.build_parser().parse_args(
         [
             "--family",
             "sana",

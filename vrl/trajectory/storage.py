@@ -10,7 +10,6 @@ from PIL.Image import Image
 
 from vrl.trajectory.device import map_tensor_tree
 from vrl.trajectory.types import TrajectoryBatch
-from vrl.utils.config import to_builtin_deep
 from vrl.utils.media_reference import MediaReference
 
 TrajectoryStorageDevice = Literal["preserve", "cpu"]
@@ -41,24 +40,6 @@ class TrajectoryStoragePolicy:
                 "trajectory storage dtype must be one of "
                 f"{sorted(_VALID_DTYPES)}, got {self.dtype!r}",
             )
-
-    @classmethod
-    def from_config(cls, value: object) -> TrajectoryStoragePolicy:
-        """Parse rollout.trajectory_storage config into a typed storage policy."""
-
-        if value is None:
-            return cls()
-        if isinstance(value, cls):
-            return value
-        value = to_builtin_deep(value)
-        if isinstance(value, Mapping):
-            return cls(**value)
-        # A non-None, non-mapping value is a misconfiguration (e.g. a bare
-        # ``trajectory_storage: cpu`` string surviving config resolution). Fail
-        # loudly instead of silently degrading to a default no-op policy.
-        raise TypeError(
-            f"rollout.trajectory_storage must be a mapping with 'device'/'dtype' keys, got {value!r}",
-        )
 
     def apply_to_trajectory_(self, batch: TrajectoryBatch) -> TrajectoryBatch:
         """Replace trajectory tensor leaves in place and return the same batch."""

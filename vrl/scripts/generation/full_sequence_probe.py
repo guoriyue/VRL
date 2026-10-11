@@ -43,7 +43,7 @@ def _check_replay_errors(pred_err: float, lp_err: float, *, pred_atol: float, lp
         raise SystemExit("[probe] FAIL: replay parity out of tolerance")
 
 
-def _build_arg_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--family", required=True)
     parser.add_argument("--path", required=True, help="checkpoint repo or local dir")
@@ -175,7 +175,7 @@ def _resolve_probe_model_build(args: argparse.Namespace, entry: Any, device: Any
 
 
 def main() -> None:
-    args = _build_arg_parser().parse_args()
+    args = build_parser().parse_args()
     started = time.perf_counter()
     artifact_dir = Path(args.artifact_dir) if args.artifact_dir else None
     if artifact_dir is not None:

@@ -48,7 +48,7 @@ def test_reward_component_keys_resolve_to_registered_reward_names() -> None:
 
     ``RewardConfig.components`` is an OPEN dict (reward names are user-chosen,
     schema.py:52-53) and ``require_training_config`` does not check key
-    registration. The real consumer is ``MultiReward.from_dict`` →
+    registration. The real consumer is ``MultiReward.from_mapping`` →
     ``get_reward(name)``, which raises ``KeyError`` at runtime for an
     unregistered key. This guards that every shipped reward group's component
     key actually resolves, value-agnostically (no literal name table), so a new

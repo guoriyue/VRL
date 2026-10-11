@@ -154,7 +154,7 @@ def test_runtime_data_loader_rejects_mixture_count_over_manifest_size(tmp_path: 
 
 def test_for_experiment_plan_covers_every_mixture_source(tmp_path: Path) -> None:
     """Each source of a manifest mixture is its own file with a present/populate status."""
-    experiment = bootstrap.ExperimentDataFiles.from_data(
+    experiment = bootstrap.ExperimentDataFiles.from_mapping(
         {
             "loader": "prompt_manifest",
             "manifest": {
@@ -291,7 +291,7 @@ def test_for_experiment_plan_marks_committed_manifest_ready(tmp_path: Path) -> N
     manifest_dir.mkdir(parents=True)
     (manifest_dir / "train.txt").write_text("a\nb\nc\n", encoding="utf-8")
 
-    experiment = bootstrap.ExperimentDataFiles.from_data(
+    experiment = bootstrap.ExperimentDataFiles.from_mapping(
         {"loader": "prompt_manifest", "manifest": "manifests/pickscore_sfw/train.txt"},
         repo_root=tmp_path,
     )
@@ -304,7 +304,7 @@ def test_for_experiment_plan_marks_committed_manifest_ready(tmp_path: Path) -> N
 
 def test_for_experiment_plan_flags_pickapic_download(tmp_path: Path) -> None:
     """The experiment's files flag the Pick-a-Pic download."""
-    experiment = bootstrap.ExperimentDataFiles.from_data(
+    experiment = bootstrap.ExperimentDataFiles.from_mapping(
         {"loader": "pickapic_preference"},
         repo_root=tmp_path,
     )
@@ -317,7 +317,7 @@ def test_for_experiment_plan_flags_missing_manifest_with_command(tmp_path: Path)
     """A missing Danbooru manifest leaves the experiment not ready and names the ``anime-safety-prompts``
     command that produces it.
     """
-    experiment = bootstrap.ExperimentDataFiles.from_data(
+    experiment = bootstrap.ExperimentDataFiles.from_mapping(
         {
             "loader": "prompt_manifest",
             "manifest": "manifests/danbooru/safety/train.jsonl",

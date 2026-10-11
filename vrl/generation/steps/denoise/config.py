@@ -9,8 +9,7 @@ from vrl.generation.steps.denoise.teacache import TeaCacheConfig
 from vrl.utils.validation import require_int
 
 if TYPE_CHECKING:
-    from vrl.config.sampling_schema import SamplingSection
-    from vrl.config.schema import RolloutConfig
+    from vrl.config.schema import RootConfig
 
 
 DenoiseMode = Literal["native", "sde"]
@@ -65,17 +64,14 @@ class DenoiseRequestOptions:
             object.__setattr__(self, "sde_window_range", (lo, hi))
 
     @classmethod
-    def from_sections(
-        cls,
-        rollout: RolloutConfig | None,
-        sampling: SamplingSection | None,
-    ) -> DenoiseRequestOptions:
+    def from_root(cls, root: RootConfig) -> DenoiseRequestOptions:
         """Project rollout.* / rollout.sde.* / sampling.teacache into the typed options.
 
         Only YAML-declared values are passed, so the option defaults stay the single
         source.
         """
 
+        rollout = root.rollout
         values: dict[str, Any] = {}
         if rollout is not None:
             for name in (
@@ -93,7 +89,7 @@ class DenoiseRequestOptions:
                     values["sde_window_size"] = sde.window_size
                 if sde.window_range is not None:
                     values["sde_window_range"] = tuple(sde.window_range)
-        teacache = getattr(sampling, "teacache", None)
+        teacache = getattr(root.sampling, "teacache", None)
         if teacache is not None:
             # Bool flows as-is; the mapping form is the section minus unset keys, so
             # TeaCacheConfig.from_sampling sees exactly what the YAML declared.

@@ -85,7 +85,7 @@ async def test_changes_inside_the_boxes_are_free_and_outside_changes_are_charged
             )
         )
 
-    reward = MultiReward.from_dict(
+    reward = MultiReward.from_mapping(
         {"locality_keep": 1.0},
         device="cuda",
         inference_configs={"locality_keep": RewardInferenceConfig(kind="in_process")},
@@ -118,7 +118,7 @@ async def test_detail_penalty_selects_configured_key_and_keeps_diagnostics(tmp_p
     inside[:32, :32] = 0
     damaged = source.copy()
     damaged[32:, 32:] //= 2
-    reward = MultiReward.from_dict(
+    reward = MultiReward.from_mapping(
         {"locality_keep": 1.0},
         device="cpu",
         reward_kwargs={

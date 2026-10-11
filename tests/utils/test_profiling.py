@@ -120,12 +120,12 @@ def test_safe_label_stable(raw: str, expected: str) -> None:
 def test_resolve_unknown_activity_fails_fast() -> None:
     cfg = TorchProfilerConfig(activities=("cpu", "gpu"))
     with pytest.raises(ValueError, match="Unknown torch profiler activities"):
-        ProfilerActivitySelection.from_config(cfg, supported={CPU, CUDA})
+        ProfilerActivitySelection.from_section(cfg, supported={CPU, CUDA})
 
 
 def test_resolve_cpu_only_reports_missing_cuda() -> None:
     cfg = TorchProfilerConfig(activities=("cpu", "cuda"))
-    selection = ProfilerActivitySelection.from_config(cfg, supported={CPU})
+    selection = ProfilerActivitySelection.from_section(cfg, supported={CPU})
     assert selection.requested == ("cpu", "cuda")
     assert selection.effective == ("cpu",)
     assert selection.missing == ("cuda",)
@@ -134,14 +134,14 @@ def test_resolve_cpu_only_reports_missing_cuda() -> None:
 
 def test_resolve_all_supported() -> None:
     cfg = TorchProfilerConfig(activities=("cpu", "cuda"))
-    selection = ProfilerActivitySelection.from_config(cfg, supported={CPU, CUDA})
+    selection = ProfilerActivitySelection.from_section(cfg, supported={CPU, CUDA})
     assert selection.missing == ()
     assert selection.effective == ("cpu", "cuda")
 
 
 def test_resolve_deduplicates_requested() -> None:
     cfg = TorchProfilerConfig(activities=("cpu", "cpu", "cuda"))
-    selection = ProfilerActivitySelection.from_config(cfg, supported={CPU, CUDA})
+    selection = ProfilerActivitySelection.from_section(cfg, supported={CPU, CUDA})
     assert selection.requested == ("cpu", "cuda")
 
 

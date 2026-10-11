@@ -191,7 +191,7 @@ def test_for_experiment_flags_videophy_i2v_population_command(tmp_path: Path) ->
     """Missing VideoPhy I2V manifests leave the experiment not ready and point every file at the
     ``videophy-i2v`` command.
     """
-    experiment = bootstrap.ExperimentDataFiles.from_data(
+    experiment = bootstrap.ExperimentDataFiles.from_mapping(
         {
             "loader": "prompt_image_manifest",
             "manifest": "data/external/videophy_i2v/manifests/train.jsonl",
@@ -217,7 +217,7 @@ def test_for_experiment_rejects_partial_videophy_i2v_smoke_data(tmp_path: Path) 
     (manifest_root / "train.jsonl").write_text('{"caption":"prompt a"}\n', encoding="utf-8")
     (manifest_root / "eval.jsonl").write_text('{"caption":"prompt c"}\n', encoding="utf-8")
 
-    experiment = bootstrap.ExperimentDataFiles.from_data(
+    experiment = bootstrap.ExperimentDataFiles.from_mapping(
         {
             "loader": "prompt_image_manifest",
             "manifest": "data/external/videophy_i2v/manifests/train.jsonl",

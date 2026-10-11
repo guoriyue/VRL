@@ -559,7 +559,7 @@ class OnlineTrainer:
         orchestration = self.config.rollout_orchestration
         self.rollout_schedule: RolloutSchedule
         if orchestration.schedule_mode == "continuous":
-            self.rollout_schedule = ContinuousRolloutSchedule.from_config(
+            self.rollout_schedule = ContinuousRolloutSchedule.from_section(
                 orchestration.continuous,
                 lifecycle=self._rollout_runtime,
                 versioned_weight_sync=self.config.versioned_weight_sync,

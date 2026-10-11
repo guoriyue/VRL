@@ -154,7 +154,7 @@ def _stack(
             built.root, device=torch.device(resources.trainer_torch_device)
         ),
     )
-    pair = AlgorithmEvaluatorPair.from_configs(
+    pair = AlgorithmEvaluatorPair.from_built(
         built,
         scheduler=getattr(bundle, "scheduler", None),
     )

@@ -55,27 +55,20 @@ def test_cpu_storage_policy_moves_tensor_leaves_to_cpu() -> None:
         assert str(tensor.value.device) == "cpu"
 
 
-def test_storage_policy_parser_rejects_unknown_values() -> None:
-    """``None`` parses to the default policy and a mapping to its fields; an unknown dtype fails
-    naming it, and a bare scalar is a misconfiguration that fails instead of degrading to a
-    default.
+def test_rollout_schema_parses_the_storage_policy_and_rejects_bad_values() -> None:
+    """``rollout.trajectory_storage`` parses a mapping into the policy; an unknown dtype, a bare
+    scalar (``trajectory_storage: cpu``) and a misspelled key each fail instead of degrading to
+    the default policy.
     """
-    assert TrajectoryStoragePolicy.from_config(None) == TrajectoryStoragePolicy()
-    assert TrajectoryStoragePolicy.from_config({"device": "cpu"}).device == "cpu"
+    from pydantic import ValidationError
 
-    with pytest.raises(ValueError, match="trajectory storage dtype"):
-        TrajectoryStoragePolicy.from_config({"dtype": "int8"})
+    from vrl.config.schema import RolloutConfig
 
-    # A bare non-mapping scalar (e.g. ``trajectory_storage: cpu``) is a
-    # misconfiguration and must fail loudly rather than degrade to a default.
-    with pytest.raises(TypeError, match="must be a mapping"):
-        TrajectoryStoragePolicy.from_config("cpu")
-
-
-@pytest.mark.parametrize("unknown_key", ["dytpe", "storage_device"])
-def test_storage_policy_parser_rejects_unknown_fields(unknown_key: str) -> None:
-    with pytest.raises(TypeError, match=unknown_key):
-        TrajectoryStoragePolicy.from_config({"device": "cpu", unknown_key: "float16"})
+    parsed = RolloutConfig.model_validate({"trajectory_storage": {"device": "cpu"}})
+    assert parsed.trajectory_storage == TrajectoryStoragePolicy(device="cpu")
+    for bad in ({"dtype": "int8"}, "cpu", {"device": "cpu", "dytpe": "float16"}):
+        with pytest.raises(ValidationError):
+            RolloutConfig.model_validate({"trajectory_storage": bad})
 
 
 def _trajectory():

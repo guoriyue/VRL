@@ -261,7 +261,7 @@ def load_prompt_examples_from_config(data: DataConfig) -> list[PromptExample]:
         return load_prompt_mixture(sources, seed=data.mix_seed)
 
     if data.loader == "prompt_image_manifest":
-        return list(ImageCaptionPromptDataset.from_config(data).examples)
+        return list(ImageCaptionPromptDataset.from_section(data).examples)
 
     raise ValueError(f"unknown data.loader={data.loader!r}")
 
@@ -342,7 +342,7 @@ class ImageCaptionPromptDataset(Dataset):
                 )
 
     @classmethod
-    def from_config(cls, data: DataConfig) -> ImageCaptionPromptDataset:
+    def from_section(cls, data: DataConfig) -> ImageCaptionPromptDataset:
         """Load the configured manifest using the configured image-caption fields."""
 
         preprocessing = data.preprocessing

@@ -304,7 +304,7 @@ class InProcessRewardScorer:
         media_temp_dir: str | None = None,
     ) -> None:
         # Typed runtime contract; the verbatim bag still feeds the factory.
-        self._launch = RewardRuntimeLaunchContract.from_component_config(worker_config)
+        self._launch = RewardRuntimeLaunchContract.from_mapping(worker_config)
         self._parking = RewardParking(self._launch)
         if model is not None and self._launch.sleep_offload:
             raise ValueError(
@@ -538,7 +538,7 @@ def build_reward_scorer(
         )
     from vrl.rewards.service.client import HttpRewardScorer
 
-    return HttpRewardScorer.from_config(deployment)
+    return HttpRewardScorer.from_section(deployment)
 
 
 __all__ = [

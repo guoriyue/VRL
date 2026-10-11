@@ -145,7 +145,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     from vrl.algorithms.dpo import DiffusionDPO, DiffusionDPOConfig
     from vrl.models.dtypes import resolve_torch_dtype
-    from vrl.ray.resources import format_distributed_resource_plan
     from vrl.trainers.activation_checkpointing import enable_transformer_gradient_checkpointing
     from vrl.trainers.checkpointing import (
         TrainingCheckpoint,
@@ -180,7 +179,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     train_batch_size = int(built.root.actor.train_batch_size)
     resume_config = built.resume
     resume_checkpoint = TrainingCheckpoint.load_for_resume(resume_config)
-    logger.info(format_distributed_resource_plan(resources))
+    logger.info("%s", resources)
     weight_dtype = resolve_torch_dtype(precision.training.dtype)
 
     # DPO needs the full family bundle because its VAE and text encoder prepare

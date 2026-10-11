@@ -43,7 +43,7 @@ class ContinuousRolloutSchedule:
         self._rollout_thread = ContinuousRolloutThread(lifecycle=lifecycle, settings=settings)
 
     @classmethod
-    def from_config(
+    def from_section(
         cls,
         config: ContinuousRolloutConfig,
         *,

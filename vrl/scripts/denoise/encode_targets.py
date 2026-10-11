@@ -29,7 +29,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def _build_arg_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--experiment",
@@ -146,7 +146,7 @@ def _resolve_clean_targets(
 
 
 def main(argv: list[str] | None = None) -> None:
-    args = _build_arg_parser().parse_args(argv)
+    args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO)
 
     import torch

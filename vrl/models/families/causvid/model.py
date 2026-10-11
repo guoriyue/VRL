@@ -45,7 +45,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.precision import model_autocast
 from vrl.models.source_integrity import runtime_source_tree_sha256
 from vrl.models.steps.denoise.base import DenoiseModelBase
-from vrl.utils.artifacts import sha256_file
+from vrl.utils.artifacts import repo_root, sha256_file
 
 # Immutable upstream/checkpoint identifiers are genuine external boundaries.
 CAUSVID_CHECKPOINT_REPOSITORY = "tianweiy/CausVid"
@@ -854,7 +854,7 @@ def _resolve_source_root(model_config: Mapping[str, Any]) -> Path:
     if configured:
         source_root = _resolve_configured_path(str(configured))
     else:
-        repo_default = Path(__file__).resolve().parents[4] / "third_party" / "CausVid"
+        repo_default = repo_root() / "third_party" / "CausVid"
         if repo_default.is_dir():
             source_root = repo_default
         else:
@@ -962,7 +962,7 @@ def _resolve_configured_path(value: str) -> Path:
     path = Path(value).expanduser()
     if path.is_absolute():
         return path
-    repo_relative = Path(__file__).resolve().parents[4] / path
+    repo_relative = repo_root() / path
     return repo_relative if repo_relative.exists() else path
 
 

@@ -351,11 +351,11 @@ async def test_multi_reward_shutdown_retries_only_failed_children() -> None:
 
 def test_factory_parking_policy_distinguishes_cpu_and_dedicated_rewards() -> None:
     """CPU-only and dedicated rewards stay resident without a parking pool."""
-    cpu_reward = MultiReward.from_dict(
+    cpu_reward = MultiReward.from_mapping(
         {"ocr": 1.0},
         device="cpu",
     )
-    dedicated_reward = MultiReward.from_dict(
+    dedicated_reward = MultiReward.from_mapping(
         {"aesthetic": 1.0},
         device="cuda:1",
     )
@@ -370,7 +370,7 @@ def test_factory_parking_policy_distinguishes_cpu_and_dedicated_rewards() -> Non
 
 def test_shared_parking_allows_one_gpu_reward_with_cpu_sibling() -> None:
     """CPU siblings do not create a second process-wide CuMem owner."""
-    reward = MultiReward.from_dict(
+    reward = MultiReward.from_mapping(
         {"aesthetic": 1.0, "ocr": 1.0},
         device="cuda:0",
         parking="cumem",
@@ -406,7 +406,7 @@ def test_component_device_cannot_override_resource_device(
 ) -> None:
     """CPU resources cannot escalate to CUDA or change a CUDA ordinal."""
     with pytest.raises(ValueError, match=r"distributed resources|CUDA device"):
-        MultiReward.from_dict(
+        MultiReward.from_mapping(
             {"kling_video_reward": 1.0},
             device=resolved_device,
             reward_kwargs={
@@ -419,7 +419,7 @@ def test_component_device_cannot_override_resource_device(
 
 def test_gpu_resource_allows_component_cpu_downgrade() -> None:
     """A CPU sibling consumes no GPU lease under a CUDA ownership ceiling."""
-    reward = MultiReward.from_dict(
+    reward = MultiReward.from_mapping(
         {"aesthetic": 1.0, "kling_video_reward": 1.0},
         device="cuda:0",
         reward_kwargs={
@@ -439,7 +439,7 @@ def test_gpu_resource_allows_component_cpu_downgrade() -> None:
 def test_from_dict_rejects_removed_pool_execution() -> None:
     """A stale reward.kwargs execution key fails loud with the migration hint."""
     with pytest.raises(ValueError, match="resource topology"):
-        MultiReward.from_dict(
+        MultiReward.from_mapping(
             {"kling_video_reward": 1.0},
             device="cpu",
             reward_kwargs={"kling_video_reward": {"execution": "pool"}},
@@ -450,14 +450,14 @@ def test_from_dict_validates_zero_weight_observation_components() -> None:
     """Observation-only scorers are live, so a typo must fail validation."""
 
     with pytest.raises(KeyError, match="Unknown reward function"):
-        MultiReward.from_dict(
+        MultiReward.from_mapping(
             {"not_a_registered_reward": 0.0, "aesthetic": 1.0},
             device="cpu",
         )
 
 
 def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) -> None:
-    reward = MultiReward.from_dict(
+    reward = MultiReward.from_mapping(
         {"unified_reward_video": 1.0},
         device="cuda:0",
         inference_configs={
@@ -477,7 +477,7 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
 def test_http_ocr_reward_uses_media_uploads_and_the_remote_scorer(tmp_path) -> None:
     from vrl.rewards.artifacts import InMemoryRewardArtifactStore
 
-    reward = MultiReward.from_dict(
+    reward = MultiReward.from_mapping(
         {"ocr": 1.0},
         device="cpu",
         reward_kwargs={"ocr": {"score_key": "ocr_match"}},
@@ -510,7 +510,7 @@ def test_in_process_ocr_reward_keeps_media_in_memory() -> None:
 
 def test_reward_config_rejects_runtime_injection_keys() -> None:
     with pytest.raises(ValueError, match="runtime injection keys"):
-        MultiReward.from_dict(
+        MultiReward.from_mapping(
             {"aesthetic": 1.0},
             device="cpu",
             reward_kwargs={"aesthetic": {"scorer": object()}},
@@ -572,7 +572,7 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
     host, port = service.address
 
     def _client() -> HttpRewardScorer:
-        return HttpRewardScorer.from_config(
+        return HttpRewardScorer.from_section(
             RewardInferenceConfig(
                 kind="http",
                 endpoint=f"http://{host}:{port}",
@@ -613,7 +613,7 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
 
 def test_http_reward_rejects_local_worker_config() -> None:
     with pytest.raises(ValueError, match="belongs to the standalone reward service"):
-        MultiReward.from_dict(
+        MultiReward.from_mapping(
             {"unified_reward_video": 1.0},
             device="cpu",
             reward_kwargs={
@@ -634,7 +634,7 @@ def test_http_reward_rejects_local_worker_config() -> None:
 def test_ray_ocr_reward_gets_an_actor_scorer_with_its_knobs(tmp_path) -> None:
     from vrl.rewards.ray import RayRewardScorer
 
-    reward = MultiReward.from_dict(
+    reward = MultiReward.from_mapping(
         {"ocr": 1.0},
         device="cpu",
         reward_kwargs={
@@ -657,7 +657,7 @@ def test_ray_ocr_reward_gets_an_actor_scorer_with_its_knobs(tmp_path) -> None:
 def test_ray_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:
     from vrl.rewards.ray import RayRewardPlacement, RayRewardScorer
 
-    reward = MultiReward.from_dict(
+    reward = MultiReward.from_mapping(
         {"unified_reward_video": 1.0},
         device="cuda:0",
         parking="cumem",
@@ -676,7 +676,7 @@ def test_multiple_gpu_reward_actors_divide_the_owned_bundle() -> None:
     from vrl.rewards.ray import RayRewardPlacement
 
     placement = RolePlacement(object(), (2,), (3,))
-    reward = MultiReward.from_dict(
+    reward = MultiReward.from_mapping(
         {"aesthetic": 1.0, "pickscore": 1.0, "ocr": 0.0},
         device="cuda:3",
         inference_configs={
@@ -710,7 +710,7 @@ def test_every_model_reward_can_run_as_a_ray_actor(tmp_path, name, device, kwarg
     from vrl.ray.placement import RolePlacement
     from vrl.rewards.ray import RayRewardPlacement, RayRewardScorer
 
-    reward = MultiReward.from_dict(
+    reward = MultiReward.from_mapping(
         {name: 1.0},
         device=device,
         reward_kwargs={name: kwargs},

@@ -641,7 +641,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                     park_model=lifecycle is not None and lifecycle.park_rollout_for_train,
                 )
             )
-        pair = AlgorithmEvaluatorPair.from_configs(
+        pair = AlgorithmEvaluatorPair.from_built(
             built,
             scheduler=bundle.scheduler,
         )

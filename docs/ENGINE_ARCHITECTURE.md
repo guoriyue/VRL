@@ -260,7 +260,7 @@ classDiagram
   retained experiment output. File-only models declare `input_artifact_format`
   and receive temporary files owned by the scoring process.
 - **`MultiReward`** — weighted composite built by the registry
-  (`MultiReward.from_dict`, called from `vrl/scripts/common/factory.py`);
+  (`MultiReward.from_mapping`, called from `vrl/scripts/common/factory.py`);
   aggregates both capability flags with `all()` across components (one
   blocking or unverified component makes the composite blocking/unverified)
   and fans lifecycle calls out to children with retryable teardown.

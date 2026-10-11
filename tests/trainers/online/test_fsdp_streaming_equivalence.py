@@ -98,7 +98,7 @@ def _trainer(
     # materialize weights receives the primary rank's through the strategy.
     torch.manual_seed(0)
     bundle = stack.trainer_bundle(materialize_weights=strategy.materialize_weights)
-    pair = AlgorithmEvaluatorPair.from_configs(
+    pair = AlgorithmEvaluatorPair.from_built(
         built,
         scheduler=getattr(bundle, "scheduler", None),
     )

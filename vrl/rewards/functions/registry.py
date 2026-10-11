@@ -5,7 +5,7 @@ Ported from the multi_score() pattern in flow_grpo/rewards.py.
 This module is the construction boundary between YAML config and reward code:
 ``_REWARD_REGISTRY`` maps each config-facing component name to its thin
 ``RewardFunction`` class under ``vrl.rewards.functions``, and
-``MultiReward.from_dict`` (called from ``vrl/scripts/common/factory.py`` with
+``MultiReward.from_mapping`` (called from ``vrl/scripts/common/factory.py`` with
 the resolved ``reward.components`` / ``reward.kwargs``) instantiates them.
 The heavyweight scoring networks are never built here — each function only
 pins a ``model_factory`` dotted path that the scorer resolves later, on the
@@ -41,7 +41,7 @@ def get_reward(name: str) -> type[ModelRewardFunction]:
 
     The builtins register lazily (importing every reward module is the cost),
     so a first lookup from a config gate populates the registry itself instead
-    of depending on ``MultiReward.from_dict`` having run earlier.
+    of depending on ``MultiReward.from_mapping`` having run earlier.
     """
     if not _REWARD_REGISTRY:
         _register_builtins()
@@ -105,7 +105,7 @@ class MultiReward(RewardFunction):
 
     Explicit local scoring (training runs instead supply resolved placement)::
 
-        reward_fn = MultiReward.from_dict(
+        reward_fn = MultiReward.from_mapping(
             {"ocr": 1.0, "aesthetic": 0.3},
             device="cuda",
             inference_configs={
@@ -161,7 +161,7 @@ class MultiReward(RewardFunction):
             raise RewardCleanupError("reward shutdown failures", errors)
 
     @classmethod
-    def from_dict(
+    def from_mapping(
         cls,
         score_dict: dict[str, float],
         device: str = "cuda",

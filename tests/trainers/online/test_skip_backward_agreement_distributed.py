@@ -324,7 +324,7 @@ def _rank_trainer(monkeypatch: pytest.MonkeyPatch, root: Path, *, samples: int) 
         device=torch.device("cpu"),
     )
     strategy = SingleProcessStrategy(context)
-    pair = AlgorithmEvaluatorPair.from_configs(
+    pair = AlgorithmEvaluatorPair.from_built(
         built,
         scheduler=getattr(bundle, "scheduler", None),
     )

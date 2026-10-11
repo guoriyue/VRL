@@ -19,9 +19,10 @@ from __future__ import annotations
 import ast
 import re
 import sys
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+from vrl.utils.artifacts import repo_root
+
+REPO_ROOT = repo_root()
 
 # A flag whose dest is read through **vars(args) / getattr(args, name) rather
 # than a literal args.<dest> cannot be proven live by grep. Declare those here

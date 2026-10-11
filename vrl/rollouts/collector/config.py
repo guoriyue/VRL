@@ -80,7 +80,7 @@ class RolloutCollectorConfig:
         return cls(
             request_sampling=request_sampling,
             samples_per_generation_batch=samples_per_generation_batch,
-            denoise=DenoiseRequestOptions.from_sections(rollout, sampling),
+            denoise=DenoiseRequestOptions.from_root(root),
             trajectory_storage=trajectory_storage,
         )
 

@@ -26,6 +26,7 @@ from vrl.scripts.data import (
     video_world,
     videophy_i2v,
 )
+from vrl.scripts.data.common import default_cache_dir
 from vrl.utils.artifacts import RootedPaths
 
 # init-dirs CLI: dataset -> directories to create under the data root. This is the
@@ -38,8 +39,6 @@ _INIT_DIRS_BY_DATASET = {
 
 
 def _cmd_init_dirs(args: argparse.Namespace) -> None:
-    from vrl.utils.artifacts import repo_root
-
     data_root = RootedPaths.data_root(args.data_root).root
     created: list[Path] = []
     for rel in _INIT_DIRS_BY_DATASET[args.dataset]:
@@ -47,8 +46,8 @@ def _cmd_init_dirs(args: argparse.Namespace) -> None:
         path.mkdir(parents=True, exist_ok=True)
         created.append(path)
     if args.dataset == "pickapic":
-        # pickapic also caches HF downloads under the repo's data/ tree.
-        cache = repo_root() / "data" / "cache" / "hf"
+        # The directory pickapic's --cache-dir defaults to.
+        cache = default_cache_dir()
         cache.mkdir(parents=True, exist_ok=True)
         created.append(cache)
     print(

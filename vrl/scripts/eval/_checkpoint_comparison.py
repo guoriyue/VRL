@@ -20,7 +20,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.precision import PrecisionPolicy
-from vrl.config.schema import parse_config
+from vrl.config.schema import RewardConfig, parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.scripts.eval._device import resolve_eval_device, resolve_eval_dtype
@@ -120,7 +120,7 @@ def reward_worker_config(
     whole GPU; parking lives in distributed.resources, never in this block.
     """
 
-    worker_config = RewardRuntimeConfig.from_cfg(cfg).worker_config(
+    worker_config = RewardRuntimeConfig.from_section(RewardConfig.from_cfg(cfg)).worker_config(
         component, default_reward_model_name=default_reward_model_name
     )
     worker_config["device"] = device

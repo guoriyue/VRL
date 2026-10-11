@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from vrl.scripts.data.common import emit
-from vrl.scripts.data.common import repo_root as _repo_root
+from vrl.utils.artifacts import repo_root as _repo_root
 
 
 def register(subparsers: Any) -> None:
@@ -59,7 +59,7 @@ class ExperimentDataFiles:
     files: tuple[DataFile, ...]
 
     @classmethod
-    def from_data(cls, data: Mapping[str, Any], *, repo_root: Path) -> ExperimentDataFiles:
+    def from_mapping(cls, data: Mapping[str, Any], *, repo_root: Path) -> ExperimentDataFiles:
         """Read the config ``data`` section and look at the manifests under ``repo_root``."""
 
         from vrl.config.data import manifest_sources
@@ -163,7 +163,7 @@ def _cmd_for_experiment(args: argparse.Namespace) -> None:
     from vrl.config.loading import load_config
 
     cfg = load_config(f"experiment/{args.experiment}", overrides=list(args.override))
-    plan = ExperimentDataFiles.from_data(cfg.get("data", {}), repo_root=_repo_root())
+    plan = ExperimentDataFiles.from_mapping(cfg.get("data", {}), repo_root=_repo_root())
     emit({"experiment": args.experiment, **plan.to_dict()})
     if args.run and not plan.ready:
         plan.run_missing()

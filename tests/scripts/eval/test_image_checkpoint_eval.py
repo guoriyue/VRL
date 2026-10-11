@@ -310,7 +310,7 @@ def test_reward_batches_are_blinded_consistently_across_seeds(generation, monkey
         return FakeReward()
 
     monkeypatch.setattr(
-        "vrl.rewards.functions.registry.MultiReward.from_dict",
+        "vrl.rewards.functions.registry.MultiReward.from_mapping",
         build_reward,
     )
     scored = asyncio.run(checkpoint_eval.score_images(archive.plan, rows, archive.directory))

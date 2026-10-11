@@ -433,7 +433,7 @@ class GenerationWorkerCore:
         memory = getattr(batch_output, "memory", None)
         if not isinstance(memory, Mapping):
             return None
-        reading = BatchMemoryReading.from_metrics(memory)
+        reading = BatchMemoryReading.from_mapping(memory)
         # Memory calibration has a first-class wire field; do not serialize the
         # binding's raw producer mapping a second time inside the batch payload.
         batch_output.memory = None

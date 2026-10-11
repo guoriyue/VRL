@@ -196,8 +196,8 @@ D 批的难点：trainer 测试用 `nn.Linear(1, 1)` 策略和手造 batch 断�
 | generation | `merge_generation_batches` / `forward_plan` / `forward_plan_pipelined` / `sort_and_validate_batch_coverage` / finalizer `merge_request` 的 `sample_rows`；Ray 执行器不再把行随请求发给 finalizer | `request.sample_rows()`（确定性，contracts 用例钉住） |
 | generation | `GenerationWorkerCore` 的 gatherer（rank 只产 batch，从不合并）和执行器"是否实现 forward_batch/merge"的可调用检查 | 合并在 driver 侧的注册表 gatherer |
 | rollouts / rewards | `ContinuousRolloutConsumer`/`Producer`/`collect_iteration` 只转交的参数；`RolloutCollector` 构造改为 `from_family(entry, …)`；`RayRewardScorer` 三个常量化的超时 / CPU 参数；`RewardFunctionRuntime(reward_function)`；协调器的 `weights_initialized`；预检改调 `reward.validate_parking()` | 对象自己持有 |
-| trainer / strategy / data | 流式更新 helper 的 `batch_plan`；`OnlineTrainer` 的 `ref_model`（KL 项或契约要求时策略即参考）与 `device`（恒等于 `strategy.context.device`）；回放选择 helper 的 config 字段参数；`init_training_process_group` 的 backend；策略各自建 collectives；FSDP mesh 词表由 schema 持有；`ContextParallelStrategy` 读 `context.cp_size`；`select_trainable_state`、`ImageCaptionPromptDataset.from_config`、`DatasetFileReport.artifact_count` | trainer config / strategy context / 模块自身 |
-| scripts | `AlgorithmEvaluatorPair.from_configs` 的 `family_entry`（`built.family`）；`OnlineRecipeRun.initialize_metrics` 的 `training_context` / `output_dir`；`_load_sft_latents_from_config(built, *, sft_weight)` | run 持有的 strategy / trainer config |
+| trainer / strategy / data | 流式更新 helper 的 `batch_plan`；`OnlineTrainer` 的 `ref_model`（KL 项或契约要求时策略即参考）与 `device`（恒等于 `strategy.context.device`）；回放选择 helper 的 config 字段参数；`init_training_process_group` 的 backend；策略各自建 collectives；FSDP mesh 词表由 schema 持有；`ContextParallelStrategy` 读 `context.cp_size`；`select_trainable_state`、`ImageCaptionPromptDataset.from_section`、`DatasetFileReport.artifact_count` | trainer config / strategy context / 模块自身 |
+| scripts | `AlgorithmEvaluatorPair.from_built` 的 `family_entry`（`built.family`）；`OnlineRecipeRun.initialize_metrics` 的 `training_context` / `output_dir`；`_load_sft_latents_from_config(built, *, sft_weight)` | run 持有的 strategy / trainer config |
 | checkpointing | `restore_training_checkpoint` / `restore_model_checkpoint` 两个 None 容忍的转发包装；所有生产调用方本来就先判空或手持已加载的检查点 | `TrainingCheckpoint.restore_training` / `.restore_model` |
 | rewards | `HttpRewardScorer` 的双模构造（URL + 关键字，或 `RewardInferenceConfig` 外加"不许同时传关键字"的守卫） | 单一构造器 + `from_config`（schema 已校验 origin 和 `expected_model`） |
 | data | `PromptExample.references`（进 reward metadata 但没有任何 reward 读它） | 删除 |
@@ -267,7 +267,7 @@ MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_prefl
 
 | 原函数 | 现在 |
 |---|---|
-| `bootstrap.resolve_experiment_dataset_plan` → dict | `ExperimentDataFiles.from_data` + `DataFile`（角色、路径、在不在、行数、该有几行、`fetch_command`），`to_dict` / `run_missing` |
+| `bootstrap.resolve_experiment_dataset_plan` → dict | `ExperimentDataFiles.from_mapping` + `DataFile`（角色、路径、在不在、行数、该有几行、`fetch_command`），`to_dict` / `run_missing` |
 | `build_configs(cfg)` | `BuiltConfigs.from_cfg(cfg)`；`vrl.config` 包不再转发 |
 | `resolve_online_run(cfg)` / `resolve_model(...)` | `ResolvedOnlineRun.from_cfg` / `ResolvedModel.from_root` |
 | `resolve_data_loader` | 并入 `DataConfig` 的校验器 |
@@ -384,3 +384,59 @@ MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_prefl
 判断标准（按 C++ 的 static 成员函数）：函数并进类 `T`，要么它是具名构造函数——返回恰好一个 `T`，且普通构造表达不了（集体通信、字段由输入推导）；要么它要用 `T` 的不变量或内部表示。返回容器、`None`，或装的是别的模块的规则，就留在模块里当函数：Python 的模块就是命名空间。上表两项是具名构造函数。`build_adapter_exports`（返回 `dict | None`，决定的是检查点目录布局）和 `build_reward_model_definitions`（返回列表，写死的是这份 SANA 报告用哪两个 reward）按这条标准不并，留在 checkpointing 和报告模块里。
 
 留下的 build_* / validate_*（80 个里的其余）：19 个脚本的 `build_parser` 是 CLI 入口约定；`build_*_replay_runtime_bundle` 是注册表按字符串引用的 family 钩子；`build_strategy` / `build_reward_scorer` / `build_optimizer` 按 kind 分发到多个类；`build_fsdp_mesh` / `build_context_parallel_mesh` 产出 torch 的 DeviceMesh；其余产出 dict / list / str，没有对应的类；`validate_*` 各检查一件自己的事，读的是文件或张量而不是某个对象的字段。两处同一角色两个名字的：`encode_targets` 和 `full_sequence_probe` 叫 `_build_arg_parser`，其它 19 个脚本叫 `build_parser`；改名要你定。
+
+## 18. 构造器后缀按输入类型（2026-10-10）
+
+把所有 `from_*` 按第一个参数的类型分组，同一种输入只留一个后缀：
+
+| 输入 | 后缀 | 这次改的 |
+|---|---|---|
+| `DictConfig` | `from_cfg` | `RewardRuntimeConfig.from_cfg` 原来同时收 `DictConfig` 和 `RewardConfig`、函数体里按类型分支 → `from_section(reward: RewardConfig)`；手里只有 `DictConfig` 的 eval 脚本先 `RewardConfig.from_cfg(cfg)` |
+| `RootConfig` | `from_root` | `DenoiseRequestOptions.from_sections(rollout, sampling)` → `from_root(root)` |
+| 已解析的 `*Config` 对象 | `from_section`（`PrecisionPolicy` 已有 61 处） | `ContinuousRolloutSchedule` / `ImageCaptionPromptDataset` / `HttpRewardScorer` / `ProfilerActivitySelection` 的 `from_config` |
+| `BuiltConfigs` | `from_built` | `AlgorithmEvaluatorPair.from_configs` |
+| `argparse.Namespace` | `from_args` | `HealthGateConfig.from_cli` |
+| 原始 mapping | `from_mapping` | `ExperimentDataFiles.from_data`、`BatchMemoryReading.from_metrics`、`RewardRuntimeLaunchContract.from_component_config`、`MultiReward.from_dict` |
+
+删掉的：`TrajectoryStoragePolicy.from_config` 在生产代码里没有调用方，`rollout.trajectory_storage` 由 schema 直接解析成这个 dataclass；它的两个测试改为走 `RolloutConfig.model_validate`，测的是生产路径真正拒绝的那三种坏值。
+
+没动的：按文件种类命名的 `from_path` / `from_yaml` / `from_capture` / `from_manifest` / `from_video_world_manifest` / `from_file`（后缀说的是文件是什么）；`TeaCacheConfig.from_sampling` 收的是 `sampling.teacache` 的原值（bool 或 mapping）。
+
+## 19. 只读一个对象字段的自由函数（2026-10-10）
+
+按形状扫：模块级函数，第一个参数的类型是 vrl 里定义的类，函数体只读它的字段。29 个命中，处置：
+
+- 改了：`format_distributed_resource_plan(resolved)` 只读 `ResolvedDistributedResources` 的字段、纯格式化 → 它的 `__str__`（docstring 本来就写“给日志和报错看的紧凑一行”），两处日志改为 `logger.info("%s", resources)`。
+- 有副作用的命令，不挂到数据类上：`init_rank_process_group(spec)`（初始化进程组）、`build_fsdp_mesh(context)` / `build_context_parallel_mesh`（建 DeviceMesh）。按“配置是数据、命令是调用”的划分，留在拥有这段生命周期的模块里。
+- 框架回调：`tensor_to_bytes` / `tensor_from_bytes` 是注册给 Ray 的序列化器（反序列化器必须是普通模块函数，driver 端才不用注册）；`_candidate_sort_key` 是 `sorted(key=...)` 回调。
+- 跨多个配置节的规则：`compile_conflicts(root)`、`validate_guarded_rollout_drift(root, precision)` 读 model / actor / distributed / sampling 多节，放在规则模块，不挂到整棵 `RootConfig` schema 上。
+- 其余都还读别的参数（加载器、日志、按 kind 分发的工厂、family 自己的加载 glue），或是 §10 决定保留的资源解析阶段。
+
+## 20. 同一种读法只写一份：diffusers config 的键（2026-10-10）
+
+转发形状扫描按名字合计引用数，两个同名的私有函数会互相掩盖。按文件重数后，“config 是 dict 就 `.get`、否则 `getattr`”这个读法写了三遍：
+
+| 原来 | 现在 |
+|---|---|
+| wan_2_1 `WanI2VDiffusersModel._encode_image_embeds` 读 `image_dim` 时内联了一遍这两个分支 | 调同文件的 `_config_value(config, "image_dim")`；回退到 PEFT 基模型 config 的判断不变 |
+| `sana_inference._config_value`：先 `hasattr(config, "get")` 再二选一 | 删掉。`require_scheduler` 收到的永远是真实的 diffusers scheduler（生产加载 `DPMSolverMultistepScheduler`，测试也构造真实类），config 是 `FrozenDict`，直接 `config.get(key)`；`getattr` 分支从未执行 |
+
+wan 的 `_config_value` 留着：它的测试替身 pipeline 的 config 既有 dict 也有 `SimpleNamespace`，两种读法都在用。
+
+## 21. 仓库根只算一处（2026-10-10）
+
+§13 按根收口时处理了用户路径、数据根和 Hub。仓库根虽然有 `vrl.utils.artifacts.repo_root()`，仍有 5 个模块 6 处自己用 `Path(__file__).resolve().parents[N]` 现算，N 跟着文件深度走，文件一挪就会悄悄指错：
+
+| 位置 | 现在 |
+|---|---|
+| causvid `_resolve_source_root` 的默认 `third_party/CausVid`、`_resolve_configured_path` 的仓库相对回退 | `repo_root() / ...` |
+| magi_1 `normalize_magi_1_model_build` 的相对 `python_executable` | `repo_root() / path` |
+| `TrainingRunTrace` 记录代码快照的 git 目录 | `repo_root()` |
+| perf `correction_ablation` 子进程的 cwd 和 `PYTHONPATH` | `repo_root()` |
+| lint `dead_flags` 的扫描根 | `REPO_ROOT = repo_root()` |
+
+同类的另外一处：`vrl.scripts.data.common` 为了“让数据脚本继续从 common 导入”再导出 `repo_root`，两个使用方（bootstrap、danbooru config）改为从所有者导入，再导出删除。
+
+`vrl/scripts/data/setup.py` 的 init-dirs 为 pickapic 建缓存目录时又拼了一遍 `repo_root() / "data" / "cache" / "hf"`，这个目录必须与 pickapic `--cache-dir` 的默认值相同，改为调 `default_cache_dir()`。
+
+替换前逐个核对过每个 `parents[N]` 与 `repo_root()` 是同一目录，行为不变。唯一可见的差别：`default_cache_dir()` 多做一次 `resolve()`，只有 `data` 是符号链接时，init-dirs 打印的路径会显示链接目标，建出的目录不变。`tests/conftest.py` 用 `os.path` 算仓库根是为了在导入 vrl 之前设置 `sys.path`，不在此列。

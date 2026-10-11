@@ -637,7 +637,7 @@ async def score_images(
     kwargs = {
         name: dict(plan.reward["kwargs"].get(name) or {}) for name in plan.reward["components"]
     }
-    deployments = RewardRuntimeConfig.from_cfg(
+    deployments = RewardRuntimeConfig.from_section(
         RewardConfig.model_validate(plan.reward),
     ).inference_configs
     # Generation is complete before evaluation scores saved images. Local
@@ -650,7 +650,7 @@ async def score_images(
     logger.info(
         "Offline reward deployments: %s", {name: cfg.kind for name, cfg in deployments.items()}
     )
-    scorer = MultiReward.from_dict(
+    scorer = MultiReward.from_mapping(
         plan.reward["components"],
         device=plan.reward_device,
         reward_kwargs=kwargs,

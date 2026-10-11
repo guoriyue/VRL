@@ -41,6 +41,7 @@ import torch
 
 from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.loading import load_config
+from vrl.config.schema import RewardConfig
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.trainers.data.prompts import load_prompt_dataset_index
@@ -201,7 +202,9 @@ def _score_kling(
 ) -> dict[str, dict[str, float]]:
     from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 
-    worker_config = RewardRuntimeConfig.from_cfg(load_config(kling_config)).worker_config(
+    worker_config = RewardRuntimeConfig.from_section(
+        RewardConfig.from_cfg(load_config(kling_config))
+    ).worker_config(
         "kling_video_reward",
         default_reward_model_name="KlingTeam/VideoReward@main",
     )

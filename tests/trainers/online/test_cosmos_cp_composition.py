@@ -172,7 +172,7 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
         trace.watch(runtime, "generate", "generate")
         trace.watch(runtime, "update_weights", "update_weights")
         collector_config = RolloutCollectorConfig.from_root(built.root)
-        pair = AlgorithmEvaluatorPair.from_configs(
+        pair = AlgorithmEvaluatorPair.from_built(
             built,
             scheduler=bundle.scheduler,
         )

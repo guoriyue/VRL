@@ -77,7 +77,7 @@ class HttpRewardScorer:
         self._closed = False
 
     @classmethod
-    def from_config(cls, service: RewardInferenceConfig) -> HttpRewardScorer:
+    def from_section(cls, service: RewardInferenceConfig) -> HttpRewardScorer:
         """Connect to the operator-owned service a ``kind=http`` section names.
 
         The section's own ``__post_init__`` already normalized the origin and

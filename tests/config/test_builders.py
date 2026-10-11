@@ -9,6 +9,7 @@ from omegaconf import OmegaConf
 import vrl.config.builders as builders
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
+from vrl.config.schema import RewardConfig
 
 
 def test_build_rejects_resume_with_a_warm_start_adapter() -> None:
@@ -48,21 +49,23 @@ def test_online_build_has_named_reward_and_trainer_fields() -> None:
 
 
 def test_reward_runtime_config_normalizes_every_component_and_derives_transport() -> None:
-    reward = builders.RewardRuntimeConfig.from_cfg(
-        OmegaConf.create(
-            {
-                "reward": {
-                    "components": {"remote": 0.0, "local": 1.0},
-                    "inference": {
-                        "remote": {
-                            "kind": "http",
-                            "endpoint": "http://127.0.0.1:8300",
-                            "expected_model": "remote-model",
+    reward = builders.RewardRuntimeConfig.from_section(
+        RewardConfig.from_cfg(
+            OmegaConf.create(
+                {
+                    "reward": {
+                        "components": {"remote": 0.0, "local": 1.0},
+                        "inference": {
+                            "remote": {
+                                "kind": "http",
+                                "endpoint": "http://127.0.0.1:8300",
+                                "expected_model": "remote-model",
+                            },
                         },
                     },
                 },
-            },
-        ),
+            ),
+        )
     )
 
     assert reward.weights == {"remote": 0.0, "local": 1.0}
@@ -70,21 +73,23 @@ def test_reward_runtime_config_normalizes_every_component_and_derives_transport(
     assert set(reward.kwargs) == {"remote", "local"}
     assert set(reward.inference_configs) == {"remote", "local"}
     assert reward.all_external_inference is False
-    external_only = builders.RewardRuntimeConfig.from_cfg(
-        OmegaConf.create(
-            {
-                "reward": {
-                    "components": {"remote": 0.0},
-                    "inference": {
-                        "remote": {
-                            "kind": "http",
-                            "endpoint": "http://127.0.0.1:8300",
-                            "expected_model": "remote-model",
+    external_only = builders.RewardRuntimeConfig.from_section(
+        RewardConfig.from_cfg(
+            OmegaConf.create(
+                {
+                    "reward": {
+                        "components": {"remote": 0.0},
+                        "inference": {
+                            "remote": {
+                                "kind": "http",
+                                "endpoint": "http://127.0.0.1:8300",
+                                "expected_model": "remote-model",
+                            },
                         },
                     },
                 },
-            },
-        ),
+            ),
+        )
     )
     assert external_only.all_external_inference is True
 
@@ -100,7 +105,7 @@ def test_reward_builder_rejects_kwargs_without_a_component() -> None:
     )
 
     with pytest.raises(ValueError, match=r"reward\.kwargs\.aestheic"):
-        builders.RewardRuntimeConfig.from_cfg(cfg)
+        builders.RewardRuntimeConfig.from_section(RewardConfig.from_cfg(cfg))
 
 
 def test_offline_dpo_uses_the_same_build_result_without_online_state() -> None:

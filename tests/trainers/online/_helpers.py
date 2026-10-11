@@ -187,7 +187,7 @@ def real_trainer(
     built = stack.built
     bundle = stack.trainer_bundle()
     strategy = strategy if strategy is not None else SingleProcessStrategy()
-    pair = AlgorithmEvaluatorPair.from_configs(
+    pair = AlgorithmEvaluatorPair.from_built(
         built,
         scheduler=getattr(bundle, "scheduler", None),
     )

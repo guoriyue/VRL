@@ -14,7 +14,7 @@ from omegaconf import DictConfig
 from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
-from vrl.config.schema import RootConfig, parse_config
+from vrl.config.schema import RewardConfig, RootConfig, parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
@@ -335,7 +335,7 @@ def _score_generated_videos(
     *,
     score_key: str,
 ) -> list[dict[str, Any]]:
-    worker_config = RewardRuntimeConfig.from_cfg(cfg).worker_config(
+    worker_config = RewardRuntimeConfig.from_section(RewardConfig.from_cfg(cfg)).worker_config(
         "kling_video_reward",
         default_reward_model_name="KlingTeam/VideoReward@main",
     )

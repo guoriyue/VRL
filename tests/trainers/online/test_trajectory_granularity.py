@@ -146,7 +146,7 @@ def _trainer(
     built = stack.built
     bundle = stack.trainer_bundle()
     strategy = SingleProcessStrategy()
-    algorithm = AlgorithmEvaluatorPair.from_configs(
+    algorithm = AlgorithmEvaluatorPair.from_built(
         built,
         scheduler=getattr(bundle, "scheduler", None),
     ).algorithm

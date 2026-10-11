@@ -15,7 +15,7 @@ from vrl.algorithms.grpo.continuous import (
 from vrl.config.builders import BuiltConfigs, RewardRuntimeConfig
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
-from vrl.config.schema import parse_config
+from vrl.config.schema import RewardConfig, parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.ray.resources import ResourcePlan
 from vrl.rollouts.collector.config import RolloutCollectorConfig
@@ -28,16 +28,18 @@ def _built_reward(
     inference: dict[str, dict] | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        reward=RewardRuntimeConfig.from_cfg(
-            OmegaConf.create(
-                {
-                    "reward": {
-                        "components": weights,
-                        "kwargs": kwargs,
-                        "inference": inference or {},
+        reward=RewardRuntimeConfig.from_section(
+            RewardConfig.from_cfg(
+                OmegaConf.create(
+                    {
+                        "reward": {
+                            "components": weights,
+                            "kwargs": kwargs,
+                            "inference": inference or {},
+                        },
                     },
-                },
-            ),
+                ),
+            )
         ),
     )
 
@@ -57,7 +59,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
     collector_config = RolloutCollectorConfig.from_root(parse_config(cfg))
     built = BuiltConfigs.from_cfg(cfg)
 
-    pair = AlgorithmEvaluatorPair.from_configs(
+    pair = AlgorithmEvaluatorPair.from_built(
         built,
         scheduler=object(),
     )
@@ -92,7 +94,7 @@ def test_diffusion_factory_accepts_each_kind_exact_config_type(
         ],
     )
 
-    pair = AlgorithmEvaluatorPair.from_configs(
+    pair = AlgorithmEvaluatorPair.from_built(
         BuiltConfigs.from_cfg(cfg),
         scheduler=object(),
     )
@@ -111,7 +113,7 @@ def test_nft_factory_passes_reward_weights_to_component_advantage_protocol() -> 
             "reward.components.locality_keep=0.3",
         ],
     )
-    pair = AlgorithmEvaluatorPair.from_configs(
+    pair = AlgorithmEvaluatorPair.from_built(
         BuiltConfigs.from_cfg(cfg),
     )
     components = {
@@ -146,7 +148,7 @@ def _chunk_config(model_preset: str, *overrides: str):
 def test_chunk_autoregressive_factory_builds_grouped_grpo_evaluator() -> None:
     cfg = _chunk_config("causvid=wan_1_3b_ar")
 
-    pair = AlgorithmEvaluatorPair.from_configs(
+    pair = AlgorithmEvaluatorPair.from_built(
         BuiltConfigs.from_cfg(cfg),
     )
 
@@ -160,7 +162,7 @@ def test_generation_only_chunk_family_fails_before_algorithm_construction() -> N
     del cfg.sampling["guidance_scale"]
 
     with pytest.raises(RuntimeError, match=r"generation-only.*no trainable actions"):
-        AlgorithmEvaluatorPair.from_configs(
+        AlgorithmEvaluatorPair.from_built(
             BuiltConfigs.from_cfg(cfg),
         )
 
@@ -187,7 +189,7 @@ def test_chunk_autoregressive_factory_rejects_undefined_algorithm_semantics(
     )
 
     with pytest.raises(ValueError, match=message):
-        AlgorithmEvaluatorPair.from_configs(
+        AlgorithmEvaluatorPair.from_built(
             BuiltConfigs.from_cfg(cfg),
         )
 
@@ -196,7 +198,7 @@ def test_chunk_autoregressive_factory_rejects_non_fp32_transition_math() -> None
     cfg = _chunk_config("causvid=wan_1_3b_ar", "precision.denoise_math.dtype=bf16")
 
     with pytest.raises(ValueError, match="exact fp32 Gaussian re-noise"):
-        AlgorithmEvaluatorPair.from_configs(
+        AlgorithmEvaluatorPair.from_built(
             BuiltConfigs.from_cfg(cfg),
         )
 
@@ -207,7 +209,7 @@ def test_chunk_autoregressive_factory_rejects_full_sequence_sft_regularizer() ->
     built.algorithm.sft_weight = 0.1
 
     with pytest.raises(ValueError, match=r"grouped causal-chunk replay.*sft_weight"):
-        AlgorithmEvaluatorPair.from_configs(
+        AlgorithmEvaluatorPair.from_built(
             built,
         )
 
@@ -394,7 +396,7 @@ def test_reward_config_rejects_yaml_lifecycle_override(component_kwargs) -> None
     )
 
     with pytest.raises(ValueError, match="sleep_offload is topology-derived"):
-        RewardRuntimeConfig.from_cfg(cfg)
+        RewardRuntimeConfig.from_section(RewardConfig.from_cfg(cfg))
 
 
 def test_reward_device_and_parking_derive_from_resource_topology() -> None:

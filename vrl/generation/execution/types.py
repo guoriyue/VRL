@@ -119,7 +119,7 @@ class BatchMemoryReading:
 
         The half of a reading that can only be measured before the denoise loop
         starts; the executor completes the record with the two per-phase peaks
-        and the sample count, and ``from_metrics`` reassembles it. The values
+        and the sample count, and ``from_mapping`` reassembles it. The values
         must be captured before the loop changes allocator occupancy.
         """
 
@@ -136,7 +136,7 @@ class BatchMemoryReading:
         }
 
     @classmethod
-    def from_metrics(cls, raw: Mapping[str, Any]) -> BatchMemoryReading | None:
+    def from_mapping(cls, raw: Mapping[str, Any]) -> BatchMemoryReading | None:
         """Normalize the binding-owned memory mapping once at the worker boundary."""
 
         names = tuple(item.name for item in fields(cls))

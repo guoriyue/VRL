@@ -39,7 +39,7 @@ async def test_region_location_and_extra_words_cannot_get_substring_full_credit(
     swapped = page[::-1].copy()
     extra = page.copy()
     extra[:20] = 120
-    reward = MultiReward.from_dict(
+    reward = MultiReward.from_mapping(
         {"text_regions": 1.0},
         device="cuda",
         reward_kwargs={"text_regions": {"worker_config": {"engine": Engine()}}},
@@ -284,7 +284,7 @@ async def test_english_word_reward_charges_neighbor_damage_without_punishing_ocr
         },
         "text_focus": {"region_id": "a", "must_contain": "midnight", "must_not_contain": "sunset"},
     }
-    reward = MultiReward.from_dict(
+    reward = MultiReward.from_mapping(
         {"text_regions": 1.0},
         device="cpu",
         reward_kwargs={

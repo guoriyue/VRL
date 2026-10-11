@@ -106,7 +106,7 @@ class RewardRuntimeConfig:
     ) -> Any:
         """Build the reward function on ``device`` under ``parking``.
 
-        ``MultiReward.from_dict`` validates the components and constructs. A
+        ``MultiReward.from_mapping`` validates the components and constructs. A
         GPU-sharing reward parks its model memory completely; a dedicated
         reward (``parking`` None) stays resident; HTTP components own their
         deployment.
@@ -115,7 +115,7 @@ class RewardRuntimeConfig:
         self.require_online_training()
         from vrl.rewards.functions.registry import MultiReward
 
-        return MultiReward.from_dict(
+        return MultiReward.from_mapping(
             self.weights,
             device=device,
             reward_kwargs=self.kwargs,
@@ -145,15 +145,14 @@ class RewardRuntimeConfig:
             )
 
     @classmethod
-    def from_cfg(cls, cfg: DictConfig | RewardConfig) -> RewardRuntimeConfig:
-        """Resolve one public reward section into its runtime config.
+    def from_section(cls, reward: RewardConfig) -> RewardRuntimeConfig:
+        """Resolve the parsed reward section into its runtime config.
 
         Zero-weight components remain present so they can be scored and logged
         as observation-only safeguards without changing the optimization
         reward.
         """
 
-        reward = cfg if isinstance(cfg, RewardConfig) else RewardConfig.from_cfg(cfg)
         weights = {name: float(weight) for name, weight in reward.components.items()}
         unknown_kwargs = sorted(set(reward.kwargs) - set(weights))
         if unknown_kwargs:
@@ -236,7 +235,7 @@ class BuiltConfigs:
         algorithm = root.algorithm.hyperparameters
         is_offline_dpo = root.algorithm.kind == "diffusion_dpo"
         trainer = None if is_offline_dpo else TrainerConfig.from_root(root)
-        reward = RewardRuntimeConfig.from_cfg(root.reward) if root.reward is not None else None
+        reward = RewardRuntimeConfig.from_section(root.reward) if root.reward is not None else None
         if not is_offline_dpo:
             if reward is None:
                 raise ValueError("online recipe requires a reward section")

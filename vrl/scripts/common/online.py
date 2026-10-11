@@ -23,10 +23,7 @@ from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
-from vrl.ray.resources import (
-    ResourcePlan,
-    format_distributed_resource_plan,
-)
+from vrl.ray.resources import ResourcePlan
 from vrl.rewards import RewardRuntime
 from vrl.rewards.ray import RayRewardPlacement
 from vrl.rewards.runtime import RewardFunctionRuntime
@@ -775,7 +772,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     family_entry.validate_gpus_per_engine(resources.rollout_gpus_per_engine)
     if resources.rollout_num_engines < 1:
         raise ValueError("distributed.resources.rollout.num_engines must be >= 1")
-    logger.info(format_distributed_resource_plan(resources))
+    logger.info("%s", resources)
     # Resolve the training process identity (rank/device) and fail-fast on
     # strategies the online recipe can't yet drive end-to-end, before building the
     # model / Ray runtime.
@@ -929,7 +926,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
                 ray_placement=reward_placement,
             ),
         )
-        algorithm_and_evaluator = AlgorithmEvaluatorPair.from_configs(
+        algorithm_and_evaluator = AlgorithmEvaluatorPair.from_built(
             built,
             scheduler=scheduler,
         )

@@ -15,7 +15,7 @@ from vrl.rollouts.stats import RolloutStats
 class ContinuousRolloutSettings:
     """The continuous rollout tuning that threads from config down to the runtime.
 
-    One object carries the resolved settings through ``ContinuousRolloutSchedule.from_config``
+    One object carries the resolved settings through ``ContinuousRolloutSchedule.from_section``
     -> ``ContinuousRolloutThread`` ->
     ``_ContinuousRolloutController`` so adding a knob touches one field here, not four
     repeated signatures. Deliberately has NO defaults: ``ContinuousRolloutConfig``

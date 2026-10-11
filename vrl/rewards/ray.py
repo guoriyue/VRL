@@ -203,7 +203,7 @@ class RayRewardScorer:
         placement: RayRewardPlacement | None = None,
         timeout_s: float = 1800.0,
     ) -> None:
-        self._launch = RewardRuntimeLaunchContract.from_component_config(worker_config)
+        self._launch = RewardRuntimeLaunchContract.from_mapping(worker_config)
         self._cuda = self._launch.device.startswith("cuda")
         if self._launch.device not in ("", "cpu") and not self._cuda:
             raise ValueError("Ray rewards support only CPU or planner-owned CUDA devices")

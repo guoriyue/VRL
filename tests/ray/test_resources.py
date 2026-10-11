@@ -9,7 +9,6 @@ from vrl.config.schema import parse_config
 from vrl.ray.placement import BundleLayout
 from vrl.ray.resources import (
     ResourcePlan,
-    format_distributed_resource_plan,
 )
 
 
@@ -212,7 +211,7 @@ def test_gpus_per_engine_derives_engine_count() -> None:
     assert resolved.rollout_devices == (1, 2, 3, 4)
     assert resolved.rollout_num_engines == 2
     assert resolved.rollout_gpus_per_engine == 2
-    assert "gpus_per_engine=2" in format_distributed_resource_plan(resolved)
+    assert "gpus_per_engine=2" in str(resolved)
 
 
 def test_gpus_per_engine_requires_divisible_gpu_count() -> None:
@@ -590,7 +589,7 @@ def test_resource_plan_formatter_includes_key_fields() -> None:
         ),
     )
 
-    text = format_distributed_resource_plan(resolved)
+    text = str(resolved)
 
     # The formatter renders resolved fields as `key=value`; assert the resolved
     # values reach the log line, not a frozen layout. A reword of the plan line

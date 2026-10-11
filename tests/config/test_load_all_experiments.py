@@ -660,7 +660,7 @@ def test_public_reward_builder_validates_its_input() -> None:
     )
 
     with pytest.raises(ValueError, match=r"reward\.kwargs\.ocr must be a mapping"):
-        RewardRuntimeConfig.from_cfg(cfg)
+        RewardRuntimeConfig.from_section(RewardConfig.from_cfg(cfg))
 
 
 def test_required_training_fields_fail_fast() -> None:

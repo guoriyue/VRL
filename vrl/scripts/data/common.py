@@ -13,8 +13,6 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-# The repo root lives in vrl.utils.artifacts (also used off the script path);
-# re-exported here so the dataset scripts keep importing it from common.
 from vrl.utils.artifacts import repo_root
 
 
@@ -41,5 +39,4 @@ __all__ = [
     "dedupe_text",
     "default_cache_dir",
     "emit",
-    "repo_root",
 ]

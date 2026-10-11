@@ -31,7 +31,7 @@ class RewardRuntimeLaunchContract:
     component_config: Mapping[str, Any]
 
     @classmethod
-    def from_component_config(
+    def from_mapping(
         cls,
         component_config: Mapping[str, Any] | None,
     ) -> RewardRuntimeLaunchContract:

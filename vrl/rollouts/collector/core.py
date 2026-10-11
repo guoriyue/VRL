@@ -243,8 +243,7 @@ class RolloutCollector:
         await self.reward_runtime.activate()
 
         # self.config already holds these as resolved, typed fields (frozen for the
-        # batch). Read them directly — feeding the typed trajectory_storage policy
-        # back through TrajectoryStoragePolicy.from_config raised TypeError.
+        # batch); the schema parsed the trajectory_storage policy once.
         trajectory_storage_policy = self.request_builder.config.trajectory_storage
         builders = []
         for rollout in unscored:

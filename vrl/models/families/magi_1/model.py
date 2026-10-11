@@ -39,7 +39,7 @@ from vrl.generation.types import GenerationInput, GenerationRequest
 from vrl.models.interfaces.replay import ReplayRequest, ReplayResult
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.source_integrity import runtime_source_tree_sha256
-from vrl.utils.artifacts import user_path
+from vrl.utils.artifacts import repo_root, user_path
 from vrl.utils.deadline import require_timeout
 from vrl.utils.media import read_video_frames
 from vrl.utils.validation import require_int
@@ -351,8 +351,7 @@ def normalize_magi_1_model_build(build: ModelBuild) -> ModelBuild:
         if os.sep in executable or (os.altsep and os.altsep in executable):
             path = Path(executable).expanduser()
             if not path.is_absolute():
-                repo_root = Path(__file__).resolve().parents[4]
-                path = repo_root / path
+                path = repo_root() / path
             config["python_executable"] = str(path.resolve())
     build.model_config = config
     return build

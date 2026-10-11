@@ -17,6 +17,8 @@ import sys
 import time
 from pathlib import Path
 
+from vrl.utils.artifacts import repo_root
+
 
 def probe_loss(output: Path) -> None:
     """Controlled log-prob perturbations through the production GRPO loss.
@@ -152,7 +154,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.epochs < 1 or args.replay_batch < 1:
         parser.error("epochs and replay-batch must be positive")
-    root = Path(__file__).resolve().parents[3]
+    root = repo_root()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     if args.compare_to is not None:

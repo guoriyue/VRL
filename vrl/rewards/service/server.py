@@ -131,7 +131,7 @@ class RewardService:
         if not isinstance(raw, Mapping):
             raise TypeError("reward service config must be a mapping")
         cfg = RewardServiceConfig.from_mapping(raw)
-        launch = RewardRuntimeLaunchContract.from_component_config(cfg.worker_config)
+        launch = RewardRuntimeLaunchContract.from_mapping(cfg.worker_config)
         if launch.sleep_offload:
             raise ValueError(
                 "worker_config.sleep_offload is not supported by the standalone service: "

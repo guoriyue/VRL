@@ -481,6 +481,37 @@ class ResourcePlan:
             return visible.index(plan_ordinal)
         return plan_ordinal
 
+    def __str__(self) -> str:
+        """The plan in one compact line, for logs and errors."""
+
+        parts = [
+            f"visible={list(self.visible_devices)}",
+            f"trainer={list(self.trainer_devices)}",
+            f"rollout={list(self.rollout_devices)}",
+            f"reward={list(self.reward_devices)}",
+            f"engines={self.rollout_num_engines}",
+            f"gpus_per_engine={self.rollout_gpus_per_engine}",
+            "reward_mode="
+            + (
+                "reserved"
+                if self.reward_devices
+                else ("trainer" if self.reward_follows_trainer else "cpu")
+            ),
+            f"colocated={self.colocated}",
+            f"cross_node={self.cross_node}",
+            f"trainer_reservation={self.requires_trainer_reservation}",
+            # Reading the plan at a glance: who offloads, and at which boundary.
+            "offload="
+            f"train:{self.lifecycle.offload_train}"
+            f",rollout:{self.lifecycle.offload_rollout}"
+            f",reward:{self.lifecycle.offload_reward}",
+            "park="
+            f"rollout_for_train:{self.lifecycle.park_rollout_for_train}"
+            f",rollout_for_reward:{self.lifecycle.park_rollout_for_reward}"
+            f",trainer_for_reward:{self.lifecycle.park_trainer_for_reward}",
+        ]
+        return "Distributed resources: " + " ".join(parts)
+
     @classmethod
     def from_root(cls, root: RootConfig) -> ResourcePlan:
         """Build the resource plan from the root: role-level requests to concrete CUDA ordinals.
@@ -500,7 +531,7 @@ class ResourcePlan:
         if root.reward is not None:
             from vrl.config.builders import RewardRuntimeConfig
 
-            reward = RewardRuntimeConfig.from_cfg(root.reward)
+            reward = RewardRuntimeConfig.from_section(root.reward)
         if reward is not None and reward.all_external_inference:
             # External services own their accelerator and process placement. Ignore
             # inherited reward presets here instead of creating a phantom local GPU
@@ -682,38 +713,6 @@ def _validate_fsdp_trainer_disjoint(
             f"reward={list(reward_devices)} "
             f"(overlap rollout={overlap_rollout}, reward={overlap_reward}).",
         )
-
-
-def format_distributed_resource_plan(resolved: ResourcePlan) -> str:
-    """Format a compact resource plan for logs and errors."""
-
-    parts = [
-        f"visible={list(resolved.visible_devices)}",
-        f"trainer={list(resolved.trainer_devices)}",
-        f"rollout={list(resolved.rollout_devices)}",
-        f"reward={list(resolved.reward_devices)}",
-        f"engines={resolved.rollout_num_engines}",
-        f"gpus_per_engine={resolved.rollout_gpus_per_engine}",
-        "reward_mode="
-        + (
-            "reserved"
-            if resolved.reward_devices
-            else ("trainer" if resolved.reward_follows_trainer else "cpu")
-        ),
-        f"colocated={resolved.colocated}",
-        f"cross_node={resolved.cross_node}",
-        f"trainer_reservation={resolved.requires_trainer_reservation}",
-        # Reading the plan at a glance: who offloads, and at which boundary.
-        "offload="
-        f"train:{resolved.lifecycle.offload_train}"
-        f",rollout:{resolved.lifecycle.offload_rollout}"
-        f",reward:{resolved.lifecycle.offload_reward}",
-        "park="
-        f"rollout_for_train:{resolved.lifecycle.park_rollout_for_train}"
-        f",rollout_for_reward:{resolved.lifecycle.park_rollout_for_reward}"
-        f",trainer_for_reward:{resolved.lifecycle.park_trainer_for_reward}",
-    ]
-    return "Distributed resources: " + " ".join(parts)
 
 
 def _resolve_cross_node_visible_devices(
@@ -982,5 +981,4 @@ __all__ = [
     "DistributedResourceConfig",
     "RayLifecyclePlan",
     "ResourcePlan",
-    "format_distributed_resource_plan",
 ]

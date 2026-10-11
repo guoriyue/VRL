@@ -48,10 +48,10 @@ def _reading(
 def test_reading_normalizes_binding_mapping_and_rejects_partial_data() -> None:
     reading = _reading()
 
-    assert BatchMemoryReading.from_metrics(asdict(reading)) == reading
+    assert BatchMemoryReading.from_mapping(asdict(reading)) == reading
     partial = asdict(reading)
     del partial["decode_peak_bytes"]
-    assert BatchMemoryReading.from_metrics(partial) is None
+    assert BatchMemoryReading.from_mapping(partial) is None
     # non-torch = device-used minus torch-reserved: (32-18) - 11 = 3GB.
     assert reading.non_torch_bytes == 3 * GB
     assert reading.budget_bytes == 29 * GB

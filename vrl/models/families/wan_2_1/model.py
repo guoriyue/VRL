@@ -1202,11 +1202,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             inner_config = getattr(getattr(base_model, "model", base_model), "config", None)
             if inner_config is not None:
                 config = inner_config
-        if isinstance(config, dict):
-            image_dim = config.get("image_dim")
-        else:
-            image_dim = getattr(config, "image_dim", None)
-        if image_dim is None:
+        if _config_value(config, "image_dim") is None:
             return None
         with torch.no_grad():
             image_embeds = self.pipeline.encode_image(reference_image, self.device)

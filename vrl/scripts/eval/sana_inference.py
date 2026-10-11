@@ -66,11 +66,7 @@ def require_scheduler(scheduler: Any) -> dict[str, Any]:
         raise TypeError("official SANA scheduler has no config")
     actual = {
         "class_name": type(scheduler).__name__,
-        **{
-            key: _config_value(config, key)
-            for key in SANA_EVAL_SCHEDULER_CONFIG
-            if key != "class_name"
-        },
+        **{key: config.get(key) for key in SANA_EVAL_SCHEDULER_CONFIG if key != "class_name"},
     }
     if actual != SANA_EVAL_SCHEDULER_CONFIG:
         raise ValueError(
@@ -127,12 +123,6 @@ def generate_prompt_images(
             f"{len(images) if isinstance(images, (list, tuple)) else 'n/a'}",
         )
     return [to_pil_image(image) for image in images]
-
-
-def _config_value(config: Any, key: str) -> Any:
-    if hasattr(config, "get"):
-        return config.get(key)
-    return getattr(config, key, None)
 
 
 __all__ = [

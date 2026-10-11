@@ -21,7 +21,7 @@ class AlgorithmEvaluatorPair:
     evaluator: Evaluator | None
 
     @classmethod
-    def from_configs(
+    def from_built(
         cls,
         built: BuiltConfigs,
         *,

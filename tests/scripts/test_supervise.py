@@ -595,7 +595,7 @@ def _health_args(*extra: str):
 
 
 def test_health_config_derives_strict_parity_limit_from_training_config() -> None:
-    health = HealthGateConfig.from_cli(
+    health = HealthGateConfig.from_args(
         _health_args(),
         schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
         replay_parity=ReplayParityConfig(max_abs_logprob_diff=0.004),
@@ -606,7 +606,7 @@ def test_health_config_derives_strict_parity_limit_from_training_config() -> Non
 
 
 def test_health_config_accepts_tighter_explicit_parity_override() -> None:
-    health = HealthGateConfig.from_cli(
+    health = HealthGateConfig.from_args(
         _health_args("--health-max-pre-update-logprob-diff", "0.002"),
         schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
         replay_parity=ReplayParityConfig(max_abs_logprob_diff=0.004),
@@ -617,7 +617,7 @@ def test_health_config_accepts_tighter_explicit_parity_override() -> None:
 
 def test_health_config_rejects_wider_explicit_parity_override() -> None:
     with pytest.raises(ValueError, match="cannot exceed"):
-        HealthGateConfig.from_cli(
+        HealthGateConfig.from_args(
             _health_args("--health-max-pre-update-logprob-diff", "0.02"),
             schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
             replay_parity=ReplayParityConfig(max_abs_logprob_diff=0.004),
@@ -625,7 +625,7 @@ def test_health_config_rejects_wider_explicit_parity_override() -> None:
 
 
 def test_health_config_carries_the_grad_norm_spike_bound_from_cli() -> None:
-    health = HealthGateConfig.from_cli(
+    health = HealthGateConfig.from_args(
         _health_args("--health-max-grad-norm", "0.8"),
         schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
         replay_parity=ReplayParityConfig(),
@@ -633,7 +633,7 @@ def test_health_config_carries_the_grad_norm_spike_bound_from_cli() -> None:
 
     assert health.max_grad_norm == pytest.approx(0.8)
     assert (
-        HealthGateConfig.from_cli(
+        HealthGateConfig.from_args(
             _health_args(),
             schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
             replay_parity=ReplayParityConfig(),
@@ -652,7 +652,7 @@ def test_health_config_derives_continuous_metrics_from_training_schedule(
 ) -> None:
     extra = () if override is None else ("--health-max-stale-policy-versions", override)
 
-    health = HealthGateConfig.from_cli(
+    health = HealthGateConfig.from_args(
         _health_args(*extra),
         schedule=RolloutOrchestrationConfig(
             schedule_mode="continuous",
@@ -673,7 +673,7 @@ def test_health_config_accepts_a_continuous_schedule_on_its_own_defaults() -> No
     key through a raw config path made the supervisor reject every such recipe.
     """
 
-    health = HealthGateConfig.from_cli(
+    health = HealthGateConfig.from_args(
         _health_args(),
         schedule=RolloutOrchestrationConfig(schedule_mode="continuous"),
         replay_parity=ReplayParityConfig(),
@@ -687,7 +687,7 @@ def test_health_config_accepts_a_continuous_schedule_on_its_own_defaults() -> No
 
 def test_health_config_rejects_stale_override_wider_than_training() -> None:
     with pytest.raises(ValueError, match="cannot exceed"):
-        HealthGateConfig.from_cli(
+        HealthGateConfig.from_args(
             _health_args("--health-max-stale-policy-versions", "2"),
             schedule=RolloutOrchestrationConfig(
                 schedule_mode="continuous",
@@ -699,7 +699,7 @@ def test_health_config_rejects_stale_override_wider_than_training() -> None:
 
 def test_health_config_rejects_stale_override_for_strict_schedule() -> None:
     with pytest.raises(ValueError, match=r"requires.*schedule_mode=continuous"):
-        HealthGateConfig.from_cli(
+        HealthGateConfig.from_args(
             _health_args("--health-max-stale-policy-versions", "0"),
             schedule=RolloutOrchestrationConfig(schedule_mode="strict_on_policy"),
             replay_parity=ReplayParityConfig(),

@@ -31,7 +31,7 @@ def test_collector_generates_and_scores_through_the_real_family_executor(
     collector = RolloutCollector.from_family(
         stack.family,
         reward_runtime=RewardFunctionRuntime(
-            MultiReward.from_dict({"image_sharpness": 1.0}, device="cpu"),
+            MultiReward.from_mapping({"image_sharpness": 1.0}, device="cpu"),
         ),
         config=stack.collector_config(),
         lifecycle=stack.resources.lifecycle,

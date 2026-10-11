@@ -71,7 +71,7 @@ def test_component_inference_configs_resolve_independently() -> None:
         },
     }
 
-    resolved = RewardRuntimeConfig.from_cfg(
+    resolved = RewardRuntimeConfig.from_section(
         RewardConfig.model_validate(cfg["reward"])
     ).inference_configs
 

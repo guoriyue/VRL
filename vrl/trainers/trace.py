@@ -21,7 +21,7 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.models.precision import float32_precision_state
-from vrl.utils.artifacts import user_path
+from vrl.utils.artifacts import repo_root, user_path
 from vrl.utils.json_files import canonical_json_sha256, write_json
 
 # These are file/protocol and environment boundaries, not algorithm vocabulary.
@@ -74,7 +74,7 @@ class TrainingRunTrace:
             "config_sha256": canonical_json_sha256(config, allow_nan=False),
             "model_identity": model_identity,
             "configured_data_files": cls._configured_data_files(config),
-            "code": cls._git_snapshot(Path(__file__).resolve().parents[2]),
+            "code": cls._git_snapshot(repo_root()),
             "runtime": cls._runtime_snapshot(),
         }
         directory = Path(output_dir) / "run_evidence"
