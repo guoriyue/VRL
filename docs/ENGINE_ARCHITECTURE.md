@@ -66,8 +66,9 @@ driver-validated snapshot, `TrainerParking` the cross-rank failure
 agreement and identity ticket, `RewardParking` the reload mode and the
 terminal device-cache release. `disk` is a property of the `move` mechanism
 rather than of the trainer: `ModelParking` takes an optional `disk` store and,
-given one, hands it every tensor it moves to CPU; without one the bytes stay
-in ordinary host RAM. `ParkingDiskStore` (`vrl/models/parking_disk_store.py`)
+given one, has it copy each tensor from its device straight into a file
+mapping, so no anonymous host copy of a whole module ever exists; without one
+the bytes stay in ordinary host RAM. `ParkingDiskStore` (`vrl/models/parking_disk_store.py`)
 owns directory validation, file mappings of every parked tensor, host-memory
 reclamation and file cleanup. `TrainingStateParking` only decides
 what the trainer parks (model, optimizer, gradient, EMA and scaler state), and

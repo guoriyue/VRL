@@ -59,10 +59,11 @@ class ModelParking:
     """Mechanism ``move``: relocate storage to CPU and remember where it was.
 
     Retains original devices before moving storage, including partial moves.
-    With a ``disk`` store, every tensor that reaches CPU goes straight on to a
-    file mapping, one module or tensor at a time, so the anonymous copies never
-    pile up; without one the parked bytes stay in ordinary host RAM. A parked
-    tensor is unused until it is restored, so this holds for any role.
+    With a ``disk`` store, each tensor is copied from its device straight into
+    its file mapping, so parking never holds an anonymous host copy of more
+    than the tensor in flight; without one the parked bytes stay in ordinary
+    host RAM. A parked tensor is unused until it is restored, so this holds
+    for any role.
     """
 
     def __init__(self, *, disk: ParkingDiskStore | None = None) -> None:
@@ -108,14 +109,11 @@ class ModelParking:
                     for name, tensor in (*model.named_parameters(), *model.named_buffers())
                 }
         self._seen_tensors.update(id(tensor) for tensor in self.module_tensors(model))
-        self._move_module(model, "cpu")
+        self._move_module(model, "cpu", disk=self._disk)
         move_frozen = getattr(model, "move_frozen_components", None)
         if callable(move_frozen):
             move_frozen("cpu")
         if self._disk is not None:
-            self._disk.store(self.module_tensors(model))
-            # Storage replacement requires FSDP to refresh its local shard views.
-            self._move_module(model, "cpu")
             self._disk.release_unused_host_memory()
 
     def park_tensors(self, value: Any) -> None:
@@ -129,9 +127,10 @@ class ModelParking:
             device = self.tensor_device(value)
             if device.type != "cpu":
                 self._tensors.append((value, device))
-                self._move_tensor(value, torch.device("cpu"))
             if self._disk is not None:
                 self._disk.store((value,))
+            elif device.type != "cpu":
+                self._move_tensor(value, torch.device("cpu"))
         elif isinstance(value, Mapping):
             for child in value.values():
                 self.park_tensors(child)
@@ -140,7 +139,13 @@ class ModelParking:
                 self.park_tensors(child)
 
     @staticmethod
-    def _move_module(model: Any, device: Any) -> None:
+    def _move_module(model: Any, device: Any, *, disk: ParkingDiskStore | None = None) -> None:
+        """Move ``model`` to ``device``; with ``disk``, its tensors go to files first.
+
+        The store relocates each tensor from wherever it is into a CPU file
+        mapping, so the module-wide move after it only catches what the store
+        does not see.
+        """
         import torch
         from torch.distributed.fsdp import FSDPModule
 
@@ -150,11 +155,15 @@ class ModelParking:
             else []
         )
         if not fsdp_modules:
+            if disk is not None:
+                disk.store(ModelParking.module_tensors(model))
             model.to(device)
             return
         # Keep DTensor wrappers and move only owned storage across phase handoffs.
         for child in fsdp_modules:
             child.reshard()
+        if disk is not None:
+            disk.store(ModelParking.module_tensors(model))
         for tensor in ModelParking.module_tensors(model):
             ModelParking._move_tensor(tensor, torch.device(device))
         for child in fsdp_modules:

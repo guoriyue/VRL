@@ -28,12 +28,13 @@ class ParkingDiskStore:
         self._directories = []
 
     def store(self, tensors: Iterable[Any]) -> None:
-        """Map parked CPU shards to files; bytes and parameter aliases stay intact.
+        """Copy each tensor from its device into a CPU file mapping, in place.
 
-        Anonymous CPU copies of every parked role can exceed host RAM. Shared
-        file mappings let Linux reclaim inactive pages while another role owns
-        the GPUs. A mapping is ordinary writable memory, so this is storage
-        relocation only.
+        Bytes and parameter aliases stay intact; the source storage is freed
+        tensor by tensor. Anonymous CPU copies of every parked role can exceed
+        host RAM. Shared file mappings let Linux reclaim inactive pages while
+        another role owns the GPUs. A mapping is ordinary writable memory, so
+        this is storage relocation only.
         """
         import tempfile
         from pathlib import Path
@@ -47,8 +48,8 @@ class ParkingDiskStore:
         with torch.no_grad():
             for index, parameter in enumerate(tensors):
                 local = getattr(parameter, "_local_tensor", parameter)
-                if local.device.type != "cpu" or not local.is_contiguous():
-                    raise RuntimeError("disk parking requires contiguous CPU shards")
+                if not local.is_contiguous():
+                    raise RuntimeError("disk parking requires contiguous shards")
                 if local.numel() == 0:
                     continue
                 mapped = torch.from_file(

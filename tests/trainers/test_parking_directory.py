@@ -157,6 +157,38 @@ def test_disk_belongs_to_the_move_mechanism_not_to_the_trainer(tmp_path, monkeyp
         assert torch.equal(tensor, before[name]), name
 
 
+@pytest.mark.gpu
+def test_disk_parking_maps_each_tensor_straight_from_the_gpu(tmp_path, monkeypatch) -> None:
+    """No anonymous host copy of the whole module: the store receives CUDA tensors."""
+
+    mounts = tmp_path / "mounts"
+    mounts.write_text("/dev/root / ext4 rw 0 0\n", encoding="utf-8")
+    monkeypatch.setattr(ParkingDiskStore, "_MOUNTS", str(mounts))
+    directory = tmp_path / "storage"
+    directory.mkdir()
+    model, _ = _cpu_training_state()
+    model.cuda()
+    before = {name: tensor.cpu() for name, tensor in model.state_dict().items()}
+    stored_from: list[str] = []
+    store = ParkingDiskStore.store
+
+    def recording_store(self, tensors):
+        tensors = list(tensors)
+        stored_from.extend(ModelParking.tensor_device(tensor).type for tensor in tensors)
+        store(self, tensors)
+
+    monkeypatch.setattr(ParkingDiskStore, "store", recording_store)
+    parking = ModelParking(disk=ParkingDiskStore(str(directory)))
+    parking.park(model, restore_device=torch.device("cuda"))
+
+    assert stored_from == ["cuda"] * 4
+    assert all(p.untyped_storage().filename is not None for p in model.parameters())
+    parking.restore()
+    assert not list(directory.iterdir())
+    for name, tensor in model.state_dict().items():
+        assert tensor.is_cuda and torch.equal(tensor.cpu(), before[name]), name
+
+
 def test_disk_parking_preserves_full_model_adam_update(tmp_path) -> None:
     """Real master/moment/gradient mappings must survive the next optimizer step."""
     from vrl.trainers.optimizer import FP32MasterWeightOptimizer
