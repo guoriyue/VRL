@@ -13,8 +13,8 @@ from typing import Any
 import torch
 
 from vrl.models.interfaces.runtime import ModelBuild
-from vrl.utils.artifacts import user_path
 from vrl.utils.media import to_pil_image
+from vrl.utils.paths import user_path
 from vrl.utils.validation import require_int
 
 # These mappings are persisted protocol identities, not tunable defaults.

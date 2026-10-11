@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from vrl.scripts.data.common import default_cache_dir, emit
-from vrl.utils.artifacts import user_path
+from vrl.utils.paths import user_path
 
 COMMAND_NAME = "pickapic"
 

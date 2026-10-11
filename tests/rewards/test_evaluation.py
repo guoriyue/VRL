@@ -8,9 +8,10 @@ import pytest
 from PIL import Image, UnidentifiedImageError
 
 from vrl.config.reward_inference import RewardInferenceConfig
-from vrl.rewards.evaluation import Evaluation, ScoringConfig
+from vrl.rewards.evaluation import Evaluation, ScoringConfig, load_media_manifest
 from vrl.rewards.runtime import build_reward_scorer
 from vrl.rewards.service.server import RewardService
+from vrl.utils.paths import PathOutsideRootsError
 
 
 @pytest.fixture
@@ -40,6 +41,25 @@ def scoring_input(tmp_path):
         },
     )
     return manifest, config, tmp_path / "scores"
+
+
+def test_manifest_media_stay_under_the_manifest_directory_unless_absolute(tmp_path):
+    """A relative media path that leaves the manifest's directory is refused;
+    an absolute path may point anywhere."""
+
+    outside = tmp_path / "outside.png"
+    Image.new("RGB", (4, 4), "white").save(outside)
+    manifest = tmp_path / "manifests" / "media.jsonl"
+    manifest.parent.mkdir()
+    row = {"sample_id": "s", "prompt_id": "p", "prompt": "x"}
+
+    manifest.write_text(json.dumps({**row, "path": "../outside.png"}) + "\n")
+    with pytest.raises(PathOutsideRootsError):
+        load_media_manifest(manifest)
+
+    manifest.write_text(json.dumps({**row, "path": str(outside)}) + "\n")
+    [loaded] = load_media_manifest(manifest)
+    assert loaded.path == outside.resolve()
 
 
 @pytest.mark.asyncio

@@ -39,9 +39,9 @@ from vrl.generation.types import GenerationInput, GenerationRequest
 from vrl.models.interfaces.replay import ReplayRequest, ReplayResult
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.source_integrity import runtime_source_tree_sha256
-from vrl.utils.artifacts import repo_root, user_path
 from vrl.utils.deadline import require_timeout
 from vrl.utils.media import read_video_frames
+from vrl.utils.paths import repo_root, user_path
 from vrl.utils.validation import require_int
 
 # This adapter is implemented against the official CLI/config contract at this

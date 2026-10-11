@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from vrl.utils.artifacts import repo_root
+from vrl.utils.paths import repo_root
 
 
 def probe_loss(output: Path) -> None:

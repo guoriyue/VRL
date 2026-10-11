@@ -120,7 +120,7 @@ def _resolve_clean_targets(
 ) -> list[tuple[str, str, str]]:
     """Resolve and validate stable target identities before loading a model."""
     from vrl.trainers.data.sft_latents import CleanTargetRef
-    from vrl.utils.artifacts import RootedPaths
+    from vrl.utils.paths import RootedPaths
 
     roots = RootedPaths.data_root(data_root)
     targets: list[tuple[str, str, str]] = []

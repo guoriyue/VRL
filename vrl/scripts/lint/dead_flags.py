@@ -20,7 +20,7 @@ import ast
 import re
 import sys
 
-from vrl.utils.artifacts import repo_root
+from vrl.utils.paths import repo_root
 
 REPO_ROOT = repo_root()
 

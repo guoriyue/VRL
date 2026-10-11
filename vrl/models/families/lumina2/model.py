@@ -58,9 +58,9 @@ class Lumina2SamplingState(GuidedDenoiseSamplingStateBase):
 
     ``latents`` / ``timesteps`` / ``scheduler`` are the only fields the batch
     executor may touch. ``num_train_timesteps`` is the training-clock length
-    the transformer's reversed time is derived from: replay rebuilds one
-    packed step without a scheduler, so the constant travels in the batch
-    context instead of being read back off ``scheduler.config``.
+    the transformer's reversed time is derived from. Rollout and replay both
+    read it off the model's own scheduler config; the replay model loads the
+    same checkpoint's scheduler, and only the rebuilt one-step state has none.
     """
 
     prompt_embeds: torch.Tensor
@@ -249,7 +249,6 @@ class Lumina2Model(
         return {
             "guidance_scale": state.guidance_scale,
             "cfg": state.do_cfg,
-            "num_train_timesteps": state.num_train_timesteps,
         }
 
     def export_replay_tensors(self, state: Lumina2SamplingState) -> dict[str, Any]:
@@ -288,7 +287,7 @@ class Lumina2Model(
             negative_prompt_attention_mask=replay_tensors.get("negative_prompt_attention_mask"),
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
-            num_train_timesteps=int(batch_context["num_train_timesteps"]),
+            num_train_timesteps=int(self.scheduler.config.num_train_timesteps),
         )
 
     def postprocess_branch(

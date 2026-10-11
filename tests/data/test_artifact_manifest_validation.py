@@ -10,7 +10,8 @@ from vrl.trainers.data.artifacts import (
     DatasetFileReport,
 )
 from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
-from vrl.utils.artifacts import ArtifactManifestError, RootedPaths
+from vrl.utils.artifacts import ArtifactManifestError
+from vrl.utils.paths import RootedPaths
 
 
 def _write_ppm(path: Path) -> None:

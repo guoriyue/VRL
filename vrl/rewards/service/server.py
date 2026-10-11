@@ -44,8 +44,9 @@ from vrl.rewards.service.wire import (
     status_to_wire,
 )
 from vrl.rewards.worker_config import RewardWorkerConfig
-from vrl.utils.artifacts import PathOutsideRootsError, RootedPaths, sha256_file
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.logging import init_logger
+from vrl.utils.paths import PathOutsideRootsError, RootedPaths
 
 if TYPE_CHECKING:
     from vrl.rewards.inference import RewardInferenceRequest

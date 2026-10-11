@@ -39,8 +39,9 @@ from vrl.trainers.checkpointing import (
     load_resolved_run_config,
 )
 from vrl.trainers.data.prompts import load_prompt_dataset_index
-from vrl.utils.artifacts import sha256_file, user_path
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
+from vrl.utils.paths import user_path
 
 logger = logging.getLogger(__name__)
 

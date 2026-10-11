@@ -1,10 +1,11 @@
 """VRL's MAGI-1 environment preflight against the Bazel-built dedicated interpreter.
 
 The adapter imports the official CLI in the dedicated Python before it will
-download weights (``_probe_runtime_environment``). This drives exactly that
-step with ``python_executable`` = //third_party/magi_1:python, so the
-official stack (torch 2.4/cu124, flash-attn built from source, flashinfer)
-is what resolves ``inference/pipeline/entry.py``.
+download weights (``Magi1SubprocessConfig.load_official_config``). This
+drives exactly that step with ``python_executable`` =
+//third_party/magi_1:python, so the official stack (torch 2.4/cu124,
+flash-attn built from source, flashinfer) is what resolves
+``inference/pipeline/entry.py``.
 """
 
 import os
@@ -18,7 +19,6 @@ from python.runfiles import runfiles
 from vrl.models.families.magi_1.model import (
     MAGI_1_SUPPORTED_SOURCE_REVISION,
     Magi1SubprocessConfig,
-    _probe_runtime_environment,
 )
 
 
@@ -36,7 +36,7 @@ class Magi1PreflightTest(unittest.TestCase):
             python_executable=interpreter,
             timeout_seconds=600.0,
         )
-        _probe_runtime_environment(config)
+        config.load_official_config()
         # And the stack itself: the dedicated interpreter reports the pinned torch
         # and a source-built flash-attn, independent of this test's own torch.
         report = subprocess.run(

@@ -17,7 +17,7 @@ from torch.utils.data import Dataset
 
 from vrl.config.data import manifest_sources
 from vrl.generation import GenerationInput
-from vrl.utils.artifacts import RootedPaths, user_path
+from vrl.utils.paths import RootedPaths, user_path
 
 
 @dataclass

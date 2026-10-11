@@ -8,11 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
-from vrl.utils.artifacts import (
-    IMAGE_SUFFIXES,
-    ArtifactManifestError,
-    RootedPaths,
-)
+from vrl.utils.artifacts import IMAGE_SUFFIXES, ArtifactManifestError
+from vrl.utils.paths import RootedPaths
 
 # Derived from PromptExample fields tagged metadata={'artifact': True} — single source of truth.
 DEFAULT_ARTIFACT_FIELDS = tuple(

@@ -19,7 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from vrl.utils.artifacts import atomic_file, user_path
+from vrl.utils.artifacts import atomic_file
+from vrl.utils.paths import user_path
 
 if TYPE_CHECKING:
     from vrl.trainers.data.prompts import PromptExample

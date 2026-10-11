@@ -9,10 +9,15 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 
 from vrl.config.base import ConfigBase
-from vrl.models.checkpoint_identity import checkpoint_identity_metadata
+from vrl.models.checkpoint_identity import (
+    CHECKPOINT_IDENTITY_METADATA_KEY,
+    checkpoint_identity_metadata,
+    local_checkpoint_source,
+)
+from vrl.utils.paths import user_path
 
 
 class LoraSection(ConfigBase):
@@ -175,6 +180,26 @@ class ModelSection(ConfigBase):
         default=None,
         json_schema_extra=checkpoint_identity_metadata("exclude"),
     )
+
+    @field_validator("*")
+    @classmethod
+    def _checkpoint_source_as_loaded(cls, value: Any, info: ValidationInfo) -> Any:
+        """Write a checkpoint source the way every loader will read it.
+
+        A source names an existing local path or a Hugging Face repo id. A local
+        one becomes absolute here, once (``~`` expanded, relative to where the
+        config is parsed); a repo id stays as written. A field is a source when
+        its checkpoint identity metadata says so: ``path`` and each family's
+        extra model sources.
+        """
+
+        field = cls.model_fields.get(str(info.field_name))
+        extra = None if field is None else field.json_schema_extra
+        metadata = extra.get(CHECKPOINT_IDENTITY_METADATA_KEY) if isinstance(extra, dict) else None
+        if not isinstance(metadata, dict) or metadata.get("kind") != "source" or value is None:
+            return value
+        local = local_checkpoint_source(value)
+        return value if local is None else str(user_path(local))
 
     @model_validator(mode="after")
     def _validate_lora(self) -> Self:

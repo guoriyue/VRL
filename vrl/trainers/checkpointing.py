@@ -22,7 +22,8 @@ from vrl.trainers.weight_sync import (
     require_trainable_modules,
     to_cpu_snapshot,
 )
-from vrl.utils.artifacts import atomic_file, fsync_directory, sha256_file, user_path
+from vrl.utils.artifacts import atomic_file, fsync_directory, sha256_file
+from vrl.utils.paths import user_path
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig

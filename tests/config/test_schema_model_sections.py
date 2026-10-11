@@ -421,3 +421,26 @@ def test_present_model_section_requires_a_family() -> None:
 
     with pytest.raises(ValueError, match=r"config missing required field: model\.family"):
         parse_config(cfg)
+
+
+def test_local_model_sources_become_absolute_and_hub_ids_stay(tmp_path, monkeypatch) -> None:
+    """Every field the identity metadata marks as a source is written the way the
+    loaders read it: an existing local path absolute with ``~`` expanded, a Hub
+    repo id as written."""
+
+    home = tmp_path / "home"
+    (home / "models" / "echo").mkdir(parents=True)
+    (home / "gemma").mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(home)
+
+    local = EchoModelSection.model_validate(
+        {"family": "echo", "path": "~/models/echo", "gemma_path": "gemma"}
+    )
+    assert local.path == str((home / "models" / "echo").resolve())
+    assert local.gemma_path == str((home / "gemma").resolve())
+
+    hub = EchoModelSection.model_validate(
+        {"family": "echo", "path": "org/echo-model", "gemma_path": "google/gemma-3-12b"}
+    )
+    assert (hub.path, hub.gemma_path) == ("org/echo-model", "google/gemma-3-12b")

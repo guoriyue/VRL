@@ -413,9 +413,9 @@ class EchoModel(DenoiseModelBase):
     # -- collector boundary --------------------------------------------
 
     def export_batch_context(self, state: EchoSamplingState) -> dict[str, Any]:
-        return {
-            "num_train_timesteps": state.num_train_timesteps,
-        }
+        # Echo's one batch constant, the training clock, is read off its own scheduler.
+        del state
+        return {}
 
     def export_replay_tensors(self, state: EchoSamplingState) -> dict[str, Any]:
         return {
@@ -447,7 +447,7 @@ class EchoModel(DenoiseModelBase):
             scheduler=None,
             video_context=replay_tensors["video_context"],
             attention_mask=replay_tensors.get("attention_mask"),
-            num_train_timesteps=int(batch_context["num_train_timesteps"]),
+            num_train_timesteps=int(self._scheduler.config.num_train_timesteps),
         )
 
     # -- decode_latents ------------------------------------------------

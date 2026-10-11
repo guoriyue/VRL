@@ -27,7 +27,7 @@ from vrl.scripts.data import (
     videophy_i2v,
 )
 from vrl.scripts.data.common import default_cache_dir
-from vrl.utils.artifacts import RootedPaths
+from vrl.utils.paths import RootedPaths
 
 # init-dirs CLI: dataset -> directories to create under the data root. This is the
 # init-dirs command's own small wiring table, not a generic artifact registry (the

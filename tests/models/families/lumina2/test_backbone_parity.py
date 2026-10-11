@@ -12,6 +12,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import torch
+from diffusers import FlowMatchEulerDiscreteScheduler
 
 from tests.models.steps.denoise.fixtures import (
     TINY_LUMINA2_CAP_DIM,
@@ -128,7 +129,7 @@ def test_lumina2_replay_roundtrip_restores_equivalent_state() -> None:
 
     restored = Lumina2ReplayModel(
         transformer=transformer,
-        scheduler=None,
+        scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=_NUM_TRAIN_TIMESTEPS),
     ).restore_eval_state(replay, context, state.latents, 0)
 
     out_orig = model.forward_step(state, 0)

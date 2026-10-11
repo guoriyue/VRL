@@ -18,8 +18,9 @@ from vrl.trainers.data.artifacts import (
     SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
     DatasetFileReport,
 )
-from vrl.utils.artifacts import sha256_file, user_path
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import read_jsonl, write_json, write_jsonl
+from vrl.utils.paths import user_path
 
 COMMAND_NAME = "derive-text-video-targets"
 

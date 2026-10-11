@@ -32,8 +32,8 @@ import torch
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import LazyTorchModule
 from vrl.rewards.models.media import decode_artifact_frames
-from vrl.utils.artifacts import RootedPaths
 from vrl.utils.media import align_frame_counts, read_image_as_frames, read_video_frames
+from vrl.utils.paths import RootedPaths
 
 # ImageNet statistics DINOv2 was trained with; frames are normalized with these
 # before the ViT. DINOv2 patch size is 14, so the resize target must be a

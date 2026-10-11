@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from vrl.utils.artifacts import PathOutsideRootsError, RootedPaths
+from vrl.utils.paths import PathOutsideRootsError, RootedPaths
 
 
 def test_relative_absolute_and_internal_symlink_references(tmp_path):

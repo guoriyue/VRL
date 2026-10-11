@@ -15,7 +15,7 @@ from typing import Any
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import LazyTorchModule
 from vrl.rewards.models.media import artifact_middle_frame_image
-from vrl.utils.artifacts import RootedPaths, user_path
+from vrl.utils.paths import RootedPaths, user_path
 
 
 class EditRewardModel(LazyTorchModule):

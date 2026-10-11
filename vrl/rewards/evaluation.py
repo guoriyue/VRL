@@ -28,6 +28,7 @@ from vrl.rewards.inference import (
 )
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import canonical_json_sha256, write_json
+from vrl.utils.paths import RootedPaths
 
 EVALUATION_SCHEMA = "vrl.reward-evaluation.v1"
 
@@ -75,6 +76,8 @@ class MediaRow(ConfigBase):
 
 
 def load_media_manifest(path: Path) -> list[MediaRow]:
+    # Relative paths stay inside the manifest's directory; absolute ones may point anywhere.
+    roots = RootedPaths(path.parent, absolute="anywhere")
     rows = []
     seen = set()
     with path.open(encoding="utf-8") as handle:
@@ -85,10 +88,9 @@ def load_media_manifest(path: Path) -> list[MediaRow]:
             if row.sample_id in seen:
                 raise ValueError(f"duplicate sample_id at {path}:{number}: {row.sample_id!r}")
             seen.add(row.sample_id)
-            row.path = (path.parent / row.path.expanduser()).resolve(strict=True)
+            row.path = roots.resolve(row.path, strict=True)
             row.assets = {
-                key: (path.parent / asset.expanduser()).resolve(strict=True)
-                for key, asset in row.assets.items()
+                key: roots.resolve(asset, strict=True) for key, asset in row.assets.items()
             }
             rows.append(row)
     if not rows:

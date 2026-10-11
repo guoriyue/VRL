@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from vrl.utils.artifacts import user_path
+from vrl.utils.paths import user_path
 
 
 @dataclass(frozen=True, slots=True)

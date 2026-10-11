@@ -17,8 +17,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from vrl.utils.artifacts import user_path
 from vrl.utils.hf_hub import HuggingFaceRepoRevision
+from vrl.utils.paths import user_path
 
 
 def worker_model_root(

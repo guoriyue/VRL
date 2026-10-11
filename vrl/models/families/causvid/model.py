@@ -45,7 +45,8 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.precision import model_autocast
 from vrl.models.source_integrity import runtime_source_tree_sha256
 from vrl.models.steps.denoise.base import DenoiseModelBase
-from vrl.utils.artifacts import repo_root, sha256_file
+from vrl.utils.artifacts import sha256_file
+from vrl.utils.paths import repo_root
 
 # Immutable upstream/checkpoint identifiers are genuine external boundaries.
 CAUSVID_CHECKPOINT_REPOSITORY = "tianweiy/CausVid"
@@ -878,7 +879,7 @@ def _resolve_source_root(model_config: Mapping[str, Any]) -> Path:
 
 def _resolve_base_model(model_config: Mapping[str, Any]) -> Path:
     reference = str(model_config.get("base_model_path", CAUSVID_BASE_REPOSITORY))
-    local = _resolve_configured_path(reference)
+    local = Path(reference)
     revision_value = model_config.get("base_model_revision")
     revision = str(revision_value) if revision_value else None
     if local.is_dir():
@@ -896,7 +897,7 @@ def _resolve_checkpoint(build: ModelBuild) -> Path:
     model_config = build.model_config or {}
     reference = str(build.model_name_or_path)
     relative_file = str(model_config.get("checkpoint_file", CAUSVID_CHECKPOINT_FILE))
-    local = _resolve_configured_path(reference)
+    local = Path(reference)
     revision = build.revision
     if local.is_file():
         checkpoint = local

@@ -45,9 +45,10 @@ from vrl.scripts.eval.robotics_discrimination import (
     robotics_reward_verdict,
 )
 from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
-from vrl.utils.artifacts import RootedPaths, sha256_file, user_path
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import write_json
 from vrl.utils.media import read_video_frames, write_mp4
+from vrl.utils.paths import RootedPaths, user_path
 
 
 def build_parser() -> argparse.ArgumentParser:

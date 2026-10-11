@@ -27,10 +27,11 @@ from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig, parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval._device import resolve_eval_device
-from vrl.utils.artifacts import sha256_file, user_path
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import write_json
 from vrl.utils.media import read_video_frames
+from vrl.utils.paths import user_path
 
 REPORT_SCHEMA = "vrl.cosmos-predict25-frame-prefix-gate/v1"
 

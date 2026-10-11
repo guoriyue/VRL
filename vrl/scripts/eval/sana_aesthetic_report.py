@@ -21,8 +21,9 @@ from omegaconf import DictConfig
 
 from vrl.config.schema import RootConfig, parse_config
 from vrl.trainers.data.prompts import load_prompt_dataset_index
-from vrl.utils.artifacts import sha256_file, user_path
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import write_json, write_jsonl
+from vrl.utils.paths import user_path
 
 # Report format and file names are shared by the producer and reader.
 REPORT_SCHEMA = "vrl.sana_aesthetic_checkpoint_eval/v6"

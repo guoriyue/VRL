@@ -19,8 +19,8 @@ from vrl.scripts.data.video_world.lerobot import (
     iter_lerobot_target_clips,
 )
 from vrl.trainers.data.artifacts import DatasetFileReport
-from vrl.utils.artifacts import RootedPaths, user_path
 from vrl.utils.json_files import write_json, write_jsonl
+from vrl.utils.paths import RootedPaths, user_path
 
 COMMAND_NAME = "video-world-bridge"
 TARGET_COMMAND_NAME = "video-world-targets"

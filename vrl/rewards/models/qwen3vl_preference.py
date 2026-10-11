@@ -317,7 +317,7 @@ class Qwen3VLPreferenceRewardModel(LazyTorchModule):
         if self._reference_key:
             from PIL import Image
 
-            from vrl.utils.artifacts import RootedPaths
+            from vrl.utils.paths import RootedPaths
 
             raw = artifact.metadata.get(self._reference_key)
             if not raw:

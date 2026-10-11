@@ -13,7 +13,7 @@ from vrl.models.families.registry import get_model_family_entry
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trainers.data.prompts import prompt_example_from_row
-from vrl.utils.artifacts import RootedPaths
+from vrl.utils.paths import RootedPaths
 
 
 def test_manifest_references_reach_encoder_in_order_with_alpha(tmp_path) -> None:

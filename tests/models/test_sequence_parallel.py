@@ -78,7 +78,10 @@ def _rank_main(
                 output = model(**_build_inputs()).sample
         finally:
             dist.destroy_process_group()
-        queue.put((rank, output))
+        # A torch tensor crosses the queue as a shared-memory handle that the
+        # parent fetches from this process, which may have exited by then; a
+        # numpy copy crosses by value.
+        queue.put((rank, output.numpy()))
     except BaseException as error:  # pragma: no cover - transported to parent
         queue.put((rank, f"error: {error!r}"))
 
@@ -123,7 +126,9 @@ def test_two_rank_forward_matches_the_single_rank_reference(tmp_path: Path) -> N
     errors = {rank: payload for rank, payload in results.items() if isinstance(payload, str)}
     assert not errors, errors
     for rank in range(world):
-        torch.testing.assert_close(results[rank], reference, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(
+            torch.from_numpy(results[rank]), reference, rtol=1e-5, atol=1e-5
+        )
 
 
 def _exchange_rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -> None:
@@ -163,7 +168,9 @@ def _exchange_rank_main(rank: int, world: int, port: int, queue: multiprocessing
             round_trip = _heads_to_shards(image, group=group)
         finally:
             dist.destroy_process_group()
-        queue.put((rank, (exchanged, layout, other_exchanged, other_layout, round_trip, local)))
+        # By value, not as shared-memory handles: see _rank_main.
+        tensors = (exchanged, layout, other_exchanged, other_layout, round_trip, local)
+        queue.put((rank, tuple(tensor.numpy() for tensor in tensors)))
     except BaseException as error:  # pragma: no cover - transported to parent
         queue.put((rank, f"error: {error!r}"))
 
@@ -198,7 +205,9 @@ def test_three_rank_exchange_matches_gather_layout_and_round_trips() -> None:
     errors = {rank: payload for rank, payload in results.items() if isinstance(payload, str)}
     assert not errors, errors
     for rank in range(world):
-        exchanged, layout, other_exchanged, other_layout, round_trip, local = results[rank]
+        exchanged, layout, other_exchanged, other_layout, round_trip, local = (
+            torch.from_numpy(array) for array in results[rank]
+        )
         assert torch.equal(exchanged, layout)
         assert torch.equal(other_exchanged, other_layout)
         assert torch.equal(round_trip, local)

@@ -33,8 +33,8 @@ from vrl.scripts.data.common import (
     emit,
     repo_root,
 )
-from vrl.utils.artifacts import RootedPaths, user_path
 from vrl.utils.json_files import write_json, write_jsonl
+from vrl.utils.paths import RootedPaths, user_path
 
 # (repo_id, csv_file, official split). Train captions live only in the training
 # CSV and held-out captions only in the test CSV, so both are always read.

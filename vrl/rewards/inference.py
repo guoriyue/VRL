@@ -17,8 +17,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from vrl.utils.artifacts import user_path
 from vrl.utils.media_reference import MediaReference
+from vrl.utils.paths import user_path
 from vrl.utils.validation import require_int
 
 

@@ -105,6 +105,9 @@ def test_entrypoint_rejects_malformed_model_before_registry_model_build(
     monkeypatch,
     tmp_path,
 ) -> None:
+    # schema binds get_model_family_entry when it is first imported; importing it
+    # before the patch below keeps the failing stand-in out of later tests.
+    import vrl.config.schema  # noqa: F401
     import vrl.models.families.registry as family_registry
     from vrl.config import loading as config_loading
 

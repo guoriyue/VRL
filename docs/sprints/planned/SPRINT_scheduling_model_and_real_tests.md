@@ -459,3 +459,29 @@ wan 的 `_config_value` 留着：它的测试替身 pipeline 的 config 既有 d
 
 历史 sprint 和 research 文档保留当时的类名，按上表对照；`docs/ENGINE_ARCHITECTURE.md` 改成现名，并顺手更正它把 reward 那个类写成不存在的 `RewardWorkerLaunchContract`。
 
+## 23. §22 之后的七条待定项按建议落地（2026-10-11）
+
+| 项 | 处置 |
+|---|---|
+| `num_train_timesteps` 走 batch context | Lumina2 / Mochi / Wan / Echo 恢复时读模型自己的 scheduler（replay 模型有从同一 checkpoint 加载的 scheduler，没有的只是恢复出来的单步状态）；batch context 不再带这个键，Echo 的 context 为空。协议变化，数值不变 |
+| 门面转发 | 保留：`merge_generation_batches` 有 gatherer 缺失检查和多个调用方；类型化归约各自固定 dtype、算子和 CPU 协调组 |
+| `model.path` 的本地判定 | `ModelSection` 解析时，凡身份元数据标为 source 的字段（`path`、Echo 的 `gemma_path`、CausVid 的 `base_model_path`）若指向本地已有路径就写成绝对路径（展开 `~`），否则按 Hub id 原样保留；本地判定只有 `local_checkpoint_source` 一处，pin 检查也用它。CausVid 的模型与基模型路径不再走仓库相对回退，该规则只留给 `causvid_source_path` |
+| 按 manifest 目录解析的路径 | reward 评测改用以 manifest 目录为根的 `RootedPaths(absolute="anywhere")`，新增拒绝越出该目录的相对路径；Qwen-Image 2.1 编辑探针改按数据根解析参考图并用训练同款检查，修好它打不开仓库内编辑 manifest 的问题 |
+| `_build_arg_parser` | 改名 `build_parser` |
+| 拆分 `vrl/utils/artifacts.py` | 路径根移到 `vrl/utils/paths.py`，不留再导出；`PathOutsideRootsError` 仍继承 `ArtifactManifestError`；`__all__` 补齐 `sha256_file`、`fsync_directory` |
+
+第七条（`ResolvedReward.from_plan` 改名）没有落地：上游 `202a76d89` 之前的提交已经删掉了 `ResolvedReward`，设备和 parking 改由 `ResourcePlan` 直接给出。
+
+顺带修掉一个测试隔离问题：`test_encode_sft_targets.py` 的守卫测试在 schema 首次导入前替换注册表函数，schema 按名字绑定了替身，同进程后跑的 full-sequence probe 测试随之失败。现在先导入 schema 再打补丁。
+
+## 24. §23 之后的复查项（2026-10-11）
+
+| 项 | 处置 |
+|---|---|
+| `test_sequence_parallel.py` 偶发 `FileNotFoundError` | 子进程把 torch 张量放进队列，传过去的是共享内存句柄，父进程取得晚时子进程已退出；改为传 numpy 拷贝。其他多进程测试传的都是标量、布尔、字符串或列表 |
+| `RankGroupSpec` | 改名 `ProcessGroupConfig`（它就是 `EngineProcessGroup.open` 的输入），持有它的字段、参数、属性改为 `process_group_config` |
+| `EditSequenceSpec` | 改名 `EditSequence`；审计报告的 `"spec"` 键和 schema 名不变 |
+| GRPO 与 DPO 各一份 `sft_weight` | 保留：两个算法都真有这一项，来源不同，分属在线与离线两支 |
+| FlashGRPO 继承来的 `sft_weight` | 维持现状：YAML 和构造都写不进去，只剩一个恒为 0、没人读的属性 |
+
+收尾核对时，对 `vrl/` 和 `tests/` 之外的顶层包（`reward/`、`tools/`、`manifests/`）也解析了全部 vrl 导入：`reward/` 的命令行和分析模块仍引用 `EditSequenceSpec`，已并入那次改名；`tools/magi_1/preflight_test.py` 自 `ce86ba996` 起还在导入已并掉的 `_probe_runtime_environment`，改为调用接替它的 `Magi1SubprocessConfig.load_official_config`（这个 Bazel 测试需要专门构建的 MAGI-1 解释器，本机未运行）。

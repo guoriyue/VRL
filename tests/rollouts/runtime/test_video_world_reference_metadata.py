@@ -8,7 +8,7 @@ from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trainers.data.prompts import (
     load_prompt_dataset_index,
 )
-from vrl.utils.artifacts import RootedPaths
+from vrl.utils.paths import RootedPaths
 
 
 def _write_reference_manifest(root: Path) -> Path:

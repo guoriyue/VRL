@@ -39,9 +39,10 @@ from vrl.trainers.checkpointing import (
     load_resolved_run_config,
     read_checkpoint_meta,
 )
-from vrl.utils.artifacts import sha256_file, user_path
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import write_json
 from vrl.utils.media import to_pil_image, write_png
+from vrl.utils.paths import user_path
 
 logger = logging.getLogger(__name__)
 

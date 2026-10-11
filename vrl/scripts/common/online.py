@@ -65,8 +65,8 @@ from vrl.trainers.online.trainer import (
 from vrl.trainers.strategy import Strategy, build_strategy
 from vrl.trainers.trace import TrainingRunTrace
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
-from vrl.utils.artifacts import RootedPaths
 from vrl.utils.memory import HostMemoryMonitor
+from vrl.utils.paths import RootedPaths
 from vrl.utils.profiling import profile_range
 
 logger = logging.getLogger(__name__)

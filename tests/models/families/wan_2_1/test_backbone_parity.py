@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 import torch
+from diffusers import FlowMatchEulerDiscreteScheduler
 
 from tests.models.steps.denoise.fixtures import (
     build_tiny_transformer,
@@ -52,6 +53,7 @@ def _model(
             transformer=transformer,
             transformer_2=transformer_2,
             config=SimpleNamespace(boundary_ratio=boundary_ratio),
+            scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000),
             device=torch.device("cpu"),
         ),
         device=torch.device("cpu"),

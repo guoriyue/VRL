@@ -84,12 +84,16 @@ def main() -> None:
     manifest_cases = None
     if args.manifest is not None:
         from vrl.trainers.data.prompts import load_prompt_dataset_index
+        from vrl.utils.paths import RootedPaths
 
         examples = load_prompt_dataset_index(args.manifest)
         if args.limit:
             examples = examples[: args.limit]
         if not examples:
             parser.error("manifest has no selected examples")
+        # References resolve against the data root, as training and image eval
+        # read the same manifests.
+        roots = RootedPaths.data_root(allow_absolute=True)
         manifest_cases = []
         for index, example in enumerate(examples):
             references = example.reference_images
@@ -97,15 +101,11 @@ def main() -> None:
                 parser.error(
                     "manifest probe requires image references and fixed sampling without per-row overrides"
                 )
+            example = example.with_resolved_references(roots).with_required_reference_images(
+                manifest=args.manifest, row_index=index
+            )
             manifest_cases.append(
-                (
-                    f"sample_{index:05d}",
-                    example.prompt,
-                    [
-                        str((args.manifest.parent / Path(path).expanduser()).resolve(strict=True))
-                        for path in references
-                    ],
-                )
+                (f"sample_{index:05d}", example.prompt, example.reference_images)
             )
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=False)

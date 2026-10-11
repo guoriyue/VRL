@@ -15,8 +15,8 @@ from vrl.trainers.data.prompts import (
     load_prompt_dataset_index,
     load_prompt_examples_from_config,
 )
-from vrl.utils.artifacts import RootedPaths
 from vrl.utils.json_files import write_jsonl
+from vrl.utils.paths import RootedPaths
 
 
 def _data_config(payload: dict) -> DataConfig:

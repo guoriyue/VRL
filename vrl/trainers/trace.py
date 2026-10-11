@@ -21,8 +21,8 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.models.precision import float32_precision_state
-from vrl.utils.artifacts import repo_root, user_path
 from vrl.utils.json_files import canonical_json_sha256, write_json
+from vrl.utils.paths import repo_root, user_path
 
 # These are file/protocol and environment boundaries, not algorithm vocabulary.
 RUN_EVIDENCE_SCHEMA = "vrl.run-evidence/v1"

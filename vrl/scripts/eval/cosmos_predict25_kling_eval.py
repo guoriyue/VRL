@@ -32,10 +32,10 @@ from vrl.trainers.checkpointing import (
     read_checkpoint_meta,
 )
 from vrl.trainers.data.prompts import load_prompt_dataset_index
-from vrl.utils.artifacts import user_path
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import write_json, write_jsonl
 from vrl.utils.media import write_mp4
+from vrl.utils.paths import user_path
 from vrl.utils.score_statistics import distribution
 
 logger = logging.getLogger(__name__)

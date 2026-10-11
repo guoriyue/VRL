@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from vrl.utils.artifacts import repo_root
+from vrl.utils.paths import repo_root
 
 
 def default_cache_dir() -> Path:

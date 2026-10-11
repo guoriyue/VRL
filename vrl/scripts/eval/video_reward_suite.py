@@ -45,8 +45,8 @@ from vrl.config.schema import RewardConfig
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.trainers.data.prompts import load_prompt_dataset_index
-from vrl.utils.artifacts import user_path
 from vrl.utils.json_files import write_csv
+from vrl.utils.paths import user_path
 
 logger = logging.getLogger(__name__)
 

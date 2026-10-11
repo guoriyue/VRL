@@ -33,8 +33,8 @@ from vrl.rewards.assets.video_judge_prompts import (
 )
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.hub import worker_model_root
-from vrl.utils.artifacts import user_path
 from vrl.utils.logging import init_logger, kv
+from vrl.utils.paths import user_path
 
 logger = init_logger(__name__)
 

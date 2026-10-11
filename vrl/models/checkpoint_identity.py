@@ -274,6 +274,19 @@ def require_checkpoint_source_member(value: Any, *, field_name: str) -> str:
     return member
 
 
+def local_checkpoint_source(reference: Any) -> Path | None:
+    """The existing local file or directory a checkpoint source names, ``~`` expanded.
+
+    ``None`` when nothing exists there: the source is then a Hugging Face repo id.
+    """
+
+    text = str(reference).strip()
+    if not text:
+        return None
+    candidate = Path(text).expanduser()
+    return candidate if candidate.exists() or candidate.is_symlink() else None
+
+
 def require_remote_checkpoint_source_pin(
     reference: Any,
     revision: Any,
@@ -285,8 +298,7 @@ def require_remote_checkpoint_source_pin(
     text = str(reference).strip()
     if not text:
         raise ValueError(f"checkpoint source field {field_name} must be non-empty")
-    candidate = Path(text).expanduser()
-    if candidate.exists() or candidate.is_symlink():
+    if local_checkpoint_source(text) is not None:
         return None
 
     from huggingface_hub.utils import HFValidationError, validate_repo_id
@@ -510,6 +522,7 @@ __all__ = [
     "MODEL_IDENTITY_SCHEMA",
     "LocalCheckpointContent",
     "checkpoint_identity_metadata",
+    "local_checkpoint_source",
     "require_checkpoint_source_member",
     "require_remote_checkpoint_source_pin",
     "resolve_checkpoint_model_identity",

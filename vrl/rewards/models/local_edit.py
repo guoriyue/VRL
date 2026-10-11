@@ -40,7 +40,7 @@ from typing import Any
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.base import LazyTorchModule
 from vrl.rewards.models.media import artifact_middle_frame_image
-from vrl.utils.artifacts import RootedPaths
+from vrl.utils.paths import RootedPaths
 
 # Appended by the local-edit manifest builder when the reference image carries a
 # drawn red box; stripped again here so the execution judge sees the plain instruction.

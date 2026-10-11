@@ -729,7 +729,6 @@ class WanT2VDiffusersModel(
             "guidance_scale_2": state.guidance_scale_2,
             "cfg": state.do_cfg,
             "boundary_ratio": state.boundary_ratio,
-            "num_train_timesteps": state.num_train_timesteps,
         }
 
     def export_replay_tensors(self, state: WanT2VSamplingState) -> dict[str, Any]:
@@ -765,7 +764,7 @@ class WanT2VDiffusersModel(
             ),
             guidance_scale_2=batch_context.get("guidance_scale_2"),
             boundary_ratio=batch_context.get("boundary_ratio"),
-            num_train_timesteps=batch_context.get("num_train_timesteps"),
+            num_train_timesteps=_scheduler_num_train_timesteps(self.scheduler),
         )
 
     # -- decode_latents ------------------------------------------------
@@ -1144,7 +1143,6 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             "cfg": state.do_cfg,
             "conditioning": "reference_image",
             "boundary_ratio": state.boundary_ratio,
-            "num_train_timesteps": state.num_train_timesteps,
         }
 
     def export_replay_tensors(self, state: WanI2VSamplingState) -> dict[str, Any]:
@@ -1183,7 +1181,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             ),
             guidance_scale_2=batch_context.get("guidance_scale_2"),
             boundary_ratio=batch_context.get("boundary_ratio"),
-            num_train_timesteps=batch_context.get("num_train_timesteps"),
+            num_train_timesteps=_scheduler_num_train_timesteps(self.scheduler),
         )
 
     def _encode_image_embeds(self, reference_image: Any) -> torch.Tensor | None:

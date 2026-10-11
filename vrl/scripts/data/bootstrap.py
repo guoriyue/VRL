@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from vrl.scripts.data.common import emit
-from vrl.utils.artifacts import repo_root as _repo_root
+from vrl.utils.paths import repo_root as _repo_root
 
 
 def register(subparsers: Any) -> None:

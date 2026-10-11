@@ -32,8 +32,9 @@ from vrl.scripts.eval.denoise_generation import (
     generate_images,
     seed_for,
 )
-from vrl.utils.artifacts import RootedPaths, sha256_file, user_path
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.json_files import write_json
+from vrl.utils.paths import RootedPaths, user_path
 
 if TYPE_CHECKING:
     from vrl.models.families.registry import ModelFamilyEntry

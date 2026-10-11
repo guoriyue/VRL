@@ -37,7 +37,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from vrl.rewards.models.local_edit import HINT_SUFFIX
-from vrl.utils.artifacts import RootedPaths
+from vrl.utils.paths import RootedPaths
 
 LOCAL_TASKS = ("attribute_modification", "swap", "removal", "addition")
 OMNIEDIT = "TIGER-Lab/OmniEdit-Filtered-1.2M"
