@@ -41,30 +41,36 @@ flowchart LR
 ### Parking (`vrl/models/parking.py`)
 
 Every role parks the same way in outline: copy what must survive off the card,
-release the card, restore on the next phase. Two words describe any concrete
-parking. The **mechanism** is how the card is released: `move` (`.to("cpu")`
-per storage, `ModelParking`) or `cumem` (the model was built inside a vLLM
-CuMem pool, so its pages are backed up and unmapped as one unit,
-`CumemPool`). The **destination** is where the bytes live meanwhile: `ram`, or
-`disk` (every parked tensor becomes a shared file mapping under
-`distributed.resources.trainer_parking_directory`). Three of the four cells exist, and
-each role sits in a fixed one:
+release the card, restore on the next phase. The **mechanism** is how the card
+is released: `move` (`.to("cpu")` per storage, `ModelParking`; the bytes stay in
+host RAM, or with a disk store every parked tensor becomes a shared file
+mapping on node-local disk), `cumem` (the model was built inside a vLLM CuMem
+pool, so its pages are backed up to pinned RAM and unmapped as one unit,
+`CumemPool`) or `reload` (nothing survives: the object is dropped and rebuilt
+from its factory, `ReloadParking`; only for objects the factory reproduces
+exactly, never training state). Each role names its mechanism in
+`distributed.resources.<role>.parking.mechanism`; whether it parks at all is
+the topology's call. Each role accepts a subset and refuses the rest at load:
 
-| | destination `ram` | destination `disk` |
-|---|---|---|
-| mechanism `move` | generation worker using CPU relocation (including managed pipeline offload); trainer by default; reward | trainer with `trainer_parking_directory` set (`TrainingStateParking`) |
-| mechanism `cumem` | generation worker with a CUDA-resident model; CuMem rewards | none: vLLM backs up to pinned RAM only |
+| role | default | also accepted | refused |
+|---|---|---|---|
+| trainer | `move` (`parking.disk_directory` adds the disk store) | none | `cumem` (state is not pool-allocated), `reload` (optimizer state cannot be rebuilt) |
+| rollout | `cumem` | `move` (required under pipeline CPU offload) | `reload` (a woken rollout is not guaranteed a weight sync) |
+| reward | `cumem` | `reload` | `move` (6.2x slower per cycle than `cumem`) |
 
 All three roles drive these mechanisms through one `ParkingSession`: `build`
-(claims the CuMem pool around construction, or a `move` ledger, and captures
-the pre-load baseline), `park` (sleeps the pool, or runs the owner's move and
-rolls it back through the ledger on failure), `restore`, `release_gpu` plus
+(claims the CuMem pool around construction, a `move` ledger or a `reload`
+factory, and captures the pre-load baseline), `park` (sleeps the pool, runs
+the owner's move and rolls it back through the ledger on failure, or drops the
+object), `restore` (returns the live object, rebuilt under `reload`; the
+session holds the object, so an owner drops its own reference before `park`),
+`release_gpu` plus
 `gpu_used_bytes` (the residual evidence) and `release_scope` (wake, drop, close).
 It raises `ParkingBroken` / `CumemBroken` and holds no policy; the owners add
 what only they need: `GenerationWorkerParking` the quarantine phases and the
 driver-validated snapshot, `TrainerParking` the cross-rank failure
-agreement and identity ticket, `RewardParking` the reload mode and the
-terminal device-cache release. `disk` is a property of the `move` mechanism
+agreement and identity ticket, `RewardParking` the terminal device-cache
+release. `disk` is a property of the `move` mechanism
 rather than of the trainer: `ModelParking` takes an optional `disk` store and,
 given one, has it copy each tensor from its device straight into a file
 mapping, so no anonymous host copy of a whole module ever exists; without one
@@ -73,7 +79,7 @@ owns directory validation, file mappings of every parked tensor, host-memory
 reclamation and file cleanup. `TrainingStateParking` only decides
 what the trainer parks (model, optimizer, gradient, EMA and scaler state), and
 `TrainerParking` injects the disk store when
-`distributed.resources.trainer_parking_directory` is set. The trainer does not allocate its state inside CuMem;
+`distributed.resources.trainer.parking.disk_directory` is set. The trainer does not allocate its state inside CuMem;
 generation CuMem backups use pinned RAM and do not implement disk storage. RAM
 capacity remains a resource requirement. GPU sharing in
 `distributed.resources` decides when roles park.
@@ -264,7 +270,7 @@ classDiagram
 | Class | Role |
 |---|---|
 | `RewardFunctionRuntime` (`runtime.py`) | Implements `RewardRuntime` around the configured `RewardFunction`: lifecycle FSM, deadlines, parking gate (`validate_parking_residual`). What `RayGenerationRuntime` is to generation. |
-| `RewardParking` (`runtime.py`) | The reward's parking owner (vocabulary in §1 Parking): a `ParkingSession` on the configured device for `cumem`, no session for `reload` (destroy the model and trim host allocations at each handoff), and the terminal device-cache release every runtime needs. |
+| `RewardParking` (`runtime.py`) | The reward's parking owner (vocabulary in §1 Parking): a `ParkingSession` on the configured device whose mechanism is `distributed.resources.reward.parking.mechanism` (`cumem`, or `reload`: drop the model and trim host allocations at each handoff, rebuild it at the next activation), and the terminal device-cache release every runtime needs. |
 | `InProcessRewardScorer` (`runtime.py`) | `RewardScorer` + `MemoryParkingScorer` implementation: builds the model from `RewardRuntimeLaunchContract.model_factory` through `RewardParking`. `_score_artifacts` resolves media and owns model-required temporary files; `_infer` runs the batch hook or per-artifact loop. Remote scoring processes reuse it. |
 | `build_reward_scorer` (`runtime.py`) | Factory: worker config or `RewardInferenceConfig` → in-process or HTTP scorer. |
 | `HttpRewardScorer` (`service/client.py`) | `RewardScorer` + `RemoteReadyScorer` over HTTP: checks service identity/capabilities at `ensure_ready` and uploads tensor media, with explicit shared-file inputs also supported. Ambiguous failures retain borrowed/shared artifacts where applicable. |

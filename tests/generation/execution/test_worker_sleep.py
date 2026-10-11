@@ -181,6 +181,7 @@ def _core(
         expected_model_identity={"schema": "test"},
         policy_version=1,
         sleep_offload=sleep_offload,
+        parking_mechanism="move" if pipeline_offload_mode != "none" else "cumem",
     )
     core = GenerationWorkerCore("rollout-0", contract)
     core.executor = (

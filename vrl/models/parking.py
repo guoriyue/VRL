@@ -2,13 +2,16 @@
 
 Every role parks through one :class:`ParkingSession`: build the object (inside
 a CuMem pool when the role must prove release), park it, restore it, release
-it, and measure the physical footprint in between. Two mechanisms sit under
+it, and measure the physical footprint in between. Three mechanisms sit under
 the session. ``move`` (:class:`ModelParking`) relocates tensors to CPU and
 records their original devices; given a ``ParkingDiskStore`` it maps every
 moved tensor to a file so Linux can reclaim the pages, and without one the
 bytes stay in ordinary host RAM. ``cumem`` (:class:`CumemPool`) requires model
 allocations to be created inside its pool, which it backs up to pinned RAM and
 unmaps while preserving virtual addresses; it has no disk destination.
+``reload`` (:class:`ReloadParking`) keeps nothing: it drops the object at park
+and rebuilds it from its factory at restore, for objects the factory
+reproduces exactly (frozen weights read from a checkpoint).
 :class:`TrainingStateParking` decides only *what* the trainer parks: the model
 plus optimizer, gradient, EMA and scaler state.
 
@@ -335,15 +338,67 @@ class CumemBroken(ParkingBroken):
     """
 
 
-ParkingMechanism = Literal["cumem", "move"]
+ParkingMechanism = Literal["cumem", "move", "reload"]
+
+
+def host_memory_trim() -> Callable[[], int]:
+    """glibc ``malloc_trim(0)``: return freed heap pages to the OS.
+
+    Resolved once by :class:`ReloadParking`, which fails at construction on a
+    libc without it rather than parking without releasing host memory.
+    """
+
+    import ctypes
+
+    trim = getattr(ctypes.CDLL(None), "malloc_trim", None)
+    if trim is None:
+        raise RuntimeError("reload parking requires glibc malloc_trim")
+    trim.argtypes = [ctypes.c_size_t]
+    trim.restype = ctypes.c_int
+    return lambda: trim(0)
+
+
+class ReloadParking:
+    """Mechanism ``reload``: drop the object at park, rebuild it from its factory at restore.
+
+    Only for objects their factory reproduces exactly, such as frozen weights
+    read from a checkpoint; never for training state, which nothing could
+    rebuild. The session holds the object and drops it before ``release``, so
+    nothing keeps its memory alive. ``malloc_trim`` then returns the freed host
+    pages, and runs again before every build because training and checkpoint
+    export in the same process can leave freed pages behind.
+    """
+
+    def __init__(self, factory: Callable[[], Any]) -> None:
+        self._factory = factory
+        self._trim = host_memory_trim()
+
+    def build(self) -> Any:
+        self._trim()
+        try:
+            return self._factory()
+        except BaseException as error:
+            # Drop traceback-held locals of the half-built object, then its pages.
+            traceback.clear_frames(error.__traceback__)
+            self.release()
+            raise
+
+    def release(self) -> None:
+        """Return the host pages of a dropped object; safe to repeat."""
+
+        gc.collect()
+        self._trim()
 
 
 class ParkingSession:
     """One role's parking of one built object: the steps every role shares.
 
     ``build`` claims the mechanism (a CuMem pool wrapped around construction,
-    or a ``move`` ledger), ``park`` releases the card, ``restore`` brings it
-    back and ``release_scope`` tears everything down. ``baseline_gpu_used_bytes``,
+    a ``move`` ledger, or a ``reload`` factory), ``park`` releases the card,
+    ``restore`` brings it back and returns the live object, and
+    ``release_scope`` tears everything down. The session holds the built
+    object: an owner drops its own reference before ``park`` and takes the
+    object ``restore`` returns, because ``reload`` rebuilds a new one. ``baseline_gpu_used_bytes``,
     ``release_gpu`` and ``gpu_used_bytes`` supply the physical evidence a
     parking-required role must produce. ``device`` scopes every pool operation
     to a configured CUDA device (a reward pinned to ``cuda:1`` while the driver
@@ -369,9 +424,11 @@ class ParkingSession:
         # before build, residual measured after park).
         self.required = required
         self._device = device
-        self.backend: ModelParking | CumemPool | None = ledger
+        self.backend: ModelParking | CumemPool | ReloadParking | None = ledger
         self.baseline_gpu_used_bytes: int | None = None
         self.parked = False
+        # The built object; ``restore`` returns it, rebuilt under ``reload``.
+        self._object: Any = None
 
     @property
     def pool(self) -> CumemPool | None:
@@ -381,7 +438,9 @@ class ParkingSession:
     def mechanism(self) -> ParkingMechanism | None:
         if self.backend is None:
             return None
-        return "cumem" if isinstance(self.backend, CumemPool) else "move"
+        if isinstance(self.backend, CumemPool):
+            return "cumem"
+        return "reload" if isinstance(self.backend, ReloadParking) else "move"
 
     def _device_scope(self) -> Any:
         if self._device is None:
@@ -402,7 +461,7 @@ class ParkingSession:
         self,
         factory: Callable[[], Any],
         *,
-        cumem: bool,
+        mechanism: ParkingMechanism,
         tag: str | None = None,
         resident: Callable[[Any], bool] | None = None,
     ) -> Any:
@@ -411,8 +470,9 @@ class ParkingSession:
         ``cumem`` claims the pool before building, so a misconfigured box fails
         in milliseconds rather than after loading GiB of weights it could not
         release; a build failure closes the pool again. ``resident`` is read
-        after the build: an object it reports off CUDA allocated nothing in the
-        pool, so the pool is closed and the session parks by moving instead.
+        after a ``cumem`` build: an object it reports off CUDA allocated nothing
+        in the pool, so the pool is closed and the session parks by moving
+        instead. ``reload`` keeps the factory and calls it again at restore.
         """
 
         if self.backend is not None:
@@ -420,11 +480,20 @@ class ParkingSession:
         if self.required:
             # Compare this process against its own preload physical baseline.
             self.baseline_gpu_used_bytes = self.gpu_used_bytes()
-        if not cumem:
+
+        def build_on_device() -> Any:
             with self._device_scope():
-                result = factory()
+                return factory()
+
+        if mechanism == "reload":
+            reload = ReloadParking(build_on_device)
+            self._object = reload.build()
+            self.backend = reload
+            return self._object
+        if mechanism == "move":
+            self._object = build_on_device()
             self.backend = ModelParking()
-            return result
+            return self._object
         pool = CumemPool.require(tag=tag)
         try:
             with self._device_scope(), pool.building():
@@ -437,6 +506,7 @@ class ParkingSession:
             release_cuda_memory(ipc_collect=True)
             self._close_pool(pool, after=f"a failed build ({build_error!r})")
             raise
+        self._object = result
         if resident is not None and not resident(result):
             self._close_pool(pool, after="a build that left the model off CUDA")
             self.backend = ModelParking()
@@ -449,11 +519,18 @@ class ParkingSession:
 
         ``cumem`` sleeps the pool. ``move`` runs the owner's move (the ledger
         knows what to relocate) and rolls it back through the ledger if it
-        fails, so a retry starts from a resident model.
+        fails, so a retry starts from a resident model. ``reload`` drops the
+        object; a failed host-page release leaves the session unparked, so a
+        retry releases again.
         """
 
         backend = self._require_backend("park")
         if self.parked:
+            return
+        if isinstance(backend, ReloadParking):
+            self._object = None
+            backend.release()
+            self.parked = True
             return
         if isinstance(backend, CumemPool):
             try:
@@ -481,13 +558,20 @@ class ParkingSession:
             raise
         self.parked = True
 
-    def restore(self) -> None:
-        """Bring the card back; a failed ``move`` restore keeps the ledger for retry."""
+    def restore(self) -> Any:
+        """Bring the card back and return the live object.
+
+        A failed ``move`` restore keeps the ledger for retry; a failed
+        ``reload`` rebuild leaves the session parked, so a retry rebuilds.
+        """
 
         backend = self._require_backend("restore")
-        if not self.parked:
-            return
-        if isinstance(backend, CumemPool):
+        if isinstance(backend, ReloadParking):
+            if self._object is None:
+                self._object = backend.build()
+        elif not self.parked:
+            return self._object
+        elif isinstance(backend, CumemPool):
             try:
                 with self._device_scope():
                     backend.wake()
@@ -499,17 +583,19 @@ class ParkingSession:
         else:
             backend.restore()
         self.parked = False
+        return self._object
 
     def release_gpu(self) -> None:
         """Strict CUDA cleanup after a park, before the residual is measured.
 
-        A ``move`` park invalidates device residency, so idle BLAS workspaces
-        that pin allocator segments are cleared too; ``cumem`` keeps its pools.
+        A ``move`` or ``reload`` park invalidates device residency, so idle BLAS
+        workspaces that pin allocator segments are cleared too; ``cumem`` keeps
+        its pools.
         """
 
         release_cuda_memory_for_parking(
             self._device,
-            clear_blas_workspaces=isinstance(self.backend, ModelParking),
+            clear_blas_workspaces=not isinstance(self.backend, CumemPool),
         )
 
     @contextmanager
@@ -526,10 +612,13 @@ class ParkingSession:
         if pool is not None:
             self.restore()
         yield
+        self._object = None
         if isinstance(backend, ModelParking):
             # The ledger also owns model/tensor references; drop them before
             # collecting allocator pages.
             backend.discard()
+        elif isinstance(backend, ReloadParking):
+            backend.release()
         release_cuda_memory(ipc_collect=True)
         if pool is not None:
             self._close_pool(pool, after="release")
@@ -537,7 +626,7 @@ class ParkingSession:
         self.backend = None
         self.parked = False
 
-    def _require_backend(self, operation: str) -> ModelParking | CumemPool:
+    def _require_backend(self, operation: str) -> ModelParking | CumemPool | ReloadParking:
         if self.backend is None:
             raise RuntimeError(
                 f"{self.owner} cannot {operation} before its build committed a backend"

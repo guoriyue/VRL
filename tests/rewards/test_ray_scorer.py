@@ -71,7 +71,7 @@ def _request(media=None, **metadata):
 @pytest.mark.slow_test
 def test_real_ray_reward_score_media_and_reload_parking(local_ray):
     async def exercise():
-        scorer = _scorer(worker_config={"sleep_offload": True, "memory_parking_mode": "reload"})
+        scorer = _scorer(worker_config={"sleep_offload": True, "parking_mechanism": "reload"})
         assert isinstance(scorer, RewardScorer)
         assert isinstance(scorer, RemoteReadyScorer)
         assert isinstance(scorer, MemoryParkingScorer)

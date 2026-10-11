@@ -52,6 +52,7 @@ from vrl.models import checkpoint_identity
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.models.families.registry import ModelFamilyEntry
 from vrl.models.interfaces import ModelBuild, RuntimeBundle
+from vrl.models.parking import ParkingMechanism
 from vrl.ray import resources as ray_resources
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
@@ -161,7 +162,9 @@ class ResolvedReward:
 
     config: RewardRuntimeConfig
     device: str
-    memory_parking_required: bool
+    # How the reward parks when the topology makes it yield its GPU
+    # (distributed.resources.reward.parking.mechanism); None keeps it resident.
+    parking: ParkingMechanism | None
 
     @classmethod
     def from_plan(
@@ -186,13 +189,15 @@ class ResolvedReward:
             # The plan's reward devices are the reward's own GPU fact: an
             # all-HTTP reward reserves none (its services own their
             # accelerators), so the plan never parks it.
-            memory_parking_required=bool(resources.lifecycle.offload_reward),
+            parking=(
+                resources.reward_parking.mechanism if resources.lifecycle.offload_reward else None
+            ),
         )
 
     def validate_parking(self) -> None:
         """Reject a GPU-sharing reward whose components cannot park, before any build."""
 
-        if self.memory_parking_required:
+        if self.parking is not None:
             self.config.validate_memory_parking(self.device)
 
     def actor_placement(self, owner: Any) -> Any:
@@ -204,7 +209,7 @@ class ResolvedReward:
 
         from vrl.rewards.ray import RayRewardPlacement
 
-        if self.device.startswith("cuda") and self.memory_parking_required:
+        if self.device.startswith("cuda") and self.parking is not None:
             import os
 
             from vrl.ray.dependencies import require_ray
@@ -235,7 +240,7 @@ class ResolvedReward:
             self.config.weights,
             device=self.device,
             reward_kwargs=self.config.kwargs,
-            memory_parking_required=self.memory_parking_required,
+            parking=self.parking,
             inference_configs=self.config.inference_configs,
             ray_placement=ray_placement,
         )
@@ -352,6 +357,7 @@ class ResolvedOnlineRun(ResolvedRun):
                     self.resources.lifecycle.rollout_mode == "on_demand"
                     and bool(self.resources.rollout_devices)
                 ),
+                parking_mechanism=str(self.resources.rollout_parking.mechanism),
             ),
             gatherer=self.family.new_gatherer(),
         )

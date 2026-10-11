@@ -172,7 +172,7 @@ class TrainerParking:
     # Class-level default so a strategy that inherits this cannot forget to
     # initialize it; the first park assigns a per-instance value.
     _parking: ParkingSession | None = None
-    # distributed.resources.trainer_parking_directory; None parks into host RAM.
+    # distributed.resources.trainer.parking.disk_directory; None parks into host RAM.
     _parking_directory: str | None = None
 
     def validate_training_state_parking(self) -> None:
@@ -1152,7 +1152,7 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
             cpu_offload=fsdp.cpu_offload,
             shard_trainable_only=fsdp.shard_trainable_only,
             parking_directory=(
-                config.distributed.resources.trainer_parking_directory
+                config.distributed.resources.trainer.parking.disk_directory
                 if config.distributed is not None and config.distributed.resources is not None
                 else None
             ),

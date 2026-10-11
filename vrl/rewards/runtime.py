@@ -20,14 +20,12 @@ This module imports the CUDA parking utilities; the contract modules
 from __future__ import annotations
 
 import asyncio
-import gc
 import random
 import time
 import traceback
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
-from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
@@ -152,25 +150,8 @@ class RewardFunctionRuntime:
             self.lifecycle.finish_shutdown()
 
 
-def _host_memory_trim() -> Any:
-    """Resolve glibc ``malloc_trim`` for reload-mode parking.
-
-    A module-level seam on purpose: it is the libc boundary the reload tests
-    replace, and reload parking must fail at construction on a libc without it.
-    """
-    import ctypes
-
-    libc = ctypes.CDLL(None)
-    trim = getattr(libc, "malloc_trim", None)
-    if trim is None:
-        raise RuntimeError("reward reload parking requires glibc malloc_trim")
-    trim.argtypes = [ctypes.c_size_t]
-    trim.restype = ctypes.c_int
-    return lambda: trim(0)
-
-
 class RewardParking:
-    """The reward runtime's parking owner: one ``ParkingSession`` plus reload mode.
+    """The reward runtime's parking owner: one ``ParkingSession`` on the configured device.
 
     ``worker_config.sleep_offload`` opts a heavyweight model into the same
     sleep/wake semantics the rollout lease uses: the model holds no GPU memory
@@ -184,10 +165,11 @@ class RewardParking:
     while preserving this reward's contents in pinned host RAM. vLLM's
     CuMemAllocator is required and missing it fails loud rather than
     degrading to a CPU round trip, which measured 6.2x slower per
-    wake/score/sleep cycle and only appears to park. Opt-in
-    ``memory_parking_mode='reload'`` has no session: the owner destroys the
-    model at each handoff and trims released host allocations, paying
-    checkpoint reload latency. CuMem tags do not isolate sleep operations, so
+    wake/score/sleep cycle and only appears to park.
+    ``distributed.resources.reward.parking.mechanism: reload`` selects the
+    session's ``reload`` mechanism instead: the model is dropped at each handoff and rebuilt from its
+    factory at the next activation, paying checkpoint reload latency instead
+    of pinned host RAM. CuMem tags do not isolate sleep operations, so
     the shared-topology preflight permits at most one configured GPU reward
     component per process; zero-weight observation-only scorers still execute
     and therefore count.
@@ -195,9 +177,6 @@ class RewardParking:
 
     def __init__(self, launch: RewardRuntimeLaunchContract) -> None:
         self._launch = launch
-        self._trim_host_memory = (
-            _host_memory_trim() if launch.memory_parking_mode == "reload" else None
-        )
         self._session: ParkingSession | None = None
         self._broken_reason: str | None = None
 
@@ -215,10 +194,6 @@ class RewardParking:
         return self._launch.sleep_offload
 
     @property
-    def by_reload(self) -> bool:
-        return self._launch.memory_parking_mode == "reload"
-
-    @property
     def pool(self) -> CumemPool | None:
         return None if self._session is None else self._session.pool
 
@@ -226,11 +201,6 @@ class RewardParking:
         """Build the model where its parking mechanism can reach it."""
 
         self._require_healthy()
-        if self._trim_host_memory is not None:
-            # Training and checkpoint export can retain freed host pages
-            # between reward activations in this shared process.
-            gc.collect()
-            self._trim_host_memory()
         if not self.required:
             return factory()
         # Build inside the pool so every CUDA allocation the factory makes
@@ -239,7 +209,7 @@ class RewardParking:
         # current device, not .to() targets.
         session = ParkingSession("reward runtime", required=True, device=self._launch.device)
         try:
-            model = session.build(factory, cumem=not self.by_reload)
+            model = session.build(factory, mechanism=self._launch.parking_mechanism)
         except CumemBroken as error:
             # A failed pool close is just as terminal as a partial sleep/wake.
             # Retain the session and avoid touching the corrupted allocator.
@@ -254,27 +224,26 @@ class RewardParking:
             traceback.clear_frames(load_error.__traceback__)
             try:
                 self._release_device_cache()
-                if self._trim_host_memory is not None:
-                    self._trim_host_memory()
             except BaseException as cleanup_error:
                 raise RuntimeError(
                     "reward model preparation and parking cleanup both failed: "
                     f"load={load_error!r}; cleanup={cleanup_error!r}",
                 ) from cleanup_error
             raise
-        self._session = session if session.mechanism == "cumem" else None
+        self._session = session
         return model
 
-    def restore(self) -> None:
-        """Wake a parked model before scoring; no-op while resident."""
+    def restore(self) -> Any:
+        """Wake or rebuild a parked model and return it; None without a session."""
 
         self._require_healthy()
-        if self._session is not None:
-            try:
-                self._session.restore()
-            except CumemBroken as error:
-                self._broken_reason = str(error)
-                raise
+        if self._session is None:
+            return None
+        try:
+            return self._session.restore()
+        except CumemBroken as error:
+            self._broken_reason = str(error)
+            raise
 
     def park(self) -> None:
         """Park the session; partial CuMem failures require process termination."""
@@ -286,7 +255,7 @@ class RewardParking:
             )
         if self._session is None:
             raise RuntimeError(
-                "reward runtime cannot park memory before its CuMem-pooled model is built",
+                "reward runtime cannot park memory before its model is built",
             )
         try:
             self._session.park()
@@ -315,8 +284,6 @@ class RewardParking:
         # reserved in this long-lived driver process, so terminal cleanup must
         # release the configured device cache for every runtime.
         self._release_device_cache()
-        if self._trim_host_memory is not None:
-            self._trim_host_memory()
         self._session = None
 
     def _release_device_cache(self) -> None:
@@ -360,48 +327,57 @@ class InProcessRewardScorer:
         of the measured scoring phase.
         """
 
-        self._ensure_model()
-        self._parking.restore()
+        self._resident_model()
 
     async def park_memory(self) -> None:
-        """Park pages; retry only while the parking owner remains healthy."""
+        """Park pages; retry only while the parking owner remains healthy.
 
-        if self._parking.required and self._parking.by_reload:
-            await self.shutdown()
-            return
+        The scorer drops its reference first: the parking session holds the
+        model, and ``reload`` can free it only if nothing else does.
+        """
+
+        self._model = None
         self._parking.park()
 
-    def _ensure_model(self) -> Any:
-        if self._model is None:
-            import numpy as np
-            import torch
+    def _resident_model(self) -> Any:
+        """The model ready to score: built on first use, woken or rebuilt after a park."""
 
-            factory_path = self._launch.model_factory
-            if not factory_path:
+        if self._model is None:
+            self._model = self._parking.restore()
+        if self._model is None:
+            if not self._launch.model_factory:
                 raise ValueError(
                     "InProcessRewardScorer requires worker_config.model_factory "
                     "(import path to a RewardModel factory) or an explicit model",
                 )
-            # Synchronous cold construction must not change the trainer's
-            # resume streams: every RNG the build may touch is restored after.
-            python_state = random.getstate()
-            numpy_state = np.random.get_state()
-            devices = list(range(torch.cuda.device_count())) if torch.cuda.is_initialized() else []
-            try:
-                with torch.random.fork_rng(devices=devices):
-                    factory = import_from_path(factory_path)
-                    self._model = self._parking.build(partial(self._build_prepared_model, factory))
-            finally:
-                random.setstate(python_state)
-                np.random.set_state(numpy_state)
+            self._model = self._parking.build(self._build_model)
         return self._model
 
-    def _build_prepared_model(self, factory: Callable[[Mapping[str, Any]], Any]) -> Any:
-        model = factory(self._launch.component_config)
-        prepare = getattr(model, "prepare_for_inference", None)
-        if callable(prepare):
-            prepare()
-        return model
+    def _build_model(self) -> Any:
+        """Construct and prepare the model, leaving every RNG stream untouched.
+
+        Synchronous cold construction, and each ``reload`` rebuild, must not
+        change the trainer's resume streams: every RNG the build may touch is
+        restored after.
+        """
+
+        import numpy as np
+        import torch
+
+        python_state = random.getstate()
+        numpy_state = np.random.get_state()
+        devices = list(range(torch.cuda.device_count())) if torch.cuda.is_initialized() else []
+        try:
+            with torch.random.fork_rng(devices=devices):
+                factory = import_from_path(self._launch.model_factory)
+                model = factory(self._launch.component_config)
+                prepare = getattr(model, "prepare_for_inference", None)
+                if callable(prepare):
+                    prepare()
+                return model
+        finally:
+            random.setstate(python_state)
+            np.random.set_state(numpy_state)
 
     async def score_batch(
         self,
@@ -409,8 +385,7 @@ class InProcessRewardScorer:
     ) -> list[RewardInferenceResult]:
         if not request.artifacts:
             return []
-        model = self._ensure_model()
-        self._parking.restore()
+        model = self._resident_model()
         # CuMem's model-building scope is one-shot. Execution uses the normal
         # allocator; park_memory's physical baseline gate rejects any lazy
         # long-lived CUDA allocation that survives scoring.

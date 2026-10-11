@@ -1,4 +1,4 @@
-"""distributed.resources.trainer_parking_directory: the trainer's parking destination.
+"""distributed.resources.trainer.parking.disk_directory: the trainer's parking destination.
 
 The config accepts only an absolute node-local path; the parking layer refuses
 a directory that is missing or sits on a RAM-backed mount, since tmpfs would
@@ -18,21 +18,15 @@ from omegaconf import OmegaConf
 from vrl.config.schema import parse_config
 from vrl.models.parking import ModelParking, TrainingMemoryState, TrainingStateParking
 from vrl.models.parking_disk_store import ParkingDiskStore
-from vrl.ray.resources import DistributedResourceConfig
+from vrl.ray.resources import DistributedResourceConfig, ParkingConfig
 from vrl.trainers.strategy import FSDPStrategy, build_strategy
 
 
 def test_parking_directory_is_optional_and_must_be_absolute() -> None:
-    assert DistributedResourceConfig().trainer_parking_directory is None
-    assert (
-        DistributedResourceConfig(
-            trainer_parking_directory="/mnt/nvme/vrl"
-        ).trainer_parking_directory
-        == "/mnt/nvme/vrl"
-    )
+    assert DistributedResourceConfig().trainer.parking == ParkingConfig("move", None)
     for bad in ("", "   ", "relative/dir"):
-        with pytest.raises(ValueError, match="trainer_parking_directory"):
-            DistributedResourceConfig(trainer_parking_directory=bad)
+        with pytest.raises(ValueError, match="disk_directory"):
+            ParkingConfig("move", bad)
 
 
 def test_parking_directory_reaches_the_fsdp_strategy(monkeypatch) -> None:
@@ -48,7 +42,9 @@ def test_parking_directory_reaches_the_fsdp_strategy(monkeypatch) -> None:
                 "model": {"family": "sd3_5"},
                 "distributed": {
                     "training": {"strategy": "fsdp", "fsdp": {"mesh": ["dp_shard"]}},
-                    "resources": {"trainer_parking_directory": "/mnt/nvme/vrl-parking"},
+                    "resources": {
+                        "trainer": {"parking": {"disk_directory": "/mnt/nvme/vrl-parking"}}
+                    },
                 },
             }
         )

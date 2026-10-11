@@ -156,9 +156,7 @@ def preflight_rewards(
         session = None
         owner = None
         try:
-            reward = ResolvedReward(
-                config=built.reward, device=str(device), memory_parking_required=False
-            )
+            reward = ResolvedReward(config=built.reward, device=str(device), parking=None)
             placement = None
             if any(
                 inference.kind == "ray" for inference in built.reward.inference_configs.values()

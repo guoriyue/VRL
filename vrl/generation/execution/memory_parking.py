@@ -76,9 +76,8 @@ class GenerationWorkerParking:
         PipelineOffloadMode(pipeline_offload_mode)
         self.worker_id = worker_id
         self._required = launch_contract.sleep_offload
-        # rollout.pipeline_offload_mode != "none": Accelerate already owns the
-        # model's residency, so the worker must not claim a CuMem scope around it.
-        self._pipeline_offload = pipeline_offload_mode != "none"
+        # The launch contract already refused cumem under pipeline CPU offload.
+        self._mechanism = launch_contract.parking_mechanism
         self._session: ParkingSession | None = None
         self._phase = _ParkingPhase.ACTIVE
         # Persist only a lightweight quarantine reason. Exception tracebacks can
@@ -93,15 +92,15 @@ class GenerationWorkerParking:
         self,
         build_executor: Callable[[], GenerationBatchExecutor],
     ) -> GenerationBatchExecutor:
-        """Build once; a parking-required, CUDA-resident model lives in a CuMem pool.
+        """Build once under the configured mechanism; a ``cumem`` model lives in a CuMem pool.
 
-        The mechanism follows from residency, not from the family: whether the
-        rank must yield its GPU (the launch contract), whether Accelerate
-        already manages the pipeline's residency (``pipeline_offload_mode``),
-        and whether the built model is resident on CUDA at all (a model that
-        is not, such as an isolated-runtime wrapper, has nothing to unmap and
-        parks by moving). The pool scope must wrap construction, so the third
-        fact is read after the build and an unneeded pool is closed at once.
+        A rank that must yield its GPU parks with
+        distributed.resources.rollout.parking.mechanism (``move`` under
+        pipeline CPU offload, which the launch contract enforces). A model that
+        is not resident on CUDA at all, such as an isolated-runtime wrapper,
+        has nothing to unmap and parks by moving: the pool scope must wrap
+        construction, so residency is read after the build and an unneeded
+        pool is closed at once.
         """
 
         self.require_active("policy build", executor=None)
@@ -116,7 +115,7 @@ class GenerationWorkerParking:
         try:
             executor = session.build(
                 build_executor,
-                cumem=self._required and not self._pipeline_offload,
+                mechanism=self._mechanism if self._required else "move",
                 tag=f"vrl:generation:{self.worker_id}:weights",
                 # Whether the built executor's model holds its weights on CUDA.
                 resident=lambda executor: str(

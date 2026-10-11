@@ -28,6 +28,7 @@ from vrl.rewards.runtime import build_reward_scorer
 from vrl.rewards.types import RewardOutput, RewardSample
 
 if TYPE_CHECKING:
+    from vrl.models.parking import ParkingMechanism
     from vrl.rewards.ray import RayRewardPlacement
 
 # Registry of reward function factories.
@@ -165,7 +166,7 @@ class MultiReward(RewardFunction):
         score_dict: dict[str, float],
         device: str = "cuda",
         reward_kwargs: dict[str, dict[str, Any]] | None = None,
-        memory_parking_required: bool | None = None,
+        parking: ParkingMechanism | None = None,
         inference_configs: Mapping[str, RewardInferenceConfig] | None = None,
         ray_placement: RayRewardPlacement | None = None,
     ) -> MultiReward:
@@ -255,7 +256,7 @@ class MultiReward(RewardFunction):
             extra.pop("device", None)
             if (
                 inference.kind in {"in_process", "ray"}
-                and memory_parking_required is True
+                and parking is not None
                 and component_device.startswith("cuda")
             ):
                 # GPU ownership comes from topology: a GPU component of a shared
@@ -265,6 +266,7 @@ class MultiReward(RewardFunction):
                 extra["worker_config"] = {
                     **(extra.get("worker_config") or {}),
                     "sleep_offload": True,
+                    "parking_mechanism": parking,
                 }
             component = reward_cls(device=component_device, **extra)
             triples.append((name, weight, component))

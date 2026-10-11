@@ -312,19 +312,19 @@ async def test_reward_sleep_failure_quarantines_all_later_allocator_operations(
     )
 
     await runtime.score_batch(_parking_request())
+    model = weakref.ref(runtime._model)
     with pytest.raises(RuntimeError, match="sleep failed"):
         await runtime.park_memory()
     assert runtime._parking.pool is not None
     assert runtime._parking.pool.asleep is False
 
-    model = runtime._model
     for operation in (runtime.park_memory, runtime.activate, runtime.shutdown):
         with pytest.raises(parking_mod.CumemBroken, match="terminate the owning process"):
             await operation()
     with pytest.raises(parking_mod.CumemBroken, match="terminate the owning process"):
         await runtime.score_batch(_parking_request())
     assert allocator.sleep_attempts == 1
-    assert runtime._model is model
+    assert model() is not None  # the broken session keeps it; nothing frees pool pages
     assert runtime._parking.pool.asleep is False
 
 
@@ -480,14 +480,14 @@ def test_reward_parking_session_scopes_pool_operations_to_the_configured_device(
     monkeypatch.setattr(torch.cuda, "device", lambda target: seen.append(target) or nullcontext())
 
     session = ParkingSession("reward runtime", required=True, device="cuda:1")
-    session.build(lambda: object(), cumem=True)
+    session.build(lambda: object(), mechanism="cumem")
     session.park()
     session.restore()
     assert seen == [torch.device("cuda:1")] * 3
 
     for device in ("cpu", None):
         resident = ParkingSession("reward runtime", required=True, device=device)
-        resident.build(lambda: object(), cumem=True)
+        resident.build(lambda: object(), mechanism="cumem")
         resident.park()
     assert len(seen) == 3
 

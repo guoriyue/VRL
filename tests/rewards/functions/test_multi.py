@@ -354,12 +354,10 @@ def test_factory_parking_policy_distinguishes_cpu_and_dedicated_rewards() -> Non
     cpu_reward = MultiReward.from_dict(
         {"ocr": 1.0},
         device="cpu",
-        memory_parking_required=False,
     )
     dedicated_reward = MultiReward.from_dict(
         {"aesthetic": 1.0},
         device="cuda:1",
-        memory_parking_required=False,
     )
 
     cpu_runtime = cpu_reward.rewards[0][2].scorer
@@ -375,7 +373,7 @@ def test_shared_parking_allows_one_gpu_reward_with_cpu_sibling() -> None:
     reward = MultiReward.from_dict(
         {"aesthetic": 1.0, "ocr": 1.0},
         device="cuda:0",
-        memory_parking_required=True,
+        parking="cumem",
     )
 
     runtimes = {name: fn.scorer for name, _, fn in reward.rewards}
@@ -416,7 +414,6 @@ def test_component_device_cannot_override_resource_device(
                     "worker_config": {"device": component_device},
                 },
             },
-            memory_parking_required=False,
         )
 
 
@@ -428,7 +425,7 @@ def test_gpu_resource_allows_component_cpu_downgrade() -> None:
         reward_kwargs={
             "kling_video_reward": {"worker_config": {"device": "cpu"}},
         },
-        memory_parking_required=True,
+        parking="cumem",
     )
 
     runtimes = {name: fn.scorer for name, _, fn in reward.rewards}
@@ -470,7 +467,6 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
                 expected_model="unified-reward-v1",
             ),
         },
-        memory_parking_required=False,
     )
 
     component = reward.rewards[0][2]
@@ -664,7 +660,7 @@ def test_ray_on_a_shared_gpu_takes_the_parking_lease(tmp_path) -> None:
     reward = MultiReward.from_dict(
         {"unified_reward_video": 1.0},
         device="cuda:0",
-        memory_parking_required=True,
+        parking="cumem",
         inference_configs={"unified_reward_video": RewardInferenceConfig(kind="ray")},
         ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"),
     )

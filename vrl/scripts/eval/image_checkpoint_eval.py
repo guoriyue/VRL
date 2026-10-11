@@ -658,7 +658,6 @@ async def score_images(
         plan.reward["components"],
         device=plan.reward_device,
         reward_kwargs=kwargs,
-        memory_parking_required=False,
         inference_configs=deployments,
     )
     by_key = {

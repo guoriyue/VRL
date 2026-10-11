@@ -72,6 +72,26 @@ def test_launch_contract_rejects_invalid_policy_version(policy_version) -> None:
         )
 
 
+def test_launch_contract_refuses_cumem_under_pipeline_offload() -> None:
+    """Pipeline CPU offload owns the model's residency, so a parking rollout must move."""
+
+    offloaded = {"rollout": {"pipeline_offload_mode": "sequential"}}
+    with pytest.raises(ValueError, match=r"parking\.mechanism: move"):
+        GenerationRuntimeLaunchContract(
+            family="unit",
+            model_build=offloaded,
+            expected_model_identity=_TEST_MODEL_IDENTITY,
+            sleep_offload=True,
+        )
+    GenerationRuntimeLaunchContract(
+        family="unit",
+        model_build=offloaded,
+        expected_model_identity=_TEST_MODEL_IDENTITY,
+        sleep_offload=True,
+        parking_mechanism="move",
+    )
+
+
 # ------------------------------------------------------- worker config projection
 
 

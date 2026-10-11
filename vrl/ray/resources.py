@@ -19,6 +19,7 @@ import os
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+from vrl.models.parking import ParkingMechanism
 from vrl.utils.config import to_builtin_deep
 
 if TYPE_CHECKING:
@@ -26,12 +27,42 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
+class ParkingConfig:
+    """How a role releases its GPU when the topology makes it yield.
+
+    Public key: ``distributed.resources.<role>.parking``. ``mechanism`` names the
+    ``ParkingSession`` mechanism (vrl/models/parking.py); left unset, the role's
+    default applies. ``disk_directory`` is the ``move`` mechanism's optional file
+    destination, ``ModelParking(disk=...)``: unset, the parked bytes stay in host
+    RAM; set, a node-local disk directory (NVMe) whose shared file mappings Linux
+    can drop and re-read while another role owns the GPU (miles:
+    --offload-train-target=disk / --offload-train-disk-dir). Whether a role
+    yields at all comes from the topology, not from here.
+    """
+
+    mechanism: ParkingMechanism | None = None
+    disk_directory: str | None = None
+
+    def __post_init__(self) -> None:
+        directory = self.disk_directory
+        if directory is None:
+            return
+        if not isinstance(directory, str) or not directory.strip():
+            raise ValueError("parking.disk_directory must be a non-empty path")
+        if not directory.startswith("/"):
+            raise ValueError(
+                f"parking.disk_directory must be an absolute node-local path, got {directory!r}",
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class _RoleResourceBase:
-    """What every ``distributed.resources.<role>`` block shares: its ``devices``.
+    """What every ``distributed.resources.<role>`` block shares: ``devices`` and ``parking``.
 
     ``devices`` is ``"auto"`` (the role shares the trainer's GPUs) or explicit
     CUDA ordinals (the role is pinned to them). It is parsed and validated once,
     at construction, and stored normalized: ``"auto"`` or a tuple of ids.
+    ``parking`` is stored with the role's mechanism resolved.
     """
 
     # Which ``distributed.resources.<role>`` block this request was parsed from.
@@ -39,14 +70,29 @@ class _RoleResourceBase:
     # (the source of truth for the accepted YAML keys, vrl/config/schema.py) must
     # not start advertising it as a settable key.
     role: ClassVar[str]
+    # The mechanisms this role can park with; the first is its default.
+    parking_mechanisms: ClassVar[tuple[ParkingMechanism, ...]]
 
     devices: tuple[int, ...] | list[int] | str = "auto"
+    parking: ParkingConfig = field(default_factory=ParkingConfig)
 
     def __post_init__(self) -> None:
         parsed = _parse_devices(self.devices)
         if parsed != "auto":
             parsed = tuple(_validate_device_ids(parsed, field_name=f"{self.key_prefix}.devices"))
         object.__setattr__(self, "devices", parsed)
+        parking = self.parking
+        mechanism = parking.mechanism or self.parking_mechanisms[0]
+        if mechanism not in self.parking_mechanisms:
+            raise ValueError(
+                f"{self.key_prefix}.parking.mechanism must be one of "
+                f"{list(self.parking_mechanisms)}, got {mechanism!r}",
+            )
+        if parking.disk_directory is not None and self.role != "trainer":
+            raise ValueError(
+                f"{self.key_prefix}.parking.disk_directory: only the trainer parks to disk",
+            )
+        object.__setattr__(self, "parking", replace(parking, mechanism=mechanism))
 
     @property
     def key_prefix(self) -> str:
@@ -72,6 +118,9 @@ class RoleResourceConfig(_RoleResourceBase):
     """GPU ownership request for one execution role."""
 
     role: ClassVar[str] = "trainer"
+    # Not cumem: training state is not allocated inside a CuMem pool. Not
+    # reload: optimizer state cannot be rebuilt from a factory.
+    parking_mechanisms: ClassVar[tuple[ParkingMechanism, ...]] = ("move",)
 
     num_gpus: int | str | None = "auto"
 
@@ -86,6 +135,8 @@ class RolloutResourceConfig(RoleResourceConfig):
     """
 
     role: ClassVar[str] = "rollout"
+    # Not reload: a woken rollout is not guaranteed a weight sync before it generates.
+    parking_mechanisms: ClassVar[tuple[ParkingMechanism, ...]] = ("cumem", "move")
 
     # Placement: unpinned ``devices`` share the trainer GPU(s) (colocated; the
     # shared roles hand the GPU over between phases). Pinned ``devices`` resolve
@@ -195,6 +246,8 @@ class RewardResourceConfig(_RoleResourceBase):
     """
 
     role: ClassVar[str] = "reward"
+    # Not move: a CPU round trip measured 6.2x slower per wake/score/sleep cycle.
+    parking_mechanisms: ClassVar[tuple[ParkingMechanism, ...]] = ("cumem", "reload")
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,33 +259,6 @@ class DistributedResourceConfig:
     rollout: RolloutResourceConfig = field(default_factory=RolloutResourceConfig)
     reward: RewardResourceConfig = field(default_factory=RewardResourceConfig)
     cross_node: bool = False
-    # The trainer's parking destination (public key:
-    # distributed.resources.trainer_parking_directory; vocabulary in
-    # vrl/models/parking.py). GPU sharing decides WHETHER a role gives up its
-    # GPU; this decides WHERE the trainer's copy goes. Unset: host RAM. Set: a
-    # node-local disk directory (NVMe) that the trainer's frozen shards are
-    # written to as shared file mappings, so Linux can drop and re-read them
-    # while generation owns the GPUs -- for hosts whose RAM cannot hold every
-    # parked role at once. Trainable parameters, optimizer state and EMA stay
-    # in host RAM. With a directory set, ranks park one at a time, since the
-    # file copy first needs a transient anonymous copy. Only the trainer has
-    # this choice: generation workers and rewards always park into RAM. The
-    # counterpart of miles' --offload-train-target=disk / --offload-train-disk-dir.
-    trainer_parking_directory: str | None = None
-
-    def __post_init__(self) -> None:
-        directory = self.trainer_parking_directory
-        if directory is None:
-            return
-        if not isinstance(directory, str) or not directory.strip():
-            raise ValueError(
-                "distributed.resources.trainer_parking_directory must be a non-empty path"
-            )
-        if not directory.startswith("/"):
-            raise ValueError(
-                "distributed.resources.trainer_parking_directory must be an absolute "
-                f"node-local path, got {directory!r}",
-            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,6 +361,11 @@ class ResolvedDistributedResources:
     # handoff. The launcher/collector/reward read this instead of re-deriving from
     # device sets.
     lifecycle: RayLifecyclePlan
+    # How the rollout and reward park when ``lifecycle`` makes them yield
+    # (distributed.resources.<role>.parking, mechanism resolved). The trainer's
+    # strategy reads its own parking straight off the config.
+    rollout_parking: ParkingConfig
+    reward_parking: ParkingConfig
 
     @property
     def rollout_num_gpus(self) -> int:
@@ -582,6 +613,8 @@ class ResolvedDistributedResources:
             rollout_gpus_per_engine=rollout_gpus_per_engine,
             cross_node=config.cross_node,
             lifecycle=lifecycle,
+            rollout_parking=config.rollout.parking,
+            reward_parking=config.reward.parking,
         )
 
 

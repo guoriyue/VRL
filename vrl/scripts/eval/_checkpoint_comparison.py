@@ -118,13 +118,12 @@ def reward_worker_config(
     """Project the run's own reward block into a scorer's worker config.
 
     Evaluation scores on training's terms, on the evaluation device, owning the
-    whole GPU: the training-only memory-parking knob is dropped.
+    whole GPU; parking lives in distributed.resources, never in this block.
     """
 
     worker_config = RewardRuntimeConfig.from_cfg(cfg).worker_config(
         component, default_reward_model_name=default_reward_model_name
     )
-    worker_config.pop("memory_parking_mode", None)
     worker_config["device"] = device
     return worker_config
 

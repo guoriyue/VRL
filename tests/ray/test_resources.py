@@ -1086,3 +1086,24 @@ def test_cosmos_async_reward_recipe_resolves_resident_reward_overlap() -> None:
     # >=2 inflight groups is the invariant that lets rollout(N+1) produce while
     # reward(N) scores; assert the relation, not the literal value.
     assert typed.continuous.max_inflight_groups >= 2
+
+
+def test_each_role_parks_with_its_default_and_refuses_other_mechanisms() -> None:
+    """``parking.mechanism`` resolves to the role's default; a mechanism the role
+    cannot use, or a disk directory outside the trainer, fails at parse.
+    """
+
+    resources = ResolvedDistributedResources.from_root(
+        parse_config(_cfg({"reward": {"parking": {"mechanism": "reload"}}}))
+    )
+    assert resources.rollout_parking.mechanism == "cumem"
+    assert resources.reward_parking.mechanism == "reload"
+    trainer = parse_config(_cfg({})).distributed.resources.trainer
+    assert trainer.parking.mechanism == "move"
+
+    refused = {"trainer": "reload", "rollout": "reload", "reward": "move"}
+    for role, mechanism in refused.items():
+        with pytest.raises(ValueError, match=rf"{role}\.parking\.mechanism must be one of"):
+            parse_config(_cfg({role: {"parking": {"mechanism": mechanism}}}))
+    with pytest.raises(ValueError, match="disk_directory"):
+        parse_config(_cfg({"reward": {"parking": {"disk_directory": "/mnt/nvme/x"}}}))

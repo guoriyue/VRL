@@ -107,8 +107,11 @@ distributed:
     # Each rank's unpinned rollout shares its own trainer GPU; the reward then
     # borrows the same rank-local card once both owners have parked.
     # Four parked trainers plus four sleeping generators exceed this host's RAM;
-    # the trainers' frozen shards go to node-local NVMe while generation runs.
-    trainer_parking_directory: /mnt/nvme/vrl-parking
+    # the trainers' parked state goes to node-local NVMe while generation runs.
+    trainer:
+      parking:
+        mechanism: move
+        disk_directory: /mnt/nvme/vrl-parking
   rollout:
     # Wan pipeline startup reads five T5 shards; 600s default killed a real
     # launch off EBS. Keep cold-start headroom even with the NVMe cache.

@@ -40,6 +40,12 @@ class RewardRuntimeConfig:
                     "be set in YAML; remove it and select shared or dedicated "
                     "reward GPU ownership under distributed.resources.reward",
                 )
+            for key in ("parking_mechanism", "memory_parking_mode"):
+                if key in component_kwargs or key in worker_config:
+                    raise ValueError(
+                        f"reward.kwargs.{name}.{key} is not a component setting; set "
+                        "distributed.resources.reward.parking.mechanism",
+                    )
 
     def worker_config(
         self, component: str, *, default_reward_model_name: str | None = None

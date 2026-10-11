@@ -6,7 +6,9 @@ import weakref
 import pytest
 import torch
 
+import vrl.models.parking as parking
 import vrl.rewards.runtime as runtime
+from vrl.config.builders import RewardRuntimeConfig
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.launch_contract import RewardRuntimeLaunchContract
 
@@ -28,9 +30,9 @@ async def test_reload_rebuilds_equal_scores_without_retaining_model(monkeypatch)
             return {"overall": self.weight + sum(artifact.media)}
 
     monkeypatch.setattr(runtime, "import_from_path", lambda _: Model)
-    monkeypatch.setattr(runtime, "_host_memory_trim", lambda: lambda: trims.append(True))
+    monkeypatch.setattr(parking, "host_memory_trim", lambda: lambda: trims.append(True))
     scorer = runtime.InProcessRewardScorer(
-        {"model_factory": "test:model", "sleep_offload": True, "memory_parking_mode": "reload"}
+        {"model_factory": "test:model", "sleep_offload": True, "parking_mechanism": "reload"}
     )
     request = RewardInferenceRequest(
         request_id="reload",
@@ -43,7 +45,7 @@ async def test_reload_rebuilds_equal_scores_without_retaining_model(monkeypatch)
         await scorer.park_memory()
         gc.collect()
         assert owners[0]() is None
-        await scorer.park_memory()
+        await scorer.park_memory()  # already parked: nothing to drop or trim
         assert len(owners) == 1
         second = await scorer.score_batch(request)
         assert first[0].scores == second[0].scores
@@ -53,7 +55,8 @@ async def test_reload_rebuilds_equal_scores_without_retaining_model(monkeypatch)
     finally:
         await scorer.shutdown()
     assert all(owner() is None for owner in owners)
-    assert len(trims) == 5
+    # Before each build, after the park, and at shutdown.
+    assert len(trims) == 4
 
 
 @pytest.mark.asyncio
@@ -71,9 +74,9 @@ async def test_failed_reload_preparation_releases_partial_model_and_can_retry(mo
                 raise RuntimeError("prepare failed")
 
     monkeypatch.setattr(runtime, "import_from_path", lambda _: Model)
-    monkeypatch.setattr(runtime, "_host_memory_trim", lambda: lambda: trims.append(True))
+    monkeypatch.setattr(parking, "host_memory_trim", lambda: lambda: trims.append(True))
     scorer = runtime.InProcessRewardScorer(
-        {"model_factory": "test:model", "sleep_offload": True, "memory_parking_mode": "reload"}
+        {"model_factory": "test:model", "sleep_offload": True, "parking_mechanism": "reload"}
     )
     before = torch.get_rng_state().clone()
     with pytest.raises(RuntimeError, match="prepare failed"):
@@ -96,9 +99,9 @@ async def test_failed_host_release_is_not_reported_as_success(monkeypatch):
             raise RuntimeError("host release failed")
 
     monkeypatch.setattr(runtime, "import_from_path", lambda _: lambda config: object())
-    monkeypatch.setattr(runtime, "_host_memory_trim", lambda: trim)
+    monkeypatch.setattr(parking, "host_memory_trim", lambda: trim)
     scorer = runtime.InProcessRewardScorer(
-        {"model_factory": "test:model", "sleep_offload": True, "memory_parking_mode": "reload"}
+        {"model_factory": "test:model", "sleep_offload": True, "parking_mechanism": "reload"}
     )
     await scorer.activate()
     with pytest.raises(RuntimeError, match="host release failed"):
@@ -122,9 +125,9 @@ async def test_reload_preload_release_failure_prevents_build_and_can_retry(monke
         return object()
 
     monkeypatch.setattr(runtime, "import_from_path", lambda _: factory)
-    monkeypatch.setattr(runtime, "_host_memory_trim", lambda: trim)
+    monkeypatch.setattr(parking, "host_memory_trim", lambda: trim)
     scorer = runtime.InProcessRewardScorer(
-        {"model_factory": "test:model", "sleep_offload": True, "memory_parking_mode": "reload"}
+        {"model_factory": "test:model", "sleep_offload": True, "parking_mechanism": "reload"}
     )
     before = torch.get_rng_state().clone()
     with pytest.raises(RuntimeError, match="preload release failed"):
@@ -142,6 +145,14 @@ async def test_reload_preload_release_failure_prevents_build_and_can_retry(monke
 
 def test_reload_requires_explicit_parking_and_supported_mode():
     with pytest.raises(ValueError, match="requires sleep_offload"):
-        RewardRuntimeLaunchContract.from_component_config({"memory_parking_mode": "reload"})
+        RewardRuntimeLaunchContract.from_component_config({"parking_mechanism": "reload"})
     with pytest.raises(ValueError, match="must be 'cumem' or 'reload'"):
-        RewardRuntimeLaunchContract.from_component_config({"memory_parking_mode": "unknown"})
+        RewardRuntimeLaunchContract.from_component_config({"parking_mechanism": "unknown"})
+    # The mechanism is a resource choice, never a component kwarg.
+    for key in ("parking_mechanism", "memory_parking_mode"):
+        with pytest.raises(ValueError, match=r"distributed\.resources\.reward\.parking"):
+            RewardRuntimeConfig(
+                weights={"x": 1.0},
+                kwargs={"x": {"worker_config": {key: "reload"}}},
+                inference_configs={},
+            )

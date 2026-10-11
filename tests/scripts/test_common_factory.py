@@ -351,7 +351,7 @@ def test_reward_factory_rejects_an_all_zero_objective() -> None:
         ResolvedReward(
             config=_built_reward({"pickscore": 0.0}, {}).reward,
             device="cpu",
-            memory_parking_required=False,
+            parking=None,
         ).build_function()
 
 
@@ -398,7 +398,7 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
         ResolvedDistributedResources.from_root(parse_config(cfg)),
     )
     assert shared.device == "cuda:0"
-    assert shared.memory_parking_required is True
+    assert shared.parking == "cumem"
 
     # A torchrun rank scores on logical cuda:0 while Ray keeps the physical ID.
     rank_local = _shared_reward_cfg("aesthetic")
@@ -411,7 +411,7 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
         trainer_device="cuda:0",
     )
     assert rank_local_reward.device == "cuda:0"
-    assert rank_local_reward.memory_parking_required is True
+    assert rank_local_reward.parking == "cumem"
 
     # HTTP components own their deployment externally: the plan resolved from
     # the same config reserves them no local GPU, so nothing parks.
@@ -435,7 +435,7 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
     )
     # The HTTP client runs in this process and reserves no local GPU.
     assert http_reward.device == "cpu"
-    assert http_reward.memory_parking_required is False
+    assert http_reward.parking is None
 
     cpu_cfg = OmegaConf.create(
         {
