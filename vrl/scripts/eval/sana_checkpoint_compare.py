@@ -24,7 +24,7 @@ import torch
 
 from vrl.config.precision import PrecisionPolicy
 from vrl.models.dtypes import dtype_to_wire_name
-from vrl.models.precision import float32_precision_state, model_precision
+from vrl.models.precision import float32_precision_state
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval.sana_inference import (
     SANA_EVAL_SAMPLING_CONFIG,
@@ -283,7 +283,7 @@ def _model_precision_snapshot(model: Any) -> dict[str, Any]:
     for name, component in components.items():
         if component is None or not hasattr(component, "dtype"):
             raise TypeError(f"SANA {name} does not expose a dtype")
-    precision = model_precision(model)
+    precision = model.precision
     return {
         **{name: dtype_to_wire_name(component.dtype) for name, component in components.items()},
         "outer_autocast": precision.outer_autocast,

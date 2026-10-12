@@ -106,17 +106,6 @@ class DenoiseModelBase(nn.Module, ABC):
 
         return self.forward_step(state, step_idx)
 
-    def diffusion_pretraining_prediction(self, values: dict[str, Any]) -> Any:
-        """Return the model output expressed in its pretraining target domain.
-
-        Most families expose that value as the finalized ``noise_pred`` used by
-        their scheduler. Families whose CFG branch values have different
-        semantics override this seam instead of making the trainer infer model
-        math from generic dictionary keys.
-        """
-
-        return values["noise_pred"]
-
     def restore_eval_state(
         self,
         replay_tensors: dict[str, Any],

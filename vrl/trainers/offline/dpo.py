@@ -25,7 +25,6 @@ import torch.nn as nn
 from vrl.models.precision import (
     apply_float32_precision,
     model_autocast,
-    model_precision,
 )
 from vrl.trainers.data.preferences import PreferenceBatch
 from vrl.utils.validation import require_int
@@ -190,7 +189,7 @@ class OfflineDPOTrainer:
         self.noise_scheduler = noise_scheduler
         self.encode_pixels = encode_pixels
         self.encode_text = encode_text
-        self.precision = model_precision(model)
+        self.precision = model.precision
         self.config = config or OfflineDPOTrainerConfig()
         self.device = torch.device(device) if isinstance(device, str) else device
         apply_float32_precision(self.precision.float32_precision)

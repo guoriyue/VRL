@@ -6,16 +6,10 @@ import contextlib
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any
 
-from vrl.config.precision import Float32Precision, RolePrecision
+from vrl.config.precision import Float32Precision
 
 if TYPE_CHECKING:
     import torch
-
-
-def model_precision(model: Any) -> RolePrecision:
-    """Return the role precision stamped on a runtime or replay model."""
-
-    return model.precision
 
 
 def model_autocast(
@@ -26,7 +20,7 @@ def model_autocast(
 
     import torch
 
-    precision = model_precision(model)
+    precision = model.precision
     dtype = precision.dtype
     if not precision.outer_autocast or dtype == "fp32":
         return contextlib.nullcontext()
@@ -85,7 +79,6 @@ __all__ = [
     "apply_float32_precision",
     "float32_precision_state",
     "model_autocast",
-    "model_precision",
 ]
 
 

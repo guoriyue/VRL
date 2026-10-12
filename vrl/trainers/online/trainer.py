@@ -29,7 +29,6 @@ from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainSte
 from vrl.models.parking import TrainingMemoryState
 from vrl.models.precision import (
     apply_float32_precision,
-    model_precision,
 )
 from vrl.rollouts.admission import AdmissionLedger
 from vrl.rollouts.batch import RolloutBatch
@@ -457,7 +456,7 @@ class OnlineTrainer:
 
         if device.type != "cuda":
             return None
-        precision = model_precision(model)
+        precision = model.precision
         uses_fp16_autocast = precision.outer_autocast and precision.dtype == "fp16"
         has_native_fp16_gradients = any(
             parameter.requires_grad and parameter.dtype == torch.float16
@@ -493,7 +492,7 @@ class OnlineTrainer:
         self.config = config
         # RuntimeBundle stamps the selected role policy on the model so trainer
         # process settings cannot be paired with a different build.
-        self.precision = model_precision(model)
+        self.precision = model.precision
         # The policy supplies its own reference (the base weights under an
         # adapter, a pre-training snapshot otherwise); only objectives that
         # read one get it: a KL term, or a contract that asks for it.
@@ -1843,7 +1842,7 @@ class OnlineTrainer:
         noise = torch.randn_like(x0)
         noisy, target = diffusion_pretraining_pair(scheduler, x0, noise, t)
         values = self.model.replay_forward_with_latents(group_batch, step_idx, noisy)
-        model_pred = self.model.diffusion_pretraining_prediction(values)
+        model_pred = values["noise_pred"]
         return self.algorithm.sft_weight * F.mse_loss(model_pred.float(), target.float())
 
     def _shared_sft_step_index(self, num_steps: int) -> int:
