@@ -707,23 +707,6 @@ class DistributedSection(ConfigBase):
 # ── Root config ───────────────────────────────────────────────────────────────
 
 
-class EvalSection(ConfigBase):
-    """Evaluation-time overrides; anything absent inherits the training config.
-
-    reader: vrl/scripts/eval/_sampling.py resolve_eval_sampling. Flow-GRPO
-    trains on a short schedule and evaluates on the full one (T=10 -> T=40).
-    """
-
-    num_steps: StrictInt | None = None
-
-    @field_validator("num_steps")
-    @classmethod
-    def _positive_steps(cls, value: int | None) -> int | None:
-        if value is not None and value < 1:
-            raise ValueError("eval.num_steps must be >= 1")
-        return value
-
-
 class RootConfig(ConfigBase):
     """Top-level typed boundary for all training config sections.
 
@@ -740,8 +723,6 @@ class RootConfig(ConfigBase):
     # (``_select_model_section``); sampling follows the model's family.
     model: SerializeAsAny[ModelSection] | None = None
     sampling: SerializeAsAny[SamplingSection] | None = None
-    # Evaluation-time overrides of the sections above (currently sampling).
-    eval: EvalSection | None = None
     trainer: TrainerSection | None = None
     actor: ActorSection | None = None
     distributed: DistributedSection | None = None
