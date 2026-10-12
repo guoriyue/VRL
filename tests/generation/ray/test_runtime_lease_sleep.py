@@ -49,7 +49,7 @@ from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import GlobalRayPlacementOwner
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trainers.strategy import SingleProcessStrategy
@@ -112,7 +112,7 @@ async def _on_demand(
     )
     TinySanaPipeline().install(monkeypatch, snapshot)
     built = BuiltConfigs.from_cfg(cfg)
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     worker_config = RolloutWorkerConfig.from_root(built.root)
     replay = run.ResolvedModel.from_root(
         built.family,

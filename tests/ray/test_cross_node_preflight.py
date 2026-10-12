@@ -4,7 +4,7 @@ Each case starts an isolated two-node Ray cluster in a subprocess: the head
 (where the driver attaches) on the host address and a second node on the
 loopback address, so ``ray.nodes()`` reports two distinct node IPs and the
 preflight classifies driver and non-driver GPU capacity from the real cluster.
-The resources argument is the real ``ResolvedDistributedResources`` output, so
+The resources argument is the real ``ResourcePlan`` output, so
 the whole cross_node config -> resolution -> preflight chain is exercised.
 """
 
@@ -15,13 +15,13 @@ from omegaconf import OmegaConf
 
 from vrl.config.schema import parse_config
 from vrl.ray import placement
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 
 pytestmark = pytest.mark.slow_test
 
 
-def _resources() -> ResolvedDistributedResources:
-    return ResolvedDistributedResources.from_root(
+def _resources() -> ResourcePlan:
+    return ResourcePlan.from_root(
         parse_config(
             OmegaConf.create(
                 {

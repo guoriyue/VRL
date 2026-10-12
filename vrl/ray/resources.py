@@ -1,7 +1,7 @@
 """Role-level resource resolution for distributed VRL runs.
 
 Resolves the ``distributed.resources`` config into concrete per-role CUDA
-ordinals (``ResolvedDistributedResources``) and the topology-derived release
+ordinals (``ResourcePlan``) and the topology-derived release
 plan (``RayLifecyclePlan``).
 Deliberately Ray-free: resolution runs before ``ray.init()`` (see
 ``vrl/scripts/common/online.py``), so everything here is static arithmetic
@@ -267,7 +267,7 @@ class RayLifecyclePlan:
 
     Stores each role's resolved GPU set; every offload decision is a property
     over them, so nothing can drift from the placement that implies it. Built
-    by :class:`ResolvedDistributedResources`; the launcher, collector and
+    by :class:`ResourcePlan`; the launcher, collector and
     reward runtime read this plan instead of re-deriving releases.
 
     The three ``offload_*`` bits are the public vocabulary (they match miles'
@@ -340,7 +340,7 @@ class RayLifecyclePlan:
 
 
 @dataclass(frozen=True, slots=True)
-class ResolvedDistributedResources:
+class ResourcePlan:
     """Concrete resource plan consumed by trainer and Ray role launchers."""
 
     # Plan-space GPU pool, also used to translate narrowed process-local torch
@@ -482,7 +482,7 @@ class ResolvedDistributedResources:
         return plan_ordinal
 
     @classmethod
-    def from_root(cls, root: RootConfig) -> ResolvedDistributedResources:
+    def from_root(cls, root: RootConfig) -> ResourcePlan:
         """Build the resource plan from the root: role-level requests to concrete CUDA ordinals.
 
         This is the single source of truth for trainer/rollout/reward GPU
@@ -684,7 +684,7 @@ def _validate_fsdp_trainer_disjoint(
         )
 
 
-def format_distributed_resource_plan(resolved: ResolvedDistributedResources) -> str:
+def format_distributed_resource_plan(resolved: ResourcePlan) -> str:
     """Format a compact resource plan for logs and errors."""
 
     parts = [
@@ -981,6 +981,6 @@ def _is_auto(value: Any) -> bool:
 __all__ = [
     "DistributedResourceConfig",
     "RayLifecyclePlan",
-    "ResolvedDistributedResources",
+    "ResourcePlan",
     "format_distributed_resource_plan",
 ]

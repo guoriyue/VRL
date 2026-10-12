@@ -34,7 +34,7 @@ class ContinuousRolloutSchedule:
         lifecycle: RolloutRuntimeCoordinator,
         # No defaults: the typed config remains the single source of defaults.
         # ``settings`` already validated ``max_stale_policy_versions >= 1`` at
-        # construction, and ResolvedDistributedResources.validate_schedule_mode
+        # construction, and ResourcePlan.validate_schedule_mode
         # rejected shared or parked GPU topologies, a GPU-sharing reward
         # included, before launch.
         settings: ContinuousRolloutSettings,

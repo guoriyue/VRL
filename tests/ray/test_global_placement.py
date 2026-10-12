@@ -19,13 +19,13 @@ from vrl.config.schema import parse_config
 from vrl.ray import dependencies as ray_dependencies
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import BundleLayout, GlobalRayPlacementOwner, RolePlacement, _ProbeActor
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 
 
 def _resolve(resources: dict):
     # Release scheduling is derived from topology, so only the resources block is
     # needed to pin a placement plan.
-    return ResolvedDistributedResources.from_root(
+    return ResourcePlan.from_root(
         parse_config(OmegaConf.create({"distributed": {"resources": resources}})),
     )
 

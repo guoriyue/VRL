@@ -191,7 +191,7 @@ D 批的难点：trainer 测试用 `nn.Linear(1, 1)` 策略和手造 batch 断�
 
 | 层 | 删除的参数 / 守卫 | 读取来源 |
 |---|---|---|
-| config / run | `ResolvedRun` 多个只转手的属性；`TrainerConfig.from_root(root)`、`ResolvedDistributedResources.from_root(root)` 的第二个"派生"参数；`normalize_precision` 的默认值 | 被调方自己从 root 推导 |
+| config / run | `ResolvedRun` 多个只转手的属性；`TrainerConfig.from_root(root)`、`ResourcePlan.from_root(root)` 的第二个"派生"参数；`normalize_precision` 的默认值 | 被调方自己从 root 推导 |
 | generation | 执行器 `pipelined` 标志（有 finalizer 即流水）；`GenerationWorkerParking.sleep` 的设备参数；`EnginePlan.from_request` 外的 request 字段；`BundleLayout.rollout_gpus_per_engine`、`StagedBatchRefs.policy_version`、`measurement_scope`；`from_rank_results` 的可选 `expected_worker_ids`；若干 isinstance 守卫 | executor / 请求 / 契约本身 |
 | generation | `merge_generation_batches` / `forward_plan` / `forward_plan_pipelined` / `sort_and_validate_batch_coverage` / finalizer `merge_request` 的 `sample_rows`；Ray 执行器不再把行随请求发给 finalizer | `request.sample_rows()`（确定性，contracts 用例钉住） |
 | generation | `GenerationWorkerCore` 的 gatherer（rank 只产 batch，从不合并）和执行器"是否实现 forward_batch/merge"的可调用检查 | 合并在 driver 侧的注册表 gatherer |
@@ -276,7 +276,7 @@ MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_prefl
 | `validate_reward_memory_parking_components(...)` | `RewardRuntimeConfig.validate_memory_parking(device)` |
 | `resolve_required_reference_images_(examples, …)`（原地改列表） | `PromptExample.with_required_reference_images`，与其它 `with_*` 同型 |
 | `validate_checkpoint_meta_compatibility(meta, …)` | `CheckpointTarget.validate_compatibility`，与 `TrainingCheckpoint.validate_compatibility` 同型 |
-| `validate_rollout_schedule_topology(config, resources)` | `ResolvedDistributedResources.validate_schedule_mode(schedule_mode)`；拓扑用例改为真实 plan |
+| `validate_rollout_schedule_topology(config, resources)` | `ResourcePlan.validate_schedule_mode(schedule_mode)`；拓扑用例改为真实 plan |
 
 保留并说明理由：
 - 按 kind 分发到多个实现类的工厂：`build_strategy`、`build_reward_scorer`、`build_optimizer`（产出不属于任何一个类）。

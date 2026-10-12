@@ -22,7 +22,7 @@ from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 
 # These build real Ray workers on the package cluster — slow by nature, nightly.
 pytestmark = pytest.mark.slow_test
@@ -51,7 +51,7 @@ async def _launched(
     )
     TinySanaPipeline().install(monkeypatch, snapshot)
     built = BuiltConfigs.from_cfg(cfg)
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     replay = run.ResolvedModel.from_root(
         built.family,
         built.root,
@@ -143,7 +143,7 @@ def test_create_runtime_rejects_missing_rollout_placement(monkeypatch, tmp_path)
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
     built = BuiltConfigs.from_cfg(cfg)
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     replay = run.ResolvedModel.from_root(
         built.family,
         built.root,
@@ -222,7 +222,7 @@ def test_worker_metadata_preserves_placement_query_failure(monkeypatch, tmp_path
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
     built = BuiltConfigs.from_cfg(cfg)
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     replay = run.ResolvedModel.from_root(
         built.family,
         built.root,

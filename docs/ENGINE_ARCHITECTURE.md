@@ -93,7 +93,7 @@ capacity remains a resource requirement. GPU sharing in
 | `RayActorDispatcher`, `RayActorJob`, `RayActorCallError(TerminalRuntimeError)` | Admission-controlled async dispatch of actor calls. |
 | `RolePlacement`, `GlobalRayPlacementOwner` | Placement-group lifecycle per role (create/probe/assign/remove). |
 | `RoleResourceConfig` → `RolloutResourceConfig`; `RewardResourceConfig` | Typed per-role resource schema: rollout is the only worker-replica role; reward is one optional pinned GPU (`devices`); whether it needs a GPU at all comes from the reward components. |
-| `DistributedResourceConfig`, `ResolvedDistributedResources`, `BundleLayout` | User schema → resolved topology → placement bundles. |
+| `DistributedResourceConfig`, `ResourcePlan`, `BundleLayout` | User schema → resolved topology → placement bundles. |
 | `RayLifecyclePlan` | Derived once from GPU topology. Stores each role's resolved device set; `offload_train` / `offload_rollout` / `offload_reward` (a role shares a GPU with any other) and the finer `park_<role>_for_<phase>` boundary views are properties over them, so no stored flag can drift. The collector reads this plan; the runtimes never decide it themselves. |
 
 ---

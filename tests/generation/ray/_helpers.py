@@ -110,7 +110,7 @@ async def ray_sana_runtime(
     from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
     from vrl.generation.ray.launcher import RayGenerationLauncher
     from vrl.ray.placement import GlobalRayPlacementOwner
-    from vrl.ray.resources import ResolvedDistributedResources
+    from vrl.ray.resources import ResourcePlan
 
     cfg = tiny_sana_online_config(
         tmp_path,
@@ -120,7 +120,7 @@ async def ray_sana_runtime(
     pipeline = TinySanaPipeline()
     pipeline.install(monkeypatch, snapshot)
     built = BuiltConfigs.from_cfg(cfg)
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     worker = RolloutWorkerConfig.from_root(built.root)
     replay = run.ResolvedModel.from_root(
         built.family,

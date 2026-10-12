@@ -641,7 +641,7 @@ preflight 失败，或改用 disjoint GPUs。
 - `RolloutOrchestrationConfig.require_separate_gpus`；
 - `ContinuousRolloutSchedule.require_separate_gpus` 与 builder 透传；
 - public `distributed.resources.rollout.memory_fraction`，以及
-  `DistributedResourceConfig` / `ResolvedDistributedResources` 的
+  `DistributedResourceConfig` / `ResourcePlan` 的
   `rollout_gpu_memory_fraction`；
 - `persistent_colocated` 的 cap-based lifecycle 派生与相关 validation；
 - launcher 的 `gpu_memory_fraction`、worker 的 `cap_cuda_memory_fraction(...)` 调用、
@@ -692,7 +692,7 @@ capabilities 由 `RolloutRuntimeCoordinator` 转发，continuous schedule 无条
 parking、reward 借用 trainer GPU 或 generation/reward 中途交接的 topology。它们不选择 lifecycle，
 也不重算 device sets；只消费 resolver、collector 与 runtime 已解析的行为能力。
 
-Keep `ResolvedDistributedResources.colocated` and runtime
+Keep `ResourcePlan.colocated` and runtime
 `requires_driver_model_offload`: they drive launcher/runtime placement and
 trainer parking. The former `RayGenerationConfig.allow_driver_gpu_overlap`
 mirror was deleted; `RayGenerationConfig.resources` is required and every

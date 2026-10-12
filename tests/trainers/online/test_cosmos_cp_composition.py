@@ -51,7 +51,7 @@ from vrl.models.families.cosmos.predict2_5.model import (
 )
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.models.precision import apply_float32_precision, fixed_row_linear_compute
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import RolloutCollector, RolloutCollectorConfig
@@ -150,7 +150,7 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
     try:
         torch.manual_seed(31)
         built = BuiltConfigs.from_cfg(_tiny_cosmos_config(root, rank=rank, ema=phase is not None))
-        resources = ResolvedDistributedResources.from_root(built.root)
+        resources = ResourcePlan.from_root(built.root)
         replay = run.ResolvedModel.from_root(
             built.family,
             built.root,

@@ -1,7 +1,7 @@
 """Run-level pieces every training entrypoint shares: trainer run policy and model resolution.
 
 An entrypoint reads its run from ``BuiltConfigs.from_cfg`` and the resource
-plan ``ResolvedDistributedResources.from_root`` once, then hands each role
+plan ``ResourcePlan.from_root`` once, then hands each role
 what it needs: the trainer its device off the plan, the reward its
 ``RewardRuntimeConfig.build_function``, the rollout its
 ``RayGenerationLaunchInputs.from_run``.

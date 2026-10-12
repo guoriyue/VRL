@@ -67,7 +67,7 @@ pipeline 全部声明为 `generation_only_modules`（absent）。
 
 ```text
 预算   没有代码声明"这张卡/这个相位可用多少字节"
-       （ResolvedDistributedResources 无字节预算；旧 rollout_gpu_memory_fraction 已随
+       （ResourcePlan 无字节预算；旧 rollout_gpu_memory_fraction 已随
         bounded-resident shared lifecycle 删除。resolve_distributed_resources docstring 明示
         "intentionally does static ownership checks only; memory pressure is still a
         runtime concern"，vrl/ray/resources.py:166-171）

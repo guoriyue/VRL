@@ -703,7 +703,7 @@ class RolloutRuntimeSection(ConfigBase):
 class DistributedSection(ConfigBase):
     """Key registry for distributed.*; values validated by vrl.ray.resources."""
 
-    # reader: vrl/ray/resources.py ResolvedDistributedResources.from_root(root); the
+    # reader: vrl/ray/resources.py ResourcePlan.from_root(root); the
     # consuming dataclass is the section type, so pydantic validates it here.
     resources: DistributedResourceConfig | None = None
     # reader: vrl/generation/ray/config.py RolloutWorkerConfig.from_root (worker

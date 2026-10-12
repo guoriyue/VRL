@@ -6,7 +6,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.config.schema import parse_config
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 
 
 def _resources(
@@ -15,7 +15,7 @@ def _resources(
     trainer: list[int],
     rollout: list[int],
     reward: list[int] | None = None,
-) -> ResolvedDistributedResources:
+) -> ResourcePlan:
     """A real plan over one GPU reward (``aesthetic``), with or without its own card."""
 
     resources: dict[str, object] = {
@@ -25,7 +25,7 @@ def _resources(
     }
     if reward is not None:
         resources["reward"] = {"devices": reward}
-    return ResolvedDistributedResources.from_root(
+    return ResourcePlan.from_root(
         parse_config(
             OmegaConf.create(
                 {

@@ -67,11 +67,11 @@ def test_local_ray_reserves_nonprefix_subset_without_changing_driver_mask(isolat
 
     from vrl.config.schema import parse_config
     from vrl.ray.placement import GlobalRayPlacementOwner
-    from vrl.ray.resources import ResolvedDistributedResources
+    from vrl.ray.resources import ResourcePlan
 
     if os.environ.get("CUDA_VISIBLE_DEVICES") is not None or torch.cuda.device_count() < 4:
         pytest.skip("requires four unmasked GPUs; probe does not execute CUDA operations")
-    resources = ResolvedDistributedResources.from_root(
+    resources = ResourcePlan.from_root(
         parse_config(
             OmegaConf.create(
                 {

@@ -17,7 +17,7 @@ from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 
@@ -215,7 +215,7 @@ def test_chunk_autoregressive_factory_rejects_full_sequence_sft_regularizer() ->
 def _build_reward_function(reward: Any, root: Any, ray_placement: Any = None) -> Any:
     """Build ``reward`` as the online recipe does for a cuda:0 trainer of ``root``."""
 
-    resources = ResolvedDistributedResources.from_root(root)
+    resources = ResourcePlan.from_root(root)
     return reward.build_function(
         device=resources.reward_torch_device(trainer_device="cuda:0"),
         parking=resources.reward_parking_mechanism,
@@ -399,7 +399,7 @@ def test_reward_config_rejects_yaml_lifecycle_override(component_kwargs) -> None
 
 def test_reward_device_and_parking_derive_from_resource_topology() -> None:
     """The resource plan, not a caller device, is the execution-device source."""
-    shared = ResolvedDistributedResources.from_root(parse_config(_shared_reward_cfg("aesthetic")))
+    shared = ResourcePlan.from_root(parse_config(_shared_reward_cfg("aesthetic")))
     assert shared.reward_torch_device() == "cuda:0"
     assert shared.reward_parking_mechanism == "cumem"
 
@@ -408,7 +408,7 @@ def test_reward_device_and_parking_derive_from_resource_topology() -> None:
     rank_local.distributed.resources.visible_devices = [2]
     rank_local.distributed.resources.trainer.devices = [2]
     rank_local.distributed.resources.rollout.devices = [2]
-    rank_local_plan = ResolvedDistributedResources.from_root(parse_config(rank_local))
+    rank_local_plan = ResourcePlan.from_root(parse_config(rank_local))
     assert rank_local_plan.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
     assert rank_local_plan.reward_parking_mechanism == "cumem"
 
@@ -426,7 +426,7 @@ def test_reward_device_and_parking_derive_from_resource_topology() -> None:
             "expected_model": "unified-reward-robotics",
         },
     }
-    http_plan = ResolvedDistributedResources.from_root(parse_config(http_cfg))
+    http_plan = ResourcePlan.from_root(parse_config(http_cfg))
     # The HTTP client runs in this process and reserves no local GPU.
     assert http_plan.reward_torch_device(trainer_device="cuda:0") == "cpu"
     assert http_plan.reward_parking_mechanism is None
@@ -444,7 +444,7 @@ def test_reward_device_and_parking_derive_from_resource_topology() -> None:
         },
     )
     # A CPU-only reward class scores on CPU even when the trainer runs on CUDA.
-    cpu_plan = ResolvedDistributedResources.from_root(parse_config(cpu_cfg))
+    cpu_plan = ResourcePlan.from_root(parse_config(cpu_cfg))
     assert cpu_plan.reward_torch_device(trainer_device="cuda:0") == "cpu"
 
 
@@ -495,7 +495,7 @@ def test_online_reward_transport_is_rejected_before_resource_resolution(monkeypa
     def unexpected_resources(*args, **kwargs):
         raise AssertionError("invalid reward deployment reached resource resolution")
 
-    monkeypatch.setattr(ResolvedDistributedResources, "from_root", unexpected_resources)
+    monkeypatch.setattr(ResourcePlan, "from_root", unexpected_resources)
     with pytest.raises(ValueError, match="in_process is not admitted for online training"):
         asyncio.run(run_online_recipe(cfg))
     # Offline diagnostics can still resolve an in-process, zero-weight observer.

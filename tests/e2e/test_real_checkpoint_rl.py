@@ -27,7 +27,7 @@ from vrl.generation import GenerationOutput, GenerationRequest
 from vrl.generation.execution.planner import EnginePlan
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.ray import RayRewardPlacement
 from vrl.rewards.runtime import RewardFunctionRuntime
@@ -567,7 +567,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             dtype,
         )
         collector_config = RolloutCollectorConfig.from_root(parse_config(cfg))
-        resources = ResolvedDistributedResources.from_root(parse_config(cfg))
+        resources = ResourcePlan.from_root(parse_config(cfg))
         # The real topology plan for this box. Generation runs on the trainer's
         # own modules through _DirectExecutorGenerationRuntime, whose
         # activate/offload move them the way a colocated rollout worker wakes

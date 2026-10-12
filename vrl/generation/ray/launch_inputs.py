@@ -13,7 +13,7 @@ from vrl.generation.protocols import GenerationBatchGatherer
 
 if TYPE_CHECKING:
     from vrl.config.builders import BuiltConfigs
-    from vrl.ray.resources import ResolvedDistributedResources
+    from vrl.ray.resources import ResourcePlan
     from vrl.run import ResolvedModel
 
 
@@ -43,7 +43,7 @@ class RayGenerationLaunchInputs:
     def from_run(
         cls,
         built: BuiltConfigs,
-        resources: ResolvedDistributedResources,
+        resources: ResourcePlan,
         replay_model: ResolvedModel,
     ) -> RayGenerationLaunchInputs:
         """The Ray worker contract of one online run, checked against its replay model.

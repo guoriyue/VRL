@@ -20,14 +20,14 @@ from vrl.config.builders import BuiltConfigs
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.worker import RayGenerationWorker
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 
 
 def _worker(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> tuple[RayGenerationWorker, Any]:
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
     built = BuiltConfigs.from_cfg(cfg)
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     replay = run.ResolvedModel.from_root(
         built.family,
         built.root,

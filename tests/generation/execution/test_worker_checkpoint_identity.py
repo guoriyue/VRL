@@ -23,7 +23,7 @@ from vrl.config.builders import BuiltConfigs
 from vrl.generation.bindings.full_sequence.executor import GenericDenoiseBatchExecutor
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 
 
 def _launch_inputs(
@@ -36,7 +36,7 @@ def _launch_inputs(
     if on_snapshot is not None:
         on_snapshot(tmp_path / "sana-snapshot")
     built = BuiltConfigs.from_cfg(cfg)
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     replay = run.ResolvedModel.from_root(
         built.family,
         built.root,

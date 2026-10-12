@@ -5,7 +5,7 @@ import pytest
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 
 PRESET = "experiment/cosmos_predict2_5/online_grpo_kling_video_reward_colocated_fsdp_4x_l40s"
 
@@ -39,7 +39,7 @@ def test_four_card_preset_resolves_rank_local_phase_owners(rank):
             ],
         )
     )
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     resources = resources
     assert tuple(resources.trainer_devices) == (rank,)
     assert tuple(resources.rollout_devices) == (rank,)

@@ -424,12 +424,12 @@ def tiny_sana_stack(
     from vrl import run
     from vrl.config.builders import BuiltConfigs
     from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-    from vrl.ray.resources import ResolvedDistributedResources
+    from vrl.ray.resources import ResourcePlan
 
     cfg = tiny_sana_online_config(tmp_path, overrides=overrides)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
     built = BuiltConfigs.from_cfg(cfg)
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     replay = run.ResolvedModel.from_root(
         built.family,
         built.root,

@@ -31,7 +31,7 @@ from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.placement import RolePlacement
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 from vrl.utils.lifecycle import RuntimePhase
 
 _TEST_MODEL_IDENTITY = {"schema": "test"}
@@ -144,7 +144,7 @@ def test_pipelined_accepts_multiple_resolved_engines() -> None:
     root = parse_config(cfg)
 
     assert RolloutWorkerConfig.from_root(root).pipelined is True
-    assert ResolvedDistributedResources.from_root(root).rollout_num_engines == 2
+    assert ResourcePlan.from_root(root).rollout_num_engines == 2
 
 
 # ------------------------------------------------------- real launch shape
@@ -234,7 +234,7 @@ def _sana_launch(tmp_path: Path, *overrides: str) -> tuple[RayGenerationLaunchIn
     """The launch inputs the recipe would ship for a tiny SANA run, and its replay model."""
 
     built = BuiltConfigs.from_cfg(tiny_sana_online_config(tmp_path, overrides=overrides))
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     replay = run.ResolvedModel.from_root(
         built.family,
         built.root,
@@ -319,7 +319,7 @@ def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(tmp_pa
         ],
     )
     built = BuiltConfigs.from_cfg(cfg)
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     replay = run.ResolvedModel.from_root(
         built.family,
         built.root,
@@ -341,7 +341,7 @@ def test_generation_launch_inputs_reject_rollout_identity_mismatch(tmp_path) -> 
     worker launch is refused before any actor starts."""
 
     built = BuiltConfigs.from_cfg(tiny_sana_online_config(tmp_path))
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     replay = run.ResolvedModel.from_root(
         built.family,
         built.root,
@@ -464,7 +464,7 @@ def _on_demand_launch(
     built = BuiltConfigs.from_cfg(
         tiny_sana_online_config(tmp_path, overrides=("distributed.resources.rollout.num_gpus=1",))
     )
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     replay = run.ResolvedModel.from_root(
         built.family,
         built.root,

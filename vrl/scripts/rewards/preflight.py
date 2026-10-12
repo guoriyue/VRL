@@ -96,7 +96,7 @@ def preflight_rewards(
     from vrl.ray.placement import GlobalRayPlacementOwner
     from vrl.ray.resources import (
         DistributedResourceConfig,
-        ResolvedDistributedResources,
+        ResourcePlan,
         RewardResourceConfig,
         RoleResourceConfig,
         RolloutResourceConfig,
@@ -194,7 +194,7 @@ def preflight_rewards(
                         "distributed": DistributedSection(resources=resource_config),
                     }
                 )
-                resources = ResolvedDistributedResources.from_root(probe_root)
+                resources = ResourcePlan.from_root(probe_root)
                 owner = GlobalRayPlacementOwner(
                     resources,
                     RolloutWorkerConfig.from_root(probe_root),

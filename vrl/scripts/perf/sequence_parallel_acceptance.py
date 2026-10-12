@@ -50,7 +50,7 @@ from vrl.generation.types import GenerationInput, GenerationRequest
 from vrl.models.families.semantics import task_type_for
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.run import ResolvedModel
 from vrl.trainers.data.prompts import load_prompt_dataset_index
@@ -161,7 +161,7 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
     cfg = load_config(args.config, overrides=_fleet_overrides(args))
     built = BuiltConfigs.from_cfg(cfg)
     family = built.family
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     if resources.rollout_gpus_per_engine != args.gpus_per_engine:
         raise RuntimeError(
             f"resolved gpus_per_engine={resources.rollout_gpus_per_engine} != "

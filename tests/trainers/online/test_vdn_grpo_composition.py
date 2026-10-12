@@ -29,7 +29,7 @@ from tests.models.steps.denoise.fixtures import (
 from tests.rollouts.collector._helpers import IndexReward, Trace
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 
 pytest.importorskip("src.models.hybrid_attention")
@@ -124,7 +124,7 @@ def _stack(
         ],
     )
     built = BuiltConfigs.from_cfg(cfg)
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     replay = run.ResolvedModel.from_root(
         built.family,
         built.root,

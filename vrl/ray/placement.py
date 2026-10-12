@@ -36,7 +36,7 @@ from vrl.ray.dependencies import (
     require_ray,
 )
 from vrl.ray.operation_deadline import get_ray_refs
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class BundleLayout:
         return len(self.bundle_gpu_ids)
 
     @classmethod
-    def from_resources(cls, resolved: ResolvedDistributedResources) -> BundleLayout:
+    def from_resources(cls, resolved: ResourcePlan) -> BundleLayout:
         """Derive the run-level role->bundle plan from a resolved resource plan.
 
         GPU roles share one bundle per physical device: a trainer-reserved GPU,
@@ -181,7 +181,7 @@ def actor_scheduling_strategy(
     )
 
 
-def cross_node_preflight(ray: Any, resources: ResolvedDistributedResources) -> None:
+def cross_node_preflight(ray: Any, resources: ResourcePlan) -> None:
     """Fail fast when the live Ray cluster cannot host cross-node rollout.
 
     Runs after ``ray.init()`` (resolution earlier in the pipeline cannot see the
@@ -331,7 +331,7 @@ class _ProbeActor:
 class GlobalRayPlacementOwner:
     """Owns the single run-level Ray placement group and role->bundle mapping."""
 
-    resources: ResolvedDistributedResources
+    resources: ResourcePlan
     rollout_worker: _RolloutCPUConfig
     layout: BundleLayout = field(init=False)
     _placement_group: Any | None = field(default=None, init=False, repr=False)

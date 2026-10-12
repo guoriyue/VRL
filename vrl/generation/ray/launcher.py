@@ -22,7 +22,7 @@ from vrl.ray.actor_group import RayActorGroup, RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
 from vrl.ray.dependencies import current_node_ip
 from vrl.ray.placement import RolePlacement, require_actor_gpu_ids
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class RayGenerationLauncher:
 
     @staticmethod
     def _validate_rank_gpu_ids(
-        resources: ResolvedDistributedResources,
+        resources: ResourcePlan,
         metadata: Sequence[RayActorHandle],
     ) -> None:
         """Validate launched rank actors against the resolved rollout placement."""
@@ -69,7 +69,7 @@ class RayGenerationLauncher:
 
     def _launch_session(
         self,
-        resources: ResolvedDistributedResources,
+        resources: ResourcePlan,
         worker: RolloutWorkerConfig,
         launch_inputs: RayGenerationLaunchInputs,
         *,
@@ -204,7 +204,7 @@ class RayGenerationLauncher:
 
     async def _launch_session_async(
         self,
-        resources: ResolvedDistributedResources,
+        resources: ResourcePlan,
         worker: RolloutWorkerConfig,
         launch_inputs: RayGenerationLaunchInputs,
         *,
@@ -227,7 +227,7 @@ class RayGenerationLauncher:
 
     def create_runtime(
         self,
-        resources: ResolvedDistributedResources,
+        resources: ResourcePlan,
         worker: RolloutWorkerConfig,
         launch_inputs: RayGenerationLaunchInputs,
         *,

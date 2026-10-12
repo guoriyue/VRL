@@ -10,7 +10,7 @@ from omegaconf import OmegaConf
 
 import vrl.scripts.train as train
 from vrl.config.schema import parse_config
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 from vrl.scripts.common.launch_environment import narrow_rank_local_cuda_visibility
 
 
@@ -98,7 +98,7 @@ def test_same_host_fsdp_selects_one_physical_gpu_per_rank(
         cfg,
         {"distributed": {"resources": {"visible_devices": [int(selected)]}}},
     )
-    resources = ResolvedDistributedResources.from_root(parse_config(narrowed))
+    resources = ResourcePlan.from_root(parse_config(narrowed))
     assert resources.trainer_devices == (int(expected),)
     assert resources.rollout_devices == (int(expected),)
 

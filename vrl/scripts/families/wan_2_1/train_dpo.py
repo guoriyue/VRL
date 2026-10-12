@@ -126,13 +126,13 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     import torch
 
     from vrl.config.builders import BuiltConfigs
-    from vrl.ray.resources import ResolvedDistributedResources
+    from vrl.ray.resources import ResourcePlan
     from vrl.run import ResolvedModel
     from vrl.trainers.offline import OfflineDPOTrainerConfig
 
     built = BuiltConfigs.from_cfg(cfg)
     family_entry = built.family
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     device = torch.device(resources.trainer_torch_device)
     configured_family = None if built.root.model is None else built.root.model.family
     family = family_entry.family

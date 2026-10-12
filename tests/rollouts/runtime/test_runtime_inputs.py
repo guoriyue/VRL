@@ -24,7 +24,7 @@ from vrl.models.families.registry import (
     ModelFamilyEntry,
     get_model_family_entry,
 )
-from vrl.ray.resources import ResolvedDistributedResources
+from vrl.ray.resources import ResourcePlan
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.run import ResolvedModel
 
@@ -55,7 +55,7 @@ def _capture_launch_inputs(
 
     built = BuiltConfigs.from_cfg(cfg)
     assert built.family is entry
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     replay_model = ResolvedModel.from_root(
         entry,
         built.root,

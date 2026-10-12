@@ -24,7 +24,7 @@ from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
 from vrl.ray.resources import (
-    ResolvedDistributedResources,
+    ResourcePlan,
     format_distributed_resource_plan,
 )
 from vrl.rewards import RewardRuntime
@@ -741,7 +741,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
         raise ValueError("online recipe requires a reward section")
     # The reward deployment is admitted before any resource resolution.
     reward_config.require_online_training()
-    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = ResourcePlan.from_root(built.root)
     run_config = OnlineRunConfig.from_root(built.root)
     worker_config = RolloutWorkerConfig.from_root(built.root)
     collector_config = RolloutCollectorConfig.from_root(built.root)
