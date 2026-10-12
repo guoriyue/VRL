@@ -98,51 +98,6 @@ def trainable_state_digest(module: Any) -> dict[str, Any]:
     }
 
 
-def parameter_state_summary(module: Any) -> dict[str, Any]:
-    """Return dtype/device counts for all registered parameters."""
-
-    import torch
-
-    named_parameters = getattr(module, "named_parameters", None)
-    parameters = named_parameters() if callable(named_parameters) else ()
-
-    dtype_counts: dict[str, int] = {}
-    device_counts: dict[str, int] = {}
-    trainable_dtype_counts: dict[str, int] = {}
-    trainable_device_counts: dict[str, int] = {}
-    parameter_count = 0
-    trainable_count = 0
-    numel = 0
-    trainable_numel = 0
-
-    for _, parameter in parameters:
-        if not isinstance(parameter, torch.Tensor):
-            continue
-        dtype = str(parameter.dtype)
-        device = str(parameter.device)
-        count = int(parameter.numel())
-        parameter_count += 1
-        numel += count
-        dtype_counts[dtype] = dtype_counts.get(dtype, 0) + 1
-        device_counts[device] = device_counts.get(device, 0) + 1
-        if getattr(parameter, "requires_grad", False):
-            trainable_count += 1
-            trainable_numel += count
-            trainable_dtype_counts[dtype] = trainable_dtype_counts.get(dtype, 0) + 1
-            trainable_device_counts[device] = trainable_device_counts.get(device, 0) + 1
-
-    return {
-        "parameter_count": parameter_count,
-        "numel": numel,
-        "dtypes": dtype_counts,
-        "devices": device_counts,
-        "trainable_parameter_count": trainable_count,
-        "trainable_numel": trainable_numel,
-        "trainable_dtypes": trainable_dtype_counts,
-        "trainable_devices": trainable_device_counts,
-    }
-
-
 def tensor_stats(value: Any) -> dict[str, Any]:
     """Return JSON-safe summary stats for a tensor-like value."""
 
@@ -195,7 +150,6 @@ def append_jsonl_record(path: str | Path, record: Mapping[str, Any]) -> None:
 
 __all__ = [
     "append_jsonl_record",
-    "parameter_state_summary",
     "tensor_stats",
     "trainable_state_digest",
 ]
