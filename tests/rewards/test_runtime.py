@@ -9,9 +9,17 @@ from typing import Any
 import pytest
 
 from vrl.rewards import RewardOutput, RewardSample
-from vrl.rewards.base import InferenceRewardFunction, RewardFunction
+from vrl.rewards.base import ModelRewardFunction, RewardFunction
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.utils.deadline import OperationTimeout
+
+
+class _UnitReward(ModelRewardFunction):
+    """A model reward whose scorer each test injects."""
+
+    model_factory = "unused:factory"
+    name = "unit"
+    default_score_key = "score"
 
 
 def _sample(sample_id: str = "sample-0") -> RewardSample:
@@ -172,9 +180,7 @@ async def test_failed_activation_leaves_nothing_to_park() -> None:
     error surfaces alone and the trainer's own cleanup can still run."""
 
     scorer = _ParkingScorer(activation_error="model build failed")
-    runtime = RewardFunctionRuntime(
-        InferenceRewardFunction(reward_name="unit", score_key="score", scorer=scorer)
-    )
+    runtime = RewardFunctionRuntime(_UnitReward(scorer=scorer))
     with pytest.raises(RuntimeError, match="model build failed"):
         await runtime.activate()
 
@@ -185,9 +191,7 @@ async def test_failed_activation_leaves_nothing_to_park() -> None:
 @pytest.mark.asyncio
 async def test_park_reaches_the_scorer_once_per_activation() -> None:
     scorer = _ParkingScorer()
-    runtime = RewardFunctionRuntime(
-        InferenceRewardFunction(reward_name="unit", score_key="score", scorer=scorer)
-    )
+    runtime = RewardFunctionRuntime(_UnitReward(scorer=scorer))
 
     await runtime.park_memory()
     assert scorer.park_calls == 0

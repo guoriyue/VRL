@@ -196,7 +196,7 @@ engine.
 | | `RewardScorer` | The transport seam below `RewardFunction` (dual of the Ray executor layer): `score_batch(request) -> results`, `shutdown`, plus the two capability flags. Runtime-checkable; validated **once, completely** at scorer injection. |
 | | `RemoteReadyScorer` | Optional capability: remote transports expose `ensure_ready()` so a broken service fails at preflight, not after the first generation batch. |
 | | `MemoryParkingScorer` | Optional capability (dual of `BatchSizeProbeExecutor`): `requires_memory_parking`, `activate`, `park_memory` for verified GPU parking. |
-| `inference.py` | `RewardInferenceArtifact`, `RewardInferenceRequest`, `RewardInferenceResult` | The schema both transports exchange; the service wire format derives its field sets from these dataclasses. `RewardInferenceRequest.validate_and_order_results()` is the identity guard, run once at the `InferenceRewardFunction` seam for every transport: one typed, finite result per artifact, restored to request order. |
+| `inference.py` | `RewardInferenceArtifact`, `RewardInferenceRequest`, `RewardInferenceResult` | The schema both transports exchange; the service wire format derives its field sets from these dataclasses. `RewardInferenceRequest.validate_and_order_results()` is the identity guard, run once at the `ModelRewardFunction` seam for every transport: one typed, finite result per artifact, restored to request order. |
 | `worker_config.py` | `RewardWorkerConfig` | The typed closed key set the runtime branches on, parsed once from `worker_config` by both processes that read it (in-process scorer, standalone service). Generation counterpart: `GenerationLaunchConfig`. |
 | `types.py` | `RewardSample`, `RewardOutput` | Collector-facing input/output pair. |
 
@@ -215,15 +215,12 @@ classDiagram
         preflight() activate() park_memory()
         score_batch() shutdown()
     }
-    class InferenceRewardFunction {
+    class ModelRewardFunction {
         scorer: RewardScorer
+        __init__ resolves model factory + scorer
         score_batch() orchestration
     }
-    class ModelRewardFunction {
-        __init__ resolves model factory + scorer
-    }
-    RewardFunction <|-- InferenceRewardFunction
-    InferenceRewardFunction <|-- ModelRewardFunction
+    RewardFunction <|-- ModelRewardFunction
     RewardFunction <|-- MultiReward
     ModelRewardFunction <|-- NSFWSafetyReward
     ModelRewardFunction <|-- OCRReward
@@ -237,21 +234,19 @@ classDiagram
     ModelRewardFunction <|-- UnifiedRewardVideoReward
 ```
 
-- **`RewardFunction`** — plugin base: lifecycle defaults, scalar→batch
-  default scoring, and the device policy. `device_config_key` names each
+- **`RewardFunction`** — plugin base: lifecycle defaults, the abstract
+  `score_batch`, and the device policy. `device_config_key` names each
   reward's device kwarg (NSFW overrides to `classifier_device`);
   `resolve_execution_device` is the overridable device-ceiling hook
   (distributed resources own placement; component config may only downgrade
   to CPU — OCR overrides it to force CPU for its CPU-only engine);
   `worker_config_with_device` applies the same policy at the config-bag
   boundary.
-- **`InferenceRewardFunction`** — owns the materialize → score → validate
-  orchestration around one injected `RewardScorer`; media rides the request in
-  memory. Every transport, including test fakes, passes the same
-  result-identity guard.
 - **`ModelRewardFunction`** — real constructor that builds the
   scorer from `model_factory` + `worker_config`, unless a ready scorer is
-  injected. Registry preflight admits remote inference through this model-factory
+  injected, and the materialize → score → validate orchestration around that
+  `RewardScorer`; media rides the request in memory. Every transport, including
+  test fakes, passes the same result-identity guard. Registry preflight admits remote inference through this model-factory
   contract. The driver writes no media files. File-only models declare `input_artifact_format`
   and receive temporary files owned by the scoring process.
 - **`MultiReward`** — weighted composite built by the registry

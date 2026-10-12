@@ -6,12 +6,20 @@ import pytest
 import torch
 
 from vrl.rewards.base import (
-    InferenceRewardFunction,
+    ModelRewardFunction,
 )
 from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import InProcessRewardScorer
 from vrl.rewards.types import RewardSample
 from vrl.utils.config import import_from_path
+
+
+class _FakeReward(ModelRewardFunction):
+    """A model reward whose scorer each test injects."""
+
+    model_factory = "unused:factory"
+    name = "fake"
+    default_score_key = "fake"
 
 
 class _FakeTorchReward(TorchRewardModel):
@@ -39,10 +47,8 @@ def _sample(
     )
 
 
-def _reward_function_in_process() -> InferenceRewardFunction:
-    return InferenceRewardFunction(
-        reward_name="fake",
-        score_key="fake",
+def _reward_function_in_process() -> ModelRewardFunction:
+    return _FakeReward(
         scorer=InProcessRewardScorer(
             model=_FakeTorchReward({"device": "cpu"}),
         ),
@@ -73,9 +79,7 @@ async def test_missing_axis_fails_instead_of_silently_losing_observations() -> N
                 return {"fake": 1.0, "quality": 0.5}
             return {"fake": 2.0}
 
-    reward = InferenceRewardFunction(
-        reward_name="fake",
-        score_key="fake",
+    reward = _FakeReward(
         scorer=InProcessRewardScorer(model=InconsistentModel()),
     )
     try:
@@ -167,8 +171,7 @@ def test_inference_reward_rejects_empty_score_key_component() -> None:
             return None
 
     with pytest.raises(ValueError, match="empty component"):
-        InferenceRewardFunction(
-            reward_name="fake",
+        _FakeReward(
             score_key="a++b",
             scorer=_Runtime(),
         )

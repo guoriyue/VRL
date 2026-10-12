@@ -2,14 +2,12 @@
 
 The plugin layer between ``RewardFunctionRuntime`` above (runtime.py) and the
 ``RewardScorer`` transports below (inference.py): concrete rewards in
-vrl/rewards/functions subclass one of the bases here. The class ladder encodes
-capabilities the registry and runtime probe, not taxonomy:
-``InferenceRewardFunction`` owns the materialize / score / validate seam so
-every transport (including injected fakes) passes the same result-identity
-guard; ``ModelRewardFunction`` resolves a model
-factory and scoring transport while forwarding media in memory by default.
-Every registered reward is a ``ModelRewardFunction``; its scorer owns memory
-parking. File-only models receive scorer-local temporary files.
+vrl/rewards/functions subclass ``ModelRewardFunction``. It resolves a model
+factory and scoring transport, forwards media in memory, and owns the
+materialize / score / validate seam, so every transport (including injected
+fakes) passes the same result-identity guard; its scorer owns memory parking.
+``MultiReward`` combines components on the plain ``RewardFunction`` base.
+File-only models receive scorer-local temporary files.
 """
 
 from __future__ import annotations
@@ -166,18 +164,151 @@ class RewardFunction:
         return None
 
 
-class InferenceRewardFunction(RewardFunction):
-    """Reward function backed by one scorer transport; media rides the request in memory."""
+class ModelRewardFunction(RewardFunction):
+    """Model-backed reward with shared factory and inference-transport wiring.
+
+    Subclasses declare the model factory, score defaults, and debug identity;
+    the registry uses this boundary to admit remote model inference. Samples
+    remain in memory (including boxed references) by default. File-only models
+    declare their input format on the model itself, and the scoring process
+    owns any temporary encoding and cleanup.
+
+    ``scorer`` injects a ready transport in place of factory construction.
+    ``worker_config``'s
+    ``sleep_offload``, which the registry sets for a GPU component of a
+    shared reward, lets the scorer release its model's GPU memory between
+    scoring phases.
+    """
+
+    # Concrete model rewards differ in these declarations, so each subclass is
+    # a declaration block instead of a forwarding __init__. model_factory /
+    # name / default_score_key have no class default on purpose — a subclass
+    # that forgets them fails loudly at construction (AttributeError).
+    model_factory: ClassVar[str]
+    # The registry component name. It is also the request-id prefix, the debug
+    # sidecar basename and the default ``reward_name``; a reward whose
+    # ``reward_name`` is a hub model id sets ``default_reward_name`` instead.
+    name: ClassVar[str]
+    default_reward_name: ClassVar[str | None] = None
+    default_score_key: ClassVar[str]
+    # In-process transport only: build the model in the constructor so config
+    # validation fails at construction and tests can reach ``self._model``
+    # (e.g. to inject a fake engine). Skipped under sleep_offload, whose pooled
+    # model must be factory-built by the runtime itself.
+    eager_model: ClassVar[bool] = False
+    # The score keys this reward can select; empty means any non-empty key.
+    score_keys: ClassVar[tuple[str, ...]] = ()
+    # Model knobs arrive as top-level keywords (``reward.kwargs.<name>.dtype``)
+    # and travel to the model in ``worker_config``. A reward whose model
+    # vocabulary is nested under ``worker_config:`` in YAML sets this so a stray
+    # top-level keyword is a typo, not a silent model knob.
+    worker_config_only: ClassVar[bool] = False
 
     def __init__(
         self,
         *,
-        reward_name: str,
-        score_key: str,
-        scorer: RewardScorer,
+        reward_name: str | None = None,
+        score_key: str | None = None,
         debug_dir: str = "",
-        name: str = "reward",
+        device: str | None = None,
+        worker_config: Mapping[str, Any] | None = None,
+        scorer: RewardScorer | None = None,
+        inference: RewardInferenceConfig | None = None,
+        ray_placement: RayRewardPlacement | None = None,
+        **model_kwargs: Any,
     ) -> None:
+        """Transport keywords are the explicit parameters; every other keyword
+        is a model knob and joins ``worker_config``. Subclasses therefore
+        declare only what they score (class attributes) and keep an
+        ``__init__`` only for a check the base cannot express."""
+
+        # Deferred: runtime.py imports this module (cycle guard).
+        from vrl.rewards.runtime import build_reward_scorer
+
+        removed = {
+            "archive_dir",
+            "artifact_dir",
+            "artifact_format",
+            "media_type",
+            "retain_artifacts",
+        } & model_kwargs.keys()
+        if removed:
+            raise TypeError(
+                f"reward transport options {sorted(removed)} were removed; "
+                "scorers own their input format and rewards write no media archive"
+            )
+        if model_kwargs and self.worker_config_only:
+            raise TypeError(
+                f"{type(self).__name__} takes model knobs under worker_config; "
+                f"unexpected keyword(s) {sorted(model_kwargs)}",
+            )
+        worker_config = {**dict(worker_config or {}), **model_kwargs}
+        model_factory = self.model_factory
+        if reward_name is None:
+            reward_name = self.default_reward_name or self.name
+        score_key = self.default_score_key if score_key is None else score_key
+        if self.score_keys and score_key not in self.score_keys:
+            raise ValueError(
+                f"{reward_name} score_key must be one of {list(self.score_keys)}, "
+                f"got {score_key!r}",
+            )
+        in_process = scorer is None and (inference is None or inference.kind == "in_process")
+
+        if scorer is None:
+            worker_cfg = dict(worker_config or {})
+            has_model_factory = bool(
+                str(worker_cfg.get("model_factory", "")).strip(),
+            )
+            # Normalize the model-id key ONCE here so the model loaders
+            # (kling/videocon) read only worker_config["reward_model_name"].
+            # Precedence: an explicit worker_config.reward_model_name wins;
+            # otherwise fold a top-level reward_name that looks like a HF repo
+            # (contains "/") — a bare reward_name stays a logical tag, not a
+            # model id.
+            reward_name_repo = reward_name if "/" in reward_name else ""
+            reward_model_name = str(
+                worker_cfg.get("reward_model_name") or reward_name_repo or "",
+            ).strip()
+            model_path = str(worker_cfg.get("model_path", "")).strip()
+            # YAML names the public model; the loader needs the private factory.
+            if not has_model_factory:
+                # A missing injected scorer is the in-process path: HTTP
+                # components inject their ready client in MultiReward before
+                # they reach this constructor. Every model-backed reward
+                # therefore needs its concrete factory even when it is a
+                # composite model rather than one Hugging Face repository.
+                worker_cfg["model_factory"] = model_factory
+            if reward_model_name or model_path:
+                if reward_model_name:
+                    worker_cfg["reward_model_name"] = reward_model_name
+                if not str(worker_cfg.get("reward_model_version", "")).strip():
+                    worker_cfg["reward_model_version"] = reward_model_name or model_path
+            # Resource resolution is the device source of truth. A nested model
+            # override would split lifecycle ownership from real CUDA execution,
+            # so apply the shared ceiling even when this constructor runs
+            # outside MultiReward.
+            if device is not None:
+                worker_cfg = self.worker_config_with_device(
+                    worker_cfg,
+                    device=str(device),
+                )
+            # ``inference`` selects in-process (None/default) or a placed Ray
+            # actor that receives this same worker_cfg. External
+            # HTTP components never reach here: the registry injects their
+            # ready client as ``scorer``.
+            if in_process and self.eager_model and not worker_cfg.get("sleep_offload"):
+                from vrl.rewards.runtime import InProcessRewardScorer
+                from vrl.utils.config import import_from_path
+
+                self._model = import_from_path(str(worker_cfg["model_factory"]))(worker_cfg)
+                scorer = InProcessRewardScorer(model=self._model)
+            else:
+                scorer = build_reward_scorer(
+                    worker_cfg,
+                    inference=inference,
+                    ray_placement=ray_placement,
+                )
+
         normalized_reward_name = str(reward_name).strip()
         if not normalized_reward_name:
             raise ValueError("reward_name must be non-empty")
@@ -196,7 +327,7 @@ class InferenceRewardFunction(RewardFunction):
         self.scorer = scorer
         self.debug_dir = str(debug_dir)
         # Prefixes request ids and names the debug sidecar files.
-        self._name = name
+        self._name = self.name
         # Parked whenever the scorer holds no device memory: before activate
         # or score builds its model, and again after each park.
         self._parked = True
@@ -372,162 +503,7 @@ class InferenceRewardFunction(RewardFunction):
                 handle.write(json.dumps(asdict(result), sort_keys=True) + "\n")
 
 
-class ModelRewardFunction(InferenceRewardFunction):
-    """Model-backed reward with shared factory and inference-transport wiring.
-
-    Subclasses declare the model factory, score defaults, and debug identity;
-    the registry uses this boundary to admit remote model inference. Samples
-    remain in memory (including boxed references) by default. File-only models
-    declare their input format on the model itself, and the scoring process
-    owns any temporary encoding and cleanup.
-
-    ``scorer`` injects a ready transport in place of factory construction.
-    ``worker_config``'s
-    ``sleep_offload``, which the registry sets for a GPU component of a
-    shared reward, lets the scorer release its model's GPU memory between
-    scoring phases.
-    """
-
-    # Concrete model rewards differ in these declarations, so each subclass is
-    # a declaration block instead of a forwarding __init__. model_factory /
-    # name / default_score_key have no class default on purpose — a subclass
-    # that forgets them fails loudly at construction (AttributeError).
-    model_factory: ClassVar[str]
-    # The registry component name. It is also the request-id prefix, the debug
-    # sidecar basename and the default ``reward_name``; a reward whose
-    # ``reward_name`` is a hub model id sets ``default_reward_name`` instead.
-    name: ClassVar[str]
-    default_reward_name: ClassVar[str | None] = None
-    default_score_key: ClassVar[str]
-    # In-process transport only: build the model in the constructor so config
-    # validation fails at construction and tests can reach ``self._model``
-    # (e.g. to inject a fake engine). Skipped under sleep_offload, whose pooled
-    # model must be factory-built by the runtime itself.
-    eager_model: ClassVar[bool] = False
-    # The score keys this reward can select; empty means any non-empty key.
-    score_keys: ClassVar[tuple[str, ...]] = ()
-    # Model knobs arrive as top-level keywords (``reward.kwargs.<name>.dtype``)
-    # and travel to the model in ``worker_config``. A reward whose model
-    # vocabulary is nested under ``worker_config:`` in YAML sets this so a stray
-    # top-level keyword is a typo, not a silent model knob.
-    worker_config_only: ClassVar[bool] = False
-
-    def __init__(
-        self,
-        *,
-        reward_name: str | None = None,
-        score_key: str | None = None,
-        debug_dir: str = "",
-        device: str | None = None,
-        worker_config: Mapping[str, Any] | None = None,
-        scorer: RewardScorer | None = None,
-        inference: RewardInferenceConfig | None = None,
-        ray_placement: RayRewardPlacement | None = None,
-        **model_kwargs: Any,
-    ) -> None:
-        """Transport keywords are the explicit parameters; every other keyword
-        is a model knob and joins ``worker_config``. Subclasses therefore
-        declare only what they score (class attributes) and keep an
-        ``__init__`` only for a check the base cannot express."""
-
-        # Deferred: runtime.py imports this module (cycle guard).
-        from vrl.rewards.runtime import build_reward_scorer
-
-        removed = {
-            "archive_dir",
-            "artifact_dir",
-            "artifact_format",
-            "media_type",
-            "retain_artifacts",
-        } & model_kwargs.keys()
-        if removed:
-            raise TypeError(
-                f"reward transport options {sorted(removed)} were removed; "
-                "scorers own their input format and rewards write no media archive"
-            )
-        if model_kwargs and self.worker_config_only:
-            raise TypeError(
-                f"{type(self).__name__} takes model knobs under worker_config; "
-                f"unexpected keyword(s) {sorted(model_kwargs)}",
-            )
-        worker_config = {**dict(worker_config or {}), **model_kwargs}
-        model_factory = self.model_factory
-        if reward_name is None:
-            reward_name = self.default_reward_name or self.name
-        score_key = self.default_score_key if score_key is None else score_key
-        if self.score_keys and score_key not in self.score_keys:
-            raise ValueError(
-                f"{reward_name} score_key must be one of {list(self.score_keys)}, "
-                f"got {score_key!r}",
-            )
-        in_process = scorer is None and (inference is None or inference.kind == "in_process")
-
-        if scorer is None:
-            worker_cfg = dict(worker_config or {})
-            has_model_factory = bool(
-                str(worker_cfg.get("model_factory", "")).strip(),
-            )
-            # Normalize the model-id key ONCE here so the model loaders
-            # (kling/videocon) read only worker_config["reward_model_name"].
-            # Precedence: an explicit worker_config.reward_model_name wins;
-            # otherwise fold a top-level reward_name that looks like a HF repo
-            # (contains "/") — a bare reward_name stays a logical tag, not a
-            # model id.
-            reward_name_repo = reward_name if "/" in reward_name else ""
-            reward_model_name = str(
-                worker_cfg.get("reward_model_name") or reward_name_repo or "",
-            ).strip()
-            model_path = str(worker_cfg.get("model_path", "")).strip()
-            # YAML names the public model; the loader needs the private factory.
-            if not has_model_factory:
-                # A missing injected scorer is the in-process path: HTTP
-                # components inject their ready client in MultiReward before
-                # they reach this constructor. Every model-backed reward
-                # therefore needs its concrete factory even when it is a
-                # composite model rather than one Hugging Face repository.
-                worker_cfg["model_factory"] = model_factory
-            if reward_model_name or model_path:
-                if reward_model_name:
-                    worker_cfg["reward_model_name"] = reward_model_name
-                if not str(worker_cfg.get("reward_model_version", "")).strip():
-                    worker_cfg["reward_model_version"] = reward_model_name or model_path
-            # Resource resolution is the device source of truth. A nested model
-            # override would split lifecycle ownership from real CUDA execution,
-            # so apply the shared ceiling even when this constructor runs
-            # outside MultiReward.
-            if device is not None:
-                worker_cfg = self.worker_config_with_device(
-                    worker_cfg,
-                    device=str(device),
-                )
-            # ``inference`` selects in-process (None/default) or a placed Ray
-            # actor that receives this same worker_cfg. External
-            # HTTP components never reach here: the registry injects their
-            # ready client as ``scorer``.
-            if in_process and self.eager_model and not worker_cfg.get("sleep_offload"):
-                from vrl.rewards.runtime import InProcessRewardScorer
-                from vrl.utils.config import import_from_path
-
-                self._model = import_from_path(str(worker_cfg["model_factory"]))(worker_cfg)
-                scorer = InProcessRewardScorer(model=self._model)
-            else:
-                scorer = build_reward_scorer(
-                    worker_cfg,
-                    inference=inference,
-                    ray_placement=ray_placement,
-                )
-
-        super().__init__(
-            reward_name=str(reward_name),
-            score_key=str(score_key),
-            scorer=scorer,
-            debug_dir=debug_dir,
-            name=self.name,
-        )
-
-
 __all__ = [
-    "InferenceRewardFunction",
     "ModelRewardFunction",
     "RewardCleanupError",
     "RewardFunction",

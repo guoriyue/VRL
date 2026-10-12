@@ -7,7 +7,6 @@ import pytest
 from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.reward_inference import RewardInferenceConfig
 from vrl.rewards.base import (
-    InferenceRewardFunction,
     ModelRewardFunction,
     RewardCleanupError,
     RewardFunction,
@@ -575,13 +574,15 @@ async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones(tmp_p
         reward_name="b",
         scorer=_client(),
     )
+
     # A real in-process runtime is the "skips local ones" half: it has no
     # ensure_ready at all, so preflight's capability dispatch must step over it.
-    local = InferenceRewardFunction(
-        reward_name="c",
-        score_key="c",
-        scorer=InProcessRewardScorer(model=_NeverScoredModel()),
-    )
+    class _LocalReward(ModelRewardFunction):
+        model_factory = "unused:factory"
+        name = "c"
+        default_score_key = "c"
+
+    local = _LocalReward(scorer=InProcessRewardScorer(model=_NeverScoredModel()))
     reward = MultiReward([("a", 1.0, remote_a), ("b", 1.0, remote_b), ("c", 1.0, local)])
     try:
         assert not remote_a.scorer._identity_checked

@@ -176,7 +176,7 @@ class RewardInferenceRequest:
     ) -> list[RewardInferenceResult]:
         """Validate one finite result per artifact and restore request order.
 
-        ``InferenceRewardFunction.score_batch`` runs every scorer's results
+        ``ModelRewardFunction.score_batch`` runs every scorer's results
         through this once, whatever the transport, so a scorer that drops,
         duplicates, invents, or mistypes a result fails there. Callers that
         drive a scorer directly (offline evaluation) call it themselves. The
