@@ -41,7 +41,7 @@ async def _launched(
     plan the launcher receives; yields (runtime, placement owner, resources)."""
 
     from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
-    from vrl import run
+    from vrl.models import checkpoint_identity
     from vrl.ray.placement import GlobalRayPlacementOwner
 
     cfg = tiny_sana_online_config(
@@ -52,13 +52,13 @@ async def _launched(
     TinySanaPipeline().install(monkeypatch, snapshot)
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResourcePlan.from_root(built.root)
-    replay = run.ResolvedModel.from_root(
-        built.family,
+    replay_build = built.family.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
+    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
     owner = GlobalRayPlacementOwner(resources, RolloutWorkerConfig.from_root(built.root))
     owner.create()
     runtime: RayGenerationRuntime | None = None
@@ -66,7 +66,7 @@ async def _launched(
         runtime = RayGenerationLauncher().create_runtime(
             plan(resources),
             RolloutWorkerConfig.from_root(built.root),
-            RayGenerationLaunchInputs.from_run(built, resources, replay),
+            RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity),
             placement=owner.rollout_placement,
         )
         yield runtime, owner, resources
@@ -138,24 +138,24 @@ def test_create_runtime_rejects_missing_rollout_placement(monkeypatch, tmp_path)
     """placement=None fails fast with the config knob, not an AttributeError."""
 
     from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
-    from vrl import run
+    from vrl.models import checkpoint_identity
 
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResourcePlan.from_root(built.root)
-    replay = run.ResolvedModel.from_root(
-        built.family,
+    replay_build = built.family.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
+    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
     with pytest.raises(ValueError, match="rollout placement"):
         RayGenerationLauncher().create_runtime(
             resources,
             RolloutWorkerConfig.from_root(built.root),
-            RayGenerationLaunchInputs.from_run(built, resources, replay),
+            RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity),
             placement=None,
         )
 
@@ -216,22 +216,23 @@ def test_worker_metadata_preserves_placement_query_failure(monkeypatch, tmp_path
     """A failed placement query surfaces as itself from the real worker."""
 
     from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
-    from vrl import run
     from vrl.generation.ray import worker
+    from vrl.models import checkpoint_identity
 
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResourcePlan.from_root(built.root)
-    replay = run.ResolvedModel.from_root(
-        built.family,
+    replay_build = built.family.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
+    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
     actor = worker.RayGenerationWorker(
-        "rollout-0", RayGenerationLaunchInputs.from_run(built, resources, replay)
+        "rollout-0",
+        RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity),
     )
     failure = RuntimeError("placement query failed")
 

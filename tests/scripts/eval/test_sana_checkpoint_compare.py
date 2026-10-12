@@ -157,7 +157,7 @@ def test_run_generates_base_before_strict_restore_and_current(monkeypatch, tmp_p
     pipeline.install(monkeypatch, snapshot)
 
     entry, build, identity = _real_build(run_dir)
-    bundle = entry.build_rollout(build)
+    bundle = entry.build_rollout(build, expected_identity=None)
     assert bundle.model.pipeline is pipeline
     base_state = {name: value.clone() for name, value in pipeline.transformer.state_dict().items()}
     with torch.no_grad():
@@ -296,7 +296,7 @@ def test_run_rejects_model_source_drift_before_generation(monkeypatch, tmp_path)
 
     with pytest.raises(
         RuntimeError,
-        match="SANA model source changed during runtime construction",
+        match="sana rollout model checkpoint source changed during bundle construction",
     ):
         checkpoint_compare.run_comparison(
             checkpoint_compare.build_parser().parse_args(

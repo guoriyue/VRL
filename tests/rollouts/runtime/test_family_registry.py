@@ -325,7 +325,7 @@ def test_generation_only_entry_fails_before_dynamic_import(
     monkeypatch.setattr("vrl.utils.config.import_from_path", fail_import)
 
     with pytest.raises(RuntimeError, match="final-video inference only"):
-        entry.build_replay(SimpleNamespace(family="magi_1"))
+        entry.build_replay(SimpleNamespace(family="magi_1"), expected_identity=None)
 
 
 def test_family_aliases_resolve_to_canonical_entries() -> None:

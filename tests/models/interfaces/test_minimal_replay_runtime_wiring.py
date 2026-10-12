@@ -383,6 +383,7 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
             family=family,
             parameter_dtype=torch.float16 if family == "sana" else torch.float32,
         ),
+        expected_identity=None,
     )
 
     assert loaded_builds
@@ -419,7 +420,7 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
     monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", fake_scheduler_loader)
 
     bundle = get_model_family_entry("wan_2_1").build_replay(
-        _build(family="wan_2_1"),
+        _build(family="wan_2_1"), expected_identity=None
     )
 
     from diffusers import UniPCMultistepScheduler
@@ -475,7 +476,7 @@ def test_replay_builders_standardize_the_loaded_scheduler_onto_the_rollout_ladde
     monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", loader)
 
     bundle = get_model_family_entry(family).build_replay(
-        _build(family=family, scheduler_config={"num_steps": 2}),
+        _build(family=family, scheduler_config={"num_steps": 2}), expected_identity=None
     )
 
     (shipped,) = loaded
@@ -500,7 +501,7 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
     monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", _diffusers_scheduler)
 
     bundle = get_model_family_entry("wan_2_1_i2v").build_replay(
-        _build(family="wan_2_1_i2v"),
+        _build(family="wan_2_1_i2v"), expected_identity=None
     )
 
     assert isinstance(bundle.model, WanI2VReplayModel)
@@ -541,6 +542,7 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
                 "trainable_transformers": ["transformer_2"],
             },
         ),
+        expected_identity=None,
     )
 
     # Primary first (generic ctor), then the prepare_replay late-load.
@@ -580,6 +582,7 @@ def test_cosmos_predict25_replay_builder_is_pipeline_free(
             use_lora=True,
             lora_config={"rank": 1, "alpha": 1, "target_modules": ["to_q"]},
         ),
+        expected_identity=None,
     )
 
     assert bundle.raw_handle is None

@@ -97,10 +97,7 @@ def _trainer(
     # Same adapter initialization in every process; a rank that does not
     # materialize weights receives the primary rank's through the strategy.
     torch.manual_seed(0)
-    bundle = stack.replay.materialize(
-        context="fsdp streaming equivalence",
-        materialize_weights=strategy.materialize_weights,
-    )
+    bundle = stack.trainer_bundle(materialize_weights=strategy.materialize_weights)
     pair = AlgorithmEvaluatorPair.from_configs(
         built,
         scheduler=getattr(bundle, "scheduler", None),

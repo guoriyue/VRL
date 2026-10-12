@@ -392,7 +392,8 @@ class TinySanaStack:
 
     built: Any
     resources: Any
-    replay: Any
+    replay_build: Any
+    replay_identity: dict[str, Any]
     runtime: Any
 
     @property
@@ -404,10 +405,14 @@ class TinySanaStack:
 
         return RolloutCollectorConfig.from_root(self.built.root)
 
-    def trainer_bundle(self) -> Any:
+    def trainer_bundle(self, *, materialize_weights: bool = True) -> Any:
         """The trainer-side policy: the run's replay bundle, built for real on CPU."""
 
-        return self.replay.materialize(context="tiny sana stack")
+        return self.family.build_replay(
+            self.replay_build,
+            expected_identity=self.replay_identity,
+            materialize_weights=materialize_weights,
+        )
 
 
 def tiny_sana_stack(
@@ -421,28 +426,29 @@ def tiny_sana_stack(
     """
 
     from tests.generation._in_process_runtime import InProcessGenerationRuntime
-    from vrl import run
     from vrl.config.builders import BuiltConfigs
     from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+    from vrl.models import checkpoint_identity
     from vrl.ray.resources import ResourcePlan
 
     cfg = tiny_sana_online_config(tmp_path, overrides=overrides)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResourcePlan.from_root(built.root)
-    replay = run.ResolvedModel.from_root(
-        built.family,
+    replay_build = built.family.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
+    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
     return TinySanaStack(
         built=built,
         resources=resources,
-        replay=replay,
+        replay_build=replay_build,
+        replay_identity=replay_identity,
         runtime=InProcessGenerationRuntime(
-            RayGenerationLaunchInputs.from_run(built, resources, replay)
+            RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity)
         ),
     )
 

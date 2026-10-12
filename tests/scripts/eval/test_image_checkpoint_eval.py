@@ -37,13 +37,11 @@ def plan(tmp_path):
     _checkpoint(tmp_path / "checkpoint-3", 3)
     _checkpoint(tmp_path / "checkpoint-8", 8)
     return checkpoint_eval.EvaluationPlan(
-        resolved_model=SimpleNamespace(
-            identity={"family": "test"},
-            entry=SimpleNamespace(family="test"),
-            build=SimpleNamespace(
-                device="cpu", parameter_dtype="float32", precision=_FakePrecision()
-            ),
+        entry=SimpleNamespace(family="test"),
+        model_build=SimpleNamespace(
+            device="cpu", parameter_dtype="float32", precision=_FakePrecision()
         ),
+        model_identity={"family": "test"},
         targets=checkpoint_eval.discover_targets(tmp_path, uses_lora=False),
         prompts=(
             checkpoint_eval.EvalPrompt(
@@ -200,7 +198,12 @@ def test_independent_policy_does_not_replace_run_sampling(tmp_path, plan, monkey
         policy_path,
     )
     monkeypatch.setattr(
-        "vrl.run.ResolvedModel.from_root", lambda *_args, **_kwargs: plan.resolved_model
+        "vrl.models.families.registry.ModelFamilyEntry.resolve_model_build",
+        lambda *_args, **_kwargs: plan.model_build,
+    )
+    monkeypatch.setattr(
+        "vrl.models.checkpoint_identity.resolve_checkpoint_model_identity",
+        lambda _build: plan.model_identity,
     )
     monkeypatch.setattr(
         "vrl.trainers.checkpointing.CheckpointTarget.validate_compatibility",
@@ -255,7 +258,7 @@ def test_base_disables_adapter_before_checkpoint_restores(tmp_path, plan, monkey
                 self.adapter_enabled = True
 
     model = FakeModel()
-    plan.resolved_model.materialize = lambda **_kwargs: SimpleNamespace(model=model)
+    plan.entry.build_rollout = lambda *_args, **_kwargs: SimpleNamespace(model=model)
 
     def generate(_model, **kwargs):
         events.append(("generate", model.adapter_enabled, kwargs["seed"]))
@@ -265,7 +268,7 @@ def test_base_disables_adapter_before_checkpoint_restores(tmp_path, plan, monkey
         checkpoint = SimpleNamespace(next_epoch=int(path.name.rsplit("-", 1)[1]))
 
         def restore(**kwargs):
-            assert kwargs["expected_model_identity"] == plan.resolved_model.identity
+            assert kwargs["expected_model_identity"] == plan.model_identity
             events.append(("restore", checkpoint.next_epoch))
 
         checkpoint.restore_model = restore

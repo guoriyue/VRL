@@ -22,10 +22,10 @@ from typing import Any
 import torch
 from omegaconf import DictConfig
 
-from vrl import run
 from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
+from vrl.models import checkpoint_identity
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.robotics_video_reward import RoboticsVideoRewardModel
@@ -209,10 +209,11 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
         # resolved config through the typed schema and precision policy first.
         root = parse_config(cfg)
         precision = PrecisionPolicy.from_section(root.precision)
-        resolved = run.ResolvedModel.from_root(
-            entry, root, device, precision=precision, for_rollout=True
+        build = entry.resolve_model_build(root, device, precision=precision, for_rollout=True)
+        bundle = entry.build_rollout(
+            build,
+            expected_identity=checkpoint_identity.resolve_checkpoint_model_identity(build),
         )
-        bundle = entry.build_rollout(resolved.build)
         if target.path is not None:
             checkpoint = TrainingCheckpoint.load(target.path)
             if str(checkpoint.payload.get("family", "")) != "wan_2_1":

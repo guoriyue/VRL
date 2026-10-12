@@ -248,11 +248,7 @@ def _generate_all(
                     "Building Cosmos Predict2.5 generation bundle for %s",
                     target.label,
                 )
-                bundle = entry.build_rollout(build)
-                if resolve_checkpoint_model_identity(build) != expected_model_identity:
-                    raise RuntimeError(
-                        "Cosmos model source changed during runtime construction",
-                    )
+                bundle = entry.build_rollout(build, expected_identity=expected_model_identity)
             logger.info("Loading checkpoint-owned state from %s", target.path)
             training_checkpoint = TrainingCheckpoint.load(target.path)
             training_checkpoint.restore_model(

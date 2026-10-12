@@ -39,7 +39,6 @@ import vrl.generation.ray.launcher as launcher_module
 import vrl.generation.ray.session as session_module
 from tests.rollouts.collector._helpers import Trace
 from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
-from vrl import run
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
@@ -47,6 +46,7 @@ from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.worker import RayGenerationWorker
+from vrl.models import checkpoint_identity
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import GlobalRayPlacementOwner
 from vrl.ray.resources import ResourcePlan
@@ -64,7 +64,8 @@ class _OnDemand:
     runtime: RayGenerationRuntime
     launcher: RayGenerationLauncher
     built: Any
-    replay: Any
+    replay_build: Any
+    replay_identity: dict[str, Any]
 
     def request(self, prompts: list[str], **kwargs: Any) -> Any:
         builder = GenerationRequestBuilder(
@@ -75,7 +76,9 @@ class _OnDemand:
     def payload(self) -> dict[str, Any]:
         """A fresh copy of the trainer's real weight-sync payload."""
 
-        bundle = self.replay.materialize(context="lease test weight payload")
+        bundle = self.built.family.build_replay(
+            self.replay_build, expected_identity=self.replay_identity
+        )
         return SingleProcessStrategy().export_rollout_state(bundle)
 
     def bad_payload(self) -> dict[str, Any]:
@@ -114,17 +117,19 @@ async def _on_demand(
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResourcePlan.from_root(built.root)
     worker_config = RolloutWorkerConfig.from_root(built.root)
-    replay = run.ResolvedModel.from_root(
-        built.family,
+    replay_build = built.family.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
+    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
     owner = GlobalRayPlacementOwner(resources, worker_config)
     owner.create()
     launcher = RayGenerationLauncher()
-    launch_inputs = RayGenerationLaunchInputs.from_run(built, resources, replay)
+    launch_inputs = RayGenerationLaunchInputs.from_run(
+        built, resources, replay_build, replay_identity
+    )
 
     async def launch_session() -> RayGenerationSession:
         # Looked up at call time, so a test may gate or fail the real launch.
@@ -141,7 +146,13 @@ async def _on_demand(
         initial_policy_version=launch_inputs.launch_contract.policy_version,
     )
     try:
-        yield _OnDemand(runtime=runtime, launcher=launcher, built=built, replay=replay)
+        yield _OnDemand(
+            runtime=runtime,
+            launcher=launcher,
+            built=built,
+            replay_build=replay_build,
+            replay_identity=replay_identity,
+        )
     finally:
         with contextlib.suppress(BaseException):
             await runtime.shutdown()

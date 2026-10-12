@@ -33,7 +33,7 @@ def build_runtime(
         raise ValueError("diffusion performance probe requires model configuration")
     entry = get_model_family_entry(str(root.model.family))
     build = entry.resolve_model_build(root, device, precision=precision)
-    return entry.build_rollout(build)
+    return entry.build_rollout(build, expected_identity=None)
 
 
 @torch.no_grad()

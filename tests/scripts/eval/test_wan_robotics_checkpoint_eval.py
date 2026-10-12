@@ -343,7 +343,7 @@ def _save_epoch_checkpoint(run_dir: Path, *, epoch: int, fill: float) -> Path:
         precision=PrecisionPolicy.from_section(root.precision),
         for_rollout=True,
     )
-    bundle = entry.build_rollout(build)
+    bundle = entry.build_rollout(build, expected_identity=None)
     with torch.no_grad():
         for parameter in bundle.trainable_modules["transformer"].parameters():
             parameter.fill_(fill)

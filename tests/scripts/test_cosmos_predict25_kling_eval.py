@@ -71,7 +71,7 @@ def test_seed_grid_cell_is_identical_across_checkpoints(tmp_path) -> None:
     """
 
     _snapshot, _config_path, root, entry, build, _identity = _tiny_cosmos_run(tmp_path)
-    model = entry.build_rollout(build).model.eval()
+    model = entry.build_rollout(build, expected_identity=None).model.eval()
     sampling = resolve_eval_sampling(root)
 
     def run(label: str) -> list[int]:
@@ -153,7 +153,7 @@ def _tiny_cosmos_run(tmp_path: Path):
 def _save_real_checkpoint(path: Path, *, entry, build, identity, fill: float) -> Path:
     """Save a strict checkpoint from the real bundle with every LoRA weight set to ``fill``."""
 
-    bundle = entry.build_rollout(build)
+    bundle = entry.build_rollout(build, expected_identity=None)
     with torch.no_grad():
         for parameter in bundle.trainable_modules["transformer"].parameters():
             if parameter.requires_grad:
@@ -380,7 +380,7 @@ def test_generate_all_rejects_model_source_drift_before_checkpoint_load(
     sampling = resolve_eval_sampling(root)
 
     with pytest.raises(
-        RuntimeError, match="Cosmos model source changed during runtime construction"
+        RuntimeError, match="rollout model checkpoint source changed during bundle construction"
     ):
         eval_script._generate_all(
             build,

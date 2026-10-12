@@ -39,7 +39,7 @@ from tests.scripts.eval.fixtures import (
     tiny_sana_ray_cluster,
     write_tiny_sana_snapshot,
 )
-from vrl import run
+from vrl.models import checkpoint_identity
 from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.rewards import RewardOutput, RewardSample
@@ -397,16 +397,20 @@ async def _ray_owner(
         collector.set_generation_runtime(ray_run.runtime)
         trace = Trace(monkeypatch)
         trace.watch(collector, "shutdown", "collector_shutdown")
-        replay = run.ResolvedModel.from_root(
-            built.family,
+        replay_build = built.family.resolve_model_build(
             built.root,
             torch.device(resources.trainer_torch_device),
             precision=built.precision,
             for_rollout=False,
         )
+        replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
         bench = CollectorBench(
             stack=TinySanaStack(
-                built=built, resources=resources, replay=replay, runtime=ray_run.runtime
+                built=built,
+                resources=resources,
+                replay_build=replay_build,
+                replay_identity=replay_identity,
+                runtime=ray_run.runtime,
             ),
             collector=collector,
             runtime=ray_run.runtime,
@@ -414,7 +418,7 @@ async def _ray_owner(
             trace=trace,
         )
         trainer = TrainerSide(
-            bundle=replay.materialize(context="owner thread ray test"),
+            bundle=built.family.build_replay(replay_build, expected_identity=replay_identity),
             strategy=SingleProcessStrategy(),
             initialized=True,
         )

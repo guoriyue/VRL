@@ -131,7 +131,7 @@ def _write_run(
     build = entry.resolve_model_build(
         root, torch.device("cpu"), precision=precision, for_rollout=True
     )
-    bundle = entry.build_rollout(build)
+    bundle = entry.build_rollout(build, expected_identity=None)
     base_state = {name: value.clone() for name, value in pipeline.transformer.state_dict().items()}
     with torch.no_grad():
         for parameter in pipeline.transformer.parameters():
@@ -665,7 +665,7 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
         root, torch.device("cpu"), precision=precision, for_rollout=True
     )
     identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
-    bundle = entry.build_rollout(build)
+    bundle = entry.build_rollout(build, expected_identity=None)
     base_state = {name: value.clone() for name, value in pipeline.transformer.state_dict().items()}
 
     targets = [CheckpointTarget.base("baseline")]
@@ -736,7 +736,7 @@ def test_generate_images_rejects_materialized_source_drift_before_generation(
 
     with pytest.raises(
         RuntimeError,
-        match="materialized SANA model source changed during runtime construction",
+        match="sana rollout model checkpoint source changed during bundle construction",
     ):
         checkpoint_eval._generate_images(
             root,

@@ -72,17 +72,17 @@ class RaySanaRuntime:
 
         import torch
 
-        from vrl import run
+        from vrl.models import checkpoint_identity
         from vrl.trainers.strategy import SingleProcessStrategy
 
-        replay = run.ResolvedModel.from_root(
-            self.built.family,
+        replay_build = self.built.family.resolve_model_build(
             self.built.root,
             torch.device(self.resources.trainer_torch_device),
             precision=self.built.precision,
             for_rollout=False,
         )
-        bundle = replay.materialize(context="ray test weight payload")
+        replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+        bundle = self.built.family.build_replay(replay_build, expected_identity=replay_identity)
         return SingleProcessStrategy().export_rollout_state(bundle)
 
 
@@ -104,11 +104,11 @@ async def ray_sana_runtime(
     import torch
 
     from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
-    from vrl import run
     from vrl.config.builders import BuiltConfigs
     from vrl.generation.ray.config import RolloutWorkerConfig
     from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
     from vrl.generation.ray.launcher import RayGenerationLauncher
+    from vrl.models import checkpoint_identity
     from vrl.ray.placement import GlobalRayPlacementOwner
     from vrl.ray.resources import ResourcePlan
 
@@ -122,20 +122,20 @@ async def ray_sana_runtime(
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResourcePlan.from_root(built.root)
     worker = RolloutWorkerConfig.from_root(built.root)
-    replay = run.ResolvedModel.from_root(
-        built.family,
+    replay_build = built.family.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
+    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
     owner = GlobalRayPlacementOwner(resources, worker)
     owner.create()
     try:
         runtime = RayGenerationLauncher().create_runtime(
             resources,
             worker,
-            RayGenerationLaunchInputs.from_run(built, resources, replay),
+            RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity),
             placement=owner.rollout_placement,
         )
         try:

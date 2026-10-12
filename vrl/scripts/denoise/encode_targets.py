@@ -203,6 +203,7 @@ def main(argv: list[str] | None = None) -> None:
             precision=precision,
             parameter_dtype_override=parameter_dtype_override,
         ),
+        expected_identity=None,
     )
     model = bundle.model
     encode = getattr(model, "encode_video_to_latents", None)

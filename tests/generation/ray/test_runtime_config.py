@@ -20,7 +20,6 @@ from omegaconf import OmegaConf
 
 from tests.generation.ray._helpers import ray_sana_runtime
 from tests.scripts.eval.fixtures import tiny_sana_online_config, write_tiny_wan_snapshot
-from vrl import run
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
@@ -29,6 +28,7 @@ from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
+from vrl.models import checkpoint_identity
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.placement import RolePlacement
 from vrl.ray.resources import ResourcePlan
@@ -235,20 +235,22 @@ def _sana_launch(tmp_path: Path, *overrides: str) -> tuple[RayGenerationLaunchIn
 
     built = BuiltConfigs.from_cfg(tiny_sana_online_config(tmp_path, overrides=overrides))
     resources = ResourcePlan.from_root(built.root)
-    replay = run.ResolvedModel.from_root(
-        built.family,
+    replay_build = built.family.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
-    return RayGenerationLaunchInputs.from_run(built, resources, replay), replay
+    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    return RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity), (
+        replay_identity
+    )
 
 
 def test_generation_launch_inputs_project_model_compile_and_precision(tmp_path) -> None:
     """The public launch path projects model config and dtype wire values once."""
 
-    launch_inputs, replay = _sana_launch(
+    launch_inputs, replay_identity = _sana_launch(
         tmp_path,
         "model.revision=driver-config",
         "model.torch_compile.enable=true",
@@ -265,7 +267,7 @@ def test_generation_launch_inputs_project_model_compile_and_precision(tmp_path) 
     contract = launch_inputs.launch_contract
     model_build = contract.model_build
     assert contract.family == "sana"
-    assert contract.expected_model_identity == replay.identity
+    assert contract.expected_model_identity == replay_identity
     assert "family" not in model_build
     assert model_build["device"] == "cpu"
     assert model_build["parameter_dtype"] == "float32"
@@ -320,16 +322,16 @@ def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(tmp_pa
     )
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResourcePlan.from_root(built.root)
-    replay = run.ResolvedModel.from_root(
-        built.family,
+    replay_build = built.family.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
+    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
 
     model_build = RayGenerationLaunchInputs.from_run(
-        built, resources, replay
+        built, resources, replay_build, replay_identity
     ).launch_contract.model_build
 
     assert model_build["rollout"]["pipeline_offload_mode"] == "sequential"
@@ -342,20 +344,20 @@ def test_generation_launch_inputs_reject_rollout_identity_mismatch(tmp_path) -> 
 
     built = BuiltConfigs.from_cfg(tiny_sana_online_config(tmp_path))
     resources = ResourcePlan.from_root(built.root)
-    replay = run.ResolvedModel.from_root(
-        built.family,
+    replay_build = built.family.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
+    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
     (tmp_path / "sana-snapshot" / "extra-weights.bin").write_bytes(b"drift")
 
     with pytest.raises(
         ValueError,
         match="rollout model identity does not match the driver replay model identity",
     ):
-        RayGenerationLaunchInputs.from_run(built, resources, replay)
+        RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity)
 
 
 def test_generation_launch_inputs_preserve_disabled_model_compile_config(tmp_path) -> None:
@@ -465,13 +467,13 @@ def _on_demand_launch(
         tiny_sana_online_config(tmp_path, overrides=("distributed.resources.rollout.num_gpus=1",))
     )
     resources = ResourcePlan.from_root(built.root)
-    replay = run.ResolvedModel.from_root(
-        built.family,
+    replay_build = built.family.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
+    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
     placement = RolePlacement(
         placement_group=None,
         bundle_indices=(0,),
@@ -480,7 +482,7 @@ def _on_demand_launch(
     return (
         resources,
         RolloutWorkerConfig.from_root(built.root),
-        RayGenerationLaunchInputs.from_run(built, resources, replay),
+        RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity),
         placement,
     )
 

@@ -112,16 +112,13 @@ def main(argv: list[str] | None = None) -> None:
         raise ValueError("SANA checkpoint evaluation requires model configuration")
     identity_precision = PrecisionPolicy.from_section(root.precision)
     from vrl.models.families.registry import get_model_family_entry
-    from vrl.run import ResolvedModel
 
     identity_entry = get_model_family_entry(str(root.model.family))
-    model_identity = ResolvedModel.from_root(
-        identity_entry,
-        root,
-        device,
-        precision=identity_precision,
-        for_rollout=True,
-    ).identity
+    model_identity = checkpoint_identity.resolve_checkpoint_model_identity(
+        identity_entry.resolve_model_build(
+            root, device, precision=identity_precision, for_rollout=True
+        )
+    )
     for target in targets:
         if target.path is not None:
             target.validate_compatibility(family="sana", expected_model_identity=model_identity)
@@ -319,7 +316,6 @@ def _generate_images(
     settings: sana_report.EvaluationSettings | None = None,
 ) -> list[GeneratedImage]:
     from vrl.models.families.registry import get_model_family_entry
-    from vrl.run import ResolvedModel
     from vrl.utils.media import write_png
 
     settings = settings or sana_report.EvaluationSettings()
@@ -329,24 +325,11 @@ def _generate_images(
     # Checkpoint compatibility stays bound to the configured Hub repo+commit.
     # The downloaded tree has a different, content-based identity, so retain it
     # separately only to prove the local snapshot did not change while loading.
-    resolved = ResolvedModel.from_root(
-        entry,
-        root,
-        device,
-        precision=precision,
-        for_rollout=True,
+    build = entry.resolve_model_build(root, device, precision=precision, for_rollout=True)
+    bundle = entry.build_rollout(
+        build,
+        expected_identity=checkpoint_identity.resolve_checkpoint_model_identity(build),
     )
-    build = resolved.build
-    materialized_model_identity = resolved.identity
-    bundle = entry.build_rollout(build)
-    # The registered mismatch wording below predates run.materialize and is
-    # pinned by this protocol's tests, so the recheck stays inline.
-    loaded_materialized_identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
-    if loaded_materialized_identity != materialized_model_identity:
-        raise RuntimeError(
-            "materialized SANA model source changed during runtime construction: "
-            f"before={materialized_model_identity!r}, after={loaded_materialized_identity!r}",
-        )
     model = bundle.model.eval()
     generated: list[GeneratedImage] = []
     checkpoint_read = False

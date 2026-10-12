@@ -201,7 +201,7 @@ def main() -> None:
     )
     build = _resolve_probe_model_build(args, entry, device)
     print(f"[probe] building {family} bundle from {args.path} ...")
-    bundle = entry.build_rollout(build)
+    bundle = entry.build_rollout(build, expected_identity=None)
     model = bundle.model
 
     encode_kwargs: dict[str, Any] = {"guidance_scale": args.guidance_scale}

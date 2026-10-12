@@ -22,10 +22,10 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from vrl import run
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig, parse_config
+from vrl.models import checkpoint_identity
 from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.utils.artifacts import sha256_file, user_path
@@ -128,12 +128,11 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
 
     device = resolve_eval_device(str(args.device))
     precision = PrecisionPolicy.from_section(root.precision)
-    resolved = run.ResolvedModel.from_root(
-        entry, root, device, precision=precision, for_rollout=True
-    )
+    build = entry.resolve_model_build(root, device, precision=precision, for_rollout=True)
+    model_identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
     bundle = None
     try:
-        bundle = resolved.materialize(context="Cosmos Predict2.5 frame-prefix gate")
+        bundle = entry.build_rollout(build, expected_identity=model_identity)
         model = bundle.model.eval()
         pipe = model.pipeline
         video = video.to(device=device, dtype=pipe.vae.dtype)
@@ -172,7 +171,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             "schema": REPORT_SCHEMA,
             "status": "passed",
             "config": str(args.config),
-            "model_identity": resolved.identity,
+            "model_identity": model_identity,
             "prefix_video": {
                 "path": str(prefix_path),
                 "sha256": sha256_file(prefix_path),

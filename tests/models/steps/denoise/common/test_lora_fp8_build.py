@@ -115,7 +115,7 @@ def _build_sd35_rollout(
     from vrl.models.families.sd3_5 import model as sd35_model
 
     monkeypatch.setattr(sd35_model, "SD3_5Model", model_cls)
-    return get_model_family_entry("sd3_5").build_rollout(build)
+    return get_model_family_entry("sd3_5").build_rollout(build, expected_identity=None)
 
 
 @pytest.mark.parametrize(

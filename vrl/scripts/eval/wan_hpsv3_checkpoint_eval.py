@@ -122,7 +122,9 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
     comparison = CheckpointComparison.from_args(
         args, requires_trainer="Wan HPSv3 checkpoint evaluation"
     )
-    bundle = comparison.entry.build_rollout(comparison.build)
+    bundle = comparison.entry.build_rollout(
+        comparison.build, expected_identity=comparison.identity
+    )
     model = bundle.model.eval()
     videos: list[GeneratedVideo] = []
     try:

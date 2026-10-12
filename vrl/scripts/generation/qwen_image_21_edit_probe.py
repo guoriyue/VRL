@@ -111,7 +111,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(8)
     device = torch.device(args.device)
-    from vrl.run import ResolvedModel
+    from vrl.models import checkpoint_identity
     from vrl.trainers.checkpointing import (
         TrainingCheckpoint,
     )
@@ -143,22 +143,21 @@ def main() -> None:
         )
     )
     entry = get_model_family_entry("qwen_image_21")
-    resolved = ResolvedModel.from_root(
-        entry,
+    build = entry.resolve_model_build(
         root,
         device,
         precision=PrecisionPolicy.from_section(root.precision),
         for_rollout=True,
     )
-    build = resolved.build
+    model_identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
     if checkpoint is not None:
         checkpoint.validate_compatibility(
-            family=entry.family, expected_model_identity=resolved.identity
+            family=entry.family, expected_model_identity=model_identity
         )
-    bundle = resolved.materialize(context="Qwen reference/RGBA probe")
+    bundle = entry.build_rollout(build, expected_identity=model_identity)
     if checkpoint is not None:
         checkpoint.restore_model(
-            bundle=bundle, family=entry.family, expected_model_identity=resolved.identity
+            bundle=bundle, family=entry.family, expected_model_identity=model_identity
         )
     model = bundle.model.eval()
     pipe = model.pipeline
@@ -199,7 +198,7 @@ def main() -> None:
             for key, value in vars(args).items()
         },
         "manifest_sha256": sha256_file(args.manifest) if args.manifest else None,
-        "model_identity": resolved.identity,
+        "model_identity": model_identity,
         "checkpoint_sha256": sha256_file(checkpoint.checkpoint_path) if checkpoint else None,
         "cases": {},
     }

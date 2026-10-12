@@ -276,7 +276,7 @@ async def test_checkpoint_source_change_stops_after_model_before_ray_or_reward(
 
     with pytest.raises(
         RuntimeError,
-        match="model checkpoint source changed during replay bundle construction",
+        match="replay model checkpoint source changed during bundle construction",
     ):
         await online.run_online_recipe(run.cfg)
 

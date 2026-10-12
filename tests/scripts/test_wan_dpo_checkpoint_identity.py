@@ -86,7 +86,7 @@ def test_source_change_during_model_load_stops_before_dataset(monkeypatch, tmp_p
 
     with pytest.raises(
         RuntimeError,
-        match="model checkpoint source changed during Wan DPO bundle construction",
+        match="rollout model checkpoint source changed during bundle construction",
     ):
         train_wan_2_1_dpo(tiny_dpo_run(tmp_path, overrides=[f"trainer.resume_from={checkpoint}"]))
 

@@ -150,18 +150,10 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
 
     device = resolve_eval_device(args.device)
     from vrl.models.families.registry import get_model_family_entry
-    from vrl.run import ResolvedModel
 
     entry = get_model_family_entry("sana")
-    resolved = ResolvedModel.from_root(
-        entry,
-        root,
-        device,
-        precision=precision,
-        for_rollout=True,
-    )
-    build = resolved.build
-    model_identity = resolved.identity
+    build = entry.resolve_model_build(root, device, precision=precision, for_rollout=True)
+    model_identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
     CheckpointTarget(
         label="current",
         path=expected_checkpoint_file.parent,
@@ -170,11 +162,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
         family="sana",
         expected_model_identity=model_identity,
     )
-    bundle = entry.build_rollout(build)
-    # The registered mismatch wording below predates run.materialize and is
-    # pinned by this tool's tests, so the recheck stays inline.
-    if checkpoint_identity.resolve_checkpoint_model_identity(build) != model_identity:
-        raise RuntimeError("SANA model source changed during runtime construction")
+    bundle = entry.build_rollout(build, expected_identity=model_identity)
     model = bundle.model.eval()
     dtype_record = _model_precision_snapshot(model)
 

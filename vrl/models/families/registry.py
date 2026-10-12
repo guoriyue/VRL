@@ -6,6 +6,7 @@ single family table shared by model construction, generation, and collection.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -311,9 +312,17 @@ class ModelFamilyEntry:
             build = import_from_path(self.family_build.model_build_normalizer)(build)
         return build
 
-    def build_replay(self, build: Any, *, materialize_weights: bool = True) -> Any:
+    def build_replay(
+        self,
+        build: Any,
+        *,
+        expected_identity: dict[str, Any] | None,
+        materialize_weights: bool = True,
+    ) -> Any:
         """Construct trainer replay through this entry's registered builder.
 
+        ``expected_identity`` pins the checkpoint the bundle must load (see
+        ``_build_pinned``); ``None`` builds without that proof.
         ``materialize_weights=False`` asks for a meta-parameter skeleton of the
         trainable roots: the training strategy fills it from the primary rank
         instead of every process reading the checkpoint. A family whose loader
@@ -329,23 +338,30 @@ class ModelFamilyEntry:
                 f"{self.family} is generation-only: {self.family_build.replay_unavailable_reason}",
             )
 
-        if self.family_build.replay_runtime_builder is not None:
-            from vrl.utils.config import import_from_path
+        def construct() -> Any:
+            if self.family_build.replay_runtime_builder is not None:
+                from vrl.utils.config import import_from_path
 
-            return import_from_path(self.family_build.replay_runtime_builder)(
+                return import_from_path(self.family_build.replay_runtime_builder)(
+                    build,
+                    materialize_weights=materialize_weights,
+                )
+            from vrl.models.steps.denoise.build import build_family_replay_runtime_bundle
+
+            return build_family_replay_runtime_bundle(
                 build,
+                entry=self,
                 materialize_weights=materialize_weights,
             )
-        from vrl.models.steps.denoise.build import build_family_replay_runtime_bundle
 
-        return build_family_replay_runtime_bundle(
-            build,
-            entry=self,
-            materialize_weights=materialize_weights,
-        )
+        return _build_pinned(build, expected_identity, construct, role="replay")
 
-    def build_rollout(self, build: Any) -> Any:
-        """Construct a rollout bundle from this entry's resolved model build."""
+    def build_rollout(self, build: Any, *, expected_identity: dict[str, Any] | None) -> Any:
+        """Construct a rollout bundle from this entry's resolved model build.
+
+        ``expected_identity`` pins the checkpoint the bundle must load (see
+        ``_build_pinned``); ``None`` builds without that proof.
+        """
 
         if build.family != self.family:
             raise ValueError(
@@ -353,13 +369,16 @@ class ModelFamilyEntry:
             )
         from vrl.utils.config import import_from_path
 
-        if self.family_build.rollout_runtime_builder is not None:
-            return import_from_path(self.family_build.rollout_runtime_builder)(build)
-        from vrl.models.steps.denoise.build import build_denoise_runtime_bundle
+        def construct() -> Any:
+            if self.family_build.rollout_runtime_builder is not None:
+                return import_from_path(self.family_build.rollout_runtime_builder)(build)
+            from vrl.models.steps.denoise.build import build_denoise_runtime_bundle
 
-        return build_denoise_runtime_bundle(
-            build, model_cls=import_from_path(self.family_build.model_cls)
-        )
+            return build_denoise_runtime_bundle(
+                build, model_cls=import_from_path(self.family_build.model_cls)
+            )
+
+        return _build_pinned(build, expected_identity, construct, role="rollout")
 
     def new_gatherer(self) -> Any:
         """Construct the explicitly bound driver-side gatherer lazily."""
@@ -367,6 +386,42 @@ class ModelFamilyEntry:
         from vrl.utils.config import import_from_path
 
         return import_from_path(self.gatherer_cls)()
+
+
+def _build_pinned(
+    build: Any,
+    expected_identity: dict[str, Any] | None,
+    construct: Callable[[], Any],
+    *,
+    role: str,
+) -> Any:
+    """Run ``construct`` only on the checkpoint ``expected_identity`` names.
+
+    The identity is resolved before construction, so a source that differs
+    from the one the caller checked (resume compatibility, the driver's replay
+    model) fails before any weights load, and again after, so a source that
+    changes mid-load cannot slip in. The identity hashes local sources, so each
+    resolution reads the checkpoint once.
+    """
+
+    if expected_identity is None:
+        return construct()
+    from vrl.models import checkpoint_identity
+
+    found = checkpoint_identity.resolve_checkpoint_model_identity(build)
+    if found != expected_identity:
+        raise ValueError(
+            f"{build.family} {role} model identity mismatch before model construction: "
+            f"expected={expected_identity!r}, found={found!r}",
+        )
+    bundle = construct()
+    loaded = checkpoint_identity.resolve_checkpoint_model_identity(build)
+    if loaded != expected_identity:
+        raise RuntimeError(
+            f"{build.family} {role} model checkpoint source changed during bundle "
+            f"construction: before={expected_identity!r}, after={loaded!r}",
+        )
+    return bundle
 
 
 FAMILY_REGISTRY: dict[str, ModelFamilyEntry] = {}

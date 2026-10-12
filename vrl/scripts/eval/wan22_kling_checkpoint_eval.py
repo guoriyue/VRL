@@ -175,7 +175,9 @@ def generate_grid(args: argparse.Namespace) -> dict[str, Any]:
     if provenance is not None and provenance["grid"] != protocol:
         raise ValueError(f"grid differs from the existing {provenance_path}: {provenance['grid']}")
 
-    bundle = comparison.entry.build_rollout(comparison.build)
+    bundle = comparison.entry.build_rollout(
+        comparison.build, expected_identity=comparison.identity
+    )
     model = bundle.model.eval()
     videos: list[GeneratedVideo] = []
     try:

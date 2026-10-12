@@ -20,6 +20,7 @@ from vrl.config.builders import BuiltConfigs
 from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
+from vrl.models import checkpoint_identity
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
@@ -36,7 +37,7 @@ from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.core import OwnedCollection
 from vrl.rollouts.orchestration import RolloutSchedule
 from vrl.rollouts.stats import RolloutStats
-from vrl.run import OnlineRunConfig, ResolvedModel
+from vrl.run import OnlineRunConfig
 from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 from vrl.trainers.activation_checkpointing import (
     enable_transformer_gradient_checkpointing,
@@ -826,14 +827,10 @@ async def run_online_recipe(cfg: DictConfig) -> None:
                 f"{family_entry.family} requires data.preprocessing.conditioning=reference_image",
             )
 
-    resolved_model = ResolvedModel.from_root(
-        family_entry,
-        built.root,
-        device,
-        precision=built.precision,
-        for_rollout=False,
+    replay_build = family_entry.resolve_model_build(
+        built.root, device, precision=built.precision, for_rollout=False
     )
-    model_identity = resolved_model.identity
+    model_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
     if resume_checkpoint is not None:
         resume_checkpoint.validate_compatibility(
             family=family_entry.family,
@@ -881,8 +878,9 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     resume_dir = resume_checkpoint.checkpoint_dir if resume_checkpoint is not None else None
 
     _host_memory.log("before_trainer_bundle_build")
-    bundle = resolved_model.materialize(
-        context="replay bundle construction",
+    bundle = family_entry.build_replay(
+        replay_build,
+        expected_identity=model_identity,
         materialize_weights=strategy.materialize_weights,
     )
     _host_memory.log("after_trainer_bundle_build")
@@ -948,7 +946,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
         )
         generation_launcher = RayGenerationLauncher()
         generation_launch_inputs = RayGenerationLaunchInputs.from_run(
-            built, resources, resolved_model
+            built, resources, replay_build, model_identity
         )
         _host_memory.log("before_rollout_backend_build")
         generation_runtime = generation_launcher.create_runtime(

@@ -18,11 +18,11 @@ from tests.scripts.eval.fixtures import (
     TinySanaPipeline,
     tiny_sana_online_config,
 )
-from vrl import run
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.bindings.full_sequence.executor import GenericDenoiseBatchExecutor
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.models import checkpoint_identity
 from vrl.ray.resources import ResourcePlan
 
 
@@ -37,14 +37,14 @@ def _launch_inputs(
         on_snapshot(tmp_path / "sana-snapshot")
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResourcePlan.from_root(built.root)
-    replay = run.ResolvedModel.from_root(
-        built.family,
+    replay_build = built.family.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
-    return RayGenerationLaunchInputs.from_run(built, resources, replay)
+    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    return RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity)
 
 
 def _worker(inputs: RayGenerationLaunchInputs) -> GenerationWorkerCore:

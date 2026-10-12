@@ -15,11 +15,11 @@ import torch
 
 from tests.rollouts.collector._helpers import Trace
 from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
-from vrl import run
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.worker import RayGenerationWorker
+from vrl.models import checkpoint_identity
 from vrl.ray.resources import ResourcePlan
 
 
@@ -28,14 +28,16 @@ def _worker(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> tuple[RayGenerati
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResourcePlan.from_root(built.root)
-    replay = run.ResolvedModel.from_root(
-        built.family,
+    replay_build = built.family.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
-    launch_inputs = RayGenerationLaunchInputs.from_run(built, resources, replay)
+    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    launch_inputs = RayGenerationLaunchInputs.from_run(
+        built, resources, replay_build, replay_identity
+    )
     return RayGenerationWorker("rollout-0", launch_inputs), launch_inputs
 
 

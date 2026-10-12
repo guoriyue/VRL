@@ -786,7 +786,7 @@ def test_wan_fsdp_replay_build_defers_full_gpu_move_until_sharding(
         for_rollout=False,
     )
 
-    bundle = entry.build_replay(build)
+    bundle = entry.build_replay(build, expected_identity=None)
     assert transformer.to_calls == 0
     trainable_names = [
         name for name, parameter in bundle.model.named_parameters() if parameter.requires_grad

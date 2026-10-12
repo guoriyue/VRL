@@ -37,13 +37,13 @@ from tests.generation._in_process_runtime import InProcessGenerationRuntime
 from tests.rollouts.collector._helpers import IndexReward, Trace
 from tests.scripts.eval.fixtures import write_tiny_cosmos25_snapshot
 from tests.trainers._strategy_policies import free_port
-from vrl import run
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.config.builders import BuiltConfigs
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
+from vrl.models import checkpoint_identity
 from vrl.models.families.cosmos.predict2_5.model import (
     CosmosPredict25Model,
     CosmosPredict25ReplayModel,
@@ -151,17 +151,17 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
         torch.manual_seed(31)
         built = BuiltConfigs.from_cfg(_tiny_cosmos_config(root, rank=rank, ema=phase is not None))
         resources = ResourcePlan.from_root(built.root)
-        replay = run.ResolvedModel.from_root(
-            built.family,
+        replay_build = built.family.resolve_model_build(
             built.root,
             torch.device(resources.trainer_torch_device),
             precision=built.precision,
             for_rollout=False,
         )
-        bundle = replay.materialize(context="cosmos cp composition")
+        replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+        bundle = built.family.build_replay(replay_build, expected_identity=replay_identity)
         model = bundle.model
         runtime = InProcessGenerationRuntime(
-            RayGenerationLaunchInputs.from_run(built, resources, replay)
+            RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity)
         )
         if rank == 0:
             # The in-process policy build draws LoRA init from this process's
@@ -210,7 +210,7 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
                 trainer=trainer,
                 bundle=bundle,
                 family="cosmos-predict2.5",
-                expected_model_identity=replay.identity,
+                expected_model_identity=replay_identity,
             )
             restore_rng_state(checkpoint.rng_state, rank=rank, world_size=2)
             assert trainer.state.step == 1
@@ -228,7 +228,7 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
                     trainer=trainer,
                     bundle=bundle,
                     family="cosmos-predict2.5",
-                    model_identity=replay.identity,
+                    model_identity=replay_identity,
                     progress={"next_step": 1},
                     strategy=strategy,
                 )

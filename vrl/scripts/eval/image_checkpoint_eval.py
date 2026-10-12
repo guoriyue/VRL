@@ -36,7 +36,8 @@ from vrl.utils.artifacts import RootedPaths, sha256_file, user_path
 from vrl.utils.json_files import write_json
 
 if TYPE_CHECKING:
-    from vrl.run import ResolvedModel
+    from vrl.models.families.registry import ModelFamilyEntry
+    from vrl.models.interfaces import ModelBuild
     from vrl.trainers.checkpointing import CheckpointTarget
     from vrl.trainers.data.prompts import PromptExample
 
@@ -68,7 +69,9 @@ class EvalPrompt:
 class EvaluationPlan:
     """One resolved generation and scoring contract, also bound to retries."""
 
-    resolved_model: ResolvedModel
+    entry: ModelFamilyEntry
+    model_build: ModelBuild
+    model_identity: dict[str, Any]
     targets: tuple[CheckpointTarget, ...]
     prompts: tuple[EvalPrompt, ...]
     sampling: ImageSampling
@@ -88,7 +91,7 @@ class EvaluationPlan:
     def record(self) -> dict[str, Any]:
         return {
             "schema": "vrl.image-checkpoint-evaluation/v1",
-            "model_identity": self.resolved_model.identity,
+            "model_identity": self.model_identity,
             "config_sha256": self.config_sha256,
             "manifest_sha256": self.manifest_sha256,
             "targets": [
@@ -100,9 +103,9 @@ class EvaluationPlan:
             ],
             "sampling": self.sampling.to_record(),
             "negative_prompt": self.negative_prompt,
-            "generation_device": str(self.resolved_model.build.device),
-            "generation_dtype": str(self.resolved_model.build.parameter_dtype),
-            "generation_precision": asdict(self.resolved_model.build.precision),
+            "generation_device": str(self.model_build.device),
+            "generation_dtype": str(self.model_build.parameter_dtype),
+            "generation_precision": asdict(self.model_build.precision),
             "samples_per_prompt": self.samples_per_prompt,
             "seed": self.seed,
             "blind_seed": self.blind_seed,
@@ -159,7 +162,7 @@ class EvaluationPlan:
         from vrl.utils.config import import_from_path
         from vrl.utils.media import to_pil_image
 
-        entry = self.resolved_model.entry
+        entry = self.entry
         executor = import_from_path(entry.executor_cls)(model, gatherer=entry.new_gatherer())
         request = GenerationRequest(
             request_id=f"eval-{seed}",
@@ -203,7 +206,7 @@ class EvaluationPlan:
             or any(target.path is None for target in self.targets[1:])
         ):
             raise ValueError("generate the base arm before restoring any checkpoint")
-        bundle = self.resolved_model.materialize(context="image checkpoint evaluation")
+        bundle = self.entry.build_rollout(self.model_build, expected_identity=self.model_identity)
         model = bundle.model.eval()
         rows = list(self.cells())
         try:
@@ -217,8 +220,8 @@ class EvaluationPlan:
                         )
                     checkpoint.restore_model(
                         bundle=bundle,
-                        family=self.resolved_model.entry.family,
-                        expected_model_identity=self.resolved_model.identity,
+                        family=self.entry.family,
+                        expected_model_identity=self.model_identity,
                     )
                     del checkpoint
                     gc.collect()
@@ -485,8 +488,8 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
     from vrl.config.loading import load_config
     from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import RewardConfig
+    from vrl.models import checkpoint_identity
     from vrl.models.families.registry import get_model_family_entry
-    from vrl.run import ResolvedModel
     from vrl.scripts.eval._device import resolve_eval_device
     from vrl.trainers.checkpointing import CheckpointTarget
     from vrl.trainers.data.prompts import load_prompt_dataset_index
@@ -524,17 +527,17 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
             epochs=args.epochs or (),
             uses_lora=bool(root.model.use_lora),
         )
-    resolved = ResolvedModel.from_root(
-        entry,
+    model_build = entry.resolve_model_build(
         root,
         resolve_eval_device(args.device),
         precision=PrecisionPolicy.from_section(root.precision),
         for_rollout=True,
     )
+    model_identity = checkpoint_identity.resolve_checkpoint_model_identity(model_build)
     for target in targets[1:]:
         target.validate_compatibility(
             family=entry.family,
-            expected_model_identity=resolved.identity,
+            expected_model_identity=model_identity,
         )
 
     # Only reward/data are projected from this independent policy. Its model,
@@ -596,7 +599,9 @@ def resolve_plan(args: argparse.Namespace) -> EvaluationPlan:
         if not issubclass(import_from_path(entry.executor_cls), ReferenceConditionedBatches):
             raise ValueError(f"{entry.family} does not take reference images")
     return EvaluationPlan(
-        resolved,
+        entry,
+        model_build,
+        model_identity,
         targets,
         prompts,
         # Only geometry and step count may differ from training; the guidance

@@ -152,7 +152,7 @@ def main(argv: list[str] | None = None) -> None:
     base_sampling.setdefault("denoise_mode", "native")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    bundle = entry.build_rollout(build)
+    bundle = entry.build_rollout(build, expected_identity=None)
     model = bundle.model.eval()
     vae = model.pipeline.vae
     results: list[dict[str, Any]] = []

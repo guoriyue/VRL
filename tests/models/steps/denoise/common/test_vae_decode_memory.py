@@ -247,6 +247,7 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
             ),
             sampling_config={"num_steps": 2},
         ),
+        expected_identity=None,
     )
 
     assert (bundle.model.vae.use_tiling, bundle.model.vae.use_slicing) == (True, True)
@@ -342,6 +343,7 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
                 "lora": {"rank": 1, "alpha": 1, "target_modules": ["to_q"]},
             },
         ),
+        expected_identity=None,
     )
 
     assert (bundle.model.vae.use_tiling, bundle.model.vae.use_slicing) == (True, False)
@@ -392,7 +394,9 @@ def test_targetless_in_process_runtime_rejects_direct_model_build_memory(
     monkeypatch.setattr(model_module, model_class_name, _TargetlessRuntimeModel)
     entry = get_model_family_entry(family)
 
-    bundle = entry.build_rollout(_direct_rollout_build(family, memory=None))
+    bundle = entry.build_rollout(
+        _direct_rollout_build(family, memory=None), expected_identity=None
+    )
     assert isinstance(bundle.model, _TargetlessRuntimeModel)
 
     from dataclasses import replace
@@ -403,6 +407,7 @@ def test_targetless_in_process_runtime_rejects_direct_model_build_memory(
                 _direct_rollout_build(family, memory=None),
                 generation_memory=GenerationMemoryPolicy(cpu_resident=("text_encoder",)),
             ),
+            expected_identity=None,
         )
 
     with pytest.raises(
@@ -411,6 +416,7 @@ def test_targetless_in_process_runtime_rejects_direct_model_build_memory(
     ):
         entry.build_rollout(
             _direct_rollout_build(family, memory={"vae_decode": {"tiling": True}}),
+            expected_identity=None,
         )
 
 

@@ -19,6 +19,7 @@ from vrl.generation.bindings.full_sequence import DenoiseBatchGatherer
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationBatchExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.models import checkpoint_identity
 from vrl.models.families.registry import (
     FAMILY_REGISTRY,
     ModelFamilyEntry,
@@ -26,7 +27,6 @@ from vrl.models.families.registry import (
 )
 from vrl.ray.resources import ResourcePlan
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.run import ResolvedModel
 
 
 class _TestGatherer:
@@ -56,15 +56,19 @@ def _capture_launch_inputs(
     built = BuiltConfigs.from_cfg(cfg)
     assert built.family is entry
     resources = ResourcePlan.from_root(built.root)
-    replay_model = ResolvedModel.from_root(
-        entry,
+    replay_model_build = entry.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
-    result = RayGenerationLaunchInputs.from_run(built, resources, replay_model)
-    return result, replay_model.identity
+    replay_model_identity = checkpoint_identity.resolve_checkpoint_model_identity(
+        replay_model_build
+    )
+    result = RayGenerationLaunchInputs.from_run(
+        built, resources, replay_model_build, replay_model_identity
+    )
+    return result, replay_model_identity
 
 
 @pytest.mark.parametrize(

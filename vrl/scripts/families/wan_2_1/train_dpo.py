@@ -126,8 +126,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     import torch
 
     from vrl.config.builders import BuiltConfigs
+    from vrl.models import checkpoint_identity
     from vrl.ray.resources import ResourcePlan
-    from vrl.run import ResolvedModel
     from vrl.trainers.offline import OfflineDPOTrainerConfig
 
     built = BuiltConfigs.from_cfg(cfg)
@@ -187,21 +187,20 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     # DPO needs the full family bundle because its VAE and text encoder prepare
     # preference pairs. Registry selection and model projection stay identical
     # to generation; only the downstream optimizer makes this a training path.
-    resolved_model = ResolvedModel.from_root(
-        family_entry,
+    model_build = family_entry.resolve_model_build(
         built.root,
         device,
         precision=precision,
         for_rollout=True,
         precision_role="training",
     )
-    model_identity = resolved_model.identity
+    model_identity = checkpoint_identity.resolve_checkpoint_model_identity(model_build)
     if resume_checkpoint is not None:
         resume_checkpoint.validate_compatibility(
             family=family,
             expected_model_identity=model_identity,
         )
-    bundle = resolved_model.materialize(context="Wan DPO bundle construction")
+    bundle = family_entry.build_rollout(model_build, expected_identity=model_identity)
     wan_model = bundle.model
     pipeline = bundle.raw_handle
 

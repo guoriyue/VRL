@@ -797,7 +797,11 @@ def _build_runtime_bundle(
         for_rollout=for_rollout,
         parameter_dtype_override=dtype,
     )
-    return entry.build_rollout(build) if for_rollout else entry.build_replay(build)
+    return (
+        entry.build_rollout(build, expected_identity=None)
+        if for_rollout
+        else entry.build_replay(build, expected_identity=None)
+    )
 
 
 def _build_executor(

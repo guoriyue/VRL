@@ -831,24 +831,24 @@ async def test_async_launcher_loads_off_loop(
         await ray_run.runtime.shutdown()
         import torch
 
-        from vrl import run
         from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+        from vrl.models import checkpoint_identity
 
         built, resources = ray_run.built, ray_run.resources
-        replay = run.ResolvedModel.from_root(
-            built.family,
+        replay_build = built.family.resolve_model_build(
             built.root,
             torch.device(resources.trainer_torch_device),
             precision=built.precision,
             for_rollout=False,
         )
+        replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
         launches = Trace(monkeypatch)
         launches.watch(RayGenerationLauncher, "_launch_session", "launch")
 
         session = await RayGenerationLauncher()._launch_session_async(
             resources,
             ray_run.worker,
-            RayGenerationLaunchInputs.from_run(built, resources, replay),
+            RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity),
             placement=ray_run.placement_owner.rollout_placement,
         )
         try:

@@ -46,7 +46,7 @@ def test_sana_training_path_matches_native_flow_euler_at_every_step() -> None:
         precision=precision,
         for_rollout=True,
     )
-    bundle = entry.build_rollout(build)
+    bundle = entry.build_rollout(build, expected_identity=None)
     model = bundle.model
     assert model.transformer.dtype is torch.float16
     assert model.pipeline.text_encoder.dtype is torch.bfloat16

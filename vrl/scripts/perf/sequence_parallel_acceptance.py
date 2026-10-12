@@ -47,12 +47,12 @@ from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.generation.types import GenerationInput, GenerationRequest
+from vrl.models import checkpoint_identity
 from vrl.models.families.semantics import task_type_for
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner
 from vrl.ray.resources import ResourcePlan
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.run import ResolvedModel
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.json_files import write_json
 
@@ -209,14 +209,15 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
         policy_version=0,
     )
 
-    replay = ResolvedModel.from_root(
-        family,
-        built.root,
-        torch.device("cpu"),
-        precision=built.precision,
-        for_rollout=False,
+    replay_build = family.resolve_model_build(
+        built.root, torch.device("cpu"), precision=built.precision, for_rollout=False
     )
-    launch_inputs = RayGenerationLaunchInputs.from_run(built, resources, replay)
+    launch_inputs = RayGenerationLaunchInputs.from_run(
+        built,
+        resources,
+        replay_build,
+        checkpoint_identity.resolve_checkpoint_model_identity(replay_build),
+    )
     worker = RolloutWorkerConfig.from_root(built.root)
 
     ray = require_ray()

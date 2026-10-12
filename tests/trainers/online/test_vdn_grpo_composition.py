@@ -69,8 +69,8 @@ def _stack(
     """Resolve the tiny VDN run and build its stack the way the online recipe does."""
 
     from tests.generation._in_process_runtime import InProcessGenerationRuntime
-    from vrl import run
     from vrl.config.loading import load_config
+    from vrl.models import checkpoint_identity
     from vrl.rewards.runtime import RewardFunctionRuntime
     from vrl.rollouts.collector import RolloutCollector
     from vrl.scripts.common.factory import AlgorithmEvaluatorPair
@@ -125,16 +125,16 @@ def _stack(
     )
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResourcePlan.from_root(built.root)
-    replay = run.ResolvedModel.from_root(
-        built.family,
+    replay_build = built.family.resolve_model_build(
         built.root,
         torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
-    bundle = replay.materialize(context="vdn composition test")
+    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    bundle = built.family.build_replay(replay_build, expected_identity=replay_identity)
     runtime = InProcessGenerationRuntime(
-        RayGenerationLaunchInputs.from_run(built, resources, replay)
+        RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity)
     )
     trace = Trace(monkeypatch)
     trace.watch(runtime, "generate", "generate")
@@ -170,7 +170,7 @@ def _stack(
         strategy=strategy,
     )
     return _Stack(
-        trainer=trainer, runtime=runtime, bundle=bundle, identity=replay.identity, trace=trace
+        trainer=trainer, runtime=runtime, bundle=bundle, identity=replay_identity, trace=trace
     )
 
 

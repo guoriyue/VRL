@@ -5,7 +5,7 @@ from __future__ import annotations
 import pickle
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from vrl.generation.execution.rank_group import RankGroupSpec
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
@@ -13,8 +13,8 @@ from vrl.generation.protocols import GenerationBatchGatherer
 
 if TYPE_CHECKING:
     from vrl.config.builders import BuiltConfigs
+    from vrl.models.interfaces import ModelBuild
     from vrl.ray.resources import ResourcePlan
-    from vrl.run import ResolvedModel
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,13 +44,15 @@ class RayGenerationLaunchInputs:
         cls,
         built: BuiltConfigs,
         resources: ResourcePlan,
-        replay_model: ResolvedModel,
+        replay_build: ModelBuild,
+        model_identity: dict[str, Any],
     ) -> RayGenerationLaunchInputs:
         """The Ray worker contract of one online run, checked against its replay model.
 
-        The rollout build is resolved on the rollout device and must carry the
-        replay model's checkpoint identity; the Ray launcher consumes the result
-        and topology only, never trainer schedule or model YAML.
+        ``model_identity`` is the checkpoint identity of ``replay_build``. The
+        rollout build is resolved on the rollout device and must carry it; the
+        Ray launcher consumes the result and topology only, never trainer
+        schedule or model YAML.
         """
 
         import torch
@@ -59,12 +61,12 @@ class RayGenerationLaunchInputs:
         from vrl.models.dtypes import dtype_to_wire_name
 
         family = built.family
-        if replay_model.entry.family != family.family:
+        if replay_build.family != family.family:
             raise ValueError(
                 "replay model family does not match the online run: "
-                f"{replay_model.entry.family!r} != {family.family!r}",
+                f"{replay_build.family!r} != {family.family!r}",
             )
-        replay_model.build.require_replay()
+        replay_build.require_replay()
         trainer = built.trainer
         if trainer is None:
             raise ValueError("online generation launch requires a trainer config")
@@ -73,11 +75,11 @@ class RayGenerationLaunchInputs:
         runtime_device = torch.device("cuda" if resources.rollout_devices else "cpu")
         build = family.resolve_model_build(root, runtime_device, precision=built.precision)
         rollout_model_identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
-        if rollout_model_identity != replay_model.identity:
+        if rollout_model_identity != model_identity:
             raise ValueError(
                 "rollout model identity does not match the driver replay model "
                 "identity before Ray worker launch: "
-                f"replay={replay_model.identity!r}, rollout={rollout_model_identity!r}",
+                f"replay={model_identity!r}, rollout={rollout_model_identity!r}",
             )
 
         model_build_payload = asdict(build)
@@ -109,7 +111,7 @@ class RayGenerationLaunchInputs:
             launch_contract=GenerationRuntimeLaunchContract(
                 family=family.family,
                 model_build=model_build_payload,
-                expected_model_identity=replay_model.identity,
+                expected_model_identity=model_identity,
                 executor_kwargs=family.executor_kwargs(root),
                 policy_version=0,
                 torch_profiler={} if torch_profiler is None else asdict(torch_profiler),

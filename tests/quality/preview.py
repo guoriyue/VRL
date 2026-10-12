@@ -127,7 +127,7 @@ def generate_rollout_preview(
         precision=validated.precision,
         for_rollout=True,
     )
-    bundle = entry.build_rollout(build)
+    bundle = entry.build_rollout(build, expected_identity=None)
     # No quantization backstop here, matching the rollout worker: the shared
     # builder's optimization pass already fails loud on a zero-match swap.
     model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
