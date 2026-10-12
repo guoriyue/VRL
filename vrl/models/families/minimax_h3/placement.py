@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 from typing import Any
 
 import torch
@@ -59,94 +57,3 @@ def load_partitioned_transformer(build: ModelBuild, block_devices: tuple[int, ..
         low_cpu_mem_usage=True,
         **build.pretrained_kwargs,
     )
-
-
-def text_encoder_device_map(
-    encoder: Any, *, root_device: int, layer_devices: tuple[int, ...]
-) -> dict[str, int]:
-    """Partition decoder layers while retaining vision and token inputs on root."""
-    if any(type(device) is not int or device < 0 for device in (root_device, *layer_devices)):
-        raise ValueError("H3 encoder placement requires explicit nonnegative CUDA indices")
-    language_model = encoder.model.language_model
-    if len(layer_devices) != len(language_model.layers):
-        raise ValueError("H3 encoder placement requires exactly one device per decoder layer")
-    mapping = {name: root_device for name, _ in encoder.named_children() if name != "model"}
-    mapping.update(
-        {
-            f"model.{name}": root_device
-            for name, _ in encoder.model.named_children()
-            if name != "language_model"
-        }
-    )
-    mapping.update(
-        {
-            f"model.language_model.{name}": root_device
-            for name, _ in language_model.named_children()
-            if name != "layers"
-        }
-    )
-    mapping.update(
-        {
-            f"model.language_model.layers.{index}": device
-            for index, device in enumerate(layer_devices)
-        }
-    )
-    return mapping
-
-
-def load_partitioned_text_encoder(
-    build: ModelBuild, *, root_device: int, layer_devices: tuple[int, ...]
-) -> Any:
-    """Load the frozen H3 conditioner directly onto its explicit CUDA owners."""
-    from accelerate import init_empty_weights
-    from transformers import Qwen3VLConfig, Qwen3VLForConditionalGeneration
-
-    rollout = build.require_rollout()
-    config = Qwen3VLConfig.from_pretrained(
-        build.model_name_or_path, subfolder="text_encoder", **build.pretrained_kwargs
-    )
-    with init_empty_weights(include_buffers=True):
-        skeleton = Qwen3VLForConditionalGeneration(config)
-    mapping = text_encoder_device_map(
-        skeleton, root_device=root_device, layer_devices=layer_devices
-    )
-    del skeleton
-    encoder = Qwen3VLForConditionalGeneration.from_pretrained(
-        build.model_name_or_path,
-        subfolder="text_encoder",
-        dtype=rollout.prompt_encoder_dtype or build.parameter_dtype,
-        device_map=mapping,
-        **build.pretrained_kwargs,
-    )
-    encoder.requires_grad_(False)
-    return encoder.eval()
-
-
-@contextmanager
-def park_partitioned_text_encoder(encoder: Any) -> Iterator[None]:
-    """Exclusively park a frozen resident encoder; restore its map even on errors.
-
-    Callers must finish and release VAE GPU work before leaving this context.
-    Concurrent encoding and nested parking are unsupported.
-    """
-    from accelerate import dispatch_model
-    from accelerate.hooks import remove_hook_from_module
-
-    mapping = getattr(encoder, "hf_device_map", None)
-    if not mapping or any(type(device) is not int or device < 0 for device in mapping.values()):
-        raise ValueError("H3 encoder parking requires an explicit GPU-only device map")
-    if encoder.training or any(p.requires_grad for p in encoder.parameters()):
-        raise ValueError("H3 encoder parking requires a frozen eval-mode encoder")
-    tensors = list(encoder.parameters()) + list(encoder.buffers())
-    if not tensors or any(t.device.type != "cuda" for t in tensors):
-        raise ValueError("H3 encoder parking requires resident CUDA parameters and buffers")
-    mapping = dict(mapping)
-    root_device = tensors[0].device.index
-    del tensors
-    try:
-        remove_hook_from_module(encoder, recurse=True)
-        encoder.hf_device_map = None
-        encoder.to("cpu")
-        yield
-    finally:
-        dispatch_model(encoder, device_map=mapping, main_device=root_device, force_hooks=True)
