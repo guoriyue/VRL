@@ -84,7 +84,6 @@ class WanT2VSamplingState(GuidedDenoiseSamplingStateBase):
     prompt_embeds: torch.Tensor
     negative_prompt_embeds: torch.Tensor | None
     do_cfg: bool
-    guidance_scale_2: float | None = None
     boundary_ratio: float | None = None
     num_train_timesteps: int | None = None
     # Host copy of ``timesteps``, filled on first expert routing; see
@@ -101,7 +100,6 @@ class WanI2VSamplingState(GuidedDenoiseSamplingStateBase):
     image_embeds: torch.Tensor | None
     condition: torch.Tensor
     do_cfg: bool
-    guidance_scale_2: float | None = None
     boundary_ratio: float | None = None
     num_train_timesteps: int | None = None
     # Host copy of ``timesteps``, filled on first expert routing; see
@@ -348,7 +346,7 @@ class WanT2VModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
             transformer_2 = self.transformer_2
             if transformer_2 is None:
                 raise RuntimeError("Wan dual-stage sampling requires transformer_2")
-            return "transformer_2", transformer_2, state.guidance_scale_2 or state.guidance_scale
+            return "transformer_2", transformer_2, state.guidance_scale
         return "transformer", self.transformer, state.guidance_scale
 
     def forward_step(
@@ -478,12 +476,7 @@ class WanT2VModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
             prompt_embeds=replay_tensors["prompt_embeds"],
             negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
             guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"]
-            and _uses_cfg(
-                batch_context["guidance_scale"],
-                batch_context.get("guidance_scale_2"),
-            ),
-            guidance_scale_2=batch_context.get("guidance_scale_2"),
+            do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             boundary_ratio=batch_context.get("boundary_ratio"),
             num_train_timesteps=_scheduler_num_train_timesteps(self.scheduler),
         )
@@ -777,8 +770,7 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
         negative_prompt_embeds = encoded.get("negative_prompt_embeds")
 
         guidance_scale = request.guidance_scale
-        guidance_scale_2 = _resolve_guidance_scale_2(guidance_scale, self._boundary_ratio)
-        do_cfg = _uses_cfg(guidance_scale, guidance_scale_2)
+        do_cfg = guidance_scale > 1.0
 
         # Multistep history belongs to this batch, not the resident pipeline.
         scheduler = type(pipe.scheduler).from_config(pipe.scheduler.config)
@@ -814,7 +806,6 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
             negative_prompt_embeds=negative_prompt_embeds,
             guidance_scale=guidance_scale,
             do_cfg=do_cfg,
-            guidance_scale_2=guidance_scale_2,
             boundary_ratio=self._boundary_ratio,
             num_train_timesteps=_scheduler_num_train_timesteps(scheduler),
         )
@@ -825,7 +816,6 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
         """Project SamplingState -> RolloutBatch.context (shared metadata)."""
         return {
             "guidance_scale": state.guidance_scale,
-            "guidance_scale_2": state.guidance_scale_2,
             "cfg": state.do_cfg,
             "boundary_ratio": state.boundary_ratio,
         }
@@ -987,12 +977,7 @@ class WanI2VModel(WanT2VModel):
             image_embeds=replay_tensors.get("image_embeds"),
             condition=replay_tensors["condition"],
             guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"]
-            and _uses_cfg(
-                batch_context["guidance_scale"],
-                batch_context.get("guidance_scale_2"),
-            ),
-            guidance_scale_2=batch_context.get("guidance_scale_2"),
+            do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             boundary_ratio=batch_context.get("boundary_ratio"),
             num_train_timesteps=_scheduler_num_train_timesteps(self.scheduler),
         )
@@ -1105,8 +1090,7 @@ class WanI2VPipelineModel(WanT2VPipelineModel, WanI2VModel):
             raise ValueError("Wan I2V sampling requires a reference_image")
 
         guidance_scale = request.guidance_scale
-        guidance_scale_2 = _resolve_guidance_scale_2(guidance_scale, self._boundary_ratio)
-        do_cfg = _uses_cfg(guidance_scale, guidance_scale_2)
+        do_cfg = guidance_scale > 1.0
 
         # Multistep history belongs to this batch, not the resident pipeline.
         scheduler = type(pipe.scheduler).from_config(pipe.scheduler.config)
@@ -1161,7 +1145,6 @@ class WanI2VPipelineModel(WanT2VPipelineModel, WanI2VModel):
             condition=condition,
             guidance_scale=guidance_scale,
             do_cfg=do_cfg,
-            guidance_scale_2=guidance_scale_2,
             boundary_ratio=self._boundary_ratio,
             num_train_timesteps=_scheduler_num_train_timesteps(scheduler),
         )
@@ -1170,7 +1153,6 @@ class WanI2VPipelineModel(WanT2VPipelineModel, WanI2VModel):
         """Project SamplingState -> RolloutBatch.context (shared metadata)."""
         return {
             "guidance_scale": state.guidance_scale,
-            "guidance_scale_2": state.guidance_scale_2,
             "cfg": state.do_cfg,
             "conditioning": "reference_image",
             "boundary_ratio": state.boundary_ratio,
@@ -1227,22 +1209,6 @@ def _stage_eager_wan_modules(
                 module.to(build.device, dtype=dtype)
             else:
                 module.to(dtype=dtype)
-
-
-def _resolve_guidance_scale_2(
-    guidance_scale: float,
-    boundary_ratio: float | None,
-) -> float | None:
-    # Wan2.2 dual-expert stages share a single guidance scale: the second
-    # (low-noise) expert mirrors the first. No config/request producer sets a
-    # per-expert override, so the second stage always mirrors ``guidance_scale``.
-    if boundary_ratio is None:
-        return None
-    return guidance_scale
-
-
-def _uses_cfg(guidance_scale: float, guidance_scale_2: float | None) -> bool:
-    return guidance_scale > 1.0 or (guidance_scale_2 is not None and guidance_scale_2 > 1.0)
 
 
 def _scheduler_num_train_timesteps(scheduler: Any) -> int | None:

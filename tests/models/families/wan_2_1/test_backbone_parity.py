@@ -167,7 +167,6 @@ def test_wan_i2v_dual_stage_routes_by_diffusers_boundary() -> None:
         condition=torch.randn(_LATENT_SHAPE),
         guidance_scale=1.0,
         do_cfg=False,
-        guidance_scale_2=1.0,
         boundary_ratio=0.5,
         num_train_timesteps=1000,
     )
@@ -230,7 +229,6 @@ def test_wan_i2v_replay_state_roundtrip_keeps_conditioning_tensors() -> None:
         condition=torch.full(_LATENT_SHAPE, 10.0),
         guidance_scale=2.0,
         do_cfg=True,
-        guidance_scale_2=3.0,
         boundary_ratio=0.5,
         num_train_timesteps=1000,
     )
@@ -247,6 +245,5 @@ def test_wan_i2v_replay_state_roundtrip_keeps_conditioning_tensors() -> None:
     torch.testing.assert_close(restored.condition, state.condition)
     torch.testing.assert_close(restored.image_embeds, state.image_embeds)
     torch.testing.assert_close(restored.timesteps, torch.tensor([[7.0, 7.0]]))
-    assert restored.guidance_scale_2 == 3.0
     assert restored.boundary_ratio == 0.5
     assert restored.num_train_timesteps == 1000
