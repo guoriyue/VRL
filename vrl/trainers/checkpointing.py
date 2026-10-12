@@ -1163,7 +1163,7 @@ def save_training_checkpoint(
     publish_failure: BaseException | None = None
     world_size = 1 if strategy is None else strategy.context.world_size
     if world_size > 1:
-        rank_states = strategy.gather_rng_states(local_rng)
+        rank_states = strategy.collectives.gather_rng_states(local_rng)
         if len(rank_states) != world_size:
             raise ValueError("checkpoint RNG gather disagrees with training world size")
         saved_rng = {"world_size": world_size, "by_rank": rank_states}

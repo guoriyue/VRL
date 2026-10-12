@@ -461,6 +461,18 @@ class TrainingCollectives:
             )[0]
         )
 
+    def gather_rng_states(self, state: dict[str, Any]) -> list[dict[str, Any]]:
+        """Collect each rank's checkpoint RNG tree, in training-rank order."""
+
+        import torch.distributed as dist
+
+        states = [None] * self.context.world_size
+        group = TrainerProcessGroup.cpu_group()
+        if group is None:
+            raise RuntimeError("checkpoint RNG gather requires the CPU coordination group")
+        dist.all_gather_object(states, state, group=group)
+        return states
+
     def coordination_barrier(self) -> None:
         """Wait on the CPU coordination group without launching GPU kernels."""
         if not self.context.distributed:

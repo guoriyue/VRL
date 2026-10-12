@@ -107,11 +107,6 @@ def test_rng_checkpoint_restores_python_numpy_and_named_generator_draws():
         restore_rng_state(state, prompt_generator=generator)
 
 
-class _RngGatherStub:
-    def gather_rng_states(self, state):
-        return [state] * self.context.world_size
-
-
 def test_training_checkpoint_round_trips_trainer_and_owned_state(tmp_path) -> None:
     """Save then restore round-trips trainer progress (step, global_step) and checkpoint-owned
     module state; ``next_epoch`` comes from the saved progress.
@@ -492,9 +487,12 @@ def test_save_training_checkpoint_non_primary_gathers_but_writes_nothing(tmp_pat
     checkpoint directory/files. The spy proves the export ran; the empty tmp_path
     proves nothing was written."""
 
-    class _SpyStrategy(_RngGatherStub):
+    class _SpyStrategy:
         def __init__(self) -> None:
-            self.collectives = SimpleNamespace(succeeded=self._agree_success)
+            self.collectives = SimpleNamespace(
+                succeeded=self._agree_success,
+                gather_rng_states=lambda state: [state] * self.context.world_size,
+            )
             self.calls: list[object] = []
             # rank1 of 2: "not primary" only exists in a multi-rank world, and a
             # multi-rank strategy owes the checkpoint a rank-agreement seam.
@@ -533,9 +531,12 @@ def test_primary_checkpoint_publication_failure_reraises_after_rank_agreement(
         def save_pretrained(self, *_args, **_kwargs):
             raise RuntimeError("artifact write failed")
 
-    class _Strategy(_RngGatherStub):
+    class _Strategy:
         def __init__(self) -> None:
-            self.collectives = SimpleNamespace(succeeded=self._agree_success)
+            self.collectives = SimpleNamespace(
+                succeeded=self._agree_success,
+                gather_rng_states=lambda state: [state] * self.context.world_size,
+            )
             self.context = _context(world_size=2)
             self.agreements = []
 
@@ -567,9 +568,12 @@ def test_primary_checkpoint_publication_failure_reraises_after_rank_agreement(
 
 
 def test_non_primary_receives_primary_checkpoint_publication_failure(tmp_path) -> None:
-    class _Strategy(_RngGatherStub):
+    class _Strategy:
         def __init__(self) -> None:
-            self.collectives = SimpleNamespace(succeeded=self._agree_success)
+            self.collectives = SimpleNamespace(
+                succeeded=self._agree_success,
+                gather_rng_states=lambda state: [state] * self.context.world_size,
+            )
             self.context = _context(rank=1, world_size=2)
             self.agreements = []
 
@@ -739,7 +743,10 @@ def test_peer_ema_swap_failure_rolls_back_before_second_export(tmp_path) -> None
 
     class _AgreementStrategy:
         def __init__(self) -> None:
-            self.collectives = SimpleNamespace(succeeded=self._agree_success)
+            self.collectives = SimpleNamespace(
+                succeeded=self._agree_success,
+                gather_rng_states=lambda state: [state] * self.context.world_size,
+            )
             self.context = _context(world_size=2)
             self.exported_weights = []
             self.agreements = []
@@ -788,7 +795,10 @@ def test_peer_ema_swap_failure_propagates_local_rollback_failure(monkeypatch, tm
 
     class _AgreementStrategy:
         def __init__(self) -> None:
-            self.collectives = SimpleNamespace(succeeded=self._agree_success)
+            self.collectives = SimpleNamespace(
+                succeeded=self._agree_success,
+                gather_rng_states=lambda state: [state] * self.context.world_size,
+            )
             self.context = _context(world_size=2)
             self.agreements = []
 
@@ -845,7 +855,10 @@ def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path
 
     class _Strategy:
         def __init__(self) -> None:
-            self.collectives = SimpleNamespace(succeeded=self._agree_success)
+            self.collectives = SimpleNamespace(
+                succeeded=self._agree_success,
+                gather_rng_states=lambda state: [state] * self.context.world_size,
+            )
             self.context = _context(world_size=2)
             self.export_calls = 0
             self.agreements = []
@@ -891,9 +904,12 @@ def test_non_primary_joins_ema_artifact_gather_and_restores_raw_weights(tmp_path
         def save_pretrained(self, *_args, **_kwargs):
             raise AssertionError("non-primary rank must not write artifacts")
 
-    class _GatherStrategy(_RngGatherStub):
+    class _GatherStrategy:
         def __init__(self) -> None:
-            self.collectives = SimpleNamespace(succeeded=self._agree_success)
+            self.collectives = SimpleNamespace(
+                succeeded=self._agree_success,
+                gather_rng_states=lambda state: [state] * self.context.world_size,
+            )
             self.states = []
             self.context = _context(rank=1, world_size=2)
 

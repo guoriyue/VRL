@@ -148,10 +148,6 @@ class Strategy(Protocol):
 
     collectives: TrainingCollectives
 
-    def gather_rng_states(self, state: dict[str, Any]) -> list[dict[str, Any]]:
-        """Collect checkpoint RNG trees in training-rank order."""
-        ...
-
     def shutdown(self, *, restore_parked: bool = True) -> None:
         """Release resources, restoring parked GPU state only when ownership is safe."""
         ...
@@ -239,32 +235,6 @@ class TrainerParking:
             # Drop only this adapter's restore ticket; the live objects deliberately
             # remain on CPU until process exit instead of racing another GPU owner.
             self._parking = None
-
-
-class _ProcessGroupStrategy:
-    """Shared behavior of strategies that run over a torch process group.
-
-    The process owns the group (``TrainerProcessGroup``); a strategy only
-    uses it. Communication operations belong to the shared TrainingCollectives
-    instance.
-    """
-
-    context: DistributedTrainingContext
-    collectives: TrainingCollectives
-
-    def gather_rng_states(self, state: dict[str, Any]) -> list[dict[str, Any]]:
-        import torch.distributed as dist
-
-        states = [None] * self.context.world_size
-        group = TrainerProcessGroup.cpu_group()
-        if group is None:
-            raise RuntimeError("checkpoint RNG gather requires the CPU coordination group")
-        dist.all_gather_object(states, state, group=group)
-        return states
-
-    def shutdown(self, *, restore_parked: bool = True) -> None:
-        # Nothing to release: the process group belongs to the process.
-        del restore_parked
 
 
 class _UnshardedStateStrategy:
@@ -422,9 +392,6 @@ class SingleProcessStrategy(TrainerParking, _UnshardedStateStrategy):
         self.place_trainable_roots(model)
         return model
 
-    def gather_rng_states(self, state: dict[str, Any]) -> list[dict[str, Any]]:
-        return [state]
-
 
 def _trainable_module_handles(model: Any) -> list[tuple[str, Any, Any]]:
     """Return every explicitly named trainable root and its writer.
@@ -467,7 +434,7 @@ def _trainable_module_handles(model: Any) -> list[tuple[str, Any, Any]]:
     return handles
 
 
-class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
+class FSDPStrategy(TrainerParking):
     """FSDP2 (``fully_shard`` + DTensor) training behind the same seam.
 
     The model wraps once in ``prepare_model``; thereafter params/grads/optimizer
@@ -912,11 +879,8 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
         if failure is not None:
             raise failure
 
-    def shutdown(self, *, restore_parked: bool = True) -> None:
-        TrainerParking.shutdown(self, restore_parked=restore_parked)
 
-
-class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
+class DDPStrategy(_UnshardedStateStrategy):
     """DistributedDataParallel training behind the same seam.
 
     For a model that fits on one card (a 2B diffusion transformer + LoRA does), DDP
@@ -945,6 +909,10 @@ class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
         self.context = context
         self.collectives = TrainingCollectives(context)
         self._find_unused_parameters = find_unused_parameters
+
+    def shutdown(self, *, restore_parked: bool = True) -> None:
+        # Nothing to release: the process group belongs to the process.
+        del restore_parked
 
     def prepare_model(self, model: Any) -> Any:
         """Replicate the policy's trainable transformer with DDP and return the policy.
