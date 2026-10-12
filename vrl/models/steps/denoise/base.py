@@ -550,10 +550,6 @@ class DenoiseModelBase(nn.Module, ABC):
     def scheduler(self) -> Any:  # pragma: no cover
         raise NotImplementedError
 
-    @property
-    def raw_handle(self) -> Any:  # pragma: no cover
-        raise NotImplementedError
-
 
 class DenoisePipelineModelBase(DenoiseModelBase):
     """A denoise model that can also sample: prompt encoding, sampling state, decode.
@@ -655,10 +651,6 @@ class DiffusersModelBase(DenoiseModelBase):
     @property
     def scheduler(self) -> Any:
         return self._scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return None
 
     @property
     def _guidance_embeds(self) -> bool:
@@ -767,10 +759,6 @@ class DiffusersPipelineModelBase(DenoisePipelineModelBase, DiffusersModelBase):
     @property
     def scheduler(self) -> Any:
         return self.pipeline.scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return self.pipeline
 
     def generation_memory_targets(self) -> dict[str, Any]:
         """The pipeline's VAE, when it ships one, is the decode-memory target."""

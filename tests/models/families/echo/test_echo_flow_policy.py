@@ -310,7 +310,6 @@ def test_replay_model_is_transformer_only_and_runs_velocity_forward() -> None:
         device=torch.device("cpu"),
     )
     stamp_model_precision(replay)
-    assert replay.raw_handle is None
     assert replay.trainable_modules == {"transformer": echo.model}
     # The replay model has no rollout surface at all: it never encodes or decodes.
     assert not hasattr(replay, "encode_prompt")

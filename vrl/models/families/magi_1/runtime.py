@@ -79,7 +79,6 @@ def build_magi_1_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
         model=model,
         trainable_modules={},
         scheduler=None,
-        raw_handle=model,
         precision=build.precision,
     )
 

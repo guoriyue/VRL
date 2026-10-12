@@ -389,7 +389,6 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     assert loaded_builds
     if family == "sana":
         assert loaded_builds[-1].parameter_dtype is torch.float16
-    assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"transformer"}
     assert not hasattr(bundle.model, "pipeline")
 
@@ -584,6 +583,5 @@ def test_cosmos_predict25_replay_builder_is_pipeline_free(
         expected_identity=None,
     )
 
-    assert bundle.raw_handle is None
     assert callable(bundle.model.replay_forward_with_latents)
     assert not hasattr(bundle.model, "pipeline")

@@ -88,7 +88,6 @@ def build_denoise_runtime_bundle(
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        raw_handle=model.raw_handle,
         precision=build.precision,
         adapter_roots=model.adapter_roots,
     )
@@ -115,7 +114,6 @@ def assemble_replay_bundle(
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        raw_handle=None,
         precision=build.precision,
         adapter_roots=model.adapter_roots,
     )

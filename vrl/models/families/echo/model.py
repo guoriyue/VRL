@@ -117,10 +117,6 @@ class EchoModel(DenoiseModelBase):
         self._device = device
 
     @property
-    def raw_handle(self) -> Any:
-        return None
-
-    @property
     def device(self) -> Any:
         return self._device
 
@@ -251,10 +247,6 @@ class EchoPipelineModel(DenoisePipelineModelBase, EchoModel):
         object.__setattr__(self, "_text_encoder", text_encoder)
         object.__setattr__(self, "_video_vae", video_vae)
         self._dtype = dtype
-
-    @property
-    def raw_handle(self) -> Any:
-        return self._echo
 
     @property
     def video_height(self) -> int:

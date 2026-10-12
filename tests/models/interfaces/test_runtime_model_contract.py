@@ -71,10 +71,6 @@ class _DiffusionModelBaseStub(DenoiseModelBase):
     def scheduler(self) -> Any:
         return None
 
-    @property
-    def raw_handle(self) -> Any:
-        return None
-
     @contextlib.contextmanager
     def reference_policy(self) -> Iterator[None]:
         yield
@@ -106,7 +102,6 @@ def test_runtime_bundle_exposes_model_contract() -> None:
         model=model,
         trainable_modules={},
         scheduler=None,
-        raw_handle=None,
         precision=RolePrecision("fp32", "ieee", outer_autocast=False),
     )
 

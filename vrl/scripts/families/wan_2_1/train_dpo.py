@@ -200,7 +200,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         )
     bundle = family_entry.build_rollout(model_build, expected_identity=model_identity)
     wan_model = bundle.model
-    pipeline = bundle.raw_handle
+    pipeline = wan_model.pipeline
 
     enable_transformer_gradient_checkpointing(bundle, built.root)
 

@@ -420,10 +420,6 @@ class Magi1SubprocessModel(torch.nn.Module):
     quantization_exclude: tuple[str, ...] = ()
 
     @property
-    def raw_handle(self) -> Magi1SubprocessModel:
-        return self
-
-    @property
     def scheduler(self) -> None:
         return None
 

@@ -138,7 +138,6 @@ class _TargetlessRuntimeModel:
         self.trainable_modules: dict[str, Any] = {}
         self.adapter_roots: dict[str, Any] = {}
         self.scheduler = object()
-        self.raw_handle = object()
 
     @classmethod
     def from_build(cls, _build: ModelBuild) -> _TargetlessRuntimeModel:
@@ -209,7 +208,6 @@ def test_wan_runtime_bundle_applies_model_build_memory_policy(
             self.trainable_modules: dict[str, Any] = {}
             self.adapter_roots: dict[str, Any] = {}
             self.scheduler = object()
-            self.raw_handle = object()
 
         @classmethod
         def from_build(cls, _build: Any) -> _FakeModel:
@@ -289,7 +287,6 @@ def test_full_generation_runtime_bundles_apply_model_build_memory_policy(
             self.trainable_modules: dict[str, Any] = {}
             self.adapter_roots: dict[str, Any] = {}
             self.scheduler = object()
-            self.raw_handle = object()
 
         def generation_memory_targets(self) -> dict[str, Any]:
             return {"vae_decode": self.vae}

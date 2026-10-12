@@ -389,10 +389,6 @@ class CausVidModel(DenoiseModelBase):
         # scheduler. RuntimeBundle still exposes it at the standard boundary.
         return self._schedule
 
-    @property
-    def raw_handle(self) -> Any:
-        return None
-
     def _set_transformer(self, transformer: Any) -> None:
         self.transformer = transformer
         setter = getattr(self._backend, "set_transformer", None)
@@ -585,10 +581,6 @@ class CausVidPipelineModel(DenoisePipelineModelBase, CausVidModel):
     ``generate_chunk_autoregressive``, so the single-step sampling entry point
     stays unreachable.
     """
-
-    @property
-    def raw_handle(self) -> Any:
-        return self._backend
 
     # ``DenoisePipelineModelBase`` requires a single-step sampling entry; the
     # causal executor generates the whole grouped trajectory instead.

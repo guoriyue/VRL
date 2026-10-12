@@ -663,7 +663,6 @@ def _export_bundle(model) -> RuntimeBundle:
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=None,
-        raw_handle=None,
         precision=_EXPORT_PRECISION,
         adapter_roots=model.adapter_roots,
     )

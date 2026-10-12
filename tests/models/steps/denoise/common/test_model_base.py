@@ -117,10 +117,6 @@ class _ModelBaseStub(DenoiseModelBase):
     def scheduler(self) -> Any:
         return None
 
-    @property
-    def raw_handle(self) -> Any:
-        return self.pipeline
-
 
 class _BackendPipelineStub(nn.Module):
     def __init__(self) -> None:

@@ -145,7 +145,6 @@ def test_shared_builder_moves_plain_lora_after_attach(monkeypatch) -> None:
             self.transformer = _TrackingTransformer(events)
             self.device = "cpu"
             self.scheduler = object()
-            self.raw_handle = object()
             self.trainable_modules = {"transformer": self.transformer}
             self.adapter_roots: dict[str, Any] = {}
 
@@ -227,7 +226,6 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
             self.transformer = _TrackingTransformer(events, quantizable=True)
             self.device = "cpu"
             self.scheduler = object()
-            self.raw_handle = object()
             self.trainable_modules = {"transformer": self.transformer}
             # No save_pretrained on the tracking transformer: nothing to publish.
             self.adapter_roots: dict[str, Any] = {}
@@ -295,7 +293,6 @@ def test_shared_builder_installs_pipeline_offload_after_final_cpu_module_tree(
             self.transformer = _TrackingTransformer(events, quantizable=True)
             self.device = "cpu"
             self.scheduler = object()
-            self.raw_handle = object()
             self.trainable_modules = {"transformer": self.transformer}
             # No save_pretrained on the tracking transformer: nothing to publish.
             self.adapter_roots: dict[str, Any] = {}
@@ -378,7 +375,6 @@ def test_shared_builder_preserves_resolved_role_precision() -> None:
             self.transformer = nn.Linear(2, 2)
             self.device = "cpu"
             self.scheduler = object()
-            self.raw_handle = object()
 
         @classmethod
         def from_build(cls, _build: Any) -> _Policy:
@@ -484,7 +480,6 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
             self.transformer.ff.net = nn.Linear(1024, 1024, bias=False).to(torch.bfloat16)
             self.device = "cpu"
             self.scheduler = object()
-            self.raw_handle = object()
 
         @property
         def policy_cores(self) -> dict[str, Any]:

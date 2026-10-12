@@ -400,10 +400,6 @@ class ModelBuild:
 class RuntimeBundle:
     """Sole output of a family builder. Consumed by scripts / collectors / trainers.
 
-    ``raw_handle`` carries the raw family object (e.g. the diffusers pipeline
-    or AR upstream wrapper) and must be treated as builder-internal — scripts
-    and trainers must not reach into it.
-
     ``model`` is the family-provided general inference object. Shared trainer
     runtime code only relies on the narrow ``vrl.models.interfaces.RuntimeModel``
     contract: ``replay_forward``, ``disable_adapter``, and
@@ -432,7 +428,6 @@ class RuntimeBundle:
     model: RuntimeModel
     trainable_modules: dict[str, Any]
     scheduler: Any
-    raw_handle: Any
     precision: RolePrecision
     adapter_roots: dict[str, Any] = field(default_factory=dict)
 
