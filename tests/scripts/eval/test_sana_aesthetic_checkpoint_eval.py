@@ -783,3 +783,69 @@ def test_run_config_rejects_other_model_family() -> None:
 def test_evaluation_settings_reject_invalid_grid(kwargs) -> None:
     with pytest.raises(ValueError):
         sana_report.EvaluationSettings(**kwargs)
+
+
+@pytest.mark.parametrize("count", [True, 1.5, "2", 0, -1])
+def test_generation_rejects_invalid_image_count_before_pipeline_access(count) -> None:
+    with pytest.raises(ValueError, match="num_images"):
+        sana_inference.generate_prompt_images(
+            None,
+            scheduler=None,
+            prompt="draw",
+            seed=0,
+            num_images=count,
+            device=torch.device("cpu"),
+        )
+
+
+def test_generation_preserves_device_autocast_query_failure(monkeypatch) -> None:
+    failure = TypeError("device autocast query failed")
+    calls = []
+
+    def query(*args):
+        calls.append(args)
+        if args:
+            raise failure
+        return False
+
+    monkeypatch.setattr(torch, "is_autocast_enabled", query)
+    with pytest.raises(TypeError) as caught:
+        sana_inference.generate_prompt_images(
+            None,
+            scheduler=None,
+            prompt="draw",
+            seed=0,
+            num_images=1,
+            device=torch.device("cpu"),
+        )
+    assert caught.value is failure
+    assert calls == [("cpu",)]
+
+
+@pytest.mark.parametrize(
+    ("key", "wrong_value"),
+    [
+        pytest.param("algorithm_type", "sde-dpmsolver++", id="algorithm"),
+        pytest.param("use_flow_sigmas", False, id="flow-sigmas"),
+    ],
+)
+def test_scheduler_protocol_rejects_wrong_config(key, wrong_value) -> None:
+    scheduler = build_official_sana_scheduler(**{key: wrong_value})
+
+    with pytest.raises(ValueError, match="official DPM-Solver"):
+        sana_inference.require_scheduler(scheduler)
+
+
+def test_scheduler_protocol_rejects_wrong_class() -> None:
+    class FlowMatchEulerDiscreteScheduler:
+        config = build_official_sana_scheduler().config
+
+    with pytest.raises(ValueError, match="official DPM-Solver"):
+        sana_inference.require_scheduler(FlowMatchEulerDiscreteScheduler())
+
+
+def test_scheduler_protocol_accepts_official_identity() -> None:
+    assert (
+        sana_inference.require_scheduler(build_official_sana_scheduler())
+        == sana_inference.SANA_EVAL_SCHEDULER_CONFIG
+    )
