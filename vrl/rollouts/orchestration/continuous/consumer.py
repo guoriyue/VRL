@@ -14,7 +14,6 @@ import time
 import torch
 
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutProducerState,
     ContinuousRolloutSettings,
@@ -31,9 +30,6 @@ class ContinuousRolloutConsumer:
 
     def __init__(self, *, settings: ContinuousRolloutSettings) -> None:
         self.settings = settings
-        self.staleness = StalenessPolicy(
-            max_stale_policy_versions=settings.max_stale_policy_versions,
-        )
         # Fresh-error count (with zero fresh completions) that ends the wait
         # early with the producer's root cause. 0 disables fail-fast. Range
         # validated once at the config boundary; trusted here.
@@ -165,14 +161,15 @@ class ContinuousRolloutConsumer:
             if item is None:
                 continue
             version = item.rollout_policy_version
-            version_lag = self.staleness.staleness(version, current_policy_version)
+            # Staleness: versions the item trails the trainer by.
+            version_lag = current_policy_version - version
             if version_lag < 0:
                 raise RuntimeError(
                     "continuous scored result is newer than the trainer policy "
                     f"(item={version}, trainer={current_policy_version}); weight-sync "
                     "barrier invariant violated",
                 )
-            if version_lag > self.staleness.max_stale_policy_versions:
+            if version_lag > self.settings.max_stale_policy_versions:
                 raise RuntimeError(
                     "continuous ready prompt batch is older than the policy window "
                     f"(item={version}, trainer={current_policy_version})",
@@ -195,7 +192,7 @@ class ContinuousRolloutConsumer:
             batches.append(item.batch)
 
         version = items[0].rollout_policy_version
-        staleness = self.staleness.staleness(version, current_policy_version)
+        staleness = current_policy_version - version
         item_age_s = max(item.age_s for item in items)
         stats = RolloutStats()
         stats.add_phase("continuous.queue_wait_s", float(queue_wait_s))

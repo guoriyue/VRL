@@ -24,7 +24,6 @@ import torch
 
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutProducerState,
     ContinuousRolloutSettings,
@@ -54,9 +53,7 @@ class ContinuousRolloutProducer:
         settings: ContinuousRolloutSettings,
     ) -> None:
         self.lifecycle = lifecycle
-        self.staleness = StalenessPolicy(
-            max_stale_policy_versions=settings.max_stale_policy_versions,
-        )
+        self.max_stale_policy_versions = settings.max_stale_policy_versions
         # Validated once at the config boundary; trusted here (no re-checks).
         self.max_inflight_groups = settings.max_inflight_groups
         self.poll_interval_s = settings.queue_poll_interval_s
@@ -434,10 +431,7 @@ class ContinuousRolloutProducer:
         # staleness as a version-barrier violation. A zero window is retained only for
         # isolated mechanism tests; production continuous config requires >= 1.
         current_version = self.lifecycle.current_policy_version()
-        if self.staleness.too_stale(
-            prompt_batch.policy_version,
-            current_version,
-        ):
+        if current_version - prompt_batch.policy_version > self.max_stale_policy_versions:
             raise RuntimeError(
                 "continuous prompt batch became stale before completion "
                 f"(item={prompt_batch.policy_version}, trainer={current_version})",
