@@ -1,19 +1,13 @@
-"""Ray generation config."""
+"""Ray generation worker config."""
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
-from pathlib import Path
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from vrl.config.schema import RolloutRuntimeSection, RootConfig
-
-from vrl.ray.resources import (
-    ResolvedDistributedResources,
-)
-from vrl.utils.profiling import TorchProfilerConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,49 +40,12 @@ class RolloutWorkerConfig:
 
         return cls(**(section or RolloutRuntimeSection()).model_dump())
 
-
-@dataclass(slots=True)
-class RayGenerationConfig:
-    """Ray launcher protocol composed from resources and one worker snapshot."""
-
-    resources: ResolvedDistributedResources
-    worker: RolloutWorkerConfig
-    torch_profiler: TorchProfilerConfig | None = None
-
-    def __post_init__(self) -> None:
-        if self.resources.rollout_num_engines < 1:
-            raise ValueError("distributed.resources.rollout.num_engines must be >= 1")
-
     @classmethod
-    def from_root(
-        cls,
-        root: RootConfig,
-        *,
-        resources: ResolvedDistributedResources,
-    ) -> RayGenerationConfig:
-        """Build Ray execution settings using the run's resolved resources."""
+    def from_root(cls, root: RootConfig) -> RolloutWorkerConfig:
+        """Freeze ``distributed.rollout`` of a validated root."""
+
         distributed = root.distributed
-        rollout_runtime = distributed.rollout if distributed is not None else None
-        profiler_section = root.rollout.torch_profiler if root.rollout is not None else None
-        torch_profiler = profiler_section
-        run_output_dir = root.trainer.output_dir if root.trainer is not None else None
-        if profiler_section is not None and not profiler_section.output_dir:
-            # The trainer's rule: an unset trace directory lands under the run's
-            # output directory (``outputs`` for a trainer-less root). Resolved
-            # here once so workers read a final path.
-            torch_profiler = replace(
-                profiler_section,
-                output_dir=str(Path(run_output_dir or "outputs") / "torch_profiler"),
-            )
-
-        return cls(
-            resources=resources,
-            worker=RolloutWorkerConfig.from_public_section(rollout_runtime),
-            torch_profiler=torch_profiler,
-        )
+        return cls.from_public_section(distributed.rollout if distributed is not None else None)
 
 
-__all__ = [
-    "RayGenerationConfig",
-    "RolloutWorkerConfig",
-]
+__all__ = ["RolloutWorkerConfig"]

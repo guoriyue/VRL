@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import torch
 from omegaconf import OmegaConf
 
 from tests.generation.execution._helpers import launch_contract
+from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
 from vrl.generation.bindings.full_sequence import DenoiseBatchGatherer
@@ -22,11 +24,9 @@ from vrl.models.families.registry import (
     ModelFamilyEntry,
     get_model_family_entry,
 )
+from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.run import (
-    ResolvedModel,
-    ResolvedOnlineRun,
-)
+from vrl.run import ResolvedModel
 
 
 class _TestGatherer:
@@ -53,16 +53,17 @@ def _capture_launch_inputs(
 ) -> tuple[RayGenerationLaunchInputs, dict[str, Any]]:
     """Resolve the production launch payload without starting Ray actors."""
 
-    run = ResolvedOnlineRun.from_cfg(cfg)
-    assert run.family is entry
+    built = BuiltConfigs.from_cfg(cfg)
+    assert built.family is entry
+    resources = ResolvedDistributedResources.from_root(built.root)
     replay_model = ResolvedModel.from_root(
         entry,
-        run.built.root,
-        run.device,
-        precision=run.built.precision,
+        built.root,
+        torch.device(resources.trainer_torch_device),
+        precision=built.precision,
         for_rollout=False,
     )
-    result = run.ray_launch_inputs(replay_model)
+    result = RayGenerationLaunchInputs.from_run(built, resources, replay_model)
     return result, replay_model.identity
 
 

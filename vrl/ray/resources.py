@@ -425,6 +425,17 @@ class ResolvedDistributedResources:
             return "cpu"
         return f"cuda:{self._local_torch_ordinal(int(devices[0]))}"
 
+    @property
+    def reward_parking_mechanism(self) -> ParkingMechanism | None:
+        """How the reward parks when the plan makes it yield its GPU; None keeps it resident.
+
+        The plan's reward devices are the reward's own GPU fact: an all-HTTP
+        reward reserves none (its services own their accelerators), so the plan
+        never parks it.
+        """
+
+        return self.reward_parking.mechanism if self.lifecycle.offload_reward else None
+
     def reward_torch_device(self, *, trainer_device: Any | None = None) -> str:
         """Device intent passed to the reward component.
 

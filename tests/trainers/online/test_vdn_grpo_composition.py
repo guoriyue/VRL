@@ -27,6 +27,10 @@ from tests.models.steps.denoise.fixtures import (
     write_tiny_vdn_h3_checkpoint,
 )
 from tests.rollouts.collector._helpers import IndexReward, Trace
+from vrl.config.builders import BuiltConfigs
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.ray.resources import ResolvedDistributedResources
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 
 pytest.importorskip("src.models.hybrid_attention")
 
@@ -119,32 +123,37 @@ def _stack(
             *overrides,
         ],
     )
-    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
-    built = resolved.built
+    built = BuiltConfigs.from_cfg(cfg)
+    resources = ResolvedDistributedResources.from_root(built.root)
     replay = run.ResolvedModel.from_root(
-        resolved.family,
+        built.family,
         built.root,
-        resolved.device,
+        torch.device(resources.trainer_torch_device),
         precision=built.precision,
         for_rollout=False,
     )
     bundle = replay.materialize(context="vdn composition test")
-    runtime = InProcessGenerationRuntime(resolved.ray_launch_inputs(replay))
+    runtime = InProcessGenerationRuntime(
+        RayGenerationLaunchInputs.from_run(built, resources, replay)
+    )
     trace = Trace(monkeypatch)
     trace.watch(runtime, "generate", "generate")
     trace.watch(runtime, "update_weights", "update_weights")
     collector = RolloutCollector.from_family(
-        resolved.family,
+        built.family,
         # Scores [0, 1] for the two samples of the one prompt group.
         reward_runtime=RewardFunctionRuntime(IndexReward()),
-        config=resolved.collector,
-        lifecycle=resolved.resources.lifecycle,
+        config=RolloutCollectorConfig.from_root(built.root),
+        lifecycle=resources.lifecycle,
     )
     collector.set_generation_runtime(runtime)
     # The recipe's strategy: built from the run's own training context, so it
     # places the trainable roots on the trainer device.
     strategy = build_strategy(
-        built.root, DistributedTrainingContext.from_root(built.root, device=resolved.device)
+        built.root,
+        DistributedTrainingContext.from_root(
+            built.root, device=torch.device(resources.trainer_torch_device)
+        ),
     )
     pair = AlgorithmEvaluatorPair.from_configs(
         built,

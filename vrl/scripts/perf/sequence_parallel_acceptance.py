@@ -41,13 +41,18 @@ from typing import Any
 
 import torch
 
+from vrl.config.builders import BuiltConfigs
+from vrl.generation.ray.config import RolloutWorkerConfig
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.generation.types import GenerationInput, GenerationRequest
 from vrl.models.families.semantics import task_type_for
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner
-from vrl.run import ResolvedModel, ResolvedOnlineRun
+from vrl.ray.resources import ResolvedDistributedResources
+from vrl.rollouts.collector.config import RolloutCollectorConfig
+from vrl.run import ResolvedModel
 from vrl.trainers.data.prompts import load_prompt_dataset_index
 from vrl.utils.json_files import write_json
 
@@ -154,8 +159,9 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
     from vrl.config.loading import load_config
 
     cfg = load_config(args.config, overrides=_fleet_overrides(args))
-    resolved = ResolvedOnlineRun.from_cfg(cfg)
-    resources = resolved.resources
+    built = BuiltConfigs.from_cfg(cfg)
+    family = built.family
+    resources = ResolvedDistributedResources.from_root(built.root)
     if resources.rollout_gpus_per_engine != args.gpus_per_engine:
         raise RuntimeError(
             f"resolved gpus_per_engine={resources.rollout_gpus_per_engine} != "
@@ -170,7 +176,7 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
     plan = {
         "config": args.config,
         "overrides": _fleet_overrides(args),
-        "family": resolved.family.family,
+        "family": family.family,
         "gpus_per_engine": resources.rollout_gpus_per_engine,
         "num_engines": resources.rollout_num_engines,
         "rollout_devices": list(resources.rollout_devices),
@@ -183,16 +189,16 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
     if args.resolve_only:
         return plan
 
-    collector = resolved.collector
+    collector = RolloutCollectorConfig.from_root(built.root)
     denoise = replace(collector.denoise or DenoiseRequestOptions(), denoise_mode="native")
     sampling = dict(collector.request_sampling)
     if sampling.get("seed") != args.seed:
         raise RuntimeError(f"sampling.seed override did not reach the request: {sampling!r}")
-    task_type = task_type_for(resolved.family.task)
+    task_type = task_type_for(family.task)
     request = GenerationRequest(
         request_id=f"sp-acceptance-{uuid.uuid4()}",
-        family=resolved.family.family,
-        task=resolved.family.task,
+        family=family.family,
+        task=family.task,
         inputs=[GenerationInput(prompt=p, task_type=task_type) for p in prompts],
         samples_per_prompt=args.samples_per_prompt,
         sampling=sampling,
@@ -204,18 +210,19 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     replay = ResolvedModel.from_root(
-        resolved.family,
-        resolved.built.root,
+        family,
+        built.root,
         torch.device("cpu"),
-        precision=resolved.built.precision,
+        precision=built.precision,
         for_rollout=False,
     )
-    launch_inputs = resolved.ray_launch_inputs(replay)
+    launch_inputs = RayGenerationLaunchInputs.from_run(built, resources, replay)
+    worker = RolloutWorkerConfig.from_root(built.root)
 
     ray = require_ray()
     if ray.is_initialized():
         raise RuntimeError("acceptance must run in a fresh process with a private Ray cluster")
-    placement_owner = GlobalRayPlacementOwner(resources, resolved.generation.worker)
+    placement_owner = GlobalRayPlacementOwner(resources, worker)
     ray.init(
         address="local",
         include_dashboard=False,
@@ -227,7 +234,8 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
         placement_owner.create()
         launch_started = time.perf_counter()
         runtime = RayGenerationLauncher().create_runtime(
-            resolved.generation,
+            resources,
+            worker,
             launch_inputs,
             placement=placement_owner.rollout_placement,
         )

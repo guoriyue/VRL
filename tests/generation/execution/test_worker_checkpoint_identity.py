@@ -1,7 +1,7 @@
 """Worker-side rollout checkpoint identity gates.
 
 Each test hands ``GenerationWorkerCore`` the launch contract the real driver
-builds (``ResolvedOnlineRun.ray_launch_inputs``) for the tiny SANA snapshot,
+builds (``RayGenerationLaunchInputs.from_run``) for the tiny SANA snapshot,
 so the identity is the real local-directory hash and the executor is the real
 family executor; the Hub load is the only double.
 """
@@ -12,15 +12,18 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import torch
 
 from tests.scripts.eval.fixtures import (
     TinySanaPipeline,
     tiny_sana_online_config,
 )
 from vrl import run
+from vrl.config.builders import BuiltConfigs
 from vrl.generation.bindings.full_sequence.executor import GenericDenoiseBatchExecutor
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.ray.resources import ResolvedDistributedResources
 
 
 def _launch_inputs(
@@ -32,15 +35,16 @@ def _launch_inputs(
     cfg = tiny_sana_online_config(tmp_path, overrides=overrides)
     if on_snapshot is not None:
         on_snapshot(tmp_path / "sana-snapshot")
-    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
+    resources = ResolvedDistributedResources.from_root(built.root)
     replay = run.ResolvedModel.from_root(
-        resolved.family,
-        resolved.built.root,
-        resolved.device,
-        precision=resolved.built.precision,
+        built.family,
+        built.root,
+        torch.device(resources.trainer_torch_device),
+        precision=built.precision,
         for_rollout=False,
     )
-    return resolved.ray_launch_inputs(replay)
+    return RayGenerationLaunchInputs.from_run(built, resources, replay)
 
 
 def _worker(inputs: RayGenerationLaunchInputs) -> GenerationWorkerCore:

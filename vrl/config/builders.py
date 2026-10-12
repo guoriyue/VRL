@@ -17,6 +17,7 @@ from vrl.config.validation import require_training_config
 if TYPE_CHECKING:
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
     from vrl.models.families.registry import ModelFamilyEntry
+    from vrl.models.parking import ParkingMechanism
     from vrl.trainers.checkpointing import TrainingResumeConfig
     from vrl.trainers.online.config import TrainerConfig
 
@@ -96,6 +97,33 @@ class RewardRuntimeConfig:
                 f"component per process, got {gpu_components}. Keep CPU reward "
                 "siblings or use a dedicated/remote reward.",
             )
+
+    def build_function(
+        self,
+        *,
+        device: str,
+        parking: ParkingMechanism | None,
+        ray_placement: Any = None,
+    ) -> Any:
+        """Build the reward function on ``device`` under ``parking``.
+
+        ``MultiReward.from_dict`` validates the components and constructs. A
+        GPU-sharing reward parks its model memory completely; a dedicated
+        reward (``parking`` None) stays resident; HTTP components own their
+        deployment.
+        """
+
+        self.require_online_training()
+        from vrl.rewards.functions.registry import MultiReward
+
+        return MultiReward.from_dict(
+            self.weights,
+            device=device,
+            reward_kwargs=self.kwargs,
+            parking=parking,
+            inference_configs=self.inference_configs,
+            ray_placement=ray_placement,
+        )
 
     def require_online_training(self) -> None:
         """Admit the resolved deployment before allocating models or Ray actors.

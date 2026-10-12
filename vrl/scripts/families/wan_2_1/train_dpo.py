@@ -123,15 +123,17 @@ def _required(value: Any, path: str) -> Any:
 def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     """Run Wan-family Diffusion-DPO training driven by a merged YAML config."""
 
+    import torch
+
     from vrl.config.builders import BuiltConfigs
-    from vrl.run import ResolvedModel, ResolvedRun
+    from vrl.ray.resources import ResolvedDistributedResources
+    from vrl.run import ResolvedModel
     from vrl.trainers.offline import OfflineDPOTrainerConfig
 
-    resolved = ResolvedRun.from_built(BuiltConfigs.from_cfg(cfg))
-    built = resolved.built
-    family_entry = resolved.family
-    resources = resolved.resources
-    device = resolved.device
+    built = BuiltConfigs.from_cfg(cfg)
+    family_entry = built.family
+    resources = ResolvedDistributedResources.from_root(built.root)
+    device = torch.device(resources.trainer_torch_device)
     configured_family = None if built.root.model is None else built.root.model.family
     family = family_entry.family
     if family != "wan_2_1":

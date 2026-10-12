@@ -30,7 +30,13 @@ from vrl.config.loading import (
 from vrl.config.schema import RewardConfig, parse_config
 from vrl.config.validation import require_training_config
 from vrl.ray.resources import ResolvedDistributedResources
-from vrl.run import ResolvedReward
+
+
+def _validate_reward_parking(reward, resources) -> None:
+    """The online recipe's pre-build check: a reward the plan parks must be able to."""
+
+    if resources.reward_parking_mechanism is not None:
+        reward.validate_memory_parking(resources.reward_torch_device())
 
 
 def _experiment_names() -> list[str]:
@@ -291,7 +297,7 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
             built = BuiltConfigs.from_cfg(cfg)
             resources = ResolvedDistributedResources.from_root(parse_config(cfg))
             resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-            ResolvedReward.from_plan(built.reward, resources).validate_parking()
+            _validate_reward_parking(built.reward, resources)
         except Exception as error:  # report the full active surface in one failure
             failures.append(f"{name}: {type(error).__name__}: {error}")
 
@@ -347,7 +353,7 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    ResolvedReward.from_plan(built.reward, resources).validate_parking()
+    _validate_reward_parking(built.reward, resources)
 
     assert resources.trainer_devices == (0,)
     assert resources.rollout_devices == (1, 2, 3)
@@ -378,7 +384,7 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    ResolvedReward.from_plan(built.reward, resources).validate_parking()
+    _validate_reward_parking(built.reward, resources)
 
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_engines == 1
@@ -411,7 +417,7 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    ResolvedReward.from_plan(built.reward, resources).validate_parking()
+    _validate_reward_parking(built.reward, resources)
 
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_engines == 1
@@ -474,7 +480,7 @@ def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    ResolvedReward.from_plan(built.reward, resources).validate_parking()
+    _validate_reward_parking(built.reward, resources)
 
     orchestration = built.trainer.rollout_orchestration
     assert resources.trainer_devices == (0,)
@@ -498,7 +504,7 @@ def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    ResolvedReward.from_plan(built.reward, resources).validate_parking()
+    _validate_reward_parking(built.reward, resources)
 
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_engines == 1
@@ -519,7 +525,7 @@ def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devi
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    ResolvedReward.from_plan(built.reward, resources).validate_parking()
+    _validate_reward_parking(built.reward, resources)
 
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.reward_devices == ()
@@ -579,7 +585,7 @@ def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> No
     built = BuiltConfigs.from_cfg(cfg)
     resources = ResolvedDistributedResources.from_root(parse_config(cfg))
     resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    ResolvedReward.from_plan(built.reward, resources).validate_parking()
+    _validate_reward_parking(built.reward, resources)
 
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_engines == 1

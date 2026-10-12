@@ -13,12 +13,16 @@ from dataclasses import replace
 from typing import Any
 
 import pytest
+import torch
 
 from tests.generation.ray._helpers import ray_sana_runtime
+from vrl.config.builders import BuiltConfigs
 from vrl.generation.ray.config import RolloutWorkerConfig
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput
+from vrl.ray.resources import ResolvedDistributedResources
 
 # These build real Ray workers on the package cluster — slow by nature, nightly.
 pytestmark = pytest.mark.slow_test
@@ -38,11 +42,11 @@ async def _launched(
     tmp_path: Any,
     snapshot: Any,
     *,
-    generation: Callable[[Any], Any] = lambda config: config,
+    plan: Callable[[Any], Any] = lambda resources: resources,
     overrides: tuple[str, ...] = (),
 ) -> AsyncIterator[tuple[RayGenerationRuntime, Any, Any]]:
-    """Launch exactly as the recipe does, with ``generation`` applied to the
-    resolved generation config first; yields (runtime, placement owner, resolved)."""
+    """Launch exactly as the recipe does, with ``plan`` applied to the resource
+    plan the launcher receives; yields (runtime, placement owner, resources)."""
 
     from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
     from vrl import run
@@ -54,24 +58,26 @@ async def _launched(
         overrides=("distributed.rollout.cpus_per_worker=0.5", *overrides),
     )
     TinySanaPipeline().install(monkeypatch, snapshot)
-    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
+    resources = ResolvedDistributedResources.from_root(built.root)
     replay = run.ResolvedModel.from_root(
-        resolved.family,
-        resolved.built.root,
-        resolved.device,
-        precision=resolved.built.precision,
+        built.family,
+        built.root,
+        torch.device(resources.trainer_torch_device),
+        precision=built.precision,
         for_rollout=False,
     )
-    owner = GlobalRayPlacementOwner(resolved.resources, resolved.generation.worker)
+    owner = GlobalRayPlacementOwner(resources, RolloutWorkerConfig.from_root(built.root))
     owner.create()
     runtime: RayGenerationRuntime | None = None
     try:
         runtime = RayGenerationLauncher().create_runtime(
-            generation(resolved.generation),
-            resolved.ray_launch_inputs(replay),
+            plan(resources),
+            RolloutWorkerConfig.from_root(built.root),
+            RayGenerationLaunchInputs.from_run(built, resources, replay),
             placement=owner.rollout_placement,
         )
-        yield runtime, owner, resolved
+        yield runtime, owner, resources
     finally:
         # The cluster is shared with the rest of this package: release the
         # workers and the placement group, never the cluster.
@@ -144,18 +150,20 @@ def test_create_runtime_rejects_missing_rollout_placement(monkeypatch, tmp_path)
 
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
-    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
+    resources = ResolvedDistributedResources.from_root(built.root)
     replay = run.ResolvedModel.from_root(
-        resolved.family,
-        resolved.built.root,
-        resolved.device,
-        precision=resolved.built.precision,
+        built.family,
+        built.root,
+        torch.device(resources.trainer_torch_device),
+        precision=built.precision,
         for_rollout=False,
     )
     with pytest.raises(ValueError, match="rollout placement"):
         RayGenerationLauncher().create_runtime(
-            resolved.generation,
-            resolved.ray_launch_inputs(replay),
+            resources,
+            RolloutWorkerConfig.from_root(built.root),
+            RayGenerationLaunchInputs.from_run(built, resources, replay),
             placement=None,
         )
 
@@ -182,18 +190,14 @@ async def test_phase_handoff_keeps_actor_and_owner_placement(
 ) -> None:
     """A shared-GPU handoff parks its actor without dropping the owner PG."""
 
-    def shared_gpu(generation: Any) -> Any:
+    def shared_gpu(resources: Any) -> Any:
         # A CPU host has no trainer GPU; pin both roles to one card to force the lease.
-        resources = generation.resources
         return replace(
-            generation,
-            resources=replace(
-                resources,
-                lifecycle=replace(resources.lifecycle, trainer=(0,), rollout=(0,)),
-            ),
+            resources,
+            lifecycle=replace(resources.lifecycle, trainer=(0,), rollout=(0,)),
         )
 
-    async with _launched(monkeypatch, tmp_path, ray_sana_snapshot, generation=shared_gpu) as (
+    async with _launched(monkeypatch, tmp_path, ray_sana_snapshot, plan=shared_gpu) as (
         runtime,
         owner,
         _,
@@ -225,15 +229,18 @@ def test_worker_metadata_preserves_placement_query_failure(monkeypatch, tmp_path
 
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
-    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
+    resources = ResolvedDistributedResources.from_root(built.root)
     replay = run.ResolvedModel.from_root(
-        resolved.family,
-        resolved.built.root,
-        resolved.device,
-        precision=resolved.built.precision,
+        built.family,
+        built.root,
+        torch.device(resources.trainer_torch_device),
+        precision=built.precision,
         for_rollout=False,
     )
-    actor = worker.RayGenerationWorker("rollout-0", resolved.ray_launch_inputs(replay))
+    actor = worker.RayGenerationWorker(
+        "rollout-0", RayGenerationLaunchInputs.from_run(built, resources, replay)
+    )
     failure = RuntimeError("placement query failed")
 
     def fail():

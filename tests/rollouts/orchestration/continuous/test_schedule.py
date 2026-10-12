@@ -66,7 +66,7 @@ def _build(
     return ContinuousRolloutSchedule.from_config(
         config,
         lifecycle=trainer.coordinator(bench),
-        versioned_weight_sync=bench.stack.resolved.built.trainer.versioned_weight_sync,
+        versioned_weight_sync=bench.stack.built.trainer.versioned_weight_sync,
     )
 
 
@@ -196,7 +196,7 @@ async def test_initialized_runtime_does_not_receive_redundant_initial_push(
     schedule = ContinuousRolloutSchedule.from_config(
         _continuous_config(),
         lifecycle=trainer.coordinator(bench),
-        versioned_weight_sync=bench.stack.resolved.built.trainer.versioned_weight_sync,
+        versioned_weight_sync=bench.stack.built.trainer.versioned_weight_sync,
     )
 
     try:
@@ -472,7 +472,7 @@ async def test_draining_barrier_reports_mode_zero(monkeypatch, tmp_path) -> None
     """A full-finetune run has no versioned slots: the barrier mode metric is 0 (draining)."""
 
     bench = _bench(monkeypatch, tmp_path)
-    assert bench.stack.resolved.built.trainer.versioned_weight_sync is False
+    assert bench.stack.built.trainer.versioned_weight_sync is False
     schedule = _build(_continuous_config(), bench)
 
     try:
@@ -492,7 +492,7 @@ async def test_non_draining_sync_skips_inflight_wait(monkeypatch, tmp_path) -> N
 
     reward = _GatedReward()
     bench = _bench(monkeypatch, tmp_path, non_draining=True, reward=reward)
-    assert bench.stack.resolved.built.trainer.versioned_weight_sync is True
+    assert bench.stack.built.trainer.versioned_weight_sync is True
     schedule = _build(_continuous_config(), bench)
 
     try:

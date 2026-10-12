@@ -218,7 +218,7 @@ async def test_weight_sync_gets_a_full_deadline_after_shared_worker_admission(
         await update
         assert time.monotonic() - started > 0.3
         assert _methods(submissions) == ["execute_batch", "update_weights"]
-        stall_timeout = ray_run.resolved.generation.worker.generation_stall_timeout_s
+        stall_timeout = ray_run.worker.generation_stall_timeout_s
         assert deadlines == [
             ("rollout.generation.batch", stall_timeout),
             ("rollout.weight_sync", 0.3),

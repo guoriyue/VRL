@@ -315,7 +315,7 @@ def _rank_trainer(monkeypatch: pytest.MonkeyPatch, root: Path, *, samples: int) 
         ),
     )
     stack = bench.stack
-    built = stack.resolved.built
+    built = stack.built
     bundle = stack.trainer_bundle()
     context = DistributedTrainingContext(
         strategy="ddp",

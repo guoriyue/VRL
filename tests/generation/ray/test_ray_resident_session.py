@@ -11,26 +11,31 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+import torch
 
 from tests.rollouts.collector._helpers import Trace
 from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
 from vrl import run
+from vrl.config.builders import BuiltConfigs
 from vrl.generation.execution.worker import GenerationWorkerCore
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.worker import RayGenerationWorker
+from vrl.ray.resources import ResolvedDistributedResources
 
 
 def _worker(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> tuple[RayGenerationWorker, Any]:
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
-    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
+    resources = ResolvedDistributedResources.from_root(built.root)
     replay = run.ResolvedModel.from_root(
-        resolved.family,
-        resolved.built.root,
-        resolved.device,
-        precision=resolved.built.precision,
+        built.family,
+        built.root,
+        torch.device(resources.trainer_torch_device),
+        precision=built.precision,
         for_rollout=False,
     )
-    launch_inputs = resolved.ray_launch_inputs(replay)
+    launch_inputs = RayGenerationLaunchInputs.from_run(built, resources, replay)
     return RayGenerationWorker("rollout-0", launch_inputs), launch_inputs
 
 

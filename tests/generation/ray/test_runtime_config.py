@@ -15,16 +15,18 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import torch
 from omegaconf import OmegaConf
 
 from tests.generation.ray._helpers import ray_sana_runtime
 from tests.scripts.eval.fixtures import tiny_sana_online_config, write_tiny_wan_snapshot
 from vrl import run
+from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
 from vrl.config.validation import compile_conflicts
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.ray.actor_group import RayActorGroup
@@ -111,20 +113,13 @@ def _cfg() -> Any:
     )
 
 
-def _ray_config(cfg: Any) -> RayGenerationConfig:
-    return RayGenerationConfig.from_root(
-        parse_config(cfg),
-        resources=ResolvedDistributedResources.from_root(parse_config(cfg)),
-    )
-
-
 def test_worker_override_projects_from_public_schema() -> None:
     cfg = _cfg()
     cfg.distributed.rollout.cpus_per_worker = 2.5
     cfg.distributed.rollout.worker_rpc_timeout_s = 3600.0
     cfg.distributed.rollout.generation_stall_timeout_s = 1200.0
     cfg.distributed.rollout.pipelined = True
-    override = _ray_config(cfg).worker
+    override = RolloutWorkerConfig.from_root(parse_config(cfg))
 
     assert override.cpus_per_worker == 2.5
     assert override.worker_rpc_timeout_s == 3600.0
@@ -146,10 +141,10 @@ def test_pipelined_accepts_multiple_resolved_engines() -> None:
         },
     )
 
-    config = _ray_config(cfg)
+    root = parse_config(cfg)
 
-    assert config.worker.pipelined is True
-    assert config.resources.rollout_num_engines == 2
+    assert RolloutWorkerConfig.from_root(root).pipelined is True
+    assert ResolvedDistributedResources.from_root(root).rollout_num_engines == 2
 
 
 # ------------------------------------------------------- real launch shape
@@ -181,7 +176,7 @@ async def test_placement_and_launcher_consume_the_same_worker_snapshot(
         ray_sana_snapshot,
         overrides=("distributed.rollout.cpus_per_worker=1.5",),
     ) as ray_run:
-        worker = ray_run.resolved.generation.worker
+        worker = ray_run.worker
         owner = ray_run.placement_owner
         session = ray_run.runtime._session
 
@@ -238,17 +233,16 @@ async def test_pipelined_launch_adds_one_finalizer_per_engine(
 def _sana_launch(tmp_path: Path, *overrides: str) -> tuple[RayGenerationLaunchInputs, Any]:
     """The launch inputs the recipe would ship for a tiny SANA run, and its replay model."""
 
-    resolved = run.ResolvedOnlineRun.from_cfg(
-        tiny_sana_online_config(tmp_path, overrides=overrides)
-    )
+    built = BuiltConfigs.from_cfg(tiny_sana_online_config(tmp_path, overrides=overrides))
+    resources = ResolvedDistributedResources.from_root(built.root)
     replay = run.ResolvedModel.from_root(
-        resolved.family,
-        resolved.built.root,
-        resolved.device,
-        precision=resolved.built.precision,
+        built.family,
+        built.root,
+        torch.device(resources.trainer_torch_device),
+        precision=built.precision,
         for_rollout=False,
     )
-    return resolved.ray_launch_inputs(replay), replay
+    return RayGenerationLaunchInputs.from_run(built, resources, replay), replay
 
 
 def test_generation_launch_inputs_project_model_compile_and_precision(tmp_path) -> None:
@@ -324,16 +318,19 @@ def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(tmp_pa
             "distributed.resources.rollout.num_gpus=0",
         ],
     )
-    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
+    resources = ResolvedDistributedResources.from_root(built.root)
     replay = run.ResolvedModel.from_root(
-        resolved.family,
-        resolved.built.root,
-        resolved.device,
-        precision=resolved.built.precision,
+        built.family,
+        built.root,
+        torch.device(resources.trainer_torch_device),
+        precision=built.precision,
         for_rollout=False,
     )
 
-    model_build = resolved.ray_launch_inputs(replay).launch_contract.model_build
+    model_build = RayGenerationLaunchInputs.from_run(
+        built, resources, replay
+    ).launch_contract.model_build
 
     assert model_build["rollout"]["pipeline_offload_mode"] == "sequential"
     assert "offload_mode" not in model_build["model_config"]
@@ -343,12 +340,13 @@ def test_generation_launch_inputs_reject_rollout_identity_mismatch(tmp_path) -> 
     """The checkpoint changing between the driver's replay resolution and the
     worker launch is refused before any actor starts."""
 
-    resolved = run.ResolvedOnlineRun.from_cfg(tiny_sana_online_config(tmp_path))
+    built = BuiltConfigs.from_cfg(tiny_sana_online_config(tmp_path))
+    resources = ResolvedDistributedResources.from_root(built.root)
     replay = run.ResolvedModel.from_root(
-        resolved.family,
-        resolved.built.root,
-        resolved.device,
-        precision=resolved.built.precision,
+        built.family,
+        built.root,
+        torch.device(resources.trainer_torch_device),
+        precision=built.precision,
         for_rollout=False,
     )
     (tmp_path / "sana-snapshot" / "extra-weights.bin").write_bytes(b"drift")
@@ -357,7 +355,7 @@ def test_generation_launch_inputs_reject_rollout_identity_mismatch(tmp_path) -> 
         ValueError,
         match="rollout model identity does not match the driver replay model identity",
     ):
-        resolved.ray_launch_inputs(replay)
+        RayGenerationLaunchInputs.from_run(built, resources, replay)
 
 
 def test_generation_launch_inputs_preserve_disabled_model_compile_config(tmp_path) -> None:
@@ -446,13 +444,15 @@ async def test_create_runtime_launches_resident_topology(
     async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
 
-        assert ray_run.resolved.resources.lifecycle.rollout_mode == "resident"
+        assert ray_run.resources.lifecycle.rollout_mode == "resident"
         assert runtime._session is not None
         assert runtime._session_factory is None
         assert [rank.worker_id for rank in runtime._session.rank_handles] == ["rollout-0"]
 
 
-def _on_demand_launch(tmp_path: Path) -> tuple[Any, RayGenerationLaunchInputs, RolePlacement]:
+def _on_demand_launch(
+    tmp_path: Path,
+) -> tuple[Any, RolloutWorkerConfig, RayGenerationLaunchInputs, RolePlacement]:
     """A tiny SANA run whose rollout shares the trainer's one GPU, resolved for real.
 
     The rollout bundle is a plain placement value: creating the real GPU
@@ -461,22 +461,28 @@ def _on_demand_launch(tmp_path: Path) -> tuple[Any, RayGenerationLaunchInputs, R
     placement without using it until activation.
     """
 
-    resolved = run.ResolvedOnlineRun.from_cfg(
+    built = BuiltConfigs.from_cfg(
         tiny_sana_online_config(tmp_path, overrides=("distributed.resources.rollout.num_gpus=1",))
     )
+    resources = ResolvedDistributedResources.from_root(built.root)
     replay = run.ResolvedModel.from_root(
-        resolved.family,
-        resolved.built.root,
-        resolved.device,
-        precision=resolved.built.precision,
+        built.family,
+        built.root,
+        torch.device(resources.trainer_torch_device),
+        precision=built.precision,
         for_rollout=False,
     )
     placement = RolePlacement(
         placement_group=None,
         bundle_indices=(0,),
-        expected_gpu_ids=tuple(resolved.resources.rollout_devices),
+        expected_gpu_ids=tuple(resources.rollout_devices),
     )
-    return resolved, resolved.ray_launch_inputs(replay), placement
+    return (
+        resources,
+        RolloutWorkerConfig.from_root(built.root),
+        RayGenerationLaunchInputs.from_run(built, resources, replay),
+        placement,
+    )
 
 
 @pytest.mark.asyncio
@@ -487,7 +493,7 @@ async def test_create_runtime_defers_on_demand_topology_launch(
     launches until the schedule activates it."""
 
     cuda_devices(1)
-    resolved, launch_inputs, placement = _on_demand_launch(tmp_path)
+    resources, worker, launch_inputs, placement = _on_demand_launch(tmp_path)
     launched: list[Any] = []
     real_launch = RayGenerationLauncher._launch_session
 
@@ -498,10 +504,10 @@ async def test_create_runtime_defers_on_demand_topology_launch(
     monkeypatch.setattr(RayGenerationLauncher, "_launch_session", launch)
 
     runtime = RayGenerationLauncher().create_runtime(
-        resolved.generation, launch_inputs, placement=placement
+        resources, worker, launch_inputs, placement=placement
     )
 
-    assert resolved.resources.lifecycle.rollout_mode == "on_demand"
+    assert resources.lifecycle.rollout_mode == "on_demand"
     assert runtime._session is None
     assert runtime._session_factory is not None
     assert launched == []
@@ -522,29 +528,30 @@ async def test_deferred_activation_reuses_factory_launcher(
     """
 
     cuda_devices(1)
-    resolved, launch_inputs, placement = _on_demand_launch(tmp_path)
-    calls: list[tuple[Any, RayGenerationLaunchInputs, Any]] = []
+    resources, worker, launch_inputs, placement = _on_demand_launch(tmp_path)
+    calls: list[tuple[Any, Any, RayGenerationLaunchInputs, Any]] = []
 
     async def launch_async(
         self: RayGenerationLauncher,
-        config: Any,
+        resources: Any,
+        worker: Any,
         launch_inputs: RayGenerationLaunchInputs,
         *,
         placement: Any,
     ) -> Any:
-        calls.append((config, launch_inputs, placement))
+        calls.append((resources, worker, launch_inputs, placement))
         raise RuntimeError("deferred launch stopped at the GPU boundary")
 
     monkeypatch.setattr(RayGenerationLauncher, "_launch_session_async", launch_async)
     runtime = RayGenerationLauncher().create_runtime(
-        resolved.generation, launch_inputs, placement=placement
+        resources, worker, launch_inputs, placement=placement
     )
 
     with pytest.raises(RuntimeError, match="deferred launch stopped"):
         await runtime.activate()
 
-    ((config, launched_inputs, launched_placement),) = calls
-    assert config is resolved.generation
+    ((launched_resources, launched_worker, launched_inputs, launched_placement),) = calls
+    assert launched_resources is resources and launched_worker is worker
     assert launch_inputs.launch_contract.sleep_offload is True
     assert launched_inputs is launch_inputs
     assert launched_placement is placement

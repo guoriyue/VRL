@@ -9,7 +9,7 @@ from dataclasses import replace
 from functools import partial
 
 from vrl.generation.execution.rank_group import RankGroupSpec
-from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.finalizer import RayGenerationFinalizer
@@ -69,7 +69,8 @@ class RayGenerationLauncher:
 
     def _launch_session(
         self,
-        config: RayGenerationConfig,
+        resources: ResolvedDistributedResources,
+        worker: RolloutWorkerConfig,
         launch_inputs: RayGenerationLaunchInputs,
         *,
         placement: RolePlacement,
@@ -82,15 +83,13 @@ class RayGenerationLauncher:
         the group; the owner does that once at run shutdown.
         """
 
-        worker = config.worker
-
         bundle_indices = list(placement.bundle_indices)
         # One engine per gpus_per_engine bundles; the resolver's num_engines
         # arithmetic guarantees divisibility (single-GPU engines have groups of
         # one bundle and rank ids equal engine ids). The placement owns the
         # grouping rule, so the launched fleet cannot disagree with the plan
         # about where an engine's ranks live.
-        gpus_per_engine = config.resources.rollout_gpus_per_engine
+        gpus_per_engine = resources.rollout_gpus_per_engine
         engine_count = len(placement.engine_bundle_groups(gpus_per_engine))
 
         placement_group = placement.placement_group
@@ -118,7 +117,7 @@ class RayGenerationLauncher:
                         master_port=engine_port,
                         group_rank=rank_idx,
                         group_world_size=gpus_per_engine,
-                        backend="nccl" if config.resources.rollout_devices else "gloo",
+                        backend="nccl" if resources.rollout_devices else "gloo",
                     ),
                 )
                 for engine_port in [self._find_rendezvous_port() for _ in engine_ids]
@@ -133,14 +132,14 @@ class RayGenerationLauncher:
                 worker_ids=rank_ids,
                 num_cpus=worker.cpus_per_worker,
                 # Each GPU rank owns one whole GPU; a CPU fleet grants none.
-                num_gpus=1 if config.resources.rollout_devices else 0,
+                num_gpus=1 if resources.rollout_devices else 0,
                 rpc_timeout_s=worker.worker_rpc_timeout_s,
                 operation_prefix="rollout",
                 placement_group=placement_group,
                 bundle_indices=bundle_indices,
                 startup_method="load_policy",
             )
-            self._validate_rank_gpu_ids(config.resources, actor_group.handles)
+            self._validate_rank_gpu_ids(resources, actor_group.handles)
             engines = [
                 RayGenerationEngine(
                     engine_id,
@@ -205,7 +204,8 @@ class RayGenerationLauncher:
 
     async def _launch_session_async(
         self,
-        config: RayGenerationConfig,
+        resources: ResolvedDistributedResources,
+        worker: RolloutWorkerConfig,
         launch_inputs: RayGenerationLaunchInputs,
         *,
         placement: RolePlacement,
@@ -219,14 +219,16 @@ class RayGenerationLauncher:
 
         return await asyncio.to_thread(
             self._launch_session,
-            config,
+            resources,
+            worker,
             launch_inputs,
             placement=placement,
         )
 
     def create_runtime(
         self,
-        config: RayGenerationConfig,
+        resources: ResolvedDistributedResources,
+        worker: RolloutWorkerConfig,
         launch_inputs: RayGenerationLaunchInputs,
         *,
         placement: RolePlacement | None,
@@ -243,19 +245,21 @@ class RayGenerationLauncher:
                 "distributed.resources.rollout.* (num_gpus/devices) and that the "
                 "placement group was created before launch.",
             )
-        deferred = config.resources.lifecycle.rollout_mode == "on_demand"
+        deferred = resources.lifecycle.rollout_mode == "on_demand"
         session = None
         session_factory = None
         if deferred:
             session_factory = partial(
                 self._launch_session_async,
-                config,
+                resources,
+                worker,
                 launch_inputs,
                 placement=placement,
             )
         else:
             session = self._launch_session(
-                config,
+                resources,
+                worker,
                 launch_inputs,
                 placement=placement,
             )

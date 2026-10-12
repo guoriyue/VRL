@@ -39,8 +39,10 @@ from tests.scripts.eval.fixtures import write_tiny_cosmos25_snapshot
 from tests.trainers._strategy_policies import free_port
 from vrl import run
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+from vrl.config.builders import BuiltConfigs
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.families.cosmos.predict2_5.model import (
     CosmosPredict25Model,
@@ -49,6 +51,7 @@ from vrl.models.families.cosmos.predict2_5.model import (
 )
 from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
 from vrl.models.precision import apply_float32_precision, fixed_row_linear_compute
+from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import RolloutCollector, RolloutCollectorConfig
@@ -146,20 +149,20 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
     trainer = None
     try:
         torch.manual_seed(31)
-        resolved = run.ResolvedOnlineRun.from_cfg(
-            _tiny_cosmos_config(root, rank=rank, ema=phase is not None)
-        )
-        built = resolved.built
+        built = BuiltConfigs.from_cfg(_tiny_cosmos_config(root, rank=rank, ema=phase is not None))
+        resources = ResolvedDistributedResources.from_root(built.root)
         replay = run.ResolvedModel.from_root(
-            resolved.family,
+            built.family,
             built.root,
-            resolved.device,
+            torch.device(resources.trainer_torch_device),
             precision=built.precision,
             for_rollout=False,
         )
         bundle = replay.materialize(context="cosmos cp composition")
         model = bundle.model
-        runtime = InProcessGenerationRuntime(resolved.ray_launch_inputs(replay))
+        runtime = InProcessGenerationRuntime(
+            RayGenerationLaunchInputs.from_run(built, resources, replay)
+        )
         if rank == 0:
             # The in-process policy build draws LoRA init from this process's
             # global RNG (a Ray actor would draw from its own). Load it before
@@ -178,10 +181,10 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
             name: p.detach().clone() for name, p in model.named_parameters() if p.requires_grad
         }
         collector = RolloutCollector.from_family(
-            resolved.family,
+            built.family,
             reward_runtime=RewardFunctionRuntime(IndexReward()),
             config=collector_config,
-            lifecycle=resolved.resources.lifecycle,
+            lifecycle=resources.lifecycle,
         )
         collector.set_generation_runtime(runtime)
         trainer = OnlineTrainer(

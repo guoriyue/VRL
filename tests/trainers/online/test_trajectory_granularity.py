@@ -143,7 +143,7 @@ def _trainer(
         ),
     )
     stack = bench.stack
-    built = stack.resolved.built
+    built = stack.built
     bundle = stack.trainer_bundle()
     strategy = SingleProcessStrategy()
     algorithm = AlgorithmEvaluatorPair.from_configs(

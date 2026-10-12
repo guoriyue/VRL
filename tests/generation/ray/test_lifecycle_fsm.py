@@ -829,22 +829,26 @@ async def test_async_launcher_loads_off_loop(
 
     async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         await ray_run.runtime.shutdown()
-        from vrl import run
+        import torch
 
-        resolved = ray_run.resolved
+        from vrl import run
+        from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+
+        built, resources = ray_run.built, ray_run.resources
         replay = run.ResolvedModel.from_root(
-            resolved.family,
-            resolved.built.root,
-            resolved.device,
-            precision=resolved.built.precision,
+            built.family,
+            built.root,
+            torch.device(resources.trainer_torch_device),
+            precision=built.precision,
             for_rollout=False,
         )
         launches = Trace(monkeypatch)
         launches.watch(RayGenerationLauncher, "_launch_session", "launch")
 
         session = await RayGenerationLauncher()._launch_session_async(
-            resolved.generation,
-            resolved.ray_launch_inputs(replay),
+            resources,
+            ray_run.worker,
+            RayGenerationLaunchInputs.from_run(built, resources, replay),
             placement=ray_run.placement_owner.rollout_placement,
         )
         try:

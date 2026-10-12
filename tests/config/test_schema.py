@@ -92,7 +92,7 @@ def test_rollout_worker_timeouts_default_and_accept_override() -> None:
 
 def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
     """RolloutRuntimeSection (pydantic lint boundary) and RolloutWorkerConfig (the
-    frozen runtime projection composed into RayGenerationConfig) must stay
+    frozen runtime projection the Ray launcher takes) must stay
     field-for-field identical. ``from_public_section`` builds the dataclass via
     ``cls(**section.model_dump())``, so a field on one but not the other silently
     breaks at runtime (TypeError / unfilled required field) instead of at parse.

@@ -31,10 +31,9 @@ from tests.scripts.eval.fixtures import (
     tiny_sana_ray_runtime_env,
     write_tiny_sana_snapshot,
 )
-from vrl import run as resolved_run
+from vrl.config.builders import BuiltConfigs, RewardRuntimeConfig
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
-from vrl.run import ResolvedReward
 from vrl.scripts.common import online
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
 
@@ -106,7 +105,7 @@ def _roles(monkeypatch: pytest.MonkeyPatch) -> Trace:
     roles.watch(online.GlobalRayPlacementOwner, "create", "owner.create")
     roles.watch(online.GlobalRayPlacementOwner, "shutdown", "owner.shutdown")
     roles.watch(online.RayGenerationLauncher, "create_runtime", "launch")
-    roles.watch(ResolvedReward, "build_function", "reward.build")
+    roles.watch(RewardRuntimeConfig, "build_function", "reward.build")
     roles.watch(online.RolloutCollector, "from_family", "collector.build")
     roles.watch(online.OnlineTrainer, "step", "trainer.step")
     roles.watch(StrictOnPolicyRolloutSchedule, "shutdown", "schedule.shutdown")
@@ -365,7 +364,7 @@ async def test_reference_conditioned_task_fails_before_model_or_ray_launch(
     roles = _roles(monkeypatch)
     # The guard reads the family's declared task; SANA is t2i, so the entry is
     # relabelled v2w for this one theorem (the config carries no conditioning).
-    entry = resolved_run.ResolvedOnlineRun.from_cfg(run.cfg).family
+    entry = BuiltConfigs.from_cfg(run.cfg).family
     monkeypatch.setattr(type(entry), "task", "v2w")
 
     with pytest.raises(ValueError, match=r"data\.preprocessing\.conditioning=reference_image"):
@@ -433,8 +432,8 @@ async def test_run_online_recipe_shutdowns_owner_after_success(
     # The driver's replay bundle is the real snapshot transformer, loaded once.
     assert replay_loads == [str(run.snapshot)]
     (launch,) = [args for event, args in roles.calls if event == "launch"]
-    _launcher, generation_config, launch_inputs = launch
-    assert generation_config.worker.cpus_per_worker == 0.5
+    _launcher, _resources, worker_config, launch_inputs = launch
+    assert worker_config.cpus_per_worker == 0.5
     # The launch contract carries the identity the real evidence record froze.
     (evidence,) = run.evidence()
     assert launch_inputs.launch_contract.expected_model_identity == evidence["model_identity"]

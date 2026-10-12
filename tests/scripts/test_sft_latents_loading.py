@@ -14,7 +14,7 @@ def test_zero_sft_weight_does_not_read_configured_shard(monkeypatch, tmp_path) -
         tmp_path,
         overrides=("algorithm.sft_weight=0.0", f"data.sft_latents={tmp_path / 'missing.pt'}"),
     )
-    built = tb.collector.stack.resolved.built
+    built = tb.collector.stack.built
 
     assert tb.trainer.algorithm.sft_weight == 0.0
     assert _load_sft_latents_from_config(built, sft_weight=tb.trainer.algorithm.sft_weight) is None

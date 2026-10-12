@@ -654,7 +654,7 @@ class TrainingSection(ConfigBase):
 class RolloutRuntimeSection(ConfigBase):
     """distributed.rollout: rollout runtime knobs (engine level and rank level).
 
-    reader: vrl/generation/ray/config.py RayGenerationConfig.from_root. Release
+    reader: vrl/generation/ray/config.py RolloutWorkerConfig.from_root. Release
     scheduling and colocation are NOT declared here: colocation lives in
     distributed.resources.<role>.devices (an unpinned rollout shares the trainer
     GPU), and release scheduling is derived from GPU topology. Rollout engines are
@@ -706,7 +706,7 @@ class DistributedSection(ConfigBase):
     # reader: vrl/ray/resources.py ResolvedDistributedResources.from_root(root); the
     # consuming dataclass is the section type, so pydantic validates it here.
     resources: DistributedResourceConfig | None = None
-    # reader: vrl/generation/ray/config.py RayGenerationConfig.from_root (worker
+    # reader: vrl/generation/ray/config.py RolloutWorkerConfig.from_root (worker
     # runtime knobs). Colocation lives in resources.<role>.devices.
     rollout: RolloutRuntimeSection | None = None
     # readers: vrl/trainers/distributed.py DistributedTrainingContext.from_root (rank/device)

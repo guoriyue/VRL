@@ -17,24 +17,26 @@ from omegaconf import DictConfig
 
 from vrl.algorithms.advantages import nonzero_advantage_mask
 from vrl.config.builders import BuiltConfigs
+from vrl.generation.ray.config import RolloutWorkerConfig
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
 from vrl.ray.resources import (
+    ResolvedDistributedResources,
     format_distributed_resource_plan,
 )
 from vrl.rewards import RewardRuntime
+from vrl.rewards.ray import RayRewardPlacement
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import RolloutCollector
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.core import OwnedCollection
 from vrl.rollouts.orchestration import RolloutSchedule
 from vrl.rollouts.stats import RolloutStats
-from vrl.run import (
-    ResolvedModel,
-    ResolvedOnlineRun,
-)
+from vrl.run import OnlineRunConfig, ResolvedModel
 from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 from vrl.trainers.activation_checkpointing import (
     enable_transformer_gradient_checkpointing,
@@ -733,22 +735,24 @@ class OnlineRecipeRun:
 async def run_online_recipe(cfg: DictConfig) -> None:
     """Run a family online training job through shared recipe glue."""
 
-    resolved = ResolvedOnlineRun.from_cfg(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
+    reward_config = built.reward
+    if reward_config is None:
+        raise ValueError("online recipe requires a reward section")
+    # The reward deployment is admitted before any resource resolution.
+    reward_config.require_online_training()
+    resources = ResolvedDistributedResources.from_root(built.root)
+    run_config = OnlineRunConfig.from_root(built.root)
+    worker_config = RolloutWorkerConfig.from_root(built.root)
+    collector_config = RolloutCollectorConfig.from_root(built.root)
     # Identical initialization on every rank, before any randomized model build.
-    resolved.run.initialize_process_rng()
-    built = resolved.built
-    run_config = resolved.run
-    family_entry = resolved.family
-    resources = resolved.resources
-    generation_config = resolved.generation
-    device = resolved.device
+    run_config.initialize_process_rng()
+    family_entry = built.family
+    device = torch.device(resources.trainer_torch_device)
     trainer_config = built.trainer
     if trainer_config is None:
         raise ValueError("online recipe cannot use an offline-only trainer config")
     batch_plan = trainer_config.batch_plan
-    reward_config = built.reward
-    if reward_config is None:
-        raise ValueError("online recipe requires a reward section")
     _log_rollout_memory_plan(
         batch_plan,
         samples_per_generation_batch=(
@@ -769,6 +773,8 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     resume_checkpoint = TrainingCheckpoint.load_for_resume(resume_config)
     resources.validate_schedule_mode(trainer_config.rollout_orchestration.schedule_mode)
     family_entry.validate_gpus_per_engine(resources.rollout_gpus_per_engine)
+    if resources.rollout_num_engines < 1:
+        raise ValueError("distributed.resources.rollout.num_engines must be >= 1")
     logger.info(format_distributed_resource_plan(resources))
     # Resolve the training process identity (rank/device) and fail-fast on
     # strategies the online recipe can't yet drive end-to-end, before building the
@@ -806,9 +812,11 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     # Resolve device intent before actor construction. Dedicated Ray placement
     # maps its reservation to an actor-local GPU; shared actors borrow this
     # trainer's physical device under the topology's parking lease.
-    reward_inputs = resolved.reward_inputs(trainer_device=device)
+    reward_device = resources.reward_torch_device(trainer_device=str(device))
+    reward_parking = resources.reward_parking_mechanism
     # A GPU-sharing reward must be able to park; checked before any model or Ray work.
-    reward_inputs.validate_parking()
+    if reward_parking is not None:
+        reward_config.validate_memory_parking(reward_device)
     data_config = built.root.data
     if family_entry.task in {"i2v", "v2w"}:
         preprocessing = data_config.preprocessing if data_config is not None else None
@@ -890,10 +898,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     # rollout bundles for the whole run. Both actor roles receive their resolved
     # ownership before construction; shared rewards borrow the trainer/rollout
     # GPU only through the phase parking lease.
-    placement_owner = GlobalRayPlacementOwner(
-        resources,
-        generation_config.worker,
-    )
+    placement_owner = GlobalRayPlacementOwner(resources, worker_config)
     ray = require_ray()
     lifecycle = _OnlineRecipeLifecycle(
         placement_owner=placement_owner,
@@ -915,10 +920,15 @@ async def run_online_recipe(cfg: DictConfig) -> None:
         if resources.cross_node:
             cross_node_preflight(ray, resources)
         placement_owner.create()
-        collector_config = resolved.collector
         reward_runtime = lifecycle.reward_runtime = RewardFunctionRuntime(
-            reward_inputs.build_function(
-                ray_placement=reward_inputs.actor_placement(placement_owner),
+            reward_config.build_function(
+                device=reward_device,
+                parking=reward_parking,
+                ray_placement=RayRewardPlacement.for_device(
+                    reward_device,
+                    shared=reward_parking is not None,
+                    owner=placement_owner,
+                ),
             ),
         )
         algorithm_and_evaluator = AlgorithmEvaluatorPair.from_configs(
@@ -936,10 +946,13 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             lifecycle=resources.lifecycle,
         )
         generation_launcher = RayGenerationLauncher()
-        generation_launch_inputs = resolved.ray_launch_inputs(resolved_model)
+        generation_launch_inputs = RayGenerationLaunchInputs.from_run(
+            built, resources, resolved_model
+        )
         _host_memory.log("before_rollout_backend_build")
         generation_runtime = generation_launcher.create_runtime(
-            generation_config,
+            resources,
+            worker_config,
             generation_launch_inputs,
             placement=placement_owner.rollout_placement,
         )

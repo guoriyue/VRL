@@ -34,7 +34,7 @@ def test_collector_generates_and_scores_through_the_real_family_executor(
             MultiReward.from_dict({"image_sharpness": 1.0}, device="cpu"),
         ),
         config=stack.collector_config(),
-        lifecycle=stack.resolved.resources.lifecycle,
+        lifecycle=stack.resources.lifecycle,
     )
     collector.set_generation_runtime(stack.runtime)
     stats = RolloutStats()

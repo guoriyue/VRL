@@ -50,6 +50,28 @@ class RayRewardPlacement:
     node_id: str | None = None
     gpu_fraction: float = 1.0
 
+    @classmethod
+    def for_device(cls, device: str, *, shared: bool, owner: Any) -> RayRewardPlacement:
+        """Bind the reward's Ray actors to the run's acquired resource ownership.
+
+        A GPU-sharing reward borrows the trainer's physical card; any other
+        reward takes the reservation the run-level placement group made for it.
+        """
+
+        if device.startswith("cuda") and shared:
+            import torch
+
+            # CUDA ordinals in a driver mask are not Ray's physical GPU IDs.
+            device_index = torch.device(device).index
+            ordinal = torch.cuda.current_device() if device_index is None else device_index
+            mask = os.environ.get("CUDA_VISIBLE_DEVICES")
+            physical_gpu = int(mask.split(",")[ordinal]) if mask else ordinal
+            return cls(
+                shared_gpu_id=physical_gpu,
+                node_id=str(require_ray().get_runtime_context().get_node_id()),
+            )
+        return cls(placement=owner.reward_placement)
+
 
 class RayRewardError(TerminalRuntimeError):
     """Remote state is uncertain; preserve artifacts until actor shutdown."""

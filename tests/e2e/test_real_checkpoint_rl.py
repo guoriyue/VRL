@@ -29,11 +29,11 @@ from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rewards.base import RewardFunction
+from vrl.rewards.ray import RayRewardPlacement
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rewards.types import RewardOutput, RewardSample
 from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.run import ResolvedReward
 from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 from vrl.trainers.data.prompts import PromptExample
 from vrl.trainers.diagnostics import trainable_state_digest
@@ -586,20 +586,19 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         else:
             executor = _build_executor(entry, bundle.model, cfg)
             ray_placement = None
-            reward_inputs = ResolvedReward.from_plan(
-                built.reward, resources, trainer_device=device
-            )
+            reward_device = resources.reward_torch_device(trainer_device=str(device))
+            reward_parking = resources.reward_parking_mechanism
             if case.use_config_reward and any(
                 inference.kind == "ray" for inference in built.reward.inference_configs.values()
             ):
-                from vrl.generation.ray.config import RayGenerationConfig
+                from vrl.generation.ray.config import RolloutWorkerConfig
                 from vrl.ray.dependencies import require_ray
                 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
                 from vrl.scripts.common.online import _RayClusterSession
 
                 reward_placement_owner = GlobalRayPlacementOwner(
                     resources,
-                    RayGenerationConfig.from_root(built.root, resources=resources).worker,
+                    RolloutWorkerConfig.from_root(built.root),
                 )
                 ray = require_ray()
                 reward_ray_session = _RayClusterSession.connect(
@@ -615,9 +614,15 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 if resources.cross_node:
                     cross_node_preflight(ray, resources)
                 reward_placement_owner.create()
-                ray_placement = reward_inputs.actor_placement(reward_placement_owner)
+                ray_placement = RayRewardPlacement.for_device(
+                    reward_device,
+                    shared=reward_parking is not None,
+                    owner=reward_placement_owner,
+                )
             reward_fn = (
-                reward_inputs.build_function(ray_placement=ray_placement)
+                built.reward.build_function(
+                    device=reward_device, parking=reward_parking, ray_placement=ray_placement
+                )
                 if case.use_config_reward
                 else _IndexReward()
             )

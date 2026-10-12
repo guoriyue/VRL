@@ -59,7 +59,7 @@ def _sft_trainer(
         tmp_path,
         overrides=(f"algorithm.sft_weight={sft_weight}", f"data.sft_latents={shard}"),
     )
-    built = tb.collector.stack.resolved.built
+    built = tb.collector.stack.built
     base = tb.trainer
     trainer = OnlineTrainer(
         algorithm=base.algorithm,

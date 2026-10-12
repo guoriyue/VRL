@@ -40,7 +40,6 @@ from vrl.config.loading import load_config
 from vrl.generation.types import GenerationInput
 from vrl.models.families.semantics import task_modality
 from vrl.rewards.types import RewardOutput, RewardSample
-from vrl.run import ResolvedReward
 from vrl.scripts.eval._device import resolve_eval_device
 
 logger = logging.getLogger(__name__)
@@ -103,6 +102,7 @@ def preflight_rewards(
         RolloutResourceConfig,
     )
     from vrl.rewards.functions.registry import get_reward
+    from vrl.rewards.ray import RayRewardPlacement
     from vrl.rewards.runtime import RewardFunctionRuntime
     from vrl.rollouts.collector.config import RolloutCollectorConfig
     from vrl.rollouts.collector.requests import GenerationRequestBuilder
@@ -156,7 +156,6 @@ def preflight_rewards(
         session = None
         owner = None
         try:
-            reward = ResolvedReward(config=built.reward, device=str(device), parking=None)
             placement = None
             if any(
                 inference.kind == "ray" for inference in built.reward.inference_configs.values()
@@ -208,9 +207,13 @@ def preflight_rewards(
                     local_gpu_ids=selected,
                 )
                 owner.create()
-                placement = reward.actor_placement(owner)
-            reward.validate_parking()
-            runtime = RewardFunctionRuntime(reward.build_function(ray_placement=placement))
+                # The probe owns its reward device outright: nothing parks.
+                placement = RayRewardPlacement.for_device(str(device), shared=False, owner=owner)
+            runtime = RewardFunctionRuntime(
+                built.reward.build_function(
+                    device=str(device), parking=None, ray_placement=placement
+                )
+            )
             await runtime.preflight()
             await runtime.activate()
             return await runtime.score(tuple(samples))

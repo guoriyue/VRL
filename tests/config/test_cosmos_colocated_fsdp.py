@@ -2,9 +2,10 @@
 
 import pytest
 
+from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
-from vrl.run import ResolvedOnlineRun
+from vrl.ray.resources import ResolvedDistributedResources
 
 PRESET = "experiment/cosmos_predict2_5/online_grpo_kling_video_reward_colocated_fsdp_4x_l40s"
 
@@ -30,7 +31,7 @@ def test_four_card_preset_preserves_global_recipe_budget():
 
 @pytest.mark.parametrize("rank", range(4))
 def test_four_card_preset_resolves_rank_local_phase_owners(rank):
-    resolved = ResolvedOnlineRun.from_cfg(
+    built = BuiltConfigs.from_cfg(
         load_config(
             PRESET,
             overrides=[
@@ -38,7 +39,8 @@ def test_four_card_preset_resolves_rank_local_phase_owners(rank):
             ],
         )
     )
-    resources = resolved.resources
+    resources = ResolvedDistributedResources.from_root(built.root)
+    resources = resources
     assert tuple(resources.trainer_devices) == (rank,)
     assert tuple(resources.rollout_devices) == (rank,)
     # The unpinned Kling reward follows the rank's own card: no reservation,

@@ -50,31 +50,36 @@ class RaySanaRuntime:
     """A launched real Ray generation runtime and what it was launched from."""
 
     runtime: Any
-    resolved: Any
+    built: Any
+    resources: Any
+    worker: Any
     placement_owner: Any
     pipeline: Any
 
     def request(self, prompts: list[str], *, group_size: int = 2, **kwargs: Any) -> Any:
         """A real generation request for ``prompts``, built by the collector's builder."""
 
+        from vrl.rollouts.collector.config import RolloutCollectorConfig
         from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
         builder = GenerationRequestBuilder(
-            entry=self.resolved.family, config=self.resolved.collector
+            entry=self.built.family, config=RolloutCollectorConfig.from_root(self.built.root)
         )
         return builder.build(prompts, group_size, **kwargs).request
 
     def trainable_state(self) -> dict[str, Any]:
         """The trainer's real weight-sync payload for this run's policy."""
 
+        import torch
+
         from vrl import run
         from vrl.trainers.strategy import SingleProcessStrategy
 
         replay = run.ResolvedModel.from_root(
-            self.resolved.family,
-            self.resolved.built.root,
-            self.resolved.device,
-            precision=self.resolved.built.precision,
+            self.built.family,
+            self.built.root,
+            torch.device(self.resources.trainer_torch_device),
+            precision=self.built.precision,
             for_rollout=False,
         )
         bundle = replay.materialize(context="ray test weight payload")
@@ -96,10 +101,16 @@ async def ray_sana_runtime(
     the runtime is shut down (its actors killed) and the placement released.
     """
 
+    import torch
+
     from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
     from vrl import run
+    from vrl.config.builders import BuiltConfigs
+    from vrl.generation.ray.config import RolloutWorkerConfig
+    from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
     from vrl.generation.ray.launcher import RayGenerationLauncher
     from vrl.ray.placement import GlobalRayPlacementOwner
+    from vrl.ray.resources import ResolvedDistributedResources
 
     cfg = tiny_sana_online_config(
         tmp_path,
@@ -108,25 +119,33 @@ async def ray_sana_runtime(
     )
     pipeline = TinySanaPipeline()
     pipeline.install(monkeypatch, snapshot)
-    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
+    resources = ResolvedDistributedResources.from_root(built.root)
+    worker = RolloutWorkerConfig.from_root(built.root)
     replay = run.ResolvedModel.from_root(
-        resolved.family,
-        resolved.built.root,
-        resolved.device,
-        precision=resolved.built.precision,
+        built.family,
+        built.root,
+        torch.device(resources.trainer_torch_device),
+        precision=built.precision,
         for_rollout=False,
     )
-    owner = GlobalRayPlacementOwner(resolved.resources, resolved.generation.worker)
+    owner = GlobalRayPlacementOwner(resources, worker)
     owner.create()
     try:
         runtime = RayGenerationLauncher().create_runtime(
-            resolved.generation,
-            resolved.ray_launch_inputs(replay),
+            resources,
+            worker,
+            RayGenerationLaunchInputs.from_run(built, resources, replay),
             placement=owner.rollout_placement,
         )
         try:
             yield RaySanaRuntime(
-                runtime=runtime, resolved=resolved, placement_owner=owner, pipeline=pipeline
+                runtime=runtime,
+                built=built,
+                resources=resources,
+                worker=worker,
+                placement_owner=owner,
+                pipeline=pipeline,
             )
         finally:
             # A test that already drove the runtime to TERMINATED has nothing

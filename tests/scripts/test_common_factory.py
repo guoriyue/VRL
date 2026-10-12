@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import torch
@@ -18,7 +19,6 @@ from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.run import ResolvedReward
 from vrl.scripts.common.factory import AlgorithmEvaluatorPair
 
 
@@ -212,6 +212,17 @@ def test_chunk_autoregressive_factory_rejects_full_sequence_sft_regularizer() ->
         )
 
 
+def _build_reward_function(reward: Any, root: Any, ray_placement: Any = None) -> Any:
+    """Build ``reward`` as the online recipe does for a cuda:0 trainer of ``root``."""
+
+    resources = ResolvedDistributedResources.from_root(root)
+    return reward.build_function(
+        device=resources.reward_torch_device(trainer_device="cuda:0"),
+        parking=resources.reward_parking_mechanism,
+        ray_placement=ray_placement,
+    )
+
+
 def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     """PickScore is logged on CPU but contributes zero optimization weight."""
     cfg = load_config("experiment/sana/online_grpo_aesthetic")
@@ -219,11 +230,11 @@ def test_sana_aesthetic_keeps_cpu_observation_only_pickscore() -> None:
     built = BuiltConfigs.from_cfg(cfg)
     from vrl.rewards.ray import RayRewardPlacement
 
-    reward = ResolvedReward.from_plan(
+    reward = _build_reward_function(
         built.reward,
-        ResolvedDistributedResources.from_root(parse_config(cfg)),
-        trainer_device="cuda:0",
-    ).build_function(ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"))
+        parse_config(cfg),
+        ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"),
+    )
 
     assert [(name, weight) for name, weight, _ in reward.rewards] == [
         ("aesthetic", 1.0),
@@ -304,11 +315,11 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
 
     assert built.resume.checkpoint_path is None
     assert cfg.model.use_lora is False
-    reward = ResolvedReward.from_plan(
+    reward = _build_reward_function(
         built.reward,
-        ResolvedDistributedResources.from_root(parse_config(cfg)),
-        trainer_device="cuda:0",
-    ).build_function(ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"))
+        parse_config(cfg),
+        ray_placement=RayRewardPlacement(shared_gpu_id=0, node_id="driver"),
+    )
     aesthetic_config = reward.rewards[0][2].scorer._launch.component_config
     pickscore_config = reward.rewards[1][2].scorer._launch.component_config
     assert aesthetic_config["model_revision"] == cfg.reward.kwargs.aesthetic.model_revision
@@ -348,11 +359,7 @@ def test_sana_direct_tool_override_changes_storage_only() -> None:
 def test_reward_factory_rejects_an_all_zero_objective() -> None:
     """Checks observation-only components cannot replace the training objective."""
     with pytest.raises(ValueError, match="At least one reward component"):
-        ResolvedReward(
-            config=_built_reward({"pickscore": 0.0}, {}).reward,
-            device="cpu",
-            parking=None,
-        ).build_function()
+        _built_reward({"pickscore": 0.0}, {}).reward.build_function(device="cpu", parking=None)
 
 
 def _shared_reward_cfg(component: str) -> object:
@@ -390,52 +397,39 @@ def test_reward_config_rejects_yaml_lifecycle_override(component_kwargs) -> None
         RewardRuntimeConfig.from_cfg(cfg)
 
 
-def test_reward_inputs_derive_device_from_resource_topology() -> None:
+def test_reward_device_and_parking_derive_from_resource_topology() -> None:
     """The resource plan, not a caller device, is the execution-device source."""
-    cfg = _shared_reward_cfg("aesthetic")
-    shared = ResolvedReward.from_plan(
-        _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}).reward,
-        ResolvedDistributedResources.from_root(parse_config(cfg)),
-    )
-    assert shared.device == "cuda:0"
-    assert shared.parking == "cumem"
+    shared = ResolvedDistributedResources.from_root(parse_config(_shared_reward_cfg("aesthetic")))
+    assert shared.reward_torch_device() == "cuda:0"
+    assert shared.reward_parking_mechanism == "cumem"
 
     # A torchrun rank scores on logical cuda:0 while Ray keeps the physical ID.
     rank_local = _shared_reward_cfg("aesthetic")
     rank_local.distributed.resources.visible_devices = [2]
     rank_local.distributed.resources.trainer.devices = [2]
     rank_local.distributed.resources.rollout.devices = [2]
-    rank_local_reward = ResolvedReward.from_plan(
-        _built_reward({"aesthetic": 1.0}, {"aesthetic": {}}).reward,
-        ResolvedDistributedResources.from_root(parse_config(rank_local)),
-        trainer_device="cuda:0",
-    )
-    assert rank_local_reward.device == "cuda:0"
-    assert rank_local_reward.parking == "cumem"
+    rank_local_plan = ResolvedDistributedResources.from_root(parse_config(rank_local))
+    assert rank_local_plan.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
+    assert rank_local_plan.reward_parking_mechanism == "cumem"
 
     # HTTP components own their deployment externally: the plan resolved from
     # the same config reserves them no local GPU, so nothing parks.
-    http_inference = {
+    http_cfg = _shared_reward_cfg("unified_reward_video")
+    http_cfg.distributed.resources.visible_devices = [2]
+    http_cfg.distributed.resources.trainer.devices = [2]
+    http_cfg.distributed.resources.rollout.devices = [2]
+    http_cfg.reward.kwargs = {}
+    http_cfg.reward.inference = {
         "unified_reward_video": {
             "kind": "http",
             "endpoint": "http://127.0.0.1:8300",
             "expected_model": "unified-reward-robotics",
         },
     }
-    http_cfg = _shared_reward_cfg("unified_reward_video")
-    http_cfg.distributed.resources.visible_devices = [2]
-    http_cfg.distributed.resources.trainer.devices = [2]
-    http_cfg.distributed.resources.rollout.devices = [2]
-    http_cfg.reward.kwargs = {}
-    http_cfg.reward.inference = http_inference
-    http_reward = ResolvedReward.from_plan(
-        _built_reward({"unified_reward_video": 1.0}, {}, http_inference).reward,
-        ResolvedDistributedResources.from_root(parse_config(http_cfg)),
-        trainer_device="cuda:0",
-    )
+    http_plan = ResolvedDistributedResources.from_root(parse_config(http_cfg))
     # The HTTP client runs in this process and reserves no local GPU.
-    assert http_reward.device == "cpu"
-    assert http_reward.parking is None
+    assert http_plan.reward_torch_device(trainer_device="cuda:0") == "cpu"
+    assert http_plan.reward_parking_mechanism is None
 
     cpu_cfg = OmegaConf.create(
         {
@@ -450,12 +444,8 @@ def test_reward_inputs_derive_device_from_resource_topology() -> None:
         },
     )
     # A CPU-only reward class scores on CPU even when the trainer runs on CUDA.
-    cpu_reward = ResolvedReward.from_plan(
-        _built_reward({"ocr": 1.0}, {"ocr": {}}).reward,
-        ResolvedDistributedResources.from_root(parse_config(cpu_cfg)),
-        trainer_device="cuda:0",
-    )
-    assert cpu_reward.device == "cpu"
+    cpu_plan = ResolvedDistributedResources.from_root(parse_config(cpu_cfg))
+    assert cpu_plan.reward_torch_device(trainer_device="cuda:0") == "cpu"
 
 
 def test_multi_gpu_engine_gate_requires_family_capability() -> None:
@@ -485,11 +475,7 @@ def test_ray_rewards_do_not_materialize_transport_files_in_the_run_output(tmp_pa
     )
     cfg.distributed.resources.visible_devices = [0]
     built = BuiltConfigs.from_cfg(cfg)
-    reward = ResolvedReward.from_plan(
-        built.reward,
-        ResolvedDistributedResources.from_root(parse_config(cfg)),
-        trainer_device="cuda:0",
-    ).build_function()
+    reward = _build_reward_function(built.reward, parse_config(cfg))
     component = reward.rewards[0][2]
     assert isinstance(component.scorer, RayRewardScorer)
     assert isinstance(component.artifact_store, InMemoryRewardArtifactStore)
@@ -497,7 +483,9 @@ def test_ray_rewards_do_not_materialize_transport_files_in_the_run_output(tmp_pa
 
 
 def test_online_reward_transport_is_rejected_before_resource_resolution(monkeypatch):
-    from vrl.run import ResolvedOnlineRun
+    import asyncio
+
+    from vrl.scripts.common.online import run_online_recipe
 
     cfg = load_config(
         "experiment/sana/online_grpo_pickscore_pickapic_sfw",
@@ -509,7 +497,7 @@ def test_online_reward_transport_is_rejected_before_resource_resolution(monkeypa
 
     monkeypatch.setattr(ResolvedDistributedResources, "from_root", unexpected_resources)
     with pytest.raises(ValueError, match="in_process is not admitted for online training"):
-        ResolvedOnlineRun.from_cfg(cfg)
+        asyncio.run(run_online_recipe(cfg))
     # Offline diagnostics can still resolve an in-process, zero-weight observer.
     offline = _built_reward(
         {"image_sharpness": 0}, {}, {"image_sharpness": {"kind": "in_process"}}

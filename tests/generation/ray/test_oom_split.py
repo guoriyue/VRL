@@ -227,7 +227,7 @@ def _one_engine_of_every_rank(run: RaySanaRuntime) -> RayGenerationExecutor:
     engine = RayGenerationEngine("engine", [e.primary for e in session.executor.engines])
     return RayGenerationExecutor(
         engines=[engine],
-        gatherer=run.resolved.family.new_gatherer(),
+        gatherer=run.built.family.new_gatherer(),
         actor_dispatcher=RayActorDispatcher(("engine",)),
         generation_stall_timeout_s=30.0,
     )

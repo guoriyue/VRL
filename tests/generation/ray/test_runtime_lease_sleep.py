@@ -40,12 +40,17 @@ import vrl.generation.ray.session as session_module
 from tests.rollouts.collector._helpers import Trace
 from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
 from vrl import run
+from vrl.config.builders import BuiltConfigs
+from vrl.generation.ray.config import RolloutWorkerConfig
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import GlobalRayPlacementOwner
+from vrl.ray.resources import ResolvedDistributedResources
+from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trainers.strategy import SingleProcessStrategy
 from vrl.utils.deadline import OperationTimeout
@@ -58,12 +63,12 @@ _TWO_ENGINES = ("distributed.resources.rollout.num_engines=2",)
 class _OnDemand:
     runtime: RayGenerationRuntime
     launcher: RayGenerationLauncher
-    resolved: Any
+    built: Any
     replay: Any
 
     def request(self, prompts: list[str], **kwargs: Any) -> Any:
         builder = GenerationRequestBuilder(
-            entry=self.resolved.family, config=self.resolved.collector
+            entry=self.built.family, config=RolloutCollectorConfig.from_root(self.built.root)
         )
         return builder.build(prompts, 2, **kwargs).request
 
@@ -106,23 +111,26 @@ async def _on_demand(
         overrides=("distributed.rollout.cpus_per_worker=0.5", *overrides),
     )
     TinySanaPipeline().install(monkeypatch, snapshot)
-    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
+    resources = ResolvedDistributedResources.from_root(built.root)
+    worker_config = RolloutWorkerConfig.from_root(built.root)
     replay = run.ResolvedModel.from_root(
-        resolved.family,
-        resolved.built.root,
-        resolved.device,
-        precision=resolved.built.precision,
+        built.family,
+        built.root,
+        torch.device(resources.trainer_torch_device),
+        precision=built.precision,
         for_rollout=False,
     )
-    owner = GlobalRayPlacementOwner(resolved.resources, resolved.generation.worker)
+    owner = GlobalRayPlacementOwner(resources, worker_config)
     owner.create()
     launcher = RayGenerationLauncher()
-    launch_inputs = resolved.ray_launch_inputs(replay)
+    launch_inputs = RayGenerationLaunchInputs.from_run(built, resources, replay)
 
     async def launch_session() -> RayGenerationSession:
         # Looked up at call time, so a test may gate or fail the real launch.
         return await launcher._launch_session_async(
-            resolved.generation,
+            resources,
+            worker_config,
             launch_inputs,
             placement=owner.rollout_placement,
         )
@@ -133,7 +141,7 @@ async def _on_demand(
         initial_policy_version=launch_inputs.launch_contract.policy_version,
     )
     try:
-        yield _OnDemand(runtime=runtime, launcher=launcher, resolved=resolved, replay=replay)
+        yield _OnDemand(runtime=runtime, launcher=launcher, built=built, replay=replay)
     finally:
         with contextlib.suppress(BaseException):
             await runtime.shutdown()

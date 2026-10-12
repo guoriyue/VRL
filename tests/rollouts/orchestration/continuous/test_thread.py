@@ -44,7 +44,7 @@ from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.runtime import RewardFunctionRuntime
-from vrl.rollouts.collector import RolloutCollector
+from vrl.rollouts.collector import RolloutCollector, RolloutCollectorConfig
 from vrl.rollouts.orchestration.continuous.thread import ContinuousRolloutThread
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.trainers.strategy import SingleProcessStrategy
@@ -130,7 +130,7 @@ def _owner(
             wait_timeout_s=5.0,
             queue_poll_interval_s=0.001,
             fail_fast_errors=2,
-            versioned_weight_sync=bench.stack.resolved.built.trainer.versioned_weight_sync,
+            versioned_weight_sync=bench.stack.built.trainer.versioned_weight_sync,
         ),
     )
 
@@ -262,7 +262,7 @@ async def test_version_slots_skip_drain_but_still_gate_new_admission(
 ) -> None:
     reward = _GatedReward()
     bench, trainer = await _stack(monkeypatch, tmp_path, reward=reward, non_draining=True)
-    assert bench.stack.resolved.built.trainer.versioned_weight_sync is True
+    assert bench.stack.built.trainer.versioned_weight_sync is True
     owner = _owner(bench, trainer)
 
     try:
@@ -386,26 +386,28 @@ async def _ray_owner(
     ``RayGenerationRuntime`` (real launcher, placement group and workers)."""
 
     async with ray_sana_runtime(monkeypatch, tmp_path, snapshot) as ray_run:
-        resolved = ray_run.resolved
+        built, resources = ray_run.built, ray_run.resources
         reward = IndexReward()
         collector = RolloutCollector.from_family(
-            resolved.family,
+            built.family,
             reward_runtime=RewardFunctionRuntime(reward),
-            config=resolved.collector,
-            lifecycle=resolved.resources.lifecycle,
+            config=RolloutCollectorConfig.from_root(built.root),
+            lifecycle=resources.lifecycle,
         )
         collector.set_generation_runtime(ray_run.runtime)
         trace = Trace(monkeypatch)
         trace.watch(collector, "shutdown", "collector_shutdown")
         replay = run.ResolvedModel.from_root(
-            resolved.family,
-            resolved.built.root,
-            resolved.device,
-            precision=resolved.built.precision,
+            built.family,
+            built.root,
+            torch.device(resources.trainer_torch_device),
+            precision=built.precision,
             for_rollout=False,
         )
         bench = CollectorBench(
-            stack=TinySanaStack(resolved=resolved, replay=replay, runtime=ray_run.runtime),
+            stack=TinySanaStack(
+                built=built, resources=resources, replay=replay, runtime=ray_run.runtime
+            ),
             collector=collector,
             runtime=ray_run.runtime,
             reward=reward,

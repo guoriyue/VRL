@@ -184,7 +184,7 @@ def real_trainer(
         overrides=overrides,
     )
     stack = bench.stack
-    built = stack.resolved.built
+    built = stack.built
     bundle = stack.trainer_bundle()
     strategy = strategy if strategy is not None else SingleProcessStrategy()
     pair = AlgorithmEvaluatorPair.from_configs(

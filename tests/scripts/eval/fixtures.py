@@ -388,20 +388,21 @@ def tiny_sana_ray_cluster(snapshot: Path) -> Iterator[Any]:
 
 @dataclass(frozen=True, slots=True)
 class TinySanaStack:
-    """A resolved tiny SANA online run and an in-process generation runtime over it."""
+    """A tiny SANA online run, its resource plan and an in-process generation runtime."""
 
-    resolved: Any
+    built: Any
+    resources: Any
     replay: Any
     runtime: Any
 
     @property
     def family(self) -> Any:
-        return self.resolved.family
+        return self.built.family
 
     def collector_config(self) -> Any:
         from vrl.rollouts.collector import RolloutCollectorConfig
 
-        return RolloutCollectorConfig.from_root(self.resolved.built.root)
+        return RolloutCollectorConfig.from_root(self.built.root)
 
     def trainer_bundle(self) -> Any:
         """The trainer-side policy: the run's replay bundle, built for real on CPU."""
@@ -421,21 +422,28 @@ def tiny_sana_stack(
 
     from tests.generation._in_process_runtime import InProcessGenerationRuntime
     from vrl import run
+    from vrl.config.builders import BuiltConfigs
+    from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+    from vrl.ray.resources import ResolvedDistributedResources
 
     cfg = tiny_sana_online_config(tmp_path, overrides=overrides)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
-    resolved = run.ResolvedOnlineRun.from_cfg(cfg)
+    built = BuiltConfigs.from_cfg(cfg)
+    resources = ResolvedDistributedResources.from_root(built.root)
     replay = run.ResolvedModel.from_root(
-        resolved.family,
-        resolved.built.root,
-        resolved.device,
-        precision=resolved.built.precision,
+        built.family,
+        built.root,
+        torch.device(resources.trainer_torch_device),
+        precision=built.precision,
         for_rollout=False,
     )
     return TinySanaStack(
-        resolved=resolved,
+        built=built,
+        resources=resources,
         replay=replay,
-        runtime=InProcessGenerationRuntime(resolved.ray_launch_inputs(replay)),
+        runtime=InProcessGenerationRuntime(
+            RayGenerationLaunchInputs.from_run(built, resources, replay)
+        ),
     )
 
 

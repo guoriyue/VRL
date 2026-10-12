@@ -230,7 +230,7 @@ def real_collector(
         config=stack.collector_config(),
         # A test passes a plan to model a shared-GPU topology; the run's own
         # plan is the tiny CPU run's disjoint one.
-        lifecycle=lifecycle or stack.resolved.resources.lifecycle,
+        lifecycle=lifecycle or stack.resources.lifecycle,
     )
     if attach_runtime:
         collector.set_generation_runtime(stack.runtime)

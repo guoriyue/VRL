@@ -93,7 +93,7 @@ def _trainer(
         ),
     )
     stack = bench.stack
-    built = stack.resolved.built
+    built = stack.built
     # Same adapter initialization in every process; a rank that does not
     # materialize weights receives the primary rank's through the strategy.
     torch.manual_seed(0)
