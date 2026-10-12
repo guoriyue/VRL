@@ -612,7 +612,7 @@ async def test_weight_ack_timeout_keeps_previous_version_and_force_kills(
         # Launch shares this RPC budget with the workers' policy load, so the
         # deadline is tightened only for the next install; the real worker
         # cannot ACK inside it.
-        session.weight_sync.worker_rpc_timeout_s = 1e-6
+        session.worker_rpc_timeout_s = 1e-6
         barrier = Trace(monkeypatch)
         barrier.watch(local_ray, "get", "ray.get")
 

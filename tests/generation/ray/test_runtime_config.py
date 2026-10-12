@@ -186,7 +186,7 @@ async def test_placement_and_launcher_consume_the_same_worker_snapshot(
         assert launch["rpc_timeout_s"] == worker.worker_rpc_timeout_s
         assert launch["operation_prefix"] == "rollout"
         assert session.executor.generation_stall_timeout_s == worker.generation_stall_timeout_s
-        assert session.executor.actor_dispatcher is session.weight_sync.actor_dispatcher
+        assert session.worker_rpc_timeout_s == worker.worker_rpc_timeout_s
 
 
 @pytest.mark.asyncio

@@ -22,7 +22,6 @@ import vrl.ray.actor_pool as actor_pool_module
 from tests.generation.ray._helpers import RaySanaRuntime, install_slow_workers, ray_sana_runtime
 from vrl.generation.execution.types import GenerationBatchEnvelope
 from vrl.generation.ray.engine import RayGenerationEngine
-from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.ray.actor_pool import RayActorJob
 from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.utils.lifecycle import RuntimePhase
@@ -127,7 +126,7 @@ async def test_remote_update_puts_the_state_once_for_every_engine(
         _record(monkeypatch, local_ray, "put", puts)
         submissions = _record_submissions(monkeypatch)
 
-        await session.weight_sync.push_to_rollout_engines(payload, policy_version=4)
+        await session.update_weights(payload, policy_version=4)
 
         ((put_args, _),) = puts
         assert put_args[0] is payload
@@ -158,17 +157,13 @@ async def test_remote_update_timeout_rejects_partial_ack_and_cancels_every_ref(
         # Another caller holds rollout-1's actor with a long generation, so its
         # install queues behind it while rollout-0 acknowledges.
         busy = stalled.ranks[0].actor.execute_batch.remote(_envelope(_busy_request(ray_run)))
-        sync = RayGenerationWeightSync(
-            session.engines,
-            actor_dispatcher=session.executor.actor_dispatcher,
-            worker_rpc_timeout_s=0.5,
-        )
+        session.worker_rpc_timeout_s = 0.5
         submissions = _record_submissions(monkeypatch)
         cancelled: list[Any] = []
         _record(monkeypatch, local_ray, "cancel", cancelled)
 
         with pytest.raises(RayOperationTimeout, match=r"rollout\.weight_sync"):
-            await sync.push_to_rollout_engines(ray_run.trainable_state(), policy_version=7)
+            await session.update_weights(ray_run.trainable_state(), policy_version=7)
 
         refs = {engine: ref for engine, _, _, ref in submissions}
         assert local_ray.get(refs["rollout-0"], timeout=30) == 7
@@ -199,14 +194,10 @@ async def test_weight_sync_gets_a_full_deadline_after_shared_worker_admission(
         while "execute_batch" not in _methods(submissions):
             await asyncio.sleep(0.01)
 
-        sync = RayGenerationWeightSync(
-            session.engines,
-            actor_dispatcher=session.executor.actor_dispatcher,
-            worker_rpc_timeout_s=0.3,
-        )
+        session.worker_rpc_timeout_s = 0.3
         started = time.monotonic()
         update = asyncio.create_task(
-            sync.push_to_rollout_engines(ray_run.trainable_state(), policy_version=3)
+            session.update_weights(ray_run.trainable_state(), policy_version=3)
         )
         await asyncio.sleep(0.5)
 

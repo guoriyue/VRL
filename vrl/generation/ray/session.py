@@ -8,9 +8,10 @@ from typing import Any
 
 from vrl.generation.execution.types import WorkerMemoryParkingSnapshot
 from vrl.generation.ray.executor import RayGenerationExecutor
-from vrl.generation.ray.weight_sync import RayGenerationWeightSync
+from vrl.ray.actor_pool import RayActorJob
 from vrl.ray.dependencies import kill_actors, kill_failures_error, require_ray
-from vrl.utils.deadline import OperationDeadline
+from vrl.utils.deadline import OperationDeadline, require_timeout
+from vrl.utils.validation import require_int
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +30,7 @@ class RayGenerationSession:
 
     ``RayGenerationRuntime`` decides when operations are admitted, which failure
     is terminal, and whether cleanup is graceful or forceful. This object holds
-    the two operation objects of one launched fleet and, read off the executor,
-    the actors to close. Engines are the operation unit (dispatch, weight sync,
+    the executor of one launched fleet and, read off it, the actors to close. Engines are the operation unit (dispatch, weight sync,
     parking); their rank actors are the lifecycle unit (kill, liveness,
     graceful release).
     """
@@ -38,10 +38,14 @@ class RayGenerationSession:
     def __init__(
         self,
         executor: RayGenerationExecutor,
-        weight_sync: RayGenerationWeightSync,
+        *,
+        worker_rpc_timeout_s: float,
     ) -> None:
         self.executor = executor
-        self.weight_sync = weight_sync
+        self.worker_rpc_timeout_s = require_timeout(
+            worker_rpc_timeout_s,
+            name="worker_rpc_timeout_s",
+        )
         # Own copies: shutdown empties them as actors die, which must not
         # change what the executor dispatches over.
         self.engines = list(executor.engines)
@@ -52,9 +56,36 @@ class RayGenerationSession:
         self._force_close = False
 
     async def update_weights(self, trainable_state: Any, policy_version: int) -> None:
-        await self.weight_sync.push_to_rollout_engines(
-            trainable_state,
-            policy_version,
+        """Broadcast ``update_weights`` to every rank of every generation engine.
+
+        The engine call fans out to all its ranks and completes when every rank
+        has installed the payload; a rank failure fails the whole sync.
+        """
+
+        require_int(policy_version, path="policy_version", minimum=0)
+        engines = self.executor.engines
+        if not engines:
+            return
+        # Serialize the (potentially large) state dict once into the object
+        # store and hand every rank the same ObjectRef. Passing the dict
+        # straight to each actor.update_weights.remote(...) makes Ray
+        # re-serialize and store one copy per rank, so weight-sync cost grew
+        # linearly in fleet size for identical data. Ray auto-dereferences
+        # the ref into the real dict before the rank method runs.
+        shared_state_ref = require_ray().put(trainable_state)
+        await self.executor.actor_dispatcher.run(
+            [
+                RayActorJob(
+                    job_index=job_index,
+                    worker_id=engine.engine_id,
+                    remote_method=engine.remote("update_weights"),
+                    payload=shared_state_ref,
+                    keyword_args={"policy_version": policy_version},
+                )
+                for job_index, engine in enumerate(engines)
+            ],
+            operation="rollout.weight_sync",
+            call_timeout_s=self.worker_rpc_timeout_s,
         )
 
     async def sleep_engines(self) -> tuple[WorkerMemoryParkingSnapshot, ...]:

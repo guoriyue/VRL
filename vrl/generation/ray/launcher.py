@@ -16,7 +16,6 @@ from vrl.generation.ray.finalizer import RayGenerationFinalizer
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
-from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_group import RayActorGroup, RayActorHandle
 from vrl.ray.actor_pool import RayActorDispatcher
@@ -182,12 +181,7 @@ class RayGenerationLauncher:
                 generation_stall_timeout_s=worker.generation_stall_timeout_s,
                 finalizers=finalizer_handles,
             )
-            weight_sync = RayGenerationWeightSync(
-                engines,
-                actor_dispatcher=actor_dispatcher,
-                worker_rpc_timeout_s=worker.worker_rpc_timeout_s,
-            )
-            return RayGenerationSession(executor, weight_sync)
+            return RayGenerationSession(executor, worker_rpc_timeout_s=worker.worker_rpc_timeout_s)
         except BaseException as error:
             for group in (actor_group, finalizer_group):
                 if group is None:

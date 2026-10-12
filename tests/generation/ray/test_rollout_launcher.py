@@ -91,7 +91,6 @@ async def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(
         assert runtime.current_policy_version == 0
         session = runtime._session
         assert session is not None
-        assert session.weight_sync is not None
         engines = session.executor.engines
         assert [engine.engine_id for engine in engines] == ["rollout-0"]
         metadata = local_ray.get(engines[0].ranks[0].actor.worker_metadata.remote())

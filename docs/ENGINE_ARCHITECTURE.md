@@ -120,11 +120,10 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 | Class | Owns |
 |---|---|
 | `RayGenerationRuntime` | The public lifecycle: admission, which failure is terminal, staged policy installs while inactive (`_PendingPolicyInstall`), activate/offload semantics. Implements `GenerationRuntime`. |
-| `RayGenerationSession` | The concrete resources of one launched fleet: worker handles, sleep/wake (memory parking with validated `WorkerMemoryParkingSnapshot` evidence), graceful policy release, kill-and-retain cleanup. Owns no public lifecycle. |
+| `RayGenerationSession` | The concrete resources of one launched fleet: worker handles, `update_weights` (one object-store put installed on every rank of every engine), sleep/wake (memory parking with validated `WorkerMemoryParkingSnapshot` evidence), graceful policy release, kill-and-retain cleanup. Owns no public lifecycle. |
 | `RayGenerationLauncher` / `RayGenerationLaunchInputs` | Building the fleet: placement, actor construction from the launch config. |
 | `RayGenerationExecutor` | Driver-side dispatch of sample batches to worker actors (through `RayActorDispatcher`), including the per-request path (`pipelined`: each engine runs its share of a request in one call and stages payloads in the object store) and OOM-split handling. |
 | `RayGenerationFinalizer` (`ray/finalizer.py`) | CPU actor, one per engine, that merges a request's staged batch references through the gatherer (rows minted from the request) and boxes reward media, off the GPU rank's critical path. |
-| `RayGenerationWeightSync` | Pushing trainer state into rollout workers (`push_to_rollout_workers(state_ref, policy_version)`), versioned slots for continuous mode. |
 | `RolloutWorkerConfig` | Typed `distributed.rollout` worker knobs for the fleet; the launcher takes it beside the resource plan. |
 | `GenerationLaunchConfig` (`launch_config.py`) | The serializable recipe a Ray actor rebuilds its executor from: `family`, `model_build`, `expected_model_identity`, `executor_kwargs`, `policy_version`, profiler and offload flags. `__post_init__` enforces primitives-only/picklable content so a live driver object fails on the driver, not inside actor deserialization. Reward counterpart: `RewardWorkerConfig`. |
 

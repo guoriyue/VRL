@@ -761,7 +761,7 @@ async def test_cold_restore_timeout_force_kills_unpublished_candidate(
             # The launch's own ray.get calls are over by now.
             candidates.append(candidate)
             releases.append(_watch_release(monkeypatch, local_ray))
-            candidate.weight_sync.worker_rpc_timeout_s = 1e-6
+            candidate.worker_rpc_timeout_s = 1e-6
 
         _gate_class(monkeypatch, RayGenerationSession, "update_weights", before=tighten)
 

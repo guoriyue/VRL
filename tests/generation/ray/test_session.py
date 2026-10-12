@@ -123,7 +123,9 @@ async def test_session_parking_failure_does_not_translate_or_close_resources(
             actor_dispatcher=real.executor.actor_dispatcher,
             generation_stall_timeout_s=real.executor.generation_stall_timeout_s,
         )
-        session = RayGenerationSession(miswired_executor, real.weight_sync)
+        session = RayGenerationSession(
+            miswired_executor, worker_rpc_timeout_s=real.worker_rpc_timeout_s
+        )
         calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         _record(monkeypatch, local_ray, "get", calls)
         _record(monkeypatch, local_ray, "kill", calls)
