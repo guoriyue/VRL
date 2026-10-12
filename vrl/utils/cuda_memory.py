@@ -107,13 +107,6 @@ def cuda_peak_allocated_bytes() -> int | None:
         return None
 
 
-def cuda_peak_allocated_mb() -> float | None:
-    """:func:`cuda_peak_allocated_bytes` in MiB, for debug metric payloads."""
-
-    peak_bytes = cuda_peak_allocated_bytes()
-    return None if peak_bytes is None else peak_bytes / (1024 * 1024)
-
-
 def gpu_process_used_bytes(device: str | None = None) -> int:
     """Physical CUDA memory attributed to this process, including CuMem pools.
 
@@ -216,7 +209,6 @@ def validate_parking_residual(
 __all__ = [
     "CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT",
     "cuda_peak_allocated_bytes",
-    "cuda_peak_allocated_mb",
     "empty_cuda_cache",
     "gpu_process_used_bytes",
     "is_cuda_out_of_memory",

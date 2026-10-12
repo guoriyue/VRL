@@ -1,4 +1,4 @@
-"""PEFT/LoRA adapter lifecycle: warm-start loading, peeling, and on/off switching.
+"""PEFT/LoRA adapter lifecycle: warm-start loading and on/off switching.
 
 Loading is fail-closed. PEFT reconstructs an adapter from its saved
 ``adapter_config.json``.  Public wm-infra LoRA settings must therefore be checked
@@ -6,9 +6,8 @@ before PEFT mutates the base model; otherwise the saved topology silently wins
 over the requested one.
 
 The helpers below :func:`load_trainable_lora_adapter` act on an *already attached*
-adapter: :func:`peel_peft` reaches the wrapped inner module, while
-:func:`temporarily_disable_lora` switches the adapter off for a base-weights forward
-pass; :func:`has_lora_adapter` says whether there is one to switch.
+adapter: :func:`temporarily_disable_lora` switches it off for a base-weights
+forward pass; :func:`has_lora_adapter` says whether there is one to switch.
 """
 
 from __future__ import annotations
@@ -217,19 +216,6 @@ def load_trainable_lora_adapter(
     )
 
 
-def peel_peft(module: Any) -> Any:
-    """Return PEFT's base module, leaving other model types unchanged.
-
-    PEFT replaces the target ``nn.Linear`` modules in place, so the peeled inner
-    module still routes through the LoRA layers. Use the public PEFT API, not
-    the similarly named ``base_model`` attribute of unrelated HF models.
-    """
-
-    from peft import PeftModel
-
-    return module.get_base_model() if isinstance(module, PeftModel) else module
-
-
 def temporarily_disable_lora(module: Any) -> contextlib.AbstractContextManager[None]:
     """Context manager disabling ``module``'s LoRA/PEFT adapter, or a no-op when absent.
 
@@ -308,6 +294,5 @@ def has_lora_adapter(module: Any) -> bool:
 __all__ = [
     "has_lora_adapter",
     "load_trainable_lora_adapter",
-    "peel_peft",
     "temporarily_disable_lora",
 ]
