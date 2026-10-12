@@ -155,7 +155,7 @@ class GenerationRequest:
 
     @property
     def prompts(self) -> list[str]:
-        """Text-only view used by family-agnostic execution code."""
+        """The prompt text of each input, in order."""
 
         return [value.prompt for value in self.inputs]
 

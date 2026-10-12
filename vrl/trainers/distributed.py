@@ -461,12 +461,6 @@ class TrainingCollectives:
             )[0]
         )
 
-    def barrier(self) -> None:
-        import torch.distributed as dist
-
-        if self.context.distributed and dist.is_initialized():
-            dist.barrier()
-
     def coordination_barrier(self) -> None:
         """Wait on the CPU coordination group without launching GPU kernels."""
         if not self.context.distributed:

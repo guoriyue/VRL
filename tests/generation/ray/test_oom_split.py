@@ -206,7 +206,7 @@ async def _fleet(
 
 def _histories(ray: Any, run: RaySanaRuntime) -> list[dict[str, list[Any]]]:
     engines = run.runtime._session.executor.engines
-    return ray.get([engine.primary.actor.history.remote() for engine in engines])
+    return ray.get([engine.ranks[0].actor.history.remote() for engine in engines])
 
 
 def _merges(ray: Any, run: RaySanaRuntime) -> list[int]:
@@ -224,7 +224,7 @@ def _one_engine_of_every_rank(run: RaySanaRuntime) -> RayGenerationExecutor:
     """
 
     session = run.runtime._session
-    engine = RayGenerationEngine("engine", [e.primary for e in session.executor.engines])
+    engine = RayGenerationEngine("engine", [e.ranks[0] for e in session.executor.engines])
     return RayGenerationExecutor(
         engines=[engine],
         gatherer=run.built.family.new_gatherer(),

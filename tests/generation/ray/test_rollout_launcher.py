@@ -94,7 +94,7 @@ async def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(
         assert session.weight_sync is not None
         engines = session.executor.engines
         assert [engine.engine_id for engine in engines] == ["rollout-0"]
-        metadata = local_ray.get(engines[0].primary.actor.worker_metadata.remote())
+        metadata = local_ray.get(engines[0].ranks[0].actor.worker_metadata.remote())
         assert metadata["worker_id"] == "rollout-0"
         assert metadata["gpu_ids"] == []
         assert "policy_version" not in metadata
@@ -196,7 +196,7 @@ async def test_phase_handoff_keeps_actor_and_owner_placement(
         await runtime.activate()
         session = runtime._session
         assert session is not None
-        first_actor = session.executor.engines[0].primary.actor
+        first_actor = session.executor.engines[0].ranks[0].actor
         await runtime.offload()
         assert runtime._session is session
         assert runtime._session_parked is True
@@ -206,7 +206,7 @@ async def test_phase_handoff_keeps_actor_and_owner_placement(
         reacquired = runtime._session
         assert reacquired is session
         assert [e.engine_id for e in reacquired.executor.engines] == ["rollout-0"]
-        assert reacquired.executor.engines[0].primary.actor is first_actor
+        assert reacquired.executor.engines[0].ranks[0].actor is first_actor
 
 
 @pytest.mark.parametrize("query", ["current_node_ip", "current_gpu_ids"])

@@ -115,7 +115,7 @@ async def test_session_parking_failure_does_not_translate_or_close_resources(
         real = ray_run.runtime._session
         miswired = RayGenerationEngine(
             "rollout-0",
-            [replace(real.engines[0].primary, actor=real.engines[1].primary.actor)],
+            [replace(real.engines[0].ranks[0], actor=real.engines[1].ranks[0].actor)],
         )
         miswired_executor = RayGenerationExecutor(
             [miswired],
@@ -133,7 +133,7 @@ async def test_session_parking_failure_does_not_translate_or_close_resources(
 
         assert session.engines == [miswired]
         assert calls == []
-        assert _alive(local_ray, miswired.primary.actor)
+        assert _alive(local_ray, miswired.ranks[0].actor)
 
 
 @pytest.mark.asyncio

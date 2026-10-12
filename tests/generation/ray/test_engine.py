@@ -119,7 +119,7 @@ async def _ranks(
         overrides=(f"distributed.resources.rollout.num_engines={count}", *overrides),
     ) as run:
         await run.runtime.activate()
-        yield run, [engine.primary for engine in run.runtime._session.executor.engines]
+        yield run, [engine.ranks[0] for engine in run.runtime._session.executor.engines]
 
 
 def _envelope(run: RaySanaRuntime, *, samples: int = 2, **request: Any) -> GenerationBatchEnvelope:

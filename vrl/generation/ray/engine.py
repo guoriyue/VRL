@@ -86,12 +86,6 @@ class RayGenerationEngine:
         self.engine_id = engine_id
         self.ranks = ranks
 
-    @property
-    def primary(self) -> RayActorHandle:
-        """Rank 0: the rank whose result represents the engine."""
-
-        return self.ranks[0]
-
     def remote(
         self,
         method_name: str,

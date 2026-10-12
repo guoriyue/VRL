@@ -88,7 +88,7 @@ def _rng_rank(rank, rendezvous, output, backend="gloo", world_size=2):
             rng_state=local,
             strategy=strategy,
         )
-        strategy.collectives.barrier()
+        torch.distributed.barrier()
         checkpoint = TrainingCheckpoint.load(output)
         assert checkpoint.rng_state["world_size"] == world_size
         rank_states = checkpoint.rng_state["by_rank"]

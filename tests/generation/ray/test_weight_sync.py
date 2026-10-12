@@ -140,7 +140,7 @@ async def test_remote_update_puts_the_state_once_for_every_engine(
         # serves version 4: a batch stamped 4 runs on both.
         envelope = _envelope(ray_run.request(["a cat"], group_size=1, policy_version=4))
         results = local_ray.get(
-            [engine.primary.actor.execute_batch.remote(envelope) for engine in session.engines],
+            [engine.ranks[0].actor.execute_batch.remote(envelope) for engine in session.engines],
             timeout=60,
         )
         assert [result.error for result in results] == [None, None]
@@ -157,7 +157,7 @@ async def test_remote_update_timeout_rejects_partial_ack_and_cancels_every_ref(
         stalled = session.engines[1]
         # Another caller holds rollout-1's actor with a long generation, so its
         # install queues behind it while rollout-0 acknowledges.
-        busy = stalled.primary.actor.execute_batch.remote(_envelope(_busy_request(ray_run)))
+        busy = stalled.ranks[0].actor.execute_batch.remote(_envelope(_busy_request(ray_run)))
         sync = RayGenerationWeightSync(
             session.engines,
             actor_dispatcher=session.executor.actor_dispatcher,
