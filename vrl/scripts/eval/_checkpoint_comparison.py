@@ -18,7 +18,6 @@ from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RewardConfig, parse_config
 from vrl.models.families.registry import get_model_family_entry
@@ -111,19 +110,26 @@ def reward_worker_config(
     cfg: DictConfig,
     component: str,
     *,
-    device: str,
+    device: str | None = None,
     default_reward_model_name: str | None = None,
 ) -> dict[str, Any]:
-    """Project the run's own reward block into a scorer's worker config.
+    """Project ``reward.kwargs.<component>`` of a run into that scorer's worker config.
 
-    Evaluation scores on training's terms, on the evaluation device, owning the
-    whole GPU; parking lives in distributed.resources, never in this block.
+    Evaluation scores on training's terms. ``default_reward_model_name`` is the
+    reward's model to fall back to when the run named none; ``device``, when
+    given, is the evaluation device the scorer owns outright (parking lives in
+    distributed.resources, never in this block).
     """
 
-    worker_config = RewardRuntimeConfig.from_section(RewardConfig.from_cfg(cfg)).worker_config(
-        component, default_reward_model_name=default_reward_model_name
-    )
-    worker_config["device"] = device
+    reward_cfg = RewardConfig.from_cfg(cfg).kwargs.get(component) or {}
+    worker_config = dict(reward_cfg.get("worker_config") or {})
+    if default_reward_model_name is not None:
+        worker_config.setdefault(
+            "reward_model_name",
+            str(reward_cfg.get("reward_name") or default_reward_model_name),
+        )
+    if device is not None:
+        worker_config["device"] = device
     return worker_config
 
 

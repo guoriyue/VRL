@@ -11,12 +11,12 @@ from omegaconf import OmegaConf
 
 from tests.scripts.eval.fixtures import cosmos25_eval_config, write_tiny_cosmos25_snapshot
 from tests.trainers._checkpoint_helpers import _Trainer
-from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
-from vrl.config.schema import RewardConfig, parse_config
+from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
+from vrl.scripts.eval._checkpoint_comparison import reward_worker_config
 from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.trainers.checkpointing import CheckpointTarget, save_training_checkpoint
 
@@ -107,7 +107,8 @@ def test_reward_worker_config_adds_reward_model_name_default() -> None:
         },
     )
 
-    worker_config = RewardRuntimeConfig.from_section(RewardConfig.from_cfg(cfg)).worker_config(
+    worker_config = reward_worker_config(
+        cfg,
         "kling_video_reward",
         default_reward_model_name="KlingTeam/VideoReward@main",
     )

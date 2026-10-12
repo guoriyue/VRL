@@ -22,12 +22,12 @@ from typing import Any
 import torch
 from omegaconf import DictConfig
 
-from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.precision import PrecisionPolicy
-from vrl.config.schema import RewardConfig, parse_config
+from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.robotics_video_reward import RoboticsVideoRewardModel
+from vrl.scripts.eval._checkpoint_comparison import reward_worker_config
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval._sampling import resolve_eval_sampling
 from vrl.scripts.eval.denoise_generation import generate_one_video
@@ -344,10 +344,7 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
         include_reference_targets=not bool(args.no_reference_targets),
     )
     device = resolve_eval_device(str(args.device))
-    worker_config = RewardRuntimeConfig.from_section(RewardConfig.from_cfg(cfg)).worker_config(
-        "robotics_video_reward"
-    )
-    worker_config["device"] = str(device)
+    worker_config = reward_worker_config(cfg, "robotics_video_reward", device=str(device))
     worker_config["data_root"] = str(
         user_path(str(worker_config.get("data_root") or cfg.data.artifact_data_root)),
     )
