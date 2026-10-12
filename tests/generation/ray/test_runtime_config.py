@@ -27,7 +27,7 @@ from vrl.config.schema import parse_config
 from vrl.config.validation import compile_conflicts
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RolloutWorkerConfig
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs, build_launch_inputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.placement import RolePlacement
@@ -242,7 +242,7 @@ def _sana_launch(tmp_path: Path, *overrides: str) -> tuple[RayGenerationLaunchIn
         precision=built.precision,
         for_rollout=False,
     )
-    return RayGenerationLaunchInputs.from_run(built, resources, replay), replay
+    return build_launch_inputs(built, resources, replay), replay
 
 
 def test_generation_launch_inputs_project_model_compile_and_precision(tmp_path) -> None:
@@ -328,9 +328,7 @@ def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(tmp_pa
         for_rollout=False,
     )
 
-    model_build = RayGenerationLaunchInputs.from_run(
-        built, resources, replay
-    ).launch_contract.model_build
+    model_build = build_launch_inputs(built, resources, replay).launch_contract.model_build
 
     assert model_build["rollout"]["pipeline_offload_mode"] == "sequential"
     assert "offload_mode" not in model_build["model_config"]
@@ -355,7 +353,7 @@ def test_generation_launch_inputs_reject_rollout_identity_mismatch(tmp_path) -> 
         ValueError,
         match="rollout model identity does not match the driver replay model identity",
     ):
-        RayGenerationLaunchInputs.from_run(built, resources, replay)
+        build_launch_inputs(built, resources, replay)
 
 
 def test_generation_launch_inputs_preserve_disabled_model_compile_config(tmp_path) -> None:
@@ -480,7 +478,7 @@ def _on_demand_launch(
     return (
         resources,
         RolloutWorkerConfig.from_root(built.root),
-        RayGenerationLaunchInputs.from_run(built, resources, replay),
+        build_launch_inputs(built, resources, replay),
         placement,
     )
 

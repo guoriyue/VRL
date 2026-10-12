@@ -93,7 +93,7 @@ def test_rollout_worker_timeouts_default_and_accept_override() -> None:
 def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
     """RolloutRuntimeSection (pydantic lint boundary) and RolloutWorkerConfig (the
     frozen runtime projection the Ray launcher takes) must stay
-    field-for-field identical. ``from_public_section`` builds the dataclass via
+    field-for-field identical. ``RolloutWorkerConfig.from_root`` builds the dataclass via
     ``cls(**section.model_dump())``, so a field on one but not the other silently
     breaks at runtime (TypeError / unfilled required field) instead of at parse.
 
@@ -112,10 +112,10 @@ def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
     assert "worker_rpc_timeout_s" in section_fields
     assert "generation_stall_timeout_s" in section_fields
 
-    # Per-field default parity: the section's declared defaults must survive the
-    # projection unchanged (from_public_section adds no fallbacks or overrides), so
-    # the section stays the single home of the default literals.
-    projected = RolloutWorkerConfig.from_public_section(RolloutRuntimeSection())
+    # Per-field default parity: an absent distributed.rollout block projects to the
+    # section's declared defaults unchanged (from_root adds no fallbacks or
+    # overrides), so the section stays the single home of the default literals.
+    projected = RolloutWorkerConfig.from_root(parse_config(minimal_grpo_cfg()))
     for name in section_fields:
         assert getattr(projected, name) == RolloutRuntimeSection.model_fields[name].default
 

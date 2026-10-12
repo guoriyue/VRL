@@ -18,7 +18,7 @@ from omegaconf import DictConfig
 from vrl.algorithms.advantages import nonzero_advantage_mask
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.ray.config import RolloutWorkerConfig
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.launch_inputs import build_launch_inputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
@@ -920,15 +920,16 @@ async def run_online_recipe(cfg: DictConfig) -> None:
         if resources.cross_node:
             cross_node_preflight(ray, resources)
         placement_owner.create()
+        if reward_parking is not None and reward_device.startswith("cuda"):
+            # A parking reward sits on another role's card and borrows it in place.
+            reward_placement = RayRewardPlacement.on_shared_gpu(reward_device)
+        else:
+            reward_placement = RayRewardPlacement(placement=placement_owner.reward_placement)
         reward_runtime = lifecycle.reward_runtime = RewardFunctionRuntime(
             reward_config.build_function(
                 device=reward_device,
                 parking=reward_parking,
-                ray_placement=RayRewardPlacement.for_device(
-                    reward_device,
-                    shared=reward_parking is not None,
-                    owner=placement_owner,
-                ),
+                ray_placement=reward_placement,
             ),
         )
         algorithm_and_evaluator = AlgorithmEvaluatorPair.from_configs(
@@ -946,9 +947,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             lifecycle=resources.lifecycle,
         )
         generation_launcher = RayGenerationLauncher()
-        generation_launch_inputs = RayGenerationLaunchInputs.from_run(
-            built, resources, resolved_model
-        )
+        generation_launch_inputs = build_launch_inputs(built, resources, resolved_model)
         _host_memory.log("before_rollout_backend_build")
         generation_runtime = generation_launcher.create_runtime(
             resources,

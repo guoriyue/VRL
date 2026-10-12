@@ -28,7 +28,7 @@ from tests.models.steps.denoise.fixtures import (
 )
 from tests.rollouts.collector._helpers import IndexReward, Trace
 from vrl.config.builders import BuiltConfigs
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.launch_inputs import build_launch_inputs
 from vrl.ray.resources import ResolvedDistributedResources
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 
@@ -133,9 +133,7 @@ def _stack(
         for_rollout=False,
     )
     bundle = replay.materialize(context="vdn composition test")
-    runtime = InProcessGenerationRuntime(
-        RayGenerationLaunchInputs.from_run(built, resources, replay)
-    )
+    runtime = InProcessGenerationRuntime(build_launch_inputs(built, resources, replay))
     trace = Trace(monkeypatch)
     trace.watch(runtime, "generate", "generate")
     trace.watch(runtime, "update_weights", "update_weights")

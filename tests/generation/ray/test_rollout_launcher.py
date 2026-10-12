@@ -18,7 +18,7 @@ import torch
 from tests.generation.ray._helpers import ray_sana_runtime
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.ray.config import RolloutWorkerConfig
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.launch_inputs import build_launch_inputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput
@@ -26,14 +26,6 @@ from vrl.ray.resources import ResolvedDistributedResources
 
 # These build real Ray workers on the package cluster — slow by nature, nightly.
 pytestmark = pytest.mark.slow_test
-
-
-def test_worker_section_absent_means_its_defaults() -> None:
-    from vrl.config.schema import RolloutRuntimeSection
-
-    assert RolloutWorkerConfig.from_public_section(
-        None
-    ) == RolloutWorkerConfig.from_public_section(RolloutRuntimeSection())
 
 
 @contextlib.asynccontextmanager
@@ -74,7 +66,7 @@ async def _launched(
         runtime = RayGenerationLauncher().create_runtime(
             plan(resources),
             RolloutWorkerConfig.from_root(built.root),
-            RayGenerationLaunchInputs.from_run(built, resources, replay),
+            build_launch_inputs(built, resources, replay),
             placement=owner.rollout_placement,
         )
         yield runtime, owner, resources
@@ -163,7 +155,7 @@ def test_create_runtime_rejects_missing_rollout_placement(monkeypatch, tmp_path)
         RayGenerationLauncher().create_runtime(
             resources,
             RolloutWorkerConfig.from_root(built.root),
-            RayGenerationLaunchInputs.from_run(built, resources, replay),
+            build_launch_inputs(built, resources, replay),
             placement=None,
         )
 
@@ -238,9 +230,7 @@ def test_worker_metadata_preserves_placement_query_failure(monkeypatch, tmp_path
         precision=built.precision,
         for_rollout=False,
     )
-    actor = worker.RayGenerationWorker(
-        "rollout-0", RayGenerationLaunchInputs.from_run(built, resources, replay)
-    )
+    actor = worker.RayGenerationWorker("rollout-0", build_launch_inputs(built, resources, replay))
     failure = RuntimeError("placement query failed")
 
     def fail():

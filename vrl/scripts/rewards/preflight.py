@@ -197,7 +197,7 @@ def preflight_rewards(
                 resources = ResolvedDistributedResources.from_root(probe_root)
                 owner = GlobalRayPlacementOwner(
                     resources,
-                    RolloutWorkerConfig.from_public_section(None),
+                    RolloutWorkerConfig.from_root(probe_root),
                 )
                 ray = require_ray()
                 session = _RayClusterSession.connect(
@@ -208,7 +208,7 @@ def preflight_rewards(
                 )
                 owner.create()
                 # The probe owns its reward device outright: nothing parks.
-                placement = RayRewardPlacement.for_device(str(device), shared=False, owner=owner)
+                placement = RayRewardPlacement(placement=owner.reward_placement)
             runtime = RewardFunctionRuntime(
                 built.reward.build_function(
                     device=str(device), parking=None, ray_placement=placement

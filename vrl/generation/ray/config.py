@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from vrl.config.schema import RolloutRuntimeSection, RootConfig
+    from vrl.config.schema import RootConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,19 +33,14 @@ class RolloutWorkerConfig:
             raise ValueError("generation_stall_timeout_s must be finite and > 0")
 
     @classmethod
-    def from_public_section(cls, section: RolloutRuntimeSection | None) -> RolloutWorkerConfig:
-        """Freeze the validated public section; an absent block means its defaults."""
+    def from_root(cls, root: RootConfig) -> RolloutWorkerConfig:
+        """Freeze ``distributed.rollout`` of a validated root; an absent block means its defaults."""
 
         from vrl.config.schema import RolloutRuntimeSection
 
-        return cls(**(section or RolloutRuntimeSection()).model_dump())
-
-    @classmethod
-    def from_root(cls, root: RootConfig) -> RolloutWorkerConfig:
-        """Freeze ``distributed.rollout`` of a validated root."""
-
         distributed = root.distributed
-        return cls.from_public_section(distributed.rollout if distributed is not None else None)
+        section = distributed.rollout if distributed is not None else None
+        return cls(**(section or RolloutRuntimeSection()).model_dump())
 
 
 __all__ = ["RolloutWorkerConfig"]

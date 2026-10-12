@@ -614,11 +614,12 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 if resources.cross_node:
                     cross_node_preflight(ray, resources)
                 reward_placement_owner.create()
-                ray_placement = RayRewardPlacement.for_device(
-                    reward_device,
-                    shared=reward_parking is not None,
-                    owner=reward_placement_owner,
-                )
+                if reward_parking is not None and reward_device.startswith("cuda"):
+                    ray_placement = RayRewardPlacement.on_shared_gpu(reward_device)
+                else:
+                    ray_placement = RayRewardPlacement(
+                        placement=reward_placement_owner.reward_placement
+                    )
             reward_fn = (
                 built.reward.build_function(
                     device=reward_device, parking=reward_parking, ray_placement=ray_placement

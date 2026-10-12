@@ -832,7 +832,7 @@ async def test_async_launcher_loads_off_loop(
         import torch
 
         from vrl import run
-        from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+        from vrl.generation.ray.launch_inputs import build_launch_inputs
 
         built, resources = ray_run.built, ray_run.resources
         replay = run.ResolvedModel.from_root(
@@ -848,7 +848,7 @@ async def test_async_launcher_loads_off_loop(
         session = await RayGenerationLauncher()._launch_session_async(
             resources,
             ray_run.worker,
-            RayGenerationLaunchInputs.from_run(built, resources, replay),
+            build_launch_inputs(built, resources, replay),
             placement=ray_run.placement_owner.rollout_placement,
         )
         try:

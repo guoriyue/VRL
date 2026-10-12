@@ -42,7 +42,7 @@ from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_confi
 from vrl import run
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.ray.config import RolloutWorkerConfig
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.launch_inputs import build_launch_inputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
@@ -124,7 +124,7 @@ async def _on_demand(
     owner = GlobalRayPlacementOwner(resources, worker_config)
     owner.create()
     launcher = RayGenerationLauncher()
-    launch_inputs = RayGenerationLaunchInputs.from_run(built, resources, replay)
+    launch_inputs = build_launch_inputs(built, resources, replay)
 
     async def launch_session() -> RayGenerationSession:
         # Looked up at call time, so a test may gate or fail the real launch.

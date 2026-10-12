@@ -107,7 +107,7 @@ async def ray_sana_runtime(
     from vrl import run
     from vrl.config.builders import BuiltConfigs
     from vrl.generation.ray.config import RolloutWorkerConfig
-    from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+    from vrl.generation.ray.launch_inputs import build_launch_inputs
     from vrl.generation.ray.launcher import RayGenerationLauncher
     from vrl.ray.placement import GlobalRayPlacementOwner
     from vrl.ray.resources import ResolvedDistributedResources
@@ -135,7 +135,7 @@ async def ray_sana_runtime(
         runtime = RayGenerationLauncher().create_runtime(
             resources,
             worker,
-            RayGenerationLaunchInputs.from_run(built, resources, replay),
+            build_launch_inputs(built, resources, replay),
             placement=owner.rollout_placement,
         )
         try:

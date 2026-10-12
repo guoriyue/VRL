@@ -43,7 +43,7 @@ import torch
 
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.ray.config import RolloutWorkerConfig
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.launch_inputs import build_launch_inputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.generation.types import GenerationInput, GenerationRequest
@@ -216,7 +216,7 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
         precision=built.precision,
         for_rollout=False,
     )
-    launch_inputs = RayGenerationLaunchInputs.from_run(built, resources, replay)
+    launch_inputs = build_launch_inputs(built, resources, replay)
     worker = RolloutWorkerConfig.from_root(built.root)
 
     ray = require_ray()
