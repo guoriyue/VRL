@@ -428,7 +428,6 @@ def tiny_sana_stack(
     from tests.generation._in_process_runtime import InProcessGenerationRuntime
     from vrl.config.builders import BuiltConfigs
     from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-    from vrl.models import checkpoint_identity
     from vrl.ray.resources import ResourcePlan
 
     cfg = tiny_sana_online_config(tmp_path, overrides=overrides)
@@ -441,7 +440,7 @@ def tiny_sana_stack(
         precision=built.precision,
         for_rollout=False,
     )
-    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    replay_identity = replay_build.checkpoint_identity()
     return TinySanaStack(
         built=built,
         resources=resources,

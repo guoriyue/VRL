@@ -23,7 +23,6 @@ from typing import Any
 import torch
 
 from vrl.config.precision import PrecisionPolicy
-from vrl.models import checkpoint_identity
 from vrl.models.dtypes import dtype_to_wire_name
 from vrl.models.precision import float32_precision_state, model_precision
 from vrl.scripts.eval._device import resolve_eval_device
@@ -153,7 +152,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, str]:
 
     entry = get_model_family_entry("sana")
     build = entry.resolve_model_build(root, device, precision=precision, for_rollout=True)
-    model_identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
+    model_identity = build.checkpoint_identity()
     CheckpointTarget(
         label="current",
         path=expected_checkpoint_file.parent,

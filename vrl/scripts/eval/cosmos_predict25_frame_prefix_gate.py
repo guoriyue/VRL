@@ -25,7 +25,6 @@ import torch.nn.functional as F
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig, parse_config
-from vrl.models import checkpoint_identity
 from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.utils.artifacts import sha256_file, user_path
@@ -129,7 +128,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     device = resolve_eval_device(str(args.device))
     precision = PrecisionPolicy.from_section(root.precision)
     build = entry.resolve_model_build(root, device, precision=precision, for_rollout=True)
-    model_identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
+    model_identity = build.checkpoint_identity()
     bundle = None
     try:
         bundle = entry.build_rollout(build, expected_identity=model_identity)

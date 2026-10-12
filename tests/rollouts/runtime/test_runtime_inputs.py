@@ -19,7 +19,6 @@ from vrl.generation.bindings.full_sequence import DenoiseBatchGatherer
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationBatchExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-from vrl.models import checkpoint_identity
 from vrl.models.families.registry import (
     FAMILY_REGISTRY,
     ModelFamilyEntry,
@@ -62,9 +61,7 @@ def _capture_launch_inputs(
         precision=built.precision,
         for_rollout=False,
     )
-    replay_model_identity = checkpoint_identity.resolve_checkpoint_model_identity(
-        replay_model_build
-    )
+    replay_model_identity = replay_model_build.checkpoint_identity()
     result = RayGenerationLaunchInputs.from_run(
         built, resources, replay_model_build, replay_model_identity
     )

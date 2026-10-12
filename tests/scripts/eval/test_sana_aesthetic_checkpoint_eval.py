@@ -19,7 +19,6 @@ from tests.trainers._checkpoint_helpers import _Trainer
 from vrl.config.loading import load_config
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import parse_config
-from vrl.models import checkpoint_identity
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.scripts.eval import sana_aesthetic_checkpoint_eval as checkpoint_eval
 from vrl.scripts.eval import sana_aesthetic_report as sana_report
@@ -144,7 +143,7 @@ def _write_run(
         family="sana",
         progress={"completed_epoch": 25, "next_epoch": 25},
         rng_state={},
-        model_identity=checkpoint_identity.resolve_checkpoint_model_identity(build),
+        model_identity=build.checkpoint_identity(),
     )
     pipeline.transformer.load_state_dict(base_state)
     pipeline.loads = 0
@@ -664,7 +663,7 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
     build = entry.resolve_model_build(
         root, torch.device("cpu"), precision=precision, for_rollout=True
     )
-    identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
+    identity = build.checkpoint_identity()
     bundle = entry.build_rollout(build, expected_identity=None)
     base_state = {name: value.clone() for name, value in pipeline.transformer.state_dict().items()}
 
@@ -736,7 +735,7 @@ def test_generate_images_rejects_materialized_source_drift_before_generation(
 
     with pytest.raises(
         RuntimeError,
-        match="sana rollout model checkpoint source changed during bundle construction",
+        match="sana model checkpoint source changed during bundle construction",
     ):
         checkpoint_eval._generate_images(
             root,

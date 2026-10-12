@@ -15,7 +15,6 @@ from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig, parse_config
-from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
@@ -159,7 +158,7 @@ def main(argv: list[str] | None = None) -> None:
         precision=precision,
         parameter_dtype_override=dtype,
     )
-    model_identity = resolve_checkpoint_model_identity(build)
+    model_identity = build.checkpoint_identity()
     for target in checkpoint_targets:
         checkpoint_dir = target.path.parent if target.path.is_file() else target.path
         replace(target, meta=read_checkpoint_meta(checkpoint_dir)).validate_compatibility(

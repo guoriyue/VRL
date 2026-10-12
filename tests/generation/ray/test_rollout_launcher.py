@@ -41,7 +41,6 @@ async def _launched(
     plan the launcher receives; yields (runtime, placement owner, resources)."""
 
     from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
-    from vrl.models import checkpoint_identity
     from vrl.ray.placement import GlobalRayPlacementOwner
 
     cfg = tiny_sana_online_config(
@@ -58,7 +57,7 @@ async def _launched(
         precision=built.precision,
         for_rollout=False,
     )
-    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    replay_identity = replay_build.checkpoint_identity()
     owner = GlobalRayPlacementOwner(resources, RolloutWorkerConfig.from_root(built.root))
     owner.create()
     runtime: RayGenerationRuntime | None = None
@@ -138,7 +137,6 @@ def test_create_runtime_rejects_missing_rollout_placement(monkeypatch, tmp_path)
     """placement=None fails fast with the config knob, not an AttributeError."""
 
     from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
-    from vrl.models import checkpoint_identity
 
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
@@ -150,7 +148,7 @@ def test_create_runtime_rejects_missing_rollout_placement(monkeypatch, tmp_path)
         precision=built.precision,
         for_rollout=False,
     )
-    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    replay_identity = replay_build.checkpoint_identity()
     with pytest.raises(ValueError, match="rollout placement"):
         RayGenerationLauncher().create_runtime(
             resources,
@@ -217,7 +215,6 @@ def test_worker_metadata_preserves_placement_query_failure(monkeypatch, tmp_path
 
     from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
     from vrl.generation.ray import worker
-    from vrl.models import checkpoint_identity
 
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
@@ -229,7 +226,7 @@ def test_worker_metadata_preserves_placement_query_failure(monkeypatch, tmp_path
         precision=built.precision,
         for_rollout=False,
     )
-    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    replay_identity = replay_build.checkpoint_identity()
     actor = worker.RayGenerationWorker(
         "rollout-0",
         RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity),

@@ -19,7 +19,6 @@ from vrl.config.builders import BuiltConfigs
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.worker import RayGenerationWorker
-from vrl.models import checkpoint_identity
 from vrl.ray.resources import ResourcePlan
 
 
@@ -34,7 +33,7 @@ def _worker(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> tuple[RayGenerati
         precision=built.precision,
         for_rollout=False,
     )
-    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    replay_identity = replay_build.checkpoint_identity()
     launch_inputs = RayGenerationLaunchInputs.from_run(
         built, resources, replay_build, replay_identity
     )

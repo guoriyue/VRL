@@ -39,7 +39,10 @@ def plan(tmp_path):
     return checkpoint_eval.EvaluationPlan(
         entry=SimpleNamespace(family="test"),
         model_build=SimpleNamespace(
-            device="cpu", parameter_dtype="float32", precision=_FakePrecision()
+            device="cpu",
+            parameter_dtype="float32",
+            precision=_FakePrecision(),
+            checkpoint_identity=lambda: {"family": "test"},
         ),
         model_identity={"family": "test"},
         targets=checkpoint_eval.discover_targets(tmp_path, uses_lora=False),
@@ -200,10 +203,6 @@ def test_independent_policy_does_not_replace_run_sampling(tmp_path, plan, monkey
     monkeypatch.setattr(
         "vrl.models.families.registry.ModelFamilyEntry.resolve_model_build",
         lambda *_args, **_kwargs: plan.model_build,
-    )
-    monkeypatch.setattr(
-        "vrl.models.checkpoint_identity.resolve_checkpoint_model_identity",
-        lambda _build: plan.model_identity,
     )
     monkeypatch.setattr(
         "vrl.trainers.checkpointing.CheckpointTarget.validate_compatibility",

@@ -111,7 +111,6 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(8)
     device = torch.device(args.device)
-    from vrl.models import checkpoint_identity
     from vrl.trainers.checkpointing import (
         TrainingCheckpoint,
     )
@@ -149,7 +148,7 @@ def main() -> None:
         precision=PrecisionPolicy.from_section(root.precision),
         for_rollout=True,
     )
-    model_identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
+    model_identity = build.checkpoint_identity()
     if checkpoint is not None:
         checkpoint.validate_compatibility(
             family=entry.family, expected_model_identity=model_identity

@@ -18,7 +18,6 @@ from tests.scripts.eval.fixtures import (
 )
 from tests.trainers._checkpoint_helpers import _Trainer
 from vrl.config.precision import PrecisionPolicy, RolePrecision
-from vrl.models import checkpoint_identity
 from vrl.models.families.sana.model import SanaModel
 from vrl.scripts.eval import sana_checkpoint_compare as checkpoint_compare
 from vrl.scripts.eval import sana_inference
@@ -86,7 +85,7 @@ def _real_build(run_dir: Path):
         precision=PrecisionPolicy.from_section(root.precision),
         for_rollout=True,
     )
-    return entry, build, checkpoint_identity.resolve_checkpoint_model_identity(build)
+    return entry, build, build.checkpoint_identity()
 
 
 def _checkpoint(tmp_path: Path, **meta_overrides) -> SimpleNamespace:
@@ -296,7 +295,7 @@ def test_run_rejects_model_source_drift_before_generation(monkeypatch, tmp_path)
 
     with pytest.raises(
         RuntimeError,
-        match="sana rollout model checkpoint source changed during bundle construction",
+        match="sana model checkpoint source changed during bundle construction",
     ):
         checkpoint_compare.run_comparison(
             checkpoint_compare.build_parser().parse_args(

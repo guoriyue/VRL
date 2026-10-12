@@ -20,7 +20,6 @@ from vrl.config.builders import BuiltConfigs
 from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
-from vrl.models import checkpoint_identity
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
@@ -830,7 +829,7 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     replay_build = family_entry.resolve_model_build(
         built.root, device, precision=built.precision, for_rollout=False
     )
-    model_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    model_identity = replay_build.checkpoint_identity()
     if resume_checkpoint is not None:
         resume_checkpoint.validate_compatibility(
             family=family_entry.family,

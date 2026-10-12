@@ -46,7 +46,6 @@ from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.worker import RayGenerationWorker
-from vrl.models import checkpoint_identity
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import GlobalRayPlacementOwner
 from vrl.ray.resources import ResourcePlan
@@ -123,7 +122,7 @@ async def _on_demand(
         precision=built.precision,
         for_rollout=False,
     )
-    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    replay_identity = replay_build.checkpoint_identity()
     owner = GlobalRayPlacementOwner(resources, worker_config)
     owner.create()
     launcher = RayGenerationLauncher()

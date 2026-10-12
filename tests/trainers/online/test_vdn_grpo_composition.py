@@ -70,7 +70,6 @@ def _stack(
 
     from tests.generation._in_process_runtime import InProcessGenerationRuntime
     from vrl.config.loading import load_config
-    from vrl.models import checkpoint_identity
     from vrl.rewards.runtime import RewardFunctionRuntime
     from vrl.rollouts.collector import RolloutCollector
     from vrl.scripts.common.factory import AlgorithmEvaluatorPair
@@ -131,7 +130,7 @@ def _stack(
         precision=built.precision,
         for_rollout=False,
     )
-    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    replay_identity = replay_build.checkpoint_identity()
     bundle = built.family.build_replay(replay_build, expected_identity=replay_identity)
     runtime = InProcessGenerationRuntime(
         RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity)

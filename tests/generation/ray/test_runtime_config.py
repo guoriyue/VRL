@@ -28,7 +28,6 @@ from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
-from vrl.models import checkpoint_identity
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.placement import RolePlacement
 from vrl.ray.resources import ResourcePlan
@@ -241,7 +240,7 @@ def _sana_launch(tmp_path: Path, *overrides: str) -> tuple[RayGenerationLaunchIn
         precision=built.precision,
         for_rollout=False,
     )
-    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    replay_identity = replay_build.checkpoint_identity()
     return RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity), (
         replay_identity
     )
@@ -328,7 +327,7 @@ def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(tmp_pa
         precision=built.precision,
         for_rollout=False,
     )
-    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    replay_identity = replay_build.checkpoint_identity()
 
     model_build = RayGenerationLaunchInputs.from_run(
         built, resources, replay_build, replay_identity
@@ -350,7 +349,7 @@ def test_generation_launch_inputs_reject_rollout_identity_mismatch(tmp_path) -> 
         precision=built.precision,
         for_rollout=False,
     )
-    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    replay_identity = replay_build.checkpoint_identity()
     (tmp_path / "sana-snapshot" / "extra-weights.bin").write_bytes(b"drift")
 
     with pytest.raises(
@@ -473,7 +472,7 @@ def _on_demand_launch(
         precision=built.precision,
         for_rollout=False,
     )
-    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    replay_identity = replay_build.checkpoint_identity()
     placement = RolePlacement(
         placement_group=None,
         bundle_indices=(0,),

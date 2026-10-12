@@ -16,7 +16,6 @@ from tests.scripts.eval.fixtures import (
 from tests.trainers._checkpoint_helpers import _Trainer
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
-from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval import wan_robotics_checkpoint_eval as checkpoint_eval
 from vrl.trainers.checkpointing import save_training_checkpoint
@@ -355,7 +354,7 @@ def _save_epoch_checkpoint(run_dir: Path, *, epoch: int, fill: float) -> Path:
         family="wan_2_1",
         progress={"completed_epoch": epoch, "next_epoch": epoch},
         rng_state={},
-        model_identity=resolve_checkpoint_model_identity(build),
+        model_identity=build.checkpoint_identity(),
     )
     return path
 

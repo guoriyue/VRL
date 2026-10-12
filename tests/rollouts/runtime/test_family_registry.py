@@ -60,7 +60,6 @@ def test_previous_adapter_follows_algorithm_for_both_build_roles(family, kind) -
             "precision": {"float32_precision": "ieee", "training": {"dtype": "fp32"}},
         },
     )
-    from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 
     identities = []
     for for_rollout in (False, True):
@@ -72,7 +71,7 @@ def test_previous_adapter_follows_algorithm_for_both_build_roles(family, kind) -
         )
         # Ray reconstructs the same build from the dataclass payload.
         restored = ModelBuild(**asdict(build))
-        identities.append(resolve_checkpoint_model_identity(restored))
+        identities.append(restored.checkpoint_identity())
     assert identities[0] == identities[1]
 
 

@@ -72,7 +72,6 @@ class RaySanaRuntime:
 
         import torch
 
-        from vrl.models import checkpoint_identity
         from vrl.trainers.strategy import SingleProcessStrategy
 
         replay_build = self.built.family.resolve_model_build(
@@ -81,7 +80,7 @@ class RaySanaRuntime:
             precision=self.built.precision,
             for_rollout=False,
         )
-        replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+        replay_identity = replay_build.checkpoint_identity()
         bundle = self.built.family.build_replay(replay_build, expected_identity=replay_identity)
         return SingleProcessStrategy().export_rollout_state(bundle)
 
@@ -108,7 +107,6 @@ async def ray_sana_runtime(
     from vrl.generation.ray.config import RolloutWorkerConfig
     from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
     from vrl.generation.ray.launcher import RayGenerationLauncher
-    from vrl.models import checkpoint_identity
     from vrl.ray.placement import GlobalRayPlacementOwner
     from vrl.ray.resources import ResourcePlan
 
@@ -128,7 +126,7 @@ async def ray_sana_runtime(
         precision=built.precision,
         for_rollout=False,
     )
-    replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+    replay_identity = replay_build.checkpoint_identity()
     owner = GlobalRayPlacementOwner(resources, worker)
     owner.create()
     try:

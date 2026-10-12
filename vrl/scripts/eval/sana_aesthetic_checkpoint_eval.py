@@ -23,7 +23,6 @@ from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import RootConfig, parse_config
-from vrl.models import checkpoint_identity
 from vrl.scripts.eval import sana_aesthetic_report as sana_report
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.scripts.eval.sana_inference import (
@@ -114,11 +113,9 @@ def main(argv: list[str] | None = None) -> None:
     from vrl.models.families.registry import get_model_family_entry
 
     identity_entry = get_model_family_entry(str(root.model.family))
-    model_identity = checkpoint_identity.resolve_checkpoint_model_identity(
-        identity_entry.resolve_model_build(
-            root, device, precision=identity_precision, for_rollout=True
-        )
-    )
+    model_identity = identity_entry.resolve_model_build(
+        root, device, precision=identity_precision, for_rollout=True
+    ).checkpoint_identity()
     for target in targets:
         if target.path is not None:
             target.validate_compatibility(family="sana", expected_model_identity=model_identity)
@@ -328,7 +325,7 @@ def _generate_images(
     build = entry.resolve_model_build(root, device, precision=precision, for_rollout=True)
     bundle = entry.build_rollout(
         build,
-        expected_identity=checkpoint_identity.resolve_checkpoint_model_identity(build),
+        expected_identity=build.checkpoint_identity(),
     )
     model = bundle.model.eval()
     generated: list[GeneratedImage] = []

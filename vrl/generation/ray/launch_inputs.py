@@ -57,7 +57,6 @@ class RayGenerationLaunchInputs:
 
         import torch
 
-        from vrl.models import checkpoint_identity
         from vrl.models.dtypes import dtype_to_wire_name
 
         family = built.family
@@ -74,7 +73,7 @@ class RayGenerationLaunchInputs:
         root = built.root
         runtime_device = torch.device("cuda" if resources.rollout_devices else "cpu")
         build = family.resolve_model_build(root, runtime_device, precision=built.precision)
-        rollout_model_identity = checkpoint_identity.resolve_checkpoint_model_identity(build)
+        rollout_model_identity = build.checkpoint_identity()
         if rollout_model_identity != model_identity:
             raise ValueError(
                 "rollout model identity does not match the driver replay model "

@@ -7,7 +7,8 @@ directly; builders consume a ``ModelBuild`` and return a ``RuntimeBundle``.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+import contextlib
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
@@ -326,6 +327,44 @@ class ModelBuild:
             raise ValueError(
                 "replay runtime construction requires ModelBuild.rollout=None; "
                 "resolve the build through a replay resolver",
+            )
+
+    def checkpoint_identity(self) -> dict[str, Any]:
+        """Resolve the path-independent identity of the checkpoint this build loads.
+
+        Local sources are content-hashed, so each call reads the checkpoint once.
+        """
+
+        # Called through the module so tests that stub the resolver reach it.
+        from vrl.models import checkpoint_identity as identity
+
+        return identity.resolve_checkpoint_model_identity(self)
+
+    @contextlib.contextmanager
+    def pinned_to(self, expected_identity: dict[str, Any] | None) -> Iterator[None]:
+        """Hold the construction in the block to the checkpoint ``expected_identity`` names.
+
+        The identity is resolved on entry, so a source that differs from the one
+        the caller checked (resume compatibility, the driver's replay model)
+        fails before any weights load, and again on exit, so a source that
+        changes mid-load cannot slip in. ``None`` builds without that proof.
+        """
+
+        if expected_identity is None:
+            yield
+            return
+        found = self.checkpoint_identity()
+        if found != expected_identity:
+            raise ValueError(
+                f"{self.family} model identity mismatch before model construction: "
+                f"expected={expected_identity!r}, found={found!r}",
+            )
+        yield
+        loaded = self.checkpoint_identity()
+        if loaded != expected_identity:
+            raise RuntimeError(
+                f"{self.family} model checkpoint source changed during bundle construction: "
+                f"before={expected_identity!r}, after={loaded!r}",
             )
 
     @property

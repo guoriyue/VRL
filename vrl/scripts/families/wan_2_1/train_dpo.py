@@ -126,7 +126,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     import torch
 
     from vrl.config.builders import BuiltConfigs
-    from vrl.models import checkpoint_identity
     from vrl.ray.resources import ResourcePlan
     from vrl.trainers.offline import OfflineDPOTrainerConfig
 
@@ -194,7 +193,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         for_rollout=True,
         precision_role="training",
     )
-    model_identity = checkpoint_identity.resolve_checkpoint_model_identity(model_build)
+    model_identity = model_build.checkpoint_identity()
     if resume_checkpoint is not None:
         resume_checkpoint.validate_compatibility(
             family=family,

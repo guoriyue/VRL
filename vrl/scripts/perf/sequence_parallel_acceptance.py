@@ -47,7 +47,6 @@ from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.generation.types import GenerationInput, GenerationRequest
-from vrl.models import checkpoint_identity
 from vrl.models.families.semantics import task_type_for
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner
@@ -216,7 +215,7 @@ async def _generate(args: argparse.Namespace) -> dict[str, Any]:
         built,
         resources,
         replay_build,
-        checkpoint_identity.resolve_checkpoint_model_identity(replay_build),
+        replay_build.checkpoint_identity(),
     )
     worker = RolloutWorkerConfig.from_root(built.root)
 

@@ -15,7 +15,6 @@ from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
-from vrl.models.checkpoint_identity import resolve_checkpoint_model_identity
 from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
 from vrl.scripts.eval._sampling import resolve_eval_sampling
@@ -146,7 +145,7 @@ def _tiny_cosmos_run(tmp_path: Path):
         precision=PrecisionPolicy.from_section(root.precision),
         for_rollout=True,
     )
-    identity = resolve_checkpoint_model_identity(build)
+    identity = build.checkpoint_identity()
     return snapshot, config_path, root, entry, build, identity
 
 
@@ -380,7 +379,7 @@ def test_generate_all_rejects_model_source_drift_before_checkpoint_load(
     sampling = resolve_eval_sampling(root)
 
     with pytest.raises(
-        RuntimeError, match="rollout model checkpoint source changed during bundle construction"
+        RuntimeError, match="model checkpoint source changed during bundle construction"
     ):
         eval_script._generate_all(
             build,

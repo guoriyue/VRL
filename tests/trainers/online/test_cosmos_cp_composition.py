@@ -43,7 +43,6 @@ from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
-from vrl.models import checkpoint_identity
 from vrl.models.families.cosmos.predict2_5.model import (
     CosmosPredict25Model,
     CosmosPredict25ReplayModel,
@@ -157,7 +156,7 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
             precision=built.precision,
             for_rollout=False,
         )
-        replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+        replay_identity = replay_build.checkpoint_identity()
         bundle = built.family.build_replay(replay_build, expected_identity=replay_identity)
         model = bundle.model
         runtime = InProcessGenerationRuntime(

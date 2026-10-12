@@ -39,7 +39,6 @@ from tests.scripts.eval.fixtures import (
     tiny_sana_ray_cluster,
     write_tiny_sana_snapshot,
 )
-from vrl.models import checkpoint_identity
 from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.rewards import RewardOutput, RewardSample
@@ -403,7 +402,7 @@ async def _ray_owner(
             precision=built.precision,
             for_rollout=False,
         )
-        replay_identity = checkpoint_identity.resolve_checkpoint_model_identity(replay_build)
+        replay_identity = replay_build.checkpoint_identity()
         bench = CollectorBench(
             stack=TinySanaStack(
                 built=built,

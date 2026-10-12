@@ -25,7 +25,6 @@ from omegaconf import DictConfig
 from vrl.config.builders import RewardRuntimeConfig
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
-from vrl.models import checkpoint_identity
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.robotics_video_reward import RoboticsVideoRewardModel
@@ -212,7 +211,7 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
         build = entry.resolve_model_build(root, device, precision=precision, for_rollout=True)
         bundle = entry.build_rollout(
             build,
-            expected_identity=checkpoint_identity.resolve_checkpoint_model_identity(build),
+            expected_identity=build.checkpoint_identity(),
         )
         if target.path is not None:
             checkpoint = TrainingCheckpoint.load(target.path)
