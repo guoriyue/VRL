@@ -8,7 +8,6 @@ import pytest
 import torch
 
 from vrl.generation.bindings.full_sequence import (
-    DenoiseRequestLayout,
     GenericDenoiseBatchExecutor,
 )
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
@@ -180,14 +179,9 @@ def test_seeded_sde_window_is_deterministic_per_request() -> None:
     assert len(windows) > 1, "30 distinct seeds all drew the same window"
 
 
-def _layout() -> DenoiseRequestLayout:
-    """A layout with explicit fallbacks (the executor is the real source)."""
-    return DenoiseRequestLayout(
-        default_num_frames=1,
-        default_fps=None,
-        default_max_sequence_length=512,
-        sde_type="flow_grpo",
-    )
+def _layout() -> GenericDenoiseBatchExecutor:
+    """An executor with explicit fallbacks; parsing reads its ``default_*`` values."""
+    return GenericDenoiseBatchExecutor(None, family="sd3_5", task="t2i", max_sequence_length=512)
 
 
 def _request(

@@ -23,7 +23,7 @@ The internal Python API uses these names in place of the former abbreviations:
 | Previous | Current |
 | --- | --- |
 | `DiffusionBatchExecutorBase`, `DiffusionBatchGatherer` | `DenoiseBatchExecutorBase`, `DenoiseBatchGatherer` |
-| `DiffusionSamplingParams`, `DiffusionRequestLayout` | `DenoiseSamplingParams`, `DenoiseRequestLayout` |
+| `DiffusionSamplingParams`, `DiffusionRequestLayout` | `DenoiseSamplingParams`; the request layout became `DenoiseBatchExecutorBase.parse_sampling_params` |
 | `DiffusionSDELogProbEvaluator` | `DenoiseSDELogProbEvaluator` |
 
 `Diffusion` is kept where it names an algorithm or a recipe kind rather than
