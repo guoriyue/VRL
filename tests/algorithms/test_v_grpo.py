@@ -31,15 +31,7 @@ def _batch(*, timestep: float | tuple[float, ...] = 500.0, seed: int = 1234):
     torch.manual_seed(seed)
     x0 = torch.randn(_LATENT_SHAPE)
     prompt_embeds = torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM)
-    # The NFT harness stores a noise tensor the V-GRPO loss never reads: its
-    # eps is the group-shared draw, not a replay tensor.
-    return (
-        x0,
-        prompt_embeds,
-        _build_batch(
-            x0=x0, noise=torch.zeros(_LATENT_SHAPE), prompt_embeds=prompt_embeds, timestep=timestep
-        ),
-    )
+    return x0, prompt_embeds, _build_batch(x0=x0, prompt_embeds=prompt_embeds, timestep=timestep)
 
 
 # ------------------------------------------------------------ advantages
@@ -82,7 +74,7 @@ def _step_distances(
     objective = VGRPO(cfg)
     x0, prompt_embeds, batch = _batch()
     model = _build_model(trainable)
-    noise = objective.noise(x0, group_ids=batch.group_ids, timestep_index=0, recorded=None)
+    noise = objective.noise(x0, group_ids=batch.group_ids, timestep_index=0)
     t = 0.5
     xt = (1 - t) * x0 + t * noise
     target = noise - x0
@@ -165,24 +157,16 @@ def test_unit_ratio_loss_is_the_negated_soft_clipped_advantage() -> None:
 def test_noise_is_shared_within_a_group_and_fresh_across_groups_and_updates() -> None:
     objective = VGRPO(VGRPOConfig())
     x0 = torch.zeros(4, 2, 3)
-    same_group = objective.noise(
-        x0, group_ids=torch.tensor([3, 3, 3, 3]), timestep_index=1, recorded=None
-    )
-    two_groups = objective.noise(
-        x0, group_ids=torch.tensor([3, 3, 4, 4]), timestep_index=1, recorded=None
-    )
+    same_group = objective.noise(x0, group_ids=torch.tensor([3, 3, 3, 3]), timestep_index=1)
+    two_groups = objective.noise(x0, group_ids=torch.tensor([3, 3, 4, 4]), timestep_index=1)
 
     assert torch.equal(same_group[0], same_group[3])
     assert torch.equal(two_groups[0], same_group[0])  # same (update, group, index)
     assert not torch.equal(two_groups[2], two_groups[0])
-    other_index = objective.noise(
-        x0, group_ids=torch.tensor([3, 3, 3, 3]), timestep_index=2, recorded=None
-    )
+    other_index = objective.noise(x0, group_ids=torch.tensor([3, 3, 3, 3]), timestep_index=2)
     assert not torch.equal(other_index[0], same_group[0])
     objective._update_counter += 1
-    next_update = objective.noise(
-        x0, group_ids=torch.tensor([3, 3, 3, 3]), timestep_index=1, recorded=None
-    )
+    next_update = objective.noise(x0, group_ids=torch.tensor([3, 3, 3, 3]), timestep_index=1)
     assert not torch.equal(next_update[0], same_group[0])
 
 

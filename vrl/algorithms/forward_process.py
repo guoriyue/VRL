@@ -56,27 +56,24 @@ class ForwardProcessAlgorithm(OnlineAlgorithm):
 
         from vrl.trajectory.reader import TrajectoryReader
 
-        replay = TrajectoryReader.from_batch(batch).forward_process_replay(
+        x0, timestep = TrajectoryReader.from_batch(batch).forward_process_replay(
             "denoise", timestep_index
         )
-        x0 = replay.latents_clean
-        t = self.flow_time(replay.timestep, x0).view(-1, *([1] * (x0.ndim - 1)))
+        t = self.flow_time(timestep, x0).view(-1, *([1] * (x0.ndim - 1)))
         noise = self.noise(
             x0,
             group_ids=getattr(batch, "group_ids", None),
             timestep_index=int(timestep_index),
-            recorded=replay.noise,
         )
         return x0, t, (1 - t) * x0.float() + t * noise.to(device=x0.device, dtype=torch.float32)
 
-    def noise(self, x0: Any, *, group_ids: Any, timestep_index: int, recorded: Any | None) -> Any:
-        """The forward-process noise for ``x0``: the rollout's recorded draw when
-        the trajectory kept one, else a fresh standard-normal draw."""
+    def noise(self, x0: Any, *, group_ids: Any, timestep_index: int) -> Any:
+        """The forward-process noise for ``x0``: a fresh standard-normal draw."""
 
         import torch
 
         del group_ids, timestep_index
-        return torch.randn_like(x0.float()) if recorded is None else recorded
+        return torch.randn_like(x0.float())
 
     def flow_time(self, t_raw: Any, x0: Any) -> Any:
         """Normalize a rollout timestep grid into flow time ``t`` in ``[0, 1]``.

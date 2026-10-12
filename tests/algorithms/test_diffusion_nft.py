@@ -150,7 +150,6 @@ def _build_model(trainable: str = "lora") -> _NFTModel:
 def _build_batch(
     *,
     x0: torch.Tensor,
-    noise: torch.Tensor,
     prompt_embeds: torch.Tensor,
     timestep: float | tuple[float, ...],
 ) -> RolloutBatch:
@@ -186,7 +185,6 @@ def _build_batch(
         replay_tensors={
             "latents_clean": x0,
             "prompt_embeds": prompt_embeds,
-            "diffusion_nft_noise": noise,
         },
         context={"num_frames": 1, "height": 4, "width": 4},
     )
@@ -238,11 +236,13 @@ def _step_distances(
     t_raw = torch.full((_BATCH,), timestep)
 
     model = _build_model(trainable)
-    batch = _build_batch(x0=x0, noise=noise, prompt_embeds=prompt_embeds, timestep=timestep)
+    batch = _build_batch(x0=x0, prompt_embeds=prompt_embeds, timestep=timestep)
 
     before = float((_default_forward(model, xt, prompt_embeds, t_raw).detach() - target).norm())
 
-    loss, _ = DiffusionNFT(cfg).compute_loss(
+    objective = DiffusionNFT(cfg)
+    objective.noise = lambda x0, **_: noise
+    loss, _ = objective.compute_loss(
         AlgorithmInput(
             model=model,
             rollout_batch=batch,
@@ -270,7 +270,6 @@ def test_nft_returns_only_objective_owned_step_metrics() -> None:
     model = _build_model()
     batch = _build_batch(
         x0=torch.randn(_LATENT_SHAPE),
-        noise=torch.randn(_LATENT_SHAPE),
         prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
         timestep=500.0,
     )
@@ -330,7 +329,6 @@ def test_edm_scale_timestep_grid_fails_loudly() -> None:
     model = _build_model()
     batch = _build_batch(
         x0=torch.randn(_LATENT_SHAPE),
-        noise=torch.randn(_LATENT_SHAPE),
         prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
         timestep=80000.0,
     )
@@ -363,11 +361,12 @@ def test_bf16_predictions_preserve_advantage_flip_invariant(monkeypatch) -> None
     monkeypatch.setattr(model, "replay_forward_with_latents", bf16_forward)
     batch = _build_batch(
         x0=torch.randn(_LATENT_SHAPE),
-        noise=torch.randn(_LATENT_SHAPE),
         prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
         timestep=500.0,
     )
     nft = DiffusionNFT(DiffusionNFTConfig(nft_beta=1.0, kl_coef=0.0))
+    noise = torch.randn(_LATENT_SHAPE)
+    nft.noise = lambda x0, **_: noise
     _, metrics_neg = nft.compute_loss(
         AlgorithmInput(
             model=model, rollout_batch=batch, timestep_index=0, advantages=torch.tensor([-4.9375])
@@ -392,7 +391,7 @@ def test_clean_prediction_auxiliary_loss_learns_when_rewards_tie(monkeypatch) ->
     x0, noise = torch.randn(_LATENT_SHAPE), torch.randn(_LATENT_SHAPE)
     prompt = torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM)
     model = _build_model("full")
-    batch = _build_batch(x0=x0, noise=noise, prompt_embeds=prompt, timestep=500.0)
+    batch = _build_batch(x0=x0, prompt_embeds=prompt, timestep=500.0)
     forward = model.replay_forward_with_latents
     calls = []
 
@@ -405,6 +404,7 @@ def test_clean_prediction_auxiliary_loss_learns_when_rewards_tie(monkeypatch) ->
     timestep = torch.full((_BATCH,), 500.0)
     before = (xt - 0.5 * _default_forward(model, xt, prompt, timestep)).detach().square().mean()
     objective = PreserveClean(DiffusionNFTConfig(kl_coef=0))
+    objective.noise = lambda x0, **_: noise
     loss, metrics = objective.compute_loss(
         AlgorithmInput(
             model=model, rollout_batch=batch, timestep_index=0, advantages=torch.zeros(_BATCH)
@@ -429,18 +429,20 @@ def test_zero_clean_prediction_auxiliary_loss_preserves_nft_loss_and_gradients()
     model = _build_model("full")
     batch = _build_batch(
         x0=torch.randn(_LATENT_SHAPE),
-        noise=torch.randn(_LATENT_SHAPE),
         prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
         timestep=500.0,
     )
     config = DiffusionNFTConfig(nft_beta=0.5)
     parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
     advantage = torch.full((_BATCH,), -5.0)
-    expected, expected_metrics = DiffusionNFT(config).compute_loss(
+    noise = torch.randn(_LATENT_SHAPE)
+    plain, zero_auxiliary = DiffusionNFT(config), ZeroAuxiliary(config)
+    plain.noise = zero_auxiliary.noise = lambda x0, **_: noise
+    expected, expected_metrics = plain.compute_loss(
         AlgorithmInput(model=model, rollout_batch=batch, timestep_index=0, advantages=advantage)
     )
     expected_gradients = torch.autograd.grad(expected, parameters)
-    actual, actual_metrics = ZeroAuxiliary(config).compute_loss(
+    actual, actual_metrics = zero_auxiliary.compute_loss(
         AlgorithmInput(model=model, rollout_batch=batch, timestep_index=0, advantages=advantage)
     )
     actual_gradients = torch.autograd.grad(actual, parameters)

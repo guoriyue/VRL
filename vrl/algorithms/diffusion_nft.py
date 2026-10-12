@@ -34,8 +34,7 @@ class DiffusionNFT(ForwardProcessAlgorithm):
 
     Likelihood-free: it computes no importance-sampling ratio, and its
     positive/negative decomposition is taken against ``theta_old``, the
-    detached current prediction. The rollout's own noise is replayed when the
-    trajectory recorded it (``diffusion_nft_noise``).
+    detached current prediction. The interpolation noise is a fresh draw.
     """
 
     needs_sde_rollout = True

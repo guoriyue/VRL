@@ -20,19 +20,6 @@ class TrajectoryReaderError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class ForwardProcessReplay:
-    """What a forward-process objective (DiffusionNFT, V-GRPO) trains on at one step.
-
-    The clean latents the rollout decoded, this step's grid timestep per sample,
-    and the noise the rollout drew for the interpolation when it stored one.
-    """
-
-    latents_clean: Any
-    timestep: Any
-    noise: Any | None
-
-
-@dataclass(frozen=True, slots=True)
 class TrajectoryReader:
     """Read named tensors, roles, and replay slices from one trajectory.
 
@@ -93,8 +80,12 @@ class TrajectoryReader:
         self,
         segment_name: str,
         timestep_index: int,
-    ) -> ForwardProcessReplay:
-        """Typed view of the tensors a forward-process objective reads at one step."""
+    ) -> tuple[Any, Any]:
+        """``(latents_clean, timestep)``: what a forward-process objective reads at one step.
+
+        The clean latents the rollout decoded and this step's grid timestep per
+        sample.
+        """
 
         timesteps = self.tensor(segment_name, "timesteps")
         step_dims = [
@@ -110,13 +101,7 @@ class TrajectoryReader:
                 step_dims[0],
                 timestep_index,
             )
-        segment = self.trajectory.segments[segment_name]
-        noise = segment.tensors.get("diffusion_nft_noise")
-        return ForwardProcessReplay(
-            latents_clean=self.tensor_value(segment_name, "latents_clean"),
-            timestep=timestep,
-            noise=None if noise is None else noise.value,
-        )
+        return self.tensor_value(segment_name, "latents_clean"), timestep
 
     def replay_tensor_dict(
         self,
@@ -201,7 +186,6 @@ class TrajectoryReader:
 
 
 __all__ = [
-    "ForwardProcessReplay",
     "TrajectoryReader",
     "TrajectoryReaderError",
 ]

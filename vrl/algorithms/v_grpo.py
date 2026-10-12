@@ -129,7 +129,7 @@ class VGRPO(ForwardProcessAlgorithm):
         loss_value = float(loss.detach().item())
         return loss, TrainStepMetrics(loss=loss_value, policy_loss=loss_value)
 
-    def noise(self, x0: Any, *, group_ids: Any, timestep_index: int, recorded: Any | None) -> Any:
+    def noise(self, x0: Any, *, group_ids: Any, timestep_index: int) -> Any:
         """One ``eps`` per prompt group, identical across the group's samples.
 
         Seeded from ``(update counter, group id, replay index)`` so the pairs a
@@ -139,7 +139,6 @@ class VGRPO(ForwardProcessAlgorithm):
 
         import torch
 
-        del recorded
         batch = int(x0.shape[0])
         if group_ids is None:
             ids = [0] * batch

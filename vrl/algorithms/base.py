@@ -84,8 +84,9 @@ class OnlineAlgorithm(Algorithm):
     algorithm, the way a scheduler calls a thread's fixed entry points; the
     defaults do nothing and an algorithm that normalizes over an update
     overrides them. What a loss reads is the type of its input
-    (``SegmentSignal`` / ``FlowSDESignal`` on the evaluator branch,
-    ``ForwardProcessReplay`` on the replay branch), not a declared key list.
+    (``SegmentSignal`` / ``FlowSDESignal`` on the evaluator branch, the
+    trajectory's clean latents and timestep on the replay branch), not a
+    declared key list.
     """
 
     config: GroupAdvantageConfig
