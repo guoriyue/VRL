@@ -26,13 +26,11 @@ from vrl.models.families.cosmos.predict2_5.config import (
     CosmosPredict25ModelSection,
 )
 from vrl.models.families.echo.config import EchoModelSection
-from vrl.models.families.flux.config import FluxModelSection
 from vrl.models.families.magi_1.config import Magi1ModelSection
 from vrl.models.families.names import _FAMILY_BY_ALIAS
 from vrl.models.families.registry import (
     FAMILY_REGISTRY,
     GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
-    SHARED_MODEL_SECTION_CLS,
     get_model_family_entry,
 )
 from vrl.models.families.wan_2_1.config import WanModelSection
@@ -196,7 +194,6 @@ def test_cosmos_predict25_keys_select_family_section() -> None:
 @pytest.mark.parametrize(
     ("family", "section_cls", "payload"),
     [
-        ("flux", FluxModelSection, {"use_lora": True, "lora": {"dropout": 0.1}}),
         (
             "echo",
             EchoModelSection,
@@ -396,7 +393,7 @@ def test_shared_only_families_use_the_shared_model_section() -> None:
     shared_families = [
         entry.family
         for entry in FAMILY_REGISTRY.values()
-        if entry.model_section_cls == SHARED_MODEL_SECTION_CLS
+        if entry.model_section_cls == "vrl.config.model_schema:ModelSection"
     ]
     assert shared_families
 

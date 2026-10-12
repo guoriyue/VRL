@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR = (
     "vrl.generation.bindings.full_sequence.executor:GenericDenoiseBatchExecutor"
 )
-SHARED_MODEL_SECTION_CLS = "vrl.config.model_schema:ModelSection"
 # Lazy public-sampling schema protocol values. Families share a path only when
 # they expose the same real request vocabulary; no per-family empty class is
 # needed merely to make registry entries look unique.
@@ -468,7 +467,7 @@ _register_model_family(
     _full_sequence_entry(
         family="sd3_5",
         task="t2i",
-        model_section_cls="vrl.models.families.sd3_5.config:SD3_5ModelSection",
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.sd3_5.model:SD3_5PipelineModel",
@@ -531,7 +530,7 @@ _register_model_family(
     _full_sequence_entry(
         family="flux",
         task="t2i",
-        model_section_cls="vrl.models.families.flux.config:FluxModelSection",
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.flux.model:FluxPipelineModel",
@@ -545,7 +544,7 @@ _register_model_family(
     _full_sequence_entry(
         family="qwen_image",
         task="t2i",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         # Descriptor-driven family: the generic functions in
         # vrl.models.steps.denoise.build read the recipe below, so qwen_image ships
@@ -562,7 +561,7 @@ _register_model_family(
     _full_sequence_entry(
         family="qwen_image_21",
         task="t2i",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls="vrl.config.sampling_schema:QwenImage21SamplingSection",
         executor_cls="vrl.models.families.qwen_image_21.runtime:QwenImage21BatchExecutor",
         # Qwen-Image-2.1: 7B single-stream DiT (diffusers ``QwenImage21*``), a
@@ -579,7 +578,7 @@ _register_model_family(
     _full_sequence_entry(
         family="sana",
         task="t2i",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.sana.model:SanaPipelineModel",
@@ -593,7 +592,7 @@ _register_model_family(
     _full_sequence_entry(
         family="lumina2",
         task="t2i",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.lumina2.model:Lumina2PipelineModel",
@@ -607,7 +606,7 @@ _register_model_family(
     _full_sequence_entry(
         family="hunyuan_video",
         task="t2v",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.hunyuan_video.model:HunyuanVideoPipelineModel",
@@ -621,7 +620,7 @@ _register_model_family(
     _full_sequence_entry(
         family="mochi",
         task="t2v",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.mochi.model:MochiPipelineModel",
@@ -635,7 +634,7 @@ _register_model_family(
     _full_sequence_entry(
         family="hunyuan_image",
         task="t2i",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls=DENOISE_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.hunyuan_image.model:HunyuanImagePipelineModel",
@@ -649,7 +648,7 @@ _register_model_family(
     _full_sequence_entry(
         family="pixart_sigma",
         task="t2i",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls=TEXT_ENCODED_IMAGE_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.pixart_sigma.model:PixArtSigmaPipelineModel",
@@ -667,7 +666,7 @@ _register_model_family(
     _full_sequence_entry(
         family="cogvideox",
         task="t2v",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls=TEXT_ENCODED_VIDEO_SAMPLING_SECTION_CLS,
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cogvideox.model:CogVideoXPipelineModel",
@@ -726,7 +725,7 @@ _register_model_family(
     _full_sequence_entry(
         family="cosmos-predict2",
         task="v2w",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosBatchExecutor",
         build=DenoiseFamilyBuild(
@@ -779,7 +778,7 @@ _register_model_family(
     _full_sequence_entry(
         family="minimax_h3",
         task="t2v",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls="vrl.config.sampling_schema:MiniMaxH3SamplingSection",
         executor_cls="vrl.models.families.minimax_h3.runtime:MiniMaxH3BatchExecutor",
         build=DenoiseFamilyBuild(
@@ -795,7 +794,7 @@ _register_model_family(
     _full_sequence_entry(
         family="cosmos3",
         task="t2v",
-        model_section_cls=SHARED_MODEL_SECTION_CLS,
+        model_section_cls="vrl.config.model_schema:ModelSection",
         sampling_section_cls=VIDEO_SAMPLING_SECTION_CLS,
         executor_cls="vrl.models.families.cosmos.cosmos3.runtime:Cosmos3BatchExecutor",
         build=DenoiseFamilyBuild(
