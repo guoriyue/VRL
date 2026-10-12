@@ -76,14 +76,9 @@ class DenoiseSDELogProbEvaluator(Evaluator):
                 # reference_policy(); a distinct frozen model runs as is.
                 ctx = model.reference_policy() if ref_model is model else contextlib.nullcontext()
                 with ctx:
-                    ref_fwd = ref_model.replay_forward(
-                        batch,
-                        timestep_idx,
-                    ).require_segment("denoise")
-                ref_noise_pred = ref_fwd.require_value("noise_pred")
+                    ref_noise_pred = ref_model.replay_forward(batch, timestep_idx)["noise_pred"]
 
-        fwd = model.replay_forward(batch, timestep_idx).require_segment("denoise")
-        noise_pred = fwd.require_value("noise_pred")
+        noise_pred = model.replay_forward(batch, timestep_idx)["noise_pred"]
         device = getattr(noise_pred, "device", None)
         replay = reader.replay_tensor_dict(
             "denoise",

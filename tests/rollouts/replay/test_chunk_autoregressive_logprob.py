@@ -10,7 +10,6 @@ import pytest
 import torch
 
 from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.denoise import (
     ChunkAutoregressiveDenoiseLogProbEvaluator,
@@ -39,7 +38,6 @@ def test_grouped_evaluator_flattens_policy_axes_and_replays_reference_once() -> 
     assert torch.all(signals.primary.log_prob == 3.0)
     assert torch.all(signals.primary.ref_log_prob == 2.0)
     assert model.adapter_disable_count == 1
-    assert model.requests == [("denoise",), ("denoise",)]
 
 
 @pytest.mark.parametrize("shared_reference", [False, True])
@@ -53,9 +51,7 @@ def test_reference_replay_does_not_build_a_gradient_graph(shared_reference) -> N
         def replay_forward(self, *args, **kwargs):
             self.grad_modes.append(torch.is_grad_enabled())
             result = super().replay_forward(*args, **kwargs)
-            segment = result.require_segment("denoise")
-            segment.values["log_probs"] = segment.values["log_probs"] * self.weight
-            return result
+            return {"log_probs": result["log_probs"] * self.weight}
 
     model = DifferentiableReplay()
     reference = model if shared_reference else DifferentiableReplay()
@@ -84,27 +80,16 @@ class _ReplayModel:
     def __init__(self) -> None:
         self.adapter_disabled = False
         self.adapter_disable_count = 0
-        self.requests: list[tuple[str, ...] | None] = []
 
     def replay_forward(
         self,
         batch: RolloutBatch,
         timestep_idx: int = 0,
-        *,
-        request: Any | None = None,
-    ) -> ReplayResult:
+    ) -> dict[str, Any]:
         del timestep_idx
-        self.requests.append(request.segment_names if request is not None else None)
         value = 2.0 if self.adapter_disabled else 3.0
         shape = batch.trajectory.segments["denoise"].tensors["old_log_prob"].value.shape
-        return ReplayResult(
-            segments={
-                "denoise": ReplaySegmentResult(
-                    segment="denoise",
-                    values={"log_probs": torch.full(shape, value)},
-                ),
-            },
-        )
+        return {"log_probs": torch.full(shape, value)}
 
     @contextmanager
     def reference_policy(self) -> Iterator[None]:

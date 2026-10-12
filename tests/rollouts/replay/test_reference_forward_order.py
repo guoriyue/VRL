@@ -16,7 +16,6 @@ import torch
 from torch import nn
 
 from vrl.generation import GenerationRequest
-from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.models.weight_snapshot import TrainableWeightsSnapshot
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.denoise.chunk_autoregressive_logprob import (
@@ -50,20 +49,12 @@ class _SnapshotPolicy:
     def reference_policy(self) -> Any:
         return self.reference.active()
 
-    def replay_forward(self, batch: RolloutBatch, timestep_idx: int = 0, *, request=None):
-        del request
+    def replay_forward(self, batch: RolloutBatch, timestep_idx: int = 0):
         segment = batch.trajectory.segments["denoise"]
         observations = segment.role_tensor("observation").value
         value = self.linear(observations)
-        if self.value_key == "log_probs":
-            value = value.mean(dim=-1)
-        else:
-            value = value[:, timestep_idx]
-        return ReplayResult(
-            segments={
-                "denoise": ReplaySegmentResult(segment="denoise", values={self.value_key: value})
-            }
-        )
+        value = value.mean(dim=-1) if self.value_key == "log_probs" else value[:, timestep_idx]
+        return {self.value_key: value}
 
 
 def _request() -> GenerationRequest:

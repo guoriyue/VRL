@@ -24,7 +24,7 @@ from vrl.models.families.mochi.model import MochiPipelineModel
 from vrl.models.families.sana.model import SanaPipelineModel
 from vrl.models.families.sd3_5.model import SD3_5PipelineModel
 from vrl.models.families.wan_2_1.model import WanT2VPipelineModel
-from vrl.models.interfaces import GenerationMemoryPolicy, ReplayResult
+from vrl.models.interfaces import GenerationMemoryPolicy
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 from vrl.models.steps.denoise import DenoiseModelBase
 from vrl.rollouts.batch import RolloutBatch
@@ -469,8 +469,8 @@ def test_forward_resolves_runtime_self_to_registered_transformer() -> None:
     assert runtime.forward_models == [runtime.transformer]
 
 
-def test_replay_forward_returns_typed_replay_result() -> None:
-    """``replay_forward`` yields a ``ReplayResult`` carrying the ``denoise`` segment's noise_pred;
+def test_replay_forward_returns_the_step_values() -> None:
+    """``replay_forward`` returns the replayed step's values by name (``noise_pred``);
     the plain base replays every timestep at index 0 while ``CosmosReplayForward`` passes the
     real ``timestep_idx`` through, because Cosmos indexes sigmas per step.
     """
@@ -516,8 +516,7 @@ def test_replay_forward_returns_typed_replay_result() -> None:
         latents=torch.zeros(2, 1),
     )
 
-    assert isinstance(result, ReplayResult)
-    assert result.segments["denoise"].values["noise_pred"].shape == (1,)
+    assert result["noise_pred"].shape == (1,)
     assert caller_latent_result["noise_pred"].shape == (1,)
     assert runtime.forward_step_indices == [0, 0]
 

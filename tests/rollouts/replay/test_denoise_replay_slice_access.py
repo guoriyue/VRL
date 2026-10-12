@@ -10,7 +10,6 @@ import torch
 
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.models.steps.denoise import DenoiseModelBase
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
@@ -179,23 +178,13 @@ class _ReplayModel(DenoiseModelBase):
         self,
         batch: Any,
         timestep_idx: int,
-        *,
-        request: Any | None = None,
-    ) -> ReplayResult:
-        del request
+    ) -> dict[str, Any]:
         replay_tensors, batch_context, latents = self._replay_inputs_for_step(
             batch,
             timestep_idx,
         )
         state = self.restore_eval_state(replay_tensors, batch_context, latents, timestep_idx)
-        return ReplayResult(
-            segments={
-                "denoise": ReplaySegmentResult(
-                    segment="denoise",
-                    values=self.forward_step(state, 0),
-                ),
-            },
-        )
+        return self.forward_step(state, 0)
 
 
 @pytest.mark.parametrize("error_type", [RuntimeError, AttributeError])

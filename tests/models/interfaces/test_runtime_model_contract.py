@@ -13,9 +13,6 @@ import torch.nn as nn
 from tests.models.interfaces import registered_runtime_model_classes
 from vrl.config.precision import RolePrecision
 from vrl.models.interfaces import (
-    ReplayRequest,
-    ReplayResult,
-    ReplaySegmentResult,
     RuntimeBundle,
     RuntimeModel,
 )
@@ -27,22 +24,9 @@ _RUNTIME_MODEL_METHODS = tuple(sorted(RuntimeModel.__protocol_attrs__))
 
 
 class _MinimalRuntimeModel:
-    def replay_forward(
-        self,
-        batch: Any,
-        timestep_idx: int = 0,
-        *,
-        request: ReplayRequest | None = None,
-    ) -> ReplayResult:
-        del batch, timestep_idx, request
-        return ReplayResult(
-            segments={
-                "denoise": ReplaySegmentResult(
-                    segment="denoise",
-                    values={},
-                ),
-            },
-        )
+    def replay_forward(self, batch: Any, timestep_idx: int = 0) -> dict[str, Any]:
+        del batch, timestep_idx
+        return {}
 
     def reference_policy(self) -> contextlib.AbstractContextManager[None]:
         return contextlib.nullcontext()

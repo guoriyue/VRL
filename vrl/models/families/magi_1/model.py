@@ -36,7 +36,6 @@ from vrl.generation.bindings.chunk_autoregressive import (
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationInput, GenerationRequest
-from vrl.models.interfaces.replay import ReplayRequest, ReplayResult
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.source_integrity import runtime_source_tree_sha256
 from vrl.utils.deadline import require_timeout
@@ -607,10 +606,8 @@ class Magi1SubprocessModel(torch.nn.Module):
         self,
         batch: Any,
         timestep_idx: int = 0,
-        *,
-        request: ReplayRequest | None = None,
-    ) -> ReplayResult:
-        del batch, timestep_idx, request
+    ) -> dict[str, Any]:
+        del batch, timestep_idx
         raise RuntimeError(self._generation_only_error())
 
     @contextlib.contextmanager

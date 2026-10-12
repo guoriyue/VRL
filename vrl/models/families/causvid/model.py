@@ -36,11 +36,6 @@ from vrl.models.families.causvid.runner import (
     CausVidGeometry,
     CausVidSchedule,
 )
-from vrl.models.interfaces import (
-    ReplayRequest,
-    ReplayResult,
-    ReplaySegmentResult,
-)
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.precision import model_autocast
 from vrl.models.source_integrity import runtime_source_tree_sha256
@@ -427,13 +422,10 @@ class CausVidModel(DenoiseModelBase):
         self,
         batch: Any,
         timestep_idx: int = 0,
-        *,
-        request: ReplayRequest | None = None,
-    ) -> ReplayResult:
+    ) -> dict[str, Any]:
         """Replay all ``[chunk, transition]`` actions in one grouped call."""
 
         self.reject_replay_timestep_selection(timestep_idx)
-        self.reject_unsupported_replay_segments(request)
         from vrl.trajectory.reader import TrajectoryReader
 
         replay = TrajectoryReader.from_batch(batch).replay_tensor_dict(
@@ -448,14 +440,7 @@ class CausVidModel(DenoiseModelBase):
             finalized_chunk_latents=replay["finalized_chunk_latents"],
             prompt_embeds=replay["prompt_embeds"],
         )
-        return ReplayResult(
-            segments={
-                "denoise": ReplaySegmentResult(
-                    segment="denoise",
-                    values={"log_probs": log_probs},
-                ),
-            },
-        )
+        return {"log_probs": log_probs}
 
     def replay_log_probs(
         self,

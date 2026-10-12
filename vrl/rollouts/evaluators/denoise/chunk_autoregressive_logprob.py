@@ -7,7 +7,7 @@ from typing import Any
 
 import torch
 
-from vrl.models.interfaces import ReplayModel, ReplayRequest
+from vrl.models.interfaces import ReplayModel
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
@@ -42,7 +42,6 @@ class ChunkAutoregressiveDenoiseLogProbEvaluator(Evaluator):
         if signal_request is None:
             signal_request = SignalRequest()
 
-        request = ReplayRequest(segment_names=("denoise",))
         # Reference first: a policy standing in for its own reference swaps its
         # weights in place, which must precede the live forward's graph.
         ref_log_prob = None
@@ -52,14 +51,10 @@ class ChunkAutoregressiveDenoiseLogProbEvaluator(Evaluator):
                 torch.no_grad(),
                 model.reference_policy() if same_model else contextlib.nullcontext(),
             ):
-                reference = ref_model.replay_forward(
-                    batch,
-                    request=request,
-                ).require_segment("denoise")
-            ref_log_prob = self._flatten_actions(reference.require_value("log_probs"))
+                reference = ref_model.replay_forward(batch)
+            ref_log_prob = self._flatten_actions(reference["log_probs"])
 
-        current = model.replay_forward(batch, request=request).require_segment("denoise")
-        log_prob = self._flatten_actions(current.require_value("log_probs"))
+        log_prob = self._flatten_actions(model.replay_forward(batch)["log_probs"])
 
         reader = TrajectoryReader.from_batch(batch)
         old_log_prob = self._flatten_actions(

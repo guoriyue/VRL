@@ -22,11 +22,6 @@ import torch
 import torch.nn as nn
 
 from vrl.generation.types import DenoiseRequest
-from vrl.models.interfaces import (
-    ReplayRequest,
-    ReplayResult,
-    ReplaySegmentResult,
-)
 from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.peft_adapter import has_lora_adapter, temporarily_disable_lora
 from vrl.models.precision import model_autocast
@@ -66,12 +61,9 @@ class GuidedDenoiseSamplingStateBase(DenoiseSamplingStateBase):
 class DenoiseModelBase(nn.Module, ABC):
     """Shared denoising and replay operations for diffusion and flow-matching families."""
 
-    # What replay this model type supports, declared on the class and checked
-    # where a replay request arrives (the shape of vLLM's ``Supports*`` model
-    # interfaces): the segments it can replay, and whether replay indexes a
-    # timestep axis. Full-sequence denoise does; causal-chunk replay runs the
-    # whole trajectory at once and has no individual timestep to select.
-    replay_segments: ClassVar[tuple[str, ...]] = ("denoise",)
+    # Whether replay indexes a timestep axis, declared on the class and checked
+    # where a replay request arrives. Full-sequence denoise does; causal-chunk
+    # replay runs the whole trajectory at once and has no timestep to select.
     replay_indexes_timesteps: ClassVar[bool] = True
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -154,32 +146,12 @@ class DenoiseModelBase(nn.Module, ABC):
             f"timestep_idx must be 0, got {timestep_idx}",
         )
 
-    def reject_unsupported_replay_segments(
-        self,
-        request: ReplayRequest | None,
-    ) -> None:
-        """Validate selection against the model's declared replay segments."""
-
-        if request is None or request.segment_names is None:
-            return
-        supported = self.replay_segments
-        requested = request.segment_names
-        unsupported = tuple(name for name in requested if name not in supported)
-        if requested and not unsupported:
-            return
-        raise ValueError(
-            f"{type(self).__name__} replay supports segments {supported!r}; got {requested!r}",
-        )
-
     def replay_forward(
         self,
         batch: Any,
         timestep_idx: int,
-        *,
-        request: ReplayRequest | None = None,
-    ) -> ReplayResult:
+    ) -> dict[str, Any]:
         """Rebuild diffusion sampling state and run one replay forward."""
-        self.reject_unsupported_replay_segments(request)
         replay_tensors, batch_context, latents = self._replay_inputs_for_step(
             batch,
             timestep_idx,
@@ -190,15 +162,7 @@ class DenoiseModelBase(nn.Module, ABC):
             latents,
             timestep_idx,
         )
-        values = self.forward(state, self._replay_forward_step_index(timestep_idx))
-        return ReplayResult(
-            segments={
-                "denoise": ReplaySegmentResult(
-                    segment="denoise",
-                    values=dict(values),
-                ),
-            },
-        )
+        return dict(self.forward(state, self._replay_forward_step_index(timestep_idx)))
 
     def replay_forward_with_latents(
         self,

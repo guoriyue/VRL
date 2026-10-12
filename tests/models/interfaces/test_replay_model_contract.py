@@ -9,9 +9,6 @@ import pytest
 from tests.models.interfaces import registered_replay_model_classes
 from vrl.models.interfaces import (
     ReplayModel,
-    ReplayRequest,
-    ReplayResult,
-    ReplaySegmentResult,
     RuntimeModel,
     require_replay_model,
     require_runtime_model,
@@ -23,42 +20,13 @@ from vrl.models.steps.denoise.base import DenoiseModelBase
 _REPLAY_MODEL_METHODS = tuple(sorted(ReplayModel.__protocol_attrs__))
 
 
-def test_replay_result_requires_non_empty_segments() -> None:
-    with pytest.raises(ValueError, match="segments must be non-empty"):
-        ReplayResult(segments={})
-
-
-def test_replay_result_requires_matching_segment_key() -> None:
-    with pytest.raises(ValueError, match="must match"):
-        ReplayResult(
-            segments={
-                "wrong": ReplaySegmentResult(
-                    segment="denoise",
-                    values={},
-                ),
-            },
-        )
-
-
-def test_replay_request_requires_non_empty_segment_names() -> None:
-    with pytest.raises(ValueError, match="segment_names"):
-        ReplayRequest(segment_names=("",))
-
-
 class _WholeTrajectoryReplay(DenoiseModelBase):
-    """Replays the denoise segment only, and has no timestep axis to select."""
+    """Replays the whole trajectory at once: it has no timestep axis to select."""
 
     replay_indexes_timesteps = False
 
     def forward_step(self, state, step_idx):
         raise NotImplementedError
-
-
-def test_replay_segment_guard_rejects_unsupported_selection() -> None:
-    with pytest.raises(ValueError, match="supports segments"):
-        _WholeTrajectoryReplay().reject_unsupported_replay_segments(
-            ReplayRequest(segment_names=("unsupported",)),
-        )
 
 
 def test_replay_timestep_guard_rejects_nonzero_index() -> None:
@@ -85,12 +53,6 @@ def test_registered_family_replay_model_satisfies_contract(family: str) -> None:
     assert not missing, f"{family}: {replay_cls.__name__} missing ReplayModel methods {missing}"
 
 
-@pytest.mark.parametrize("segment_names", ["image", b"image", "", b""])
-def test_replay_request_rejects_bare_segment_name(segment_names):
-    with pytest.raises(ValueError, match="sequence of names"):
-        ReplayRequest(segment_names=segment_names)
-
-
 @pytest.mark.parametrize(
     "protocol,guard", [(ReplayModel, require_replay_model), (RuntimeModel, require_runtime_model)]
 )
@@ -109,15 +71,3 @@ def test_protocol_guard_rejects_noncallable_members(protocol, guard, bad_method)
 def test_protocol_guard_returns_callable_implementation(protocol, guard):
     model = SimpleNamespace(**{name: lambda: None for name in protocol.__protocol_attrs__})
     assert guard(model) is model
-
-
-def test_replay_request_owns_immutable_segment_selection():
-    names = ["image"]
-    request = ReplayRequest(segment_names=names)
-    names.append("text")
-    assert request.segment_names == ("image",)
-
-
-def test_replay_request_materializes_iterable_before_validation():
-    request = ReplayRequest(segment_names=iter(["image", "text"]))
-    assert request.segment_names == ("image", "text")
