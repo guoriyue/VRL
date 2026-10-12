@@ -7,7 +7,6 @@ import torch
 
 from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.strategy import (
-    ContextParallelStrategy,
     DDPStrategy,
     FSDPStrategy,
     SingleProcessStrategy,
@@ -25,7 +24,7 @@ _UNSHARDED_STATE_METHODS = (
     "load_optimizer_state",
 )
 
-_STRATEGY_CLASSES = (SingleProcessStrategy, DDPStrategy, FSDPStrategy, ContextParallelStrategy)
+_STRATEGY_CLASSES = (SingleProcessStrategy, DDPStrategy, FSDPStrategy)
 _STRATEGY_METHODS = tuple(
     name
     for name, value in Strategy.__dict__.items()
@@ -61,7 +60,6 @@ def test_concrete_strategy_exposes_structural_contract(strategy_cls: type) -> No
         (SingleProcessStrategy, _UnshardedStateStrategy),
         (DDPStrategy, _UnshardedStateStrategy),
         (FSDPStrategy, FSDPStrategy),
-        (ContextParallelStrategy, _UnshardedStateStrategy),
     ],
     ids=lambda value: getattr(value, "__name__", str(value)),
 )
@@ -82,19 +80,15 @@ def _new_strategy(strategy_cls: type) -> Strategy:
             SingleProcessStrategy: "single_process",
             DDPStrategy: "ddp",
             FSDPStrategy: "fsdp",
-            ContextParallelStrategy: "context_parallel",
         }[strategy_cls],
         rank=0,
-        world_size=2 if strategy_cls is ContextParallelStrategy else 1,
+        world_size=1,
         device=torch.device("cpu"),
-        cp_size=2 if strategy_cls is ContextParallelStrategy else 1,
     )
     if strategy_cls is SingleProcessStrategy:
         return SingleProcessStrategy(context)
     if strategy_cls is DDPStrategy:
         return DDPStrategy(context, find_unused_parameters=False)
-    if strategy_cls is ContextParallelStrategy:
-        return ContextParallelStrategy(context)
     return FSDPStrategy(
         context,
         precision_policy="actor",

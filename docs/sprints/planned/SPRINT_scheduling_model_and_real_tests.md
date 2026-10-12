@@ -515,3 +515,7 @@ wan 的 `_config_value` 留着：它的测试替身 pipeline 的 config 既有 d
 | causvid | `CausVidModel` → `CausVidPipelineModel` | `CausVidReplayModel`（及 `_CausVidPolicyModel`）→ `CausVidModel` |
 
 行为变化：Wan 的 `apply_full_finetune` 和 `load_trainable_state` 原来按 rollout/replay 分支，现在按类分开；Echo 的 replay 构造不再收只给解码用的 `dtype`；CausVid 去掉 `generation_enabled` 标志；MiniMax-H3 replay 不再造空槽位的组件外壳，外壳上的 `patch_size`（移到基类）和无人使用的 `canvas_multiple` 删除；Wan I2V 与 VDN-H3 的采样类不再依赖基类顺序。MAGI-1 不是 denoise 体系的类，没有 replay，不在此列。
+
+## 26. 删除 Cosmos 手写 context parallel（2026-10-11）
+
+仓库里有两套 context parallel。第一套是 FSDP mesh `[dp_shard, cp]` 加 diffusers 的 `_cp_plan`（Wan、Flux、Qwen-Image、LTX），有 Wan 2 卡预设，保留。第二套是为没有 `_cp_plan` 的 Cosmos 手写的：`ContextParallelStrategy`（参数全复制、手动 CP 求和再 DP 平均、严格确定性 fp32），`ContextParallelGroups`、`reduce_context_parallel_gradients`、三个 Ulysses all-to-all，`CosmosContextParallelAttnProcessor` 和 `cosmos/context_parallel.py`，以及配套的 CP 组长收集路径（`ContextParallelStrictRolloutSchedule`、`collect_context_parallel_iteration`、`synchronize_context_parallel_rng`）。schema 的 `strategy` 只有 `single_process` / `fsdp` / `ddp`，`build_strategy` 从不构造它，只有测试走得到；2026-10-04 留下组长收集路径的决定一并撤回。只为切分前后 GEMM 行数一致而存在的 `fixed_row_linear_compute` 随之删除。需要在 Cosmos 上做序列切分时再加，优先考虑给 Cosmos transformer 补 `_cp_plan` 走第一套。

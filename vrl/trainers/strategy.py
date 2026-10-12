@@ -13,7 +13,6 @@ teaching the trainer which distributed mechanism is active.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from contextlib import ExitStack
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -29,7 +28,6 @@ from vrl.models.parking import (
 )
 from vrl.models.parking_disk_store import ParkingDiskStore
 from vrl.trainers.distributed import (
-    ContextParallelGroups,
     ContextParallelPeerGroup,
     DistributedTrainingContext,
     TrainerProcessGroup,
@@ -918,109 +916,6 @@ class FSDPStrategy(_ProcessGroupStrategy, TrainerParking):
         TrainerParking.shutdown(self, restore_parked=restore_parked)
 
 
-class ContextParallelStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
-    """Explicit Cosmos CP candidate; deliberately absent from config dispatch.
-
-    Caller owns group-consistent replay inputs and DP-aware sampling. Full
-    outputs/losses are replicated inside CP. Parameters are replicated across
-    all ranks, so checkpoint state is unsharded. Rollout must independently use
-    the same fixed-row/FP32-LoRA compute contract without replay CP hooks.
-    """
-
-    def __init__(self, context: DistributedTrainingContext):
-        self.context = context
-        self.collectives = TrainingCollectives(context)
-        self.cp_size = context.cp_size
-        self.groups = None
-        self._execution = ExitStack()
-        self._parameters: list[nn.Parameter] = []
-        self._pending_backward = False
-
-    def prepare_model(self, model: Any) -> Any:
-        import os
-
-        import torch.distributed as dist
-        from diffusers import CosmosTransformer3DModel
-
-        from vrl.models.families.cosmos.context_parallel import cosmos_context_parallel
-        from vrl.models.precision import fixed_row_linear_compute, float32_precision_state
-
-        if self.groups is not None:
-            raise RuntimeError("CP strategy has already prepared a model")
-        handles = _trainable_module_handles(model)
-        if len(handles) != 1:
-            raise ValueError("CP strategy requires one Cosmos transformer")
-        self.place_trainable_roots(model)
-        handle = handles[0][1]
-        base = handle.get_base_model() if hasattr(handle, "get_base_model") else handle
-        if not isinstance(base, CosmosTransformer3DModel):
-            raise ValueError("CP strategy requires a Cosmos transformer")
-        parameters = [p for p in handle.parameters() if p.requires_grad]
-        if not parameters or any(p.dtype != torch.float32 for p in parameters):
-            raise ValueError("CP strategy requires FP32 trainable parameters")
-        if self.context.device.type == "cuda" and (
-            not torch.are_deterministic_algorithms_enabled()
-            or torch.is_deterministic_algorithms_warn_only_enabled()
-            or os.environ.get("CUBLAS_WORKSPACE_CONFIG") not in (":4096:8", ":16:8")
-            or float32_precision_state()["matmul"] != "ieee"
-        ):
-            raise ValueError("CP CUDA strategy requires strict deterministic IEEE compute")
-        TrainerProcessGroup.require(self.context)
-        self.groups = ContextParallelGroups.create(self.cp_size)
-        for tensor in (*handle.parameters(), *handle.buffers()):
-            dist.broadcast(tensor.detach(), src=0)
-        branches = [
-            module
-            for name, module in handle.named_modules()
-            if isinstance(module, nn.Linear) and (".lora_A." in name or ".lora_B." in name)
-        ]
-        try:
-            if self.context.device.type == "cuda":
-                from torch.nn.attention import SDPBackend, sdpa_kernel
-
-                self._execution.enter_context(sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION))
-            self._execution.enter_context(fixed_row_linear_compute(handle, fp32_modules=branches))
-            self._execution.enter_context(
-                cosmos_context_parallel(
-                    handle, group=self.groups.cp_group, shard_cross_attention=True
-                )
-            )
-        except BaseException:
-            self._execution.close()
-            raise
-        self._parameters = parameters
-        return model
-
-    def backward(self, loss: torch.Tensor, *, grad_scaler: Any | None = None) -> None:
-        if self.groups is None:
-            raise RuntimeError("CP strategy requires prepare_model before backward")
-        if grad_scaler is not None:
-            raise NotImplementedError("CP GradScaler synchronization is not implemented")
-        (loss / self.groups.cp_size).backward()
-        self._pending_backward = True
-
-    def clip_grad_norm(self, parameters: Iterable[nn.Parameter], max_norm: float) -> float:
-        from vrl.trainers.distributed import reduce_context_parallel_gradients
-
-        parameters = [p for p in parameters if p.requires_grad]
-        if self.groups is None or [id(p) for p in parameters] != [id(p) for p in self._parameters]:
-            raise ValueError("CP clipping requires the prepared trainable parameters")
-        if self._pending_backward:
-            reduce_context_parallel_gradients(parameters, groups=self.groups)
-            self._pending_backward = False
-        return float(nn.utils.clip_grad_norm_(parameters, max_norm))
-
-    def validate_training_state_parking(self) -> None:
-        raise NotImplementedError("CP shared-GPU training-state parking is not implemented")
-
-    def shutdown(self, *, restore_parked: bool = True) -> None:
-        self._execution.close()
-        self.groups = None
-        self._parameters = []
-        self._pending_backward = False
-        super().shutdown(restore_parked=restore_parked)
-
-
 class DDPStrategy(_ProcessGroupStrategy, _UnshardedStateStrategy):
     """DistributedDataParallel training behind the same seam.
 
@@ -1154,7 +1049,6 @@ def build_strategy(config: RootConfig, context: DistributedTrainingContext) -> S
 
 
 __all__ = [
-    "ContextParallelStrategy",
     "DDPStrategy",
     "FSDPStrategy",
     "SingleProcessStrategy",
