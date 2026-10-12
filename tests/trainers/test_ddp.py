@@ -24,7 +24,6 @@ from tests.trainers._strategy_policies import (
     ToyTransformer,
 )
 from vrl.config.schema import DDPConfig, RootConfig
-from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.trainers.distributed import DistributedTrainingContext, TrainerProcessGroup
 from vrl.trainers.strategy import (
     DDPStrategy,
@@ -175,26 +174,7 @@ def test_ddp_rollout_export_matches_single_process_key_space(cpu_process_group) 
         assert torch.allclose(got[key], expected[key])
 
 
-def test_ddp_rollout_export_filters_frozen_params(cpu_process_group) -> None:
-    """Rollout excludes frozen state while checkpoint includes registered state."""
-    net = ToyTransformer()
-    net.head.requires_grad_(False)
-    register_checkpoint_owned_state(
-        net,
-        [name for name, _ in net.named_parameters() if name.startswith("head.")],
-    )
-    wrapped = _ddp_wrap(net)
-    strategy = _ddp_strategy(_cpu_ddp_context())
-
-    rollout = strategy.export_rollout_state(Bundle(wrapped))
-    assert rollout
-    assert not any("head" in key for key in rollout)
-
-    checkpoint = strategy.export_checkpoint_state(Bundle(wrapped))["transformer"]
-    assert any("head" in key for key in checkpoint)
-
-
-def test_ddp_checkpoint_state_excludes_unregistered_frozen_params(cpu_process_group) -> None:
+def test_ddp_checkpoint_state_excludes_frozen_params(cpu_process_group) -> None:
     net = ToyTransformer()
     net.head.requires_grad_(False)
     strategy = _ddp_strategy(_cpu_ddp_context())

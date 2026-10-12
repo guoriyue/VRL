@@ -18,7 +18,6 @@ from vrl.models.interfaces.runtime import (
     RolloutBuildOptions,
     RuntimeBundle,
     checkpoint_owned_state_names,
-    register_checkpoint_owned_state,
 )
 
 __all__ = [
@@ -33,7 +32,6 @@ __all__ = [
     "RuntimeModel",
     "VaeDecodeMemory",
     "checkpoint_owned_state_names",
-    "register_checkpoint_owned_state",
     "require_replay_model",
     "require_runtime_model",
 ]

@@ -15,7 +15,6 @@ from tests.trainers._checkpoint_helpers import (
     _PublishableModule,
     _Trainer,
 )
-from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.trainers.checkpointing import (
     CHECKPOINT_META_NAME,
     LORA_WEIGHTS_NAME,
@@ -412,13 +411,10 @@ def test_adapter_export_selects_default_and_excludes_frozen_previous(tmp_path) -
     config = peft.LoraConfig(r=2, lora_alpha=4, target_modules=["lin"])
     module = peft.get_peft_model(_Base(), config)
     module.add_adapter("previous", config)
-    # A frozen adapter registered as checkpoint-owned state: excluded from the
-    # rollout export, kept in the checkpoint.
-    frozen = [name for name, _ in module.named_parameters() if ".previous." in name]
+    # A frozen second adapter: neither checkpoint-owned nor exported.
     for name, parameter in module.named_parameters():
-        if name in frozen:
+        if ".previous." in name:
             parameter.requires_grad_(False)
-    register_checkpoint_owned_state(module, frozen)
     with torch.no_grad():
         for name, parameter in module.named_parameters():
             if ".default." in name:
@@ -440,7 +436,7 @@ def test_adapter_export_selects_default_and_excludes_frozen_previous(tmp_path) -
 
     checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-default-only")
     root_state = checkpoint.checkpoint_state["module"]
-    assert any(".previous." in name for name in root_state)
+    assert root_state and not any(".previous." in name for name in root_state)
     artifact_dir = tmp_path / "checkpoint-default-only" / LORA_WEIGHTS_NAME
     artifact = load_file(artifact_dir / "adapter_model.safetensors")
     assert artifact

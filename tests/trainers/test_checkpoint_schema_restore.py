@@ -488,7 +488,7 @@ def test_strict_schema_v1_selective_state_requires_verified_identity(tmp_path) -
         )
 
 
-def test_strict_schema_v1_selective_state_rejects_missing_registered_state(tmp_path) -> None:
+def test_strict_schema_v1_selective_state_rejects_missing_owned_state(tmp_path) -> None:
     payload = _v1_payload(
         {"weight": torch.tensor([7.0])},
         identity=UNIT_IDENTITY,

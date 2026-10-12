@@ -7,7 +7,7 @@ from safetensors.torch import load_file
 from torch import nn
 
 from vrl.config.precision import RolePrecision
-from vrl.models.interfaces.runtime import RuntimeBundle, register_checkpoint_owned_state
+from vrl.models.interfaces.runtime import RuntimeBundle
 from vrl.models.steps.denoise.base import DenoiseModelBase
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
@@ -148,8 +148,7 @@ class _OwnedModule(nn.Module):
         super().__init__()
         self.weight = nn.Parameter(torch.tensor([1.0]))
         self.frozen_base = nn.Parameter(torch.tensor([2.0]), requires_grad=False)
-        self.register_buffer("previous", torch.tensor([3.0]))
-        register_checkpoint_owned_state(self, ["previous"])
+        self.previous = nn.Parameter(torch.tensor([3.0]))
 
 
 class _OwnedBundle:

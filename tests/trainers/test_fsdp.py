@@ -29,7 +29,6 @@ from tests.trainers._strategy_policies import (
     ToyTransformer,
 )
 from vrl.config.schema import FSDPConfig, RootConfig, parse_config
-from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.trainers.distributed import DistributedTrainingContext, TrainerProcessGroup
 from vrl.trainers.fsdp import (
     apply_fsdp,
@@ -417,29 +416,17 @@ def test_fsdp_rollout_export_filters_frozen_params(cpu_process_group) -> None:
         "that counterpart spawns a real gloo process group and runs on every PR"
     ),
 )
-@pytest.mark.parametrize("register_frozen", [False, True])
-def test_fsdp_checkpoint_gather_asks_dcp_to_skip_frozen_base_when_possible(
-    monkeypatch,
-    register_frozen,
-) -> None:
-    """A registered frozen exception is the only reason to keep frozen base state.
+def test_fsdp_checkpoint_gather_asks_dcp_to_skip_frozen_base(monkeypatch) -> None:
+    """Checkpoints own only trainable state, so the gather never asks for the frozen base.
 
     The spy delegates to the real ``get_model_state_dict``, so the resulting key
     set is torch's answer to ``ignore_frozen_params``, not a filter this test
-    re-implemented — a change to DCP's own semantics reddens here instead of
-    silently agreeing with a hand-copied comprehension.
-
-    The flag observation stays because the ``register_frozen=False`` arm has no
-    other observable: ``gather_checkpoint_state_dict`` only ever reads
-    ``owned_names``, so on one rank the flag's real payoff (a frozen base that
-    never enters an all-gather) cannot be seen.
+    re-implemented.
     """
     import torch.distributed.checkpoint.state_dict as dcp
 
     module = nn.Linear(2, 1)
     module.bias.requires_grad_(False)
-    if register_frozen:
-        register_checkpoint_owned_state(module, ["bias"])
     observed: list[bool] = []
     real_get_model_state_dict = dcp.get_model_state_dict
 
@@ -452,36 +439,8 @@ def test_fsdp_checkpoint_gather_asks_dcp_to_skip_frozen_base_when_possible(
 
     state = gather_checkpoint_state_dict(module)
 
-    assert observed == [not register_frozen]
-    assert set(state) == ({"weight", "bias"} if register_frozen else {"weight"})
-
-
-def test_fsdp_checkpoint_includes_registered_frozen_state_but_rollout_does_not(
-    cpu_process_group,
-) -> None:
-    net = ToyTransformer()
-    net.head.requires_grad_(False)
-    registered = [name for name, _ in net.named_parameters() if name.startswith("head.")]
-    register_checkpoint_owned_state(net, registered)
-    _shard(net)
-    strategy = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none")
-
-    checkpoint = strategy.export_checkpoint_state(Bundle(net))["transformer"]
-    rollout = strategy.export_rollout_state(Bundle(net))
-
-    assert set(registered) <= set(checkpoint)
-    assert not any("head" in name for name in rollout)
-
-    restored = ToyTransformer()
-    restored.head.requires_grad_(False)
-    register_checkpoint_owned_state(restored, registered)
-    _shard(restored)
-    strategy.load_checkpoint_state(
-        Bundle(restored),
-        {"transformer": checkpoint},
-    )
-    restored_state = gather_full_state_dict(restored)
-    assert all(torch.equal(restored_state[name], checkpoint[name]) for name in registered)
+    assert observed == [True]
+    assert set(state) == {"weight"}
 
 
 def test_fsdp_prepare_model_wraps_multi_transformer_model(cpu_process_group) -> None:

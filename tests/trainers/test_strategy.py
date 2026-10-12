@@ -13,7 +13,6 @@ from torch import nn
 
 from tests.trainers._strategy_policies import FakePolicy, ToyTransformer
 from tests.trainers.online._helpers import bare_trainer
-from vrl.models.interfaces.runtime import register_checkpoint_owned_state
 from vrl.models.parking import TrainingMemoryState
 from vrl.trainers.online.ema import EMAWeights
 from vrl.trainers.optimizer import FP32MasterWeightOptimizer
@@ -500,23 +499,6 @@ def test_export_and_load_checkpoint_state_round_trip() -> None:
         dst.trainable_modules["adapter"].weight,
         src.trainable_modules["adapter"].weight,
     )
-
-
-def test_checkpoint_and_rollout_state_have_distinct_ownership() -> None:
-    module = nn.Linear(2, 1, bias=False)
-    module.register_buffer("previous", torch.ones(1))
-    module.register_buffer("cache", torch.zeros(1))
-    register_checkpoint_owned_state(module, ["previous"])
-    bundle = _Bundle(module)
-    strategy = SingleProcessStrategy()
-
-    checkpoint = strategy.export_checkpoint_state(bundle)["adapter"]
-    rollout = strategy.export_rollout_state(bundle)
-
-    assert set(checkpoint) == {"weight", "previous"}
-    assert set(rollout) == {"adapter.weight"}
-    assert "adapter.previous" not in rollout
-    assert "cache" not in checkpoint
 
 
 def test_every_strategy_answers_the_checkpoint_optimizer_export() -> None:

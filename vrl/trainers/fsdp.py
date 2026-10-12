@@ -280,12 +280,12 @@ def gather_trainable_state_dict(
 
 
 def gather_checkpoint_state_dict(module: nn.Module, *, rank0_only: bool = False) -> dict[str, Any]:
-    """Gather exactly trainable plus registered checkpoint-owned state.
+    """Gather exactly the trainable, checkpoint-owned state.
 
     DCP exposes the sharded state mapping without materializing full tensors.
     Selection happens before ``DTensor.full_tensor()``, so frozen base weights
-    never enter an all-gather while registered frozen mutable state is still
-    checkpointed. All ranks join the collectives; rank0_only controls retention.
+    never enter an all-gather. All ranks join the collectives; rank0_only
+    controls retention.
     """
 
     import torch.distributed as dist
@@ -297,18 +297,11 @@ def gather_checkpoint_state_dict(module: nn.Module, *, rank0_only: bool = False)
     owned_names = checkpoint_owned_state_names(module)
     if not owned_names:
         raise ValueError(f"{type(module).__name__} has no checkpoint-owned state")
-    trainable_names = frozenset(
-        str(name) for name, parameter in module.named_parameters() if parameter.requires_grad
-    )
-    has_registered_frozen_state = owned_names != trainable_names
     sharded_state = get_model_state_dict(
         module,
+        # Checkpoints own only trainable state, so DCP omits the frozen base.
         options=StateDictOptions(
-            full_state_dict=False,
-            cpu_offload=False,
-            # The ordinary LoRA path lets DCP omit the frozen base entirely.
-            # Opt out only when the model registered a frozen mutable exception.
-            ignore_frozen_params=not has_registered_frozen_state,
+            full_state_dict=False, cpu_offload=False, ignore_frozen_params=True
         ),
     )
     return _gather_named_full_cpu(
