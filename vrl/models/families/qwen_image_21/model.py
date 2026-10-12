@@ -558,7 +558,6 @@ class QwenImage21PipelineModel(DiffusersPipelineModelBase, QwenImage21Model):
                 pipe.image_processor.postprocess(image, output_type="pt"),
             ),
             output_layout="image_bchw",
-            decode_batch_size=getattr(pipe, "decode_batch_size", None),
         )
         return decoder(latents)
 

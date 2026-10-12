@@ -602,7 +602,6 @@ class CosmosPredict2PipelineModel(DiffusersPipelineModelBase, CosmosPredict2Mode
                 output_type="pt",
             ),
             output_layout="video_btchw",
-            decode_batch_size=getattr(pipe, "decode_batch_size", None),
         )
         return decoder(latents)
 

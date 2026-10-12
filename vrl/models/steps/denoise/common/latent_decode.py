@@ -1,4 +1,4 @@
-"""Chunked VAE decode policy for diffusion model latents."""
+"""VAE decode policy for diffusion model latents."""
 
 from __future__ import annotations
 
@@ -15,36 +15,23 @@ LatentOutputLayout = Literal["image_bchw", "video_btchw"]
 class ChunkedLatentDecoder:
     """Apply family normalization, VAE decode, postprocess, and layout policy.
 
-    The family supplies the callables; the decoder owns the chunking and the
-    output layout.
+    The family supplies the callables; the decoder owns the output layout.
     """
 
     prepare_latents: Callable[[torch.Tensor], torch.Tensor]
     vae_decode: Callable[[torch.Tensor], torch.Tensor]
     postprocess: Callable[[torch.Tensor], torch.Tensor]
     output_layout: LatentOutputLayout
-    decode_batch_size: int | None = None
     prepare_decoded: Callable[[torch.Tensor], torch.Tensor] | None = None
 
     def __call__(self, latents: torch.Tensor) -> torch.Tensor:
-        size = self.decode_batch_size
-        batches = (
-            (latents,)
-            if size is None or size <= 0 or size >= latents.shape[0]
-            else latents.split(size, dim=0)
-        )
-        decoded = [self._decode_chunk(batch) for batch in batches]
-        output = decoded[0] if len(decoded) == 1 else torch.cat(decoded, dim=0)
+        decoded = self.vae_decode(self.prepare_latents(latents))
+        if self.prepare_decoded is not None:
+            decoded = self.prepare_decoded(decoded)
+        output = self.postprocess(decoded)
         if self.output_layout == "video_btchw":
             return output.permute(0, 2, 1, 3, 4)
         return output
-
-    def _decode_chunk(self, latents: torch.Tensor) -> torch.Tensor:
-        prepared = self.prepare_latents(latents)
-        decoded = self.vae_decode(prepared)
-        if self.prepare_decoded is not None:
-            decoded = self.prepare_decoded(decoded)
-        return self.postprocess(decoded)
 
 
 class VaeDecodeMixin:
@@ -91,7 +78,6 @@ class VaeDecodeMixin:
             vae_decode=lambda batch: vae.decode(batch, return_dict=False)[0],
             postprocess=postprocess,
             output_layout=self._decode_output_layout,
-            decode_batch_size=getattr(pipe, "decode_batch_size", None),
         )
         return decoder(latents)
 

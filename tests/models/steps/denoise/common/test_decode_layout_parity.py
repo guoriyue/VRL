@@ -54,9 +54,9 @@ class _VideoProcessor:
         return video.permute(0, 2, 1, 3, 4)
 
 
-def test_sd3_decode_latents_uses_shared_chunked_decoder_and_keeps_layout() -> None:
-    """SD3 decode runs the shared chunked decoder (one VAE call per ``decode_batch_size`` chunk)
-    and applies ``latents / scaling_factor + shift_factor`` before decoding.
+def test_sd3_decode_latents_uses_shared_decoder_and_keeps_layout() -> None:
+    """SD3 decode runs the shared decoder in one VAE call and applies
+    ``latents / scaling_factor + shift_factor`` before decoding.
     """
     vae = _IdentityDecodeVAE(SimpleNamespace(scaling_factor=2.0, shift_factor=0.5))
     pipeline = SimpleNamespace(
@@ -64,14 +64,13 @@ def test_sd3_decode_latents_uses_shared_chunked_decoder_and_keeps_layout() -> No
         vae=vae,
         image_processor=_ImageProcessor(),
         device=torch.device("cpu"),
-        decode_batch_size=1,
     )
     model = SD3_5PipelineModel(pipeline=pipeline, device=torch.device("cpu"))
     latents = torch.arange(8.0).view(2, 1, 2, 2)
 
     image = model.decode_latents(latents)
 
-    assert len(vae.calls) == 2
+    assert len(vae.calls) == 1
     torch.testing.assert_close(image, latents / 2.0 + 0.5)
 
 

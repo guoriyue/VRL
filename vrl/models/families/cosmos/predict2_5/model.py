@@ -456,7 +456,6 @@ class CosmosPredict25PipelineModel(DiffusersPipelineModelBase, CosmosPredict25Mo
                 output_type="pt",
             ),
             output_layout="video_btchw",
-            decode_batch_size=getattr(pipe, "decode_batch_size", None),
         )
         return decoder(latents)
 
