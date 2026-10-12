@@ -76,10 +76,7 @@ def check_cross_section_rules(root: RootConfig) -> None:
         from vrl.models.families.registry import get_model_family_entry
 
         entry = get_model_family_entry(str(root.model.family))
-        if (
-            entry.policy_semantics.generation_regime != "full_sequence"
-            or not entry.supports_policy_replay
-        ):
+        if entry.generation_regime != "full_sequence" or not entry.supports_policy_replay:
             raise ValueError(
                 f"algorithm.kind={kind} evaluates the clean latent through the "
                 "full-sequence denoise replay forward; "

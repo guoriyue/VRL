@@ -52,7 +52,7 @@ def _full_sequence_diffusion_families() -> list[str]:
     return [
         family
         for family, entry in FAMILY_REGISTRY.items()
-        if entry.policy_semantics.generation_regime == "full_sequence"
+        if entry.generation_regime == "full_sequence"
     ]
 
 

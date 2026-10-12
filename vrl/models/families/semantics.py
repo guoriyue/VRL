@@ -10,29 +10,14 @@ semantics alone never imply trainability.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal, get_args
+from typing import Literal
 
+# Temporal organization of the selected executable denoise stage:
+# ``full_sequence`` updates all output positions together in each policy step;
+# ``chunk_autoregressive`` advances one temporal chunk from earlier batches.
+# Every registered policy is a continuous denoise step over a denoise-layout
+# trajectory, so the regime is the only routing fact.
 GenerationRegime = Literal["full_sequence", "chunk_autoregressive"]
-
-
-@dataclass(frozen=True, slots=True)
-class PolicySemantics:
-    """Temporal organization of the selected executable denoise stage.
-
-    ``full_sequence`` updates all output positions together in each policy
-    step; ``chunk_autoregressive`` advances one temporal chunk from earlier
-    batches. Every registered policy is a continuous denoise step over a
-    denoise-layout trajectory, so the regime is the only routing fact.
-    """
-
-    generation_regime: GenerationRegime
-
-    def __post_init__(self) -> None:
-        if self.generation_regime not in get_args(GenerationRegime):
-            raise ValueError(
-                f"unsupported policy generation_regime: {self.generation_regime!r}",
-            )
 
 
 # ── Family task vocabulary ──────────────────────────────────────────────────
@@ -72,7 +57,6 @@ def task_type_for(task: str) -> str | None:
 __all__ = [
     "VIDEO_TASKS",
     "GenerationRegime",
-    "PolicySemantics",
     "Task",
     "task_modality",
     "task_type_for",

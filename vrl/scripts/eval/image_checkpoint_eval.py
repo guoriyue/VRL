@@ -276,7 +276,7 @@ class CheckpointEvaluation:
         if root.model is None:
             raise ValueError("checkpoint evaluation requires a model config")
         entry = get_model_family_entry(root.model.family)
-        if entry.task != "t2i" or entry.policy_semantics.generation_regime != "full_sequence":
+        if entry.task != "t2i" or entry.generation_regime != "full_sequence":
             raise ValueError(
                 "image checkpoint evaluation requires a full-sequence denoise text-to-image family"
             )

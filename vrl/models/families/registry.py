@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from vrl.models.families.names import (
     normalize_model_family,
 )
-from vrl.models.families.semantics import PolicySemantics, Task
+from vrl.models.families.semantics import GenerationRegime, Task
 
 if TYPE_CHECKING:
     from vrl.config.precision import PrecisionPolicy
@@ -115,7 +115,7 @@ class ModelFamilyEntry:
 
     family: str
     task: Task
-    policy_semantics: PolicySemantics
+    generation_regime: GenerationRegime
     executor_cls: str
     gatherer_cls: str
     # Lazy public-YAML schema boundary.
@@ -422,7 +422,7 @@ def _full_sequence_entry(
     return ModelFamilyEntry(
         family=family,
         task=task,
-        policy_semantics=PolicySemantics(generation_regime="full_sequence"),
+        generation_regime="full_sequence",
         executor_cls=executor_cls,
         gatherer_cls="vrl.generation.bindings.full_sequence.gather:DenoiseBatchGatherer",
         model_section_cls=model_section_cls,
@@ -447,7 +447,7 @@ def _chunk_autoregressive_entry(
     return ModelFamilyEntry(
         family=family,
         task=task,
-        policy_semantics=PolicySemantics(generation_regime="chunk_autoregressive"),
+        generation_regime="chunk_autoregressive",
         executor_cls=executor_cls,
         gatherer_cls=(
             "vrl.generation.bindings.chunk_autoregressive.gather:"
@@ -842,6 +842,5 @@ __all__ = [
     "DenoiseFamilyBuild",
     "GenerationRuntimeCapabilities",
     "ModelFamilyEntry",
-    "PolicySemantics",
     "get_model_family_entry",
 ]

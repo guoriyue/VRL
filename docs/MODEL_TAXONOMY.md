@@ -3,11 +3,12 @@
 VRL classifies the **trainable policy exposed by a registry entry**, not an
 entire checkpoint and not its package directory. Hybrid checkpoints can contain
 several generation stages with different mathematics; only the stage producing
-RL actions determines `PolicySemantics`.
+RL actions determines its classification.
 
 ## Typed policy semantics
 
-`vrl.models.families.semantics.PolicySemantics` records one typed fact:
+`ModelFamilyEntry.generation_regime` (typed by
+`vrl.models.families.semantics.GenerationRegime`) records one fact:
 
 | Field | Values | Meaning |
 |---|---|---|
@@ -77,7 +78,7 @@ capabilities such as torch-compile support, request chunk-size arguments, CuMem
 parking, and frozen-component parking.
 
 The former flattened `collector_kind` has been removed. Production code reads
-`policy_semantics` for policy classification and the explicit executor,
+`generation_regime` for policy classification and the explicit executor,
 gatherer, or runtime capability for implementation behavior. A future
 chunk-autoregressive denoise entry must therefore register that profile directly; it
 cannot pretend to be conventional full-sequence denoise merely to reuse a branch.
@@ -85,7 +86,7 @@ cannot pretend to be conventional full-sequence denoise merely to reuse a branch
 ## Physical layout
 
 The repository now uses a family-first physical layout. Directories answer
-ownership questions; `PolicySemantics` answers classification questions:
+ownership questions; `generation_regime` answers classification questions:
 
 ```text
 vrl/models/

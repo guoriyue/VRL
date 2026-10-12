@@ -64,9 +64,7 @@ class AlgorithmEvaluatorPair:
             # proposal mean (config rules require it to be stored).
             from vrl.config.algorithm import algorithm_class
 
-            is_chunk_autoregressive = (
-                family_entry.policy_semantics.generation_regime == "chunk_autoregressive"
-            )
+            is_chunk_autoregressive = family_entry.generation_regime == "chunk_autoregressive"
             denoise = (
                 RolloutCollectorConfig.from_root(built.root).denoise or DenoiseRequestOptions()
             )

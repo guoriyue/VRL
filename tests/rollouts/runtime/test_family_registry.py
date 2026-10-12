@@ -205,7 +205,7 @@ def test_family_registry_entries_have_complete_protocol_wiring() -> None:
         assert entry.model_section_cls
         assert entry.sampling_section_cls
         assert callable(entry.new_gatherer().merge_generation_batches)
-        assert entry.policy_semantics.generation_regime in {
+        assert entry.generation_regime in {
             "full_sequence",
             "chunk_autoregressive",
         }

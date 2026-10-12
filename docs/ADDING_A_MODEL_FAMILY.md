@@ -15,8 +15,8 @@ steps, generation composition, and concrete bindings under
 The `vrl/models/families/` package root owns the import-light registry, names,
 and policy semantics; its `<family>/` subdirectories own concrete implementations.
 
-Every registry entry classifies the trainable policy with `PolicySemantics`:
-its generation regime (`full_sequence` or `chunk_autoregressive`). See
+Every registry entry classifies the trainable policy by its
+`generation_regime` (`full_sequence` or `chunk_autoregressive`). See
 [`MODEL_TAXONOMY.md`](MODEL_TAXONOMY.md).
 
 The existing `sd3_5` family is the smallest complete example.
@@ -200,7 +200,7 @@ status.
 - [ ] the replay class owns no generation-only modules.
 - [ ] one registry entry uses `DenoiseFamilyBuild` and the matching shared
       builders.
-- [ ] registry `PolicySemantics` describes the trainable policy rather than the
+- [ ] registry `generation_regime` describes the trainable policy rather than the
       whole checkpoint (especially for hybrid or staged models).
 - [ ] the real experiment YAML generates individual images through the shared
       rollout preview before a costly training run.
