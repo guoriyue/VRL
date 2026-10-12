@@ -15,9 +15,6 @@ DEFAULT_EXCLUDE: tuple[str, ...] = (
     "txt_in",
 )
 
-# Language-model trunks additionally protect vocabulary heads because their
-# logits are the values scored by the RL objective.
-LM_EXCLUDE: tuple[str, ...] = (*DEFAULT_EXCLUDE, "head", "output")
 
 # The conservative NVFP4 production profile keeps attention in the base dtype
 # until full-attention NVFP4 passes a real rollout -> replay SDE/reward gate.
@@ -48,7 +45,6 @@ class LinearTargetProfile(StrEnum):
 
 __all__ = [
     "DEFAULT_EXCLUDE",
-    "LM_EXCLUDE",
     "MLP_PATH_SEGMENTS",
     "LinearTargetProfile",
 ]
