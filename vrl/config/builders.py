@@ -15,7 +15,6 @@ from vrl.config.schema import RewardConfig, RootConfig
 from vrl.config.validation import require_training_config
 
 if TYPE_CHECKING:
-    from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
     from vrl.models.families.registry import ModelFamilyEntry
     from vrl.models.parking import ParkingMechanism
     from vrl.trainers.checkpointing import TrainingResumeConfig
@@ -274,23 +273,6 @@ class BuiltConfigs:
             reward=reward,
             resume=resume,
         )
-
-
-def build_precision_split_safety_configs() -> PrecisionCorrectionConfig:
-    """Build the production correction policy for a precision split.
-
-    Hardware validation probes consume this same typed source so a measured gate
-    cannot silently validate thresholds different from live training. The
-    catastrophic-drift bound the replay-parity gate still enforces under this
-    correction is ``CORRECTED_REPLAY_MAX_ABS_LOG_RATIO``.
-    """
-
-    from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
-
-    return PrecisionCorrectionConfig(
-        tis_mode="truncate",
-        rs_mode="seq_mean_k1",
-    )
 
 
 __all__ = [

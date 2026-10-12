@@ -301,14 +301,17 @@ class TrainerConfig:
         )
         # On a rollout/train precision split, the correction mechanism is an
         # implementation detail the user should not have to spell out: default to
-        # TIS/RS correction (the replay-parity gate still fails on catastrophic
-        # drift). An explicit expert trainer.precision_correction is respected.
+        # truncated IS plus sequence-mean rejection (the replay-parity gate still
+        # fails on catastrophic drift, CORRECTED_REPLAY_MAX_ABS_LOG_RATIO). An
+        # explicit expert trainer.precision_correction is respected.
         if not precision.stages_match:
-            from vrl.config.builders import build_precision_split_safety_configs
+            from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 
             explicit = set() if root.trainer is None else root.trainer.model_fields_set
             if "precision_correction" not in explicit:
-                payload["precision_correction"] = build_precision_split_safety_configs()
+                payload["precision_correction"] = PrecisionCorrectionConfig(
+                    tis_mode="truncate", rs_mode="seq_mean_k1"
+                )
 
         config = cls(**payload)
         algorithm = root.algorithm
