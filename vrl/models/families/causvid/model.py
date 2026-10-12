@@ -40,6 +40,7 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.precision import model_autocast
 from vrl.models.source_integrity import runtime_source_tree_sha256
 from vrl.models.steps.denoise.base import DenoiseModelBase, DenoisePipelineModelBase
+from vrl.trajectory.types import TrajectoryTensor
 from vrl.utils.artifacts import sha256_file
 from vrl.utils.paths import repo_root
 
@@ -650,11 +651,29 @@ class CausVidPipelineModel(DenoisePipelineModelBase, CausVidModel):
             from vrl.utils.media import to_uint8
 
             video = to_uint8(video)
-        mapping = run.trajectory_mapping(context={})
         return ChunkAutoregressiveDenoiseResult(
             batch=batch,
             output=video,
-            **mapping,
+            temporal_chunk_count=run.geometry.temporal_chunk_count,
+            denoise_transition_count=run.schedule.transition_count,
+            observations=run.observations,
+            actions=run.actions,
+            old_log_prob=run.old_log_prob,
+            mask=torch.ones_like(run.old_log_prob),
+            timesteps=run.timesteps,
+            finalized_chunk_latents=run.finalized_chunk_latents,
+            replay_tensors={
+                "prompt_embeds": TrajectoryTensor(
+                    "prompt_embeds", run.prompt_embeds, ("sample",), "replay_input"
+                ),
+                "next_sigmas": TrajectoryTensor(
+                    "next_sigmas",
+                    run.next_sigmas,
+                    ("sample", "temporal_chunk", "denoise_transition"),
+                    "replay_input",
+                ),
+            },
+            context={},
         )
 
     def _validate_generation_request(self, request: Any) -> None:

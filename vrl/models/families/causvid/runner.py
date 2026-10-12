@@ -15,12 +15,11 @@ FlexAttention).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, TypedDict
+from typing import Any, Protocol
 
 import torch
 
 from vrl.math.denoise.renoise import renoise_step_with_logprob
-from vrl.trajectory.types import TrajectoryTensor
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,21 +157,6 @@ class CausVidCausalBackend(Protocol):
         ...
 
 
-class CausVidTrajectoryMapping(TypedDict):
-    """Typed projection into ``ChunkAutoregressiveDenoiseResult`` fields."""
-
-    temporal_chunk_count: int
-    denoise_transition_count: int
-    observations: torch.Tensor
-    actions: torch.Tensor
-    old_log_prob: torch.Tensor
-    mask: torch.Tensor
-    timesteps: torch.Tensor
-    finalized_chunk_latents: torch.Tensor
-    replay_tensors: dict[str, TrajectoryTensor]
-    context: dict[str, Any]
-
-
 @dataclass(slots=True)
 class CausVidRunResult:
     """One sample batch produced by the released causal loop."""
@@ -187,32 +171,6 @@ class CausVidRunResult:
     prompt_embeds: torch.Tensor
     geometry: CausVidGeometry
     schedule: CausVidSchedule
-
-    def trajectory_mapping(self, *, context: dict[str, Any]) -> CausVidTrajectoryMapping:
-        """Map family-owned facts to the shared chunk-denoise wire contract."""
-
-        return {
-            "temporal_chunk_count": self.geometry.temporal_chunk_count,
-            "denoise_transition_count": self.schedule.transition_count,
-            "observations": self.observations,
-            "actions": self.actions,
-            "old_log_prob": self.old_log_prob,
-            "mask": torch.ones_like(self.old_log_prob),
-            "timesteps": self.timesteps,
-            "finalized_chunk_latents": self.finalized_chunk_latents,
-            "replay_tensors": {
-                "prompt_embeds": TrajectoryTensor(
-                    "prompt_embeds", self.prompt_embeds, ("sample",), "replay_input"
-                ),
-                "next_sigmas": TrajectoryTensor(
-                    "next_sigmas",
-                    self.next_sigmas,
-                    ("sample", "temporal_chunk", "denoise_transition"),
-                    "replay_input",
-                ),
-            },
-            "context": dict(context),
-        }
 
 
 class CausVidCausalRunner:
@@ -396,5 +354,4 @@ __all__ = [
     "CausVidGeometry",
     "CausVidRunResult",
     "CausVidSchedule",
-    "CausVidTrajectoryMapping",
 ]

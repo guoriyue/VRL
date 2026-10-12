@@ -183,12 +183,6 @@ def test_released_call_order_and_chunk_policy_shapes() -> None:
     assert torch.equal(result.timesteps[0, 0], torch.tensor([1000, 757]))
     assert torch.isfinite(result.old_log_prob).all()
 
-    trajectory = result.trajectory_mapping(context={"request_id": "tiny"})
-    assert trajectory["temporal_chunk_count"] == chunk_count
-    assert trajectory["denoise_transition_count"] == 2
-    assert trajectory["mask"].shape == (BATCH_SIZE, chunk_count, 2)
-    assert trajectory["context"] == {"request_id": "tiny"}
-
 
 def test_per_sample_generators_are_repeatable_and_row_local() -> None:
     _, baseline = _run(11, 29)
