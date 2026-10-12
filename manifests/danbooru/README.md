@@ -26,5 +26,4 @@ Rebuild committed prompt manifests with:
 python -m vrl.scripts.data.setup anime-prompts
 ```
 
-The builder package lives at `vrl/scripts/data/danbooru/`; its `__init__.py`
-keeps the historical import facade while each dataset concern has one owner.
+The builder lives in one module, `vrl/scripts/data/danbooru.py`.

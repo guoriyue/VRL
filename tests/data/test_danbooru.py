@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from vrl.scripts.data.danbooru.safety import (
+from vrl.scripts.data.danbooru import (
     build_danbooru_safety_prompt_rows,
     build_safety_prompts,
     split_safety_prompt_rows,

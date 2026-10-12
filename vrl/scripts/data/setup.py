@@ -1,6 +1,6 @@
 """Dataset setup CLI — the single entrypoint for preparing training datasets.
 
-Each dataset has its own concrete implementation (``pickapic.py``, ``danbooru/``,
+Each dataset has its own concrete implementation (``pickapic.py``, ``danbooru.py``,
 ``video_world/``, ``bootstrap.py``, ``videophy_i2v.py``, and
 ``derive_text_video_targets.py``); this module wires their subcommands together
 and adds ``init-dirs`` for creating the empty artifact directories a dataset
