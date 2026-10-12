@@ -512,7 +512,7 @@ _register_model_family(
         sampling_section_cls="vrl.config.sampling_schema:MagiSamplingSection",
         executor_cls="vrl.models.families.magi_1.runtime:Magi1BatchExecutor",
         build=DenoiseFamilyBuild(
-            model_cls="vrl.models.families.magi_1.model:Magi1Model",
+            model_cls="vrl.models.families.magi_1.model:Magi1SubprocessModel",
             rollout_runtime_builder=(
                 "vrl.models.families.magi_1.runtime:build_magi_1_runtime_bundle"
             ),

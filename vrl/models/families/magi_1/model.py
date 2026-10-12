@@ -857,16 +857,9 @@ def _optional_path(value: Any) -> Path | None:
     return None if value in (None, "") else Path(str(value))
 
 
-# Canonical family surface used by the registry.  The explicit subprocess name
-# remains available for callers/tests that need to distinguish this integration
-# from an in-process MAGI implementation.
-Magi1Model = Magi1SubprocessModel
-
-
 __all__ = [
     "MAGI_1_RUNTIME_SOURCE_SHA256",
     "MAGI_1_SUPPORTED_SOURCE_REVISION",
-    "Magi1Model",
     "Magi1SubprocessConfig",
     "Magi1SubprocessModel",
     "magi_subprocess_environment",
