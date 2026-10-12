@@ -104,8 +104,10 @@ def test_prepare_sampling_runs_on_the_swapped_flow_match_scheduler(monkeypatch) 
 
     model, pipeline, _ = _load(monkeypatch, torch.float32)
     pipeline.prepare_latents = (
-        lambda batch, channels, height, width, dtype, device, generator, _latents: torch.randn(
-            (batch, channels, height // 32, width // 32), generator=generator, dtype=dtype
+        lambda batch, channels, height, width, dtype, device, generator, _latents=None: (
+            torch.randn(
+                (batch, channels, height // 32, width // 32), generator=generator, dtype=dtype
+            )
         )
     )
     pipeline.transformer.to(torch.float32)

@@ -67,8 +67,9 @@ python -m vrl.scripts.generation.qwen_image_21_edit_probe \
 Set `HF_HUB_OFFLINE=1` to require locally cached weights. `--device cpu` runs
 without GPU memory. It saves three VRL
 outputs, optional official outputs, and `report.json` with transparency and
-replay checks. Official comparison uses identical initial latent values and
-disables KV caching on both paths. Small precision differences may remain.
+replay checks. Official comparison starts the upstream pipeline from the VRL
+loop's first observation and disables KV caching on both paths. Small precision
+differences remain, including the initial latent's rounding to the VAE dtype.
 The optional backward check attaches a fresh rank-4 LoRA, generates a two-step
 SDE trajectory with two references, checks replay log-probability parity, and
 verifies finite gradients and an actual optimizer update. It does not save or

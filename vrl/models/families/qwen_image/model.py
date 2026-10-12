@@ -283,8 +283,6 @@ class QwenImagePipelineModel(DiffusersPipelineModelBase, QwenImageModel):
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
-        *,
-        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> QwenImageSamplingState:
         """Build the per-request packed-latent SamplingState for a denoise loop."""
@@ -311,7 +309,6 @@ class QwenImagePipelineModel(DiffusersPipelineModelBase, QwenImageModel):
             torch.float32,
             device,
             generator,
-            initial_latents,
         )
 
         # Dynamic-shifting timesteps depend on the packed image sequence length.

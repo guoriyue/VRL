@@ -291,8 +291,6 @@ class HunyuanImagePipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, Huny
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
-        *,
-        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> HunyuanImageSamplingState:
         """Build the per-request 4D-latent SamplingState for a denoise loop."""
@@ -325,7 +323,6 @@ class HunyuanImagePipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, Huny
             torch.float32,
             device,
             generator,
-            initial_latents,
         )
 
         return HunyuanImageSamplingState(

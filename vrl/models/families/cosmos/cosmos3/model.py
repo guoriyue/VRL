@@ -340,8 +340,6 @@ class Cosmos3PipelineModel(DiffusersPipelineModelBase, Cosmos3Model):
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
-        *,
-        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> Cosmos3SamplingState:
         del kwargs
@@ -365,7 +363,6 @@ class Cosmos3PipelineModel(DiffusersPipelineModelBase, Cosmos3Model):
             height=request.height,
             width=request.width,
             fps=float(fps),
-            latents=initial_latents,
             generator=generator,
             device=device,
             dtype=pipe.transformer.dtype,

@@ -299,8 +299,6 @@ class PixArtSigmaPipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, PixAr
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
-        *,
-        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> PixArtSigmaSamplingState:
         """Build the per-request SamplingState for a denoise loop."""
@@ -328,7 +326,6 @@ class PixArtSigmaPipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, PixAr
             torch.float32,
             device,
             generator,
-            initial_latents,
         )
 
         return PixArtSigmaSamplingState(

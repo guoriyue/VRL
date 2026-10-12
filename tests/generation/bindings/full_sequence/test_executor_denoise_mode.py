@@ -19,10 +19,9 @@ def test_initial_noise_uses_batch_offset_without_mutating_request(seed: int | No
     )
 
     class PreparingModel:
-        def prepare_sampling(self, batch_request, encoded, *, initial_latents=None, marker):
+        def prepare_sampling(self, batch_request, encoded, *, marker):
             assert encoded == {"prompt": "test"}
             assert marker == "forwarded"
-            assert initial_latents is None
             self.seed = batch_request.seed
             generator = torch.Generator().manual_seed(self.seed or 0)
             return _State(
@@ -130,35 +129,3 @@ class _Scheduler:
     def index_for_timestep(self, timestep: torch.Tensor) -> int:
         del timestep
         return 0
-
-
-def test_injected_initial_latents_reach_the_family_preparation() -> None:
-    """``draw_initial_latents`` draws nothing by default; latents a caller injects
-    (``qwen_image_21_edit_probe --compare-reference``) reach ``prepare_sampling``."""
-    request = DenoiseRequest(
-        width=128, height=128, frame_count=1, num_steps=1, guidance_scale=1.0, seed=5
-    )
-    received: list[torch.Tensor | None] = []
-
-    class PreparingModel:
-        def prepare_sampling(self, batch_request, encoded, *, initial_latents=None):
-            del batch_request, encoded
-            received.append(initial_latents)
-            return _State(torch.zeros(2, 8), torch.tensor([1.0]), _Scheduler())
-
-    executor = _Executor(PreparingModel())
-    config = DenoiseLoopConfig(
-        sample_start=0,
-        sample_count=2,
-        seed=5,
-        sde=DenoiseSDEParams(noise_level=0.7, sde_type="flow_grpo"),
-        sde_window=None,
-    )
-    encoded = {"prompt_embeds": torch.zeros(2, 3)}
-    assert executor.draw_initial_latents(request=request, encoded=encoded, config=config) is None
-
-    injected = torch.ones(2, 8)
-    executor.prepare_denoise_state(
-        request=request, encoded=encoded, config=config, initial_latents=injected
-    )
-    assert received == [injected]

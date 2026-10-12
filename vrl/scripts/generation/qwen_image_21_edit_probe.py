@@ -164,14 +164,6 @@ def main() -> None:
     replay = replay_cls(transformer=pipe.transformer, scheduler=pipe.scheduler, device=device)
     replay.precision = model.precision
     executor = import_from_path(entry.executor_cls)(model, gatherer=entry.new_gatherer())
-    if args.compare_reference:
-        # Both loops start from exactly the same bf16-representable values;
-        # sharing only a seed would compare different dtype-specific draws.
-        def draw_comparison_latents(*, request, encoded, config, prepare_kwargs):
-            state = model.prepare_sampling(request, encoded, **(prepare_kwargs or {}))
-            return state.latents.to(torch.bfloat16).float()
-
-        executor.draw_initial_latents = draw_comparison_latents
     cases = [
         (
             "localized_edit",
@@ -212,7 +204,8 @@ def main() -> None:
         images, batch_size, channels, height, width, dtype, device, generator, latents=None
     ):
         # Match VRL's fp32 VAE boundary without first rounding source pixels
-        # to text dtype. The supplied initial latent is already shared exactly.
+        # to text dtype. The official loop starts from the VRL loop's first
+        # observation, so the two starts differ only by this dtype rounding.
         target, references = original_prepare(
             images, batch_size, channels, height, width, pipe.vae.dtype, device, generator, latents
         )

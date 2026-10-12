@@ -382,8 +382,6 @@ class EchoPipelineModel(DenoisePipelineModelBase, EchoModel):
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
-        *,
-        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> EchoSamplingState:
         """Build initial flow-matching noise latents + the sigma schedule."""
@@ -425,15 +423,12 @@ class EchoPipelineModel(DenoisePipelineModelBase, EchoModel):
         seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
         generator = torch.Generator(device=device)
         generator.manual_seed(seed)
-        if initial_latents is not None:
-            latents = initial_latents.to(device=device, dtype=torch.float32)
-        else:
-            latents = torch.randn(
-                latent_shape,
-                generator=generator,
-                device=device,
-                dtype=torch.float32,
-            )
+        latents = torch.randn(
+            latent_shape,
+            generator=generator,
+            device=device,
+            dtype=torch.float32,
+        )
 
         return EchoSamplingState(
             latents=latents,

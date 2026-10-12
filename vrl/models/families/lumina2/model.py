@@ -239,8 +239,6 @@ class Lumina2PipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, Lumina2Mo
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
-        *,
-        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> Lumina2SamplingState:
         """Build the per-request SamplingState for a denoise loop."""
@@ -266,7 +264,6 @@ class Lumina2PipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, Lumina2Mo
             torch.float32,
             device,
             generator,
-            initial_latents,
         )
 
         return Lumina2SamplingState(

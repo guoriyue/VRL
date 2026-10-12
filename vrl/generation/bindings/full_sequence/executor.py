@@ -249,18 +249,11 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
             denoise_mode=params.denoise_mode,
             teacache=params.teacache,
         )
-        initial_latents = self.draw_initial_latents(
-            request=params.model_request,
-            encoded=encoded,
-            config=config,
-            prepare_kwargs=prepare_kwargs,
-        )
         state = self.prepare_denoise_state(
             request=params.model_request,
             encoded=batch_encoded,
             config=config,
             prepare_kwargs=prepare_kwargs,
-            initial_latents=initial_latents,
         )
         stage_durations["prepare_latent"] = time.perf_counter() - started
 
@@ -304,24 +297,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         batch_result.replay_tensors = policy.apply_to_value(batch_result.replay_tensors)
         return batch_result
 
-    def draw_initial_latents(
-        self,
-        *,
-        request: DenoiseRequest,
-        encoded: dict[str, Any],
-        config: DenoiseLoopConfig,
-        prepare_kwargs: dict[str, Any] | None = None,
-    ) -> torch.Tensor | None:
-        """Starting latents to inject into this batch, or ``None``.
-
-        ``None`` leaves the family to its own draw from ``request.seed``. The
-        documented ``qwen_image_21_edit_probe --compare-reference`` mode
-        overrides this hook so two denoise loops start from identical latents.
-        """
-
-        del request, encoded, config, prepare_kwargs
-        return None
-
     def prepare_denoise_state(
         self,
         *,
@@ -329,7 +304,6 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
         encoded: dict[str, Any],
         config: DenoiseLoopConfig,
         prepare_kwargs: dict[str, Any] | None = None,
-        initial_latents: torch.Tensor | None = None,
     ) -> Any:
         """Prepare latent state for one diffusion sample batch."""
 
@@ -341,12 +315,7 @@ class DenoiseBatchExecutorBase(BatchExecutorBase):
             # seed makes every one-sample native batch start from identical noise.
             request = replace(request, seed=request.seed + config.sample_start)
         with profile_range("generation.prepare_sampling"):
-            state = model.prepare_sampling(
-                request,
-                encoded,
-                initial_latents=initial_latents,
-                **(prepare_kwargs or {}),
-            )
+            state = model.prepare_sampling(request, encoded, **(prepare_kwargs or {}))
         batch_rows = state.latents.shape[0]
         if int(batch_rows) != config.sample_count:
             raise ValueError(

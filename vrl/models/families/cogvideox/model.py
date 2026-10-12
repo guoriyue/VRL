@@ -261,8 +261,6 @@ class CogVideoXPipelineModel(DiffusersPipelineModelBase, CogVideoXModel):
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
-        *,
-        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> CogVideoXSamplingState:
         """Build the per-request BFCHW-latent SamplingState for a denoise loop."""
@@ -300,7 +298,6 @@ class CogVideoXPipelineModel(DiffusersPipelineModelBase, CogVideoXModel):
             torch.float32,
             device,
             generator,
-            initial_latents,
         )
 
         do_cfg = request.guidance_scale > 1.0 and negative_prompt_embeds is not None

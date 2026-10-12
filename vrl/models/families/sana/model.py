@@ -267,8 +267,6 @@ class SanaPipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, SanaModel):
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
-        *,
-        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> SanaSamplingState:
         """Build the per-request SamplingState for a denoise loop."""
@@ -294,7 +292,6 @@ class SanaPipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, SanaModel):
             torch.float32,
             device,
             generator,
-            initial_latents,
         )
 
         return SanaSamplingState(

@@ -291,11 +291,9 @@ class _Model:
         self,
         request: Any,
         encoded: dict[str, torch.Tensor],
-        *,
-        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> SimpleNamespace:
-        del kwargs, initial_latents
+        del kwargs
         return _state(
             batch=int(encoded["prompt_embeds"].shape[0]),
             steps=request.num_steps,

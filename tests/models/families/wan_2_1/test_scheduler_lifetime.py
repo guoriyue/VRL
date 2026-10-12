@@ -21,7 +21,9 @@ def test_batch_history_is_released_and_repeated_sampling_matches_shared_schedule
     transformer = torch.nn.Linear(4, 4)
     transformer.config = SimpleNamespace(in_channels=4)
 
-    def prepare_t2v(batch, channels, height, width, frames, dtype, device, generator, latents):
+    def prepare_t2v(
+        batch, channels, height, width, frames, dtype, device, generator, latents=None
+    ):
         return torch.randn((batch, channels, 1, 2, 2), generator=generator)
 
     def prepare_i2v(

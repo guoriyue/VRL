@@ -29,8 +29,8 @@ HF_HUB_OFFLINE=1 .venv/bin/python -m vrl.scripts.generation.qwen_image_21_edit_p
 ```
 
 The fixed probe prompts expect a bookshop sign and a leaf. Native Euler comparison
-shares the initial latent and VAE preprocessing precision with the upstream
-pipeline. The separate SDE probe checks likelihood replay, finite gradients, and
+starts the upstream pipeline from the VRL loop's first observation (rounded to the
+VAE dtype) and shares its VAE preprocessing precision. The separate SDE probe checks likelihood replay, finite gradients, and
 one LoRA optimizer update. It does not train on task reward or demonstrate an RL
 improvement. Full online training and agentic control require their own validation.
 

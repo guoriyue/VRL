@@ -327,8 +327,6 @@ class CosmosPredict25PipelineModel(DiffusersPipelineModelBase, CosmosPredict25Mo
         self,
         request: DenoiseRequest,
         encoded: dict[str, Any],
-        *,
-        initial_latents: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> CosmosPredict25SamplingState:
         del kwargs
@@ -355,7 +353,6 @@ class CosmosPredict25PipelineModel(DiffusersPipelineModelBase, CosmosPredict25Mo
             dtype=torch.float32,
             device=device,
             generator=generator,
-            latents=initial_latents,
         )
         padding_mask = latents.new_zeros(
             1,
