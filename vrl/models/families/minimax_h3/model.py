@@ -756,21 +756,14 @@ class MiniMaxH3PipelineModel(DiffusersPipelineModelBase, MiniMaxH3Model):
             int(vae.spatial_compression_ratio),
         )
 
-    def final_audio_rows(self, state: MiniMaxH3SamplingState) -> torch.Tensor:
-        """The fully denoised audio rows after the last loop step (``sigma = 0``)."""
-
-        if state.audio_rows_next is None or state.audio_step != len(state.timesteps) - 1:
-            raise RuntimeError("the audio side stream has not reached the last denoise step")
-        return state.audio_rows_next
-
     # ---- decode ----
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Video latents -> ``[B, C, T, H, W]`` in ``[0, 1]``.
 
         Mirrors ``MiniMaxH3VideoDecodeStep``: undo the per-channel latent
         normalization, decode (fp16 autocast on CUDA, as the reference), undo
-        the ImageNet pixel normalization, clamp. The soundtrack is not decoded
-        here; see ``decode_audio``.
+        the ImageNet pixel normalization, clamp. The soundtrack is not decoded:
+        the RL artifact is the video.
         """
 
         components = self.pipeline
@@ -804,32 +797,6 @@ class MiniMaxH3PipelineModel(DiffusersPipelineModelBase, MiniMaxH3Model):
             output_layout="video_btchw",
         )
         return decoder(latents).to(output_device)
-
-    def decode_audio(self, audio_rows: torch.Tensor) -> tuple[torch.Tensor, int]:
-        """Final audio rows ``[1, rows, C]`` -> ``(waveform [channels, samples], sample_rate)``.
-
-        Mirrors ``MiniMaxH3AfterDenoiseStep`` + ``MiniMaxH3AudioDecodeStep``.
-        Not on the engine's decode path (the RL artifact is the video); offered
-        for evaluation scripts that want the soundtrack of a rollout.
-        """
-
-        components = self.pipeline
-        audio_vae = components.audio_vae
-        if audio_rows.ndim != 3 or audio_rows.shape[0] != 1:
-            raise ValueError(
-                f"audio rows must be [1, rows, channels], got {tuple(audio_rows.shape)}"
-            )
-        output_device = audio_rows.device
-        rows = audio_rows[0].to(audio_vae.device)
-        num_latents = rows.shape[0] // _AUDIO_CHANNELS
-        latents = rows.reshape(_AUDIO_CHANNELS, num_latents, rows.shape[-1]).permute(0, 2, 1)
-        device = latents.device
-        mean = torch.tensor(audio_vae.config.latents_mean, device=device).view(1, -1, 1)
-        std = torch.tensor(audio_vae.config.latents_std, device=device).view(1, -1, 1)
-        audio = audio_vae.decode(latents.float() * std + mean, return_dict=False)[0]
-        return audio.float().permute(1, 0, 2)[0].to(output_device), int(
-            audio_vae.config.sampling_rate
-        )
 
     # ---- replay export/restore ----
     def export_batch_context(self, state: MiniMaxH3SamplingState) -> dict[str, Any]:

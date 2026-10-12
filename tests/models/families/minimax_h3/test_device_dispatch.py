@@ -203,28 +203,16 @@ def test_decode_uses_vae_owner_and_returns_outputs_to_latent_owner(vae_device):
     model = _model(latents_mean=0.5, latents_std=2.0)
     state = _sampling_state(model)
     model.pipeline.vae.to(vae_device)
-    model.pipeline.audio_vae.to(vae_device)
     latents = state.latents.detach().to("cuda:0")
-    audio_rows = state.audio_rows.detach().to("cuda:0")
     saved_video = latents.clone()
-    saved_audio = audio_rows.clone()
     with torch.no_grad():
         video = model.decode_latents(latents)
         expected_video = model.decode_latents(latents.to(vae_device))
-        waveform, rate = model.decode_audio(audio_rows)
-        expected_waveform, expected_rate = model.decode_audio(audio_rows.to(vae_device))
-    assert video.device == waveform.device == torch.device("cuda:0")
-    assert expected_video.device == expected_waveform.device == torch.device(vae_device)
+    assert video.device == torch.device("cuda:0")
+    assert expected_video.device == torch.device(vae_device)
     torch.testing.assert_close(video, expected_video.to("cuda:0"), atol=0, rtol=0)
-    torch.testing.assert_close(waveform, expected_waveform.to("cuda:0"), atol=0, rtol=0)
     torch.testing.assert_close(latents, saved_video, atol=0, rtol=0)
-    torch.testing.assert_close(audio_rows, saved_audio, atol=0, rtol=0)
-    assert rate == expected_rate == 100
-    assert torch.isfinite(video).all() and torch.isfinite(waveform).all()
+    assert torch.isfinite(video).all()
     assert video.shape == (1, 3, 8, 16, 16)
-    assert waveform.shape == (
-        2,
-        state.layout.num_audio_latents * model.pipeline.audio_vae.hop_length,
-    )
-    assert model.pipeline.vae.device == model.pipeline.audio_vae.device == torch.device(vae_device)
-    assert model.pipeline.vae.dtype == model.pipeline.audio_vae.dtype == torch.float32
+    assert model.pipeline.vae.device == torch.device(vae_device)
+    assert model.pipeline.vae.dtype == torch.float32

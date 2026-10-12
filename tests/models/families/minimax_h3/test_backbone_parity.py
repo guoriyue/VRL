@@ -397,19 +397,3 @@ def test_decode_latents_undoes_both_normalizations_through_the_real_vae() -> Non
     mean = torch.tensor((0.485, 0.456, 0.406)).view(1, -1, 1, 1, 1)
     std = torch.tensor((0.229, 0.224, 0.225)).view(1, -1, 1, 1, 1)
     torch.testing.assert_close(video, (raw.float() * std + mean).clamp(0, 1))
-
-
-def test_decode_audio_unpacks_channel_major_rows_into_a_stereo_waveform() -> None:
-    """The final audio rows (after the last loop step) decode to ``[2, samples]``
-    at the audio VAE's rate; before the last step there is nothing final."""
-    model = _model()
-    state, _, _ = _rollout(model)
-
-    waveform, sample_rate = model.decode_audio(model.final_audio_rows(state))
-
-    hop = model.pipeline.audio_vae.hop_length
-    assert waveform.shape == (2, state.layout.num_audio_latents * hop)
-    assert sample_rate == 100
-    fresh = _sampling_state(model)
-    with pytest.raises(RuntimeError, match="last denoise step"):
-        model.final_audio_rows(fresh)
