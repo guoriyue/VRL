@@ -423,7 +423,7 @@ def tiny_sana_stack(
     from tests.generation._in_process_runtime import InProcessGenerationRuntime
     from vrl import run
     from vrl.config.builders import BuiltConfigs
-    from vrl.generation.ray.launch_inputs import build_launch_inputs
+    from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
     from vrl.ray.resources import ResolvedDistributedResources
 
     cfg = tiny_sana_online_config(tmp_path, overrides=overrides)
@@ -441,7 +441,9 @@ def tiny_sana_stack(
         built=built,
         resources=resources,
         replay=replay,
-        runtime=InProcessGenerationRuntime(build_launch_inputs(built, resources, replay)),
+        runtime=InProcessGenerationRuntime(
+            RayGenerationLaunchInputs.from_run(built, resources, replay)
+        ),
     )
 
 

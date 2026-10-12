@@ -18,7 +18,7 @@ from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_confi
 from vrl import run
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.execution.worker import GenerationWorkerCore
-from vrl.generation.ray.launch_inputs import build_launch_inputs
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.resources import ResolvedDistributedResources
 
@@ -35,7 +35,7 @@ def _worker(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> tuple[RayGenerati
         precision=built.precision,
         for_rollout=False,
     )
-    launch_inputs = build_launch_inputs(built, resources, replay)
+    launch_inputs = RayGenerationLaunchInputs.from_run(built, resources, replay)
     return RayGenerationWorker("rollout-0", launch_inputs), launch_inputs
 
 

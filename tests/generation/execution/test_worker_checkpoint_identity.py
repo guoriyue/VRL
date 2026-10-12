@@ -1,7 +1,7 @@
 """Worker-side rollout checkpoint identity gates.
 
 Each test hands ``GenerationWorkerCore`` the launch contract the real driver
-builds (``build_launch_inputs``) for the tiny SANA snapshot,
+builds (``RayGenerationLaunchInputs.from_run``) for the tiny SANA snapshot,
 so the identity is the real local-directory hash and the executor is the real
 family executor; the Hub load is the only double.
 """
@@ -22,7 +22,7 @@ from vrl import run
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.bindings.full_sequence.executor import GenericDenoiseBatchExecutor
 from vrl.generation.execution.worker import GenerationWorkerCore
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs, build_launch_inputs
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.ray.resources import ResolvedDistributedResources
 
 
@@ -44,7 +44,7 @@ def _launch_inputs(
         precision=built.precision,
         for_rollout=False,
     )
-    return build_launch_inputs(built, resources, replay)
+    return RayGenerationLaunchInputs.from_run(built, resources, replay)
 
 
 def _worker(inputs: RayGenerationLaunchInputs) -> GenerationWorkerCore:

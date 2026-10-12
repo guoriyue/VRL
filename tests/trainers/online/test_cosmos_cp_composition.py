@@ -42,7 +42,7 @@ from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.config.builders import BuiltConfigs
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
-from vrl.generation.ray.launch_inputs import build_launch_inputs
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.families.cosmos.predict2_5.model import (
     CosmosPredict25Model,
@@ -160,7 +160,9 @@ def _cpu_worker(rank, rendezvous, root, phase=None):
         )
         bundle = replay.materialize(context="cosmos cp composition")
         model = bundle.model
-        runtime = InProcessGenerationRuntime(build_launch_inputs(built, resources, replay))
+        runtime = InProcessGenerationRuntime(
+            RayGenerationLaunchInputs.from_run(built, resources, replay)
+        )
         if rank == 0:
             # The in-process policy build draws LoRA init from this process's
             # global RNG (a Ray actor would draw from its own). Load it before

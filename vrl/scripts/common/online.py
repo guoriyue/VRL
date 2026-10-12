@@ -18,7 +18,7 @@ from omegaconf import DictConfig
 from vrl.algorithms.advantages import nonzero_advantage_mask
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.ray.config import RolloutWorkerConfig
-from vrl.generation.ray.launch_inputs import build_launch_inputs
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
@@ -947,7 +947,9 @@ async def run_online_recipe(cfg: DictConfig) -> None:
             lifecycle=resources.lifecycle,
         )
         generation_launcher = RayGenerationLauncher()
-        generation_launch_inputs = build_launch_inputs(built, resources, resolved_model)
+        generation_launch_inputs = RayGenerationLaunchInputs.from_run(
+            built, resources, resolved_model
+        )
         _host_memory.log("before_rollout_backend_build")
         generation_runtime = generation_launcher.create_runtime(
             resources,

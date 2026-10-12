@@ -18,7 +18,7 @@ from vrl.config.schema import parse_config
 from vrl.generation.bindings.full_sequence import DenoiseBatchGatherer
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationBatchExecutor
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs, build_launch_inputs
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.models.families.registry import (
     FAMILY_REGISTRY,
     ModelFamilyEntry,
@@ -63,7 +63,7 @@ def _capture_launch_inputs(
         precision=built.precision,
         for_rollout=False,
     )
-    result = build_launch_inputs(built, resources, replay_model)
+    result = RayGenerationLaunchInputs.from_run(built, resources, replay_model)
     return result, replay_model.identity
 
 
