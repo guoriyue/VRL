@@ -44,7 +44,6 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DenoiseBackboneCaller,
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
@@ -182,10 +181,8 @@ class FluxModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
                 device=latent_input.device,
                 dtype=td,
             )
-        output = DenoiseBackboneCaller(
+        return self.run_backbone(
             self.transformer,
-            self,
-        )(
             DenoiseBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
@@ -209,7 +206,6 @@ class FluxModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
                 },
             ),
         )
-        return output.as_dict()
 
     def restore_eval_state(
         self,

@@ -4,7 +4,7 @@ Names distinguish the data being handled from the order in which it is generated
 
 | Term | Meaning | Examples |
 | --- | --- | --- |
-| `Denoise` | Shared denoising execution and replay operations, including flow matching | `DenoiseModelBase`, `DenoiseSamplingParams`, `DenoiseBackboneCaller` |
+| `Denoise` | Shared denoising execution and replay operations, including flow matching | `DenoiseModelBase`, `DenoiseSamplingParams`, `DenoiseBackboneRunnerBase` |
 | `Diffusers` | An adapter to the Diffusers library | `DiffusersPipelineModelBase` |
 
 The generation regime describes execution order: `full_sequence` or

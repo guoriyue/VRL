@@ -48,7 +48,6 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DenoiseBackboneCaller,
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
@@ -172,10 +171,8 @@ class CogVideoXModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
         negative_embeds = (
             None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
-        output = DenoiseBackboneCaller(
+        return self.run_backbone(
             self.transformer,
-            self,
-        )(
             DenoiseBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
@@ -187,7 +184,6 @@ class CogVideoXModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
                 extra={"image_rotary_emb": rope},
             ),
         )
-        return output.as_dict()
 
     def restore_eval_state(
         self,

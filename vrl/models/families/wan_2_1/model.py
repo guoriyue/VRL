@@ -58,7 +58,6 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DenoiseBackboneCaller,
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
@@ -389,10 +388,8 @@ class WanT2VModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
             None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
         with self._expert_lifecycle_trace(expert_name, timestep):
-            output = DenoiseBackboneCaller(
+            output = self.run_backbone(
                 transformer,
-                self,
-            )(
                 DenoiseBackboneInput(
                     hidden_states=latent_input,
                     timestep=timestep_batch,
@@ -404,7 +401,7 @@ class WanT2VModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
                     extra=self._backbone_extra(state, td),
                 ),
             )
-        return output.as_dict()
+        return output
 
     @contextlib.contextmanager
     def _expert_lifecycle_trace(

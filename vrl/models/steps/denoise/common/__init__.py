@@ -1,7 +1,6 @@
 """Shared diffusion model call helpers used by family models."""
 
 from vrl.models.steps.denoise.common.backbone import (
-    DenoiseBackboneCaller,
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
 )
@@ -25,7 +24,6 @@ from vrl.utils.tensors import expand_tensor_to_batch
 
 __all__ = [
     "ChunkedLatentDecoder",
-    "DenoiseBackboneCaller",
     "DenoiseBackboneInput",
     "DenoiseBackboneRunnerBase",
     "DenoiseBranch",

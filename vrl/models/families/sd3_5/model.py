@@ -46,7 +46,6 @@ from vrl.models.steps.denoise import (
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
-    DenoiseBackboneCaller,
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
@@ -141,10 +140,8 @@ class SD3_5Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
             if state.negative_pooled_prompt_embeds is None
             else state.negative_pooled_prompt_embeds.to(td)
         )
-        output = DenoiseBackboneCaller(
+        return self.run_backbone(
             self.transformer,
-            self,
-        )(
             DenoiseBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
@@ -159,7 +156,6 @@ class SD3_5Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
                 },
             ),
         )
-        return output.as_dict()
 
     def restore_eval_state(
         self,

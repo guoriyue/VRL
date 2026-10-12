@@ -49,7 +49,6 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DenoiseBackboneCaller,
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
@@ -207,10 +206,8 @@ class QwenImage21Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
             if state.negative_image_pad_mask is None
             else self._joint_img_mask(state.negative_image_pad_mask, latent_tokens)
         )
-        output = DenoiseBackboneCaller(
+        return self.run_backbone(
             self.transformer,
-            self,
-        )(
             DenoiseBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
@@ -229,7 +226,6 @@ class QwenImage21Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
                 },
             ),
         )
-        return output.as_dict()
 
     def restore_eval_state(
         self,

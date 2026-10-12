@@ -53,7 +53,6 @@ from vrl.models.steps.denoise import (
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
-    DenoiseBackboneCaller,
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
@@ -166,10 +165,8 @@ class PixArtSigmaModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
         negative_embeds = (
             None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
-        output = DenoiseBackboneCaller(
+        return self.run_backbone(
             self.transformer,
-            self,
-        )(
             DenoiseBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
@@ -184,7 +181,6 @@ class PixArtSigmaModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
                 },
             ),
         )
-        return output.as_dict()
 
     def restore_eval_state(
         self,

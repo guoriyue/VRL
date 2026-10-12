@@ -44,7 +44,6 @@ from vrl.models.steps.denoise import (
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
-    DenoiseBackboneCaller,
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
@@ -111,10 +110,8 @@ class HunyuanVideoModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
             device=latent_input.device,
             dtype=td,
         )
-        output = DenoiseBackboneCaller(
+        return self.run_backbone(
             self.transformer,
-            self,
-        )(
             DenoiseBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
@@ -129,7 +126,6 @@ class HunyuanVideoModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
                 },
             ),
         )
-        return output.as_dict()
 
     def restore_eval_state(
         self,

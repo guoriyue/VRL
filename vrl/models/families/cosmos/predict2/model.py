@@ -39,7 +39,6 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DenoiseBackboneCaller,
     DenoiseBackboneInput,
     DenoiseBackboneRunnerBase,
     DenoiseBranch,
@@ -219,10 +218,8 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersModelBase):
             else None
         )
 
-        output = DenoiseBackboneCaller(
+        return CosmosPredict2DenoiseBackboneRunner(current_sigma=current_sigma).run_backbone(
             self.transformer,
-            CosmosPredict2DenoiseBackboneRunner(current_sigma=current_sigma),
-        )(
             DenoiseBackboneInput(
                 hidden_states=state.latents,
                 timestep=timestep,
@@ -243,7 +240,6 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersModelBase):
                 },
             ),
         )
-        return output.as_dict()
 
     def restore_eval_state(
         self,
