@@ -57,7 +57,7 @@ async def test_nsfw_safety_reward_uses_max_probability_for_image_batches() -> No
     )
     output = torch.rand(2, 3, 8, 8)
 
-    score = await reward.score(_sample(output))
+    score = (await reward.score_batch([_sample(output)])).scores[0]
 
     assert score == pytest.approx(-0.8)
 

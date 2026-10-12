@@ -214,7 +214,7 @@ classDiagram
         resolve_execution_device() classmethod
         worker_config_with_device() classmethod
         preflight() activate() park_memory()
-        score() score_batch() shutdown()
+        score_batch() shutdown()
     }
     class InferenceRewardFunction {
         scorer: RewardScorer

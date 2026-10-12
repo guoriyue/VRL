@@ -161,8 +161,12 @@ async def test_real_paddleocr_reads_rendered_text_and_ranks_the_matching_target(
     reward = OCRReward(device="cpu")
     reward._engine = engine
     image = torch.from_numpy(frame).permute(2, 0, 1).float() / 255.0
-    matching = await reward.score(_make_ocr_sample("HELLO", video_tensor=image))
-    mismatching = await reward.score(_make_ocr_sample("ZQXJ", video_tensor=image))
+    matching = (await reward.score_batch([_make_ocr_sample("HELLO", video_tensor=image)])).scores[
+        0
+    ]
+    mismatching = (
+        await reward.score_batch([_make_ocr_sample("ZQXJ", video_tensor=image)])
+    ).scores[0]
     assert matching > mismatching
 
 
@@ -180,7 +184,7 @@ async def test_image_ocr_substring_match_gets_full_credit(engine_cls) -> None:
         video_tensor=torch.zeros(3, 64, 64),
     )
 
-    score = await reward.score(sample)
+    score = (await reward.score_batch([sample])).scores[0]
 
     assert score == pytest.approx(1.0)
 
@@ -198,7 +202,7 @@ async def test_video_ocr_never_gets_the_image_only_substring_credit(engine_cls) 
     reward._engine = engine_cls(["Cafe Free WiFi Open", "Cafe Free WiFi Open"])
     sample = _make_ocr_sample("Free WiFi", video_tensor=torch.zeros(3, 8, 64, 64))
 
-    assert await reward.score(sample) == pytest.approx(0.0)
+    assert (await reward.score_batch([sample])).scores[0] == pytest.approx(0.0)
 
 
 def test_column_lines_do_not_silently_truncate_to_the_shorter_column() -> None:
@@ -216,11 +220,16 @@ async def test_match_score_requires_full_text_and_counts_failed_video_frames(eng
     reward._engine = engine_cls(["Hello World", "Hello Word", "XHello World", ""])
     image = torch.zeros(3, 64, 64)
     sample = _make_ocr_sample("HELLO WORLD", video_tensor=image)
-    assert [await reward.score(sample) for _ in range(4)] == [1.0, 0.0, 0.0, 0.0]
+    assert [(await reward.score_batch([sample])).scores[0] for _ in range(4)] == [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+    ]
     reward._engine = engine_cls(["Hello World", "Hello Word"])
     video = _make_ocr_sample("HELLO WORLD", video_tensor=torch.zeros(3, 8, 64, 64))
-    assert await reward.score(video) == pytest.approx(0.5)
-    assert await reward.score(_make_ocr_sample("", video_tensor=image)) == 0.0
+    assert (await reward.score_batch([video])).scores[0] == pytest.approx(0.5)
+    assert (await reward.score_batch([_make_ocr_sample("", video_tensor=image)])).scores[0] == 0.0
     with pytest.raises(ValueError, match="score_key"):
         OCRReward(score_key="typo")
 
@@ -239,7 +248,7 @@ async def test_image_ocr_debug_dump_includes_zero_score_sample(tmp_path: Path) -
         sample_id="request:prompt:0:sample:7",
     )
 
-    score = await reward.score(sample)
+    score = (await reward.score_batch([sample])).scores[0]
 
     assert score == pytest.approx(0.0)
     image_paths = list(debug_dir.glob("*_score0.000.png"))
@@ -268,9 +277,9 @@ async def test_image_ocr_debug_dump_continues_existing_index(tmp_path: Path) -> 
     reward = OCRReward(device="cpu", debug_dir=str(debug_dir))
     reward._engine = _PaddleOCR2x(["JUNK"])
 
-    await reward.score(
-        _make_ocr_sample("ABC", video_tensor=torch.zeros(3, 64, 64)),
-    )
+    (
+        await reward.score_batch([_make_ocr_sample("ABC", video_tensor=torch.zeros(3, 64, 64))])
+    ).scores[0]
 
     assert len(list(debug_dir.glob("000001_*_score0.000.png"))) == 1
     assert len(list(debug_dir.glob("000001_*_score0.000.json"))) == 1
@@ -297,9 +306,11 @@ async def test_image_ocr_debug_dump_warns_on_write_failure(
     reward._engine = _PaddleOCR2x(["ABC"])
 
     with caplog.at_level(logging.WARNING, logger="vrl.rewards.models.ocr"):
-        score = await reward.score(
-            _make_ocr_sample("ABC", video_tensor=torch.zeros(3, 64, 64)),
-        )
+        score = (
+            await reward.score_batch(
+                [_make_ocr_sample("ABC", video_tensor=torch.zeros(3, 64, 64))]
+            )
+        ).scores[0]
 
     assert score == pytest.approx(1.0)
     assert "Failed to write OCR debug sample 000000" in caplog.text
@@ -321,6 +332,6 @@ async def test_video_ocr_keeps_flow_grpo_video_edit_distance_behavior(engine_cls
         video_tensor=torch.zeros(3, 8, 64, 64),
     )
 
-    score = await reward.score(sample)
+    score = (await reward.score_batch([sample])).scores[0]
 
     assert score == pytest.approx(0.875)

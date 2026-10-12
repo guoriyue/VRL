@@ -137,7 +137,7 @@ async def test_reward_reads_spec_from_metadata_and_scores_partial() -> None:
             "geneval": {"include": [{"class": "bench", "count": 1}, {"class": "cow", "count": 1}]}
         },
     )
-    assert await reward.score(sample) == pytest.approx(0.5)
+    assert (await reward.score_batch([sample])).scores[0] == pytest.approx(0.5)
 
 
 @pytest.mark.asyncio
@@ -145,7 +145,7 @@ async def test_reward_requires_geneval_metadata() -> None:
     reward = GenEvalOwlReward(device="cpu", detector=lambda images, classes: [{}] * len(images))
     sample = RewardSample(prompt="p", output=_IMAGE, sample_id="s0", metadata={})
     with pytest.raises(ValueError, match="metadata\\['geneval'\\]"):
-        await reward.score(sample)
+        (await reward.score_batch([sample])).scores[0]
 
 
 def test_nms_drops_a_group_box_spanning_two_instances() -> None:

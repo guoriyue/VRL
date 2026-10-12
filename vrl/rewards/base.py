@@ -155,15 +155,10 @@ class RewardFunction:
 
         return None
 
-    async def score(self, sample: RewardSample) -> float:
-        """Score one generated sample; family-specific scalar extension hook."""
-
-        raise NotImplementedError(f"{type(self).__name__}.score is not implemented")
-
     async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
-        """Score ordered samples through the batch/runtime hook."""
+        """Score ordered samples; every concrete reward implements this."""
 
-        return RewardOutput(scores=tuple([await self.score(sample) for sample in samples]))
+        raise NotImplementedError(f"{type(self).__name__}.score_batch is not implemented")
 
     async def shutdown(self) -> None:
         """Release reward-owned resources, when applicable."""
@@ -244,11 +239,6 @@ class InferenceRewardFunction(RewardFunction):
             return
         await scorer.park_memory()
         self._parked = True
-
-    async def score(self, sample: RewardSample) -> float:
-        """Score one sample through the batch inference path."""
-
-        return (await self.score_batch((sample,))).scores[0]
 
     async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
         """Materialize, score and validate one ordered sample batch."""

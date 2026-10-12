@@ -96,7 +96,9 @@ async def test_reward_function_in_process_single_score() -> None:
     for the test model).
     """
     reward = _reward_function_in_process()
-    assert await reward.score(_sample(torch.zeros(1, 3, 2, 2))) == pytest.approx(0.0)
+    assert (await reward.score_batch([_sample(torch.zeros(1, 3, 2, 2))])).scores[
+        0
+    ] == pytest.approx(0.0)
 
 
 @pytest.mark.parametrize(

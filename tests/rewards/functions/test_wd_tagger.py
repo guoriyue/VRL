@@ -41,7 +41,7 @@ async def test_wd_tagger_reward_scores_recall_over_wanted_tags() -> None:
         tagger=lambda images: [{"long_hair": 0.9, "smile": 0.5, "lingerie": 0.1}] * len(images),
     )
 
-    score = await reward.score(_sample(_image()))
+    score = (await reward.score_batch([_sample(_image())])).scores[0]
 
     assert score == pytest.approx(2.0 / 3.0)
 
@@ -55,7 +55,7 @@ async def test_wd_tagger_reward_threshold_is_inclusive() -> None:
         tagger=lambda images: [{"long_hair": 0.5, "smile": 0.4999, "lingerie": 0.0}] * len(images),
     )
 
-    score = await reward.score(_sample(_image()))
+    score = (await reward.score_batch([_sample(_image())])).scores[0]
 
     assert score == pytest.approx(1.0 / 3.0)
 
@@ -73,7 +73,9 @@ async def test_wd_tagger_reward_matches_case_insensitively_and_ignores_extras() 
         ),
     )
 
-    score = await reward.score(_sample(_image(), tags=["long_hair", "Lingerie", "SMILE"]))
+    score = (
+        await reward.score_batch([_sample(_image(), tags=["long_hair", "Lingerie", "SMILE"])])
+    ).scores[0]
 
     assert score == pytest.approx(1.0)
 
@@ -102,7 +104,7 @@ async def test_wd_tagger_reward_rejects_missing_tags() -> None:
     reward = WDTaggerReward(tagger=lambda images: [{}] * len(images))
 
     with pytest.raises(ValueError, match="adherence_tags"):
-        await reward.score(_sample(_image(), tags=None))
+        (await reward.score_batch([_sample(_image(), tags=None)])).scores[0]
 
 
 def test_wd_tagger_reward_rejects_invalid_threshold() -> None:
@@ -131,7 +133,7 @@ async def test_wd_tagger_rejects_non_string_tags_before_inference(invalid_tag) -
     calls = []
     reward = WDTaggerReward(tagger=lambda images: calls.append(images))
     with pytest.raises(ValueError, match="must contain only tag strings"):
-        await reward.score(_sample(_image(), tags=["smile", invalid_tag]))
+        (await reward.score_batch([_sample(_image(), tags=["smile", invalid_tag])])).scores[0]
     assert calls == []
 
 
@@ -147,13 +149,15 @@ async def test_dense_score_orders_images_the_recall_calls_identical() -> None:
             ),
         )
 
-    faint = await reward_for(0.05).score(_sample(_image()))
-    nearly = await reward_for(0.30).score(_sample(_image()))
-    recall = await WDTaggerReward(
+    sample = [_sample(_image())]
+    (faint,) = (await reward_for(0.05).score_batch(sample)).scores
+    (nearly,) = (await reward_for(0.30).score_batch(sample)).scores
+    recall_reward = WDTaggerReward(
         score_key="wd_tagger_recall",
         threshold=0.35,
         tagger=lambda images: [{"long_hair": 0.9, "smile": 0.9, "lingerie": 0.05}] * len(images),
-    ).score(_sample(_image()))
+    )
+    (recall,) = (await recall_reward.score_batch(sample)).scores
 
     assert recall == pytest.approx(2.0 / 3.0)
     assert faint < nearly
@@ -172,17 +176,17 @@ async def test_dense_score_caps_each_tag_at_the_threshold() -> None:
         tagger=lambda images: [{"long_hair": 1.0, "smile": 1.0, "lingerie": 1.0}] * len(images),
     )
 
-    assert await detected.score(_sample(_image())) == pytest.approx(1.0)
-    assert await certain.score(_sample(_image())) == pytest.approx(1.0)
+    assert (await detected.score_batch([_sample(_image())])).scores[0] == pytest.approx(1.0)
+    assert (await certain.score_batch([_sample(_image())])).scores[0] == pytest.approx(1.0)
 
 
 @pytest.mark.asyncio
 async def test_dense_equals_recall_when_every_tag_is_absent_or_confident() -> None:
     tagger = lambda images: [{"long_hair": 0.9, "smile": 0.0, "lingerie": 0.0}] * len(images)  # noqa: E731
-    dense = await WDTaggerReward(threshold=0.35, tagger=tagger).score(_sample(_image()))
-    recall = await WDTaggerReward(
-        score_key="wd_tagger_recall", threshold=0.35, tagger=tagger
-    ).score(_sample(_image()))
+    sample = [_sample(_image())]
+    (dense,) = (await WDTaggerReward(threshold=0.35, tagger=tagger).score_batch(sample)).scores
+    recall_reward = WDTaggerReward(score_key="wd_tagger_recall", threshold=0.35, tagger=tagger)
+    (recall,) = (await recall_reward.score_batch(sample)).scores
 
     assert dense == recall == pytest.approx(1.0 / 3.0)
 

@@ -34,9 +34,6 @@ class _QueuedBatchReward(RewardFunction):
         super().__init__()
         self.batches = list(batches)
 
-    async def score(self, sample: RewardSample) -> float:
-        return self.batches.pop(0)[0]
-
     async def score_batch(self, samples: list[RewardSample]) -> RewardOutput:
         scores = self.batches.pop(0)
         assert len(scores) == len(samples)
