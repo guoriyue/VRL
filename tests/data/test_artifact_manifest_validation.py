@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from vrl.scripts.data import setup as setup_cli
-from vrl.trainers.data.artifacts import (
+from vrl.scripts.data.manifest_artifacts import (
     DatasetFileReport,
 )
 from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index

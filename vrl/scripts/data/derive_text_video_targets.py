@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from vrl.scripts.data.common import emit
-from vrl.trainers.data.artifacts import (
+from vrl.scripts.data.manifest_artifacts import (
     SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
     DatasetFileReport,
 )

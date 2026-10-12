@@ -7,9 +7,9 @@ against the rollout geometry before device transfer.
 The producer is ``vrl/scripts/denoise/encode_targets.py``; the consumer is
 ``run_online_recipe`` (via ``data.sft_latents``) when ``algorithm.sft_weight > 0``.
 
-Split out of ``vrl/trainers/data/artifacts.py`` (which owns prompt-manifest path
-resolution + validation) because this tensor-persistence contract shares no
-symbol, constant, or helper with the manifest code.
+It shares no symbol, constant, or helper with prompt-manifest path resolution
+and validation, which the data scripts own
+(``vrl/scripts/data/manifest_artifacts.py``).
 """
 
 from __future__ import annotations

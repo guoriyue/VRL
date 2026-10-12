@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from vrl.trainers.data.artifacts import (
+from vrl.scripts.data.manifest_artifacts import (
     DatasetFileReport,
 )
 from vrl.utils.artifacts import ArtifactManifestError

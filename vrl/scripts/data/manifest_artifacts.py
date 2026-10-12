@@ -1,4 +1,4 @@
-"""Artifact dataset path resolution and manifest validation."""
+"""Artifact dataset path resolution and manifest validation for the data scripts."""
 
 from __future__ import annotations
 
