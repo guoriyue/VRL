@@ -525,6 +525,24 @@ _register_model_family(
 
 _register_model_family(
     _full_sequence_entry(
+        family="qwen_image_layered",
+        task="t2i",
+        model_section_cls="vrl.config.model_schema:ModelSection",
+        sampling_section_cls="vrl.config.sampling_schema:QwenImageLayeredSamplingSection",
+        executor_cls="vrl.models.families.qwen_image.layered_runtime:QwenImageLayeredBatchExecutor",
+        # Qwen-Image-Layered: the qwen_image MMDiT and video VAE loaded through
+        # the checkpoint's QwenImageLayeredPipeline; one source image conditions
+        # a packed sequence of ``layers`` RGBA layers (see qwen_image/layered.py).
+        build=DenoiseFamilyBuild(
+            model_cls="vrl.models.families.qwen_image.layered:QwenImageLayeredPipelineModel",
+            replay_cls="vrl.models.families.qwen_image.layered:QwenImageLayeredModel",
+            transformer_classname="QwenImageTransformer2DModel",
+        ),
+    ),
+)
+
+_register_model_family(
+    _full_sequence_entry(
         family="qwen_image_21",
         task="t2i",
         model_section_cls="vrl.config.model_schema:ModelSection",
