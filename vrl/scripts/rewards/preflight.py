@@ -209,6 +209,7 @@ def preflight_rewards(
                 owner.create()
                 # The probe owns its reward device outright: nothing parks.
                 placement = RayRewardPlacement(placement=owner.reward_placement)
+            built.reward.require_online_training()
             runtime = RewardFunctionRuntime(
                 built.reward.build_function(
                     device=str(device), parking=None, ray_placement=placement

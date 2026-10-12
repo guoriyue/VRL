@@ -361,7 +361,7 @@ def test_sana_direct_tool_override_changes_storage_only() -> None:
 def test_reward_factory_rejects_an_all_zero_objective() -> None:
     """Checks observation-only components cannot replace the training objective."""
     with pytest.raises(ValueError, match="At least one reward component"):
-        _built_reward({"pickscore": 0.0}, {}).reward.build_function(device="cpu", parking=None)
+        _built_reward({"pickscore": 0.0}, {}).reward.require_online_training()
 
 
 def _shared_reward_cfg(component: str) -> object:

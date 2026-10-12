@@ -111,7 +111,6 @@ class RewardRuntimeConfig:
         deployment.
         """
 
-        self.require_online_training()
         from vrl.rewards.functions.registry import MultiReward
 
         return MultiReward.from_mapping(
@@ -239,8 +238,6 @@ class BuiltConfigs:
         if not is_offline_dpo:
             if reward is None:
                 raise ValueError("online recipe requires a reward section")
-            if not any(weight > 0 for weight in reward.weights.values()):
-                raise ValueError("At least one reward component must have weight > 0.")
             # Copy the facts an objective reads from other sections into its
             # config. The public ``algorithm`` section holds only the objective's
             # own knobs; the reward weights, the trainer's precision correction and

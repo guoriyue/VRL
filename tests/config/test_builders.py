@@ -129,7 +129,7 @@ def test_online_build_rejects_missing_or_all_zero_reward() -> None:
     for name in all_zero.reward.components:
         all_zero.reward.components[name] = 0.0
     with pytest.raises(ValueError, match="At least one reward component"):
-        BuiltConfigs.from_cfg(all_zero)
+        BuiltConfigs.from_cfg(all_zero).reward.require_online_training()
 
 
 @pytest.mark.parametrize(
