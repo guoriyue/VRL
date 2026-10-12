@@ -315,7 +315,7 @@ def test_sana_fullparam_long_is_fresh_and_pins_reward_revisions() -> None:
     built = BuiltConfigs.from_cfg(cfg)
     from vrl.rewards.ray import RayRewardPlacement
 
-    assert built.resume.checkpoint_path is None
+    assert built.resume_from is None
     assert cfg.model.use_lora is False
     reward = _build_reward_function(
         built.reward,

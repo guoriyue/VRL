@@ -31,7 +31,7 @@ def test_build_preserves_warm_start_adapter_without_full_resume() -> None:
 
     built = BuiltConfigs.from_cfg(cfg)
 
-    assert built.resume.checkpoint_path is None
+    assert built.resume_from is None
     assert cfg.model.lora.path == "/tmp/warm-start-adapter"
     assert built.root.model is not None
     assert built.root.model.lora is not None
@@ -116,7 +116,7 @@ def test_offline_dpo_uses_the_same_build_result_without_online_state() -> None:
     assert type(built.algorithm).__name__ == "DiffusionDPOConfig"
     assert built.trainer is None
     assert built.reward is None
-    assert built.resume.checkpoint_path is None
+    assert built.resume_from is None
 
 
 def test_online_build_rejects_missing_or_all_zero_reward() -> None:
@@ -224,3 +224,16 @@ def test_every_allow_listed_offline_dpo_actor_field_has_a_reader() -> None:
         "resolver on the recipe reads them; drop them from "
         "DiffusionDPO.consumed_sections or wire a reader"
     )
+
+
+@pytest.mark.parametrize(
+    ("resume_from", "expected"),
+    [("", None), (" /tmp/checkpoint-7 ", "/tmp/checkpoint-7")],
+)
+def test_build_resolves_fresh_and_checkpoint_resume(
+    resume_from: str, expected: str | None
+) -> None:
+    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
+    OmegaConf.update(cfg, "trainer.resume_from", resume_from)
+
+    assert BuiltConfigs.from_cfg(cfg).resume_from == expected

@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from omegaconf import OmegaConf
 from torch import nn
 
 from tests.trainers._checkpoint_helpers import (
@@ -16,7 +15,6 @@ from tests.trainers._checkpoint_helpers import (
     _Trainer,
 )
 from vrl.config.precision import RolePrecision
-from vrl.config.schema import parse_config
 from vrl.models.interfaces.runtime import RuntimeBundle
 from vrl.models.steps.denoise.base import DenoiseModelBase
 from vrl.trainers.checkpointing import (
@@ -27,7 +25,6 @@ from vrl.trainers.checkpointing import (
     AdapterExport,
     CheckpointTarget,
     TrainingCheckpoint,
-    TrainingResumeConfig,
     export_checkpoint_state,
     load_checkpoint_state,
     save_training_checkpoint,
@@ -113,23 +110,6 @@ def test_rng_checkpoint_restores_python_numpy_and_named_generator_draws():
 class _RngGatherStub:
     def gather_rng_states(self, state):
         return [state] * self.context.world_size
-
-
-@pytest.mark.parametrize(
-    ("resume_from", "expected_path"),
-    [("", None), (" /tmp/checkpoint-7 ", "/tmp/checkpoint-7")],
-)
-def test_resume_config_resolves_fresh_and_checkpoint_paths(
-    resume_from: str,
-    expected_path: str | None,
-) -> None:
-    cfg = OmegaConf.create(
-        {"trainer": {"resume_from": resume_from}},
-    )
-
-    resolved = TrainingResumeConfig.from_root(parse_config(cfg))
-
-    assert resolved.checkpoint_path == expected_path
 
 
 def test_training_checkpoint_round_trips_trainer_and_owned_state(tmp_path) -> None:

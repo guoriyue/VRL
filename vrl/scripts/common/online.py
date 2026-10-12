@@ -766,8 +766,9 @@ async def run_online_recipe(cfg: DictConfig) -> None:
     # resume policy, so the recipe only loads the raw checkpoint here. The
     # checkpoint-identity preflight below consumes it directly; the epoch/step/dir
     # fields are derived after the preflight, next to the trainer that reads them.
-    resume_config = built.resume
-    resume_checkpoint = TrainingCheckpoint.load_for_resume(resume_config)
+    resume_checkpoint = (
+        TrainingCheckpoint.load(built.resume_from) if built.resume_from is not None else None
+    )
     resources.validate_schedule_mode(trainer_config.rollout_orchestration.schedule_mode)
     family_entry.validate_gpus_per_engine(resources.rollout_gpus_per_engine)
     if resources.rollout_num_engines < 1:

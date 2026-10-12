@@ -177,8 +177,9 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     trainer_cfg = OfflineDPOTrainerConfig.from_root(built.root)
     assert built.root.actor is not None  # the builder required actor.train_batch_size
     train_batch_size = int(built.root.actor.train_batch_size)
-    resume_config = built.resume
-    resume_checkpoint = TrainingCheckpoint.load_for_resume(resume_config)
+    resume_checkpoint = (
+        TrainingCheckpoint.load(built.resume_from) if built.resume_from is not None else None
+    )
     logger.info("%s", resources)
     weight_dtype = resolve_torch_dtype(precision.training.dtype)
 

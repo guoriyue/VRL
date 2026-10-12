@@ -17,7 +17,6 @@ from vrl.config.validation import require_training_config
 if TYPE_CHECKING:
     from vrl.models.families.registry import ModelFamilyEntry
     from vrl.models.parking import ParkingMechanism
-    from vrl.trainers.checkpointing import TrainingResumeConfig
     from vrl.trainers.online.config import TrainerConfig
 
 
@@ -208,7 +207,8 @@ class BuiltConfigs:
     precision: PrecisionPolicy
     trainer: TrainerConfig | None
     reward: RewardRuntimeConfig | None
-    resume: TrainingResumeConfig
+    # The checkpoint trainer.resume_from names, or None for a fresh run.
+    resume_from: str | None
 
     @property
     def family(self) -> ModelFamilyEntry:
@@ -225,11 +225,11 @@ class BuiltConfigs:
     def from_cfg(cls, cfg: DictConfig) -> BuiltConfigs:
         """Bundle typed configs for downstream training scripts."""
 
-        from vrl.trainers.checkpointing import TrainingResumeConfig
         from vrl.trainers.online.config import TrainerConfig
 
         root, precision = require_training_config(cfg)
-        resume = TrainingResumeConfig.from_root(root)
+        resume_from = str((root.trainer.resume_from if root.trainer is not None else None) or "")
+        resume_from = resume_from.strip() or None
         if root.algorithm is None:
             raise ValueError("config missing `algorithm` section")
         algorithm = root.algorithm.hyperparameters
@@ -270,7 +270,7 @@ class BuiltConfigs:
             precision=precision,
             trainer=trainer,
             reward=reward,
-            resume=resume,
+            resume_from=resume_from,
         )
 
 

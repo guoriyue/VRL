@@ -332,14 +332,6 @@ class TrainingCheckpoint:
             raise TypeError("schema-v1 checkpoint missing dict field: model.trainable_modules")
 
     @classmethod
-    def load_for_resume(cls, resume: TrainingResumeConfig) -> TrainingCheckpoint | None:
-        """Load the checkpoint selected by one resolved resume policy."""
-
-        if resume.checkpoint_path is None:
-            return None
-        return cls.load(resume.checkpoint_path)
-
-    @classmethod
     def load(cls, path: str | Path) -> TrainingCheckpoint:
         """Load ``checkpoint.pt`` from a checkpoint directory or direct file path."""
 
@@ -700,21 +692,6 @@ class TrainingCheckpoint:
             state=normalized,
             full_state_roots=frozenset(full_state_roots),
         )
-
-
-@dataclass(frozen=True, slots=True)
-class TrainingResumeConfig:
-    """Resolved checkpoint input shared by online and offline trainers."""
-
-    checkpoint_path: str | None = None
-
-    @classmethod
-    def from_root(cls, root: RootConfig) -> TrainingResumeConfig:
-        """Build the resume input from the root's public checkpoint inputs."""
-
-        trainer = root.trainer
-        resume_from = str((trainer.resume_from if trainer is not None else None) or "").strip()
-        return cls(checkpoint_path=resume_from or None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1627,7 +1604,6 @@ __all__ = [
     "AdapterExport",
     "CheckpointTarget",
     "TrainingCheckpoint",
-    "TrainingResumeConfig",
     "build_adapter_exports",
     "capture_rng_state",
     "export_checkpoint_state",

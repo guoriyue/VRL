@@ -251,7 +251,7 @@ async def test_missing_prompt_rng_stops_before_prompt_model_or_ray(
     checkpoint = online.TrainingCheckpoint.load(checkpoint_dir)
     checkpoint.payload["rng"] = rng_state
     monkeypatch.setattr(
-        online.TrainingCheckpoint, "load_for_resume", staticmethod(lambda _resume: checkpoint)
+        online.TrainingCheckpoint, "load", classmethod(lambda cls, _path: checkpoint)
     )
 
     with pytest.raises(ValueError, match="missing requested generators: prompt_generator"):
@@ -465,7 +465,7 @@ async def test_resume_releases_full_checkpoint_payload_before_training(
         overrides=(f"trainer.resume_from={checkpoint_dir}", "trainer.total_epochs=2"),
     )
     roles = _roles(monkeypatch)
-    roles.watch(online.TrainingCheckpoint, "load_for_resume", "checkpoint.load")
+    roles.watch(online.TrainingCheckpoint, "load", "checkpoint.load")
     roles.watch(online.TrainingCheckpoint, "restore_training", "checkpoint.restore")
     roles.watch(gc, "collect", "gc.collect")
 
