@@ -681,11 +681,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 f"{case.logprob_parity_tol}) — broken sample/replay parity"
             )
         if case.use_config_reward:
-            _assert_local_reward_artifacts(
-                tmp_path,
-                metrics,
-                samples=int(cfg.rollout.n_samples_per_prompt),
-            )
+            _assert_local_reward_scored(tmp_path, metrics)
     finally:
         try:
             if trainer is not None:
@@ -746,12 +742,9 @@ def build_tensor_mean_model(worker_config):
 
 
 def _local_reward_overrides(tmp_path: Path, model_factory: str | None) -> tuple[str, ...]:
-    artifact_dir = tmp_path / "reward_artifacts"
     debug_dir = tmp_path / "reward_debug"
     overrides = [
-        f"reward.kwargs.kling_video_reward.archive_dir={artifact_dir.as_posix()}",
         f"reward.kwargs.kling_video_reward.debug_dir={debug_dir.as_posix()}",
-        # Explicit experiment archives are independent of the reward transport.
         "reward.kwargs.kling_video_reward.worker_config.local_files_only=true",
     ]
     if model_factory is not None:
@@ -762,13 +755,10 @@ def _local_reward_overrides(tmp_path: Path, model_factory: str | None) -> tuple[
     return tuple(overrides)
 
 
-def _assert_local_reward_artifacts(tmp_path: Path, metrics: Any, *, samples: int) -> None:
+def _assert_local_reward_scored(tmp_path: Path, metrics: Any) -> None:
     components = metrics.reward_components
     assert "kling_video_reward" in components
     assert isinstance(components["kling_video_reward"], float)
-    # One retained mp4 per scored sample, plus the per-request debug rows.
-    retained = sorted((tmp_path / "reward_artifacts").glob("*.mp4"))
-    assert len(retained) == samples, [path.name for path in retained]
     assert (tmp_path / "reward_debug" / "kling_video_reward_results.jsonl").exists()
 
 

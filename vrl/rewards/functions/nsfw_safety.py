@@ -13,8 +13,6 @@ class NSFWSafetyReward(ModelRewardFunction):
     model_factory = "vrl.rewards.models.nsfw_safety:NSFWSafetyRewardModel"
     name = "nsfw_safety"
     default_score_key = "nsfw_safety"
-    default_artifact_format = "tensor"
-    default_media_type = "image"
     eager_model = True
 
     def __init__(self, *, scorer: Any = None, **kwargs: Any) -> None:

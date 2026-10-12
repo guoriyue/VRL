@@ -12,8 +12,6 @@ class GenEvalOwlReward(ModelRewardFunction):
     name = "geneval_owl"
     default_score_key = "geneval_owl_dense"
     score_keys = ("geneval_owl_dense", "geneval_owl_partial", "geneval_owl_strict")
-    default_artifact_format = "tensor"
-    default_media_type = "image"
 
 
 __all__ = ["GenEvalOwlReward"]

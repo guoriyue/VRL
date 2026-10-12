@@ -15,8 +15,6 @@ class WDTaggerReward(ModelRewardFunction):
     name = "wd_tagger"
     default_score_key = "wd_tagger_dense"
     score_keys = ("wd_tagger_dense", "wd_tagger_recall")
-    default_artifact_format = "tensor"
-    default_media_type = "image"
     eager_model = True
 
     @classmethod

@@ -4,18 +4,16 @@ The plugin layer between ``RewardFunctionRuntime`` above (runtime.py) and the
 ``RewardScorer`` transports below (inference.py): concrete rewards in
 vrl/rewards/functions subclass one of the bases here. The class ladder encodes
 capabilities the registry and runtime probe, not taxonomy:
-``InferenceRewardFunction`` owns the materialize / score / validate /
-release-or-retain seam so every transport (including injected fakes) passes
-the same result-identity guard; ``ModelRewardFunction`` resolves a model
+``InferenceRewardFunction`` owns the materialize / score / validate seam so
+every transport (including injected fakes) passes the same result-identity
+guard; ``ModelRewardFunction`` resolves a model
 factory and scoring transport while forwarding media in memory by default.
 Every registered reward is a ``ModelRewardFunction``; its scorer owns memory
-parking. Explicit archives are separate
-experiment outputs; file-only models receive scorer-local temporary files.
+parking. File-only models receive scorer-local temporary files.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import math
 import time
@@ -26,18 +24,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from vrl.config.reward_inference import RewardInferenceConfig
-from vrl.rewards.artifacts import (
-    DiskRewardArtifactStore,
-    InMemoryRewardArtifactStore,
-    MediaType,
-    RewardArtifactStore,
-)
 from vrl.rewards.inference import (
+    RewardInferenceArtifact,
     RewardInferenceRequest,
     RewardInferenceResult,
 )
 from vrl.rewards.protocols import (
-    ArtifactRetainingError,
     MemoryParkingScorer,
     RemoteReadyScorer,
     RewardScorer,
@@ -180,7 +172,7 @@ class RewardFunction:
 
 
 class InferenceRewardFunction(RewardFunction):
-    """Reward function backed by one scorer transport and one artifact store."""
+    """Reward function backed by one scorer transport; media rides the request in memory."""
 
     def __init__(
         self,
@@ -188,8 +180,6 @@ class InferenceRewardFunction(RewardFunction):
         reward_name: str,
         score_key: str,
         scorer: RewardScorer,
-        artifact_store: RewardArtifactStore | None = None,
-        archive_store: RewardArtifactStore | None = None,
         debug_dir: str = "",
         name: str = "reward",
     ) -> None:
@@ -199,9 +189,6 @@ class InferenceRewardFunction(RewardFunction):
         normalized_score_key = str(score_key).strip()
         if not normalized_score_key:
             raise ValueError("score_key must be non-empty")
-        if artifact_store is None:
-            # Media stays in memory unless a caller explicitly injects a store.
-            artifact_store = InMemoryRewardArtifactStore()
         self.reward_name = normalized_reward_name
         self.score_key = normalized_score_key
         selected_score_keys = tuple(part.strip() for part in normalized_score_key.split("+"))
@@ -212,8 +199,6 @@ class InferenceRewardFunction(RewardFunction):
             )
         self._selected_score_keys = selected_score_keys
         self.scorer = scorer
-        self.artifact_store = artifact_store
-        self._archive_store = archive_store
         self.debug_dir = str(debug_dir)
         # Prefixes request ids and names the debug sidecar files.
         self._name = name
@@ -266,128 +251,87 @@ class InferenceRewardFunction(RewardFunction):
         return (await self.score_batch((sample,))).scores[0]
 
     async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
-        """Materialize, score, validate, and finalize one ordered sample batch."""
+        """Materialize, score and validate one ordered sample batch."""
 
         samples = list(samples)
         if not samples:
             return RewardOutput(scores=())
 
-        if self._archive_store is not None:
-            # Explicit experiment output is independent of scorer transport;
-            # never send these driver-local paths to a remote worker.
-            archived = self._archive_store.materialize(samples)
-            self._archive_store.retain(archived)
         scorer = self.scorer
         total_started = time.perf_counter()
         materialize_started = time.perf_counter()
-        artifacts = self.artifact_store.materialize(samples)
+        # Media rides the request in memory (tensors or boxed references);
+        # the driver writes no files.
+        artifacts = [
+            RewardInferenceArtifact(
+                artifact_id=f"{sample.sample_id}:in-memory",
+                sample_id=sample.sample_id,
+                path="",
+                media=sample.output,
+                prompt=str(sample.prompt),
+                metadata=dict(sample.metadata or {}),
+            )
+            for sample in samples
+        ]
         materialization_ms = (time.perf_counter() - materialize_started) * 1000.0
-        operation_error: BaseException | None = None
-        output: RewardOutput | None = None
-        request_id: str | None = None
-        try:
-            if len(artifacts) != len(samples):
-                raise ValueError(
-                    "reward artifact store returned wrong number of artifacts: "
-                    f"artifacts={len(artifacts)}, samples={len(samples)}",
-                )
-            request_id = f"{self._name}-{uuid.uuid4().hex}"
-            request = RewardInferenceRequest(
-                request_id=request_id,
-                artifacts=tuple(artifacts),
-            )
-            inference_started = time.perf_counter()
-            # Contract enforcement lives at this seam, not inside each runtime,
-            # so every runtime (including injected fakes) gets the same result
-            # identity guard and request-order re-sort.
-            self._parked = False
-            raw_results = await scorer.score_batch(request)
-            results = request.validate_and_order_results(raw_results)
-            inference_total_ms = (time.perf_counter() - inference_started) * 1000.0
-            total_latency_ms = (time.perf_counter() - total_started) * 1000.0
-            self._write_debug(
-                request,
-                results,
-                artifact_materialization_ms=materialization_ms,
-                inference_total_ms=inference_total_ms,
-                total_reward_latency_ms=total_latency_ms,
-            )
-            score_keys = set(results[0].scores)
-            if any(set(result.scores) != score_keys for result in results):
-                raise ValueError("reward model returned inconsistent score axes within a batch")
-
-            # Per-result transport timings fold into one reward-call summary:
-            # stage-parallel phases report their slowest member (max over
-            # results); per-artifact inference cost is additive (sum), falling
-            # back to this call's measured inference wall time when a
-            # transport reports no per-result values.
-            def stage_max(key: str) -> float:
-                return max(
-                    (
-                        float(result.timing_ms[key])
-                        for result in results
-                        if key in result.timing_ms
-                    ),
-                    default=0.0,
-                )
-
-            inference_values = [
-                float(result.timing_ms["inference_ms"])
-                for result in results
-                if "inference_ms" in result.timing_ms
-            ]
-            output = RewardOutput(
-                scores=tuple(self._select_score(result.scores) for result in results),
-                components={
-                    key: tuple(result.scores[key] for result in results)
-                    for key in results[0].scores
-                },
-                timing_ms={
-                    "latency_ms": total_latency_ms,
-                    "queue_wait_ms": stage_max("queue_wait_ms"),
-                    "inference_ms": (
-                        sum(inference_values) if inference_values else float(inference_total_ms)
-                    ),
-                    "artifact_materialization_ms": materialization_ms,
-                    "artifact_validation_ms": stage_max("service_artifact_validation_ms"),
-                    "service_inference_wall_ms": stage_max("service_inference_wall_ms"),
-                    "transport_roundtrip_ms": stage_max("http_roundtrip_ms"),
-                },
-            )
-        except BaseException as error:
-            operation_error = error
-
-        cleanup_error: BaseException | None = None
-        retain_for_remote = operation_error is not None and (
-            isinstance(operation_error, asyncio.CancelledError)
-            or (
-                isinstance(operation_error, ArtifactRetainingError)
-                and operation_error.retain_reward_artifacts
-            )
+        request_id = f"{self._name}-{uuid.uuid4().hex}"
+        request = RewardInferenceRequest(
+            request_id=request_id,
+            artifacts=tuple(artifacts),
         )
-        if retain_for_remote:
-            logger.warning(
-                "reward inference did not confirm terminal state; retaining %d "
-                "artifact(s) for request_id=%s",
-                len(artifacts),
-                request_id,
+        inference_started = time.perf_counter()
+        # Contract enforcement lives at this seam, not inside each runtime,
+        # so every runtime (including injected fakes) gets the same result
+        # identity guard and request-order re-sort.
+        self._parked = False
+        raw_results = await scorer.score_batch(request)
+        results = request.validate_and_order_results(raw_results)
+        inference_total_ms = (time.perf_counter() - inference_started) * 1000.0
+        total_latency_ms = (time.perf_counter() - total_started) * 1000.0
+        self._write_debug(
+            request,
+            results,
+            artifact_materialization_ms=materialization_ms,
+            inference_total_ms=inference_total_ms,
+            total_reward_latency_ms=total_latency_ms,
+        )
+        score_keys = set(results[0].scores)
+        if any(set(result.scores) != score_keys for result in results):
+            raise ValueError("reward model returned inconsistent score axes within a batch")
+
+        # Per-result transport timings fold into one reward-call summary:
+        # stage-parallel phases report their slowest member (max over
+        # results); per-artifact inference cost is additive (sum), falling
+        # back to this call's measured inference wall time when a
+        # transport reports no per-result values.
+        def stage_max(key: str) -> float:
+            return max(
+                (float(result.timing_ms[key]) for result in results if key in result.timing_ms),
+                default=0.0,
             )
-        finalize = self.artifact_store.retain if retain_for_remote else self.artifact_store.release
-        try:
-            finalize(artifacts)
-        except BaseException as error:
-            cleanup_error = error
-        if operation_error is not None and cleanup_error is not None:
-            raise RewardCleanupError(
-                "reward operation and artifact cleanup both failed",
-                [operation_error, cleanup_error],
-            )
-        if operation_error is not None:
-            raise operation_error
-        if cleanup_error is not None:
-            raise cleanup_error
-        assert output is not None
-        return output
+
+        inference_values = [
+            float(result.timing_ms["inference_ms"])
+            for result in results
+            if "inference_ms" in result.timing_ms
+        ]
+        return RewardOutput(
+            scores=tuple(self._select_score(result.scores) for result in results),
+            components={
+                key: tuple(result.scores[key] for result in results) for key in results[0].scores
+            },
+            timing_ms={
+                "latency_ms": total_latency_ms,
+                "queue_wait_ms": stage_max("queue_wait_ms"),
+                "inference_ms": (
+                    sum(inference_values) if inference_values else float(inference_total_ms)
+                ),
+                "artifact_materialization_ms": materialization_ms,
+                "artifact_validation_ms": stage_max("service_artifact_validation_ms"),
+                "service_inference_wall_ms": stage_max("service_inference_wall_ms"),
+                "transport_roundtrip_ms": stage_max("http_roundtrip_ms"),
+            },
+        )
 
     def _select_score(self, scores: Mapping[str, Any]) -> float:
         missing = [key for key in self._selected_score_keys if key not in scores]
@@ -448,9 +392,7 @@ class ModelRewardFunction(InferenceRewardFunction):
     owns any temporary encoding and cleanup.
 
     ``scorer`` injects a ready transport in place of factory construction.
-    ``artifact_store`` is an explicit alternative input store, while
-    ``archive_dir`` independently retains experiment output; an archive is
-    never selected merely because scoring is remote. ``worker_config``'s
+    ``worker_config``'s
     ``sleep_offload``, which the registry sets for a GPU component of a
     shared reward, lets the scorer release its model's GPU memory between
     scoring phases.
@@ -467,9 +409,6 @@ class ModelRewardFunction(InferenceRewardFunction):
     name: ClassVar[str]
     default_reward_name: ClassVar[str | None] = None
     default_score_key: ClassVar[str]
-    # Explicit archive encoding only; scorer input format belongs to its model.
-    default_artifact_format: ClassVar[str] = "mp4"
-    default_media_type: ClassVar[MediaType] = "video"
     # In-process transport only: build the model in the constructor so config
     # validation fails at construction and tests can reach ``self._model``
     # (e.g. to inject a fake engine). Skipped under sleep_offload, whose pooled
@@ -488,12 +427,10 @@ class ModelRewardFunction(InferenceRewardFunction):
         *,
         reward_name: str | None = None,
         score_key: str | None = None,
-        archive_dir: str = "",
         debug_dir: str = "",
         device: str | None = None,
         worker_config: Mapping[str, Any] | None = None,
         scorer: RewardScorer | None = None,
-        artifact_store: RewardArtifactStore | None = None,
         inference: RewardInferenceConfig | None = None,
         ray_placement: RayRewardPlacement | None = None,
         **model_kwargs: Any,
@@ -507,6 +444,7 @@ class ModelRewardFunction(InferenceRewardFunction):
         from vrl.rewards.runtime import build_reward_scorer
 
         removed = {
+            "archive_dir",
             "artifact_dir",
             "artifact_format",
             "media_type",
@@ -515,7 +453,7 @@ class ModelRewardFunction(InferenceRewardFunction):
         if removed:
             raise TypeError(
                 f"reward transport options {sorted(removed)} were removed; "
-                "scorers own their input format; use archive_dir only for explicit experiment output"
+                "scorers own their input format and rewards write no media archive"
             )
         if model_kwargs and self.worker_config_only:
             raise TypeError(
@@ -533,15 +471,6 @@ class ModelRewardFunction(InferenceRewardFunction):
                 f"got {score_key!r}",
             )
         in_process = scorer is None and (inference is None or inference.kind == "in_process")
-        archive_store = (
-            DiskRewardArtifactStore(
-                archive_dir,
-                media_type=self.default_media_type,
-                artifact_format=self.default_artifact_format,
-            )
-            if archive_dir
-            else None
-        )
 
         if scorer is None:
             worker_cfg = dict(worker_config or {})
@@ -602,8 +531,6 @@ class ModelRewardFunction(InferenceRewardFunction):
             reward_name=str(reward_name),
             score_key=str(score_key),
             scorer=scorer,
-            artifact_store=artifact_store,
-            archive_store=archive_store,
             debug_dir=debug_dir,
             name=self.name,
         )

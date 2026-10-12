@@ -1,5 +1,7 @@
 # SPRINT: Media artifact async write —— 把 reward 落盘（mp4/.pt 编码 + D2H）移出热路径
 
+> **已失效（2026-10-13）：** 打分媒体早已走内存（Ray object store），驱动端落盘的 `DiskRewardArtifactStore` 和 `archive_dir` 已删除，本 sprint 要挪出热路径的写盘不复存在。下文是历史记录。
+
 状态：**PARKED（2026-06-29）。** PROFILED + 重大更正：原「fire-and-forget」前提被**证伪**（写盘是 reward 打分的硬依赖——kling 按 path 读回 mp4,见下）。实测 encode 占 rollout **240p 2% / 480p 4.85%**。**Un-park 触发：committed 到 480p（droid）AND 已在改 reward 输入契约 → 那时做「Ray object-store 内存传输」（砍掉 libx264+落盘+读盘），不是写队列。** 否则不做。`.pt` 捷径对 kling 无效。 性质：**EXACT（无损）throughput 杠杆。** 把落盘型 reward 每个 rollout 的「GPU→CPU 拷贝 + libx264 逐帧编码」从同步内联（head-of-line 阻塞单线程事件循环）改成「`asyncio.to_thread` offload」,或更根本地用 Ray object-store 内存传输绕过编码+落盘。
 
 > ## ⚠️ PROFILE + 重大更正（2026-06-29，RTX 5090，真 `write_mp4`）

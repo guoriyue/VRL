@@ -465,7 +465,6 @@ def test_multi_gpu_engine_gate_requires_family_capability() -> None:
 
 def test_ray_rewards_do_not_materialize_transport_files_in_the_run_output(tmp_path) -> None:
     """A run-owned scorer transfers media without making an artifact directory."""
-    from vrl.rewards.artifacts import InMemoryRewardArtifactStore
     from vrl.rewards.ray import RayRewardScorer
 
     cfg = load_config(
@@ -480,7 +479,6 @@ def test_ray_rewards_do_not_materialize_transport_files_in_the_run_output(tmp_pa
     reward = _build_reward_function(built.reward, parse_config(cfg))
     component = reward.rewards[0][2]
     assert isinstance(component.scorer, RayRewardScorer)
-    assert isinstance(component.artifact_store, InMemoryRewardArtifactStore)
     assert not (tmp_path / "run" / "reward_artifacts").exists()
 
 

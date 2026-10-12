@@ -86,7 +86,6 @@ class RemoteRewardServiceError(RuntimeError):
         retryable: bool = False,
         request_id: str | None = None,
         details: dict[str, Any] | None = None,
-        retain_reward_artifacts: bool = False,
     ) -> None:
         super().__init__(message)
         self.code = str(code)
@@ -94,10 +93,6 @@ class RemoteRewardServiceError(RuntimeError):
         self.retryable = bool(retryable)
         self.request_id = request_id
         self.details = dict(details or {})
-        # A transport failure can leave remote scoring alive after the client
-        # coroutine exits. The artifact owner must not delete shared files
-        # until cancellation or completion has been confirmed.
-        self.retain_reward_artifacts = bool(retain_reward_artifacts)
 
 
 __all__ = [

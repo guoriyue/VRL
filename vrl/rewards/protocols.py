@@ -12,9 +12,8 @@ same lease vocabulary.
 One layer below, ``RewardScorer`` is the transport seam under
 ``RewardFunction`` — the reward dual of the generation engine's Ray executor
 layer, with Ray actors (ray.py), standalone HTTP (service/client.py), and
-explicit in-process execution (runtime.py). ``RemoteReadyScorer``,
-``MemoryParkingScorer``, and
-``ArtifactRetainingError`` are isinstance-probed optional capabilities.
+explicit in-process execution (runtime.py). ``RemoteReadyScorer`` and
+``MemoryParkingScorer`` are isinstance-probed optional capabilities.
 """
 
 from __future__ import annotations
@@ -95,18 +94,6 @@ class RemoteReadyScorer(Protocol):
 
 
 @runtime_checkable
-class ArtifactRetainingError(Protocol):
-    """Error capability: scoring state is unknown, artifacts may still be read.
-
-    Declared by the service error type (and any future transport error) so the
-    artifact owner can keep shared files alive until remote completion or
-    cancellation is confirmed — checked by isinstance, never by getattr.
-    """
-
-    retain_reward_artifacts: bool
-
-
-@runtime_checkable
 class MemoryParkingScorer(Protocol):
     """Transport boundary for verifiable reward GPU parking.
 
@@ -124,7 +111,6 @@ class MemoryParkingScorer(Protocol):
 
 
 __all__ = [
-    "ArtifactRetainingError",
     "MemoryParkingScorer",
     "RemoteReadyScorer",
     "RewardRuntime",

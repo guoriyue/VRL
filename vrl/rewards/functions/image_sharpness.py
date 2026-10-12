@@ -14,8 +14,6 @@ class ImageSharpnessReward(ModelRewardFunction):
     model_factory = "vrl.rewards.models.image_sharpness:ImageSharpnessRewardModel"
     name = "image_sharpness"
     default_score_key = "image_sharpness"
-    default_artifact_format = "tensor"
-    default_media_type = "image"
     eager_model = True
 
     @classmethod

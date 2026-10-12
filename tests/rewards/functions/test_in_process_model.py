@@ -5,10 +5,8 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.rewards.artifacts import InMemoryRewardArtifactStore
 from vrl.rewards.base import (
     InferenceRewardFunction,
-    RewardCleanupError,
 )
 from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import InProcessRewardScorer
@@ -158,22 +156,6 @@ def test_lazy_reward_models_defer_module_construction(
         assert built_on == ["cuda:7"]  # one build per runtime lifetime
 
 
-def test_inference_reward_defaults_to_inmemory_artifact_store() -> None:
-    class _Runtime:
-        async def score_batch(self, request):
-            return []
-
-        async def shutdown(self) -> None:
-            return None
-
-    reward = InferenceRewardFunction(
-        reward_name="fake",
-        score_key="fake",
-        scorer=_Runtime(),
-    )
-    assert isinstance(reward.artifact_store, InMemoryRewardArtifactStore)
-
-
 def test_inference_reward_rejects_empty_score_key_component() -> None:
     class _Runtime:
         async def score_batch(self, request):
@@ -188,70 +170,3 @@ def test_inference_reward_rejects_empty_score_key_component() -> None:
             score_key="a++b",
             scorer=_Runtime(),
         )
-
-
-@pytest.mark.asyncio
-async def test_reward_reports_operation_and_artifact_cleanup_failures() -> None:
-    class _FailingRuntime:
-        async def score_batch(self, request):
-            raise RuntimeError("score failed")
-
-        async def shutdown(self) -> None:
-            return None
-
-    class _FailingCleanupStore(InMemoryRewardArtifactStore):
-        def release(self, artifacts) -> None:
-            assert artifacts
-            raise OSError("cleanup failed")
-
-    reward = InferenceRewardFunction(
-        reward_name="fake",
-        score_key="fake",
-        scorer=_FailingRuntime(),
-        artifact_store=_FailingCleanupStore(),
-    )
-
-    with pytest.raises(RewardCleanupError) as error:
-        await reward.score(_sample(torch.zeros(1, 3, 2, 2)))
-
-    assert [str(item) for item in error.value.errors] == [
-        "score failed",
-        "cleanup failed",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_reward_retains_artifacts_when_remote_state_is_ambiguous() -> None:
-    class _AmbiguousRuntime:
-        async def score_batch(self, request):
-            error = RuntimeError("remote state unknown")
-            error.retain_reward_artifacts = True
-            raise error
-
-        async def shutdown(self) -> None:
-            return None
-
-    class _RecordingStore(InMemoryRewardArtifactStore):
-        released = False
-        retained = False
-
-        def release(self, artifacts) -> None:
-            self.released = True
-
-        def retain(self, artifacts) -> None:
-            assert artifacts
-            self.retained = True
-
-    store = _RecordingStore()
-    reward = InferenceRewardFunction(
-        reward_name="fake",
-        score_key="fake",
-        scorer=_AmbiguousRuntime(),
-        artifact_store=store,
-    )
-
-    with pytest.raises(RuntimeError, match="remote state unknown"):
-        await reward.score(_sample(torch.zeros(1, 3, 2, 2)))
-
-    assert store.retained is True
-    assert store.released is False

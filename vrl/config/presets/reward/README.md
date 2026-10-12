@@ -46,11 +46,10 @@ resource bundle. `expected_model` is required; set `expected_model_version` for
 fixed reward protocols so preflight also rejects a same-name service running a
 different checkpoint, revision, or threshold.
 
-Scoring does not require `media_type`, `artifact_format`, `artifact_dir`, or
-`retain_artifacts` constructor settings. The model owns its decoder format.
-For an explicit experiment archive, set `reward.kwargs.<component>.archive_dir`;
-these saved copies are separate from the inputs sent for scoring. `debug_dir`
-remains available for reward-specific diagnostic records. GenEval's evaluator
+Scoring takes no `media_type`, `artifact_format`, `artifact_dir`,
+`retain_artifacts` or `archive_dir` settings: the model owns its decoder format
+and rewards write no media archive. `debug_dir` remains available for
+reward-specific diagnostic records. GenEval's evaluator
 `artifact_dir` is a separate model argument, not a transport directory.
 
 Generation/reward streaming is topology-derived: it is enabled only when the

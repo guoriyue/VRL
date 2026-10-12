@@ -26,8 +26,6 @@ class OCRReward(ModelRewardFunction):
     model_factory = "vrl.rewards.models.ocr:OCRRewardModel"
     name = "ocr"
     default_score_key = "ocr"
-    default_artifact_format = "tensor"
-    default_media_type = "image"
     eager_model = True
     score_keys = ("ocr", "ocr_match")
 

@@ -11,8 +11,6 @@ class AestheticReward(ModelRewardFunction):
     model_factory = "vrl.rewards.models.aesthetic:AestheticRewardModel"
     name = "aesthetic"
     default_score_key = "aesthetic"
-    default_artifact_format = "tensor"
-    default_media_type = "image"
 
 
 __all__ = ["AestheticReward"]

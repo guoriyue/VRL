@@ -11,8 +11,6 @@ class LocalEditReward(ModelRewardFunction):
     model_factory = "vrl.rewards.models.local_edit:LocalEditRewardModel"
     name = "local_edit"
     default_score_key = "local_edit"
-    default_artifact_format = "tensor"
-    default_media_type = "image"
     worker_config_only = True
 
 

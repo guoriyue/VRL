@@ -205,10 +205,8 @@ async def test_uploaded_request_lifecycle_drains_remote_work(termination):
         else:
             if termination == "shutdown":
                 await service.shutdown_async()
-            with pytest.raises(RemoteRewardServiceError) as caught:
+            with pytest.raises(RemoteRewardServiceError):
                 await task
-            if termination == "timeout":
-                assert not caught.value.retain_reward_artifacts
         assert await asyncio.to_thread(runtime.stopped.wait, 2)
         assert service._active_requests == 0
     assert runtime.shutdown_calls == 1

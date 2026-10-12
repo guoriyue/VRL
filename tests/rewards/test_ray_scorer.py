@@ -10,16 +10,12 @@ from pathlib import Path
 import pytest
 import torch
 
+from vrl.ray.operation_deadline import RayOperationCancelled, RayOperationTimeout
 from vrl.ray.placement import RolePlacement
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.protocols import MemoryParkingScorer, RemoteReadyScorer, RewardScorer
-from vrl.rewards.ray import (
-    RayRewardCancelled,
-    RayRewardError,
-    RayRewardPlacement,
-    RayRewardScorer,
-    RayRewardTimeout,
-)
+from vrl.rewards.ray import RayRewardPlacement, RayRewardScorer
+from vrl.runtime_errors import TerminalRuntimeError
 from vrl.utils.lifecycle import RuntimePhase
 from vrl.utils.media_reference import MediaReference
 
@@ -106,9 +102,8 @@ def test_real_ray_reward_timeout_kills_blocking_actor(local_ray):
             scorer._timeout = 10
             await scorer.activate()
             scorer._timeout = 0.1
-            with pytest.raises(RayRewardTimeout) as caught:
+            with pytest.raises(RayOperationTimeout):
                 await scorer.score_batch(_request(delay=30))
-            assert caught.value.retain_reward_artifacts
             with pytest.raises(RuntimeError, match="shutting down"):
                 await scorer.score_batch(_request())
         finally:
@@ -130,10 +125,12 @@ def test_real_ray_reward_cancellation_and_failure_close_admission(local_ray):
                     task = asyncio.create_task(scorer.score_batch(_request(delay=30)))
                     await asyncio.sleep(0.1)
                     task.cancel()
-                    with pytest.raises(RayRewardCancelled):
+                    with pytest.raises(RayOperationCancelled):
                         await task
                 else:
-                    with pytest.raises(RayRewardError, match="injected reward model failure"):
+                    with pytest.raises(
+                        TerminalRuntimeError, match="injected reward model failure"
+                    ):
                         await scorer.score_batch(_request(fail=True))
                 assert scorer.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
             finally:
@@ -175,7 +172,7 @@ def test_real_ray_shutdown_interrupts_inflight_score(local_ray):
         task = asyncio.create_task(scorer.score_batch(_request(delay=30)))
         await asyncio.sleep(0.1)
         await scorer.shutdown()
-        with pytest.raises(RayRewardError):
+        with pytest.raises(TerminalRuntimeError, match="Ray reward score_batch failed"):
             await task
         assert scorer.lifecycle.phase is RuntimePhase.TERMINATED
 
@@ -195,7 +192,7 @@ def test_real_ray_startup_deadline_cancels_unschedulable_cpu_actor(local_ray, mo
             {"device": "cpu", "model_factory": "tests.rewards._ray_model:TinyRewardModel"},
         )
         try:
-            with pytest.raises(RayRewardTimeout, match=r"reward\.ready"):
+            with pytest.raises(RayOperationTimeout, match=r"reward\.ready"):
                 await scorer.ensure_ready()
         finally:
             await scorer.shutdown()
@@ -225,7 +222,7 @@ def test_real_ray_file_reward_cancellation_cleans_only_actor_root(local_ray, tmp
                     await asyncio.sleep(0.01)
             assert list(root.rglob("*.pt"))
             task.cancel()
-            with pytest.raises(RayRewardCancelled):
+            with pytest.raises(RayOperationCancelled):
                 await task
         finally:
             await scorer.shutdown()

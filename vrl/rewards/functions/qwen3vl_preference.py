@@ -11,8 +11,6 @@ class Qwen3VLPreferenceReward(ModelRewardFunction):
     model_factory = "vrl.rewards.models.qwen3vl_preference:Qwen3VLPreferenceRewardModel"
     name = "qwen3vl_preference"
     default_score_key = "qwen3vl_preference"
-    default_artifact_format = "tensor"
-    default_media_type = "image"
     worker_config_only = True
 
 

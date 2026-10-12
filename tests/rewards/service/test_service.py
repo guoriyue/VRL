@@ -563,40 +563,6 @@ async def test_client_cancellation_propagates_by_request_id(tmp_path) -> None:
     assert len(runtime.requests) == 1
 
 
-@pytest.mark.asyncio
-async def test_ambiguous_score_transport_failure_requires_artifact_retention(
-    tmp_path,
-) -> None:
-    artifact_file = tmp_path / "a0.mp4"
-    artifact_file.write_bytes(b"x")
-    client = HttpRewardScorer("http://127.0.0.1:8300")
-    client._identity_checked = True
-
-    async def fail_request(*args, **kwargs):
-        raise RemoteRewardServiceError(
-            RewardServiceErrorCode.TRANSPORT_ERROR.value,
-            "score response was lost",
-            retryable=True,
-        )
-
-    async def fail_cancel(request_id):
-        raise RemoteRewardServiceError(
-            RewardServiceErrorCode.REQUEST_NOT_FOUND.value,
-            f"request {request_id} was not found",
-            status_code=404,
-        )
-
-    client._request_json = fail_request
-    client.cancel = fail_cancel
-    try:
-        with pytest.raises(RemoteRewardServiceError) as caught:
-            await client.score_batch(_request(str(artifact_file)))
-    finally:
-        await client.shutdown()
-
-    assert caught.value.retain_reward_artifacts is True
-
-
 def test_invalid_admission_capacity_does_not_start_runtime_owner(tmp_path, monkeypatch) -> None:
     runtime = _FakeRuntime()
     owner_started = False
@@ -877,21 +843,6 @@ def test_module_cli_handles_sigterm_without_eager_import_warning(tmp_path) -> No
 
     assert process.returncode == 0, (stdout, stderr)
     assert "found in sys.modules" not in stderr
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("status", ["running", "ready", "", "cancelled"])
-async def test_cancel_requires_terminal_acknowledgement(monkeypatch, status):
-    from vrl.rewards.service.wire import status_to_wire
-
-    client = HttpRewardScorer("http://127.0.0.1:8300")
-
-    async def request_json(method, path, **kwargs):
-        assert method == "DELETE"
-        return status_to_wire(status), 200
-
-    monkeypatch.setattr(client, "_request_json", request_json)
-    assert await client._settle_ambiguous_request("request") is (status == "cancelled")
 
 
 @pytest.mark.parametrize("details", [False, 0, "", [], None])

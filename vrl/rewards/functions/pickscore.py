@@ -11,8 +11,6 @@ class PickScoreReward(ModelRewardFunction):
     model_factory = "vrl.rewards.models.pickscore:PickScoreRewardModel"
     name = "pickscore"
     default_score_key = "pickscore"
-    default_artifact_format = "tensor"
-    default_media_type = "image"
 
 
 __all__ = ["PickScoreReward"]

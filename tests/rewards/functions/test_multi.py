@@ -475,8 +475,6 @@ def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) 
 
 
 def test_http_ocr_reward_uses_media_uploads_and_the_remote_scorer(tmp_path) -> None:
-    from vrl.rewards.artifacts import InMemoryRewardArtifactStore
-
     reward = MultiReward.from_mapping(
         {"ocr": 1.0},
         device="cpu",
@@ -493,19 +491,10 @@ def test_http_ocr_reward_uses_media_uploads_and_the_remote_scorer(tmp_path) -> N
     component = reward.rewards[0][2]
     assert isinstance(component, ModelRewardFunction)
     assert isinstance(component.scorer, HttpRewardScorer)
-    assert isinstance(component.artifact_store, InMemoryRewardArtifactStore)
     assert component.score_key == "ocr_match"
     # No in-process engine exists behind a remote scorer.
     with pytest.raises(AttributeError):
         component._engine = object()
-
-
-def test_in_process_ocr_reward_keeps_media_in_memory() -> None:
-    from vrl.rewards.artifacts import InMemoryRewardArtifactStore
-    from vrl.rewards.functions.ocr import OCRReward
-
-    reward = OCRReward(device="cpu")
-    assert isinstance(reward.artifact_store, InMemoryRewardArtifactStore)
 
 
 def test_reward_config_rejects_runtime_injection_keys() -> None:

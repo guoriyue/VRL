@@ -8,11 +8,11 @@ from typing import ClassVar, Literal
 import pytest
 import torch
 
-from vrl.rewards.artifacts import DiskRewardArtifactStore
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.media import decode_artifact_frames
 from vrl.rewards.runtime import InProcessRewardScorer
 from vrl.rewards.types import RewardSample
+from vrl.utils.media import write_mp4
 
 
 class _FileConsumer:
@@ -69,11 +69,19 @@ async def test_scorer_owns_only_temporary_files_and_cleans_them_on_error(
     consumer_type, fail, tmp_path
 ) -> None:
     sample = _sample()
-    store = DiskRewardArtifactStore(
-        tmp_path / "borrowed", artifact_format=consumer_type.input_artifact_format
+    # A caller-owned file, as offline evaluation passes existing media by path.
+    if consumer_type.input_artifact_format == "mp4":
+        borrowed_path = tmp_path / "borrowed.mp4"
+        write_mp4(sample.output, borrowed_path, fps=8.0)
+    else:
+        borrowed_path = tmp_path / "borrowed.pt"
+        torch.save(sample.output, borrowed_path)
+    borrowed = RewardInferenceArtifact(
+        artifact_id="borrowed-pattern",
+        sample_id=sample.sample_id,
+        path=str(borrowed_path),
+        prompt=sample.prompt,
     )
-    borrowed = store.materialize([sample])[0]
-    borrowed_path = Path(borrowed.path)
     original_bytes = borrowed_path.read_bytes()
     temporary_root = tmp_path / "scorer-temporary"
     temporary_root.mkdir()
@@ -96,26 +104,6 @@ async def test_scorer_owns_only_temporary_files_and_cleans_them_on_error(
     assert borrowed_path.read_bytes() == original_bytes
     assert request.artifacts[0].path == ""
     assert request.artifacts[0].media is sample.output
-
-
-@pytest.mark.parametrize(
-    "metadata", [{}, {"fps": 12.0}, {"video_fps": 6.0, "fps": 12.0}, {"video_fps": None}]
-)
-@pytest.mark.asyncio
-async def test_scorer_local_mp4_matches_legacy_disk_encoding_exactly(metadata, tmp_path) -> None:
-    sample = _sample(metadata)
-    store = DiskRewardArtifactStore(tmp_path / "legacy", artifact_format="mp4")
-    legacy = store.materialize([sample])[0]
-    consumer = _FileConsumer()
-    scorer = InProcessRewardScorer(model=consumer, media_temp_dir=str(tmp_path))
-
-    baseline = await scorer.score_batch(RewardInferenceRequest("baseline", (legacy,)))
-    actual = await scorer.score_batch(RewardInferenceRequest("local", (_inline(sample),)))
-
-    torch.testing.assert_close(consumer.frames[0], consumer.frames[1], rtol=0, atol=0)
-    assert actual[0].scores == baseline[0].scores
-    assert Path(legacy.path).exists()
-    assert not consumer.paths[1].exists()
 
 
 @pytest.mark.asyncio

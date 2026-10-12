@@ -67,20 +67,6 @@ class RayRewardPlacement:
         )
 
 
-class RayRewardError(TerminalRuntimeError):
-    """Remote state is uncertain; preserve artifacts until actor shutdown."""
-
-    retain_reward_artifacts = True
-
-
-class RayRewardTimeout(RayOperationTimeout):
-    retain_reward_artifacts = True
-
-
-class RayRewardCancelled(RayOperationCancelled):
-    retain_reward_artifacts = True
-
-
 def _remove_actor_media_directory(path: str, token: str) -> None:
     """Remove only this actor's UUID-named root, on the node that created it."""
 
@@ -338,15 +324,15 @@ class RayRewardScorer:
                 timeout=deadline.remaining_s(),
             )
         except TimeoutError as cause:
-            error = RayRewardTimeout(deadline.operation, deadline.timeout_s)
+            error = RayOperationTimeout(deadline.operation, deadline.timeout_s)
             self._fail(error)
             raise error from cause
         except asyncio.CancelledError as cause:
-            error = RayRewardCancelled(deadline.operation)
+            error = RayOperationCancelled(deadline.operation)
             self._fail(error)
             raise error from cause
         except BaseException as cause:
-            error = RayRewardError(f"Ray reward {method} failed: {cause}")
+            error = TerminalRuntimeError(f"Ray reward {method} failed: {cause}")
             self._fail(error)
             raise error from cause
         finally:
@@ -391,12 +377,9 @@ class RayRewardScorer:
             # A queued shutdown RPC cannot stop a blocked synchronous model.
             # Only attempt graceful cleanup when no operation is in flight.
             if self._active_ref is None and not self._kill_requested:
-                try:
+                # Hard process teardown below remains authoritative.
+                with contextlib.suppress(TerminalRuntimeError):
                     await self._call("shutdown", timeout_s=_SHUTDOWN_TIMEOUT_S)
-                except RayRewardError:
-                    pass  # Hard process teardown below remains authoritative.
-                except (RayRewardTimeout, RayRewardCancelled):
-                    pass
             try:
                 ray.kill(actor, no_restart=True)
                 self._kill_requested = True
@@ -430,7 +413,7 @@ class RayRewardScorer:
         ray = require_ray()
         node_id, path = self._actor_directory
         if not ray.is_initialized():
-            error = RayRewardError(
+            error = TerminalRuntimeError(
                 f"cannot clean reward media {path!r} on node {node_id!r}: "
                 "the run owner shut down Ray before reward cleanup completed",
             )
@@ -450,7 +433,7 @@ class RayRewardScorer:
                 timeout=_SHUTDOWN_TIMEOUT_S,
             )
         except BaseException as cause:
-            error = RayRewardError(
+            error = TerminalRuntimeError(
                 f"reward actor terminated but media cleanup on node {node_id!r} "
                 f"for {path!r} failed; retry shutdown when that node is reachable",
             )

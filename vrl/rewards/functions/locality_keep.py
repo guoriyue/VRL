@@ -12,8 +12,6 @@ class LocalityKeepReward(ModelRewardFunction):
     model_factory = "vrl.rewards.models.locality_keep:LocalityKeepRewardModel"
     name = "locality_keep"
     default_score_key = "locality_keep"
-    default_media_type = "image"
-    default_artifact_format = "tensor"
     worker_config_only = True
     score_keys = ("locality_keep", "locality_detail_keep", "locality_psnr", "locality_hf_ratio")
 

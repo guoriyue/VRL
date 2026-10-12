@@ -197,9 +197,7 @@ engine.
 | | `RewardScorer` | The transport seam below `RewardFunction` (dual of the Ray executor layer): `score_batch(request) -> results`, `shutdown`, plus the two capability flags. Runtime-checkable; validated **once, completely** at scorer injection. |
 | | `RemoteReadyScorer` | Optional capability: remote transports expose `ensure_ready()` so a broken service fails at preflight, not after the first generation batch. |
 | | `MemoryParkingScorer` | Optional capability (dual of `BatchSizeProbeExecutor`): `requires_memory_parking`, `activate`, `park_memory` for verified GPU parking. |
-| | `ArtifactRetainingError` | Error capability: `retain_reward_artifacts` declared by transport errors whose scoring state is unknown — the artifact owner keeps shared files alive. `RemoteRewardServiceError` satisfies it. |
 | `inference.py` | `RewardInferenceArtifact`, `RewardInferenceRequest`, `RewardInferenceResult` | The schema both transports exchange; the service wire format derives its field sets from these dataclasses. `RewardInferenceRequest.validate_and_order_results()` is the identity guard, run once at the `InferenceRewardFunction` seam for every transport: one typed, finite result per artifact, restored to request order. |
-| `artifacts.py` | `MediaType`, `ArtifactFormat`, `RewardArtifactStore` (protocol), `InMemoryRewardArtifactStore`, `DiskRewardArtifactStore` | The store seam: `materialize` builds artifacts; exactly one of `release`/`retain` runs at a terminal state. Tensors or boxed references are the default. The disk store is explicitly selected for archives or file-backed inputs and tracks ownership; scoring transport does not imply a driver-side file. |
 | `worker_config.py` | `RewardWorkerConfig` | The typed closed key set the runtime branches on, parsed once from `worker_config` by both processes that read it (in-process scorer, standalone service). Generation counterpart: `GenerationLaunchConfig`. |
 | `types.py` | `RewardSample`, `RewardOutput` | Collector-facing input/output pair. |
 
@@ -220,7 +218,6 @@ classDiagram
     }
     class InferenceRewardFunction {
         scorer: RewardScorer
-        artifact_store: RewardArtifactStore
         score_batch() orchestration
     }
     class ModelRewardFunction {
@@ -249,15 +246,14 @@ classDiagram
   to CPU — OCR overrides it to force CPU for its CPU-only engine);
   `worker_config_with_device` applies the same policy at the config-bag
   boundary.
-- **`InferenceRewardFunction`** — owns the materialize → score → validate →
-  release-or-retain orchestration around one injected `RewardScorer` and one
-  `RewardArtifactStore` (in-memory by default). Every transport, including
-  test fakes, passes the same result-identity guard.
+- **`InferenceRewardFunction`** — owns the materialize → score → validate
+  orchestration around one injected `RewardScorer`; media rides the request in
+  memory. Every transport, including test fakes, passes the same
+  result-identity guard.
 - **`ModelRewardFunction`** — real constructor that builds the
   scorer from `model_factory` + `worker_config`, unless a ready scorer is
   injected. Registry preflight admits remote inference through this model-factory
-  contract. Media stays in memory by default; `archive_dir` separately opts into
-  retained experiment output. File-only models declare `input_artifact_format`
+  contract. The driver writes no media files. File-only models declare `input_artifact_format`
   and receive temporary files owned by the scoring process.
 - **`MultiReward`** — weighted composite built by the registry
   (`MultiReward.from_mapping`, called from `vrl/scripts/common/factory.py`);
@@ -276,7 +272,7 @@ classDiagram
 | `HttpRewardScorer` (`service/client.py`) | `RewardScorer` + `RemoteReadyScorer` over HTTP: checks service identity/capabilities at `ensure_ready` and uploads tensor media, with explicit shared-file inputs also supported. Ambiguous failures retain borrowed/shared artifacts where applicable. |
 | `RewardService`, `RewardServiceConfig` (`service/server.py`) | The standalone scoring process: parses the same launch config, re-verifies artifact integrity (`sha256_file`); result identity is checked by the calling reward function. |
 | `RewardScoringThread` (`service/owner.py`) | Runs every runtime operation on one dedicated event-loop thread inside the service. |
-| `RewardServiceInfo`, `RewardServiceErrorCode`, `RewardServiceProtocolError(ValueError)`, `RemoteRewardServiceError(RuntimeError)` (`service/protocol.py`) | The wire protocol vocabulary; `RemoteRewardServiceError` carries `retain_reward_artifacts` (typed ctor field) and thereby satisfies `ArtifactRetainingError`. |
+| `RewardServiceInfo`, `RewardServiceErrorCode`, `RewardServiceProtocolError(ValueError)`, `RemoteRewardServiceError(RuntimeError)` (`service/protocol.py`) | The wire protocol vocabulary. |
 
 ### 3.4 Reward models (`models/`)
 

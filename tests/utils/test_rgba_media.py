@@ -1,12 +1,11 @@
-"""RGBA survives output/archive IO; RGB reward views composite over white."""
+"""RGBA survives output IO; RGB reward views composite over white."""
 
 import numpy as np
 import torch
 from PIL import Image
 
-from vrl.rewards.artifacts import DiskRewardArtifactStore, InMemoryRewardArtifactStore
+from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.media import artifact_middle_frame_image, pil_frames_from_media
-from vrl.rewards.types import RewardSample
 from vrl.utils.media import (
     frames_thwc_to_float,
     image_to_uint8_hwc,
@@ -35,16 +34,11 @@ def test_rgba_png_and_reward_transport_preserve_alpha_with_consistent_rgb_view(t
     torch.testing.assert_close(
         read_image_as_frames(path)[0], torch.from_numpy(expected).float() / 255
     )
-    sample = RewardSample(prompt="red layer", output=wire, sample_id="one")
-    for store in (
-        InMemoryRewardArtifactStore(),
-        DiskRewardArtifactStore(tmp_path / "reward", media_type="image"),
-    ):
-        artifact = store.materialize([sample])[0]
-        media = artifact.as_media()
-        assert media.shape == (4, 5, 6)
-        np.testing.assert_array_equal(np.asarray(artifact_middle_frame_image(artifact)), expected)
-        store.release([artifact])
+    artifact = RewardInferenceArtifact(
+        artifact_id="one:in-memory", sample_id="one", path="", prompt="red layer", media=wire
+    )
+    assert artifact.as_media().shape == (4, 5, 6)
+    np.testing.assert_array_equal(np.asarray(artifact_middle_frame_image(artifact)), expected)
 
 
 def test_rgba_video_and_frame_layouts_use_the_image_reward_composite() -> None:

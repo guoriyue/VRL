@@ -110,13 +110,12 @@ class HttpRewardScorer:
                 )
             raise
         except RemoteRewardServiceError as error:
-            if (
-                error.code == RewardServiceErrorCode.TRANSPORT_ERROR.value
-                and not await self._settle_ambiguous_request(request.request_id)
-            ):
-                error.retain_reward_artifacts = any(
-                    artifact.path and artifact.media is None for artifact in request.artifacts
-                )
+            if error.code == RewardServiceErrorCode.TRANSPORT_ERROR.value:
+                # The remote request may still be running: cancel it by id.
+                with suppress(Exception):
+                    await asyncio.shield(
+                        asyncio.wait_for(self.cancel(request.request_id), timeout=2.0),
+                    )
             raise
         if status >= 400:
             raise error_from_wire(body, status_code=status)
@@ -329,28 +328,6 @@ class HttpRewardScorer:
                 f"reward service request failed: {type(error).__name__}: {error}",
                 retryable=True,
             ) from error
-
-    async def _settle_ambiguous_request(self, request_id: str) -> bool:
-        """Best-effort cancel after a POST whose remote state is unknown.
-
-        DELETE waits for the server-side task to stop, including a
-        non-cooperative model call. A timeout or missing request is still
-        ambiguous. Shared-path callers must retain their artifacts in that case;
-        uploaded media has no caller-owned remote filesystem lifetime.
-        """
-
-        try:
-            await asyncio.shield(
-                asyncio.wait_for(self.cancel(request_id), timeout=2.0),
-            )
-        except RemoteRewardServiceError as error:
-            return error.code in {
-                RewardServiceErrorCode.CANCELLED.value,
-                RewardServiceErrorCode.REQUEST_COMPLETED.value,
-            }
-        except Exception:
-            return False
-        return True
 
     @staticmethod
     def _parse_status(body: Any, *, status_code: int) -> str:
