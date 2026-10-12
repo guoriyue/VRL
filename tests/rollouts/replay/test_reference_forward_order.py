@@ -22,7 +22,6 @@ from vrl.rollouts.evaluators.denoise.chunk_autoregressive_logprob import (
     ChunkAutoregressiveDenoiseLogProbEvaluator,
 )
 from vrl.rollouts.evaluators.denoise.sde_logprob import DenoiseSDELogProbEvaluator
-from vrl.rollouts.evaluators.types import SignalRequest
 from vrl.trajectory.builders import (
     build_chunk_autoregressive_denoise_trajectory,
     build_diffusion_trajectory,
@@ -80,7 +79,7 @@ def test_sde_evaluator_backpropagates_after_an_in_place_reference_forward() -> N
 
     signals = (
         DenoiseSDELogProbEvaluator(_Scheduler())
-        .evaluate(model, batch, 0, ref_model=model, signal_request=SignalRequest(need_ref=True))
+        .evaluate(model, batch, 0, ref_model=model, need_ref=True)
         .primary
     )
     (signals.log_prob - signals.ref_log_prob).sum().backward()
@@ -109,7 +108,7 @@ def test_chunk_evaluator_backpropagates_after_an_in_place_reference_forward() ->
 
     signals = (
         ChunkAutoregressiveDenoiseLogProbEvaluator()
-        .evaluate(model, batch, 0, ref_model=model, signal_request=SignalRequest(need_ref=True))
+        .evaluate(model, batch, 0, ref_model=model, need_ref=True)
         .primary
     )
     (signals.log_prob - signals.ref_log_prob).sum().backward()

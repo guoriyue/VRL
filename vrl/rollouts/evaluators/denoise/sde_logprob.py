@@ -9,7 +9,7 @@ from vrl.models.interfaces import ReplayModel
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
-from vrl.rollouts.evaluators.types import FlowSDESignal, SignalRequest, TrajectorySignalBatch
+from vrl.rollouts.evaluators.types import FlowSDESignal, TrajectorySignalBatch
 from vrl.trajectory.device import move_value_to_device
 
 
@@ -45,7 +45,8 @@ class DenoiseSDELogProbEvaluator(Evaluator):
         batch: RolloutBatch,
         timestep_idx: int,
         ref_model: ReplayModel | None = None,
-        signal_request: SignalRequest | None = None,
+        *,
+        need_ref: bool = False,
     ) -> TrajectorySignalBatch:
         """Replay one diffusion step into trajectory-native signals.
 
@@ -59,8 +60,6 @@ class DenoiseSDELogProbEvaluator(Evaluator):
         import torch
 
         model, ref_model = self._require_models(model, ref_model)
-        if signal_request is None:
-            signal_request = SignalRequest()
 
         from vrl.trajectory.reader import TrajectoryReader
 
@@ -70,7 +69,7 @@ class DenoiseSDELogProbEvaluator(Evaluator):
         # reference swaps its weights in place for the duration, which must not
         # happen while the live forward's graph is waiting for backward.
         ref_noise_pred = None
-        if signal_request.need_ref and ref_model is not None:
+        if need_ref and ref_model is not None:
             with torch.no_grad():
                 # The policy model stands in for its own reference through
                 # reference_policy(); a distinct frozen model runs as is.

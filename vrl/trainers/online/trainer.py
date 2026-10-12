@@ -650,7 +650,7 @@ class OnlineTrainer:
         the algorithm loss remain outside autocast.
         """
 
-        from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
+        from vrl.rollouts.evaluators.types import TrajectorySignalBatch
         from vrl.utils.profiling import profile_range
 
         if self.evaluator is None:
@@ -661,7 +661,7 @@ class OnlineTrainer:
                 batch,
                 timestep_index,
                 ref_model=self.ref_model,
-                signal_request=SignalRequest(need_ref=self.algorithm.requires_reference_policy),
+                need_ref=self.algorithm.requires_reference_policy,
             )
         if not isinstance(signals, TrajectorySignalBatch):
             raise TypeError(

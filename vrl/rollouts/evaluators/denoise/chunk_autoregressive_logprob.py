@@ -11,7 +11,7 @@ from vrl.models.interfaces import ReplayModel
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
-from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
+from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 from vrl.trajectory.reader import TrajectoryReader
 
 
@@ -35,17 +35,16 @@ class ChunkAutoregressiveDenoiseLogProbEvaluator(Evaluator):
         batch: RolloutBatch,
         timestep_idx: int,
         ref_model: ReplayModel | None = None,
-        signal_request: SignalRequest | None = None,
+        *,
+        need_ref: bool = False,
     ) -> TrajectorySignalBatch:
         del timestep_idx
         model, ref_model = self._require_models(model, ref_model)
-        if signal_request is None:
-            signal_request = SignalRequest()
 
         # Reference first: a policy standing in for its own reference swaps its
         # weights in place, which must precede the live forward's graph.
         ref_log_prob = None
-        if signal_request.need_ref and ref_model is not None:
+        if need_ref and ref_model is not None:
             same_model = ref_model is model
             with (
                 torch.no_grad(),

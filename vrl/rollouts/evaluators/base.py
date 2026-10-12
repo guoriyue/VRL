@@ -7,7 +7,7 @@ from typing import ClassVar, Literal
 
 from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
+from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 
 
 class Evaluator(ABC):
@@ -37,7 +37,8 @@ class Evaluator(ABC):
         batch: RolloutBatch,
         timestep_idx: int,
         ref_model: ReplayModel | None = None,
-        signal_request: SignalRequest | None = None,
+        *,
+        need_ref: bool = False,
     ) -> TrajectorySignalBatch:
         """Run replay and extract the requested trajectory signals."""
 

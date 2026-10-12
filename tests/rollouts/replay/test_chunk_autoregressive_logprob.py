@@ -14,7 +14,6 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.denoise import (
     ChunkAutoregressiveDenoiseLogProbEvaluator,
 )
-from vrl.rollouts.evaluators.types import SignalRequest
 from vrl.trajectory.builders import build_chunk_autoregressive_denoise_trajectory
 
 
@@ -28,7 +27,7 @@ def test_grouped_evaluator_flattens_policy_axes_and_replays_reference_once() -> 
         batch,
         timestep_idx=99,
         ref_model=model,
-        signal_request=SignalRequest(need_ref=True),
+        need_ref=True,
     )
 
     assert evaluator.replay_granularity == "trajectory"
@@ -57,9 +56,7 @@ def test_reference_replay_does_not_build_a_gradient_graph(shared_reference) -> N
     reference = model if shared_reference else DifferentiableReplay()
     signal = (
         ChunkAutoregressiveDenoiseLogProbEvaluator()
-        .evaluate(
-            model, _batch(), 0, ref_model=reference, signal_request=SignalRequest(need_ref=True)
-        )
+        .evaluate(model, _batch(), 0, ref_model=reference, need_ref=True)
         .primary
     )
 

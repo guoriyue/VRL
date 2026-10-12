@@ -100,13 +100,6 @@ class TrajectorySignalBatch:
         return next(iter(self.segments.values()))
 
 
-@dataclass
-class SignalRequest:
-    """What the trainer asks the evaluator to compute beyond the replay itself."""
-
-    need_ref: bool = False
-
-
 def _require_same_shape(left: Any, right: Any, *, label: str, hint: str = "") -> None:
     left_shape = getattr(left, "shape", None)
     right_shape = getattr(right, "shape", None)
