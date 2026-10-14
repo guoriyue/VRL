@@ -39,15 +39,5 @@ class OCRReward(ModelRewardFunction):
         # reward-level debug sidecar the base owns.
         super().__init__(worker_config={"debug_dir": debug_dir}, **kwargs)
 
-    # Test seam onto the eagerly built in-process engine; a remote transport
-    # builds no model here, so the attribute is simply absent.
-    @property
-    def _engine(self) -> Any:
-        return self._model._engine
-
-    @_engine.setter
-    def _engine(self, value: Any) -> None:
-        self._model._engine = value
-
 
 __all__ = ["OCRReward"]

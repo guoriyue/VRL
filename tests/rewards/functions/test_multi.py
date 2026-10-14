@@ -488,9 +488,6 @@ def test_http_ocr_reward_uses_media_uploads_and_the_remote_scorer(tmp_path) -> N
     assert isinstance(component, ModelRewardFunction)
     assert isinstance(component.scorer, HttpRewardScorer)
     assert component.score_key == "ocr_match"
-    # No in-process engine exists behind a remote scorer.
-    with pytest.raises(AttributeError):
-        component._engine = object()
 
 
 def test_reward_config_rejects_runtime_injection_keys() -> None:

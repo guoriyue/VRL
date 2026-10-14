@@ -158,8 +158,7 @@ async def test_real_paddleocr_reads_rendered_text_and_ranks_the_matching_target(
     assert lines
     assert "hello" in normalize_ocr_text("".join(line.text for line in lines))
 
-    reward = OCRReward(device="cpu")
-    reward._engine = engine
+    reward = OCRReward(device="cpu", engine=engine)
     image = torch.from_numpy(frame).permute(2, 0, 1).float() / 255.0
     matching = (await reward.score_batch([_make_ocr_sample("HELLO", video_tensor=image)])).scores[
         0
@@ -177,8 +176,7 @@ async def test_image_ocr_substring_match_gets_full_credit(engine_cls) -> None:
     contains the target scores 1.0 regardless of the surrounding text."""
     import torch
 
-    reward = OCRReward(device="cpu")
-    reward._engine = engine_cls(["Cafe Free WiFi Open"])
+    reward = OCRReward(device="cpu", engine=engine_cls(["Cafe Free WiFi Open"]))
     sample = _make_ocr_sample(
         "Free WiFi",
         video_tensor=torch.zeros(3, 64, 64),
@@ -198,8 +196,9 @@ async def test_video_ocr_never_gets_the_image_only_substring_credit(engine_cls) 
     The same text scores 1.0 as an image (above)."""
     import torch
 
-    reward = OCRReward(device="cpu")
-    reward._engine = engine_cls(["Cafe Free WiFi Open", "Cafe Free WiFi Open"])
+    reward = OCRReward(
+        device="cpu", engine=engine_cls(["Cafe Free WiFi Open", "Cafe Free WiFi Open"])
+    )
     sample = _make_ocr_sample("Free WiFi", video_tensor=torch.zeros(3, 8, 64, 64))
 
     assert (await reward.score_batch([sample])).scores[0] == pytest.approx(0.0)
@@ -216,8 +215,11 @@ def test_column_lines_do_not_silently_truncate_to_the_shorter_column() -> None:
 async def test_match_score_requires_full_text_and_counts_failed_video_frames(engine_cls) -> None:
     import torch
 
-    reward = OCRReward(device="cpu", score_key="ocr_match")
-    reward._engine = engine_cls(["Hello World", "Hello Word", "XHello World", ""])
+    reward = OCRReward(
+        device="cpu",
+        score_key="ocr_match",
+        engine=engine_cls(["Hello World", "Hello Word", "XHello World", ""]),
+    )
     image = torch.zeros(3, 64, 64)
     sample = _make_ocr_sample("HELLO WORLD", video_tensor=image)
     assert [(await reward.score_batch([sample])).scores[0] for _ in range(4)] == [
@@ -226,7 +228,9 @@ async def test_match_score_requires_full_text_and_counts_failed_video_frames(eng
         0.0,
         0.0,
     ]
-    reward._engine = engine_cls(["Hello World", "Hello Word"])
+    reward = OCRReward(
+        device="cpu", score_key="ocr_match", engine=engine_cls(["Hello World", "Hello Word"])
+    )
     video = _make_ocr_sample("HELLO WORLD", video_tensor=torch.zeros(3, 8, 64, 64))
     assert (await reward.score_batch([video])).scores[0] == pytest.approx(0.5)
     assert (await reward.score_batch([_make_ocr_sample("", video_tensor=image)])).scores[0] == 0.0
@@ -238,8 +242,7 @@ async def test_image_ocr_debug_dump_includes_zero_score_sample(tmp_path: Path) -
     import torch
 
     debug_dir = tmp_path / "ocr_debug"
-    reward = OCRReward(device="cpu", debug_dir=str(debug_dir))
-    reward._engine = _PaddleOCR2x(["JUNK"])
+    reward = OCRReward(device="cpu", debug_dir=str(debug_dir), engine=_PaddleOCR2x(["JUNK"]))
     sample = _make_ocr_sample(
         "ABC",
         video_tensor=torch.zeros(3, 64, 64),
@@ -272,8 +275,7 @@ async def test_image_ocr_debug_dump_continues_existing_index(tmp_path: Path) -> 
     debug_dir.mkdir()
     (debug_dir / "000000_ABC_score0.000.png").touch()
     (debug_dir / "000000_ABC_score0.000.txt").touch()
-    reward = OCRReward(device="cpu", debug_dir=str(debug_dir))
-    reward._engine = _PaddleOCR2x(["JUNK"])
+    reward = OCRReward(device="cpu", debug_dir=str(debug_dir), engine=_PaddleOCR2x(["JUNK"]))
 
     (
         await reward.score_batch([_make_ocr_sample("ABC", video_tensor=torch.zeros(3, 64, 64))])
@@ -300,8 +302,9 @@ async def test_image_ocr_debug_dump_warns_on_write_failure(
         raise OSError("debug disk unavailable")
 
     monkeypatch.setattr(Image.Image, "save", fail_save)
-    reward = OCRReward(device="cpu", debug_dir=str(tmp_path / "ocr_debug"))
-    reward._engine = _PaddleOCR2x(["ABC"])
+    reward = OCRReward(
+        device="cpu", debug_dir=str(tmp_path / "ocr_debug"), engine=_PaddleOCR2x(["ABC"])
+    )
 
     with caplog.at_level(logging.WARNING, logger="vrl.rewards.models.ocr"):
         score = (
@@ -323,8 +326,7 @@ async def test_video_ocr_keeps_flow_grpo_video_edit_distance_behavior(engine_cls
     A loose ``0 < score < 1`` would also accept dividing by ``len(text)`` (0.888)."""
     import torch
 
-    reward = OCRReward(device="cpu")
-    reward._engine = engine_cls(["Free WiFiX", "Free WiFiX"])
+    reward = OCRReward(device="cpu", engine=engine_cls(["Free WiFiX", "Free WiFiX"]))
     sample = _make_ocr_sample(
         "Free WiFi",
         video_tensor=torch.zeros(3, 8, 64, 64),

@@ -192,8 +192,7 @@ class ModelRewardFunction(RewardFunction):
     default_reward_name: ClassVar[str | None] = None
     default_score_key: ClassVar[str]
     # In-process transport only: build the model in the constructor so config
-    # validation fails at construction and tests can reach ``self._model``
-    # (e.g. to inject a fake engine). Skipped under sleep_offload, whose pooled
+    # validation fails at construction. Skipped under sleep_offload, whose pooled
     # model must be factory-built by the runtime itself.
     eager_model: ClassVar[bool] = False
     # The score keys this reward can select; empty means any non-empty key.
@@ -300,8 +299,8 @@ class ModelRewardFunction(RewardFunction):
                 from vrl.rewards.runtime import InProcessRewardScorer
                 from vrl.utils.config import import_from_path
 
-                self._model = import_from_path(str(worker_cfg["model_factory"]))(worker_cfg)
-                scorer = InProcessRewardScorer(model=self._model)
+                model = import_from_path(str(worker_cfg["model_factory"]))(worker_cfg)
+                scorer = InProcessRewardScorer(model=model)
             else:
                 scorer = build_reward_scorer(
                     worker_cfg,
