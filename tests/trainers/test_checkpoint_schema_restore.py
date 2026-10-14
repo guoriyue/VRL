@@ -79,7 +79,13 @@ def test_strict_resume_verifies_primary_optimizer_snapshot(
     if matches:
         checkpoint.restore_training(trainer=Trainer(), bundle=None, family="unit")
     else:
-        with pytest.raises((ValueError, RuntimeError), match="restored optimizer"):
+        # The primary's own comparison fails; a peer learns it from the vote.
+        error, message = (
+            (ValueError, "restored optimizer state")
+            if primary
+            else (RuntimeError, "restored optimizer state verification failed on the primary")
+        )
+        with pytest.raises(error, match=message):
             checkpoint.restore_training(trainer=Trainer(), bundle=None, family="unit")
     assert agreements == [matches if primary else True]
 
@@ -260,28 +266,38 @@ def test_schema_v2_non_tensor_owned_value_rejects_before_mutation(tmp_path) -> N
 
 
 @pytest.mark.parametrize(
-    "owned_state",
+    ("owned_state", "message"),
     [
-        {"module": {"weight": torch.tensor([7.0])}},
-        {
-            "module": {
-                "weight": torch.tensor([7.0]),
-                "previous": torch.tensor([8.0]),
-                "frozen_base": torch.tensor([9.0]),
+        (
+            {"module": {"weight": torch.tensor([7.0])}},
+            r"keys mismatch for 'module': missing=\['previous'\]",
+        ),
+        (
+            {
+                "module": {
+                    "weight": torch.tensor([7.0]),
+                    "previous": torch.tensor([8.0]),
+                    "frozen_base": torch.tensor([9.0]),
+                },
             },
-        },
-        {
-            "module": {
-                "weight": torch.tensor([7.0]),
-                "previous": torch.tensor([8.0]),
+            r"keys mismatch for 'module': missing=\[\], unexpected=\['frozen_base'\]",
+        ),
+        (
+            {
+                "module": {
+                    "weight": torch.tensor([7.0]),
+                    "previous": torch.tensor([8.0]),
+                },
+                "extra": {},
             },
-            "extra": {},
-        },
+            r"roots mismatch: missing=\[\], unexpected=\['extra'\]",
+        ),
     ],
 )
 def test_strict_schema_v2_restore_rejects_missing_extra_keys_and_roots(
     tmp_path,
     owned_state,
+    message,
 ) -> None:
     payload = {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
@@ -292,7 +308,7 @@ def test_strict_schema_v2_restore_rejects_missing_extra_keys_and_roots(
         "rng": {},
     }
 
-    with pytest.raises(ValueError, match=r"keys mismatch|roots mismatch"):
+    with pytest.raises(ValueError, match=message):
         _training_checkpoint(tmp_path, payload).restore_training(
             trainer=_Trainer(),
             bundle=_OwnedBundle(),
@@ -383,7 +399,8 @@ def test_strict_schema_v1_malformed_full_state_rejects_before_mutation(
     restored = _OwnedBundle()
     before = {name: value.clone() for name, value in restored.module.state_dict().items()}
 
-    with pytest.raises(ValueError, match=r"verified model identity|keys mismatch"):
+    # Without a saved identity a non-full v1 state is rejected before any key check.
+    with pytest.raises(ValueError, match="selective state without verified model identity"):
         _training_checkpoint(tmp_path, _v1_payload(state)).restore_training(
             trainer=_Trainer(),
             bundle=restored,

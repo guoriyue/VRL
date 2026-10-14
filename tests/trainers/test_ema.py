@@ -152,13 +152,19 @@ def test_both_checkpoint_paths_snapshot_away_from_the_live_shadow(is_primary: bo
         assert sharded is None
 
 
-@pytest.mark.parametrize("failure", ["count", "device_copy"])
-def test_failed_ema_restore_preserves_live_state(failure) -> None:
+@pytest.mark.parametrize(
+    ("failure", "error", "message"),
+    [
+        ("count", ValueError, "parameter count mismatch"),
+        ("device_copy", NotImplementedError, "meta tensor"),
+    ],
+)
+def test_failed_ema_restore_preserves_live_state(failure, error, message) -> None:
     ema = EMAWeights([_single_param(10.0)], decay=0.9, device=torch.device("cpu"))
     shadows = ema.ema_parameters
     incoming = [] if failure == "count" else [torch.ones(1, device="meta")]
 
-    with pytest.raises((ValueError, NotImplementedError)):
+    with pytest.raises(error, match=message):
         ema.load_state_dict({"decay": 0.5, "num_updates": 7, "ema_parameters": incoming})
 
     assert ema.decay == 0.9

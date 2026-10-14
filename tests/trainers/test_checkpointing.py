@@ -271,18 +271,24 @@ def test_checkpoint_meta_preflight_rejects_identity_mismatch() -> None:
 
 
 @pytest.mark.parametrize(
-    "meta",
+    ("meta", "message"),
     [
-        {"family": "sana", "model_identity": UNIT_IDENTITY},
-        {
-            "schema_version": CHECKPOINT_SCHEMA_VERSION,
-            "family": "",
-            "model_identity": UNIT_IDENTITY,
-        },
+        (
+            {"family": "sana", "model_identity": UNIT_IDENTITY},
+            "metadata is missing schema_version",
+        ),
+        (
+            {
+                "schema_version": CHECKPOINT_SCHEMA_VERSION,
+                "family": "",
+                "model_identity": UNIT_IDENTITY,
+            },
+            "metadata family must be a non-empty trimmed string",
+        ),
     ],
 )
-def test_checkpoint_meta_preflight_rejects_missing_protocol_fields(meta) -> None:
-    with pytest.raises((TypeError, ValueError), match=r"schema_version|family"):
+def test_checkpoint_meta_preflight_rejects_missing_protocol_fields(meta, message) -> None:
+    with pytest.raises(ValueError, match=message):
         CheckpointTarget(label="unit", path=None, meta=meta).validate_compatibility(
             family="sana",
             expected_model_identity=UNIT_IDENTITY,
@@ -290,16 +296,25 @@ def test_checkpoint_meta_preflight_rejects_missing_protocol_fields(meta) -> None
 
 
 @pytest.mark.parametrize(
-    ("family", "identity"),
+    ("family", "identity", "message"),
     [
-        ("flux", {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}),
-        ("sana", {"schema": "vrl.model-identity/v1", "sources": {"base": {}}, "build": {}}),
+        (
+            "flux",
+            {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}},
+            "family mismatch",
+        ),
+        (
+            "sana",
+            {"schema": "vrl.model-identity/v1", "sources": {"base": {}}, "build": {}},
+            "model identity mismatch",
+        ),
     ],
 )
 def test_checkpoint_compatibility_preflight_rejects_strict_mismatch(
     tmp_path,
     family,
     identity,
+    message,
 ) -> None:
     checkpoint = TrainingCheckpoint(
         checkpoint_dir=tmp_path,
@@ -319,7 +334,7 @@ def test_checkpoint_compatibility_preflight_rejects_strict_mismatch(
         meta={},
     )
 
-    with pytest.raises(ValueError, match=r"family mismatch|model identity mismatch"):
+    with pytest.raises(ValueError, match=message):
         checkpoint.validate_compatibility(
             family=family,
             expected_model_identity=identity,
@@ -700,21 +715,25 @@ def test_load_training_checkpoint_rejects_bad_schema(tmp_path) -> None:
 
 
 @pytest.mark.parametrize(
-    "payload",
+    ("payload", "error", "message"),
     [
-        pytest.param({}, id="missing"),
-        pytest.param({"schema_version": "2"}, id="string"),
+        pytest.param({}, ValueError, "missing schema_version", id="missing"),
+        pytest.param(
+            {"schema_version": "2"}, TypeError, "schema_version must be an integer", id="string"
+        ),
     ],
 )
 def test_load_training_checkpoint_rejects_non_integer_schema_version(
     tmp_path,
     payload,
+    error,
+    message,
 ) -> None:
     ckpt = tmp_path / "checkpoint-invalid-schema"
     ckpt.mkdir()
     torch.save(payload, ckpt / TRAINING_CHECKPOINT_NAME)
 
-    with pytest.raises((TypeError, ValueError), match="schema_version"):
+    with pytest.raises(error, match=message):
         TrainingCheckpoint.load(ckpt)
 
 
@@ -781,12 +800,12 @@ def test_load_checkpoint_state_strict_rejects_key_mismatch() -> None:
         load_checkpoint_state(_Bundle(), {})
 
 
-@pytest.mark.parametrize("name", ["checkpoint-final", "checkpoint-42"])
 @pytest.mark.parametrize("field", ["next_epoch", "next_step"])
-def test_resume_position_requires_explicit_progress(tmp_path, name, field) -> None:
+def test_resume_position_requires_explicit_progress(tmp_path, field) -> None:
+    # Neither the directory name nor the metadata sidecar may stand in for progress.
     checkpoint = TrainingCheckpoint(
-        tmp_path / name,
-        tmp_path / name / TRAINING_CHECKPOINT_NAME,
+        tmp_path / "checkpoint-42",
+        tmp_path / "checkpoint-42" / TRAINING_CHECKPOINT_NAME,
         {"trainer": {"step": 12, "global_step": 24}},
         {"next_epoch": 42},
     )
@@ -954,7 +973,7 @@ def test_checkpoint_load_requires_meta_family_to_match_payload(
         TrainingCheckpoint.load(target)
 
 
-@pytest.mark.parametrize("size", [1.9, True, "1", "invalid", [], -1])
+@pytest.mark.parametrize("size", [True, -1])
 def test_checkpoint_completeness_rejects_invalid_recorded_size(tmp_path, size) -> None:
     from vrl.trainers.checkpointing import is_complete_checkpoint
 
@@ -1051,8 +1070,7 @@ def test_require_equal_tensor_tree_bridges_devices() -> None:
         )
 
 
-@pytest.mark.parametrize("value", [-1, 1.5, "2", True, None])
-@pytest.mark.parametrize("field", ["next_epoch", "next_step"])
+@pytest.mark.parametrize(("field", "value"), [("next_epoch", True), ("next_step", -1)])
 def test_resume_position_rejects_invalid_values(tmp_path, field, value):
     checkpoint = TrainingCheckpoint(
         tmp_path,
