@@ -21,11 +21,10 @@ from typing import Any
 import pytest
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
 from torch.distributed.tensor import DTensor
 
 from tests.rollouts.collector._helpers import real_collector
-from tests.trainers._strategy_policies import free_port
+from tests.trainers._strategy_policies import run_ranks
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.base import RewardFunction
 from vrl.scripts.common.factory import AlgorithmEvaluatorPair
@@ -155,17 +154,17 @@ def _result(trainer: OnlineTrainer, norms: list[float], output: Path) -> dict[st
     }
 
 
-def _rank(rank: int, port: int, root: str, uneven: bool, queue: Any) -> None:
+def _rank(rank: int, world_size: int, port: int, queue: Any, root: str, uneven: bool) -> None:
     os.environ.update(MASTER_ADDR="127.0.0.1", MASTER_PORT=str(port))
     torch.set_num_threads(1)
-    dist.init_process_group("gloo", rank=rank, world_size=_WORLD)
+    dist.init_process_group("gloo", rank=rank, world_size=world_size)
     monkeypatch = pytest.MonkeyPatch()
     try:
         # A spawned rank escapes the conftest CUDA pin; this test is CPU-only.
         monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
         monkeypatch.setattr(torch.cuda, "device_count", lambda: 0)
         strategy = FSDPStrategy(
-            DistributedTrainingContext("fsdp", rank, _WORLD, torch.device("cpu")),
+            DistributedTrainingContext("fsdp", rank, world_size, torch.device("cpu")),
             precision_policy="none",
             reshard_after_forward=True,
             cpu_offload=False,
@@ -212,28 +211,9 @@ def _reference(monkeypatch: pytest.MonkeyPatch, root: Path) -> dict[str, Any]:
 @pytest.mark.parametrize("uneven", [False, True])
 def test_four_rank_streaming_semantics(monkeypatch, tmp_path, uneven):
     reference = None if uneven else _reference(monkeypatch, tmp_path / "reference")
-    ctx = mp.get_context("spawn")
-    queue = ctx.Queue()
-    port = free_port()
-    processes = [
-        ctx.Process(target=_rank, args=(rank, port, str(tmp_path), uneven, queue))
-        for rank in range(_WORLD)
-    ]
-    try:
-        for process in processes:
-            process.start()
-        results = dict(queue.get(timeout=300) for _ in range(_WORLD))
-        for rank, result in results.items():
-            assert not isinstance(result, str), (rank, result)
-        for process in processes:
-            process.join(timeout=30)
-            assert process.exitcode == 0
-    finally:
-        for process in processes:
-            if process.is_alive():
-                process.terminate()
-                process.join(timeout=10)
-    for result in results.values():
+    # A failing rank reports its error string, which the exit-code failure carries.
+    results = run_ranks(_rank, _WORLD, str(tmp_path), uneven, timeout=300)
+    for (result,) in results.values():
         if uneven:
             assert result is True
             continue

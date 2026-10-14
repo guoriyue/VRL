@@ -24,7 +24,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 
 from tests.rollouts.collector._helpers import Trace, real_collector
-from tests.trainers._strategy_policies import free_port
+from tests.trainers._strategy_policies import run_ranks
 from tests.trainers.online._helpers import _diffusion_rollout_batch
 from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
 from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
@@ -69,7 +69,7 @@ def _rollout_batch(sample_count: int) -> RolloutBatch:
     )
 
 
-def _run_rank(rank: int, world_size: int, port: int, local_flags: list[bool], q: mp.Queue) -> None:
+def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue, local_flags: list[bool]) -> None:
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
     dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
@@ -90,22 +90,10 @@ def _run_rank(rank: int, world_size: int, port: int, local_flags: list[bool], q:
     ids=list(_CASES),
 )
 def test_skip_backward_decision_is_unanimous(local_flags: list[bool], expected: bool) -> None:
-    ctx = mp.get_context("spawn")
-    q: mp.Queue = ctx.Queue()
-    port = free_port()
-    procs = [ctx.Process(target=_run_rank, args=(r, 2, port, local_flags, q)) for r in range(2)]
-    for p in procs:
-        p.start()
-    results = {}
-    for _ in range(2):
-        rank, agreed = q.get(timeout=50)
-        results[rank] = agreed
-    for p in procs:
-        p.join(timeout=10)
-        assert p.exitcode == 0
+    results = run_ranks(_run_rank, 2, local_flags, timeout=50)
     # Both ranks must agree, and on the AND of the local flags.
-    assert results[0] is expected
-    assert results[1] is expected
+    assert results[0] == (expected,)
+    assert results[1] == (expected,)
 
 
 def test_falls_back_to_local_without_process_group() -> None:
@@ -187,26 +175,16 @@ def _run_parity_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None
 
 
 def test_initial_replay_stats_are_rank_consistent() -> None:
-    ctx = mp.get_context("spawn")
-    q: mp.Queue = ctx.Queue()
-    port = free_port()
-    procs = [ctx.Process(target=_run_parity_rank, args=(r, 2, port, q)) for r in range(2)]
-    for process in procs:
-        process.start()
-    results = [q.get(timeout=50) for _ in range(2)]
-    for process in procs:
-        process.join(timeout=10)
-        assert process.exitcode == 0
+    results = run_ranks(_run_parity_rank, 2, timeout=50)
 
     for (
-        _rank,
         initial_replay,
         initial_has_measurements,
         mixed_rank_replay,
         mixed_has_measurements,
         empty_rank_replay,
         empty_has_measurements,
-    ) in results:
+    ) in results.values():
         assert initial_replay.clip_fraction == pytest.approx(0.65)
         assert initial_replay.active_clip_fraction == pytest.approx(0.325)
         assert initial_replay.logprob_abs_diff_max == pytest.approx(0.9)
@@ -225,8 +203,8 @@ def _run_replay_planner_rank(
     rank: int,
     world_size: int,
     port: int,
-    local_counts: list[int],
     q: mp.Queue,
+    local_counts: list[int],
 ) -> None:
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
@@ -258,22 +236,7 @@ def _run_replay_planner_rank(
 
 
 def test_replay_planner_slot_count_is_unanimous_under_gloo() -> None:
-    ctx = mp.get_context("spawn")
-    q: mp.Queue = ctx.Queue()
-    port = free_port()
-    procs = [
-        ctx.Process(target=_run_replay_planner_rank, args=(r, 2, port, [8, 3], q))
-        for r in range(2)
-    ]
-    for p in procs:
-        p.start()
-    results = {}
-    for _ in range(2):
-        rank, *result = q.get(timeout=50)
-        results[rank] = tuple(result)
-    for p in procs:
-        p.join(timeout=10)
-        assert p.exitcode == 0
+    results = run_ranks(_run_replay_planner_rank, 2, [8, 3], timeout=50)
 
     # Both ranks pad to the global maximum slot count; real work comes first
     # and the weights still sum to one per rank.
@@ -344,9 +307,9 @@ def _run_replay_loop_rank(
     rank: int,
     world_size: int,
     port: int,
+    q: mp.Queue,
     local_counts: list[int],
     root: str,
-    q: mp.Queue,
 ) -> None:
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
@@ -386,22 +349,7 @@ def _run_replay_loop_rank(
 
 
 def test_replay_loop_balances_evaluate_and_backward_counts_under_gloo(tmp_path) -> None:
-    ctx = mp.get_context("spawn")
-    q: mp.Queue = ctx.Queue()
-    port = free_port()
-    procs = [
-        ctx.Process(target=_run_replay_loop_rank, args=(r, 2, port, [8, 3], str(tmp_path), q))
-        for r in range(2)
-    ]
-    for p in procs:
-        p.start()
-    results = {}
-    for _ in range(2):
-        rank, *result = q.get(timeout=120)
-        results[rank] = tuple(result)
-    for p in procs:
-        p.join(timeout=30)
-        assert p.exitcode == 0
+    results = run_ranks(_run_replay_loop_rank, 2, [8, 3], str(tmp_path), timeout=120)
 
     samples_0, evaluate_0, backward_0, metrics_0, zero_0 = results[0]
     samples_1, evaluate_1, backward_1, metrics_1, zero_1 = results[1]

@@ -19,7 +19,7 @@ from torch import nn
 
 peft = pytest.importorskip("peft")
 
-from tests.trainers._strategy_policies import free_port  # noqa: E402
+from tests.trainers._strategy_policies import run_ranks  # noqa: E402
 from vrl.trainers.distributed import DistributedTrainingContext  # noqa: E402
 from vrl.trainers.fsdp import (  # noqa: E402
     apply_fsdp,
@@ -148,19 +148,7 @@ def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
 
 
 def test_checkpoint_state_is_selective_and_round_trips_on_every_rank() -> None:
-    ctx = mp.get_context("spawn")
-    q: mp.Queue = ctx.Queue()
-    port = free_port()
-    procs = [ctx.Process(target=_run_rank, args=(r, 2, port, q)) for r in range(2)]
-    for p in procs:
-        p.start()
-    results = {}
-    for _ in range(2):
-        rank, *flags = q.get(timeout=60)
-        results[rank] = flags
-    for p in procs:
-        p.join(timeout=10)
-        assert p.exitcode == 0
+    results = run_ranks(_run_rank, 2, timeout=60)
 
     for rank in (0, 1):
         selective, all_cpu, trainable_restored, frozen_unchanged = results[rank]
@@ -275,19 +263,7 @@ def _run_optim_ema_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> N
 
 
 def test_optimizer_and_ema_full_state_on_every_rank() -> None:
-    ctx = mp.get_context("spawn")
-    q: mp.Queue = ctx.Queue()
-    port = free_port()
-    procs = [ctx.Process(target=_run_optim_ema_rank, args=(r, 2, port, q)) for r in range(2)]
-    for p in procs:
-        p.start()
-    results = {}
-    for _ in range(2):
-        rank, *flags = q.get(timeout=120)
-        results[rank] = flags
-    for p in procs:
-        p.join(timeout=10)
-        assert p.exitcode == 0
+    results = run_ranks(_run_optim_ema_rank, 2, timeout=120)
 
     for rank in (0, 1):
         (
@@ -310,8 +286,8 @@ def _run_checkpoint_ema_export_rank(
     rank: int,
     world_size: int,
     port: int,
-    output_dir: str,
     q: mp.Queue,
+    output_dir: str,
     fail_swap_rank: int | None = None,
     fail_artifact_write: bool = False,
     fail_rollback_rank: int | None = None,
@@ -463,26 +439,8 @@ def _run_checkpoint_ema_export_rank(
 
 
 def test_checkpoint_keeps_raw_state_and_exports_ema_on_every_fsdp_rank(tmp_path) -> None:
-    ctx = mp.get_context("spawn")
-    q: mp.Queue = ctx.Queue()
-    port = free_port()
     output_dir = str(tmp_path / "checkpoint-ema")
-    procs = [
-        ctx.Process(
-            target=_run_checkpoint_ema_export_rank,
-            args=(rank, 2, port, output_dir, q),
-        )
-        for rank in range(2)
-    ]
-    for process in procs:
-        process.start()
-    results = {}
-    for _ in range(2):
-        rank, *flags = q.get(timeout=180)
-        results[rank] = flags
-    for process in procs:
-        process.join(timeout=20)
-        assert process.exitcode == 0
+    results = run_ranks(_run_checkpoint_ema_export_rank, 2, output_dir, timeout=180)
 
     for rank in (0, 1):
         live_restored, raw_checkpoint, ema_artifact = results[rank]
@@ -492,26 +450,8 @@ def test_checkpoint_keeps_raw_state_and_exports_ema_on_every_fsdp_rank(tmp_path)
 
 
 def test_peer_ema_swap_failure_aborts_before_second_fsdp_gather(tmp_path) -> None:
-    ctx = mp.get_context("spawn")
-    q: mp.Queue = ctx.Queue()
-    port = free_port()
     output_dir = str(tmp_path / "checkpoint-peer-swap-failure")
-    procs = [
-        ctx.Process(
-            target=_run_checkpoint_ema_export_rank,
-            args=(rank, 2, port, output_dir, q, 0),
-        )
-        for rank in range(2)
-    ]
-    for process in procs:
-        process.start()
-    results = {}
-    for _ in range(2):
-        rank, *flags = q.get(timeout=180)
-        results[rank] = flags
-    for process in procs:
-        process.join(timeout=20)
-        assert process.exitcode == 0
+    results = run_ranks(_run_checkpoint_ema_export_rank, 2, output_dir, 0, timeout=180)
 
     for rank in (0, 1):
         live_restored, failed_together, wrote_nothing = results[rank]
@@ -523,26 +463,8 @@ def test_peer_ema_swap_failure_aborts_before_second_fsdp_gather(tmp_path) -> Non
 def test_peer_ema_swap_and_rollback_failures_propagate_to_every_fsdp_rank(
     tmp_path,
 ) -> None:
-    ctx = mp.get_context("spawn")
-    q: mp.Queue = ctx.Queue()
-    port = free_port()
     output_dir = str(tmp_path / "checkpoint-peer-rollback-failure")
-    procs = [
-        ctx.Process(
-            target=_run_checkpoint_ema_export_rank,
-            args=(rank, 2, port, output_dir, q, 0, False, 1),
-        )
-        for rank in range(2)
-    ]
-    for process in procs:
-        process.start()
-    results = {}
-    for _ in range(2):
-        rank, *flags = q.get(timeout=180)
-        results[rank] = flags
-    for process in procs:
-        process.join(timeout=20)
-        assert process.exitcode == 0
+    results = run_ranks(_run_checkpoint_ema_export_rank, 2, output_dir, 0, False, 1, timeout=180)
 
     for rank in (0, 1):
         failed_together, reported_rollback, wrote_nothing = results[rank]
@@ -552,26 +474,8 @@ def test_peer_ema_swap_and_rollback_failures_propagate_to_every_fsdp_rank(
 
 
 def test_rank0_artifact_write_failure_propagates_to_every_fsdp_rank(tmp_path) -> None:
-    ctx = mp.get_context("spawn")
-    q: mp.Queue = ctx.Queue()
-    port = free_port()
     output_dir = str(tmp_path / "checkpoint-rank0-write-failure")
-    procs = [
-        ctx.Process(
-            target=_run_checkpoint_ema_export_rank,
-            args=(rank, 2, port, output_dir, q, None, True),
-        )
-        for rank in range(2)
-    ]
-    for process in procs:
-        process.start()
-    results = {}
-    for _ in range(2):
-        rank, *flags = q.get(timeout=180)
-        results[rank] = flags
-    for process in procs:
-        process.join(timeout=20)
-        assert process.exitcode == 0
+    results = run_ranks(_run_checkpoint_ema_export_rank, 2, output_dir, None, True, timeout=180)
 
     for rank in (0, 1):
         live_restored, failed_together, wrote_nothing = results[rank]

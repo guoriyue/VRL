@@ -31,7 +31,7 @@ from tests.models.steps.denoise.fixtures import (
     build_tiny_transformer,
     stamp_model_precision,
 )
-from tests.trainers._strategy_policies import free_port
+from tests.trainers._strategy_policies import free_port, run_ranks
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import FSDPConfig
 from vrl.models.families.wan_2_1.model import (
@@ -300,8 +300,8 @@ def _run_rank(
     rank: int,
     world_size: int,
     port: int,
-    checkpoint_path: str,
     queue: mp.Queue,
+    checkpoint_path: str,
 ) -> None:
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
@@ -390,27 +390,8 @@ def _run_rank(
 
 
 def test_wan_i2v_fsdp_step_checkpoint_resume_and_continue(tmp_path: Path) -> None:
-    context = mp.get_context("spawn")
-    queue: mp.Queue = context.Queue()
-    port = free_port()
     checkpoint_path = tmp_path / "checkpoint.pt"
-    processes = [
-        context.Process(
-            target=_run_rank,
-            args=(rank, 2, port, str(checkpoint_path), queue),
-        )
-        for rank in range(2)
-    ]
-    for process in processes:
-        process.start()
-
-    results = {}
-    for _ in range(2):
-        rank, *values = queue.get(timeout=120)
-        results[rank] = values
-    for process in processes:
-        process.join(timeout=10)
-        assert process.exitcode == 0
+    results = run_ranks(_run_rank, 2, str(checkpoint_path), timeout=120)
 
     assert checkpoint_path.is_file()
     for rank in (0, 1):
@@ -440,8 +421,8 @@ def _run_dual_rank(
     rank: int,
     world_size: int,
     port: int,
-    checkpoint_path: str,
     queue: mp.Queue,
+    checkpoint_path: str,
 ) -> None:
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
@@ -532,27 +513,8 @@ def _run_dual_rank(
 
 
 def test_wan_dual_expert_fsdp_stage_isolation_sync_and_resume(tmp_path: Path) -> None:
-    context = mp.get_context("spawn")
-    queue: mp.Queue = context.Queue()
-    port = free_port()
     checkpoint_path = tmp_path / "dual-expert-checkpoint.pt"
-    processes = [
-        context.Process(
-            target=_run_dual_rank,
-            args=(rank, 2, port, str(checkpoint_path), queue),
-        )
-        for rank in range(2)
-    ]
-    for process in processes:
-        process.start()
-
-    results = {}
-    for _ in range(2):
-        rank, *values = queue.get(timeout=180)
-        results[rank] = values
-    for process in processes:
-        process.join(timeout=10)
-        assert process.exitcode == 0
+    results = run_ranks(_run_dual_rank, 2, str(checkpoint_path), timeout=180)
 
     assert checkpoint_path.is_file()
     for rank in (0, 1):
@@ -757,26 +719,7 @@ def test_wan_dual_expert_fsdp_cuda_cpu_offload(world_size: int, mixed_dtype: boo
     if torch.cuda.device_count() < world_size:
         pytest.skip(f"requires {world_size} CUDA device(s)")
 
-    context = mp.get_context("spawn")
-    queue: mp.Queue = context.Queue()
-    port = free_port()
-    processes = [
-        context.Process(
-            target=_run_dual_cuda_offload_rank,
-            args=(rank, world_size, port, queue, mixed_dtype),
-        )
-        for rank in range(world_size)
-    ]
-    for process in processes:
-        process.start()
-
-    results = {}
-    for _ in range(world_size):
-        rank, *values = queue.get(timeout=180)
-        results[rank] = values
-    for process in processes:
-        process.join(timeout=10)
-        assert process.exitcode == 0
+    results = run_ranks(_run_dual_cuda_offload_rank, world_size, mixed_dtype, timeout=180)
 
     for rank in range(world_size):
         high_grad, low_grad, local_shards_on_cpu, peak_bytes = results[rank]
@@ -792,22 +735,7 @@ def test_wan_i2v_fsdp_four_rank_cuda_step() -> None:
     if torch.cuda.device_count() < 4:
         pytest.skip("requires four CUDA devices")
 
-    context = mp.get_context("spawn")
-    queue: mp.Queue = context.Queue()
-    port = free_port()
-    processes = [
-        context.Process(target=_run_cuda_rank, args=(rank, 4, port, queue)) for rank in range(4)
-    ]
-    for process in processes:
-        process.start()
-
-    results = {}
-    for _ in range(4):
-        rank, *values = queue.get(timeout=180)
-        results[rank] = values
-    for process in processes:
-        process.join(timeout=10)
-        assert process.exitcode == 0
+    results = run_ranks(_run_cuda_rank, 4, timeout=180)
 
     for rank in range(4):
         cuda_sharded, grad_norm, changed, adapter_only, peak_bytes = results[rank]

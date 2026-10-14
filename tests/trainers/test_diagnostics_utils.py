@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import os
-import socket
-import tempfile
 
 import pytest
 import torch
 import torch.multiprocessing as mp
 from torch import nn
 
+from tests.trainers._strategy_policies import run_ranks
 from vrl.trainers.diagnostics import trainable_state_digest
 
 
@@ -49,14 +48,6 @@ def test_trainable_digest_does_not_fall_back_to_frozen_weights():
     assert before == after
     assert before["tensor_count"] == 0
     assert before["numel"] == 0
-
-
-def _free_port() -> int:
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    probe.bind(("127.0.0.1", 0))
-    port = probe.getsockname()[1]
-    probe.close()
-    return port
 
 
 def _run_uneven_shard_digest_rank(
@@ -116,67 +107,23 @@ def test_trainable_state_digest_hashes_real_uneven_dtensor_shards() -> None:
     if not dist.is_gloo_available():
         pytest.skip("PyTorch was built without gloo")
 
-    context = mp.get_context("spawn")
-    queue = context.Queue()
-    port = _free_port()
-    processes = [
-        context.Process(
-            target=_run_uneven_shard_digest_rank,
-            args=(rank, 2, port, queue),
-        )
-        for rank in range(2)
-    ]
-    for process in processes:
-        process.start()
-    try:
-        for process in processes:
-            process.join(timeout=30)
-        assert all(not process.is_alive() for process in processes), (
-            "rank-local digest hung on a distributed collective"
-        )
-        assert all(process.exitcode == 0 for process in processes)
-        results = sorted(queue.get(timeout=5) for _ in processes)
-    finally:
-        for process in processes:
-            if process.is_alive():
-                process.terminate()
-            process.join(timeout=5)
-        queue.close()
+    # A rank-local digest that joined a collective would hang past the timeout.
+    results = run_ranks(_run_uneven_shard_digest_rank, 2, timeout=30)
 
-    assert [result[1] for result in results] == [(3, 3), (2, 3)]
-    assert [result[2] for result in results] == [9, 6]
-    for rank, _, _, tensor_count, scope, before_sha, after_sha in results:
+    assert [results[rank][0] for rank in (0, 1)] == [(3, 3), (2, 3)]
+    assert [results[rank][1] for rank in (0, 1)] == [9, 6]
+    for rank, (_, _, tensor_count, scope, before_sha, after_sha) in results.items():
         assert tensor_count == 1, f"rank {rank} skipped its trainable DTensor"
         assert scope == "rank_local_dtensor_values"
         assert before_sha != after_sha, f"rank {rank} did not observe its local update"
-    assert results[0][5] != results[1][5]
+    assert results[0][4] != results[1][4]
 
 
 @pytest.fixture
-def cpu_device_mesh():
-    import torch.distributed as dist
+def cpu_device_mesh(cpu_process_group):
     from torch.distributed.device_mesh import init_device_mesh
 
-    if not dist.is_gloo_available():
-        pytest.skip("PyTorch was built without gloo")
-    if dist.is_initialized():
-        pytest.skip("test requires ownership of the process group")
-
-    descriptor, rendezvous_path = tempfile.mkstemp()
-    os.close(descriptor)
-    os.unlink(rendezvous_path)
-    dist.init_process_group(
-        "gloo",
-        init_method=f"file://{rendezvous_path}",
-        rank=0,
-        world_size=1,
-    )
-    try:
-        yield init_device_mesh("cpu", (1,), mesh_dim_names=("dp_shard",))
-    finally:
-        dist.destroy_process_group()
-        if os.path.exists(rendezvous_path):
-            os.unlink(rendezvous_path)
+    return init_device_mesh("cpu", (1,), mesh_dim_names=("dp_shard",))
 
 
 def test_trainable_state_digest_supports_replicated_dtensor(cpu_device_mesh) -> None:

@@ -25,7 +25,7 @@ pytest.importorskip("diffusers")
 pytest.importorskip("peft")
 
 from tests.models.steps.denoise.fixtures import build_tiny_transformer
-from tests.trainers._strategy_policies import free_port
+from tests.trainers._strategy_policies import run_ranks
 from vrl.config.precision import RolePrecision
 from vrl.config.schema import FSDPConfig
 from vrl.models.families.sd3_5.model import SD3_5Model
@@ -70,9 +70,9 @@ def _run_rank(
     rank: int,
     world_size: int,
     port: int,
+    queue: mp.Queue,
     repo: str,
     shard_trainable_only: bool,
-    queue: mp.Queue,
 ) -> None:
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
@@ -128,37 +128,17 @@ def test_non_primary_ranks_are_filled_from_rank_zero(
     repo = tmp_path / "tiny-sd3"
     build_tiny_transformer("sd3", seed=123).save_pretrained(repo / "transformer")
 
-    context = mp.get_context("spawn")
-    queue: mp.Queue = context.Queue()
-    processes = [
-        context.Process(
-            target=_run_rank, args=(rank, 2, free_port(), str(repo), shard_trainable_only, queue)
-        )
-        for rank in range(2)
-    ]
-    port = free_port()
-    processes = [
-        context.Process(
-            target=_run_rank, args=(rank, 2, port, str(repo), shard_trainable_only, queue)
-        )
-        for rank in range(2)
-    ]
-    for process in processes:
-        process.start()
-    for process in processes:
-        process.join(timeout=300)
-    assert all(process.exitcode == 0 for process in processes)
-
-    results = {}
-    while not queue.empty():
-        rank, skeleton_before, meta_left, mismatched, trainable = queue.get()
-        results[rank] = SimpleNamespace(
+    results = {
+        rank: SimpleNamespace(
             skeleton_before=skeleton_before,
             meta_left=meta_left,
             mismatched=mismatched,
             trainable=trainable,
         )
-    assert set(results) == {0, 1}
+        for rank, (skeleton_before, meta_left, mismatched, trainable) in run_ranks(
+            _run_rank, 2, str(repo), shard_trainable_only, timeout=300
+        ).items()
+    }
     # Only the non-primary rank built a skeleton; nothing stays on meta afterwards.
     assert results[0].skeleton_before is False
     assert results[1].skeleton_before is True

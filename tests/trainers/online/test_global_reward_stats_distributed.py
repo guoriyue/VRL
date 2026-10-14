@@ -16,6 +16,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
+from tests.trainers._strategy_policies import run_ranks
 from vrl.trainers.online.trainer import _global_reward_stats
 
 _RANK_REWARDS = [[1.0, 2.0, 3.0, 4.0], [10.0, 20.0, 30.0, 40.0]]
@@ -41,18 +42,7 @@ def test_logged_reward_stats_are_cross_rank() -> None:
         t = torch.tensor(s)
         assert abs(float(t.mean()) - g_mean) > 1.0
 
-    ctx = mp.get_context("spawn")
-    q: mp.Queue = ctx.Queue()
-    procs = [ctx.Process(target=_run_rank, args=(r, 2, 29566, q)) for r in range(2)]
-    for p in procs:
-        p.start()
-    results = {}
-    for _ in range(2):
-        rank, mean, std = q.get(timeout=50)
-        results[rank] = (mean, std)
-    for p in procs:
-        p.join(timeout=10)
-        assert p.exitcode == 0
+    results = run_ranks(_run_rank, 2, timeout=50)
 
     for rank in (0, 1):
         mean, std = results[rank]

@@ -37,7 +37,7 @@ from vrl.trainers.distributed import (
 )
 from vrl.trainers.fsdp import build_context_parallel_mesh, build_fsdp_mesh
 
-from ._strategy_policies import free_port
+from ._strategy_policies import run_ranks
 
 # ── identity and config ──────────────────────────────────────────────────────
 
@@ -251,15 +251,19 @@ class _LeaderOnlyInner:
         pass
 
 
-def _run_rank(rank: int, port: int, q: mp.Queue) -> None:
+def _run_rank(rank: int, world_size: int, port: int, q: mp.Queue) -> None:
     import asyncio
 
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(port)
-    dist.init_process_group(backend="gloo", rank=rank, world_size=2)
+    dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
     try:
         ctx = DistributedTrainingContext(
-            strategy="fsdp", rank=rank, world_size=2, device=torch.device("cpu"), cp_size=2
+            strategy="fsdp",
+            rank=rank,
+            world_size=world_size,
+            device=torch.device("cpu"),
+            cp_size=2,
         )
         groups = ContextParallelPeerGroup.create(ctx)
         cp_mesh = build_context_parallel_mesh(ctx, ulysses_degree=2, ring_degree=1)
@@ -281,24 +285,7 @@ def _run_rank(rank: int, port: int, q: mp.Queue) -> None:
 
 
 def test_two_rank_cp_group_generates_slices_and_gathers_the_union() -> None:
-    ctx = mp.get_context("spawn")
-    q: mp.Queue = ctx.Queue()
-    port = free_port()
-    procs = [ctx.Process(target=_run_rank, args=(r, port, q)) for r in range(2)]
-    for p in procs:
-        p.start()
-    results = {}
-    for _ in range(2):
-        rank, *rest = q.get(timeout=120)
-        results[rank] = rest
-    for p in procs:
-        p.join(timeout=10)
-        if p.is_alive():
-            # Never leave a rank behind: multiprocessing joins live children at
-            # interpreter exit and a wedged rank would hang the whole session.
-            p.kill()
-            p.join(timeout=10)
-        assert p.exitcode == 0
+    results = run_ranks(_run_rank, 2, timeout=120)
 
     for rank in (0, 1):
         mesh_ok, _seen, prompts = results[rank]
