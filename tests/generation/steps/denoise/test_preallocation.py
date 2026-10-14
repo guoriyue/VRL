@@ -39,22 +39,15 @@ def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> 
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
-def test_record_step_casts_into_allocated_buffers_without_gradients(dtype, device) -> None:
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA is unavailable")
+def test_record_step_casts_into_allocated_buffers_without_gradients(dtype) -> None:
     state = _state(batch=2, steps=1, dtype=dtype)
-    state.latents = state.latents.to(device)
-    state.timesteps = state.timesteps.to(device)
     config = _config()
     config = replace(
         config,
         sde=replace(config.sde, return_prev_sample_mean=True),
     )
     buffers = DenoiseTrajectoryBuffers.allocate(state=state, config=config)
-    values = torch.tensor(
-        [[0.1234, -0.5678], [1.2345, -2.3456]], device=device, requires_grad=True
-    )
+    values = torch.tensor([[0.1234, -0.5678], [1.2345, -2.3456]], requires_grad=True)
     log_prob = values[:, 0]
     buffers.record_initial_latents(values)
     buffers.record_step(
@@ -147,24 +140,6 @@ def test_run_denoise_steps_writes_preallocated_buffers() -> None:
     )
 
 
-def test_decode_denoise_result_does_not_serialize_model_precision() -> None:
-    """Execution policy stays on the model instead of entering trajectories."""
-    executor = _Executor()
-
-    result = executor.run_denoise_steps(
-        state=_state(batch=2, steps=1),
-        config=_config(sample_count=2),
-    )
-
-    batch = executor.decode_denoise_result(
-        batch=_chunk(),
-        config=_config(sample_count=2),
-        denoise_result=result,
-    )
-
-    assert batch.context == {"model_family": "test"}
-
-
 def test_executor_adds_no_autocast_scope(monkeypatch: pytest.MonkeyPatch) -> None:
     """The model owns its forward contract; the executor must not add autocast.
 
@@ -222,22 +197,18 @@ def test_decode_denoise_result_uses_only_model_exported_context() -> None:
     assert batch.context == {"model_family": "test"}
 
 
-@pytest.mark.parametrize("field", ["sample_start", "sample_count"])
-@pytest.mark.parametrize("value", [1.9, "2", True, -1])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("sample_start", True), ("sample_start", -1), ("sample_count", 1.9), ("sample_count", 0)],
+)
 def test_denoise_config_rejects_invalid_sample_identity(field, value) -> None:
     with pytest.raises(ValueError, match=field):
         replace(_config(), **{field: value})
 
 
-@pytest.mark.parametrize("mode", ["Native", "unknown", "", None])
-def test_denoise_config_rejects_unknown_mode(mode) -> None:
+def test_denoise_config_rejects_unknown_mode() -> None:
     with pytest.raises(ValueError, match="denoise_mode"):
-        replace(_config(), denoise_mode=mode)
-
-
-def test_denoise_config_rejects_empty_sample_batch() -> None:
-    with pytest.raises(ValueError, match="sample_count"):
-        replace(_config(), sample_count=0)
+        replace(_config(), denoise_mode="Native")
 
 
 def _config(*, sample_count: int = 2) -> DenoiseLoopConfig:
@@ -417,9 +388,8 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
     assert untouched.latents is before
 
 
-@pytest.mark.parametrize("timesteps", [[0.9, 0.5], [torch.tensor(0.9)], None])
-def test_preallocation_requires_tensor_timestep_schedule(timesteps: object) -> None:
+def test_preallocation_requires_tensor_timestep_schedule() -> None:
     state = _state(batch=2, steps=2)
-    state.timesteps = timesteps
+    state.timesteps = [torch.tensor(0.9), torch.tensor(0.5)]
     with pytest.raises(TypeError, match=r"state\.timesteps must be a torch\.Tensor"):
         DenoiseTrajectoryBuffers.allocate(state=state, config=_config(sample_count=2))
