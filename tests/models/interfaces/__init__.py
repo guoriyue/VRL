@@ -5,16 +5,6 @@ from __future__ import annotations
 from vrl.models.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild
 from vrl.utils.config import import_from_path
 
-# Custom replay construction is the only place the registry cannot derive the
-# concrete replay class from the generic descriptor.
-_CUSTOM_REPLAY_MODEL_CLASSES = {
-    "causvid": "vrl.models.families.causvid.model:CausVidModel",
-    "cosmos3": "vrl.models.families.cosmos.cosmos3.model:Cosmos3Model",
-    "echo": "vrl.models.families.echo.model:EchoModel",
-    "minimax_h3": "vrl.models.families.minimax_h3.model:MiniMaxH3Model",
-    "vdn_h3": "vrl.models.families.vdn_h3.model:VDNH3Model",
-}
-
 
 def registered_runtime_model_classes() -> dict[str, type]:
     """Resolve every registered family's runtime model class."""
@@ -34,12 +24,7 @@ def registered_replay_model_classes() -> dict[str, type]:
             continue
         build = entry.family_build
         assert isinstance(build, DenoiseFamilyBuild)
-        replay_path = build.replay_cls or _CUSTOM_REPLAY_MODEL_CLASSES.get(family)
-        if replay_path is None:
-            raise AssertionError(
-                f"custom replay family {family!r} lacks a contract-test model class",
-            )
-        resolved[family] = import_from_path(replay_path)
+        resolved[family] = import_from_path(build.replay_cls)
     return resolved
 
 

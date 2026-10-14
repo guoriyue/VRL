@@ -1,14 +1,9 @@
-"""MiniMax-H3 family runtime: the batch-one executor and the replay bundle builder.
+"""MiniMax-H3 family runtime: the batch-one executor.
 
 NOTE — no ``runner.py``: the H3 transformer takes a packed-sequence layout
 (nine kwargs) and returns a ``(video, audio)`` pair, which does not fit
 ``DenoiseBackboneInput``; the call and the audio side-stream update run
 inline in ``MiniMaxH3Model.forward_step``.
-
-NOTE — the replay bundle is a custom builder, not the generic recipe: replay
-needs TWO schedulers (video ``shift=12``, audio ``shift=3``, both
-``MiniMaxH3Scheduler`` under different subfolders), and the video one has to be
-the flow-convention subclass. The generic recipe loads exactly one scheduler.
 """
 
 from __future__ import annotations
@@ -21,85 +16,11 @@ from vrl.generation.bindings.full_sequence import (
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
-from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
-from vrl.utils.logging import init_logger
-
-logger = init_logger(__name__)
 
 # 5 s at 24 fps is 120 frames; the video VAE decodes ``17n + 5``, so 124.
 DEFAULT_NUM_FRAMES = 124
 DEFAULT_FPS = 24
 DEFAULT_MAX_SEQUENCE_LENGTH = 512
-
-
-def load_h3_replay_components(
-    build: ModelBuild,
-    *,
-    block_devices: tuple[int, ...] | None = None,
-    materialize_weights: bool = True,
-) -> dict[str, Any]:
-    """Transformer + the two H3 schedulers as ``MiniMaxH3Model`` kwargs.
-
-    Shared with VDN-H3, whose replay model is the same construction plus the
-    hybrid-attention graft applied afterwards. ``materialize_weights=False``
-    loads a meta skeleton for a sharded strategy to fill; the block-partitioned
-    loader always materializes, since its device map is the placement.
-    """
-
-    from diffusers import MiniMaxH3Scheduler
-
-    from vrl.models.families.minimax_h3.model import build_flow_scheduler_class
-    from vrl.models.loader import load_diffusers_transformer
-
-    if block_devices is None:
-        transformer = load_diffusers_transformer(
-            build,
-            "MiniMaxH3Transformer3DModel",
-            materialize_weights=materialize_weights,
-        )
-    else:
-        from vrl.models.families.minimax_h3.placement import load_partitioned_transformer
-
-        transformer = load_partitioned_transformer(build, block_devices)
-    load_kwargs = build.pretrained_kwargs
-    return {
-        "transformer": transformer,
-        "scheduler": build_flow_scheduler_class().from_pretrained(
-            build.model_name_or_path,
-            subfolder="scheduler",
-            **load_kwargs,
-        ),
-        "audio_scheduler": MiniMaxH3Scheduler.from_pretrained(
-            build.model_name_or_path,
-            subfolder="audio_scheduler",
-            **load_kwargs,
-        ),
-        "device": build.device,
-    }
-
-
-def build_minimax_h3_replay_runtime_bundle(
-    build: ModelBuild,
-    *,
-    block_devices: tuple[int, ...] | None = None,
-    materialize_weights: bool = True,
-) -> RuntimeBundle:
-    """Transformer + the two H3 schedulers; no VAE, no conditioner."""
-
-    from vrl.models.families.minimax_h3.model import MiniMaxH3Model
-    from vrl.models.steps.denoise.build import assemble_replay_bundle
-
-    logger.info("Building minimax_h3 replay runtime bundle from %s", build.model_name_or_path)
-    components = load_h3_replay_components(
-        build,
-        block_devices=block_devices,
-        materialize_weights=materialize_weights,
-    )
-    model = MiniMaxH3Model(**components)
-    num_steps = build.num_steps
-    if num_steps is not None:
-        model.set_num_steps(num_steps)
-    return assemble_replay_bundle(model, build)
 
 
 class MiniMaxH3BatchExecutor(DenoiseBatchExecutorBase):
@@ -135,6 +56,4 @@ __all__ = [
     "DEFAULT_MAX_SEQUENCE_LENGTH",
     "DEFAULT_NUM_FRAMES",
     "MiniMaxH3BatchExecutor",
-    "build_minimax_h3_replay_runtime_bundle",
-    "load_h3_replay_components",
 ]

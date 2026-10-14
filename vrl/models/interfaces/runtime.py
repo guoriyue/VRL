@@ -197,6 +197,11 @@ class ModelBuild:
     # component settings. A nested primitive mapping is accepted only for the Ray
     # wire boundary and normalized immediately in ``__post_init__``.
     rollout: RolloutBuildOptions | Mapping[str, Any] | None = None
+    # Per-rank replay load choice set by the training strategy. False asks for a
+    # meta-parameter skeleton of the trainable roots, which the strategy fills
+    # from the primary rank; a family whose loader cannot build one loads real
+    # weights regardless.
+    materialize_weights: bool = True
 
     def __post_init__(self) -> None:
         from vrl.models.dtypes import require_plain_dtype
@@ -362,7 +367,7 @@ class ModelBuild:
         eager while the rollout policy can still compile (and mirrored for
         sequence-parallel rollouts). The role is decided by the build itself —
         ``rollout`` present or ``None`` — so every consumer (the rollout
-        ``CompilePass``, ``assemble_replay_bundle``, the loader's
+        ``CompilePass``, ``build_family_replay_runtime_bundle``, the loader's
         quantization conflict) reads one role-correct answer instead of
         re-deriving it.
         """

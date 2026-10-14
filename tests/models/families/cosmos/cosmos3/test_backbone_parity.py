@@ -72,7 +72,7 @@ def _model(**vae_stats: float) -> Cosmos3PipelineModel:
 
 def test_minimal_replay_loads_without_vae_weights_and_matches_rollout(tmp_path) -> None:
     from vrl.config.precision import RolePrecision
-    from vrl.models.families.cosmos.cosmos3.runtime import build_cosmos3_replay_runtime_bundle
+    from vrl.models.families.registry import get_model_family_entry
     from vrl.models.interfaces.runtime import ModelBuild
 
     pipeline = build_tiny_cosmos3_pipeline()
@@ -90,7 +90,7 @@ def test_minimal_replay_loads_without_vae_weights_and_matches_rollout(tmp_path) 
         precision=RolePrecision("fp32", "ieee"),
         model_config={"use_lora": False},
     )
-    bundle = build_cosmos3_replay_runtime_bundle(build)
+    bundle = get_model_family_entry("cosmos3").build_replay(build, expected_identity=None)
     replay = bundle.model
     rollout = Cosmos3PipelineModel(pipeline=pipeline, device=torch.device("cpu"))
     stamp_model_precision(rollout)

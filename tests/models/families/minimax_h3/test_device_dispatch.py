@@ -105,7 +105,8 @@ def test_partitioned_replay_loads_local_shards_and_keeps_native_lora_on_owners(t
     from diffusers import MiniMaxH3Transformer3DModel
 
     from tests.models.families.minimax_h3.test_model_loading import _build
-    from vrl.models.families.minimax_h3.runtime import build_minimax_h3_replay_runtime_bundle
+    from vrl.models.families.minimax_h3.model import MiniMaxH3Model, load_h3_replay_components
+    from vrl.models.families.registry import get_model_family_entry
 
     fixture = _model()
     state = _sampling_state(fixture)
@@ -128,17 +129,20 @@ def test_partitioned_replay_loads_local_shards_and_keeps_native_lora_on_owners(t
             },
         },
     )
-    reference = build_minimax_h3_replay_runtime_bundle(build)
-    split = build_minimax_h3_replay_runtime_bundle(build, block_devices=(0, 1))
-    for name, parameter in reference.model.transformer.named_parameters():
+    reference = (
+        get_model_family_entry("minimax_h3").build_replay(build, expected_identity=None).model
+    )
+    # The registry has no partitioned replay; build the split model with the same
+    # adapter the registry attaches to the reference.
+    split = MiniMaxH3Model(**load_h3_replay_components(build, block_devices=(0, 1)))
+    split.apply_lora(build)
+    for name, parameter in reference.transformer.named_parameters():
         if "lora_B" in name:
             torch.nn.init.normal_(parameter, std=0.01)
-    split.model.transformer.load_state_dict(reference.model.transformer.state_dict(), strict=True)
-    owners = {name: p.device for name, p in split.model.transformer.named_parameters()}
+    split.transformer.load_state_dict(reference.transformer.state_dict(), strict=True)
+    owners = {name: p.device for name, p in split.transformer.named_parameters()}
     assert {device.index for device in owners.values()} == {0, 1}
-    assert all(
-        p.dtype == torch.float32 for p in split.model.transformer.parameters() if p.requires_grad
-    )
+    assert all(p.dtype == torch.float32 for p in split.transformer.parameters() if p.requires_grad)
     kwargs = {
         "hidden_states": patchify_video_latents(state.latents, TINY_MINIMAX_H3_PATCH_SIZE),
         "audio_hidden_states": state.audio_rows,
@@ -151,16 +155,16 @@ def test_partitioned_replay_loads_local_shards_and_keeps_native_lora_on_owners(t
     kwargs = {
         k: v.detach().to("cuda:0") if isinstance(v, torch.Tensor) else v for k, v in kwargs.items()
     }
-    expected = reference.model.transformer(**kwargs)
-    actual = split.model.transformer(**kwargs)
+    expected = reference.transformer(**kwargs)
+    actual = split.transformer(**kwargs)
     for left, right in zip(actual, expected, strict=True):
         torch.testing.assert_close(left, right, atol=1e-3, rtol=1e-3)
     sum(x.float().square().mean() for x in expected).backward()
     sum(x.float().square().mean() for x in actual).backward()
-    reference_parameters = dict(reference.model.transformer.named_parameters())
+    reference_parameters = dict(reference.transformer.named_parameters())
     nonzero = 0
     remote_nonzero = 0
-    for name, parameter in split.model.transformer.named_parameters():
+    for name, parameter in split.transformer.named_parameters():
         assert parameter.device == owners[name]
         other = reference_parameters[name]
         assert (parameter.grad is None) == (other.grad is None)
@@ -175,16 +179,16 @@ def test_partitioned_replay_loads_local_shards_and_keeps_native_lora_on_owners(t
     assert remote_nonzero > 0
     before = {
         name: p.detach().clone()
-        for name, p in split.model.transformer.named_parameters()
+        for name, p in split.transformer.named_parameters()
         if p.requires_grad
     }
-    for bundle in (reference, split):
+    for model in (reference, split):
         optimizer = torch.optim.AdamW(
-            [p for p in bundle.model.transformer.parameters() if p.requires_grad], lr=1e-4
+            [p for p in model.transformer.parameters() if p.requires_grad], lr=1e-4
         )
         optimizer.step()
     changed_devices = set()
-    for name, parameter in split.model.transformer.named_parameters():
+    for name, parameter in split.transformer.named_parameters():
         assert parameter.device == owners[name]
         torch.testing.assert_close(
             parameter.to("cuda:0"), reference_parameters[name], atol=1e-3, rtol=1e-3

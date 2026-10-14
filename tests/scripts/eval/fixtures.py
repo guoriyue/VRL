@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -409,9 +409,8 @@ class TinySanaStack:
         """The trainer-side policy: the run's replay bundle, built for real on CPU."""
 
         return self.family.build_replay(
-            self.replay_build,
+            replace(self.replay_build, materialize_weights=materialize_weights),
             expected_identity=self.replay_identity,
-            materialize_weights=materialize_weights,
         )
 
 

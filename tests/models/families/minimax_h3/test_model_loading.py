@@ -1,9 +1,9 @@
-"""MiniMax-H3's ``from_build`` and replay builder: what they ask diffusers for.
+"""MiniMax-H3's two ``from_build`` loaders: what they ask diffusers for.
 
 The modular pipeline is loaded for the ``t2va`` workflow only (the 33B
 ``transformer_ref`` partition stays on disk), the frozen conditioner follows the
 rollout prompt dtype, both VAEs stay fp32, and the video scheduler is swapped
-for the flow-convention subclass. The replay builder loads the transformer and
+for the flow-convention subclass. The replay model loads the transformer and
 the two schedulers from their subfolders and nothing else.
 """
 
@@ -17,11 +17,8 @@ import torch
 
 from tests.models.steps.denoise.fixtures import build_tiny_minimax_h3_transformer
 from vrl.config.precision import RolePrecision
-from vrl.models.families.minimax_h3.model import MiniMaxH3PipelineModel
-from vrl.models.families.minimax_h3.runtime import (
-    MiniMaxH3BatchExecutor,
-    build_minimax_h3_replay_runtime_bundle,
-)
+from vrl.models.families.minimax_h3.model import MiniMaxH3Model, MiniMaxH3PipelineModel
+from vrl.models.families.minimax_h3.runtime import MiniMaxH3BatchExecutor
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
 pytest.importorskip("diffusers.modular_pipelines.minimax_h3")
@@ -120,10 +117,8 @@ def test_from_build_loads_the_t2va_workflow_and_freezes_the_generation_modules(
     assert set(model.pipeline.components) == {"transformer", "vae", "audio_vae", "text_encoder"}
 
 
-def test_replay_builder_loads_transformer_and_both_schedulers_only(monkeypatch) -> None:
+def test_replay_model_loads_transformer_and_both_schedulers_only(monkeypatch) -> None:
     import diffusers
-
-    import vrl.models.steps.denoise.build as denoise_build
 
     loads: list[dict[str, Any]] = []
 
@@ -143,16 +138,9 @@ def test_replay_builder_loads_transformer_and_both_schedulers_only(monkeypatch) 
         lambda: _Scheduler,
     )
     monkeypatch.setattr("vrl.models.loader.load_diffusers_transformer", fake_transformer_loader)
-    monkeypatch.setattr(
-        denoise_build,
-        "assemble_replay_bundle",
-        lambda model, build: SimpleNamespace(model=model),
-    )
 
-    # CPU device: the builder eagerly sets both schedules on the build device.
-    bundle = build_minimax_h3_replay_runtime_bundle(
-        _build(rollout=False, num_steps=4, device="cpu")
-    )
+    # CPU device: from_build eagerly sets both schedules on the build device.
+    model = MiniMaxH3Model.from_build(_build(rollout=False, num_steps=4, device="cpu"))
 
     assert [load["cls"] for load in loads] == [
         "MiniMaxH3Transformer3DModel",
@@ -161,7 +149,6 @@ def test_replay_builder_loads_transformer_and_both_schedulers_only(monkeypatch) 
     ]
     assert [load.get("subfolder") for load in loads[1:]] == ["scheduler", "audio_scheduler"]
     assert all(load["path"] == _PATH and load["revision"] == "abc123" for load in loads[1:])
-    model = bundle.model
     assert model.scheduler.timesteps.numel() == 4
     assert model.audio_scheduler.timesteps.numel() == 4
     assert not hasattr(model, "decode_latents")

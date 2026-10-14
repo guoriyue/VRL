@@ -101,6 +101,12 @@ such as a reference image or video belongs on each `GenerationInput`; it is not
 registry metadata or an executor-constructor setting. Set `scheduler_classname`
 when replay must load a scheduler other than the shared flow-match scheduler.
 
+When replay cannot be expressed as one diffusers transformer plus one scheduler
+(a non-diffusers loader, a second scheduler, a weight graft), omit
+`transformer_classname` and give `MyModel` its own `from_build(build)`; the
+registry then calls it and applies LoRA, compile and precision as usual. Honor
+`build.materialize_weights` there only if the loader can build a meta skeleton.
+
 External aliases live only in `vrl/models/families/names.py`. Add one there when
 an existing public spelling must remain accepted; do not copy aliases onto the
 runtime entry.

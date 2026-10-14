@@ -5,9 +5,10 @@ sequence. A ``DenoiseFamilyBuild`` descriptor in the model-family registry suppl
 the model classes, upstream transformer classname, and scheduler;
 The registry dispatches rollout and replay construction to these shared builders.
 
-Families keep custom assembly only when construction has real per-call semantics
-that a descriptor cannot express. This module stays family-agnostic and resolves
-descriptor import strings lazily to avoid a registry import cycle.
+A replay class whose loading a descriptor cannot express (a non-diffusers
+loader, extra schedulers, a graft) owns it in ``from_build``. This module stays
+family-agnostic and resolves descriptor import strings lazily to avoid a
+registry import cycle.
 """
 
 from __future__ import annotations
@@ -93,22 +94,57 @@ def build_denoise_runtime_bundle(
     )
 
 
-def assemble_replay_bundle(
-    model: object,
+def build_family_replay_runtime_bundle(
     build: ModelBuild,
+    *,
+    entry,
 ) -> RuntimeBundle:
-    """Apply shared training knobs to a replay model and assemble its bundle."""
+    """Build replay through a family's ``replay_cls`` and apply the training knobs.
+
+    Called only by ``ModelFamilyEntry.build_replay``, which has already matched
+    ``build.family`` and rejected generation-only families. A descriptor with a
+    transformer class loads the transformer and scheduler here, honoring
+    ``build.materialize_weights``; one without it hands the whole load to
+    ``replay_cls.from_build``.
+    """
+
+    from vrl.utils.config import import_from_path
 
     build.require_replay()
+    family_build = entry.family_build
+    replay_cls = import_from_path(family_build.replay_cls)
+    logger.info(
+        "Building %s replay runtime bundle from %s",
+        entry.family,
+        build.model_name_or_path,
+    )
+    if family_build.transformer_classname is None:
+        model = replay_cls.from_build(build)
+    else:
+        model = replay_cls(
+            transformer=load_diffusers_transformer(
+                build,
+                family_build.transformer_classname,
+                materialize_weights=build.materialize_weights,
+            ),
+            scheduler=(
+                load_diffusers_scheduler(build, family_build.scheduler_classname)
+                if family_build.scheduler_classname is not None
+                else load_flow_match_scheduler(build)
+            ),
+            device=build.device,
+        )
+        # Family replay models may finish replay-only setup after their transformer
+        # and scheduler exist (FLUX derives its dynamic-shift timesteps here).
+        model.prepare_replay(build)
+
     if build.use_lora:
         model.apply_lora(build)
     else:
         model.apply_full_finetune(build)
-
     compile_cfg = build.torch_compile
     if compile_cfg is not None:
         model.torch_compile_transformer(compile_cfg["mode"], regional=compile_cfg["regional"])
-
     apply_float32_precision(build.precision.float32_precision)
     return RuntimeBundle(
         model=model,
@@ -119,52 +155,7 @@ def assemble_replay_bundle(
     )
 
 
-def build_family_replay_runtime_bundle(
-    build: ModelBuild,
-    *,
-    entry,
-    materialize_weights: bool = True,
-) -> RuntimeBundle:
-    """Build replay through a family's declarative diffusion recipe.
-
-    Called only by ``ModelFamilyEntry.build_replay``, which has already matched
-    ``build.family`` and dispatched custom or unavailable replay elsewhere, so
-    the descriptor here always carries ``replay_cls`` and a transformer class.
-    ``materialize_weights=False`` loads the transformer as a meta-parameter
-    skeleton for the training strategy to fill from its primary rank.
-    """
-
-    from vrl.utils.config import import_from_path
-
-    build.require_replay()
-    family_build = entry.family_build
-    replay_cls = import_from_path(family_build.replay_cls)
-    logger.info(
-        "Building %s replay runtime bundle (registry descriptor) from %s",
-        entry.family,
-        build.model_name_or_path,
-    )
-    model = replay_cls(
-        transformer=load_diffusers_transformer(
-            build,
-            family_build.transformer_classname,
-            materialize_weights=materialize_weights,
-        ),
-        scheduler=(
-            load_diffusers_scheduler(build, family_build.scheduler_classname)
-            if family_build.scheduler_classname is not None
-            else load_flow_match_scheduler(build)
-        ),
-        device=build.device,
-    )
-    # Family replay models may finish replay-only setup after their transformer
-    # and scheduler exist (FLUX derives its dynamic-shift timesteps here).
-    model.prepare_replay(build)
-    return assemble_replay_bundle(model, build)
-
-
 __all__ = [
-    "assemble_replay_bundle",
     "build_denoise_runtime_bundle",
     "build_family_replay_runtime_bundle",
 ]

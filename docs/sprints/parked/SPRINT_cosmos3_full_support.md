@@ -124,7 +124,7 @@ audio/action = 非目标
   cond 与 uncond，CFG 与 logprob 留给共享 denoise loop。
 - `runtime.py`：`Cosmos3ChunkExecutor` 复用
   `vrl/generation/bindings/full_sequence/`，并因 pipeline 契约固定 batch=1；
-  `build_cosmos3_replay_runtime_bundle` 构造 trainer replay runtime。
+  trainer replay 由注册表调 `Cosmos3Model.from_build` 构造。
 - `vrl/models/families/registry.py` 是 family/executor/replay builder 的唯一 binding；
   `vrl/config/presets/model/cosmos/cosmos3_nano.yaml` 是当前唯一 Cosmos3 model preset，
   必须保留，不能在 preset sweep 中当作孤儿删除。

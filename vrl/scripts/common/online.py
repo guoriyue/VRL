@@ -8,7 +8,7 @@ import logging
 import os
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -876,9 +876,8 @@ async def run_online_recipe(cfg: DictConfig) -> None:
 
     _host_memory.log("before_trainer_bundle_build")
     bundle = family_entry.build_replay(
-        replay_build,
+        replace(replay_build, materialize_weights=strategy.materialize_weights),
         expected_identity=model_identity,
-        materialize_weights=strategy.materialize_weights,
     )
     _host_memory.log("after_trainer_bundle_build")
     enable_transformer_gradient_checkpointing(bundle, built.root)

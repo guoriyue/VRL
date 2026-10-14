@@ -149,6 +149,60 @@ class EchoModel(DenoiseModelBase):
     def set_num_steps(self, n: int) -> None:
         self._scheduler.set_timesteps(int(n), device=self.device)
 
+    @classmethod
+    def from_build(cls, build: ModelBuild) -> EchoModel:
+        """Build the trainer replay model: Echo's velocity transformer only.
+
+        Not diffusers-backed: the LTX wrapper loads the transformer (no text
+        encoder, VAE or audio) from the whole checkpoint, so every rank loads
+        real weights regardless of ``build.materialize_weights``.
+        """
+
+        from diffusers import FlowMatchEulerDiscreteScheduler
+        from ltx_distillation.models.ltx_wrapper import create_ltx2_wrapper
+
+        build.require_replay()
+        video_height, video_width = resolve_echo_video_dimensions(build)
+        device = torch.device(build.device) if build.device is not None else torch.device("cpu")
+        gemma_path = (build.model_config or {}).get("gemma_path")
+        if not gemma_path:
+            raise ValueError(
+                "Echo requires model.gemma_path (the Gemma-3-12B encoder directory)",
+            )
+        echo = create_ltx2_wrapper(
+            checkpoint_path=_resolve_echo_checkpoint(
+                build.model_name_or_path,
+                **build.revision_kwargs,
+            ),
+            gemma_path=_resolve_gemma_dir(
+                str(gemma_path),
+                **build.config_revision_kwargs("gemma_revision"),
+            ),
+            device=device,
+            dtype=build.parameter_dtype,
+            video_height=video_height,
+            video_width=video_width,
+        )
+        # Same flow-matching scheduler as the rollout side (EchoPipelineModel.from_build):
+        # Echo's released DMD few-step sampler is bypassed; RL drives the velocity
+        # field with the standard flow-matching SDE. num_train_timesteps=1000 is
+        # Echo/LTX's train-time discretization (sigma = t / num_train_timesteps), and
+        # it MUST match the rollout value so replay log-prob recompute reads the
+        # identical sigma table.
+        model = cls(
+            echo=echo,
+            scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000),
+            device=device,
+        )
+        # The replay scheduler feeds the SDE log-prob evaluator, which maps each
+        # stored timestep -> sigma via scheduler.sigmas; populate the schedule (the
+        # rollout side does this in prepare_sampling, but the trainer reads
+        # bundle.scheduler directly).
+        num_steps = build.num_steps
+        if num_steps is not None:
+            model.set_num_steps(num_steps)
+        return model
+
     # -- forward_step --------------------------------------------------
 
     @staticmethod

@@ -45,6 +45,7 @@ from vrl.models.families.minimax_h3.model import (
     MiniMaxH3Model,
     MiniMaxH3PipelineModel,
     MiniMaxH3SamplingState,
+    load_h3_replay_components,
 )
 from vrl.models.families.vdn_h3.vendor import VDNEntryPoints, load_vdn
 from vrl.models.interfaces.runtime import ModelBuild
@@ -60,12 +61,31 @@ _DEFAULT_SOFTMAX_BACKEND = "auto"
 class VDNH3Model(MiniMaxH3Model):
     """MiniMax-H3 carrying VDN-H3's hybrid attention: the model replay runs.
 
-    The replay builder grafts the same hybrid attention onto it
+    ``from_build`` grafts the same hybrid attention onto it
     (``install_hybrid_attention``) that sampling's loader does, or the
     recomputed log-probs would describe a different model.
     """
 
     # -- loading -----------------------------------------------------------
+
+    @classmethod
+    def from_build(cls, build: ModelBuild) -> VDNH3Model:
+        """Transformer + both H3 schedulers, with the hybrid graft applied.
+
+        The graft loads the VDN checkpoint's branch weights into the backbone, so
+        every rank loads real weights regardless of ``build.materialize_weights``.
+        """
+
+        build.require_replay()
+        model = cls(**load_h3_replay_components(build))
+        # Same graft as the rollout policy, before LoRA attach or FSDP wrapping:
+        # the transform replaces every block's attention module, so anything that
+        # holds a reference to the old one must be built after it.
+        model.install_hybrid_attention(build)
+        num_steps = build.num_steps
+        if num_steps is not None:
+            model.set_num_steps(num_steps)
+        return model
 
     def install_hybrid_attention(self, build: ModelBuild) -> None:
         """Apply the transform in the artifact's own spec and load its weights."""

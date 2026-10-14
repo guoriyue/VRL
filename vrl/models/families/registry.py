@@ -60,19 +60,16 @@ class DenoiseFamilyBuild:
 
     A family whose runtime construction is pure data records its build inputs
     here. ``ModelFamilyEntry`` derives the shared resolver and worker builder
-    from this descriptor. Only real family-specific replay assembly remains as an
-    explicit override.
+    from this descriptor.
     """
 
     model_cls: str
-    # Replay recipe; None marks a family whose registry entry points directly to
-    # its hand-written replay builder (echo/cosmos3).
+    # Replay model class. With ``transformer_classname`` the shared builder loads
+    # its transformer and scheduler; without it the class loads itself through
+    # ``replay_cls.from_build`` (non-diffusers loaders, extra schedulers, grafts).
     replay_cls: str | None = None
     transformer_classname: str | None = None
     scheduler_classname: str | None = None
-    # Only families whose replay construction cannot use the generic descriptor
-    # path declare an override (echo/cosmos3).
-    replay_runtime_builder: str | None = None
     # Non-diffusers families may own rollout assembly as well as replay
     # assembly. The registry still carries ``model_cls`` as the importable
     # family surface, while this hook owns checkpoint/component construction.
@@ -85,27 +82,18 @@ class DenoiseFamilyBuild:
     replay_unavailable_reason: str | None = None
 
     def __post_init__(self) -> None:
-        generic_replay = self.replay_cls is not None and self.transformer_classname is not None
-        partial_generic_replay = (self.replay_cls is None) != (self.transformer_classname is None)
-        custom_replay = self.replay_runtime_builder is not None
         unavailable = self.replay_unavailable_reason is not None
-        if partial_generic_replay:
-            raise ValueError(
-                "denoise family generic replay requires both replay_cls and transformer_classname",
-            )
         if unavailable and not self.replay_unavailable_reason.strip():
             raise ValueError("replay_unavailable_reason must be non-empty when set")
-        if sum((generic_replay, custom_replay, unavailable)) != 1:
+        if (self.replay_cls is not None) == unavailable:
             raise ValueError(
-                "denoise family build must declare exactly one replay mode: "
-                "replay_cls plus transformer_classname, replay_runtime_builder, "
+                "denoise family build must declare exactly one of replay_cls "
                 "or replay_unavailable_reason",
             )
-        if not generic_replay and self.scheduler_classname is not None:
-            raise ValueError(
-                "scheduler_classname belongs to the generic replay builder and "
-                "cannot accompany custom or unavailable replay",
-            )
+        if self.transformer_classname is None and self.scheduler_classname is not None:
+            raise ValueError("scheduler_classname requires transformer_classname")
+        if self.replay_cls is None and self.transformer_classname is not None:
+            raise ValueError("transformer_classname requires replay_cls")
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,10 +128,7 @@ class ModelFamilyEntry:
     def supports_policy_replay(self) -> bool:
         """Whether this entry declares a concrete trainer replay recipe."""
 
-        return (
-            self.family_build.replay_cls is not None
-            or self.family_build.replay_runtime_builder is not None
-        )
+        return self.family_build.replay_cls is not None
 
     def validate_gpus_per_engine(self, gpus_per_engine: int) -> None:
         """Gate multi-GPU engines on this family's sequence-parallel install.
@@ -315,16 +300,11 @@ class ModelFamilyEntry:
         build: Any,
         *,
         expected_identity: dict[str, Any] | None,
-        materialize_weights: bool = True,
     ) -> Any:
-        """Construct trainer replay through this entry's registered builder.
+        """Construct trainer replay through this entry's ``replay_cls``.
 
         ``expected_identity`` pins the checkpoint the bundle must load (see
         ``ModelBuild.pinned_to``); ``None`` builds without that proof.
-        ``materialize_weights=False`` asks for a meta-parameter skeleton of the
-        trainable roots: the training strategy fills it from the primary rank
-        instead of every process reading the checkpoint. A family whose loader
-        cannot build one keeps loading real weights and says so in its builder.
         """
 
         if build.family != self.family:
@@ -336,22 +316,10 @@ class ModelFamilyEntry:
                 f"{self.family} is generation-only: {self.family_build.replay_unavailable_reason}",
             )
 
+        from vrl.models.steps.denoise.build import build_family_replay_runtime_bundle
+
         with build.pinned_to(expected_identity):
-            if self.family_build.replay_runtime_builder is not None:
-                from vrl.utils.config import import_from_path
-
-                bundle = import_from_path(self.family_build.replay_runtime_builder)(
-                    build,
-                    materialize_weights=materialize_weights,
-                )
-            else:
-                from vrl.models.steps.denoise.build import build_family_replay_runtime_bundle
-
-                bundle = build_family_replay_runtime_bundle(
-                    build,
-                    entry=self,
-                    materialize_weights=materialize_weights,
-                )
+            bundle = build_family_replay_runtime_bundle(build, entry=self)
         return bundle
 
     def build_rollout(self, build: Any, *, expected_identity: dict[str, Any] | None) -> Any:
@@ -494,9 +462,7 @@ _register_model_family(
         executor_cls="vrl.models.families.causvid.runtime:CausVidBatchExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.causvid.model:CausVidPipelineModel",
-            replay_runtime_builder=(
-                "vrl.models.families.causvid.runtime:build_causvid_replay_runtime_bundle"
-            ),
+            replay_cls="vrl.models.families.causvid.model:CausVidModel",
         ),
         runtime_capabilities=GenerationRuntimeCapabilities(
             supports_torch_compile=True,
@@ -767,9 +733,7 @@ _register_model_family(
         executor_cls="vrl.models.families.vdn_h3.runtime:VDNH3BatchExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.vdn_h3.model:VDNH3PipelineModel",
-            replay_runtime_builder=(
-                "vrl.models.families.vdn_h3.runtime:build_vdn_h3_replay_runtime_bundle"
-            ),
+            replay_cls="vrl.models.families.vdn_h3.model:VDNH3Model",
         ),
     ),
 )
@@ -783,9 +747,7 @@ _register_model_family(
         executor_cls="vrl.models.families.minimax_h3.runtime:MiniMaxH3BatchExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.minimax_h3.model:MiniMaxH3PipelineModel",
-            replay_runtime_builder=(
-                "vrl.models.families.minimax_h3.runtime:build_minimax_h3_replay_runtime_bundle"
-            ),
+            replay_cls="vrl.models.families.minimax_h3.model:MiniMaxH3Model",
         ),
     ),
 )
@@ -799,9 +761,7 @@ _register_model_family(
         executor_cls="vrl.models.families.cosmos.cosmos3.runtime:Cosmos3BatchExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.cosmos.cosmos3.model:Cosmos3PipelineModel",
-            replay_runtime_builder=(
-                "vrl.models.families.cosmos.cosmos3.runtime:build_cosmos3_replay_runtime_bundle"
-            ),
+            replay_cls="vrl.models.families.cosmos.cosmos3.model:Cosmos3Model",
         ),
     ),
 )
@@ -815,9 +775,7 @@ _register_model_family(
         executor_cls="vrl.models.families.echo.runtime:EchoBatchExecutor",
         build=DenoiseFamilyBuild(
             model_cls="vrl.models.families.echo.model:EchoPipelineModel",
-            replay_runtime_builder=(
-                "vrl.models.families.echo.runtime:build_echo_replay_runtime_bundle"
-            ),
+            replay_cls="vrl.models.families.echo.model:EchoModel",
         ),
     ),
 )

@@ -6,10 +6,6 @@ interleaved joint sequence and returns a 3-tuple of lists, which does not fit
 ``DenoiseBackboneInput``; CFG + velocity-masking run inline in
 ``Cosmos3Model.forward_step`` (see model.py). A runner would be a thin no-op layer
 with no protocol boundary, so it is intentionally omitted.
-
-Replay loads the transformer and scheduler directly. Upstream segment builders
-consume stored token IDs and latents plus the VAE's configuration-only temporal
-compression factor; no generation pipeline or VAE weights are retained.
 """
 
 from __future__ import annotations
@@ -22,25 +18,6 @@ from vrl.generation.bindings.full_sequence import (
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
-from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
-from vrl.utils.logging import init_logger
-
-logger = init_logger(__name__)
-
-
-def build_cosmos3_replay_runtime_bundle(
-    build: ModelBuild,
-    *,
-    materialize_weights: bool = True,
-) -> RuntimeBundle:
-    """Cosmos3 replay loads real weights on every rank; no skeleton path yet."""
-
-    del materialize_weights
-    from vrl.models.families.cosmos.cosmos3.model import Cosmos3Model
-    from vrl.models.steps.denoise.build import assemble_replay_bundle
-
-    logger.info("Building cosmos3 replay runtime bundle from %s", build.model_name_or_path)
-    return assemble_replay_bundle(Cosmos3Model.from_build(build), build)
 
 
 class Cosmos3BatchExecutor(DenoiseBatchExecutorBase):
@@ -75,5 +52,4 @@ class Cosmos3BatchExecutor(DenoiseBatchExecutorBase):
 
 __all__ = [
     "Cosmos3BatchExecutor",
-    "build_cosmos3_replay_runtime_bundle",
 ]

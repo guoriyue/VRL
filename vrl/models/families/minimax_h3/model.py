@@ -289,6 +289,54 @@ class MiniMaxH3SamplingState(DenoiseSamplingStateBase):
     audio_rows_by_step: list[torch.Tensor] = field(default_factory=list)
 
 
+def load_h3_replay_components(
+    build: ModelBuild,
+    *,
+    block_devices: tuple[int, ...] | None = None,
+    materialize_weights: bool = True,
+) -> dict[str, Any]:
+    """Transformer + the two H3 schedulers as ``MiniMaxH3Model`` kwargs.
+
+    Replay needs TWO schedulers (video ``shift=12``, audio ``shift=3``, both
+    ``MiniMaxH3Scheduler`` under different subfolders), and the video one has to
+    be the flow-convention subclass, so the registry's one-scheduler recipe does
+    not fit. Shared with VDN-H3, whose replay model is the same construction plus
+    the hybrid-attention graft applied afterwards. ``materialize_weights=False``
+    loads a meta skeleton for a sharded strategy to fill; the block-partitioned
+    loader always materializes, since its device map is the placement.
+    """
+
+    from diffusers import MiniMaxH3Scheduler
+
+    from vrl.models.loader import load_diffusers_transformer
+
+    if block_devices is None:
+        transformer = load_diffusers_transformer(
+            build,
+            "MiniMaxH3Transformer3DModel",
+            materialize_weights=materialize_weights,
+        )
+    else:
+        from vrl.models.families.minimax_h3.placement import load_partitioned_transformer
+
+        transformer = load_partitioned_transformer(build, block_devices)
+    load_kwargs = build.pretrained_kwargs
+    return {
+        "transformer": transformer,
+        "scheduler": build_flow_scheduler_class().from_pretrained(
+            build.model_name_or_path,
+            subfolder="scheduler",
+            **load_kwargs,
+        ),
+        "audio_scheduler": MiniMaxH3Scheduler.from_pretrained(
+            build.model_name_or_path,
+            subfolder="audio_scheduler",
+            **load_kwargs,
+        ),
+        "device": build.device,
+    }
+
+
 class MiniMaxH3Model(CosmosReplayForward, DiffusersModelBase):
     """MiniMax-H3 joint video+audio transformer, its two schedulers and per-step math: the model replay runs.
 
@@ -302,6 +350,19 @@ class MiniMaxH3Model(CosmosReplayForward, DiffusersModelBase):
     ) -> None:
         super().__init__(transformer=transformer, scheduler=scheduler, device=device)
         self._audio_scheduler = audio_scheduler
+
+    @classmethod
+    def from_build(cls, build: ModelBuild) -> MiniMaxH3Model:
+        """Transformer + both H3 schedulers; no VAE, no conditioner."""
+
+        build.require_replay()
+        model = cls(
+            **load_h3_replay_components(build, materialize_weights=build.materialize_weights)
+        )
+        num_steps = build.num_steps
+        if num_steps is not None:
+            model.set_num_steps(num_steps)
+        return model
 
     @property
     def audio_scheduler(self) -> Any:
@@ -844,6 +905,7 @@ __all__ = [
     "MiniMaxH3SamplingState",
     "audio_euler_step",
     "build_flow_scheduler_class",
+    "load_h3_replay_components",
     "patchify_video_latents",
     "unpatchify_video_rows",
 ]

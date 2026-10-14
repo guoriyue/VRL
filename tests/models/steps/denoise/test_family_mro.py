@@ -6,7 +6,8 @@ have to switch off again; the replay test pins that shape. The others pin
 MRO facts whose failure is a silent wrong answer rather than an error:
 
 - ``from_build`` on ``DiffusersPipelineModelBase`` is the shared diffusers
-  loader; a family not backed by a diffusers pipeline must own its own.
+  loader; a family not backed by a diffusers pipeline must own its own, and so
+  must a replay class the registry loads through ``from_build``.
 - The Wan I2V sampling class must run the I2V math the I2V replay model runs.
 """
 
@@ -20,16 +21,6 @@ from vrl.models.families.registry import FAMILY_REGISTRY, DenoiseFamilyBuild
 from vrl.models.steps.denoise import DenoiseModelBase
 from vrl.models.steps.denoise.base import DenoisePipelineModelBase, DiffusersPipelineModelBase
 from vrl.utils.config import import_from_path
-
-# Families whose registry entry declares a replay BUILDER instead of a replay
-# class, so the class cannot be reached through ``DenoiseFamilyBuild``.
-_UNREGISTERED_REPLAY_CLASSES = (
-    "vrl.models.families.echo.model:EchoModel",
-    "vrl.models.families.causvid.model:CausVidModel",
-    "vrl.models.families.cosmos.cosmos3.model:Cosmos3Model",
-    "vrl.models.families.minimax_h3.model:MiniMaxH3Model",
-    "vrl.models.families.vdn_h3.model:VDNH3Model",
-)
 
 
 def _owner(cls: type, name: str) -> type | None:
@@ -49,17 +40,15 @@ def _denoise_model_classes() -> list[Any]:
     ]
 
 
-def _replay_model_classes() -> list[Any]:
-    paths = [
-        entry.family_build.replay_cls
-        for entry in FAMILY_REGISTRY.values()
-        if isinstance(entry.family_build, DenoiseFamilyBuild)
-        and entry.family_build.replay_cls is not None
-    ]
-    paths.extend(_UNREGISTERED_REPLAY_CLASSES)
+def _replay_model_classes(*, self_loading: bool | None = None) -> list[Any]:
     classes = {}
-    for path in paths:
-        replay_cls = import_from_path(path)
+    for entry in FAMILY_REGISTRY.values():
+        build = entry.family_build
+        if not isinstance(build, DenoiseFamilyBuild) or build.replay_cls is None:
+            continue
+        if self_loading is not None and (build.transformer_classname is None) != self_loading:
+            continue
+        replay_cls = import_from_path(build.replay_cls)
         classes[replay_cls.__name__] = replay_cls
     return [pytest.param(cls, id=name) for name, cls in classes.items()]
 
@@ -72,6 +61,17 @@ def test_family_without_a_diffusers_pipeline_owns_from_build(
 
     if not issubclass(model_cls, DiffusersPipelineModelBase):
         assert _owner(model_cls, "from_build") is model_cls
+
+
+@pytest.mark.parametrize("replay_cls", _replay_model_classes(self_loading=True))
+def test_self_loading_replay_model_owns_from_build(replay_cls: type) -> None:
+    """A replay class the registry loads through ``from_build`` defines its own.
+
+    Inheriting a parent family's loader is a silent wrong model: ``VDNH3Model``
+    without its own ``from_build`` would load MiniMax-H3 and skip the graft.
+    """
+
+    assert _owner(replay_cls, "from_build") is replay_cls
 
 
 def test_wan_i2v_pipeline_takes_forward_math_from_i2v_and_plumbing_from_t2v() -> None:

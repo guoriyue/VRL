@@ -297,13 +297,10 @@ def test_policy_replay_support_is_derived_from_family_recipes() -> None:
         {},
         {
             "replay_cls": "example:Replay",
-            "transformer_classname": "Transformer",
-            "replay_runtime_builder": "example:build_replay",
-        },
-        {
-            "replay_runtime_builder": "example:build_replay",
             "replay_unavailable_reason": "generation only",
         },
+        {"transformer_classname": "Transformer", "replay_unavailable_reason": "generation only"},
+        {"replay_cls": "example:Replay", "scheduler_classname": "Scheduler"},
     ],
 )
 def test_denoise_family_build_rejects_ambiguous_replay_modes(
@@ -468,15 +465,7 @@ def test_denoise_family_build_descriptors_have_one_explicit_replay_mode() -> Non
         if not entry.supports_policy_replay:
             assert build.replay_cls is None
             assert build.transformer_classname is None
-            assert build.replay_runtime_builder is None
             assert build.replay_unavailable_reason
             continue
-        if build.replay_cls is not None:
-            assert callable(import_from_path(build.replay_cls))
-            assert build.transformer_classname
-            assert build.replay_runtime_builder is None
-            assert build.replay_unavailable_reason is None
-        else:
-            assert build.replay_runtime_builder
-            assert callable(import_from_path(build.replay_runtime_builder))
-            assert build.replay_unavailable_reason is None
+        assert callable(import_from_path(build.replay_cls))
+        assert build.replay_unavailable_reason is None

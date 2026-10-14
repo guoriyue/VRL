@@ -1,14 +1,10 @@
-"""Runtime assembly and generation executor for CausVid."""
+"""Generation executor for CausVid."""
 
 from __future__ import annotations
 
 from vrl.generation.bindings.chunk_autoregressive import (
     ChunkAutoregressiveDenoiseExecutorBase,
 )
-from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
-from vrl.utils.logging import init_logger
-
-logger = init_logger(__name__)
 
 
 class CausVidBatchExecutor(ChunkAutoregressiveDenoiseExecutorBase):
@@ -18,18 +14,6 @@ class CausVidBatchExecutor(ChunkAutoregressiveDenoiseExecutorBase):
     task: str = "t2v"
 
 
-def build_causvid_replay_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
-    """Build the minimal transformer-only CausVid trainer runtime."""
-
-    from vrl.models.families.causvid.model import CausVidModel
-    from vrl.models.steps.denoise.build import assemble_replay_bundle
-
-    build.require_replay()
-    logger.info("Building CausVid replay runtime from %s", build.model_name_or_path)
-    return assemble_replay_bundle(CausVidModel.from_build(build), build)
-
-
 __all__ = [
     "CausVidBatchExecutor",
-    "build_causvid_replay_runtime_bundle",
 ]

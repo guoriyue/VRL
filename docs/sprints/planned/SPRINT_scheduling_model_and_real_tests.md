@@ -280,7 +280,7 @@ MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_prefl
 
 保留并说明理由：
 - 按 kind 分发到多个实现类的工厂：`build_strategy`、`build_reward_scorer`、`build_optimizer`（产出不属于任何一个类）。
-- 注册表按字符串路径引用的钩子：各 family 的 `build_*_replay_runtime_bundle`、`normalize_*_model_build`。
+- 注册表按字符串路径引用的钩子：各 family 的 `normalize_*_model_build`。
 - 对 state-dict 树工作的一组函数：`capture_rng_state` / `validate_rng_state` / `restore_rng_state`。
 - `resolve_checkpoint_model_identity(build)`：产出的是写进 checkpoint 元数据的可序列化 dict，算法独立成模块；做成 `ModelBuild` 方法只能是转发。
 - `require_training_config(cfg)`：parse + 跨节规则 + 精度策略三件事的入口；`BuiltConfigs.from_cfg` 调它。
@@ -383,7 +383,7 @@ MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_prefl
 
 判断标准（按 C++ 的 static 成员函数）：函数并进类 `T`，要么它是具名构造函数——返回恰好一个 `T`，且普通构造表达不了（集体通信、字段由输入推导）；要么它要用 `T` 的不变量或内部表示。返回容器、`None`，或装的是别的模块的规则，就留在模块里当函数：Python 的模块就是命名空间。上表两项是具名构造函数。`build_adapter_exports`（返回 `dict | None`，决定的是检查点目录布局）和 `build_reward_model_definitions`（返回列表，写死的是这份 SANA 报告用哪两个 reward）按这条标准不并，留在 checkpointing 和报告模块里。
 
-留下的 build_* / validate_*（80 个里的其余）：19 个脚本的 `build_parser` 是 CLI 入口约定；`build_*_replay_runtime_bundle` 是注册表按字符串引用的 family 钩子；`build_strategy` / `build_reward_scorer` / `build_optimizer` 按 kind 分发到多个类；`build_fsdp_mesh` / `build_context_parallel_mesh` 产出 torch 的 DeviceMesh；其余产出 dict / list / str，没有对应的类；`validate_*` 各检查一件自己的事，读的是文件或张量而不是某个对象的字段。两处同一角色两个名字的：`encode_targets` 和 `full_sequence_probe` 叫 `_build_arg_parser`，其它 19 个脚本叫 `build_parser`；改名要你定。
+留下的 build_* / validate_*（80 个里的其余）：19 个脚本的 `build_parser` 是 CLI 入口约定；`build_strategy` / `build_reward_scorer` / `build_optimizer` 按 kind 分发到多个类；`build_fsdp_mesh` / `build_context_parallel_mesh` 产出 torch 的 DeviceMesh；其余产出 dict / list / str，没有对应的类；`validate_*` 各检查一件自己的事，读的是文件或张量而不是某个对象的字段。两处同一角色两个名字的：`encode_targets` 和 `full_sequence_probe` 叫 `_build_arg_parser`，其它 19 个脚本叫 `build_parser`；改名要你定。
 
 ## 18. 构造器后缀按输入类型（2026-10-10）
 

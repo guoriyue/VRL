@@ -1,9 +1,5 @@
 """JoyAI-Echo family runtime (single-shot video flow-matching policy).
 
-Echo is not diffusers-backed, so the replay bundle does NOT use
-``load_diffusers_transformer``; it builds the velocity transformer through Echo's
-own ``create_ltx2_wrapper`` (transformer only — no text encoder / VAE / audio).
-
 The rollout bundle routes through the shared diffusion builder (2026-07-01),
 which wires rollout quantization and torch.compile — both conditional no-ops
 while the config leaves them off, and both still UNVALIDATED on the LTX
@@ -15,89 +11,12 @@ from __future__ import annotations
 
 from typing import Any
 
-import torch
-
 from vrl.generation.bindings.full_sequence import (
     DenoiseBatchExecutorBase,
     DenoiseSamplingParams,
 )
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.types import GenerationRequest
-from vrl.models.interfaces.runtime import ModelBuild, RuntimeBundle
-from vrl.utils.logging import init_logger
-
-logger = init_logger(__name__)
-
-
-def build_echo_replay_runtime_bundle(
-    build: ModelBuild,
-    *,
-    materialize_weights: bool = True,
-) -> RuntimeBundle:
-    """Build the trainer replay bundle: Echo's velocity transformer only.
-
-    The vendored LTX wrapper loads its checkpoint whole, so every rank
-    materializes real weights regardless of ``materialize_weights``.
-    """
-
-    del materialize_weights
-
-    from vrl.models.families.echo.config import resolve_echo_video_dimensions
-
-    video_height, video_width = resolve_echo_video_dimensions(build)
-    from diffusers import FlowMatchEulerDiscreteScheduler
-
-    from vrl.models.families.echo.model import (
-        EchoModel,
-        _resolve_echo_checkpoint,
-        _resolve_gemma_dir,
-    )
-
-    logger.info("Building echo replay runtime bundle from %s", build.model_name_or_path)
-    from ltx_distillation.models.ltx_wrapper import create_ltx2_wrapper
-
-    dtype = build.parameter_dtype
-    device = torch.device(build.device) if build.device is not None else torch.device("cpu")
-    gemma_path = (build.model_config or {}).get("gemma_path")
-    if not gemma_path:
-        raise ValueError(
-            "Echo requires model.gemma_path (the Gemma-3-12B encoder directory)",
-        )
-    echo = create_ltx2_wrapper(
-        checkpoint_path=_resolve_echo_checkpoint(
-            build.model_name_or_path,
-            **build.revision_kwargs,
-        ),
-        gemma_path=_resolve_gemma_dir(
-            str(gemma_path),
-            **build.config_revision_kwargs("gemma_revision"),
-        ),
-        device=device,
-        dtype=dtype,
-        video_height=video_height,
-        video_width=video_width,
-    )
-    # Same flow-matching scheduler as the rollout side (model.py from_build): Echo's
-    # released DMD few-step sampler is bypassed; RL drives the velocity field with
-    # the standard flow-matching SDE. num_train_timesteps=1000 is Echo/LTX's
-    # train-time discretization (sigma = t / num_train_timesteps), and it MUST match the
-    # rollout value so replay log-prob recompute reads the identical sigma table.
-    model = EchoModel(
-        echo=echo,
-        scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000),
-        device=device,
-    )
-    # The replay scheduler feeds the SDE log-prob evaluator, which maps each
-    # stored timestep -> sigma via scheduler.sigmas; populate the schedule (the
-    # rollout side does this in prepare_sampling, but the trainer reads
-    # bundle.scheduler directly).
-    num_steps = build.num_steps
-    if num_steps is not None:
-        model.set_num_steps(num_steps)
-
-    from vrl.models.steps.denoise.build import assemble_replay_bundle
-
-    return assemble_replay_bundle(model, build)
 
 
 class EchoBatchExecutor(DenoiseBatchExecutorBase):
@@ -138,5 +57,4 @@ class EchoBatchExecutor(DenoiseBatchExecutorBase):
 
 __all__ = [
     "EchoBatchExecutor",
-    "build_echo_replay_runtime_bundle",
 ]

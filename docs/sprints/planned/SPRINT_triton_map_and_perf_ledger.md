@@ -160,7 +160,7 @@ resolved config 的 torch_compile 键。事实链：
   （preset 注释记录了当时的 A/B：1.31×/1.33×）。
 - Run E resolved config 第 83–85 行 `enable: true, mode: default`；日志
   15:05:10 有 `rollout pass compile applied (mode=default)`。
-- 训练侧同样生效：`assemble_replay_bundle`（`vrl/models/steps/denoise/build.py:104`）
+- 训练侧同样生效：`build_family_replay_runtime_bundle`（`vrl/models/steps/denoise/build.py`）
   按同一 knob compile 重放模型；compile×checkpointing 冲突由
   `validate_compile_checkpointing_compatible` 在配置加载期拦截。
 

@@ -27,11 +27,12 @@ rank 0 在 CPU 加载真权重，其余 rank 用 `init_empty_weights` 建 meta �
 - 谁需要真权重是**训练策略**的事实，不是模型的：`Strategy.materialize_weights`
   属性，非分片策略（单进程 / DDP / CP，每个 rank 都复制整个策略）恒为真，
   FSDP 只在 rank 0 为真。
-- 训练入口把它作为关键字传给 `ResolvedModel.materialize(materialize_weights=...)`
-  → `ModelFamilyEntry.build_replay(build, materialize_weights=...)` →
-  各家族 replay 构建器 → `load_diffusers_transformer(..., materialize_weights=...)`。
-  它不进 `ModelBuild`，不过 Ray wire 边界，和刚删掉的 `defer_trainable_device_move`
-  是同一条原则：策略事实不投影成构建参数。
+- 训练入口把它写进本 rank 的 replay 构建：
+  `replace(replay_build, materialize_weights=strategy.materialize_weights)` →
+  `ModelFamilyEntry.build_replay(build)` → 通用 recipe 或能建骨架的
+  `XModel.from_build` → `load_diffusers_transformer(..., materialize_weights=build.materialize_weights)`。
+  2026-10-13 起它是 `ModelBuild` 字段（默认 True，和 `device` 一样是每 rank 的加载选项）。
+  之前它是一路透传的关键字，建不了骨架的 4 个家族只能收下再 `del`；放进构建之后它们不再碰它。
 - 采样路径不受影响：`build_rollout` 没有这个关键字。
 
 ## 3. 改动
@@ -52,7 +53,7 @@ rank 0 在 CPU 加载真权重，其余 rank 用 `init_empty_weights` 建 meta �
 | 家族 | `materialize_weights=False` 时 |
 | --- | --- |
 | 所有走 `DenoiseFamilyBuild` 通用 recipe 的家族 | 骨架 |
-| MiniMax-H3 / VDN-H3 共用的 `load_h3_replay_components` | 骨架（`block_devices` 分卡路径始终加载真权重，它的 device map 就是放置本身） |
+| MiniMax-H3（`MiniMaxH3Model.from_build` → `load_h3_replay_components`） | 骨架（`block_devices` 分卡路径始终加载真权重，它的 device map 就是放置本身） |
 | Anima | 骨架（同一个 `_cosmos_t2i_transformer_config()`） |
 | VDN-H3 | 真权重：graft 要把 VDN checkpoint 的分支权重装进骨干 |
 | Echo | 真权重：vendored LTX wrapper 整体加载 |

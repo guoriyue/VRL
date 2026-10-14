@@ -114,7 +114,7 @@ def test_echo_replay_checkpoint_uses_optional_model_revision(
     revision: str | None,
 ) -> None:
     """Replay resolves the same merged checkpoint revision as rollout."""
-    from vrl.models.families.echo.runtime import build_echo_replay_runtime_bundle
+    from vrl.models.families.echo.model import EchoModel
 
     wrapper_calls: list[dict[str, Any]] = []
     _patch_echo_dependencies(monkeypatch, wrapper_calls)
@@ -128,16 +128,9 @@ def test_echo_replay_checkpoint_uses_optional_model_revision(
 
     import huggingface_hub
 
-    import vrl.models.steps.denoise.build as diffusion_build
-
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_hub_download)
-    monkeypatch.setattr(
-        diffusion_build,
-        "assemble_replay_bundle",
-        lambda model, _build, **_kwargs: model,
-    )
 
-    build_echo_replay_runtime_bundle(_build(str(gemma_path), revision))
+    EchoModel.from_build(_build(str(gemma_path), revision))
 
     expected = {
         "repo_id": "jdopensource/JoyAI-Echo",
