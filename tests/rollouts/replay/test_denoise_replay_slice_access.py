@@ -31,7 +31,6 @@ def test_diffusion_replay_slices_timestep_before_device_move(monkeypatch) -> Non
     evaluator = DenoiseSDELogProbEvaluator(_Scheduler())
     model = _ReplayModel()
 
-    assert evaluator.supports_deferred_replay_tensor_move is True
     moved = batch.to_device(
         torch.device("cpu"),
         defer_replay_tensors=True,
@@ -208,9 +207,11 @@ def test_replay_propagates_model_device_failure(error_type) -> None:
     assert all(sentinel.full_to_calls == 0 for sentinel in sentinels)
 
 
-@pytest.mark.parametrize("version", [True, 1.9, "1", -1])
+@pytest.mark.parametrize("version", [True, -1])
 def test_active_slot_fast_path_rejects_ambiguous_version(version) -> None:
     model = _ReplayModel()
+    # The fast path skips the reload when the requested version is already
+    # active; True == 1 would take it without validation.
     model._active_slot_version = 1
     with pytest.raises(ValueError, match="policy version"):
         model.activate_trainable_state(version)

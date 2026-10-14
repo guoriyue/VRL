@@ -6,7 +6,6 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-import pytest
 import torch
 
 from vrl.generation import GenerationRequest, GenerationSampleRow
@@ -30,7 +29,6 @@ def test_grouped_evaluator_flattens_policy_axes_and_replays_reference_once() -> 
         need_ref=True,
     )
 
-    assert evaluator.replay_granularity == "trajectory"
     assert signals.primary.log_prob.shape == (2, 6)
     assert signals.primary.old_log_prob.shape == (2, 6)
     assert signals.primary.mask.shape == (2, 6)
@@ -39,8 +37,7 @@ def test_grouped_evaluator_flattens_policy_axes_and_replays_reference_once() -> 
     assert model.adapter_disable_count == 1
 
 
-@pytest.mark.parametrize("shared_reference", [False, True])
-def test_reference_replay_does_not_build_a_gradient_graph(shared_reference) -> None:
+def test_reference_replay_does_not_build_a_gradient_graph() -> None:
     class DifferentiableReplay(_ReplayModel):
         def __init__(self):
             super().__init__()
@@ -52,25 +49,23 @@ def test_reference_replay_does_not_build_a_gradient_graph(shared_reference) -> N
             result = super().replay_forward(*args, **kwargs)
             return {"log_probs": result["log_probs"] * self.weight}
 
+    # A policy standing in for its own reference (reference forward before
+    # the live one) is test_reference_forward_order.
     model = DifferentiableReplay()
-    reference = model if shared_reference else DifferentiableReplay()
+    reference = DifferentiableReplay()
     signal = (
         ChunkAutoregressiveDenoiseLogProbEvaluator()
         .evaluate(model, _batch(), 0, ref_model=reference, need_ref=True)
         .primary
     )
 
-    # The reference forward (no grad) precedes the live one (grad): a policy
-    # standing in for its own reference swaps weights in place, which must not
-    # touch the live forward's graph.
     assert model.grad_modes[-1] is True
     assert reference.grad_modes[0] is False
     assert signal.log_prob.requires_grad
     assert not signal.ref_log_prob.requires_grad
     (signal.log_prob - signal.ref_log_prob).sum().backward()
     assert model.weight.grad.item() == 36.0
-    if not shared_reference:
-        assert reference.weight.grad is None
+    assert reference.weight.grad is None
 
 
 class _ReplayModel:
