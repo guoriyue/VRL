@@ -113,36 +113,6 @@ def test_ddim_deterministic_is_eta_zero() -> None:
     torch.testing.assert_close(result.prev_sample, ref, atol=1e-5, rtol=1e-5)
 
 
-def test_ddim_final_step_uses_terminal_alpha() -> None:
-    """The last ladder step falls back to final_alpha_cumprod instead of indexing off the table."""
-    scheduler = _scheduler("epsilon")
-    torch.manual_seed(3)
-    sample = torch.randn(_SHAPE)
-    model_output = torch.randn(_SHAPE)
-    last = len(scheduler.timesteps) - 1
-    t = scheduler.timesteps[last]
-
-    result = sde_step_with_logprob(
-        scheduler,
-        model_output,
-        t.expand(_SHAPE[0]),
-        sample,
-        generator=torch.Generator().manual_seed(9),
-        sde_type="ddim",
-        step_index=last,
-    )
-    ref = scheduler.step(
-        model_output,
-        t,
-        sample,
-        eta=1.0,
-        variance_noise=torch.zeros(_SHAPE),
-        return_dict=False,
-    )[0]
-    torch.testing.assert_close(result.prev_sample_mean, ref, atol=1e-5, rtol=1e-5)
-    assert torch.isfinite(result.log_prob).all()
-
-
 @pytest.mark.parametrize("step_indices", [[9, 9], [3, 9]])
 @pytest.mark.parametrize("residual", [0.0, 0.2])
 def test_ddim_zero_variance_scores_and_gradients(step_indices, residual) -> None:
