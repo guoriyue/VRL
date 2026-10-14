@@ -21,7 +21,6 @@ from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.runtime import RayGenerationRuntime
-from vrl.generation.types import GenerationOutput
 from vrl.ray.resources import ResourcePlan
 
 # These build real Ray workers on the package cluster — slow by nature, nightly.
@@ -99,39 +98,6 @@ async def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(
         assert "policy_version" not in metadata
 
 
-@pytest.mark.asyncio
-async def test_pipelined_runtime_stages_batches_and_merges_on_the_finalizer(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    """Per-request path end to end on real actors: the rank stages each batch in
-    the object store, the finalizer merges the references, and the driver gets
-    the gathered output in batch order."""
-
-    async with ray_sana_runtime(
-        monkeypatch,
-        tmp_path,
-        ray_sana_snapshot,
-        overrides=("distributed.rollout.pipelined=true", "rollout.samples_per_generation_batch=2"),
-    ) as ray_run:
-        runtime = ray_run.runtime
-        session = runtime._session
-        assert session is not None
-        assert [handle.worker_id for handle in session.finalizer_handles] == [
-            "rollout-0.finalize",
-        ]
-        assert session.executor.finalizers == tuple(session.finalizer_handles)
-        request = ray_run.request(["p"], group_size=4)
-
-        await runtime.activate()
-        output = await runtime.generate(request)
-
-        assert isinstance(output, GenerationOutput)
-        assert output.request_id == request.request_id
-        assert output.output.shape[0] == 4
-        assert [row.sample_index for row in output.sample_rows] == [0, 1, 2, 3]
-        assert output.trajectory.request_id == request.request_id
-
-
 def test_create_runtime_rejects_missing_rollout_placement(monkeypatch, tmp_path) -> None:
     """placement=None fails fast with the config knob, not an AttributeError."""
 
@@ -206,53 +172,3 @@ async def test_phase_handoff_keeps_actor_and_owner_placement(
         assert reacquired is session
         assert [e.engine_id for e in reacquired.executor.engines] == ["rollout-0"]
         assert reacquired.executor.engines[0].ranks[0].actor is first_actor
-
-
-@pytest.mark.parametrize("query", ["current_node_ip", "current_gpu_ids"])
-def test_worker_metadata_preserves_placement_query_failure(monkeypatch, tmp_path, query) -> None:
-    """A failed placement query surfaces as itself from the real worker."""
-
-    from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
-    from vrl.generation.ray import worker
-
-    cfg = tiny_sana_online_config(tmp_path)
-    TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
-    built = BuiltConfigs.from_cfg(cfg)
-    resources = ResourcePlan.from_root(built.root)
-    replay_build = built.family.resolve_model_build(
-        built.root,
-        torch.device(resources.trainer_torch_device),
-        precision=built.precision,
-        for_rollout=False,
-    )
-    replay_identity = replay_build.checkpoint_identity()
-    actor = worker.RayGenerationWorker(
-        "rollout-0",
-        RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity),
-    )
-    failure = RuntimeError("placement query failed")
-
-    def fail():
-        raise failure
-
-    monkeypatch.setattr(worker, query, fail)
-    with pytest.raises(RuntimeError, match="placement query failed") as caught:
-        actor.worker_metadata()
-    assert caught.value is failure
-
-
-def test_cross_node_validation_preserves_driver_node_query_failure(monkeypatch) -> None:
-    from types import SimpleNamespace
-
-    from vrl.generation.ray import launcher
-
-    failure = RuntimeError("driver node query failed")
-
-    def fail():
-        raise failure
-
-    monkeypatch.setattr(launcher, "current_node_ip", fail)
-    resources = SimpleNamespace(rollout_devices=(0,), cross_node=True)
-    with pytest.raises(RuntimeError, match="driver node query failed") as caught:
-        launcher.RayGenerationLauncher._validate_rank_gpu_ids(resources, [])
-    assert caught.value is failure

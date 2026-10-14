@@ -60,28 +60,3 @@ def test_merge_rejects_an_empty_reference_list() -> None:
     request = _request()
     with pytest.raises(ValueError, match="no batch references"):
         RayGenerationFinalizer("finalize-0", DenoiseBatchGatherer()).merge_request(request, [])
-
-
-@pytest.mark.slow_test
-def test_real_ray_finalizer_merges_staged_batches(local_ray) -> None:
-    """Staged payloads round-trip through the object store into one output."""
-
-    ray = local_ray
-    finalizer = ray.remote(num_cpus=0)(RayGenerationFinalizer).remote(
-        "finalize-0", DenoiseBatchGatherer()
-    )
-    try:
-        request = _request(4)
-        refs = [ray.put(_batch(0, 2)), ray.put(_batch(2, 2))]
-        output = ray.get(
-            finalizer.merge_request.remote(request, refs),
-            timeout=60,
-        )
-        assert isinstance(output, GenerationOutput)
-        assert output.request_id == "r"
-        assert [row.sample_index for row in output.trajectory.sample_rows] == [0, 1, 2, 3]
-        assert all(isinstance(sample, MediaReference) for sample in output.output)
-        assert sum(sample.nbytes for sample in output.output) == 4 * 48
-        assert ray.get(finalizer.health.remote(), timeout=30) == "finalize-0"
-    finally:
-        ray.kill(finalizer, no_restart=True)

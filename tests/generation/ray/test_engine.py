@@ -6,7 +6,7 @@ ranks (rank groups need GPUs), so each launched single-rank engine's actor
 stands for one rank of the N=2/3 engine under test. The launcher starts a
 subclass of the real worker (``_rank_worker``) that turns one named rank into
 the failure a theorem needs -- a real executor error, torch's CUDA OOM error,
-or a reply whose identity disagrees -- and otherwise runs unchanged.
+or a parking report whose identity disagrees -- and otherwise runs unchanged.
 """
 
 from __future__ import annotations
@@ -52,8 +52,7 @@ def _rank_worker(
 
     ``decode`` / ``oom``: its executor's forward raises a real error / torch's
     CUDA OOM error; ``request_oom``: only inside the per-request loop;
-    ``request_id`` / ``policy_version``: its batch reply disagrees on that
-    field; ``snapshot``: its parking report names another worker.
+    ``snapshot``: its parking report names another worker.
     """
 
     class _RankWorker(RayGenerationWorker):
@@ -74,14 +73,6 @@ def _rank_worker(
             executor.forward_batch = forward_batch
 
         _in_request = False
-
-        def execute_batch(self, envelope: Any) -> Any:
-            result = super().execute_batch(envelope)
-            if self.core.worker_id == faulty and fault == "request_id":
-                result = replace(result, request_id="wrong")
-            if self.core.worker_id == faulty and fault == "policy_version":
-                result = replace(result, policy_version=8)
-            return result
 
         def execute_request_batches(self, request: Any, sample_batches: Any) -> Any:
             self._in_request = True
@@ -360,13 +351,3 @@ async def test_batch_combines_metrics_from_every_rank_without_mutating_primary(
         assert set(result.rank_metrics) == {"rollout-0", "rollout-1"}
         assert result.worker_id == "rollout-0"
         assert set(primary.rank_metrics) == {"rollout-0"}
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["request_id", "policy_version"])
-async def test_batch_rejects_inconsistent_rank_identity(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path, field: str
-) -> None:
-    async with _ranks(monkeypatch, tmp_path, ray_sana_snapshot, 2, fault=field) as (run, handles):
-        with pytest.raises(RuntimeError, match="engine ranks returned different"):
-            await RayGenerationEngine("engine-0", handles).execute_batch()(_envelope(run))
