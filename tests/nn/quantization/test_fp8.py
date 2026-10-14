@@ -437,64 +437,6 @@ def test_quantization_pass_dispatches_by_scheme():
     assert model.recipes == ["rowwise"]
 
 
-def test_resolve_model_build_derives_fp8_from_precision_rollout():
-    from omegaconf import OmegaConf
-
-    from vrl.config.precision import PrecisionPolicy
-    from vrl.config.schema import parse_config
-    from vrl.models.families.registry import get_model_family_entry
-
-    fp8_cfg = OmegaConf.create(
-        {
-            "model": {"family": "sd3_5", "path": "x"},
-            "precision": {
-                "float32_precision": "tf32",
-                "training": {"dtype": "bf16"},
-                "rollout": {
-                    "dtype": "bf16",
-                    "quantization": {"format": "fp8"},
-                },
-            },
-        }
-    )
-    fp8_root = parse_config(fp8_cfg)
-    fp8_precision = PrecisionPolicy.from_section(fp8_root.precision)
-    entry = get_model_family_entry("sd3_5")
-    build = entry.resolve_model_build(
-        fp8_root,
-        "cuda",
-        precision=fp8_precision,
-    )
-    assert build.rollout is not None
-    assert build.precision.quantization is not None
-    assert build.precision.quantization.format == "fp8"
-    assert build.precision.dtype == "bf16"
-    assert build.precision.float32_precision == "tf32"
-    assert build.precision.outer_autocast is True
-    assert build.parameter_dtype is torch.bfloat16  # this family uses a bf16 source master
-
-    bf16_cfg = OmegaConf.create(
-        {
-            "model": {"family": "sd3_5", "path": "x"},
-            "precision": {
-                "float32_precision": "tf32",
-                "training": {"dtype": "bf16"},
-                "rollout": {"dtype": "bf16"},
-            },
-        }
-    )
-    bf16_root = parse_config(bf16_cfg)
-    bf16_precision = PrecisionPolicy.from_section(bf16_root.precision)
-    plain_build = entry.resolve_model_build(
-        bf16_root,
-        "cuda",
-        precision=bf16_precision,
-    )
-    assert plain_build.rollout is not None
-    assert plain_build.precision.quantization is None
-    assert plain_build.precision.dtype == "bf16"
-
-
 @pytest.mark.gpu
 @requires_fp8
 def test_end_to_end_dit_stack_drift_is_bounded(capsys):

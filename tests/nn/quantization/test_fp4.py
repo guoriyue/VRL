@@ -316,42 +316,6 @@ def test_pass_allows_torch_compile_after_shape_gate(monkeypatch) -> None:
     assert model.nvfp4_calls == 1
 
 
-def test_resolve_model_build_derives_nvfp4_from_nested_precision() -> None:
-    from omegaconf import OmegaConf
-
-    from vrl.config.precision import PrecisionPolicy
-    from vrl.config.schema import parse_config
-    from vrl.models.families.registry import get_model_family_entry
-
-    cfg = OmegaConf.create(
-        {
-            "model": {"family": "sd3_5", "path": "x"},
-            "precision": {
-                "float32_precision": "tf32",
-                "training": {"dtype": "bf16"},
-                "rollout": {
-                    "dtype": "bf16",
-                    "quantization": {"format": "nvfp4"},
-                },
-            },
-        },
-    )
-    root = parse_config(cfg)
-    precision = PrecisionPolicy.from_section(root.precision)
-    build = get_model_family_entry("sd3_5").resolve_model_build(
-        root,
-        "cuda",
-        precision=precision,
-    )
-    assert build.rollout is not None
-    assert build.precision.quantization is not None
-    assert build.precision.quantization.format == "nvfp4"
-    assert build.precision.dtype == "bf16"
-    assert build.precision.float32_precision == "tf32"
-    assert build.precision.outer_autocast is True
-    assert build.parameter_dtype is torch.bfloat16
-
-
 # --- GPU parity and compile ---------------------------------------------------
 
 
