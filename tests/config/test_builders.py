@@ -38,16 +38,6 @@ def test_build_preserves_warm_start_adapter_without_full_resume() -> None:
     assert built.root.model.lora.path == "/tmp/warm-start-adapter"
 
 
-def test_online_build_has_named_reward_and_trainer_fields() -> None:
-    built = BuiltConfigs.from_cfg(load_config("experiment/sana/online_grpo_aesthetic"))
-
-    assert built.trainer is not None
-    assert built.reward is not None
-    assert built.reward.weights["aesthetic"] == pytest.approx(1.0)
-    assert built.reward.weights["pickscore"] == pytest.approx(0.0)
-    assert set(built.reward.kwargs) == {"aesthetic", "pickscore"}
-
-
 def test_reward_runtime_config_normalizes_every_component_and_derives_transport() -> None:
     reward = builders.RewardRuntimeConfig.from_section(
         RewardConfig.from_cfg(

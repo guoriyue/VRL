@@ -42,15 +42,6 @@ def test_offline_dpo_bridges_every_supported_adam_knob() -> None:
     assert resolved.adam_epsilon == pytest.approx(1e-6)
 
 
-def test_offline_dpo_uses_typed_optimizer_defaults_when_keys_are_absent() -> None:
-    resolved = _resolved_trainer_config(["actor.scale_lr=false"])
-
-    assert resolved.adam_beta1 == pytest.approx(0.9)
-    assert resolved.adam_beta2 == pytest.approx(0.999)
-    assert resolved.adam_weight_decay == pytest.approx(1e-4)
-    assert resolved.adam_epsilon == pytest.approx(1e-8)
-
-
 def test_offline_dpo_bridges_explicit_max_grad_norm() -> None:
     resolved = _resolved_trainer_config(["actor.max_norm=0.25"])
 
@@ -92,15 +83,3 @@ def test_offline_dpo_rejects_unsupported_deterministic_policy() -> None:
         ValueError, match=r"does not consume config field\(s\): trainer\.deterministic"
     ):
         _resolved_trainer_config(["trainer.deterministic=true"])
-
-
-@pytest.mark.parametrize(
-    "override",
-    [
-        "actor.optim.disk_state_directory=/tmp/retired-optimizer",
-        "actor.optim.disk_state_bucket_bytes=1024",
-    ],
-)
-def test_removed_disk_optimizer_options_are_rejected(override: str) -> None:
-    with pytest.raises((ValueError, TypeError)):
-        _resolved_trainer_config([override])

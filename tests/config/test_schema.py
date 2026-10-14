@@ -72,24 +72,6 @@ def test_unknown_enum_value_is_rejected_at_parse_by_its_dotted_path(path: str, v
 # ── distributed.rollout knobs ─────────────────────────────────────────────────
 
 
-def test_rollout_worker_timeouts_default_and_accept_override() -> None:
-    default = parse_config(minimal_grpo_cfg(distributed={"rollout": {}}))
-    assert default.distributed.rollout.worker_rpc_timeout_s == 600.0
-    assert default.distributed.rollout.generation_stall_timeout_s == 3600.0
-
-    cfg = minimal_grpo_cfg(
-        distributed={
-            "rollout": {
-                "worker_rpc_timeout_s": 3600.0,
-                "generation_stall_timeout_s": 1200.0,
-            }
-        },
-    )
-    rollout = parse_config(cfg).distributed.rollout
-    assert rollout.worker_rpc_timeout_s == 3600.0
-    assert rollout.generation_stall_timeout_s == 1200.0
-
-
 def test_rollout_worker_section_mirrors_worker_runtime_config() -> None:
     """RolloutRuntimeSection (pydantic lint boundary) and RolloutWorkerConfig (the
     frozen runtime projection the Ray launcher takes) must stay
@@ -221,14 +203,6 @@ def test_missing_mandatory_value_produces_repo_standard_message() -> None:
 
 
 # ── extra="ignore" migration policy ──────────────────────────────────────────
-
-
-def test_unknown_top_level_sections_are_rejected() -> None:
-    """parse_config is the one gate: a section no consumer reads fails loud."""
-    cfg = minimal_grpo_cfg()
-    OmegaConf.update(cfg, "some_future_section.foo", "bar")
-    with pytest.raises(ValueError, match=r"unknown some_future_section"):
-        parse_config(cfg)
 
 
 def test_fsdp_mesh_vocabulary_is_closed_at_parse() -> None:

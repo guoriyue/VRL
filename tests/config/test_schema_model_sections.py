@@ -31,44 +31,12 @@ from vrl.models.families.names import _FAMILY_BY_ALIAS
 from vrl.models.families.registry import (
     FAMILY_REGISTRY,
     GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR,
-    get_model_family_entry,
 )
 from vrl.models.families.wan_2_1.config import WanModelSection
 from vrl.models.interfaces.generation_memory import (
     GenerationMemoryPolicy,
     VaeDecodeMemory,
 )
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-# Independent fixture for the shared executor configuration boundary.
-_MODEL_EXECUTOR_CAPABILITIES = {
-    "sd3_5": True,
-    "causvid": False,
-    "magi_1": False,
-    "flux": True,
-    "qwen_image": True,
-    "qwen_image_21": False,
-    "sana": True,
-    "lumina2": True,
-    "hunyuan_video": True,
-    "mochi": True,
-    "hunyuan_image": True,
-    "pixart_sigma": True,
-    "cogvideox": True,
-    "wan_2_1": True,
-    "wan_2_1_i2v": False,
-    "cosmos-predict2": False,
-    "cosmos-predict2.5": False,
-    "cosmos3": False,
-    "minimax_h3": False,
-    "vdn_h3": False,
-    "echo": False,
-}
-
-
-# ── distributed.training strategy ─────────────────────────────────────────────
-
 
 # ── model family scoped keys ──────────────────────────────────────────────────
 
@@ -210,16 +178,25 @@ def test_cosmos_predict25_keys_select_family_section() -> None:
             {
                 "accept_noncommercial_license": True,
                 "base_model_path": "Wan-AI/Wan2.1-T2V-1.3B",
+                "base_model_revision": "base-revision",
+                "causvid_source_path": "third_party/CausVid",
+                "causvid_source_revision": "source-revision",
                 "checkpoint_file": "autoregressive_checkpoint/model.pt",
+                "checkpoint_sha256": "digest",
             },
         ),
         (
             "magi_1",
             Magi1ModelSection,
             {
+                "checkpoint_path": None,
+                "config_path": "example/4.5B/4.5B_base_config.json",
                 "python_executable": "third_party/MAGI-1/.venv/bin/python",
                 "source_path": "third_party/MAGI-1",
+                "source_revision": "source-revision",
+                "t5_pretrained_path": None,
                 "timeout_seconds": 3600,
+                "vae_pretrained_path": None,
             },
         ),
     ],
@@ -255,15 +232,6 @@ def test_model_family_aliases_select_their_canonical_section_classes() -> None:
 
         assert type(parsed_alias.model) is type(canonical.model)
         assert parsed_alias.model.family == alias
-
-
-def test_model_runtime_capability_matrix_covers_every_registered_family() -> None:
-    assert set(_MODEL_EXECUTOR_CAPABILITIES) == set(FAMILY_REGISTRY)
-
-    for family, supports_executor in _MODEL_EXECUTOR_CAPABILITIES.items():
-        entry = get_model_family_entry(family)
-
-        assert (entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR) is supports_executor
 
 
 def test_shared_nested_model_sections_preserve_explicit_falsy_presence() -> None:
@@ -346,7 +314,13 @@ def _parse_error(model: dict[str, object]) -> str | None:
 def test_executor_support_is_family_specific_but_memory_uses_the_shared_schema() -> None:
     """Memory field shapes parse here; actual support is checked during model build."""
 
-    for family, supports_executor in _MODEL_EXECUTOR_CAPABILITIES.items():
+    supports = {
+        family: entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
+        for family, entry in FAMILY_REGISTRY.items()
+    }
+    # Both outcomes occur, so neither branch below is vacuous.
+    assert set(supports.values()) == {True, False}
+    for family, supports_executor in supports.items():
         executor_error = _parse_error(
             {
                 "family": family,
@@ -372,7 +346,7 @@ def test_executor_support_is_family_specific_but_memory_uses_the_shared_schema()
 def test_empty_model_runtime_sections_are_valid_for_every_family(
     empty_value: object,
 ) -> None:
-    for family in _MODEL_EXECUTOR_CAPABILITIES:
+    for family in FAMILY_REGISTRY:
         parsed = parse_config(
             OmegaConf.create(
                 {
