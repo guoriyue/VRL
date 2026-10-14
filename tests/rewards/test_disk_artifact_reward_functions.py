@@ -1,14 +1,11 @@
 """Model-backed reward functions as thin in-memory inference-runtime adapters.
 
-HPSv3, Kling VideoReward and UnifiedReward-2.0 are all
-zero-method subclasses of ``ModelRewardFunction``: they only pin a
-model factory, a debug basename and their defaults. Every behavior asserted
-here -- media forwarding, ``score_key`` selection, the missing-key and
-and result/artifact-mismatch failures -- lives
-in ``vrl/rewards/base.py`` and ``vrl/rewards/inference.py``. One parametrized
-module pins that shared contract for all four wrappers, so a wrapper that
-starts overriding the adapter shows up as a red test rather than as an
-untested divergence.
+HPSv3, Kling VideoReward and UnifiedReward-2.0 are all zero-method subclasses of
+``ModelRewardFunction``: they only pin a model factory, a debug basename and their
+defaults. Every behavior asserted here -- media forwarding, ``score_key``
+selection, the missing-key and result/artifact-mismatch failures -- lives in
+``vrl/rewards/base.py`` and ``vrl/rewards/inference.py``, so one wrapper
+(Kling) stands in for all of them.
 
 Model-side parsing (UnifiedReward axis scales) and
 the debug-row schema stay in their own modules; they are not shared behavior.
@@ -17,7 +14,6 @@ the debug-row schema stay in their own modules; they are not shared behavior.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -26,50 +22,11 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.config.schema import RewardConfig
-from vrl.rewards.functions.hpsv3 import HPSv3Reward
 from vrl.rewards.functions.kling_video_reward import KlingVideoReward
-from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
 from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.types import RewardSample
 
-
-@dataclass(frozen=True)
-class _Case:
-    reward_cls: type
-    reward_name: str
-    worker_config: dict[str, str]
-    default_score_key: str
-    alternate_score_key: str
-    fake_scores: dict[str, float]
-
-
-_CASES = [
-    _Case(
-        HPSv3Reward,
-        "hpsv3",
-        {"reward_model_name": "MizzenAI/HPSv3@main"},
-        "top_frame_mean",
-        "frame_mean",
-        {"top_frame_mean": 9.5, "frame_mean": 7.25, "frame_min": 1.5},
-    ),
-    _Case(
-        KlingVideoReward,
-        "kling_video_reward",
-        {"reward_model_version": "unit-test"},
-        "overall_reward",
-        "detail",
-        {"overall_reward": 1.5, "detail": 0.5},
-    ),
-    _Case(
-        UnifiedRewardVideoReward,
-        "unified_reward_video",
-        {"reward_model_name": "CodeGoat24/UnifiedReward-2.0-qwen-7b@main"},
-        "overall",
-        "physics",
-        {"alignment": 4.0, "physics": 2.0, "style": 3.0, "overall": 3.0},
-    ),
-]
-_CASE_IDS = [case.reward_name for case in _CASES]
+_FAKE_SCORES = {"overall_reward": 1.5, "detail": 0.5}
 
 
 class _FakeRuntime:
@@ -110,74 +67,65 @@ def _sample() -> RewardSample:
     )
 
 
-def _build_reward(
-    case: _Case,
-    tmp_path: Path,
-    *,
-    score_key: str,
-    scorer: _FakeRuntime | None = None,
-):
-    return case.reward_cls(
-        reward_name=case.reward_name,
+def _build_reward(tmp_path: Path, *, score_key: str, scorer: _FakeRuntime | None = None):
+    return KlingVideoReward(
+        reward_name="kling_video_reward",
         score_key=score_key,
         debug_dir=str(tmp_path / "debug"),
-        scorer=scorer if scorer is not None else _FakeRuntime(case.fake_scores),
+        scorer=scorer if scorer is not None else _FakeRuntime(_FAKE_SCORES),
     )
 
 
-@pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
 @pytest.mark.asyncio
-async def test_forwards_media_and_selects_the_score_key(case: _Case, tmp_path: Path) -> None:
-    """Default and alternate score keys select their axis; debug logs every public key."""
-    reward = _build_reward(case, tmp_path, score_key=case.default_score_key)
+async def test_forwards_media_and_selects_the_score_key(tmp_path: Path) -> None:
+    """Default and alternate score keys select their axis; debug rows log the score key,
+    every public score, the model version and the scorer's per-artifact timing."""
+    reward = _build_reward(tmp_path, score_key="overall_reward")
     sample = _sample()
     output = await reward.score_batch([sample])
 
-    assert output.scores == pytest.approx([case.fake_scores[case.default_score_key]])
+    assert output.scores == pytest.approx([_FAKE_SCORES["overall_reward"]])
     request = reward.scorer.requests[0]
     assert len(request.artifacts) == 1
     assert request.artifacts[0].path == ""
     assert request.artifacts[0].media is sample.output
     assert not list(tmp_path.rglob("*.mp4"))
     assert not list(tmp_path.rglob("*.pt"))
-    assert (tmp_path / "debug" / f"{case.reward_name}_requests.jsonl").exists()
-    results_path = tmp_path / "debug" / f"{case.reward_name}_results.jsonl"
+    requests_path = tmp_path / "debug" / "kling_video_reward_requests.jsonl"
+    request_row = json.loads(requests_path.read_text(encoding="utf-8").splitlines()[0])
+    assert request_row["score_key"] == "overall_reward"
+    results_path = tmp_path / "debug" / "kling_video_reward_results.jsonl"
     body = results_path.read_text(encoding="utf-8")
-    assert all(key in body for key in case.fake_scores)
+    assert all(key in body for key in _FAKE_SCORES)
     first_row = json.loads(body.splitlines()[0])
     assert first_row["reward_model_version"] == "fake-test"
+    assert first_row["timing_ms"]["inference_ms"] == pytest.approx(1.0)
 
-    alternate = _build_reward(case, tmp_path / "alt", score_key=case.alternate_score_key)
+    alternate = _build_reward(tmp_path / "alt", score_key="detail")
     output = await alternate.score_batch([_sample()])
-    assert output.scores == pytest.approx([case.fake_scores[case.alternate_score_key]])
+    assert output.scores == pytest.approx([_FAKE_SCORES["detail"]])
 
 
-@pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
 @pytest.mark.asyncio
-async def test_missing_score_key_fails_fast(case: _Case, tmp_path: Path) -> None:
+async def test_missing_score_key_fails_fast(tmp_path: Path) -> None:
     """An unknown score_key raises rather than silently scoring zero."""
-    reward = _build_reward(case, tmp_path, score_key="not_a_real_axis")
+    reward = _build_reward(tmp_path, score_key="not_a_real_axis")
     with pytest.raises(KeyError, match="missing score keys"):
         await reward.score_batch([_sample()])
 
 
-@pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
 @pytest.mark.asyncio
-async def test_unmatched_runtime_results_fail(case: _Case, tmp_path: Path) -> None:
+async def test_unmatched_runtime_results_fail(tmp_path: Path) -> None:
     """A runtime that drops results raises instead of scoring a partial batch."""
     reward = _build_reward(
-        case,
-        tmp_path,
-        score_key=case.default_score_key,
-        scorer=_EmptyRuntime(case.fake_scores),
+        tmp_path, score_key="overall_reward", scorer=_EmptyRuntime(_FAKE_SCORES)
     )
 
     with pytest.raises(RuntimeError, match="result/artifact mismatch"):
         await reward.score_batch([_sample()])
 
 
-@pytest.mark.parametrize("case", _CASES, ids=_CASE_IDS)
-def test_config_passes_the_shipped_component_shape_through_unvalidated(case: _Case) -> None:
+def test_config_passes_the_shipped_component_shape_through_unvalidated() -> None:
     """``RewardConfig.kwargs`` is open by design (vrl/config/schema.py): a reward's kwargs
     contract belongs to the reward class at construction, not to the config layer. The
     nested ``worker_config`` must survive validation byte-for-byte; tightening this schema
@@ -187,12 +135,12 @@ def test_config_passes_the_shipped_component_shape_through_unvalidated(case: _Ca
     cfg = OmegaConf.create(
         {
             "reward": {
-                "components": {case.reward_name: 1.0},
+                "components": {"hpsv3": 1.0},
                 "kwargs": {
-                    case.reward_name: {
-                        "reward_name": case.reward_name,
-                        "score_key": case.default_score_key,
-                        "worker_config": dict(case.worker_config),
+                    "hpsv3": {
+                        "reward_name": "hpsv3",
+                        "score_key": "top_frame_mean",
+                        "worker_config": {"reward_model_name": "MizzenAI/HPSv3@main"},
                     },
                 },
             },
@@ -200,7 +148,7 @@ def test_config_passes_the_shipped_component_shape_through_unvalidated(case: _Ca
     )
     parsed = RewardConfig.from_cfg(cfg)
 
-    assert parsed.kwargs[case.reward_name]["worker_config"] == dict(case.worker_config)
+    assert parsed.kwargs["hpsv3"]["worker_config"] == {"reward_model_name": "MizzenAI/HPSv3@main"}
 
 
 def test_as_media_normalizes_quantized_pt_files_to_unit_floats(tmp_path: Path) -> None:
