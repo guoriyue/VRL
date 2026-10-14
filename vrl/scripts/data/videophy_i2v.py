@@ -22,7 +22,7 @@ import os
 import re
 import shutil
 import urllib.request
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -140,8 +140,6 @@ def prepare_videophy_i2v_dataset(
     keep_videos: bool = False,
     width: int = 832,
     height: int = 480,
-    fetch_video: Callable[[str, Path], None] | None = None,
-    extract_first_frame: Callable[[Path, Path], None] | None = None,
 ) -> dict[str, Any]:
     """Build source-backed Wan I2V manifests from local VideoPhy CSVs."""
 
@@ -194,8 +192,6 @@ def prepare_videophy_i2v_dataset(
                     keep_videos=keep_videos,
                     width=width,
                     height=height,
-                    fetch_video=fetch_video,
-                    extract_first_frame=extract_first_frame,
                 )
                 break
             except HTTPError as error:
@@ -349,8 +345,6 @@ def _materialize_selected_video(
     keep_videos: bool,
     width: int,
     height: int,
-    fetch_video: Callable[[str, Path], None] | None,
-    extract_first_frame: Callable[[Path, Path], None] | None,
 ) -> dict[str, Any]:
     source_key = hashlib.sha256(item.source_row.video_url.encode()).hexdigest()[:16]
     stem = f"{item.split_index:03d}-{source_key}-{width}x{height}"
@@ -363,9 +357,7 @@ def _materialize_selected_video(
     # A different candidate must never reuse the prior candidate's frame. Keep
     # the original dimensions separately so retries do not report resized sizes.
     if not image_path.exists() or not source_info_path.exists():
-        if fetch_video is not None:
-            fetch_video(item.source_row.video_url, video_path)
-        elif not (video_path.exists() and video_path.stat().st_size > 0):
+        if not (video_path.exists() and video_path.stat().st_size > 0):
             tmp = video_path.with_suffix(video_path.suffix + ".tmp")
             with (
                 urllib.request.urlopen(item.source_row.video_url, timeout=120) as response,
@@ -373,18 +365,15 @@ def _materialize_selected_video(
             ):
                 shutil.copyfileobj(response, handle)
             tmp.replace(video_path)
-        if extract_first_frame is not None:
-            extract_first_frame(video_path, image_path)
-        else:
-            import imageio.v2 as imageio
-            from PIL import Image
+        import imageio.v2 as imageio
+        from PIL import Image
 
-            reader = imageio.get_reader(str(video_path), "ffmpeg")
-            try:
-                frame = reader.get_data(0)
-            finally:
-                reader.close()
-            Image.fromarray(frame).convert("RGB").save(image_path, format="PNG")
+        reader = imageio.get_reader(str(video_path), "ffmpeg")
+        try:
+            frame = reader.get_data(0)
+        finally:
+            reader.close()
+        Image.fromarray(frame).convert("RGB").save(image_path, format="PNG")
         source_size = _resize_image(image_path, width=width, height=height)
         write_json(source_info_path, {"source_size": list(source_size)})
     else:

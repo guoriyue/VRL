@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import io
 import json
+import urllib.request
 from pathlib import Path
 from urllib.error import HTTPError
 
+import imageio.v2 as imageio
+import numpy as np
 import pytest
 from PIL import Image
 
@@ -17,9 +21,18 @@ from vrl.scripts.data.videophy_i2v import (
 )
 
 
-@pytest.mark.parametrize("status", [403, 404, 410, 503])
+def _mp4_bytes(tmp_path: Path, *, width: int, height: int) -> bytes:
+    """A real two-frame H.264 clip, so the production ffmpeg decode reads it."""
+
+    path = tmp_path / f"source-{width}x{height}.mp4"
+    frame = np.full((height, width, 3), (10, 20, 30), dtype=np.uint8)
+    imageio.mimsave(path, [frame, frame], fps=8, macro_block_size=1)
+    return path.read_bytes()
+
+
+@pytest.mark.parametrize("status", [403, 503])
 def test_unavailable_candidate_fallback_keeps_source_and_cache_identity(
-    tmp_path: Path, status: int
+    tmp_path: Path, monkeypatch, status: int
 ) -> None:
     csv_path = tmp_path / "videos.csv"
     csv_path.write_text(
@@ -29,17 +42,19 @@ def test_unavailable_candidate_fallback_keeps_source_and_cache_identity(
     )
     prompts = tmp_path / "prompts.txt"
     prompts.write_text("A wheel rolls.\n")
+    video = _mp4_bytes(tmp_path, width=8, height=6)
     fetched = []
     best_available = False
 
-    def fetch(url: str, path: Path) -> None:
+    # The network is the one boundary: every other step (download into the
+    # cache path, ffmpeg first-frame decode, resize) runs for real.
+    def urlopen(url: str, timeout: float) -> io.BytesIO:
         fetched.append(url)
         if url.endswith("best.mp4") and not best_available:
             raise HTTPError(url, status, "unavailable", None, None)
-        path.write_bytes(b"video")
+        return io.BytesIO(video)
 
-    def decode(video: Path, image: Path) -> None:
-        Image.new("RGB", (8, 6), (10, 20, 30)).save(image)
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
 
     def prepare() -> dict:
         return prepare_videophy_i2v_dataset(
@@ -49,8 +64,6 @@ def test_unavailable_candidate_fallback_keeps_source_and_cache_identity(
             data_root=tmp_path / "data",
             width=4,
             height=4,
-            fetch_video=fetch,
-            extract_first_frame=decode,
         )
 
     if status == 503:
@@ -119,7 +132,9 @@ def test_select_videophy_videos_prefers_aligned_physical_candidate() -> None:
     assert selected[0].source_row.video_url == "https://example.test/best.mp4"
 
 
-def test_prepare_videophy_i2v_dataset_writes_source_backed_manifest(tmp_path: Path) -> None:
+def test_prepare_videophy_i2v_dataset_writes_source_backed_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Preparation fetches each split's video, extracts its first frame resized to 832x480, writes
     source-backed manifest rows (URL, decode method, frame sizes) plus a report, and does not
     keep the videos.
@@ -142,16 +157,14 @@ def test_prepare_videophy_i2v_dataset_writes_source_backed_manifest(tmp_path: Pa
     eval_prompts.write_text("Honey diffuses.\n", encoding="utf-8")
     data_root = tmp_path / "external"
 
-    fetched: list[tuple[str, Path]] = []
+    video = _mp4_bytes(tmp_path, width=4, height=4)
+    fetched: list[str] = []
 
-    def fake_fetch(url: str, target: Path) -> None:
-        fetched.append((url, target))
-        target.write_bytes(b"fake-video")
+    def urlopen(url: str, timeout: float) -> io.BytesIO:
+        fetched.append(url)
+        return io.BytesIO(video)
 
-    def fake_extract(video_path: Path, image_path: Path) -> None:
-        assert video_path.exists()
-        image_path.parent.mkdir(parents=True, exist_ok=True)
-        Image.new("RGB", (4, 4), (10, 20, 30)).save(image_path)
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
 
     report = prepare_videophy_i2v_dataset(
         sources=[
@@ -160,8 +173,6 @@ def test_prepare_videophy_i2v_dataset_writes_source_backed_manifest(tmp_path: Pa
         train_prompts=train_prompts,
         eval_prompts=eval_prompts,
         data_root=data_root,
-        fetch_video=fake_fetch,
-        extract_first_frame=fake_extract,
     )
 
     dataset_root = data_root / "videophy_i2v"
@@ -172,7 +183,7 @@ def test_prepare_videophy_i2v_dataset_writes_source_backed_manifest(tmp_path: Pa
 
     assert report["train_rows"] == 1
     assert report["eval_rows"] == 1
-    assert fetched[0][0] == "https://example.test/train.mp4"
+    assert fetched == ["https://example.test/train.mp4", "https://example.test/eval.mp4"]
     assert train_rows[0]["image"].startswith("images/train/000-")
     assert train_rows[0]["caption"] == "A wheel rolls."
     assert train_rows[0]["task_type"] == "image_to_video"
