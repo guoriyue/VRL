@@ -168,6 +168,10 @@ def test_compile_off_never_conflicts() -> None:
             {"distributed": {"resources": {"rollout": {"gpus_per_engine": 2}}}},
             "gpus_per_engine=2",
         ),
+        (
+            {"model": {"family": "magi_1", "torch_compile": {"enable": True}}},
+            "does not support torch.compile",
+        ),
     ],
 )
 def test_each_incompatible_feature_is_reported(overrides: dict, expected: str) -> None:
