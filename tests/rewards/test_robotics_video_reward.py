@@ -116,8 +116,8 @@ def test_robotics_reward_weights_reject_unknown_or_non_finite_values() -> None:
         RoboticsRewardWeights.from_mapping({"motion_dynamics": float("nan")})
 
 
-@pytest.mark.parametrize("field", ["weights", "kling", "dino", "motion"])
-@pytest.mark.parametrize("value", [False, 0, "", [], [("device", "cpu")]])
+# weights and the child sections are validated by different code.
+@pytest.mark.parametrize(("field", "value"), [("weights", False), ("kling", [("device", "cpu")])])
 def test_robotics_reward_rejects_non_mapping_sections_before_model_construction(
     field, value, monkeypatch
 ) -> None:

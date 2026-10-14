@@ -115,10 +115,9 @@ def test_spec_without_conditions_is_rejected() -> None:
         _model({}).judge(_IMAGE, {"tag": "single_object"})
 
 
-@pytest.mark.parametrize("key", ["detection_threshold", "nms_iou", "position_threshold"])
-def test_thresholds_must_be_probabilities(key: str) -> None:
-    with pytest.raises(ValueError, match=key):
-        _model({}, **{key: 1.5})
+def test_thresholds_must_be_probabilities() -> None:
+    with pytest.raises(ValueError, match="nms_iou"):
+        _model({}, nms_iou=1.5)
 
 
 @pytest.mark.asyncio

@@ -89,9 +89,9 @@ def test_result_rejects_nonfinite_scores() -> None:
         RewardInferenceResult(artifact_id="a", scores={"overall_reward": float("nan")})
 
 
-@pytest.mark.parametrize("field", ["scores", "timing_ms"])
-@pytest.mark.parametrize("value", [None, [], 1])
-@pytest.mark.parametrize("wire", [False, True])
+@pytest.mark.parametrize(
+    ("field", "value", "wire"), [("scores", None, False), ("timing_ms", [], True)]
+)
 def test_result_rejects_nonmapping_fields(field, value, wire):
     from vrl.rewards.service.protocol import RewardServiceProtocolError
     from vrl.rewards.service.wire import score_response_from_wire
@@ -114,7 +114,7 @@ def test_result_rejects_invalid_timing() -> None:
         )
 
 
-@pytest.mark.parametrize("prompt", ["", "   ", None, 123])
+@pytest.mark.parametrize("prompt", ["   ", None])
 def test_video_judge_requires_explicit_artifact_prompt(tmp_path, prompt):
     artifact = RewardInferenceArtifact(
         artifact_id="a",

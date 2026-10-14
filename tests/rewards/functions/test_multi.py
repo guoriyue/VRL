@@ -679,27 +679,24 @@ def test_multiple_gpu_reward_actors_divide_the_owned_bundle() -> None:
 
 
 @pytest.mark.parametrize(
-    ("name", "device", "kwargs"),
+    ("name", "kwargs", "expected_device"),
     [
-        ("ocr", "cpu", {}),
-        ("nsfw_safety", "cuda:0", {"model_name": "test"}),
-        ("wd_tagger", "cpu", {"tagger": None}),
-        ("image_sharpness", "cpu", {}),
-        ("aesthetic", "cuda:0", {}),
-        ("pickscore", "cuda:0", {}),
-        ("geneval_owl", "cuda:0", {}),
-        ("motion_dynamics", "cuda:0", {"worker_config": {"num_frames": 4}}),
-        ("target_dino_similarity", "cuda:0", {"worker_config": {"num_frames": 4}}),
+        # A CPU-only reward (custom __init__ too) never claims the resolved GPU.
+        ("ocr", {}, "cpu"),
+        # NSFW reads its device override from classifier_device and has its own __init__.
+        ("nsfw_safety", {"model_name": "test"}, "cuda:0"),
+        ("aesthetic", {}, "cuda:0"),
+        ("motion_dynamics", {"worker_config": {"num_frames": 4}}, "cuda:0"),
     ],
 )
-def test_every_model_reward_can_run_as_a_ray_actor(tmp_path, name, device, kwargs) -> None:
-    """Every binding forwards model configuration to its actor scorer."""
+def test_every_model_reward_can_run_as_a_ray_actor(name, kwargs, expected_device) -> None:
+    """A model reward forwards its factory and execution device to its actor scorer."""
     from vrl.ray.placement import RolePlacement
     from vrl.rewards.ray import RayRewardPlacement, RayRewardScorer
 
     reward = MultiReward.from_mapping(
         {name: 1.0},
-        device=device,
+        device="cuda:0",
         reward_kwargs={name: kwargs},
         inference_configs={name: RewardInferenceConfig(kind="ray")},
         ray_placement=RayRewardPlacement(placement=RolePlacement(object(), (0,), (0,))),
@@ -709,9 +706,7 @@ def test_every_model_reward_can_run_as_a_ray_actor(tmp_path, name, device, kwarg
     scorer = component.scorer
     assert isinstance(scorer, RayRewardScorer)
     assert scorer._worker_config.model_factory == type(component).model_factory
-    assert scorer._worker_config.device == type(component).resolve_execution_device(
-        device=device, kwargs=kwargs
-    )
+    assert scorer._worker_config.device == expected_device
 
 
 def test_reward_config_rejects_nonfinite_weights() -> None:

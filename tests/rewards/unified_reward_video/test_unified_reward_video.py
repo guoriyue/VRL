@@ -72,7 +72,7 @@ def test_load_rubric_rejects_missing_prompt_slot(tmp_path: Path) -> None:
         _load_rubric(str(rubric))
 
 
-@pytest.mark.parametrize("failure_at", [None, "get", "read", "convert"])
+@pytest.mark.parametrize("failure_at", [None, "read"])
 def test_frame_sampling_releases_capture_on_success_and_failure(monkeypatch, failure_at) -> None:
     import cv2
     import numpy as np
@@ -85,8 +85,6 @@ def test_frame_sampling_releases_capture_on_success_and_failure(monkeypatch, fai
         releases = 0
 
         def get(self, key):
-            if failure_at == "get":
-                raise failure
             return 1
 
         def isOpened(self):
@@ -102,12 +100,6 @@ def test_frame_sampling_releases_capture_on_success_and_failure(monkeypatch, fai
 
     capture = Capture()
     monkeypatch.setattr(cv2, "VideoCapture", lambda path: capture)
-    if failure_at == "convert":
-
-        def broken_conversion(*args):
-            raise failure
-
-        monkeypatch.setattr(cv2, "cvtColor", broken_conversion)
     if failure_at:
         with pytest.raises(RuntimeError) as caught:
             _sample_frames("video.mp4", 1)

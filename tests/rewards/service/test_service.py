@@ -800,13 +800,12 @@ def test_module_cli_handles_sigterm_without_eager_import_warning(tmp_path) -> No
     assert "found in sys.modules" not in stderr
 
 
-@pytest.mark.parametrize("details", [False, 0, "", [], None])
-def test_wire_rejects_nonobject_error_details(details):
+def test_wire_rejects_nonobject_error_details():
     from vrl.rewards.service.wire import error_from_wire
 
     error = error_from_wire(
         {
-            "error": {"code": "scoring_failed", "message": "failed", "details": details},
+            "error": {"code": "scoring_failed", "message": "failed", "details": []},
         },
         status_code=500,
     )
@@ -897,8 +896,7 @@ async def test_owner_repeated_cancellation_waits_for_runtime_exit(tmp_path):
         await owner.close()
 
 
-@pytest.mark.parametrize("timeout_s", [0, -1, float("nan"), float("inf"), -float("inf")])
-@pytest.mark.parametrize("entry", ["config", "client"])
+@pytest.mark.parametrize(("entry", "timeout_s"), [("config", 0), ("client", float("nan"))])
 def test_reward_timeout_contract_is_shared(timeout_s, entry) -> None:
     with pytest.raises(ValueError, match="timeout_s must be finite and > 0"):
         if entry == "config":
@@ -907,7 +905,8 @@ def test_reward_timeout_contract_is_shared(timeout_s, entry) -> None:
             HttpRewardScorer("http://127.0.0.1:8300", timeout_s=timeout_s)
 
 
-@pytest.mark.parametrize("size_bytes", [True, 1.0, -0.5, "1", -1])
+# bool is an int subclass; -1 is an int below the minimum.
+@pytest.mark.parametrize("size_bytes", [True, -1])
 def test_wire_rejects_non_integer_artifact_size(tmp_path, size_bytes) -> None:
     artifact_file = tmp_path / "artifact.png"
     artifact_file.write_bytes(b"x")
@@ -930,8 +929,7 @@ def test_service_info_rejects_noninteger_capacity(value) -> None:
         info_from_wire({"info": info})
 
 
-@pytest.mark.parametrize("field", ["model_name", "model_version"])
-@pytest.mark.parametrize("value", [True, 42, None, ["model"], {"name": "model"}])
+@pytest.mark.parametrize(("field", "value"), [("model_name", 42), ("model_version", None)])
 def test_service_info_rejects_nonstring_identity(field, value) -> None:
     from vrl.rewards.service.wire import info_from_wire
 

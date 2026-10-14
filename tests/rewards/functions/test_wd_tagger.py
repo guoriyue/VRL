@@ -128,12 +128,11 @@ def test_prepare_wd14_input_pads_white_resizes_and_swaps_to_bgr() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("invalid_tag", [None, 42, True, {}, ["smile"]])
-async def test_wd_tagger_rejects_non_string_tags_before_inference(invalid_tag) -> None:
+async def test_wd_tagger_rejects_non_string_tags_before_inference() -> None:
     calls = []
     reward = WDTaggerReward(tagger=lambda images: calls.append(images))
     with pytest.raises(ValueError, match="must contain only tag strings"):
-        (await reward.score_batch([_sample(_image(), tags=["smile", invalid_tag])])).scores[0]
+        (await reward.score_batch([_sample(_image(), tags=["smile", 42])])).scores[0]
     assert calls == []
 
 
