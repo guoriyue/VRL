@@ -94,18 +94,16 @@ def wan_forward(
     encoder_hidden_states: torch.Tensor,
     extra: dict[str, Any] | None = None,
 ) -> torch.Tensor:
-    """Wan transformer forward; unwrap policy modules before raw backbone call.
+    """Wan backbone forward through the policy model's registered ``transformer``.
 
     The ``ForwardFn`` this recipe hands to ``OfflineDPOTrainer``. The trainer
     itself stays family-neutral, so the Wan-shaped call — ``hidden_states`` /
     ``timestep`` / ``encoder_hidden_states`` and the tuple return — belongs
-    here with the recipe that selects it.
+    here with the recipe that selects it. The model wrapper's own ``forward``
+    is the per-step denoise API, so the backbone is called directly.
     """
     del extra
-    forward_model = getattr(model, "transformer", None)
-    if forward_model is None:
-        forward_model = model
-    out = forward_model(
+    out = model.transformer(
         hidden_states=noisy_latents,
         timestep=timesteps,
         encoder_hidden_states=encoder_hidden_states,
