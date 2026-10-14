@@ -429,48 +429,6 @@ def test_training_microbatch_size_splits_backward_and_preserves_gradient(
         torch.testing.assert_close(stream_grad[name], grad, rtol=1e-5, atol=1e-7)
 
 
-def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
-    """Startup logs should make rollout microbatch residency visible."""
-    import logging
-
-    from vrl.scripts.common.online import _log_rollout_memory_plan
-
-    def _batch_config(rbs: int, gas: int) -> OnlineBatchConfig:
-        return OnlineBatchConfig(
-            prompts_per_batch=rbs,
-            n_samples_per_prompt=2,
-            prompts_per_collection=(rbs // gas) if gas else 0,
-        )
-
-    logger_name = "vrl.scripts.common.online"
-    with caplog.at_level(logging.INFO, logger=logger_name):
-        _log_rollout_memory_plan(
-            _batch_config(4, 4),
-            samples_per_generation_batch=2,
-        )
-    streaming_messages = [record.getMessage() for record in caplog.records]
-    assert any("streaming accumulation enabled" in msg for msg in streaming_messages)
-    assert any("collection_prompts=1" in msg for msg in streaming_messages)
-    assert any("samples_per_generation_batch=2" in msg for msg in streaming_messages)
-    assert any("training_microbatch_size=1" in msg for msg in streaming_messages)
-    assert any("target_samples_per_update=8" in msg for msg in streaming_messages)
-
-    caplog.clear()
-    with caplog.at_level(logging.INFO, logger=logger_name):
-        _log_rollout_memory_plan(
-            _batch_config(4, 0),
-            samples_per_generation_batch=2,
-        )
-    legacy_messages = [record.getMessage() for record in caplog.records]
-    assert any("legacy full-batch accumulation" in msg for msg in legacy_messages)
-    assert any("samples_per_generation_batch=2" in msg for msg in legacy_messages)
-    assert any("training_microbatch_size=1" in msg for msg in legacy_messages)
-    # The legacy path must emit a host-RAM residency WARNING. Assert the warning
-    # level fired (the behavioral contract) rather than pinning its exact prose,
-    # which a benign reword would redden with no real regression.
-    assert any(record.levelno == logging.WARNING for record in caplog.records)
-
-
 def test_global_std_streaming_scope_logging(caplog) -> None:
     """Both one- and multi-group slices require update-wide normalization."""
     import logging

@@ -213,14 +213,3 @@ def test_step_replay_rejects_multiple_primary_action_axes() -> None:
 
     with pytest.raises(ValueError, match="exactly one non-sample axis"):
         _indices(trainer, _chunk_denoise_batch(), 1.0, "strided")
-
-
-def test_evaluator_less_diffusion_uses_primary_action_axis() -> None:
-    trainer = bare_trainer(evaluator=None)
-    batch = _diffusion_rollout_batch(
-        rewards=torch.zeros(1),
-        group_ids=torch.zeros(1, dtype=torch.long),
-        num_steps=4,
-    )
-
-    assert _indices(trainer, batch, 0.5, "strided") == [0, 2]

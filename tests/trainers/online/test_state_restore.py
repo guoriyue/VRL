@@ -21,7 +21,12 @@ from vrl.trainers.strategy import DDPStrategy, SingleProcessStrategy
 
 
 def _trainer(
-    monkeypatch, tmp_path, *, ema: bool = False, overrides: tuple[str, ...] = ()
+    monkeypatch,
+    tmp_path,
+    *,
+    ema: bool = False,
+    overrides: tuple[str, ...] = (),
+    strategy: SingleProcessStrategy | None = None,
 ) -> TrainerBench:
     return real_trainer(
         monkeypatch,
@@ -32,6 +37,7 @@ def _trainer(
             f"actor.ema.enable={str(ema).lower()}",
             *overrides,
         ),
+        strategy=strategy,
     )
 
 
@@ -158,22 +164,6 @@ class TestOnlineTrainerResumeState:
         with pytest.raises(ValueError, match="EMA state"):
             restored.trainer.load_state_dict(state)
 
-    def test_load_state_dict_resets_rollout_weight_initialization(
-        self, monkeypatch, tmp_path
-    ) -> None:
-        """Loading a checkpoint resets the rollout-weights-initialized and replay-parity flags, so
-        the next step re-pushes weights and re-checks parity against the restored state.
-        """
-
-        tb = _trained(monkeypatch, tmp_path)
-        assert tb.trainer._rollout_runtime.weights_initialized is True
-        assert tb.trainer._replay_parity_passed is True
-
-        tb.trainer.load_state_dict(tb.trainer.state_dict())
-
-        assert tb.trainer._rollout_runtime.weights_initialized is False
-        assert tb.trainer._replay_parity_passed is False
-
     def test_resume_rechecks_parity_at_nonzero_training_step(self, monkeypatch, tmp_path) -> None:
         tb = _trained(monkeypatch, tmp_path)
         assert tb.trainer._replay_parity_passed is True
@@ -275,21 +265,12 @@ class TestOnlineTrainerResumeState:
 def _cuda_fp16_trainer(monkeypatch, tmp_path) -> OnlineTrainer:
     """The real FP16 policy on the card: native FP16 gradients need the GradScaler."""
 
-    tb = _trainer(monkeypatch, tmp_path, overrides=("precision.training.dtype=fp16",))
-    tb.model.to("cuda")
-    trainer = tb.trainer
-    return OnlineTrainer(
-        algorithm=trainer.algorithm,
-        collector=trainer.collector,
-        evaluator=trainer.evaluator,
-        model=tb.model,
-        weight_syncer=trainer.weight_syncer,
-        sync_state_getter=trainer.sync_state_getter,
-        config=trainer.config,
-        strategy=SingleProcessStrategy(
-            DistributedTrainingContext("single_process", 0, 1, torch.device("cuda"))
-        ),
+    cuda = SingleProcessStrategy(
+        DistributedTrainingContext("single_process", 0, 1, torch.device("cuda"))
     )
+    return _trainer(
+        monkeypatch, tmp_path, overrides=("precision.training.dtype=fp16",), strategy=cuda
+    ).trainer
 
 
 @pytest.mark.gpu

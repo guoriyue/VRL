@@ -171,6 +171,7 @@ def real_trainer(
     """
 
     from vrl.scripts.common.factory import AlgorithmEvaluatorPair
+    from vrl.scripts.common.online import _load_sft_latents_from_config
     from vrl.trainers.online.trainer import OnlineTrainer
     from vrl.trainers.strategy import SingleProcessStrategy
     from vrl.trainers.weight_sync import RayRuntimeWeightSyncer
@@ -200,5 +201,6 @@ def real_trainer(
         sync_state_getter=lambda: strategy.export_rollout_state(bundle),
         config=built.trainer,
         strategy=strategy,
+        sft_latents=_load_sft_latents_from_config(built, sft_weight=pair.algorithm.sft_weight),
     )
     return TrainerBench(trainer=trainer, collector=bench, bundle=bundle, strategy=strategy)

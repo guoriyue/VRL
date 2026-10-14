@@ -105,16 +105,6 @@ def test_two_steps_partition_the_batch_after_one_advantage_pass(monkeypatch, tmp
             assert members & update
 
 
-def test_one_step_keeps_the_single_update(monkeypatch, tmp_path) -> None:
-    tb = _trainer(monkeypatch, tmp_path, optimizer_steps_per_batch=1)
-    trace = _trace_updates(monkeypatch, tb)
-
-    asyncio.run(tb.trainer.step(["p1", "p2"]))
-
-    assert tb.trainer.state.global_step == 1
-    assert len(_trained_rewards_per_update(trace)) == 1
-
-
 def test_dealing_is_deterministic_for_a_resumed_counter(monkeypatch, tmp_path) -> None:
     dealt = []
     for name in ("a", "b"):

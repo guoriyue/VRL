@@ -19,7 +19,7 @@ from tests.trainers.online._helpers import TrainerBench, real_trainer
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trainers.data.prompts import PromptExample
 from vrl.trainers.data.sft_latents import SFT_LATENTS_SCHEMA_VERSION
-from vrl.trainers.online.trainer import OnlineTrainer, _ReplayMetrics
+from vrl.trainers.online.trainer import _ReplayMetrics
 
 _TARGET_VIDEO = "targets/training.mp4"
 _TARGET_IMAGE = "targets/training.png"
@@ -40,8 +40,6 @@ def _sft_trainer(
     and model path; the recipe's ``_load_sft_latents_from_config`` reads it back.
     """
 
-    from vrl.scripts.common.online import _load_sft_latents_from_config
-
     tmp_path.mkdir(parents=True, exist_ok=True)
     shard = tmp_path / "sft_latents.pt"
     torch.save(
@@ -59,20 +57,6 @@ def _sft_trainer(
         tmp_path,
         overrides=(f"algorithm.sft_weight={sft_weight}", f"data.sft_latents={shard}"),
     )
-    built = tb.collector.stack.built
-    base = tb.trainer
-    trainer = OnlineTrainer(
-        algorithm=base.algorithm,
-        collector=tb.collector.collector,
-        evaluator=base.evaluator,
-        model=base.model,
-        weight_syncer=base.weight_syncer,
-        sync_state_getter=base.sync_state_getter,
-        config=base.config,
-        strategy=tb.strategy,
-        sft_latents=_load_sft_latents_from_config(built, sft_weight=base.algorithm.sft_weight),
-    )
-    tb.trainer = trainer
     tb.collector.trace.watch(tb.model, "replay_forward_with_latents", "sft_forward")
     return tb
 
