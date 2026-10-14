@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import torch
 from safetensors.torch import load_file, save_file
@@ -8,13 +10,12 @@ from torch import nn
 from tests.trainers._checkpoint_helpers import (
     UNIT_IDENTITY,
     _Bundle,
-    _DenoisePolicy,
     _ema_holding,
-    _export_bundle,
-    _exported_adapter_weight,
-    _PublishableModule,
     _Trainer,
 )
+from vrl.config.precision import RolePrecision
+from vrl.models.interfaces.runtime import RuntimeBundle
+from vrl.models.steps.denoise.base import DenoiseModelBase
 from vrl.trainers.checkpointing import (
     CHECKPOINT_META_NAME,
     LORA_WEIGHTS_NAME,
@@ -24,6 +25,56 @@ from vrl.trainers.checkpointing import (
     build_adapter_exports,
     save_training_checkpoint,
 )
+
+_EXPORT_PRECISION = RolePrecision(
+    dtype="fp32",
+    float32_precision="ieee",
+    outer_autocast=False,
+)
+
+
+class _PublishableModule(nn.Linear):
+    def __init__(self) -> None:
+        super().__init__(1, 1, bias=False)
+
+    def save_pretrained(self, *_args, **_kwargs):  # pragma: no cover - never called
+        raise AssertionError("build_adapter_exports must not write anything")
+
+
+class _DenoisePolicy(DenoiseModelBase):
+    """Minimal real diffusion policy: only ``trainable_modules`` is family data."""
+
+    def __init__(self, roots: dict[str, nn.Module]) -> None:
+        super().__init__()
+        self._roots = roots
+
+    @property
+    def trainable_modules(self) -> dict[str, nn.Module]:
+        return dict(self._roots)
+
+    def forward_step(self, state, step_idx):  # pragma: no cover
+        raise NotImplementedError
+
+
+def _export_bundle(model) -> RuntimeBundle:
+    return RuntimeBundle(
+        model=model,
+        trainable_modules=model.trainable_modules,
+        scheduler=None,
+        precision=_EXPORT_PRECISION,
+        adapter_roots=model.adapter_roots,
+    )
+
+
+def _exported_adapter_weight(path: Path) -> torch.Tensor:
+    """Read an exported adapter back through safetensors.
+
+    ``write_text("stub")`` produced a five-byte file that no safetensors reader can
+    open, so ``.exists()`` was the strongest claim available. Loading it proves the
+    artifact is the real container with the real tensor in it.
+    """
+
+    return load_file(path)["weight"]
 
 
 def test_training_checkpoint_writes_optional_lora_export(tmp_path) -> None:

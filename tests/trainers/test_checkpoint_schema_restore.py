@@ -4,20 +4,54 @@ import pytest
 import torch
 from torch import nn
 
-from tests.trainers._checkpoint_helpers import (
-    UNIT_IDENTITY,
-    _OwnedBundle,
-    _OwnedModule,
-    _Trainer,
-    _training_checkpoint,
-    _v1_payload,
-)
+from tests.trainers._checkpoint_helpers import UNIT_IDENTITY, _Trainer
 from vrl.trainers.checkpointing import (
     CHECKPOINT_SCHEMA_VERSION,
     TRAINING_CHECKPOINT_NAME,
     TrainingCheckpoint,
     export_checkpoint_state,
 )
+
+
+class _OwnedModule(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.tensor([1.0]))
+        self.frozen_base = nn.Parameter(torch.tensor([2.0]), requires_grad=False)
+        self.previous = nn.Parameter(torch.tensor([3.0]))
+
+
+class _OwnedBundle:
+    def __init__(self) -> None:
+        self.module = _OwnedModule()
+        self.trainable_modules = {"module": self.module}
+
+
+def _training_checkpoint(tmp_path, payload) -> TrainingCheckpoint:
+    return TrainingCheckpoint(
+        checkpoint_dir=tmp_path,
+        checkpoint_path=tmp_path / TRAINING_CHECKPOINT_NAME,
+        payload=payload,
+        meta={},
+    )
+
+
+def _v1_payload(
+    state: dict[str, torch.Tensor],
+    *,
+    identity: dict | None = None,
+) -> dict:
+    model = {"trainable_modules": {"module": state}}
+    if identity is not None:
+        model["identity"] = identity
+    return {
+        "schema_version": 1,
+        "family": "unit",
+        "trainer": {"step": 2, "global_step": 5},
+        "model": model,
+        "progress": {"next_epoch": 2},
+        "rng": {},
+    }
 
 
 @pytest.mark.parametrize("zip_format", [True, False])

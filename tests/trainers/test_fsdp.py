@@ -20,7 +20,6 @@ import pytest
 import torch
 from torch import nn
 
-from tests.trainers._state_dict_helpers import gather_full_state_dict
 from tests.trainers._strategy_policies import (
     Bundle,
     DualStagePolicy,
@@ -47,6 +46,24 @@ from vrl.trainers.strategy import (
 )
 
 # ── fixtures / fakes ────────────────────────────────────────────────────────
+
+
+def gather_full_state_dict(module: nn.Module) -> dict[str, torch.Tensor]:
+    """Reference full CPU state dict of a sharded module, on every rank.
+
+    ``cpu_offload`` stays False: with it DCP returns the full state only on rank 0.
+    """
+
+    from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict
+    from torch.distributed.tensor import DTensor
+
+    state = get_model_state_dict(
+        module, options=StateDictOptions(full_state_dict=True, cpu_offload=False)
+    )
+    return {
+        key: (value.full_tensor() if isinstance(value, DTensor) else value).detach().cpu()
+        for key, value in state.items()
+    }
 
 
 def _cpu_fsdp_context() -> DistributedTrainingContext:

@@ -19,7 +19,6 @@ from torch import nn
 
 peft = pytest.importorskip("peft")
 
-from tests.trainers._state_dict_helpers import gather_full_state_dict  # noqa: E402
 from tests.trainers._strategy_policies import free_port  # noqa: E402
 from vrl.trainers.distributed import DistributedTrainingContext  # noqa: E402
 from vrl.trainers.fsdp import (  # noqa: E402
@@ -29,6 +28,24 @@ from vrl.trainers.fsdp import (  # noqa: E402
     load_checkpoint_state_dict,
     mixed_precision_policy,
 )
+
+
+def gather_full_state_dict(module: nn.Module) -> dict[str, torch.Tensor]:
+    """Reference full CPU state dict of a sharded module, on every rank.
+
+    ``cpu_offload`` stays False: with it DCP returns the full state only on rank 0.
+    """
+
+    from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict
+    from torch.distributed.tensor import DTensor
+
+    state = get_model_state_dict(
+        module, options=StateDictOptions(full_state_dict=True, cpu_offload=False)
+    )
+    return {
+        key: (value.full_tensor() if isinstance(value, DTensor) else value).detach().cpu()
+        for key, value in state.items()
+    }
 
 
 class _Block(nn.Module):

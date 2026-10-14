@@ -12,7 +12,6 @@ from tests.rollouts.collector._helpers import Trace
 from tests.trainers._checkpoint_helpers import (
     UNIT_IDENTITY,
     _Bundle,
-    _context,
     _ema_holding,
     _Trainer,
 )
@@ -28,6 +27,7 @@ from vrl.trainers.checkpointing import (
     load_checkpoint_state,
     save_training_checkpoint,
 )
+from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.strategy import SingleProcessStrategy
 
 
@@ -51,7 +51,15 @@ class _RecordingStrategy:
         fail_export_at: int | None = None,
         exported_state: dict[str, Any] | None = None,
     ) -> None:
-        self.context = _context(rank=rank, world_size=world_size)
+        # A real context: ``is_primary`` is derived from ``rank``, so a double can
+        # no longer claim "not primary, world size 1", and ``single_process`` is
+        # world 1 exactly as the resolver enforces.
+        self.context = DistributedTrainingContext(
+            strategy="single_process" if world_size == 1 else "fsdp",
+            rank=rank,
+            world_size=world_size,
+            device=torch.device("cpu"),
+        )
         self.collectives = SimpleNamespace(
             succeeded=self._agree,
             gather_rng_states=lambda state: [state] * world_size,
