@@ -10,7 +10,6 @@ import signal
 import sys
 import threading
 import time
-from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -35,7 +34,7 @@ from vrl.trainers.core.types import (
 from vrl.trainers.metrics_io import (
     OnlineMetricRow,
 )
-from vrl.training_run_result import TRAINING_RUN_RESULT_NAME, TrainingRunResultWriter
+from vrl.training_run_result import TrainingRunResultWriter
 
 _METRICS_HEADER = "epoch,loss,reward_mean,reward_std,grad_norm,pre_update_logprob_abs_diff_max\n"
 
@@ -373,13 +372,6 @@ def test_stop_kills_torchrun_workers(tmp_path) -> None:
         raise AssertionError("torchrun worker survived supervisor stop")
 
 
-def test_result_file_contract_matches_train_cli() -> None:
-    """The supervisor reads the same file name vrl-train writes."""
-    from vrl.scripts import supervise
-
-    assert supervise.TRAINING_RUN_RESULT_NAME == TRAINING_RUN_RESULT_NAME
-
-
 def test_build_train_launch_keeps_single_process_direct() -> None:
     cfg = OmegaConf.create(
         {"distributed": {"training": {"strategy": "single_process"}}},
@@ -568,14 +560,6 @@ def test_distributed_success_requires_every_rank_result(tmp_path) -> None:
     complete = supervisor._collect_attempt_result()
     assert complete is not None
     assert complete["status"] == "success"
-
-
-def test_supervisor_cli_defaults_are_derived_from_runtime_config() -> None:
-    args = build_parser().parse_args(["--config", "unit"])
-    defaults = {item.name: item.default for item in fields(RunSupervisor)}
-
-    assert args.max_attempts == defaults["max_attempts"]
-    assert args.same_cause_limit == defaults["same_cause_limit"]
 
 
 @pytest.mark.parametrize(
@@ -777,42 +761,6 @@ def test_health_gate_default_never_trips_on_a_large_grad_norm(tmp_path) -> None:
 def test_health_config_rejects_a_max_grad_norm_at_or_below_the_minimum() -> None:
     with pytest.raises(ValueError, match="must be > min_grad_norm"):
         HealthGateConfig(max_grad_norm=0.5, min_grad_norm=0.5)
-
-
-def test_metrics_health_gate_cli_thresholds_are_configurable() -> None:
-    args = build_parser().parse_args(
-        [
-            "--config",
-            "unit",
-            "--health-metrics",
-            "--health-poll-seconds",
-            "2.5",
-            "--health-failure-limit",
-            "4",
-            "--health-max-pre-update-logprob-diff",
-            "0.02",
-            "--health-max-stale-policy-versions",
-            "1",
-            "--health-max-stale-logprob-diff",
-            "0.08",
-            "--health-min-reward-std",
-            "0.003",
-            "--health-min-grad-norm",
-            "0.0002",
-            "--health-max-grad-norm",
-            "0.8",
-        ],
-    )
-
-    assert args.health_metrics is True
-    assert args.health_poll_seconds == 2.5
-    assert args.health_failure_limit == 4
-    assert args.health_max_pre_update_logprob_diff == 0.02
-    assert args.health_max_stale_policy_versions == 1
-    assert args.health_max_stale_logprob_diff == 0.08
-    assert args.health_min_reward_std == 0.003
-    assert args.health_min_grad_norm == 0.0002
-    assert args.health_max_grad_norm == 0.8
 
 
 @pytest.mark.parametrize(

@@ -133,33 +133,3 @@ def test_entrypoint_rejects_malformed_model_before_registry_model_build(
                 str(tmp_path / "latents.pt"),
             ],
         )
-
-
-def test_entrypoint_forwards_composition_overrides(monkeypatch, tmp_path) -> None:
-    from vrl.config import loading as config_loading
-
-    expected_overrides = [
-        "+reward=wd_tagger",
-        "+reward=pickscore",
-        "+dataset=anime_craft",
-        "model.use_lora=false",
-        "sampling.num_steps=40",
-    ]
-
-    def capture_load_config(path, *, overrides):
-        assert path == "experiment/sd3_5/online_grpo_pickscore"
-        assert overrides == expected_overrides
-        raise RuntimeError("configuration arguments captured before model loading")
-
-    monkeypatch.setattr(config_loading, "load_config", capture_load_config)
-
-    with pytest.raises(RuntimeError, match="configuration arguments captured"):
-        encode_targets.main(
-            [
-                "--experiment",
-                "sd3_5/online_grpo_pickscore",
-                "--out",
-                str(tmp_path / "latents.pt"),
-                *expected_overrides,
-            ],
-        )

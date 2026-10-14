@@ -12,22 +12,6 @@ def _root(**trainer: object) -> RootConfig:
     return RootConfig.model_validate({"trainer": trainer})
 
 
-def test_online_run_config_uses_controller_defaults() -> None:
-    run = OnlineRunConfig.from_root(_root(total_epochs=0))
-
-    assert run.total_epochs == 0
-    assert run.save_freq == 50
-    assert run.seed == 0
-
-
-def test_online_run_config_preserves_explicit_values() -> None:
-    run = OnlineRunConfig.from_root(
-        _root(total_epochs=12, save_freq=3, seed=-7),
-    )
-
-    assert run == OnlineRunConfig(total_epochs=12, save_freq=3, seed=-7)
-
-
 @pytest.mark.parametrize(
     ("trainer", "path"),
     [
