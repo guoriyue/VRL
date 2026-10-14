@@ -526,7 +526,7 @@ reds are the 8 upstream ones listed in the plan (deselected).
   run's checkpoints (impossible for a fresh trainer); mismatch = real
   validator against a second snapshot; drift = file written in
   `from_build`. Remaining double: the Pick-a-Pic Hub download, replaced by
-  an in-memory `datasets.Dataset` of real JPEG pairs (`_wan_dpo_helpers.py`).
+  an in-memory `datasets.Dataset` of real JPEG pairs (now in `test_wan_dpo_run.py`).
 - Wan robotics eval fake model/generate/write_mp4 -> real `generate_shard`
   on base and on a real full-parameter checkpoint; same seed grid, different
   mp4 sha256 only because the loaded weights differ.
@@ -657,8 +657,8 @@ ran inside them.
 - `_install_common_fakes` (55 patches) -> `_install_ray_side_fakes` (Ray-side
   shutdown recorders only) on a real resolved run.
 - `tests/scripts/eval/fixtures.py` gained the tiny Wan snapshot, the tiny
-  SANA online config and the prompt-manifest writer; `_wan_dpo_helpers.py`
-  holds the Pick-a-Pic in-memory dataset for the four Wan DPO modules.
+  SANA online config and the prompt-manifest writer; the Pick-a-Pic in-memory
+  dataset now lives in `test_wan_dpo_run.py`, the one Wan DPO run module.
 - `test_schema.py` split into five theorem modules.
 - One fixture lie fixed on the way: `build_tiny_wan_vae` now has the four
   levels diffusers' derived scale factors assume (found because the
