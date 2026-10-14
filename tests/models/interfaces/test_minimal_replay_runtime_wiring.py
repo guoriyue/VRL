@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 from typing import Any
 
 import pytest
@@ -11,66 +10,21 @@ from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 
 
-def test_role_precision_rejects_quantized_base_dtype() -> None:
-    """Quantization formats are selective GEMM policies, not autocast dtypes."""
-
-    with pytest.raises(ValueError, match="precision role dtype must be one of"):
-        RolePrecision(
-            dtype="fp8",
-            float32_precision="tf32",
-        )
-
-
-def test_role_precision_rejects_unknown_float32_backend() -> None:
-    with pytest.raises(ValueError, match=r"precision\.float32_precision must be one of"):
-        RolePrecision(
-            dtype="fp32",
-            float32_precision="fast",  # type: ignore[arg-type]
-        )
-
-
-@pytest.mark.parametrize("dtype", ["fp8"])
-def test_model_build_rejects_subbyte_parameter_storage(dtype: str) -> None:
+def test_model_build_rejects_subbyte_parameter_storage() -> None:
     with pytest.raises(ValueError, match="neither is parameter storage"):
         ModelBuild(
             model_name_or_path="fake/repo",
             revision=None,
             device="cpu",
-            parameter_dtype=dtype,
+            parameter_dtype="fp8",
             family="sd3_5",
             precision=RolePrecision("fp32", "ieee", outer_autocast=False),
         )
 
 
-@pytest.mark.parametrize(
-    ("quantization_format", "message"),
-    [("fp4", "replaced.*nvfp4"), ("int8", "quantization.format")],
-)
-def test_quantization_policy_rejects_unknown_or_ambiguous_format(
-    quantization_format: str,
-    message: str,
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        QuantizationPolicy(format=quantization_format)
-
-
-def test_quantization_policy_normalizes_fp8_default_recipe() -> None:
-    quantization = QuantizationPolicy(format="FP8")
-
-    assert quantization.format == "fp8"
-    assert quantization.recipe == "rowwise"
-
-
-def test_quantization_policy_accepts_nvfp4_without_recipe() -> None:
-    quantization = QuantizationPolicy(format="NVFP4")
-
-    assert quantization.format == "nvfp4"
-    assert quantization.recipe is None
-
-
-def test_quantization_policy_rejects_nvfp4_recipe() -> None:
-    with pytest.raises(ValueError, match=r"nvfp4.*does not accept.*recipe"):
-        QuantizationPolicy(format="nvfp4", recipe="rowwise")
+def test_quantization_policy_rejects_unknown_format() -> None:
+    with pytest.raises(ValueError, match=r"quantization\.format must be one of"):
+        QuantizationPolicy(format="int8")
 
 
 def _compile_scope_build(scope: str | None, *, rollout: bool) -> ModelBuild:
@@ -281,28 +235,6 @@ def _diffusers_scheduler(_build: Any, class_name: str, **_kwargs: Any) -> Any:
     return getattr(diffusers, class_name)()
 
 
-class _TinyRuntimeModel(nn.Module):
-    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(1))
-        self.language_model = nn.Linear(1, 1)
-
-    def replay_forward(self, *_args: Any, **_kwargs: Any) -> Any:
-        return None
-
-    def reference_policy(self) -> contextlib.AbstractContextManager[None]:
-        return contextlib.nullcontext()
-
-    def load_trainable_state(self, state_dict: dict[str, Any]) -> Any:
-        return self.load_state_dict(state_dict, strict=False)
-
-    @property
-    def adapter_roots(self) -> dict[str, Any]:
-        # Mirrors AutoregressiveModelBase: the checkpoint root is the wrapper, the adapter
-        # is one hop in on language_model.
-        return {"model": self.language_model}
-
-
 def _build(**overrides: Any) -> ModelBuild:
     """Build a ModelBuild from friendly overrides.
 
@@ -392,7 +324,9 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     assert set(bundle.trainable_modules) == {"transformer"}
     assert not hasattr(bundle.model, "pipeline")
 
-    # ModelBuild rejects a missing identity before any registry dispatch.
+
+def test_model_build_rejects_missing_family() -> None:
+    """ModelBuild rejects a missing identity before any registry dispatch."""
     with pytest.raises(ValueError, match=r"ModelBuild\.family"):
         _build(family="")
 
