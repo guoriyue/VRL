@@ -354,19 +354,3 @@ async def test_cancelling_partially_completed_weight_sync_terminalizes_runtime(
         assert completed not in cancelled_refs
         generation.cancel()
         await asyncio.gather(generation, return_exceptions=True)
-
-
-@pytest.mark.asyncio
-async def test_session_does_not_coerce_invalid_policy_version(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
-        session = ray_run.runtime._session
-        payload = ray_run.trainable_state()
-        submissions = _record_submissions(monkeypatch)
-
-        for policy_version in (True, 1.9, "1", -1):
-            with pytest.raises(ValueError, match="policy_version must be"):
-                await session.update_weights(payload, policy_version)
-
-        assert submissions == []

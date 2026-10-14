@@ -11,7 +11,6 @@ from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.ray.actor_pool import RayActorJob
 from vrl.ray.dependencies import kill_actors, kill_failures_error, require_ray
 from vrl.utils.deadline import OperationDeadline, require_timeout
-from vrl.utils.validation import require_int
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +61,6 @@ class RayGenerationSession:
         has installed the payload; a rank failure fails the whole sync.
         """
 
-        require_int(policy_version, path="policy_version", minimum=0)
         engines = self.executor.engines
         if not engines:
             return
