@@ -226,8 +226,3 @@ def test_dense_exclude_falls_as_the_forbidden_instance_gets_confident() -> None:
 
     assert (two.strict, faint_third.strict) == (1.0, 1.0)
     assert faint_third.dense < two.dense == pytest.approx(1.0)
-
-
-def test_reward_rejects_an_unknown_score_key() -> None:
-    with pytest.raises(ValueError, match="score_key"):
-        GenEvalOwlReward(device="cpu", score_key="geneval_owl")

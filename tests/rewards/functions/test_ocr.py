@@ -230,8 +230,6 @@ async def test_match_score_requires_full_text_and_counts_failed_video_frames(eng
     video = _make_ocr_sample("HELLO WORLD", video_tensor=torch.zeros(3, 8, 64, 64))
     assert (await reward.score_batch([video])).scores[0] == pytest.approx(0.5)
     assert (await reward.score_batch([_make_ocr_sample("", video_tensor=image)])).scores[0] == 0.0
-    with pytest.raises(ValueError, match="score_key"):
-        OCRReward(score_key="typo")
 
 
 @pytest.mark.asyncio

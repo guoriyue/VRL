@@ -189,8 +189,3 @@ async def test_dense_equals_recall_when_every_tag_is_absent_or_confident() -> No
     (recall,) = (await recall_reward.score_batch(sample)).scores
 
     assert dense == recall == pytest.approx(1.0 / 3.0)
-
-
-def test_reward_rejects_an_unknown_score_key() -> None:
-    with pytest.raises(ValueError, match="score_key"):
-        WDTaggerReward(score_key="wd_tagger")

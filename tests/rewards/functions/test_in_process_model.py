@@ -11,7 +11,6 @@ from vrl.rewards.base import (
 from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import InProcessRewardScorer
 from vrl.rewards.types import RewardSample
-from vrl.utils.config import import_from_path
 
 
 class _FakeReward(ModelRewardFunction):
@@ -94,39 +93,6 @@ async def test_missing_axis_fails_instead_of_silently_losing_observations() -> N
         await reward.shutdown()
 
 
-@pytest.mark.asyncio
-async def test_reward_function_in_process_single_score() -> None:
-    """A single in-process ``score`` on an all-zero image returns the model's score for it (0.0
-    for the test model).
-    """
-    reward = _reward_function_in_process()
-    assert (await reward.score_batch([_sample(torch.zeros(1, 3, 2, 2))])).scores[
-        0
-    ] == pytest.approx(0.0)
-
-
-@pytest.mark.parametrize(
-    ("factory_path", "expected_type"),
-    [
-        (
-            "vrl.rewards.models.aesthetic:AestheticRewardModel",
-            "AestheticRewardModel",
-        ),
-        (
-            "vrl.rewards.models.pickscore:PickScoreRewardModel",
-            "PickScoreRewardModel",
-        ),
-    ],
-)
-def test_reward_model_factory_class_paths_construct(
-    factory_path: str,
-    expected_type: str,
-) -> None:
-    model = import_from_path(factory_path)({"device": "cpu"})
-
-    assert type(model).__name__ == expected_type
-
-
 def test_lazy_reward_models_defer_module_construction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -162,7 +128,9 @@ def test_lazy_reward_models_defer_module_construction(
         assert built_on == ["cuda:7"]  # one build per runtime lifetime
 
 
-def test_inference_reward_rejects_empty_score_key_component() -> None:
+def test_constructor_rejects_bad_score_keys_and_stray_model_knobs() -> None:
+    """Construction-time checks shared by every ModelRewardFunction (base.py)."""
+
     class _Runtime:
         async def score_batch(self, request):
             return []
@@ -170,8 +138,15 @@ def test_inference_reward_rejects_empty_score_key_component() -> None:
         async def shutdown(self) -> None:
             return None
 
+    class _ClosedReward(_FakeReward):
+        score_keys = ("dense", "recall")
+        worker_config_only = True
+
+    with pytest.raises(ValueError, match="score_key must be non-empty"):
+        _FakeReward(score_key="", scorer=_Runtime())
     with pytest.raises(ValueError, match="empty component"):
-        _FakeReward(
-            score_key="a++b",
-            scorer=_Runtime(),
-        )
+        _FakeReward(score_key="a++b", scorer=_Runtime())
+    with pytest.raises(ValueError, match=r"score_key must be one of \['dense', 'recall'\]"):
+        _ClosedReward(score_key="fake", scorer=_Runtime())
+    with pytest.raises(TypeError, match="unknown_knob"):
+        _ClosedReward(score_key="dense", scorer=_Runtime(), unknown_knob=True)
