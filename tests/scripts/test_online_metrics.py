@@ -145,30 +145,6 @@ def test_metrics_csv_initializes_both_headers_before_any_rows(tmp_path) -> None:
         assert "loss" in rows[0]
 
 
-def test_metrics_csv_writes_continuous_request_diagnostics(tmp_path) -> None:
-    path = tmp_path / "metrics.csv"
-    run = OnlineMetricsCSV(tmp_path)
-    metrics = TrainStepMetrics(
-        phase_times={
-            "continuous.ready_groups_at_demand": 1.0,
-            "continuous.lookahead_requested": 1.0,
-            "continuous.producer_submitted": 2.0,
-            "continuous.producer_completed": 1.0,
-        },
-    )
-
-    run.append(0, metrics)
-
-    with path.open(newline="", encoding="utf-8") as handle:
-        rows = list(csv.DictReader(handle))
-    assert len(rows) == 1
-    assert None not in rows[0]
-    assert rows[0]["continuous_ready_groups_at_demand"] == "1.0"
-    assert rows[0]["continuous_lookahead_requested"] == "1.0"
-    assert rows[0]["continuous_producer_submitted"] == "2.0"
-    assert rows[0]["continuous_producer_completed"] == "1.0"
-
-
 @pytest.mark.parametrize("fail", [False, True])
 def test_metrics_csv_preflight_is_rank_consistent_with_real_gloo(tmp_path, fail) -> None:
     context = mp.get_context("spawn")

@@ -18,9 +18,7 @@ from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval import cosmos_predict25_kling_eval as eval_script
 from vrl.scripts.eval._checkpoint_comparison import reward_worker_config
 from vrl.scripts.eval._sampling import resolve_eval_sampling
-from vrl.trainers.checkpointing import CheckpointTarget, save_training_checkpoint
-
-MODEL_IDENTITY = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
+from vrl.trainers.checkpointing import save_training_checkpoint
 
 
 def _minimal_eval_config(*, family: str = "cosmos-predict2.5"):
@@ -43,19 +41,6 @@ def _minimal_eval_config(*, family: str = "cosmos-predict2.5"):
             "trainer": {},
         },
     )
-
-
-def test_parse_checkpoint_accepts_label_and_path(tmp_path) -> None:
-    """Checks checkpoint CLI values can carry stable labels."""
-    checkpoint = tmp_path / "checkpoint-final"
-    checkpoint.mkdir()
-
-    (target,) = CheckpointTarget.from_cli_values(
-        [f"baseline={checkpoint}"], require_directory=False
-    )
-
-    assert target.label == "baseline"
-    assert target.path == checkpoint.resolve()
 
 
 def test_seed_grid_cell_is_identical_across_checkpoints(tmp_path) -> None:

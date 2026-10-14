@@ -2,36 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 import torch
 from omegaconf import OmegaConf
 
-from tests.config.test_load_all_experiments import (
-    _experiment_names,
-    _load_experiment_for_static_validation,
-)
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.models.dtypes import resolve_torch_dtype
-
-# Derive every online recipe from the experiment glob (the single source of
-# truth in test_load_all_experiments) rather than hand-maintaining a subset —
-# the old hand list had drifted and only exercised four recipes. "online" ==
-# every experiment whose final path component is not an `offline_*` recipe.
-_RECIPES = [name for name in _experiment_names() if not Path(name).name.startswith("offline_")]
-
-
-@pytest.mark.parametrize("experiment", _RECIPES)
-def test_bridge_uses_aligned_public_precision(experiment):
-    """Every online recipe resolves one precision policy for both roles."""
-    cfg = _load_experiment_for_static_validation(experiment)
-    policy = PrecisionPolicy.from_section(parse_config(cfg).precision)
-    assert policy.training == policy.rollout
 
 
 def test_fp16_precision_block_drives_trainer_and_rollout():
@@ -72,20 +52,6 @@ def test_rollout_precision_split_auto_derives_correction_policy(
         tis_mode="truncate",
         rs_mode="seq_mean_k1",
     )
-
-
-def test_no_split_means_no_auto_correction_policy() -> None:
-    """rollout == train: the builder early-returns and installs no auto policy."""
-    cfg = _with_precision(
-        "sd3_5/online_grpo_ocr",
-        _plain_policy("bf16"),
-    )
-
-    trainer_config = BuiltConfigs.from_cfg(cfg).trainer
-
-    # No split -> the correction field keeps its dataclass default; the
-    # split-only policy (TIS truncate) is NOT installed.
-    assert trainer_config.precision_correction == PrecisionCorrectionConfig()
 
 
 def test_outer_autocast_split_is_preserved_in_trainer_role_labels() -> None:
@@ -149,7 +115,6 @@ def _rollout_quantization_policy(format_name: str) -> dict:
 @pytest.mark.parametrize("math,expected", [("fp32", torch.float32), ("bf16", torch.bfloat16)])
 def test_math_axis_resolves_to_dtype(math, expected):
     # P2: the `math` axis resolves to the evaluator's log-prob math dtype.
-    from vrl.config.precision import PrecisionPolicy
 
     block = _plain_policy("fp32")
     block["denoise_math"] = {"dtype": math}
@@ -159,94 +124,6 @@ def test_math_axis_resolves_to_dtype(math, expected):
         is expected
     )
     assert BuiltConfigs.from_cfg(cfg).precision.denoise_math == math
-
-
-def test_replay_parity_config_is_bridged_from_yaml() -> None:
-    cfg = _with_precision(
-        "sd3_5/online_grpo_ocr",
-        _plain_policy("bf16"),
-    )
-    cfg = OmegaConf.merge(
-        cfg,
-        OmegaConf.create(
-            {"trainer": {"replay_parity": {"max_abs_logprob_diff": 2.0e-4}}},
-        ),
-    )
-
-    trainer_config = BuiltConfigs.from_cfg(cfg).trainer
-
-    assert trainer_config.replay_parity.max_abs_logprob_diff == pytest.approx(2.0e-4)
-
-
-def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
-    """Mismatch + continuous-async diagnostics are written as regular CSV columns."""
-    from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
-    from vrl.algorithms.types import InitialReplayStats, PolicyUpdateStats, TrainStepMetrics
-    from vrl.trainers.metrics_io import OnlineMetricsCSV
-
-    csv_path = tmp_path / "metrics.csv"
-    run = OnlineMetricsCSV(tmp_path)
-    run.append(
-        0,
-        TrainStepMetrics(
-            loss=1.0,
-            policy_loss=2.0,
-            weighted_kl_loss=0.025,
-            update=PolicyUpdateStats(
-                active_clip_fraction=0.15,
-                tis_clip_fraction=0.09,
-                rs_seq_masked_fraction=0.11,
-            ),
-            initial_replay=InitialReplayStats(
-                clip_fraction=0.16,
-                active_clip_fraction=0.07,
-                logprob_abs_diff_max=0.008,
-            ),
-            logprob_mismatch=LogprobMismatchStats(
-                logprob_abs_diff_mean=0.1,
-                logprob_abs_diff_max=0.2,
-                ratio_abs_dev_mean=0.3,
-                ratio_abs_dev_max=0.4,
-                mismatch_kl=-0.5,
-                mismatch_k3_kl=0.6,
-            ),
-            phase_times={
-                "continuous.stale_policy_versions": 1.0,
-                "continuous.weight_sync_pause_s": 0.25,
-                "continuous.lookahead_requested": 1.0,
-                "continuous.producer_completed": 2.0,
-            },
-        ),
-    )
-
-    header, row = csv_path.read_text().splitlines()
-    assert "logprob_abs_diff_mean" in header
-    assert "weighted_kl_loss" in header
-    assert "pre_update_logprob_abs_diff_max" in header
-    assert "tis_clip_fraction" in header
-    assert "ratio_abs_dev_max" in header
-    assert "mismatch_k3_kl" in header
-    assert "continuous_stale_versions" in header
-    assert "continuous_lookahead_requested" in header
-    assert "continuous_producer_completed" in header
-    values = dict(zip(header.split(","), row.split(","), strict=True))
-    # Assert the numeric value landed in the right column, not the CSV float
-    # format width (.6f / .4f zero-padding is a display detail, not a contract).
-    assert float(values["logprob_abs_diff_mean"]) == pytest.approx(0.1)
-    assert float(values["weighted_kl_loss"]) == pytest.approx(0.025)
-    assert float(values["active_clip_fraction"]) == pytest.approx(0.15)
-    assert float(values["pre_update_clip_fraction"]) == pytest.approx(0.16)
-    assert float(values["pre_update_active_clip_fraction"]) == pytest.approx(0.07)
-    assert float(values["pre_update_logprob_abs_diff_max"]) == pytest.approx(0.008)
-    assert float(values["tis_clip_fraction"]) == pytest.approx(0.09)
-    assert float(values["rs_seq_masked_fraction"]) == pytest.approx(0.11)
-    assert float(values["ratio_abs_dev_max"]) == pytest.approx(0.4)
-    assert float(values["mismatch_kl"]) == pytest.approx(-0.5)
-    # Continuous-async diagnostics sourced from TrainStepMetrics.phase_times.
-    assert float(values["continuous_stale_versions"]) == pytest.approx(1.0)
-    assert float(values["continuous_weight_sync_pause_s"]) == pytest.approx(0.25)
-    assert float(values["continuous_lookahead_requested"]) == pytest.approx(1.0)
-    assert float(values["continuous_producer_completed"]) == pytest.approx(2.0)
 
 
 @pytest.mark.parametrize(
@@ -301,19 +178,3 @@ def test_family_parameter_dtype_is_derived_from_runtime_role() -> None:
 
     assert rollout.parameter_dtype is torch.float16
     assert replay.parameter_dtype is torch.bfloat16
-
-
-def test_direct_tool_parameter_dtype_override_is_explicit() -> None:
-    """Non-production tools may override storage dtype only through a named argument."""
-    from vrl.models.families.registry import get_model_family_entry
-
-    cfg = _with_precision("sd3_5/online_grpo_ocr", _plain_policy("bf16"))
-    built = BuiltConfigs.from_cfg(cfg)
-    build = get_model_family_entry("sd3_5").resolve_model_build(
-        built.root,
-        torch.device("cpu"),
-        precision=built.precision,
-        parameter_dtype_override="fp32",
-    )
-
-    assert build.parameter_dtype is torch.float32

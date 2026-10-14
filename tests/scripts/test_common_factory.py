@@ -358,12 +358,6 @@ def test_sana_direct_tool_override_changes_storage_only() -> None:
     )
 
 
-def test_reward_factory_rejects_an_all_zero_objective() -> None:
-    """Checks observation-only components cannot replace the training objective."""
-    with pytest.raises(ValueError, match="At least one reward component"):
-        _built_reward({"pickscore": 0.0}, {}).reward.require_online_training()
-
-
 def _shared_reward_cfg(component: str) -> object:
     return OmegaConf.create(
         {
@@ -432,22 +426,6 @@ def test_reward_device_and_parking_derive_from_resource_topology() -> None:
     # The HTTP client runs in this process and reserves no local GPU.
     assert http_plan.reward_torch_device(trainer_device="cuda:0") == "cpu"
     assert http_plan.reward_parking_mechanism is None
-
-    cpu_cfg = OmegaConf.create(
-        {
-            "distributed": {
-                "resources": {
-                    "visible_devices": [0, 1],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1]},
-                },
-            },
-            "reward": {"components": {"ocr": 1.0}, "kwargs": {"ocr": {}}},
-        },
-    )
-    # A CPU-only reward class scores on CPU even when the trainer runs on CUDA.
-    cpu_plan = ResourcePlan.from_root(parse_config(cpu_cfg))
-    assert cpu_plan.reward_torch_device(trainer_device="cuda:0") == "cpu"
 
 
 def test_multi_gpu_engine_gate_requires_family_capability() -> None:

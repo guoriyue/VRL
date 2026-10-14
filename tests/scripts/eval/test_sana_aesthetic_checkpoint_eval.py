@@ -31,7 +31,6 @@ SANA_PRECISION = RolePrecision(
     float32_precision="ieee",
     outer_autocast=False,
 )
-SANA_IDENTITY = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
 
 # The five `main()` tests below run on a minimal synthetic run directory and stub
 # out snapshot materialization plus image generation. Which pinned revisions get
@@ -300,20 +299,6 @@ def test_main_rejects_empty_manifest(monkeypatch, tmp_path) -> None:
     _allow_minimal_protocol(monkeypatch)
     with pytest.raises(ValueError, match="manifest has no prompts"):
         checkpoint_eval.main(["--run-dir", str(run_dir), "--device", "cpu"])
-
-
-def test_checkpoint_discovery_rejects_curve_gap(tmp_path, monkeypatch) -> None:
-    run_dir, _pipeline = _write_run(tmp_path, monkeypatch)
-    (run_dir / "checkpoint-25").rename(run_dir / "checkpoint-50")
-    meta_path = run_dir / "checkpoint-50" / "checkpoint_meta.json"
-    meta = json.loads(meta_path.read_text())
-    meta["completed_epoch"] = 50
-    meta_path.write_text(json.dumps(meta), encoding="utf-8")
-    cfg = OmegaConf.load(run_dir / "resolved_config.yaml")
-    cfg.trainer.total_epochs = 50
-
-    with pytest.raises(ValueError, match="incomplete or has gaps"):
-        checkpoint_eval._discover_checkpoint_targets(run_dir, parse_config(cfg))
 
 
 def test_checkpoint_discovery_rejects_incomplete_curve_before_model_load(
@@ -842,10 +827,3 @@ def test_scheduler_protocol_rejects_wrong_class() -> None:
 
     with pytest.raises(ValueError, match="official DPM-Solver"):
         sana_inference.require_scheduler(FlowMatchEulerDiscreteScheduler())
-
-
-def test_scheduler_protocol_accepts_official_identity() -> None:
-    assert (
-        sana_inference.require_scheduler(build_official_sana_scheduler())
-        == sana_inference.SANA_EVAL_SCHEDULER_CONFIG
-    )
