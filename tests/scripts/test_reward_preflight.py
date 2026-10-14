@@ -53,7 +53,7 @@ def test_preflight_closes_its_ray_session_when_scoring_fails(tmp_path) -> None:
     import ray
 
     initialized_before = ray.is_initialized()
-    with pytest.raises((ValueError, KeyError), match="missing"):
+    with pytest.raises(KeyError, match="missing score keys"):
         preflight_rewards(
             _config(tmp_path, "reward.kwargs.image_sharpness.score_key=missing"),
             prompts=1,
@@ -67,7 +67,8 @@ def test_preflight_can_score_the_eval_manifest(tmp_path) -> None:
         _config(tmp_path), prompts=1, use_eval_manifest=True, device=torch.device("cpu")
     )
 
-    assert len(report.prompts) == 1
+    # The first row of manifests/drawbench/eval_64.txt, not of train_192.txt.
+    assert report.prompts == ("Lego Arnold Schwarzenegger.",)
 
 
 def test_main_reports_a_missing_manifest_as_a_failure(tmp_path, capsys) -> None:

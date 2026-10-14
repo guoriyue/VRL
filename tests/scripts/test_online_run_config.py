@@ -125,13 +125,12 @@ def test_seed_range_is_rejected_at_config_boundary(seed):
         OnlineRunConfig(total_epochs=1, seed=seed)
 
 
+@pytest.mark.gpu
 def test_strict_cuda_seed_repeats_small_optimizer_updates(monkeypatch):
     import torch
 
     from vrl.trainers.checkpointing import capture_rng_state, restore_rng_state
 
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA is unavailable")
     previous = capture_rng_state()
     enabled = torch.are_deterministic_algorithms_enabled()
     warn_only = torch.is_deterministic_algorithms_warn_only_enabled()

@@ -4,7 +4,6 @@ measured bf16 peak is a sane training denominator — not the inflated vendor he
 from __future__ import annotations
 
 import pytest
-import torch
 
 from vrl.scripts.perf.gpu_preflight import (
     GpuPreflight,
@@ -12,18 +11,15 @@ from vrl.scripts.perf.gpu_preflight import (
     run_gpu_preflight,
 )
 
-_HAS_CUDA = torch.cuda.is_available()
-
 
 def test_cpu_path_is_graceful_not_crash() -> None:
     """On a CPU box (CI), preflight must degrade to a well-formed 'unavailable' report,
     never raise — so perf probes can import/call it on non-CUDA CI."""
     report = run_gpu_preflight(force=True)
     assert isinstance(report, GpuPreflight)
-    if not _HAS_CUDA:
-        assert report.available is False
-        assert report.bf16_peak_tflops == 0.0
-        assert measured_bf16_peak_tflops() == 0.0
+    assert report.available is False
+    assert report.bf16_peak_tflops == 0.0
+    assert measured_bf16_peak_tflops() == 0.0
 
 
 @pytest.mark.gpu
