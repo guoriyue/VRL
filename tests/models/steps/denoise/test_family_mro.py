@@ -32,12 +32,17 @@ def _owner(cls: type, name: str) -> type | None:
     return None
 
 
-def _denoise_model_classes() -> list[Any]:
-    return [
-        pytest.param(import_from_path(entry.family_build.model_cls), id=family)
-        for family, entry in FAMILY_REGISTRY.items()
-        if isinstance(entry.family_build, DenoiseFamilyBuild)
-    ]
+def _non_diffusers_pipeline_model_classes() -> list[Any]:
+    """Registered model classes that cannot inherit the shared diffusers loader."""
+
+    params = []
+    for family, entry in FAMILY_REGISTRY.items():
+        if not isinstance(entry.family_build, DenoiseFamilyBuild):
+            continue
+        model_cls = import_from_path(entry.family_build.model_cls)
+        if not issubclass(model_cls, DiffusersPipelineModelBase):
+            params.append(pytest.param(model_cls, id=family))
+    return params
 
 
 def _replay_model_classes(*, self_loading: bool | None = None) -> list[Any]:
@@ -53,14 +58,13 @@ def _replay_model_classes(*, self_loading: bool | None = None) -> list[Any]:
     return [pytest.param(cls, id=name) for name, cls in classes.items()]
 
 
-@pytest.mark.parametrize("model_cls", _denoise_model_classes())
+@pytest.mark.parametrize("model_cls", _non_diffusers_pipeline_model_classes())
 def test_family_without_a_diffusers_pipeline_owns_from_build(
     model_cls: type[DenoiseModelBase],
 ) -> None:
     """Only diffusers-pipeline families may inherit the shared loader."""
 
-    if not issubclass(model_cls, DiffusersPipelineModelBase):
-        assert _owner(model_cls, "from_build") is model_cls
+    assert _owner(model_cls, "from_build") is model_cls
 
 
 @pytest.mark.parametrize("replay_cls", _replay_model_classes(self_loading=True))

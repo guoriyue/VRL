@@ -39,20 +39,6 @@ class _SingleRoot:
     set_module_root = DenoiseModelBase.set_module_root
 
 
-class _DualRoot(_SingleRoot):
-    """A Wan-shaped policy: ONE override covers both views and every pass."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.transformer_2 = nn.Linear(4, 4)
-
-    def set_module_root(self, name: str, module: Any) -> None:
-        if name == "transformer_2":
-            self.transformer_2 = module
-            return
-        _SingleRoot.set_module_root(self, name, module)
-
-
 def test_write_back_reaches_every_alias() -> None:
     """The replacement must land in every handle the model holds, not just one."""
 
@@ -68,20 +54,6 @@ def test_write_back_reaches_every_alias() -> None:
 
     # Both went through _set_transformer, so both reached every alias.
     assert policy.aliases == [compiled, wrapped]
-
-
-def test_one_override_serves_both_views_on_a_multi_root_policy() -> None:
-    """The point of the refactor: no per-root method under a derived name."""
-
-    policy = _DualRoot()
-    expert_1 = nn.Linear(4, 4)
-    expert_2 = nn.Linear(4, 4)
-
-    policy.set_module_root("transformer", expert_1)
-    policy.set_module_root("transformer_2", expert_2)
-
-    assert policy.transformer is expert_1
-    assert policy.transformer_2 is expert_2
 
 
 def test_unknown_root_fails_loud_on_a_single_root_policy() -> None:

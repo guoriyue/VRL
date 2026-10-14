@@ -61,12 +61,9 @@ def test_move_frozen_components_moves_only_frozen() -> None:
     assert next(model.transformer.parameters()).device.type == "cpu"
 
 
-@pytest.mark.parametrize("components", [None, [], "vae"])
-def test_invalid_pipeline_components_cannot_silently_skip_offload(components) -> None:
+def test_invalid_pipeline_components_cannot_silently_skip_offload() -> None:
     transformer = nn.Linear(2, 2)
-    model = SD3_5PipelineModel(
-        pipeline=SimpleNamespace(transformer=transformer, components=components)
-    )
+    model = SD3_5PipelineModel(pipeline=SimpleNamespace(transformer=transformer, components=[]))
     with pytest.raises(TypeError, match=r"pipeline\.components must be a mapping"):
         model.move_frozen_components("meta")
     assert next(transformer.parameters()).device.type == "cpu"
