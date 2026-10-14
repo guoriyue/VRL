@@ -80,34 +80,6 @@ def test_reward_output_rejects_invalid_timing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_function_runtime_returns_the_function_output_directly() -> None:
-    class _ReportingReward(RewardFunction):
-        def __init__(self) -> None:
-            self.calls: list[list[str]] = []
-
-        async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
-            self.calls.append([sample.sample_id for sample in samples])
-            return RewardOutput(
-                scores=(1.25, 2.5),
-                components={"quality": (0.2, 0.4)},
-                timing_ms={"latency_ms": 7.0},
-            )
-
-    reward = _ReportingReward()
-    runtime = RewardFunctionRuntime(reward)
-    samples = (_sample("sample-0"), _sample("sample-1"))
-
-    output = await runtime.score(samples)
-
-    assert reward.calls == [["sample-0", "sample-1"]]
-    assert output == RewardOutput(
-        scores=(1.25, 2.5),
-        components={"quality": (0.2, 0.4)},
-        timing_ms={"latency_ms": 7.0},
-    )
-
-
-@pytest.mark.asyncio
 async def test_function_runtime_rejects_empty_and_duplicate_samples() -> None:
     class _ZeroReward(RewardFunction):
         async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:

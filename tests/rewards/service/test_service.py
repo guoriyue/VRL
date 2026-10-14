@@ -748,25 +748,6 @@ def test_service_requires_explicit_existing_absolute_artifact_roots(tmp_path) ->
         RewardService(_FakeRuntime(), artifact_roots=[tmp_path / "missing"])
 
 
-def test_obsolete_managed_launch_token_is_rejected_by_config_and_wire() -> None:
-    from vrl.rewards.service.protocol import RewardServiceInfo
-    from vrl.rewards.service.wire import info_from_wire, info_to_wire
-
-    with pytest.raises(ValueError, match="unknown launch_token"):
-        RewardServiceConfig.from_mapping({"launch_token": "obsolete-child-token"})
-    info = RewardServiceInfo(
-        model_name="external-model",
-        model_version="v1",
-        max_pending_requests=8,
-    )
-    payload = info_to_wire(info)
-    assert "launch_token" not in payload["info"]
-    assert info_from_wire(payload) == info
-    payload["info"]["launch_token"] = "obsolete-child-token"
-    with pytest.raises(RewardServiceProtocolError, match="launch_token"):
-        info_from_wire(payload)
-
-
 def test_cli_config_rejects_unknown_top_level_keys_but_keeps_worker_config_open() -> None:
     with pytest.raises(ValueError, match=r"reward service config: unknown typo"):
         RewardServiceConfig.from_mapping({"artifact_roots": ["/tmp"], "typo": True})

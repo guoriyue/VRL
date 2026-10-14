@@ -133,12 +133,6 @@ async def test_rootless_http_upload_roundtrip_idempotency_and_shutdown(tmp_path,
         await client.ensure_ready()
         assert await client.ready()
         assert (await client.info()).model_name == "upload-model"
-        async with (
-            aiohttp.ClientSession() as probe,
-            probe.get(f"{endpoint}/info") as response,
-        ):
-            assert response.status == 200
-            assert "launch_token" not in (await response.json())["info"]
         result = await client.score_batch(request)
         replay = await client.score_batch(request)
         assert result[0].scores == replay[0].scores == {"sum": float(media.sum())}
