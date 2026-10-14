@@ -463,9 +463,6 @@ class ContinuousRolloutProducer:
                 float(stats.reward_queue_wait_ms) / 1000.0,
             )
         prompt_batch.results[slot] = ScoredRollout(
-            batch_id=prompt_batch.batch_id,
-            group_slot=slot,
-            rollout_policy_version=prompt_batch.policy_version,
             batch=stored,
             completed_at=time.monotonic(),
             stats=stats,

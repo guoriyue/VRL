@@ -75,6 +75,7 @@ class ContinuousRolloutConsumer:
             if len(items) == len(prompt_batch.prompts):
                 wait_s = time.perf_counter() - wait_start
                 return self._build_iteration(
+                    prompt_batch=prompt_batch,
                     items=items,
                     current_policy_version=current_policy_version,
                     queue_wait_s=wait_s,
@@ -155,29 +156,33 @@ class ContinuousRolloutConsumer:
         prompt_batch: PromptBatch,
         current_policy_version: int,
     ) -> None:
-        """Fail when a ready item falls outside the trainable version window."""
+        """Fail when ready items fall outside the trainable version window.
 
-        for item in prompt_batch.results:
-            if item is None:
-                continue
-            version = item.rollout_policy_version
-            # Staleness: versions the item trails the trainer by.
-            version_lag = current_policy_version - version
-            if version_lag < 0:
-                raise RuntimeError(
-                    "continuous scored result is newer than the trainer policy "
-                    f"(item={version}, trainer={current_policy_version}); weight-sync "
-                    "barrier invariant violated",
-                )
-            if version_lag > self.settings.max_stale_policy_versions:
-                raise RuntimeError(
-                    "continuous ready prompt batch is older than the policy window "
-                    f"(item={version}, trainer={current_policy_version})",
-                )
+        Every slot of a prompt batch runs at the batch's fixed policy version,
+        so the check is per batch, once any slot is ready.
+        """
+
+        if all(item is None for item in prompt_batch.results):
+            return
+        version = prompt_batch.policy_version
+        # Staleness: versions the batch trails the trainer by.
+        version_lag = current_policy_version - version
+        if version_lag < 0:
+            raise RuntimeError(
+                "continuous scored result is newer than the trainer policy "
+                f"(item={version}, trainer={current_policy_version}); weight-sync "
+                "barrier invariant violated",
+            )
+        if version_lag > self.settings.max_stale_policy_versions:
+            raise RuntimeError(
+                "continuous ready prompt batch is older than the policy window "
+                f"(item={version}, trainer={current_policy_version})",
+            )
 
     def _build_iteration(
         self,
         *,
+        prompt_batch: PromptBatch,
         items: list[ScoredRollout],
         current_policy_version: int,
         queue_wait_s: float,
@@ -191,7 +196,7 @@ class ContinuousRolloutConsumer:
             item.batch.group_ids = torch.full_like(item.batch.group_ids, index)
             batches.append(item.batch)
 
-        version = items[0].rollout_policy_version
+        version = prompt_batch.policy_version
         staleness = current_policy_version - version
         item_age_s = max(item.age_s for item in items)
         stats = RolloutStats()
@@ -210,7 +215,7 @@ class ContinuousRolloutConsumer:
                 "continuous.item_age_s": float(item_age_s),
                 "continuous.ready_groups_at_demand": float(ready_groups_at_demand),
                 # Report the same batch identity used to select this iteration.
-                "continuous.batch_id": float(items[0].batch_id),
+                "continuous.batch_id": float(prompt_batch.batch_id),
             },
         )
         return RolloutIteration(batches=batches, stats=stats)

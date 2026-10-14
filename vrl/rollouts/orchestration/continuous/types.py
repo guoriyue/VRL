@@ -38,19 +38,15 @@ class ContinuousRolloutSettings:
 class ScoredRollout:
     """One completed prompt group waiting in its batch's result slot.
 
-    ``batch_id + group_slot`` is the logical work identity. ``group_slot`` is
-    the prompt's slot index in the batch's stable prompt list (not the prompt
-    string) so that a prompt batch with duplicate strings still yields
-    ``len(prompts)`` distinct groups per iteration.
-    Receipt fields are fixed at completion so result identity stays stable. The
-    referenced batch and stats remain mutable payload objects.
+    Its identity is its position: ``PromptBatch.results[slot]``, where the slot
+    is the prompt's index in the batch's stable prompt list (not the prompt
+    string), so a prompt batch with duplicate strings still yields
+    ``len(prompts)`` distinct groups per iteration. The owning ``PromptBatch``
+    carries the batch id and the fixed policy version every slot ran under.
+    Receipt fields are fixed at completion; the referenced batch and stats
+    remain mutable payload objects.
     """
 
-    # Producer-assigned monotonic identity, unique per owner lifetime. The
-    # consumer selects the demanded batch by this key.
-    batch_id: int
-    group_slot: int
-    rollout_policy_version: int
     batch: RolloutBatch
     # display/provenance-only: receipt time on this process's monotonic clock
     # (never wall time), exported as a result-age gauge. Computing age
@@ -79,7 +75,9 @@ class PromptBatch:
     trainer has taken the iteration, before another batch can be installed.
     """
 
+    # Producer-assigned monotonic identity, unique per owner lifetime.
     batch_id: int
+    # Fixed at install: every slot (retries included) generates at this version.
     policy_version: int
     prompts: tuple[Any, ...]
     group_size: int

@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter, deque
 from collections.abc import Sequence
-from dataclasses import FrozenInstanceError, dataclass
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -393,7 +393,7 @@ async def test_finite_prompt_batch_completes_each_slot_once_then_idles(
         # The drain must admit p2 even though pause caught the batch with only
         # the first two slots live.
         await producer.drain_prompt_batch(wait_timeout_s=5.0)
-        assert {item.group_slot for item in results if item is not None} == {0, 1, 2}
+        assert _ready(results) == 3
         assert _attempts(stack.bench) == {"p0": 1, "p1": 1, "p2": 1}
         assert producer.state.submitted_count == 3
         assert producer.state.completed_count == 3
@@ -438,13 +438,11 @@ async def test_prompt_batch_freezes_version_and_options_across_serial_retry(
         assert producer.state.error_count == 1
         assert producer.state.submitted_count == 3
         assert producer.state.completed_count == 2
-        items = {item.group_slot: item for item in results if item is not None}
-        assert set(items) == {0, 1}
-        # Identity contract: a retry keeps the same batch_id + group_slot.
-        assert {item.batch_id for item in items.values()} == {0}
+        # A retry refills the same slot of the same batch.
+        assert _ready(results) == 2
         # Each item carries its own admission-wait/service gauges (max-on-merge
         # views of the per-slot intervals).
-        for item in items.values():
+        for item in results:
             assert item.stats.gauges["continuous.generation_queue_wait_s"] >= 0.0
             assert item.stats.gauges["continuous.generation_service_s"] >= 0.0
     finally:
@@ -686,7 +684,7 @@ async def test_items_carry_policy_version_captured_at_submission(monkeypatch, tm
         await producer.drain_prompt_batch(wait_timeout_s=5.0)
 
         assert _ready(results) == 1
-        assert results[0].rollout_policy_version == 1
+        assert prompt_batch.policy_version == 1
         assert stack.bench.trace.requests[0].policy_version == 1
     finally:
         producer.resume_admission()
@@ -734,17 +732,8 @@ def _batch(samples: int = 2) -> RolloutBatch:
     )
 
 
-def _item(
-    group_slot: int,
-    version: int,
-    phase_times: dict[str, float] | None = None,
-    *,
-    batch_id: int = 0,
-) -> ScoredRollout:
+def _item(phase_times: dict[str, float] | None = None) -> ScoredRollout:
     return ScoredRollout(
-        batch_id=batch_id,
-        group_slot=group_slot,
-        rollout_policy_version=version,
         batch=_batch(),
         stats=RolloutStats(phase_seconds=dict(phase_times or {})),
     )
@@ -790,19 +779,12 @@ async def _collect_iteration(
     )
 
 
-@pytest.mark.parametrize("field, replacement", [("batch_id", 5), ("rollout_policy_version", 9)])
-def test_scored_receipt_identity_cannot_change_after_completion(field, replacement) -> None:
-    item = _item(group_slot=0, version=1)
-    with pytest.raises(FrozenInstanceError):
-        setattr(item, field, replacement)
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ready_count", [0, 1])
 async def test_consumer_timeout_identifies_incomplete_batch(ready_count) -> None:
     prompt_batch = _prompt_batch([None, None], batch_id=7)
     for slot in range(ready_count):
-        prompt_batch.results[slot] = _item(group_slot=slot, version=1, batch_id=7)
+        prompt_batch.results[slot] = _item()
     receipts = list(prompt_batch.results)
 
     with pytest.raises(TimeoutError) as caught:
@@ -825,7 +807,7 @@ async def test_consumer_consumes_stale_items_within_bound() -> None:
 
     The consumer only reads the slots; releasing them is the producer's.
     """
-    items = [_item(group_slot=slot, version=1) for slot in range(2)]
+    items = [_item(), _item()]
     prompt_batch = _prompt_batch(list(items))
     iteration = await _collect_iteration(
         _consumer(max_stale=1), prompt_batch, current_policy_version=2
@@ -845,7 +827,7 @@ async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
     The non-draining weight-sync barrier runs the same check directly, so a
     late reward landing after the trainer's bump is rejected there too.
     """
-    items = [_item(group_slot=slot, version=1) for slot in range(2)]
+    items = [_item(), _item()]
     prompt_batch = _prompt_batch(list(items))
     consumer = _consumer(max_stale=0)
     with pytest.raises(RuntimeError, match="older than the policy window"):
@@ -857,9 +839,7 @@ async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
 
 @pytest.mark.asyncio
 async def test_iteration_carries_batch_identity_gauges() -> None:
-    prompt_batch = _prompt_batch(
-        [_item(group_slot=slot, version=1, batch_id=3) for slot in range(2)], batch_id=3
-    )
+    prompt_batch = _prompt_batch([_item(), _item()], batch_id=3)
     iteration = await _collect_iteration(
         _consumer(max_stale=0), prompt_batch, current_policy_version=1
     )
@@ -871,14 +851,14 @@ def test_item_ages_never_go_negative_under_a_skewed_clock(
 ) -> None:
     from vrl.rollouts.orchestration.continuous import types as continuous_types
 
-    item = _item(group_slot=0, version=1)
+    item = _item()
     monkeypatch.setattr(continuous_types.time, "monotonic", lambda: item.completed_at - 10.0)
     assert item.age_s == 0.0
 
 
 @pytest.mark.asyncio
 async def test_consumer_rejects_future_policy_version() -> None:
-    prompt_batch = _prompt_batch([_item(group_slot=0, version=2)], version=2)
+    prompt_batch = _prompt_batch([_item()], version=2)
     with pytest.raises(RuntimeError, match="newer than the trainer policy"):
         await _collect_iteration(_consumer(max_stale=0), prompt_batch, current_policy_version=1)
 
@@ -887,12 +867,8 @@ async def test_consumer_rejects_future_policy_version() -> None:
 async def test_consumer_aggregates_item_phase_times() -> None:
     prompt_batch = _prompt_batch(
         [
-            _item(
-                group_slot=0,
-                version=1,
-                phase_times={"collect.engine_generate": 1.5, "collect.reward_score": 0.5},
-            ),
-            _item(group_slot=1, version=1, phase_times={"collect.engine_generate": 2.5}),
+            _item(phase_times={"collect.engine_generate": 1.5, "collect.reward_score": 0.5}),
+            _item(phase_times={"collect.engine_generate": 2.5}),
         ]
     )
     iteration = await _collect_iteration(
