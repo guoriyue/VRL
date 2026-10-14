@@ -649,13 +649,14 @@ def test_invalid_build_sampling_prevents_weight_download(
         Magi1SubprocessConfig.from_build(build)
 
 
-@pytest.mark.parametrize("timeout", [float("nan"), float("inf"), float("-inf"), 0, -1])
-def test_subprocess_config_requires_finite_positive_timeout(tmp_path, timeout):
+def test_subprocess_config_requires_finite_positive_timeout(tmp_path):
+    """The config routes its timeout through require_timeout, whose branches are
+    pinned in tests/ray/test_operation_deadline.py."""
     from dataclasses import replace
 
     config, _ = _installation(tmp_path)
     with pytest.raises(ValueError, match="timeout_seconds"):
-        replace(config, timeout_seconds=timeout)
+        replace(config, timeout_seconds=0)
 
 
 @pytest.mark.parametrize(
@@ -675,7 +676,8 @@ def test_prepare_config_rejects_coerced_sampling_values(sampling):
         prepare_magi_runtime_config(_base_config(), sampling=sampling, sample_index=0)
 
 
-@pytest.mark.parametrize("sample_index", [True, 1.5, "1", -1])
+# One row per require_int branch: a non-int (bool) and one below the minimum.
+@pytest.mark.parametrize("sample_index", [True, -1])
 def test_prepare_config_requires_nonnegative_integer_sample_index(sample_index):
     with pytest.raises(ValueError, match="sample_index"):
         prepare_magi_runtime_config(_base_config(), sampling={}, sample_index=sample_index)

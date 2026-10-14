@@ -51,7 +51,8 @@ _PACKED_STATIC_TRANSFORMER_KWARGS = frozenset(
 
 
 @pytest.mark.parametrize("name", ["cond_input_ids", "uncond_input_ids"])
-@pytest.mark.parametrize("token_id", [1.9, "2", True, -1])
+# One token per require_int branch: a non-int (bool) and one below the minimum.
+@pytest.mark.parametrize("token_id", [True, -1])
 def test_replay_rejects_invalid_token_ids_before_segment_building(name, token_id):
     model = _model()
     replay = {

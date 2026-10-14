@@ -75,7 +75,8 @@ def test_tensor_impostor_is_rejected_before_any_weight_copy() -> None:
         torch.testing.assert_close(value, original[name])
 
 
-@pytest.mark.parametrize("version", [True, 1.9, "1", -1])
+# One version per require_int branch: a non-int (bool) and one below the minimum.
+@pytest.mark.parametrize("version", [True, -1])
 @pytest.mark.parametrize("operation", ["install", "has", "get"])
 def test_state_slots_reject_ambiguous_versions_without_replacing_state(version, operation):
     slots = TrainableStateSlots()
@@ -89,10 +90,9 @@ def test_state_slots_reject_ambiguous_versions_without_replacing_state(version, 
     assert slots.get(1) is original
 
 
-@pytest.mark.parametrize("limit", [True, 1.9, "1"])
-def test_state_slots_require_exact_retention_limit(limit):
+def test_state_slots_require_exact_retention_limit():
     with pytest.raises(ValueError, match="max_retained"):
-        TrainableStateSlots(max_retained=limit)
+        TrainableStateSlots(max_retained=True)
 
 
 @pytest.mark.parametrize("child_name", ["module", "_orig_mod"])

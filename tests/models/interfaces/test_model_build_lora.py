@@ -7,7 +7,6 @@ import torch
 
 from vrl.config.model_schema import LoraSection
 from vrl.config.precision import RolePrecision
-from vrl.models.families.registry import FAMILY_REGISTRY
 from vrl.models.interfaces.runtime import ModelBuild
 
 
@@ -52,15 +51,22 @@ def test_required_lora_config_resolves_defaults_and_path(extras) -> None:
     assert build.require_lora_config().path == "/adapter"
 
 
-@pytest.mark.parametrize("family", FAMILY_REGISTRY)
-def test_family_lora_defaults_are_resolved_by_the_build(family: str) -> None:
+# One row per distinct ``lora_defaults``: the shared ModelSection default
+# (sd3_5), WanModelSection (both wan entries) and CausVidModelSection.
+@pytest.mark.parametrize(
+    ("family", "init_lora_weights", "autocast_adapter_dtype"),
+    [("sd3_5", "gaussian", True), ("wan_2_1", True, False), ("causvid", True, True)],
+)
+def test_family_lora_defaults_are_resolved_by_the_build(
+    family: str,
+    init_lora_weights: str | bool,
+    autocast_adapter_dtype: bool,
+) -> None:
     build = _build({"use_lora": True, "lora": {"rank": 2, "alpha": 4, "target_modules": ["proj"]}})
     build.family = family
 
     config = build.require_lora_config()
 
-    assert config.init_lora_weights == (
-        True if family in {"wan_2_1", "wan_2_1_i2v", "causvid"} else "gaussian"
-    )
-    assert config.autocast_adapter_dtype is (family not in {"wan_2_1", "wan_2_1_i2v"})
+    assert config.init_lora_weights == init_lora_weights
+    assert config.autocast_adapter_dtype is autocast_adapter_dtype
     assert config.dropout == 0.0
