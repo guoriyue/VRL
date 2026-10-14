@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pytest
@@ -12,21 +12,50 @@ import torch
 from tests.rollouts.collector._helpers import (
     CollectorBench,
     IndexReward,
-    collect_scored,
     real_collector,
 )
 from vrl.generation import GenerationOutput
 from vrl.ray.resources import RoleLifecycle
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.base import RewardCleanupError
+from vrl.rewards.runtime import RewardFunctionRuntime
+from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
+from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.data.prompts import PromptExample
 from vrl.trainers.weight_sync import flatten_trainable_module_state, to_cpu_snapshot
 from vrl.trajectory.storage import TrajectoryStoragePolicy
+
+
+async def collect_scored(
+    collector: RolloutCollector,
+    inputs: list[Any],
+    *,
+    group_size: int,
+    metadata: Mapping[str, Any] | None = None,
+    request_overrides: Mapping[str, Any] | None = None,
+    policy_version: int | None = None,
+) -> RolloutBatch:
+    """Collect one group and score it in a single call.
+
+    Tests needing a single unsplit batch compose the low-level phases here.
+    The public prompt-group API additionally restores prompt IDs and splits batches.
+    """
+
+    unscored = await collector.generate_rollout(
+        collector.request_builder.build(
+            inputs,
+            group_size=group_size,
+            metadata=metadata,
+            request_overrides=request_overrides,
+            policy_version=policy_version,
+        )
+    )
+    return (collector.assemble_training_batches(await collector.evaluate_rollout([unscored])))[0]
 
 
 def _sync_policy(bench: CollectorBench, version: int) -> None:
@@ -47,8 +76,14 @@ def _generated(bench: CollectorBench, prompts: list[str]) -> GenerationOutput:
 
 
 def test_collector_requires_runtime_before_collect(monkeypatch, tmp_path) -> None:
-    bench = real_collector(monkeypatch, tmp_path, attach_runtime=False)
-    collector = bench.collector
+    bench = real_collector(monkeypatch, tmp_path)
+    # The same run's collector before the trainer attaches its runtime.
+    collector = RolloutCollector.from_family(
+        bench.stack.family,
+        reward_runtime=RewardFunctionRuntime(bench.reward),
+        config=bench.stack.collector_config(),
+        lifecycle=bench.stack.resources.lifecycle,
+    )
     assert collector.generation_runtime is None
 
     with pytest.raises(RuntimeError, match="runtime is not initialized"):

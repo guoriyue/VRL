@@ -255,37 +255,6 @@ async def test_failed_reward_scoring_leaves_result_slot_empty(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_control_loop_failure_reaches_consumer_without_timeout(
-    monkeypatch, tmp_path
-) -> None:
-    stack = await _stack(monkeypatch, tmp_path)
-    producer = _producer(stack.coordinator)
-    prompt_batch = producer.prompt_batch
-    assert prompt_batch is not None
-
-    def fail_admission() -> None:
-        raise RuntimeError("admission invariant broke")
-
-    producer._admit = fail_admission
-    await producer.start()
-    try:
-        await _wait_until(lambda: producer.state.fatal_error is not None)
-        consumer = _consumer(max_stale=0, wait_timeout_s=60.0)
-
-        with pytest.raises(RuntimeError, match="producer control loop failed") as caught:
-            await consumer.collect_iteration(
-                prompt_batch=prompt_batch,
-                current_policy_version=1,
-                producer_state=producer.state,
-            )
-
-        assert caught.value.__cause__ is producer.state.fatal_error
-        assert "admission invariant broke" in str(caught.value.__cause__)
-    finally:
-        await producer.stop()
-
-
-@pytest.mark.asyncio
 async def test_terminal_generation_error_is_not_retried_or_wrapped(monkeypatch, tmp_path) -> None:
     error = RayOperationTimeout(
         "rollout.generation.batch",

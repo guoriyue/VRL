@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import inspect
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,7 +26,6 @@ from vrl.ray.resources import RoleLifecycle
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.runtime import RewardFunctionRuntime
-from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.trainers.strategy import SingleProcessStrategy
@@ -198,7 +197,6 @@ def real_collector(
     *,
     reward: RewardFunction | None = None,
     lifecycle: RoleLifecycle | None = None,
-    attach_runtime: bool = True,
     versioned_slots: bool = False,
     overrides: tuple[str, ...] = (),
 ) -> CollectorBench:
@@ -232,35 +230,5 @@ def real_collector(
         # plan is the tiny CPU run's disjoint one.
         lifecycle=lifecycle or stack.resources.lifecycle,
     )
-    if attach_runtime:
-        collector.set_generation_runtime(stack.runtime)
+    collector.set_generation_runtime(stack.runtime)
     return CollectorBench(stack, collector, stack.runtime, reward, trace)
-
-
-async def collect_scored(
-    collector: RolloutCollector,
-    inputs: list[Any],
-    *,
-    group_size: int,
-    metadata: Mapping[str, Any] | None = None,
-    request_overrides: Mapping[str, Any] | None = None,
-    runtime_debug: bool = False,
-    policy_version: int | None = None,
-) -> RolloutBatch:
-    """Collect one group and score it in a single call.
-
-    Tests needing a single unsplit batch compose the low-level phases here.
-    The public prompt-group API additionally restores prompt IDs and splits batches.
-    """
-
-    unscored = await collector.generate_rollout(
-        collector.request_builder.build(
-            inputs,
-            group_size=group_size,
-            metadata=metadata,
-            request_overrides=request_overrides,
-            runtime_debug=runtime_debug,
-            policy_version=policy_version,
-        )
-    )
-    return (collector.assemble_training_batches(await collector.evaluate_rollout([unscored])))[0]

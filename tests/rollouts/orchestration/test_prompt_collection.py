@@ -16,6 +16,7 @@ import pytest
 import torch
 
 from tests.rollouts.collector._helpers import CollectorBench, IndexReward, real_collector
+from tests.rollouts.orchestration.continuous._helpers import _wait_until
 from vrl.ray.resources import RoleLifecycle
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rollouts.collector.core import (
@@ -74,15 +75,6 @@ def _hook_generation(
         return await real(request)
 
     monkeypatch.setattr(bench.runtime, "generate", generate)
-
-
-async def _wait_for(condition: Callable[[], bool], timeout_s: float = 10.0) -> None:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_s
-    while not condition():
-        if loop.time() >= deadline:
-            raise AssertionError("condition not reached before timeout")
-        await asyncio.sleep(0.001)
 
 
 @pytest.mark.asyncio
@@ -404,11 +396,11 @@ async def test_next_generation_is_submitted_before_the_current_one_completes(
         _collect(bench, [PromptExample(prompt=f"p{i}") for i in range(3)])
     )
 
-    await _wait_for(lambda: len(events) == 2)
+    await _wait_until(lambda: len(events) == 2)
     # p1 is already submitted while p0 has not completed; p2 is not.
     assert events == ["submit:p0", "submit:p1"]
     release["p0"].set()
-    await _wait_for(lambda: "submit:p2" in events)
+    await _wait_until(lambda: "submit:p2" in events)
     assert events == ["submit:p0", "submit:p1", "generated:p0", "submit:p2"]
     release["p1"].set()
     release["p2"].set()
