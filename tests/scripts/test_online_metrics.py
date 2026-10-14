@@ -17,13 +17,17 @@ from vrl.trainers.distributed import DistributedTrainingContext
 from vrl.trainers.metrics_io import OnlineMetricsCSV
 
 
-def _run(context: DistributedTrainingContext, output_dir: Path) -> SimpleNamespace:
-    """The slice of OnlineRecipeRun that initialize_metrics reads."""
+def _run(context: DistributedTrainingContext, output_dir: Path) -> OnlineRecipeRun:
+    """A real controller whose trainer/strategy carry only what initialize_metrics reads."""
 
-    return SimpleNamespace(
-        metrics_csv=None,
-        strategy=SimpleNamespace(context=context),
+    return OnlineRecipeRun(
+        bundle=object(),
         trainer=SimpleNamespace(config=SimpleNamespace(output_dir=str(output_dir))),
+        strategy=SimpleNamespace(context=context),
+        family="unit",
+        adapter_exports=None,
+        rng=object(),
+        model_identity={},
     )
 
 
@@ -100,11 +104,7 @@ def _run_metrics_preflight_rank(
 
             run = _run(_context(distributed=True, primary=rank == 0), Path(marker_path).parent)
             with patch("vrl.scripts.common.online.OnlineMetricsCSV", _prepare):
-                OnlineRecipeRun.initialize_metrics(
-                    run,
-                    component_names=(),
-                    resume_epoch=None,
-                )
+                run.initialize_metrics(component_names=(), resume_epoch=None)
             assert (run.metrics_csv is not None) == (rank == 0)
         except RuntimeError as exc:
             queue.put((rank, str(exc)))
@@ -120,8 +120,7 @@ def test_metrics_csv_preflight_preserves_single_process_error(monkeypatch, tmp_p
 
     monkeypatch.setattr("vrl.scripts.common.online.OnlineMetricsCSV", fail)
     with pytest.raises(ValueError, match="different metrics schema"):
-        OnlineRecipeRun.initialize_metrics(
-            _run(_context(distributed=False, primary=True), tmp_path),
+        _run(_context(distributed=False, primary=True), tmp_path).initialize_metrics(
             component_names=(),
             resume_epoch=None,
         )
