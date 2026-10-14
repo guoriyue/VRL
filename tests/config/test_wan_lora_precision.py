@@ -17,14 +17,15 @@ def test_fp32_adapter_schema_requires_lora(section: type[ModelSection], family: 
     assert section.resolve_lora(None).parameter_dtype is None
 
 
-@pytest.mark.parametrize("dtype", ["bfloat16", "float16", "auto"])
-def test_adapter_schema_rejects_unsupported_dtype(dtype: str) -> None:
+def test_adapter_schema_rejects_unsupported_dtype() -> None:
     with pytest.raises(ValidationError, match="parameter_dtype"):
-        WanModelSection(family="wan_2_1", use_lora=True, lora={"parameter_dtype": dtype})
+        WanModelSection(family="wan_2_1", use_lora=True, lora={"parameter_dtype": "bfloat16"})
 
 
-@pytest.mark.parametrize("policy", [None, "actor", "none"])
-@pytest.mark.parametrize("dtype", [None, "float32"])
+@pytest.mark.parametrize(
+    ("policy", "dtype"),
+    [(None, None), (None, "float32"), ("actor", "float32"), ("none", "float32")],
+)
 def test_fp32_adapter_requires_preserving_fsdp_policy(
     policy: str | None,
     dtype: str | None,

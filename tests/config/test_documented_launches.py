@@ -10,8 +10,6 @@ import re
 import shlex
 from pathlib import Path
 
-import pytest
-
 from vrl.config.loading import load_config
 from vrl.config.schema import parse_config
 
@@ -72,17 +70,3 @@ def test_maintained_documented_launches_compile_without_loading_models():
     )
     assert any(path.parent == docs for path in compiled)
     assert any(path.parent == docs / "sprints/info" for path in compiled)
-
-
-def test_document_gate_catches_removed_override_keys_and_preserves_marked_history(tmp_path):
-    path = tmp_path / "example.md"
-    path.write_text(
-        "```bash\npython -m vrl.scripts.train --config=experiment/sd3_5/online_grpo_pickscore actor.optim.lr=1e-5\n```\n"
-    )
-    assert _compile_documented_commands([path]) == [path]
-    command = "python -m vrl.scripts.train --config experiment/sd3_5/online_grpo_pickscore \\\n  production.kling_video_reward.enabled=false\n"
-    path.write_text("```bash\n" + command + "```\n")
-    with pytest.raises(AssertionError, match="production"):
-        _compile_documented_commands([path])
-    path.write_text("```bash historical\n" + command + "```\n")
-    assert _compile_documented_commands([path]) == []

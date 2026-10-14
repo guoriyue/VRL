@@ -40,7 +40,6 @@ def test_four_card_preset_resolves_rank_local_phase_owners(rank):
         )
     )
     resources = ResourcePlan.from_root(built.root)
-    resources = resources
     assert tuple(resources.trainer_devices) == (rank,)
     assert tuple(resources.rollout_devices) == (rank,)
     # The unpinned Kling reward follows the rank's own card: no reservation,
