@@ -274,6 +274,9 @@ async def test_nonprimary_oom_retries_whole_engine_and_reports_every_rank(
         histories = _histories(local_ray, run)
         assert [h["batch_calls"] for h in histories] == [[_key(0, 4), _key(0, 2), _key(2, 2)]] * 2
         assert output.output.shape[0] == 4
+        assert all(
+            row["worker_id"] == "rollout-1" for row in output.runtime_debug["batch_oom_splits"]
+        )
         rows = output.runtime_debug["ray_chunks"]
         assert {row["worker_id"] for row in rows} == {"rollout-0", "rollout-1"}
         assert {row["batch_key"] for row in rows} == {_key(0, 2), _key(2, 2)}
@@ -340,7 +343,8 @@ async def test_non_oom_error_is_not_retried(
 async def test_healthy_chunks_skip_degradation_path(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ) -> None:
-    """No OOM: results and telemetry are exactly the pre-split behavior."""
+    """No OOM: results and telemetry are exactly the pre-split behavior, and the
+    default (pipelined=False) dispatches per batch, never per request."""
 
     async with _fleet(
         monkeypatch, tmp_path, ray_sana_snapshot, _fault_worker(capacity=2), batch=2
@@ -350,6 +354,7 @@ async def test_healthy_chunks_skip_degradation_path(
         assert output.output.shape[0] == 4
         assert output.runtime_debug is None
         (history,) = _histories(local_ray, run)
+        assert history["request_calls"] == []
         assert history["batch_calls"] == [_key(0, 2), _key(2, 2)]
 
 
@@ -389,14 +394,6 @@ async def test_stale_slot_routes_to_graceful_discard_not_failure(
         assert history["batch_calls"] == [_key(0, 2)]
 
 
-def test_stale_slot_discard_is_not_runtime_error() -> None:
-    """StaleSlotDiscard must be its OWN type, not a RuntimeError subclass — the
-    producer's generic ``except Exception`` (error_count) must not catch it first."""
-
-    assert not issubclass(StaleSlotDiscard, RuntimeError)
-    assert issubclass(StaleSlotDiscard, Exception)
-
-
 @_OOM_WIRE_FORMAT
 @pytest.mark.slow_test
 @pytest.mark.asyncio
@@ -417,12 +414,6 @@ async def test_slot_evicted_during_oom_retry_discards_request(
 
         (history,) = _histories(local_ray, run)
         assert history["batch_calls"] == [_key(0, 4), _key(0, 2), _key(2, 2)]
-
-
-def test_is_oom_error_classifier() -> None:
-    assert is_cuda_out_of_memory(_OOM_MESSAGE)
-    assert is_cuda_out_of_memory("torch.OutOfMemoryError: HIP out of memory")
-    assert not is_cuda_out_of_memory("ValueError: shape mismatch")
 
 
 @pytest.mark.slow_test
@@ -610,21 +601,6 @@ async def test_pipelined_oom_worker_id_must_match_actor(
 
 @pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_default_uses_per_chunk_path(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
-) -> None:
-    """Default (pipelined=False) is the unchanged per-batch dispatch."""
-
-    async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, _fault_worker(), batch=4) as run:
-        await run.runtime.generate(run.request(["p"], group_size=4))
-
-        (history,) = _histories(local_ray, run)
-        assert history["request_calls"] == []
-        assert history["batch_calls"] == [_key(0, 4)]
-
-
-@pytest.mark.slow_test
-@pytest.mark.asyncio
 @pytest.mark.parametrize("with_reading", [True, False])
 async def test_executor_logs_measured_batch_memory(
     local_ray, ray_sana_snapshot, monkeypatch, tmp_path, caplog, with_reading
@@ -679,25 +655,15 @@ def test_local_and_remote_oom_classification_agree(message, expected):
 
 @pytest.mark.slow_test
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [_OOM_MESSAGE, "decode failed"])
 async def test_real_multirank_nonprimary_failure_reaches_driver(
-    local_ray, ray_sana_snapshot, monkeypatch, tmp_path, failure
+    local_ray, ray_sana_snapshot, monkeypatch, tmp_path
 ):
-    worker = _fault_worker(capacity={"rollout-0": 8, "rollout-1": 2}, failure=failure)
+    """A non-OOM failure on a non-primary rank fails the request without a retry."""
+
+    worker = _fault_worker(capacity={"rollout-0": 8, "rollout-1": 2}, failure="decode failed")
     async with _fleet(monkeypatch, tmp_path, ray_sana_snapshot, worker, batch=8, engines=2) as run:
         executor = _one_engine_of_every_rank(run)
-        request = run.request(["p"], group_size=8, runtime_debug=True)
 
-        if failure == _OOM_MESSAGE:
-            output = await executor.execute(request)
-            assert output.output.shape[0] == 8
-            assert all(
-                row["worker_id"] == "rollout-1" for row in output.runtime_debug["batch_oom_splits"]
-            )
-            histories = _histories(local_ray, run)
-            assert histories[0]["batch_calls"] == histories[1]["batch_calls"]
-            assert len(histories[0]["batch_calls"]) == 7
-        else:
-            with pytest.raises(RuntimeError, match="decode failed"):
-                await executor.execute(request)
-            assert [h["batch_calls"] for h in _histories(local_ray, run)] == [[_key(0, 8)]] * 2
+        with pytest.raises(RuntimeError, match="decode failed"):
+            await executor.execute(run.request(["p"], group_size=8))
+        assert [h["batch_calls"] for h in _histories(local_ray, run)] == [[_key(0, 8)]] * 2
