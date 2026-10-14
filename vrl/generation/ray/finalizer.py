@@ -33,9 +33,6 @@ class RayGenerationFinalizer:
         self.finalizer_id = finalizer_id
         self.gatherer = gatherer
 
-    def health(self) -> str:
-        return self.finalizer_id
-
     def worker_metadata(self) -> dict[str, Any]:
         """Return Ray placement metadata used during actor-group startup."""
 
