@@ -8,6 +8,7 @@ import pytest
 import torch
 from torch import nn
 
+from tests.nn._quantization_helpers import QuantizablePolicy
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.nn.quantization import (
     Fp4Linear,
@@ -231,33 +232,6 @@ def test_attention_mlp_profile_includes_aligned_attention() -> None:
 # --- runtime wiring (CPU) -----------------------------------------------------
 
 
-class _FakeModel:
-    """A policy with one NVFP4-eligible MLP linear, driven through the real swap.
-
-    The linear must sit on an MLP path (the NVFP4 profile is ``mlp_only``) and
-    clear ``min_features``, or the swap would match nothing and the loader would
-    fail loud for the wrong reason.
-    """
-
-    quantization_exclude: tuple[str, ...] = ()
-
-    def __init__(self) -> None:
-        root = nn.Module()
-        root.ff = nn.Module()
-        root.ff.net = nn.Linear(1024, 1024, bias=False)
-        self._root = root
-
-    @property
-    def policy_cores(self) -> dict[str, nn.Module]:
-        return {"transformer": self._root}
-
-    @property
-    def nvfp4_calls(self) -> int:
-        """How many linears actually became NVFP4 — the effect, not the call."""
-
-        return sum(isinstance(module, Fp4Linear) for module in self._root.modules())
-
-
 def _rollout_spec(
     *,
     recipe: str | None = None,
@@ -278,15 +252,16 @@ def _rollout_spec(
     )
 
 
-def test_quantization_pass_dispatches_nvfp4(caplog, monkeypatch) -> None:
+def test_quantization_pass_dispatches_nvfp4(capsys, monkeypatch) -> None:
     from vrl.nn.optimization import QuantizationPass
 
     monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
-    model = _FakeModel()
-    with caplog.at_level("INFO"):
-        QuantizationPass().quantize(model, _rollout_spec(device="cuda:0"))
-    assert model.nvfp4_calls == 1
-    assert "nvfp4" in caplog.text
+    model = QuantizablePolicy()
+    QuantizationPass().quantize(model, _rollout_spec(device="cuda:0"))
+    assert len(model.swapped(Fp4Linear)) == 1
+    # The ``vrl`` logger does not propagate to the root (vrl/utils/logging.py);
+    # its handler writes to the live stdout.
+    assert "nvfp4" in capsys.readouterr().out
 
 
 def test_nvfp4_policy_rejects_fp8_recipes() -> None:
@@ -297,23 +272,23 @@ def test_nvfp4_policy_rejects_fp8_recipes() -> None:
 def test_pass_rejects_unsupported_target_before_mutation(monkeypatch) -> None:
     from vrl.nn.optimization import QuantizationPass
 
-    model = _FakeModel()
+    model = QuantizablePolicy()
     monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: False)
     with pytest.raises(RuntimeError, match="NVFP4-capable CUDA target"):
         QuantizationPass().quantize(model, _rollout_spec(device="cuda:0"))
-    assert model.nvfp4_calls == 0
+    assert model.swapped(Fp4Linear) == []
 
 
 def test_pass_allows_torch_compile_after_shape_gate(monkeypatch) -> None:
     from vrl.nn.optimization import QuantizationPass
 
     monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
-    model = _FakeModel()
+    model = QuantizablePolicy()
     QuantizationPass().quantize(
         model,
         _rollout_spec(torch_compile={"enable": True, "mode": "default"}),
     )
-    assert model.nvfp4_calls == 1
+    assert len(model.swapped(Fp4Linear)) == 1
 
 
 # --- GPU parity and compile ---------------------------------------------------

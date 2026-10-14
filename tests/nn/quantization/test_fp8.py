@@ -16,6 +16,7 @@ import pytest
 import torch
 from torch import nn
 
+from tests.nn._quantization_helpers import QuantizablePolicy
 from vrl.nn.quantization import Fp8Linear
 
 
@@ -296,37 +297,6 @@ def test_fp8_linear_preserves_leading_dims_and_bias():
 # --- FP8 rollout guards: no silent base-dtype fallback (CPU) ---------------------
 
 
-class _SwapModel:
-    """A policy declaring real roots, so the loader drives the real swap.
-
-    ``names`` become MLP-path linears wide enough to clear ``min_features``; an
-    empty list is a policy with nothing quantizable (the no-op case the loader
-    must reject).
-    """
-
-    quantization_exclude: tuple[str, ...] = ()
-
-    def __init__(self, names: list[str]) -> None:
-        root = nn.Module()
-        root.ff = nn.Module()
-        for name in names:
-            setattr(root.ff, name, nn.Linear(1024, 1024, bias=False))
-        self._root = root
-
-    @property
-    def policy_cores(self) -> dict[str, nn.Module]:
-        return {"transformer": self._root}
-
-    @property
-    def recipe_seen(self) -> str | None:
-        """The recipe the swapped modules actually recorded, not a captured arg."""
-
-        for module in self._root.modules():
-            if isinstance(module, Fp8Linear):
-                return module.recipe
-        return None
-
-
 def _rollout_spec(
     quantization: str | None,
     *,
@@ -351,30 +321,31 @@ def test_quantization_pass_raises_when_swap_matches_nothing():
     from vrl.nn.optimization import QuantizationPass
 
     with pytest.raises(RuntimeError, match="matched 0 linears"):
-        QuantizationPass().quantize(_SwapModel([]), _rollout_spec("fp8"))
+        QuantizationPass().quantize(QuantizablePolicy(linears=()), _rollout_spec("fp8"))
 
 
 def test_quantization_pass_disabled_without_scheme_and_counts_swaps():
     from vrl.nn.optimization import QuantizationPass
 
     assert not QuantizationPass().enabled(_rollout_spec(None))
-    assert QuantizationPass().quantize(_SwapModel(["a", "b"]), _rollout_spec("fp8")) == 2
+    model = QuantizablePolicy(linears=("a", "b"))
+    assert QuantizationPass().quantize(model, _rollout_spec("fp8")) == 2
 
 
 def test_quantization_pass_passes_recipe_through():
     """The nested rollout quantization recipe reaches the FP8 swap."""
     from vrl.nn.optimization import QuantizationPass
 
-    model = _SwapModel(["a"])
+    model = QuantizablePolicy()
     QuantizationPass().quantize(
         model,
         _rollout_spec("fp8", recipe="tensorwise"),
     )
-    assert model.recipe_seen == "tensorwise"
+    assert [module.recipe for module in model.swapped(Fp8Linear)] == ["tensorwise"]
 
-    model = _SwapModel(["a"])
+    model = QuantizablePolicy()
     QuantizationPass().quantize(model, _rollout_spec("fp8"))
-    assert model.recipe_seen == "rowwise"
+    assert [module.recipe for module in model.swapped(Fp8Linear)] == ["rowwise"]
 
 
 def test_scheme_identity_is_carried_by_the_module_not_its_base_class() -> None:
@@ -395,27 +366,10 @@ def test_scheme_identity_is_carried_by_the_module_not_its_base_class() -> None:
     }
 
 
-# --- runtime wiring: the swap reaches the rollout builder from precision (CPU) --
-
-
-class _FakeModel(_SwapModel):
-    """A quantizable policy that records the recipe of every applied swap."""
-
-    def __init__(self) -> None:
-        super().__init__(["net"])
-
-    @property
-    def recipes(self) -> list[str]:
-        return [module.recipe for module in self._root.modules() if isinstance(module, Fp8Linear)]
-
-
-def test_quantization_pass_dispatches_by_scheme():
+def test_quantization_pass_rejects_an_unregistered_scheme():
     from vrl.nn.optimization import QuantizationPass
 
-    model = _FakeModel()
-    # bf16/fp16/fp32 rollout: a load-time dtype, the pass never runs
-    assert not QuantizationPass().enabled(_rollout_spec(None))
-    assert model.recipes == []
+    model = QuantizablePolicy()
     # An unimplemented scheme must NOT silently no-op (that was the old footgun).
     # QuantizationPolicy rejects unknown formats at construction, so reaching the
     # pass with one requires a raw fake — the pass still fails loud.
@@ -431,10 +385,7 @@ def test_quantization_pass_dispatches_by_scheme():
     )
     with pytest.raises(NotImplementedError, match="no rollout swap"):
         QuantizationPass().quantize(model, unknown_scheme)
-    assert model.recipes == []
-    # fp8: the swap fires
-    QuantizationPass().quantize(model, _rollout_spec("fp8"))
-    assert model.recipes == ["rowwise"]
+    assert model.swapped(Fp8Linear) == []
 
 
 @pytest.mark.gpu

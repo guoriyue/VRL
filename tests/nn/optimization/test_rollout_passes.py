@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 from torch import nn
 
+from tests.nn._quantization_helpers import QuantizablePolicy
 from vrl.nn.optimization import (
     apply_rollout_optimizations,
     unguarded_drift_sources,
@@ -20,23 +21,12 @@ from vrl.nn.optimization import (
 from vrl.nn.quantization import QuantizedLinear
 
 
-class _Policy:
-    """A rollout policy declaring ``roots`` MLP-shaped, quantizable cores."""
-
-    quantization_exclude: tuple[str, ...] = ()
+class _Policy(QuantizablePolicy):
+    """A quantizable policy whose compile really wraps each declared root."""
 
     def __init__(self, *roots: str) -> None:
-        self._cores: dict[str, nn.Module] = {}
-        for name in roots:
-            root = nn.Module()
-            root.ff = nn.Module()
-            root.ff.net = nn.Linear(1024, 1024, bias=False)
-            self._cores[name] = root
+        super().__init__(roots=roots)
         self.compiled: list[str] = []
-
-    @property
-    def policy_cores(self) -> dict[str, nn.Module]:
-        return self._cores
 
     def torch_compile_transformer(self, mode: str, *, regional: bool = False) -> None:
         # Really compile: the pass verifies the EFFECT on the modules, so a fake
@@ -126,16 +116,12 @@ def test_policy_without_cores_cannot_satisfy_a_core_level_pass() -> None:
 # --- ordering is the assembly point's contract ---------------------------------
 
 
-def test_quantization_runs_before_compile() -> None:
+def test_quantization_runs_before_compile(monkeypatch: pytest.MonkeyPatch) -> None:
     """Inductor must trace the final module tree, so compile is last."""
 
     order: list[str] = []
 
     class _OrderPolicy(_Policy):
-        @property
-        def policy_cores(self) -> dict[str, nn.Module]:
-            return self._cores
-
         def torch_compile_transformer(self, mode: str, *, regional: bool = False) -> None:
             order.append("compile")
             super().torch_compile_transformer(mode, regional=regional)
@@ -144,20 +130,16 @@ def test_quantization_runs_before_compile() -> None:
     import vrl.nn.quantization as quantization
 
     real_swap = quantization.Fp8Linear.swap_linears
-    original = quantization.Fp8Linear.swap_linears
 
     def _tracked(cls, root, **kwargs):
         order.append("quantize")
         return real_swap.__func__(cls, root, **kwargs)
 
-    quantization.Fp8Linear.swap_linears = classmethod(_tracked)
-    try:
-        apply_rollout_optimizations(
-            model,
-            _build(quantization="fp8", compile_mode="default"),
-        )
-    finally:
-        quantization.Fp8Linear.swap_linears = original
+    monkeypatch.setattr(quantization.Fp8Linear, "swap_linears", classmethod(_tracked))
+    apply_rollout_optimizations(
+        model,
+        _build(quantization="fp8", compile_mode="default"),
+    )
 
     assert order == ["quantize", "compile"]
 
@@ -173,15 +155,15 @@ def test_device_move_seam_runs_between_quantize_and_compile() -> None:
             super().torch_compile_transformer(mode, regional=regional)
 
     model = _SeamPolicy("transformer")
+    core = model.policy_cores["transformer"]
 
     apply_rollout_optimizations(
         model,
         _build(quantization="fp8", compile_mode="default"),
-        before_compile=lambda: order.append("move"),
+        before_compile=lambda: order.append(f"move(quantized={bool(_quantized(core))})"),
     )
 
-    assert order == ["move", "compile"]
-    assert _quantized(model.policy_cores["transformer"]), "quantization ran before the move"
+    assert order == ["move(quantized=True)", "compile"]
 
 
 def test_device_move_seam_runs_even_with_compile_disabled() -> None:
