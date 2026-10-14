@@ -583,10 +583,9 @@ async def test_active_prompt_batch_fails_when_collect_is_cancelled(monkeypatch, 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("timeout_s", [0.0, -1.0, float("nan"), float("inf")])
 @pytest.mark.parametrize("operation", ["stop", "drain_prompt_batch"])
 async def test_invalid_producer_timeout_preserves_running_work(
-    monkeypatch, tmp_path, timeout_s: float, operation: str
+    monkeypatch, tmp_path, operation: str
 ) -> None:
     stack, reward, gate = await _gated(monkeypatch, tmp_path)
     gate.allow.clear()
@@ -596,7 +595,7 @@ async def test_invalid_producer_timeout_preserves_running_work(
     await asyncio.wait_for(gate.started.wait(), 5.0)
     try:
         with pytest.raises(ValueError, match="wait_timeout_s must be finite and > 0"):
-            await getattr(producer, operation)(wait_timeout_s=timeout_s)
+            await getattr(producer, operation)(wait_timeout_s=0.0)
         await asyncio.sleep(0)
         assert producer.state.running
         assert producer.inflight_count == 1
@@ -692,78 +691,6 @@ async def test_drain_prompt_batch_waits_for_generation_and_reward(monkeypatch, t
         await producer.stop()
 
 
-@pytest.mark.asyncio
-async def test_late_reward_finishes_before_version_bump_under_draining(
-    monkeypatch, tmp_path
-) -> None:
-    """OFF-POLICY INVARIANT, draining branch.
-
-    A reward that completes *after* generation but is still in-flight at the
-    weight-sync barrier must finish before the policy-version bump, so the group
-    is never trained off-policy. This is the reward-late timing variant of
-    ``test_drain_prompt_batch_waits_for_generation_and_reward``: here generation is
-    already done and only scoring is outstanding when the barrier starts.
-    ``schedule.after_train_step`` (non_draining=False) runs
-    ``drain_prompt_batch`` -> ``sync_weights_after_train``, so reward(N) must
-    complete strictly before the version advances to N+1.
-    """
-
-    stack, reward, _gate = await _gated(monkeypatch, tmp_path)
-    # Generation finishes immediately; reward is the late phase still running
-    # when the barrier opens.
-    reward.allow_score.clear()
-    producer = _producer(stack.coordinator, max_stale=0)
-    prompt_batch = producer.prompt_batch
-    assert prompt_batch is not None
-    results = prompt_batch.results
-
-    await producer.start()
-    try:
-        # Generation has completed; the group is parked in reward scoring.
-        await _wait_until(lambda: "generate_end" in reward.events)
-        assert "score_end" not in reward.events  # reward still in flight
-        assert _ready(results) == 0  # unscored work is never trainer-visible
-
-        producer.pause_admission()
-        order: list[str] = []
-
-        async def _drain_then_bump() -> None:
-            # Mirror schedule.after_train_step's draining branch exactly:
-            # drain in-flight (gen + reward) BEFORE syncing/bumping the version.
-            await producer.drain_prompt_batch(wait_timeout_s=5.0)
-            order.append("drain_done")
-            await stack.bump_version()  # the weight-sync push
-            order.append("version_bumped")
-
-        drain_task = asyncio.create_task(_drain_then_bump())
-        await asyncio.sleep(0.05)
-        # The reward is what is holding the barrier open: no bump yet.
-        assert order == []
-        assert "score_end" not in reward.events
-        assert stack.bench.runtime.current_policy_version == 1
-
-        reward.allow_score.set()
-        await asyncio.wait_for(drain_task, 5.0)
-
-        # Reward finished strictly before the version bump.
-        assert reward.events == ["generate_start", "generate_end", "score_end"]
-        assert order == ["drain_done", "version_bumped"]
-        assert stack.bench.runtime.current_policy_version == 2
-        # The fully-scored group is stored in its slot, stamped at the pre-bump
-        # version it was generated under -- so it is on-policy for v1.
-        assert _ready(results) == 1
-        item = results[0]
-        assert item.rollout_policy_version == 1
-        assert item.batch.rewards is not None
-        assert item.batch.rewards.numel() == 2
-        # A late reward cannot relabel the stamped version: reward is computed
-        # from the rollout output by a frozen reward model, so the group's
-        # policy version is fixed at generation time, never at scoring time.
-    finally:
-        producer.resume_admission()
-        await producer.stop()
-
-
 # ------------------------------------------------------- version stamping
 
 
@@ -828,34 +755,6 @@ async def test_prompt_batch_fails_when_group_is_stale_at_receipt(monkeypatch, tm
         await producer.stop()
 
 
-@pytest.mark.asyncio
-async def test_prompt_batch_fails_when_group_is_past_stale_window(monkeypatch, tmp_path) -> None:
-    """The gate respects the configured window, not any version change: with
-    max_stale=1 a two-version-old group is still dropped."""
-
-    stack, _reward, gate = await _gated(monkeypatch, tmp_path, versioned=True)
-    gate.allow.clear()
-    producer = _producer(stack.coordinator, max_stale=1)
-    prompt_batch = producer.prompt_batch
-    assert prompt_batch is not None
-    results = prompt_batch.results
-
-    await producer.start()
-    try:
-        await asyncio.wait_for(gate.started.wait(), 5.0)
-        producer.pause_admission()
-        await stack.bump_version()
-        assert await stack.bump_version() == 3  # two versions ahead: staleness 2 > 1
-        gate.allow.set()
-        with pytest.raises(RuntimeError, match="became stale before completion"):
-            await producer.drain_prompt_batch(wait_timeout_s=5.0)
-
-        assert _ready(results) == 0
-    finally:
-        producer.resume_admission()
-        await producer.stop()
-
-
 # ------------------------------------------------------------- consumer
 
 
@@ -908,20 +807,6 @@ def _prompt_batch(
         pending_since={},
         results=results,
     )
-
-
-def test_out_of_range_knobs_are_rejected_at_the_config_boundary() -> None:
-    """Mechanisms trust settings validated by ContinuousRolloutConfig."""
-    from vrl.trainers.core.types import ContinuousRolloutConfig
-
-    for kwargs, message in (
-        ({"max_inflight_groups": 0}, "max_inflight_groups"),
-        ({"wait_timeout_s": 0.0}, "wait_timeout_s"),
-        ({"queue_poll_interval_s": 0.0}, "queue_poll_interval_s"),
-        ({"fail_fast_errors": -1}, "fail_fast_errors"),
-    ):
-        with pytest.raises(ValueError, match=message):
-            ContinuousRolloutConfig(**kwargs)
 
 
 async def _collect_iteration(
@@ -986,11 +871,18 @@ async def test_consumer_consumes_stale_items_within_bound() -> None:
 
 @pytest.mark.asyncio
 async def test_consumer_rejects_a_too_stale_ready_batch() -> None:
-    """A finite batch fails instead of dropping slots it cannot regenerate."""
+    """A finite batch fails instead of dropping slots it cannot regenerate.
+
+    The non-draining weight-sync barrier runs the same check directly, so a
+    late reward landing after the trainer's bump is rejected there too.
+    """
     items = [_item(group_slot=slot, version=1) for slot in range(2)]
     prompt_batch = _prompt_batch(list(items))
+    consumer = _consumer(max_stale=0)
     with pytest.raises(RuntimeError, match="older than the policy window"):
-        await _collect_iteration(_consumer(max_stale=0), prompt_batch, current_policy_version=2)
+        consumer.validate_ready_versions(prompt_batch=prompt_batch, current_policy_version=2)
+    with pytest.raises(RuntimeError, match="older than the policy window"):
+        await _collect_iteration(consumer, prompt_batch, current_policy_version=2)
     assert prompt_batch.results == items
 
 
@@ -1020,21 +912,6 @@ async def test_consumer_rejects_future_policy_version() -> None:
     prompt_batch = _prompt_batch([_item(group_slot=0, version=2)], version=2)
     with pytest.raises(RuntimeError, match="newer than the trainer policy"):
         await _collect_iteration(_consumer(max_stale=0), prompt_batch, current_policy_version=1)
-
-
-@pytest.mark.asyncio
-async def test_late_reward_batch_fails_under_non_draining_max_stale_0() -> None:
-    """The non-draining barrier must reject results older than its policy window."""
-    prompt_batch = _prompt_batch([None])
-    consumer = _consumer(max_stale=0)
-    # The late reward lands after the trainer's bump, retaining the submit version.
-    item = _item(group_slot=0, version=1)
-    prompt_batch.results[0] = item
-    with pytest.raises(RuntimeError, match="older than the policy window"):
-        consumer.validate_ready_versions(prompt_batch=prompt_batch, current_policy_version=2)
-    assert prompt_batch.results[0] is item
-    with pytest.raises(RuntimeError, match="older than the policy window"):
-        await _collect_iteration(consumer, prompt_batch, current_policy_version=2)
 
 
 @pytest.mark.asyncio

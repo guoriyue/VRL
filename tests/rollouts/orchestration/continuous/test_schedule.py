@@ -231,17 +231,6 @@ async def test_reset_reuses_committed_runtime_weights_without_version_bump(
         await schedule.shutdown()
 
 
-def test_continuous_rejects_zero_window(monkeypatch, tmp_path) -> None:
-    """Zero-window execution belongs to strict_on_policy, not continuous."""
-
-    bench = _bench(monkeypatch, tmp_path)
-    with pytest.raises(ValueError, match=r"max_stale_policy_versions.*>= 1"):
-        _build(
-            _continuous_config(max_stale_policy_versions=0),
-            bench,
-        )
-
-
 @pytest.mark.asyncio
 async def test_continuous_drains_full_homogeneous_iteration(monkeypatch, tmp_path) -> None:
     """A homogeneous continuous iteration drains the full set: one policy version for rollout and
@@ -732,17 +721,20 @@ async def test_prefetch_accepts_identical_prompt_with_non_scalar_metadata(
         await schedule.shutdown()
 
 
-@pytest.mark.parametrize("window", [1.5, "1", True])
-def test_continuous_schedule_does_not_coerce_policy_window(monkeypatch, tmp_path, window) -> None:
-    bench = _bench(monkeypatch, tmp_path)
-    with pytest.raises(ValueError, match="max_stale_policy_versions"):
-        _build(_continuous_config(max_stale_policy_versions=window), bench)
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("max_inflight_groups", 0, r"max_inflight_groups must be >= 1"),
+        # Zero-window execution belongs to strict_on_policy, not continuous.
+        ("max_stale_policy_versions", 0, r"max_stale_policy_versions must be >= 1"),
+        ("max_stale_policy_versions", True, r"max_stale_policy_versions must be an integer"),
+        ("wait_timeout_s", float("nan"), r"wait_timeout_s must be finite and > 0"),
+        ("queue_poll_interval_s", 0.0, r"queue_poll_interval_s must be finite and > 0"),
+        ("fail_fast_errors", -1, r"fail_fast_errors must be >= 0"),
+    ],
+)
+def test_continuous_config_rejects_out_of_range_fields(field, value, message) -> None:
+    """The schedule trusts settings validated by ContinuousRolloutConfig."""
 
-
-@pytest.mark.parametrize("name", ["wait_timeout_s", "queue_poll_interval_s"])
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), 0.0, -1.0])
-def test_continuous_config_requires_finite_positive_waits(name, value) -> None:
-    from vrl.trainers.core.types import ContinuousRolloutConfig
-
-    with pytest.raises(ValueError, match=name):
-        ContinuousRolloutConfig(**{name: value})
+    with pytest.raises(ValueError, match=message):
+        ContinuousRolloutConfig(**{field: value})

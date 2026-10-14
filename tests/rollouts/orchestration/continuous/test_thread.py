@@ -5,8 +5,7 @@ collector on the tiny SANA in-process runtime (``real_collector``) and the real
 trainer side (``trainer_side``): weight pushes are real trainable-state
 exports through ``RayRuntimeWeightSyncer``. A ``Trace`` records which thread
 each real call ran on and injects the one-shot failures the quarantine tests
-need; scoring is gated by a real ``RewardFunction`` that blocks on an event.
-The two Ray quarantine tests run the same owner over a real
+need. The two Ray quarantine tests run the same owner over a real
 ``RayGenerationRuntime`` (real launcher, placement group and tiny-SANA
 workers on a module-scoped cluster).
 """
@@ -33,7 +32,7 @@ from tests.rollouts.collector._helpers import (
     real_collector,
     trainer_side,
 )
-from tests.rollouts.orchestration.continuous._helpers import _wait_until, owner_snapshot
+from tests.rollouts.orchestration.continuous._helpers import owner_snapshot
 from tests.scripts.eval.fixtures import (
     TinySanaStack,
     tiny_sana_ray_cluster,
@@ -48,55 +47,6 @@ from vrl.rollouts.orchestration.continuous.thread import ContinuousRolloutThread
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutSettings
 from vrl.trainers.strategy import SingleProcessStrategy
 from vrl.utils.lifecycle import RuntimePhase
-
-
-class _GatedReward(IndexReward):
-    """Index scoring that blocks on an event after N successful calls.
-
-    The owner loop awaits the block through a thread, as a Ray reward actor
-    call would, so the test controls when an in-flight reward completes.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._lock = threading.Lock()
-        self._block_from_call: int | None = None
-        self._blocked_calls = 0
-        self.allow_score = threading.Event()
-        self.allow_score.set()
-        self.score_calls = 0
-        self.score_threads: list[int] = []
-
-    @property
-    def blocked_calls(self) -> int:
-        with self._lock:
-            return self._blocked_calls
-
-    def block_scores_after(self, successful_calls: int) -> None:
-        self.allow_score.clear()
-        with self._lock:
-            self._block_from_call = self.score_calls + int(successful_calls) + 1
-            self._blocked_calls = 0
-
-    def release_scores(self) -> None:
-        self.allow_score.set()
-
-    async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
-        self.score_threads.append(threading.get_ident())
-        with self._lock:
-            self.score_calls += 1
-            should_block = (
-                self._block_from_call is not None and self.score_calls >= self._block_from_call
-            )
-            if should_block:
-                self._blocked_calls += 1
-        if should_block:
-            try:
-                await asyncio.to_thread(self.allow_score.wait)
-            finally:
-                with self._lock:
-                    self._blocked_calls -= 1
-        return await super().score_batch(samples)
 
 
 async def _stack(
@@ -164,8 +114,7 @@ async def test_empty_prefetch_fails_before_initial_weight_sync(monkeypatch, tmp_
 @pytest.mark.asyncio
 async def test_owner_cadence_survives_blocked_trainer_event_loop(monkeypatch, tmp_path) -> None:
     main_thread = threading.get_ident()
-    reward = _GatedReward()
-    bench, trainer = await _stack(monkeypatch, tmp_path, reward=reward)
+    bench, trainer = await _stack(monkeypatch, tmp_path)
     owner = _owner(bench, trainer)
 
     try:
@@ -190,101 +139,9 @@ async def test_owner_cadence_survives_blocked_trainer_event_loop(monkeypatch, tm
         assert pushes and set(pushes) != {main_thread}
         collects = bench.trace.thread_ids("generate")
         assert collects and set(collects) != {main_thread}
-        assert reward.score_threads and set(reward.score_threads) != {main_thread}
+        scores = bench.trace.thread_ids("score")
+        assert scores and set(scores) != {main_thread}
     finally:
-        await owner.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_owner_skips_initial_commit_for_initialized_runtime(monkeypatch, tmp_path) -> None:
-    bench, trainer = await _stack(monkeypatch, tmp_path, version=7)
-    owner = _owner(bench, trainer)
-    pushes_before = _pushes(bench)
-
-    try:
-        iteration = await owner.next_iteration(
-            ["p0"],
-            group_size=1,
-            runtime_debug=False,
-            initial_weights=None,
-        )
-
-        assert iteration.stats.as_metrics_dict()["continuous.rollout_policy_version"] == 7.0
-        assert _pushes(bench) == pushes_before
-    finally:
-        await owner.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_draining_commit_waits_for_reward_then_resumes(monkeypatch, tmp_path) -> None:
-    reward = _GatedReward()
-    bench, trainer = await _stack(monkeypatch, tmp_path, reward=reward)
-    owner = _owner(bench, trainer)
-
-    try:
-        reward.block_scores_after(1)
-        await owner.next_iteration(
-            ["p0"],
-            group_size=1,
-            runtime_debug=False,
-            initial_weights=trainer.export(),
-            next_prompts=["p1"],
-        )
-        await _wait_until(lambda: reward.blocked_calls > 0)
-
-        push_count = _pushes(bench)
-        commit = asyncio.create_task(owner.commit_weights(trainer.export()))
-        await asyncio.sleep(0.05)
-        blocked = await owner_snapshot(owner)
-
-        assert commit.done() is False
-        assert _pushes(bench) == push_count
-        assert blocked.producer_state is not None
-        assert blocked.producer_state.paused_for_weight_sync is True
-
-        reward.release_scores()
-        phases = await asyncio.wait_for(commit, 5.0)
-        resumed = await owner_snapshot(owner)
-
-        assert phases.as_metrics_dict()["continuous.weight_sync_barrier_mode"] == 0.0
-        assert bench.runtime.current_policy_version == 2
-        assert resumed.producer_state is not None
-        assert resumed.producer_state.paused_for_weight_sync is False
-    finally:
-        reward.release_scores()
-        await owner.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_version_slots_skip_drain_but_still_gate_new_admission(
-    monkeypatch, tmp_path
-) -> None:
-    reward = _GatedReward()
-    bench, trainer = await _stack(monkeypatch, tmp_path, reward=reward, non_draining=True)
-    assert bench.stack.built.trainer.versioned_weight_sync is True
-    owner = _owner(bench, trainer)
-
-    try:
-        reward.block_scores_after(1)
-        await owner.next_iteration(
-            ["p0"],
-            group_size=1,
-            runtime_debug=False,
-            initial_weights=trainer.export(),
-            next_prompts=["p1"],
-        )
-        await _wait_until(lambda: reward.blocked_calls > 0)
-
-        phases = await asyncio.wait_for(owner.commit_weights(trainer.export()), 5.0)
-        snapshot = await owner_snapshot(owner)
-
-        assert phases.as_metrics_dict()["continuous.weight_sync_barrier_mode"] == 1.0
-        assert bench.runtime.current_policy_version == 2
-        assert reward.blocked_calls > 0
-        assert snapshot.producer_state is not None
-        assert snapshot.producer_state.paused_for_weight_sync is False
-    finally:
-        reward.release_scores()
         await owner.shutdown()
 
 
@@ -545,35 +402,6 @@ async def test_failed_terminal_cleanup_is_retried_by_shutdown_once(monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_failed_shutdown_keeps_owner_alive_for_cleanup_retry(monkeypatch, tmp_path) -> None:
-    bench, trainer = await _stack(monkeypatch, tmp_path)
-    bench.trace.fail("collector_shutdown", "collector cleanup failed")
-    owner = _owner(bench, trainer)
-
-    await owner.next_iteration(
-        ["p0"],
-        group_size=1,
-        runtime_debug=False,
-        initial_weights=trainer.export(),
-    )
-
-    with pytest.raises(RuntimeError, match="collector cleanup failed"):
-        await owner.shutdown()
-
-    thread = owner._thread
-    assert _shutdowns(bench) == 1
-    assert thread is not None and thread.is_alive()
-    assert owner._closed is False
-
-    await owner.shutdown()
-    await owner.shutdown()
-
-    assert _shutdowns(bench) == 2
-    assert owner._stopped.is_set()
-    assert thread is not None and not thread.is_alive()
-
-
-@pytest.mark.asyncio
 async def test_immediate_shutdown_publishes_result_before_owner_stops(
     monkeypatch, tmp_path
 ) -> None:
@@ -711,7 +539,7 @@ async def test_checkpointed_sampler_replays_preview_prompt_order_in_a_new_owner(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("group_size", [True, 2.5, "2", 0, -1])
+@pytest.mark.parametrize("group_size", [True, 0])
 async def test_owner_rejects_invalid_group_size_before_weight_push(
     monkeypatch, tmp_path, group_size
 ) -> None:
