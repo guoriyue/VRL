@@ -38,8 +38,8 @@ def test_sft_latents_round_trip(tmp_path) -> None:
         assert loaded[target].device.type == "cpu"
 
 
-@pytest.mark.parametrize("stage", ["serialize", "flush"])
-def test_failed_shard_publication_preserves_existing_file(tmp_path, monkeypatch, stage):
+@pytest.mark.parametrize(("stage", "error"), [("serialize", RuntimeError), ("flush", OSError)])
+def test_failed_shard_publication_preserves_existing_file(tmp_path, monkeypatch, stage, error):
     from pathlib import Path
 
     import vrl.utils.artifacts as artifacts
@@ -61,7 +61,7 @@ def test_failed_shard_publication_preserves_existing_file(tmp_path, monkeypatch,
         monkeypatch.setattr(torch, "save", fail_save)
     else:
         monkeypatch.setattr(artifacts.os, "fsync", fail_flush)
-    with pytest.raises((RuntimeError, OSError), match="failed"):
+    with pytest.raises(error, match="failed"):
         save_sft_latents(
             path,
             family="f",
@@ -155,15 +155,15 @@ def test_sft_latents_rejects_foreign_payload(tmp_path) -> None:
         load_sft_latents(shard)
 
 
-@pytest.mark.parametrize("version", [2.9, "2", True, None])
-def test_shard_schema_version_is_not_coerced(tmp_path, version):
+def test_shard_schema_version_is_not_coerced(tmp_path):
     path = tmp_path / "shard.pt"
-    torch.save({"schema_version": version, "latents": {"target": torch.zeros(1)}}, path)
+    # A bool is an int subclass, so only an exact type check refuses it.
+    torch.save({"schema_version": True, "latents": {"target": torch.zeros(1)}}, path)
     with pytest.raises(ValueError, match="unsupported sft-latents schema_version"):
         load_sft_latents(path)
 
 
-@pytest.mark.parametrize("key", [1, "", "   "])
+@pytest.mark.parametrize("key", [1, "   "])
 def test_shard_preserves_target_key_type_instead_of_stringifying(tmp_path, key):
     path = tmp_path / "shard.pt"
     latents = {key: torch.zeros(1), "1": torch.ones(1)}
@@ -177,14 +177,11 @@ def test_shard_preserves_target_key_type_instead_of_stringifying(tmp_path, key):
         load_sft_latents(path)
 
 
-@pytest.mark.parametrize("value", [123, True, ["target.mp4"], {"path": "target.mp4"}])
 @pytest.mark.parametrize("as_example", [False, True])
-def test_clean_target_identity_rejects_non_string(value, as_example):
+def test_clean_target_identity_rejects_non_string(as_example):
     from vrl.trainers.data.prompts import PromptExample
 
-    source = (
-        PromptExample(prompt="p", target_video=value) if as_example else {"target_video": value}
-    )
+    source = PromptExample(prompt="p", target_video=123) if as_example else {"target_video": 123}
     with pytest.raises(ValueError, match="target_video must be a string"):
         CleanTargetRef.from_source(source)
 

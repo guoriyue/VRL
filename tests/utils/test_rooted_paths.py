@@ -58,3 +58,11 @@ def test_relative_root_is_normalized_once(tmp_path, monkeypatch):
     other.mkdir()
     monkeypatch.chdir(other)
     assert paths.resolve("a") == tmp_path / "data/a"
+
+
+def test_data_root_allow_absolute_accepts_paths_outside_it(tmp_path):
+    root = tmp_path / "data"
+    root.mkdir()
+    outside = tmp_path / "outside.png"
+
+    assert RootedPaths.data_root(root, allow_absolute=True).resolve(outside) == outside
