@@ -61,11 +61,6 @@ class GuidedDenoiseSamplingStateBase(DenoiseSamplingStateBase):
 class DenoiseModelBase(nn.Module, ABC):
     """Shared denoising and replay operations for diffusion and flow-matching families."""
 
-    # Whether replay indexes a timestep axis, declared on the class and checked
-    # where a replay request arrives. Full-sequence denoise does; causal-chunk
-    # replay runs the whole trajectory at once and has no timestep to select.
-    replay_indexes_timesteps: ClassVar[bool] = True
-
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Run every concrete ``forward_step`` under its role precision.
 
@@ -124,16 +119,6 @@ class DenoiseModelBase(nn.Module, ABC):
         """
         del build
         return None
-
-    def reject_replay_timestep_selection(self, timestep_idx: int) -> None:
-        """No-op for families that do index timesteps."""
-
-        if self.replay_indexes_timesteps or timestep_idx == 0:
-            return
-        raise ValueError(
-            f"{type(self).__name__} replay has no timestep axis; "
-            f"timestep_idx must be 0, got {timestep_idx}",
-        )
 
     def replay_forward(
         self,

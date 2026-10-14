@@ -13,27 +13,10 @@ from vrl.models.interfaces import (
     require_replay_model,
     require_runtime_model,
 )
-from vrl.models.steps.denoise.base import DenoiseModelBase
 
 # ReplayModel's required surface. Derived from the protocol's
 # ``__protocol_attrs__``, so a method add/rename auto-widens the contract check.
 _REPLAY_MODEL_METHODS = tuple(sorted(ReplayModel.__protocol_attrs__))
-
-
-class _WholeTrajectoryReplay(DenoiseModelBase):
-    """Replays the whole trajectory at once: it has no timestep axis to select."""
-
-    replay_indexes_timesteps = False
-
-    def forward_step(self, state, step_idx):
-        raise NotImplementedError
-
-
-def test_replay_timestep_guard_rejects_nonzero_index() -> None:
-    model = _WholeTrajectoryReplay()
-    model.reject_replay_timestep_selection(0)
-    with pytest.raises(ValueError, match="timestep_idx must be 0"):
-        model.reject_replay_timestep_selection(1)
 
 
 @pytest.mark.parametrize(

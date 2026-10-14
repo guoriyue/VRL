@@ -16,7 +16,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import torch
 
@@ -356,11 +356,6 @@ class CausVidModel(DenoiseModelBase):
     class adds the prompt encoder and VAE through a generation backend.
     """
 
-    # Grouped replay: every [chunk, transition] action is replayed in ONE call,
-    # so there is no timestep axis to select (unlike the denoise-family default
-    # this class inherits).
-    replay_indexes_timesteps: ClassVar[bool] = False
-
     def __init__(
         self,
         *,
@@ -422,7 +417,13 @@ class CausVidModel(DenoiseModelBase):
     ) -> dict[str, Any]:
         """Replay all ``[chunk, transition]`` actions in one grouped call."""
 
-        self.reject_replay_timestep_selection(timestep_idx)
+        # Grouped replay: every [chunk, transition] action is replayed in ONE
+        # call, so there is no timestep axis to select.
+        if timestep_idx != 0:
+            raise ValueError(
+                f"{type(self).__name__} replay has no timestep axis; "
+                f"timestep_idx must be 0, got {timestep_idx}",
+            )
         from vrl.trajectory.reader import TrajectoryReader
 
         replay = TrajectoryReader.from_batch(batch).replay_tensor_dict(

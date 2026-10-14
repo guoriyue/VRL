@@ -235,6 +235,14 @@ def test_full_prefix_replay_matches_rollout_and_backpropagates() -> None:
     assert gradient.abs() > 0
 
 
+def test_grouped_replay_rejects_a_timestep_selection() -> None:
+    """Grouped replay scores the whole trajectory, so there is no timestep to select."""
+    replay_model = CausVidModel(backend=_ReplayParityBackend(), geometry=REPLAY_GEOMETRY)
+
+    with pytest.raises(ValueError, match="timestep_idx must be 0"):
+        replay_model.replay_forward(object(), timestep_idx=1)
+
+
 def test_each_rollout_allocates_a_fresh_empty_cache() -> None:
     backend = _ReplayParityBackend()
 
