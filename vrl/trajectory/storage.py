@@ -97,16 +97,6 @@ def trajectory_tensor_bytes(value: object) -> int:
             return 0
         seen.add(value_id)
 
-        if isinstance(value, TrajectoryBatch):
-            total = 0
-            for segment in value.segments.values():
-                for tensor in segment.tensors.values():
-                    total += count_bytes(tensor.value)
-            total += count_bytes(value.context)
-            for segment in value.segments.values():
-                total += count_bytes(segment.metadata)
-            return total
-
         if isinstance(value, Tensor):
             return int(value.numel()) * int(value.element_size())
         if isinstance(value, MediaReference):
