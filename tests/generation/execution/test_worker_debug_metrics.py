@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import torch
 
+from tests.generation.execution._helpers import launch_config
 from vrl.generation.execution.worker import GenerationWorkerCore
 
 
@@ -23,8 +24,7 @@ def test_batch_output_debug_metrics_includes_stage_memory_and_counters() -> None
         peak_memory_mb=1234.5,
     )
 
-    worker = object.__new__(GenerationWorkerCore)
-    worker.worker_id = "rollout-0"
+    worker = GenerationWorkerCore("rollout-0", launch_config())
     metrics = worker._rank_metrics(runtime_debug=True, batch_output=output)
 
     assert metrics["rollout-0"] == {
@@ -45,5 +45,5 @@ def test_disabled_debug_does_not_read_batch_properties() -> None:
         def stage_durations(self):
             raise AssertionError("disabled debug must not inspect batch metrics")
 
-    worker = object.__new__(GenerationWorkerCore)
+    worker = GenerationWorkerCore("rollout-0", launch_config())
     assert worker._rank_metrics(runtime_debug=False, batch_output=UnreadableOutput()) == {}

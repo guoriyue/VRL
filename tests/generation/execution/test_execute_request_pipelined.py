@@ -9,7 +9,6 @@ from __future__ import annotations
 import pytest
 
 from tests.generation.execution._helpers import launch_config
-from vrl.generation.execution.memory_parking import GenerationWorkerParking
 from vrl.generation.execution.types import (
     RequestBatchOutOfMemory,
     StaleSlotDiscard,
@@ -57,22 +56,14 @@ class _Executor:
         return results
 
 
-def _core(*, executor, uses_slots: bool, policy_version: int | None):
-    core = GenerationWorkerCore.__new__(GenerationWorkerCore)
+def _core(*, executor, uses_slots: bool, policy_version: int):
+    core = GenerationWorkerCore("w0", launch_config(policy_version=policy_version))
     core.executor = executor
-    core.process_group_config = None
-    core.worker_id = "w0"
     # Payload injection, not a double: these tests start from a worker that is
     # ALREADY in slot mode. How the flag is actually derived is asserted against a
     # real GenerationWorkerCore and a real update_weights in
     # test_worker_versioned_slots.py::test_update_weights_installs_versioned_slots_without_overwrite.
     core._uses_versioned_slots = uses_slots
-    core._policy_version = policy_version
-    core._memory_parking = GenerationWorkerParking(
-        "w0",
-        launch_config(),
-    )
-    core.load_policy = lambda: None  # type: ignore[method-assign]
     return core
 
 

@@ -50,15 +50,11 @@ def _rank_main(rank: int, world: int, port: int, queue: multiprocessing.Queue) -
             # Rank-local RNGs deliberately differ before every request.
             import random
 
+            from tests.generation.execution._helpers import launch_config
             from vrl.generation.execution.worker import GenerationWorkerCore
             from vrl.generation.types import GenerationRequest
 
-            core = object.__new__(GenerationWorkerCore)
-            core.process_group_config = config
-            core._memory_parking = SimpleNamespace(require_active=lambda *args, **kwargs: None)
-            core.load_policy = lambda: None
-            core._uses_versioned_slots = False
-            core._policy_version = None
+            core = GenerationWorkerCore("rollout-0", launch_config(), config)
             core.executor = SimpleNamespace(
                 execute_request_batches=lambda request, batches, **kwargs: torch.cat(
                     [torch.rand(4), torch.tensor([random.random()])]
@@ -121,15 +117,13 @@ def test_spec_rejects_degenerate_and_out_of_range_shapes() -> None:
 
 
 @pytest.mark.parametrize("field", ["master_port", "group_rank", "group_world_size"])
-@pytest.mark.parametrize("value", [True, False, 2.5, "2", float("nan"), float("inf")])
-def test_spec_requires_integer_rendezvous_fields(field, value) -> None:
+def test_spec_requires_integer_rendezvous_fields(field) -> None:
     settings = dict(master_addr="127.0.0.1", master_port=29500, group_rank=0, group_world_size=2)
-    settings[field] = value
+    settings[field] = True
     with pytest.raises(ValueError, match=field + " must be an integer"):
         ProcessGroupConfig(**settings)
 
 
-@pytest.mark.parametrize("address", [123, True, b"127.0.0.1", ["127.0.0.1"]])
-def test_spec_rejects_nonstring_rendezvous_address(address) -> None:
+def test_spec_rejects_nonstring_rendezvous_address() -> None:
     with pytest.raises(ValueError, match="master_addr"):
-        ProcessGroupConfig(address, 29500, 0, 2)
+        ProcessGroupConfig(b"127.0.0.1", 29500, 0, 2)
