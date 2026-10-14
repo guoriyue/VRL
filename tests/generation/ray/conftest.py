@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 
-from tests.scripts.eval.fixtures import tiny_sana_ray_cluster, write_tiny_sana_snapshot
+from tests.tiny_real_stack import tiny_sana_ray_cluster, write_tiny_sana_snapshot
 
 
 @pytest.fixture(scope="package")

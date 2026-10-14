@@ -19,7 +19,7 @@ import pytest
 import torch
 
 from tests.generation._in_process_runtime import InProcessGenerationRuntime
-from tests.scripts.eval.fixtures import TinySanaStack, tiny_sana_stack
+from tests.tiny_real_stack import TinySanaStack, tiny_sana_stack
 from vrl.generation import GenerationRequest
 from vrl.models.parking import TrainingMemoryState
 from vrl.ray.resources import RoleLifecycle

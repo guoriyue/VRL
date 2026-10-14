@@ -10,7 +10,7 @@ import torch
 from omegaconf import OmegaConf
 from PIL import Image
 
-from tests.scripts.eval.fixtures import (
+from tests.tiny_real_stack import (
     TinySanaPipeline,
     build_official_sana_scheduler,
     write_tiny_sana_snapshot,

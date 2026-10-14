@@ -24,7 +24,7 @@ import torch
 
 from tests.conftest import real_local_ray
 from tests.rollouts.collector._helpers import Trace
-from tests.scripts.eval.fixtures import (
+from tests.tiny_real_stack import (
     TinySanaPipeline,
     tiny_sana_online_config,
     tiny_sana_ray_cluster,

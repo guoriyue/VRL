@@ -8,7 +8,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from tests.scripts.eval.fixtures import write_tiny_wan_snapshot
+from tests.tiny_real_stack import write_tiny_wan_snapshot
 from tests.trainers._checkpoint_helpers import _Trainer
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config

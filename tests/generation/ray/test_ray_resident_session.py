@@ -14,7 +14,7 @@ import pytest
 
 from tests.generation.ray._helpers import run_launch_inputs
 from tests.rollouts.collector._helpers import Trace
-from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
+from tests.tiny_real_stack import TinySanaPipeline, tiny_sana_online_config
 from vrl.config.builders import BuiltConfigs
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.ray.worker import RayGenerationWorker

@@ -33,7 +33,7 @@ from tests.rollouts.collector._helpers import (
     trainer_side,
 )
 from tests.rollouts.orchestration.continuous._helpers import owner_snapshot
-from tests.scripts.eval.fixtures import (
+from tests.tiny_real_stack import (
     TinySanaStack,
     tiny_sana_ray_cluster,
     write_tiny_sana_snapshot,

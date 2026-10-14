@@ -8,7 +8,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from tests.scripts.eval.fixtures import TinySanaPipeline, write_tiny_sana_snapshot
+from tests.tiny_real_stack import TinySanaPipeline, write_tiny_sana_snapshot
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.models.families.sana.model import SanaPipelineModel

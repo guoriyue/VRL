@@ -26,7 +26,7 @@ import pytest
 # ``data`` extra, which the model-only test environments do not install.
 pytest.importorskip("datasets")
 
-from tests.scripts.eval.fixtures import write_tiny_wan_snapshot
+from tests.tiny_real_stack import write_tiny_wan_snapshot
 from vrl.config.loading import load_config
 from vrl.scripts.families.wan_2_1.train_dpo import train_wan_2_1_dpo
 from vrl.trainers.activation_checkpointing import selective_checkpoint_func

@@ -6,7 +6,7 @@ import asyncio
 
 import torch
 
-from tests.scripts.eval.fixtures import tiny_sana_stack
+from tests.tiny_real_stack import tiny_sana_stack
 from vrl.rewards.functions.registry import MultiReward
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.collector import RolloutCollector

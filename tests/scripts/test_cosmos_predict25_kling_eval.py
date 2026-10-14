@@ -9,7 +9,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from tests.scripts.eval.fixtures import cosmos25_eval_config, write_tiny_cosmos25_snapshot
+from tests.tiny_real_stack import cosmos25_eval_config, write_tiny_cosmos25_snapshot
 from tests.trainers._checkpoint_helpers import _Trainer
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy

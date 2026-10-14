@@ -1,4 +1,4 @@
-"""Real objects shared by the SANA eval-script tests."""
+"""Tiny real model snapshots and the SANA rollout stack shared across test packages."""
 
 from __future__ import annotations
 
@@ -359,7 +359,7 @@ def tiny_sana_ray_runtime_env(snapshot: Path) -> dict[str, Any]:
 
     import os
 
-    repo = str(Path(__file__).resolve().parents[3])
+    repo = str(Path(__file__).resolve().parents[1])
     python_path = os.pathsep.join(
         part for part in (repo, os.environ.get("PYTHONPATH", "")) if part
     )
@@ -370,9 +370,7 @@ def tiny_sana_ray_runtime_env(snapshot: Path) -> dict[str, Any]:
             # Workers of a CPU test cluster must not see a card either.
             "CUDA_VISIBLE_DEVICES": "",
         },
-        "worker_process_setup_hook": (
-            "tests.scripts.eval.fixtures.install_tiny_sana_in_ray_worker"
-        ),
+        "worker_process_setup_hook": ("tests.tiny_real_stack.install_tiny_sana_in_ray_worker"),
     }
 
 

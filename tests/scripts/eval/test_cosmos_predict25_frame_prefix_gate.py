@@ -5,7 +5,7 @@ from pathlib import Path
 import torch
 from omegaconf import OmegaConf
 
-from tests.scripts.eval.fixtures import cosmos25_eval_config, write_tiny_cosmos25_snapshot
+from tests.tiny_real_stack import cosmos25_eval_config, write_tiny_cosmos25_snapshot
 from vrl.scripts.eval import cosmos_predict25_frame_prefix_gate as gate
 from vrl.utils.media import write_mp4
 

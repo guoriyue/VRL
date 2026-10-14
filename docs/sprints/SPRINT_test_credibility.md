@@ -656,7 +656,7 @@ ran inside them.
 
 - `_install_common_fakes` (55 patches) -> `_install_ray_side_fakes` (Ray-side
   shutdown recorders only) on a real resolved run.
-- `tests/scripts/eval/fixtures.py` gained the tiny Wan snapshot, the tiny
+- `tests/tiny_real_stack.py` gained the tiny Wan snapshot, the tiny
   SANA online config and the prompt-manifest writer; the Pick-a-Pic in-memory
   dataset now lives in `test_wan_dpo_run.py`, the one Wan DPO run module.
 - `test_schema.py` split into five theorem modules.

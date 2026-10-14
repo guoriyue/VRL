@@ -59,7 +59,7 @@ generation 58、models 45，`monkeypatch.setattr` 在 scripts 116 处、generati
 
 真实替身的来源，仓库里已经有：
 
-- `tests/scripts/eval/fixtures.py`：`write_tiny_sana_snapshot` / `write_tiny_cosmos25_snapshot` /
+- `tests/tiny_real_stack.py`：`write_tiny_sana_snapshot` / `write_tiny_cosmos25_snapshot` /
   `write_tiny_wan_snapshot` 写出能被真实 family 加载的小权重；`tiny_sana_online_config` 给出完整在线配置。
 - CPU reward：`image_sharpness`（纯 numpy）、`ocr`（CPU-only 类）可作为真实 reward 组件。
 - `tests/e2e/test_real_checkpoint_rl.py` 的 `_DirectExecutorGenerationRuntime`：不经 Ray 直接驱动真实
@@ -81,7 +81,7 @@ generation 58、models 45，`monkeypatch.setattr` 在 scripts 116 处、generati
 保留的注入点：`environ=`、超时参数、`monkeypatch` 掉的 CUDA 探测（`cuda_devices` fixture）。
 它们让测试在无 GPU、无网络、一秒内跑完，不是业务替身。
 
-真实栈的共用件（`tests/rollouts/collector/_helpers.py`，`tests/scripts/eval/fixtures.py`）：
+真实栈的共用件（`tests/rollouts/collector/_helpers.py`，`tests/tiny_real_stack.py`）：
 
 - `tiny_sana_stack(monkeypatch, tmp_path, overrides=)`：解析 tiny SANA 在线配置，建 `InProcessGenerationRuntime`；
   `trainer_bundle()` 物化 replay bundle 作为 trainer 侧策略。`TinySanaPipeline` 现在带真的

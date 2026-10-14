@@ -21,7 +21,7 @@ from tests.generation.ray._helpers import (
     resolve_replay_build,
     run_launch_inputs,
 )
-from tests.scripts.eval.fixtures import tiny_sana_online_config, write_tiny_wan_snapshot
+from tests.tiny_real_stack import tiny_sana_online_config, write_tiny_wan_snapshot
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
 from vrl.generation.launch_config import GenerationLaunchConfig

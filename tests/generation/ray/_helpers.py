@@ -148,7 +148,7 @@ async def ray_sana_runtime(
     their real move ledger.
     """
 
-    from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
+    from tests.tiny_real_stack import TinySanaPipeline, tiny_sana_online_config
     from vrl.config.builders import BuiltConfigs
     from vrl.generation.ray.config import RolloutWorkerConfig
     from vrl.generation.ray.launcher import RayGenerationLauncher

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from tests.generation.ray._helpers import run_launch_inputs
-from tests.scripts.eval.fixtures import (
+from tests.tiny_real_stack import (
     TinySanaPipeline,
     tiny_sana_online_config,
 )

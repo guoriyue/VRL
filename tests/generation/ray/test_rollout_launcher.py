@@ -45,7 +45,7 @@ async def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray(
 def test_create_runtime_rejects_missing_rollout_placement(monkeypatch, tmp_path) -> None:
     """placement=None fails fast with the config knob, not an AttributeError."""
 
-    from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
+    from tests.tiny_real_stack import TinySanaPipeline, tiny_sana_online_config
 
     cfg = tiny_sana_online_config(tmp_path)
     TinySanaPipeline().install(monkeypatch, tmp_path / "sana-snapshot")
