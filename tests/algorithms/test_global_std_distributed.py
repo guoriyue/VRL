@@ -17,6 +17,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
+from tests.trainers._strategy_policies import free_port
 from vrl.algorithms.advantages import (
     _population_std_across_ranks,
     group_relative_advantages,
@@ -55,7 +56,8 @@ def test_global_std_is_cross_rank_not_per_rank() -> None:
 
     ctx = mp.get_context("spawn")
     q: mp.Queue = ctx.Queue()
-    procs = [ctx.Process(target=_run_rank, args=(rank, 2, 29555, q)) for rank in range(2)]
+    port = free_port()
+    procs = [ctx.Process(target=_run_rank, args=(rank, 2, port, q)) for rank in range(2)]
     for p in procs:
         p.start()
     results = {}

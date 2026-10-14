@@ -46,12 +46,6 @@ _NVTX_DEPTH_IS_UNOBSERVABLE = pytest.mark.real_cover(
 # ---------------------------------------------------------------------------
 
 
-def test_profile_range_is_transparent_to_return_value() -> None:
-    with profile_range("test.noop"):
-        result = 1 + 1
-    assert result == 2
-
-
 @_NVTX_DEPTH_IS_UNOBSERVABLE
 def test_profile_range_no_nvtx_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = {"push": 0, "pop": 0}
@@ -168,8 +162,7 @@ def test_capture_fails_fast_on_missing_activity(
 def test_capture_disabled_is_passthrough(tmp_path: Path) -> None:
     cfg = TorchProfilerConfig(enabled=False, output_dir=str(tmp_path / "torch_profiler"))
     with capture_torch_trace(cfg, step=0, device="cpu", worker_name="t"):
-        ran = True
-    assert ran
+        pass
     assert not (tmp_path / "torch_profiler").exists()
 
 

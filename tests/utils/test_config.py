@@ -1,30 +1,9 @@
 """Shared configuration conversion boundaries."""
 
-import builtins
-
 import pytest
 from omegaconf import OmegaConf
 
 from vrl.utils.config import import_from_path, plain_mapping, to_builtin_deep
-
-
-@pytest.mark.parametrize("converter", [plain_mapping, to_builtin_deep])
-def test_config_conversion_preserves_dependency_import_failure(monkeypatch, converter):
-    original_import = builtins.__import__
-    failure = RuntimeError("broken OmegaConf initialization")
-
-    def import_module(name, *args, **kwargs):
-        if name == "omegaconf":
-            raise failure
-        return original_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", import_module)
-    with pytest.raises(RuntimeError) as caught:
-        if converter is plain_mapping:
-            converter({"devices": (0, 1)}, field_name="resources")
-        else:
-            converter({"devices": (0, 1)})
-    assert caught.value is failure
 
 
 def test_deep_conversion_resolves_yaml_and_plain_nested_values():

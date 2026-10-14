@@ -95,8 +95,6 @@ def test_cpu_offload_parking_releases_segment_pinned_by_blas_workspace():
 
 @pytest.mark.gpu
 def test_real_cumem_parking_with_another_process_allocation():
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA is unavailable")
     pytest.importorskip("vllm.device_allocator.cumem")
     code = textwrap.dedent("""
         import gc, subprocess, sys
