@@ -262,7 +262,8 @@ def test_all_experiments_load_and_validate() -> None:
 
 
 def test_all_online_experiments_pass_static_launch_preflight() -> None:
-    """Every active online recipe has a valid schedule and reward topology.
+    """Every active online recipe has a valid schedule and reward topology, and
+    ships no rollout precision split by accident.
 
     Unpinned roles share the trainer GPU, so a recipe needs exactly the ordinals
     its pinned ``devices`` name (one synthetic device when nothing is pinned:
@@ -300,6 +301,11 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
             _validate_reward_parking(built.reward, resources)
         except Exception as error:  # report the full active surface in one failure
             failures.append(f"{name}: {type(error).__name__}: {error}")
+            continue
+        if built.precision.training != built.precision.rollout:
+            failures.append(f"{name}: training and rollout precision differ")
+        if built.precision.denoise_math != "fp32":
+            failures.append(f"{name}: denoise_math is {built.precision.denoise_math!r}")
 
     assert failures == []
 

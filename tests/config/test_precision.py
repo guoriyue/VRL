@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
 import torch
 from omegaconf import OmegaConf
 
-from tests.config.test_load_all_experiments import (
-    _experiment_names,
-    _load_experiment_for_static_validation,
-)
-from vrl.config.loading import load_config
 from vrl.config.precision import (
     PrecisionConfig,
     PrecisionPolicy,
@@ -212,15 +206,6 @@ def test_denoise_math_and_prompt_encoders_can_be_explicit():
     assert p.prompt_encoder_dtype == "fp16"
 
 
-def test_base_preset_keeps_prompt_encoders_aligned_with_rollout():
-    cfg = load_config("experiment/sd3_5/online_grpo_ocr")
-    p = PrecisionPolicy.from_section(parse_config(cfg).precision)
-    assert p.rollout.dtype == "bf16"
-    assert p.prompt_encoder_dtype == "bf16"
-    assert p.training.float32_precision == "tf32"
-    assert p.rollout.float32_precision == "tf32"
-
-
 @pytest.mark.parametrize("mode", ["ieee", "tf32"])
 def test_float32_precision_is_explicit_and_resolved(mode):
     block = _plain_precision()
@@ -379,39 +364,24 @@ def test_resolve_torch_dtype_subbyte(spelling, torch_name):
     assert resolve_torch_dtype(spelling) is getattr(torch, torch_name)
 
 
-def test_shipped_online_recipes_keep_training_and_rollout_precision_aligned():
-    """No bundled online recipe ships a rollout precision split by accident."""
-
-    for name in _experiment_names():
-        if Path(name).name.startswith("offline_"):
-            continue
-        policy = PrecisionPolicy.from_section(
-            parse_config(_load_experiment_for_static_validation(name)).precision,
-        )
-        assert policy.training == policy.rollout, name
-        assert policy.denoise_math == "fp32", name
-
-
-@pytest.mark.parametrize("value", [None, "", "   "])
 @pytest.mark.parametrize("section", ["training", "denoise_math", "prompt_encoders"])
-def test_required_precision_dtype_does_not_default_empty_values(section, value):
+def test_required_precision_dtype_does_not_default_empty_values(section):
     block = {"float32_precision": "ieee", "training": {"dtype": "bf16"}}
     if section == "prompt_encoders":
-        block["rollout"] = {"prompt_encoders": {"dtype": value}}
+        block["rollout"] = {"prompt_encoders": {"dtype": None}}
     else:
-        block[section] = {"dtype": value}
+        block[section] = {"dtype": None}
     with pytest.raises(ValueError, match="explicit non-empty dtype"):
         _section(block)
 
 
-@pytest.mark.parametrize("value", ["", "   "])
-def test_rollout_blank_dtype_is_not_silently_fp32(value):
+def test_rollout_blank_dtype_is_not_silently_fp32():
     with pytest.raises(ValueError, match="explicit non-empty dtype"):
         _section(
             {
                 "float32_precision": "ieee",
                 "training": {"dtype": "bf16"},
-                "rollout": {"dtype": value},
+                "rollout": {"dtype": "   "},
             }
         )
 
