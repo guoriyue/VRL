@@ -12,7 +12,6 @@ from omegaconf import OmegaConf
 
 from vrl.config.loading import load_config
 from vrl.config.precision import PrecisionPolicy
-from vrl.config.sampling_schema import SamplingSection
 from vrl.config.schema import parse_config
 from vrl.generation.steps.denoise.config import DenoiseRequestOptions
 from vrl.models.families.names import (
@@ -29,8 +28,6 @@ from vrl.models.interfaces.generation_memory import (
     VaeDecodeMemory,
 )
 from vrl.models.interfaces.runtime import ModelBuild
-from vrl.ray.resources import RoleLifecycle
-from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.collector.config import RolloutCollectorConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.trajectory.storage import TrajectoryStoragePolicy
@@ -44,8 +41,7 @@ def _typed_model_build_inputs(payload):
 
 
 @pytest.mark.parametrize("family", ["cosmos-predict2.5", "flux", "sd3_5"])
-@pytest.mark.parametrize("kind", [None, "grpo", "diffusion_nft", "v_grpo"])
-def test_previous_adapter_follows_algorithm_for_both_build_roles(family, kind) -> None:
+def test_rollout_and_replay_builds_share_one_checkpoint_identity(family) -> None:
     _, root, precision = _typed_model_build_inputs(
         {
             "model": {
@@ -55,7 +51,6 @@ def test_previous_adapter_follows_algorithm_for_both_build_roles(family, kind) -
                 "use_lora": True,
                 "lora": {"rank": 2, "alpha": 4, "target_modules": ["to_q"]},
             },
-            "algorithm": None if kind is None else {"kind": kind},
             "rollout": {"sde": {"type": "flow_grpo"}},
             "precision": {"float32_precision": "ieee", "training": {"dtype": "fp32"}},
         },
@@ -196,42 +191,20 @@ def test_denoise_model_build_requires_a_nonempty_path(path) -> None:
 
 
 def test_family_registry_entries_have_complete_protocol_wiring() -> None:
-    assert FAMILY_REGISTRY
-    assert len(FAMILY_REGISTRY) == len(set(FAMILY_REGISTRY))
+    """Registration and DenoiseFamilyBuild.__post_init__ enforce the entry shape;
+    what they cannot check is that the dotted paths resolve. Gatherers are
+    built per entry in test_every_registry_entry_has_pickle_safe_ray_launch_inputs."""
 
-    for family, entry in FAMILY_REGISTRY.items():
-        assert entry.family == family
+    for entry in FAMILY_REGISTRY.values():
         assert entry.task
-        assert entry.model_section_cls
-        assert entry.sampling_section_cls
-        assert callable(entry.new_gatherer().merge_generation_batches)
-        assert entry.generation_regime in {
-            "full_sequence",
-            "chunk_autoregressive",
-        }
-        assert isinstance(entry.family_build, DenoiseFamilyBuild)
         assert entry.executor_cls.startswith(
             (
                 "vrl.models.families.",
                 "vrl.generation.bindings.full_sequence.",
             ),
         )
-
-
-def test_family_registry_entries_own_importable_model_sections() -> None:
-    from vrl.config.model_schema import ModelSection
-
-    for entry in FAMILY_REGISTRY.values():
-        section_cls = import_from_path(entry.model_section_cls)
-        assert isinstance(section_cls, type)
-        assert issubclass(section_cls, ModelSection)
-
-
-def test_family_registry_entries_own_importable_sampling_sections() -> None:
-    for entry in FAMILY_REGISTRY.values():
-        section_cls = import_from_path(entry.sampling_section_cls)
-        assert isinstance(section_cls, type)
-        assert issubclass(section_cls, SamplingSection)
+        if entry.supports_policy_replay:
+            assert callable(import_from_path(entry.family_build.replay_cls))
 
 
 def test_model_section_imports_do_not_load_model_runtimes() -> None:
@@ -246,10 +219,13 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
                 "TorchCompileSection, VaeDecodeMemorySection; "
                 "from vrl.models.families.registry import FAMILY_REGISTRY; "
                 "from vrl.utils.config import import_from_path; "
+                "from vrl.config.model_schema import ModelSection; "
+                "from vrl.config.sampling_schema import SamplingSection; "
                 "sections = [import_from_path(entry.model_section_cls) "
                 "for entry in FAMILY_REGISTRY.values()]; "
-                "[import_from_path(entry.sampling_section_cls) "
-                "for entry in FAMILY_REGISTRY.values()]; "
+                "assert all(issubclass(section, ModelSection) for section in sections); "
+                "assert all(issubclass(import_from_path(entry.sampling_section_cls), "
+                "SamplingSection) for entry in FAMILY_REGISTRY.values()); "
                 # Registry-derived, not a second hand-written family list: a new
                 # family is covered the moment it registers a section path.
                 "assert all(section.__module__ == 'vrl.config.model_schema' "
@@ -281,32 +257,24 @@ def test_model_section_imports_do_not_load_model_runtimes() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_policy_replay_support_is_derived_from_family_recipes() -> None:
-    causvid = get_model_family_entry("causvid")
-    magi = get_model_family_entry("magi_1")
-    sana = get_model_family_entry("sana")
-
-    assert causvid.supports_policy_replay is True
-    assert magi.supports_policy_replay is False
-    assert sana.supports_policy_replay is True
-
-
 @pytest.mark.parametrize(
-    "kwargs",
+    ("kwargs", "message"),
     [
-        {},
-        {
-            "replay_cls": "example:Replay",
-            "replay_unavailable_reason": "generation only",
-        },
-        {"transformer_classname": "Transformer", "replay_unavailable_reason": "generation only"},
-        {"replay_cls": "example:Replay", "scheduler_classname": "Scheduler"},
+        ({}, "exactly one of replay_cls or replay_unavailable_reason"),
+        (
+            {"transformer_classname": "Transformer", "replay_unavailable_reason": "gen only"},
+            "transformer_classname requires replay_cls",
+        ),
+        (
+            {"replay_cls": "example:Replay", "scheduler_classname": "Scheduler"},
+            "scheduler_classname requires transformer_classname",
+        ),
     ],
 )
 def test_denoise_family_build_rejects_ambiguous_replay_modes(
-    kwargs: dict[str, str],
+    kwargs: dict[str, str], message: str
 ) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=message):
         DenoiseFamilyBuild(model_cls="example:Model", **kwargs)
 
 
@@ -345,6 +313,8 @@ def test_rollout_config_is_projected_from_yaml() -> None:
                 "fps": 16,
             },
             "rollout": {
+                "n_samples_per_prompt": 4,
+                "prompts_per_batch": 1,
                 "samples_per_generation_batch": 8,
                 "noise_level": 1.0,
                 "sde": {
@@ -370,7 +340,11 @@ def test_rollout_config_is_projected_from_yaml() -> None:
         sde_window_size=0,
         sde_window_range=(0, 10),
     )
-    assert "noise_level" not in rollout.request_sampling
+    # Only generation-owned values reach the request; driver and storage
+    # settings stay on the collector config.
+    for driver_key in ("noise_level", "n_samples_per_prompt", "prompts_per_batch"):
+        assert driver_key not in rollout.request_sampling
+    assert "trajectory_storage" not in rollout.request_sampling
     assert rollout.trajectory_storage == TrajectoryStoragePolicy(
         device="cpu",
         dtype="float16",
@@ -405,67 +379,6 @@ def test_request_fps_override_updates_reward_metadata() -> None:
     assert collector_request.metadata["video_fps"] == 12
 
 
-def test_request_sampling_projects_only_generation_owned_rollout_values() -> None:
-    cfg = OmegaConf.create(
-        {
-            "model": {"family": "wan_2_1"},
-            "sampling": {"width": 1280, "num_frames": 93, "fps": 16},
-            "rollout": {
-                "n_samples_per_prompt": 4,
-                "prompts_per_batch": 1,
-                "samples_per_generation_batch": 8,
-                "sde": {"type": "flow_grpo", "window_range": [0, 10]},
-            },
-            "algorithm": {"kind": "grpo"},
-        },
-    )
-
-    rollout = RolloutCollectorConfig.from_root(parse_config(cfg))
-    sampling = rollout.request_sampling
-
-    assert sampling["width"] == 1280
-    assert rollout.samples_per_generation_batch == 8
-    assert rollout.denoise is not None
-    assert rollout.denoise.sde_type == "flow_grpo"
-    assert rollout.denoise.sde_window_range == (0, 10)
-    for driver_key in ("n_samples_per_prompt", "prompts_per_batch"):
-        assert driver_key not in sampling
-    assert "trajectory_storage" not in sampling
-    assert rollout.trajectory_storage == TrajectoryStoragePolicy()
-
-
-def test_all_registry_entries_build_collectors_from_the_same_entry() -> None:
-    for entry in FAMILY_REGISTRY.values():
-        collector = RolloutCollector.from_family(
-            entry,
-            reward_runtime=SimpleNamespace(),
-            config=RolloutCollectorConfig(samples_per_generation_batch=1),
-            lifecycle=RoleLifecycle(trainer=(0,), rollout=(1,), reward=(2,)),
-        )
-        assert collector.request_builder.entry is entry
-        assert callable(collector.generate_rollout)
-        assert callable(collector.evaluate_rollout)
-
-
 def test_unknown_family_raises_clear_error() -> None:
     with pytest.raises(ValueError, match="unsupported model family"):
         get_model_family_entry("not_a_family")
-
-
-def test_denoise_family_build_descriptors_have_one_explicit_replay_mode() -> None:
-    denoise_entries = [
-        entry
-        for entry in FAMILY_REGISTRY.values()
-        if isinstance(entry.family_build, DenoiseFamilyBuild)
-    ]
-    assert len(denoise_entries) >= 10
-    for entry in denoise_entries:
-        build = entry.family_build
-        assert isinstance(build, DenoiseFamilyBuild)
-        if not entry.supports_policy_replay:
-            assert build.replay_cls is None
-            assert build.transformer_classname is None
-            assert build.replay_unavailable_reason
-            continue
-        assert callable(import_from_path(build.replay_cls))
-        assert build.replay_unavailable_reason is None

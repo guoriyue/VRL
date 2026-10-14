@@ -105,22 +105,15 @@ def test_every_registry_entry_has_pickle_safe_ray_launch_inputs(
 
 
 @pytest.mark.parametrize(
-    ("experiment", "family", "expected_gatherer", "overrides"),
+    ("experiment", "family"),
     [
-        ("sd3_5/online_grpo_ocr", "sd3_5", DenoiseBatchGatherer, ()),
-        (
-            "wan_2_1/online_grpo_physics_i2v",
-            "wan_2_1_i2v",
-            DenoiseBatchGatherer,
-            (),
-        ),
+        ("sd3_5/online_grpo_ocr", "sd3_5"),
+        ("wan_2_1/online_grpo_physics_i2v", "wan_2_1_i2v"),
     ],
 )
 def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     experiment: str,
     family: str,
-    expected_gatherer: type,
-    overrides: tuple[str, ...],
 ) -> None:
     """Launch inputs survive a pickle round trip; family lives only on the outer contract, batch
     width only in request sampling, and the gatherer is registry-built and is not itself an
@@ -129,7 +122,6 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     cfg = load_config(
         f"experiment/{experiment}",
         overrides=[
-            *overrides,
             "distributed.resources.visible_devices=[]",
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",
@@ -154,7 +146,7 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     assert restored.launch_config.policy_version == 0
     # Batch width is per-request data (request.sampling), never executor wiring.
     assert "samples_per_generation_batch" not in restored.launch_config.executor_kwargs
-    assert isinstance(restored.gatherer, expected_gatherer)
+    assert isinstance(restored.gatherer, DenoiseBatchGatherer)
     assert not isinstance(restored.gatherer, GenerationBatchExecutor)
 
 
@@ -305,27 +297,15 @@ def test_generation_batch_width_reaches_the_request_not_the_executor() -> None:
     assert "samples_per_generation_batch" not in collector.request_sampling
 
 
-@pytest.mark.parametrize(
-    ("experiment", "family", "overrides"),
-    [
-        ("sd3_5/online_grpo_ocr", "sd3_5", ()),
-        (
-            "cosmos_predict2_5/online_nft_kling_video_reward",
-            "cosmos-predict2.5",
-            (),
-        ),
-    ],
-)
-def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
-    experiment: str,
-    family: str,
-    overrides: tuple[str, ...],
-) -> None:
-    """Checks model.torch_compile is the single compile source for rollout workers."""
+def test_model_torch_compile_applies_to_all_diffusion_rollout_families() -> None:
+    """Checks model.torch_compile is the single compile source for rollout workers.
+
+    The projection into ModelBuild.model_config is family-generic
+    (ModelFamilyEntry.resolve_model_build), so one family pins it.
+    """
     cfg = load_config(
-        f"experiment/{experiment}",
+        "experiment/sd3_5/online_grpo_ocr",
         overrides=[
-            *overrides,
             "distributed.resources.visible_devices=[]",
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",
@@ -335,7 +315,7 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
             "model.torch_compile.mode=default",
         ],
     )
-    entry = get_model_family_entry(family)
+    entry = get_model_family_entry("sd3_5")
 
     inputs, _ = _capture_launch_inputs(
         cfg,
@@ -348,31 +328,6 @@ def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
         "enable": True,
         "mode": "default",
     }
-
-
-def test_executor_kwargs_use_configured_chunk_size() -> None:
-    """The public config is the only batch-size input to the launch config."""
-    cfg = load_config(
-        "experiment/sd3_5/online_grpo_ocr",
-        overrides=[
-            "distributed.resources.visible_devices=[]",
-            "distributed.resources.trainer.num_gpus=0",
-            "distributed.resources.rollout.num_gpus=0",
-            "distributed.resources.rollout.num_engines=1",
-            "rollout.samples_per_generation_batch=8",
-        ],
-    )
-
-    inputs, _ = _capture_launch_inputs(
-        cfg,
-        get_model_family_entry("sd3_5"),
-    )
-
-    assert isinstance(inputs, RayGenerationLaunchInputs)
-    assert "samples_per_generation_batch" not in inputs.launch_config.executor_kwargs
-    collector = RolloutCollectorConfig.from_root(parse_config(cfg))
-    assert collector.samples_per_generation_batch == 8
-    assert "samples_per_generation_batch" not in collector.request_sampling
 
 
 def test_generic_executor_kwargs_project_the_complete_model_block() -> None:
