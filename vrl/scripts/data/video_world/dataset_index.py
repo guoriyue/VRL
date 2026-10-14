@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 import os
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -71,9 +71,11 @@ def build_target_video_world_rows(
     source: str,
     fps: float,
     conditioning: str = "first_frame",
-    video_writer: Callable[[Path, Sequence[Any], float], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Write first-frame PNGs and target clips from real demonstrations."""
+
+    import imageio.v2 as imageio
+    import numpy as np
 
     reference_dir.mkdir(parents=True, exist_ok=True)
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -102,19 +104,13 @@ def build_target_video_world_rows(
         ref_path = reference_dir / f"{source}_{episode_id}_first.png"
         target_path = target_dir / f"{source}_{episode_id}_target.mp4"
         write_png(frames[0], ref_path)
-        if video_writer is not None:
-            video_writer(target_path, frames, clip_fps)
-        else:
-            import imageio.v2 as imageio
-            import numpy as np
-
-            arrays = []
-            for frame in frames:
-                array = np.asarray(frame)
-                if array.dtype != np.uint8:
-                    array = array.astype("uint8")
-                arrays.append(array)
-            imageio.mimsave(target_path, arrays, fps=clip_fps, macro_block_size=1)
+        arrays = []
+        for frame in frames:
+            array = np.asarray(frame)
+            if array.dtype != np.uint8:
+                array = array.astype("uint8")
+            arrays.append(array)
+        imageio.mimsave(target_path, arrays, fps=clip_fps, macro_block_size=1)
         rows.append(
             {
                 "prompt": prompt,
