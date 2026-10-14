@@ -30,7 +30,7 @@ async def test_nsfw_safety_reward_only_penalizes_scores_above_threshold() -> Non
         threshold=0.25,
         penalty_scale=2.0,
         max_penalty=1.5,
-        scorer=lambda images: [0.10, 0.75],
+        worker_config={"scorer": lambda images: [0.10, 0.75]},
     )
     image = Image.new("RGB", (8, 8), color=(128, 128, 128))
 
@@ -53,7 +53,7 @@ async def test_nsfw_safety_reward_uses_max_probability_for_image_batches() -> No
         threshold=0.50,
         penalty_scale=1.0,
         image_sample_count=2,
-        scorer=lambda images: [0.20, 0.90],
+        worker_config={"scorer": lambda images: [0.20, 0.90]},
     )
     output = torch.rand(2, 3, 8, 8)
 

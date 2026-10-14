@@ -680,7 +680,7 @@ def test_multiple_gpu_reward_actors_divide_the_owned_bundle() -> None:
     [
         # A CPU-only reward (custom __init__ too) never claims the resolved GPU.
         ("ocr", {}, "cpu"),
-        # NSFW reads its device override from classifier_device and has its own __init__.
+        # NSFW reads its device override from classifier_device.
         ("nsfw_safety", {"model_name": "test"}, "cuda:0"),
         ("aesthetic", {}, "cuda:0"),
         ("motion_dynamics", {"worker_config": {"num_frames": 4}}, "cuda:0"),
