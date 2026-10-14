@@ -87,6 +87,38 @@ class _FakeRuntime:
         self.shutdown_calls += 1
 
 
+class _BlockingRuntime(_FakeRuntime):
+    """Holds each request until the test sets ``release``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    async def score_batch(self, request):
+        self.requests.append(request)
+        self.started.set()
+        await asyncio.to_thread(self.release.wait)
+        return _results(request)
+
+
+class _CancellableRuntime(_FakeRuntime):
+    """Waits forever; records when its scoring task is cancelled."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.cancelled = threading.Event()
+
+    async def score_batch(self, request):
+        self.requests.append(request)
+        self.started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            self.cancelled.set()
+
+
 @asynccontextmanager
 async def _running_service(
     runtime,
@@ -399,18 +431,6 @@ async def test_cached_idempotent_request_revalidates_replaced_file(tmp_path) -> 
 
 @pytest.mark.asyncio
 async def test_bounded_admission_returns_retryable_backpressure(tmp_path) -> None:
-    class _BlockingRuntime(_FakeRuntime):
-        def __init__(self) -> None:
-            super().__init__()
-            self.started = threading.Event()
-            self.release = threading.Event()
-
-        async def score_batch(self, request):
-            self.requests.append(request)
-            self.started.set()
-            await asyncio.to_thread(self.release.wait)
-            return _results(request)
-
     first_file = tmp_path / "first.mp4"
     second_file = tmp_path / "second.mp4"
     first_file.write_bytes(b"x")
@@ -439,18 +459,6 @@ async def test_bounded_admission_returns_retryable_backpressure(tmp_path) -> Non
 
 @pytest.mark.asyncio
 async def test_idempotency_joins_inflight_replays_cache_and_rejects_conflict(tmp_path) -> None:
-    class _BlockingRuntime(_FakeRuntime):
-        def __init__(self) -> None:
-            super().__init__()
-            self.started = threading.Event()
-            self.release = threading.Event()
-
-        async def score_batch(self, request):
-            self.requests.append(request)
-            self.started.set()
-            await asyncio.to_thread(self.release.wait)
-            return _results(request)
-
     artifact_file = tmp_path / "a0.mp4"
     artifact_file.write_bytes(b"x")
     runtime = _BlockingRuntime()
@@ -504,20 +512,6 @@ async def test_idempotency_joins_inflight_replays_cache_and_rejects_conflict(tmp
 
 @pytest.mark.asyncio
 async def test_client_cancellation_propagates_by_request_id(tmp_path) -> None:
-    class _CancellableRuntime(_FakeRuntime):
-        def __init__(self) -> None:
-            super().__init__()
-            self.started = threading.Event()
-            self.cancelled = threading.Event()
-
-        async def score_batch(self, request):
-            self.requests.append(request)
-            self.started.set()
-            try:
-                await asyncio.Future()
-            finally:
-                self.cancelled.set()
-
     artifact_file = tmp_path / "a0.mp4"
     artifact_file.write_bytes(b"x")
     runtime = _CancellableRuntime()
@@ -564,12 +558,7 @@ def test_invalid_admission_capacity_does_not_start_runtime_owner(tmp_path, monke
 
 @pytest.mark.asyncio
 async def test_noncooperative_cancel_holds_admission_until_runtime_stops(tmp_path) -> None:
-    class _BlockingRuntime(_FakeRuntime):
-        def __init__(self) -> None:
-            super().__init__()
-            self.started = threading.Event()
-            self.release = threading.Event()
-
+    class _NonCooperativeRuntime(_BlockingRuntime):
         async def score_batch(self, request):
             self.requests.append(request)
             self.started.set()
@@ -582,7 +571,7 @@ async def test_noncooperative_cancel_holds_admission_until_runtime_stops(tmp_pat
     second_file = tmp_path / "second.mp4"
     first_file.write_bytes(b"x")
     second_file.write_bytes(b"x")
-    runtime = _BlockingRuntime()
+    runtime = _NonCooperativeRuntime()
     async with _running_service(
         runtime,
         tmp_path,
@@ -662,19 +651,6 @@ async def test_invalid_timing_is_retryable_instead_of_cached_as_success(tmp_path
 
 @pytest.mark.asyncio
 async def test_service_shutdown_cancels_work_and_shuts_runtime_exactly_once(tmp_path) -> None:
-    class _CancellableRuntime(_FakeRuntime):
-        def __init__(self) -> None:
-            super().__init__()
-            self.started = threading.Event()
-            self.cancelled = threading.Event()
-
-        async def score_batch(self, request):
-            self.started.set()
-            try:
-                await asyncio.Future()
-            finally:
-                self.cancelled.set()
-
     artifact_file = tmp_path / "a0.mp4"
     artifact_file.write_bytes(b"x")
     runtime = _CancellableRuntime()
