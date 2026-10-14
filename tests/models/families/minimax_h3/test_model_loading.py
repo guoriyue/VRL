@@ -26,11 +26,20 @@ pytest.importorskip("diffusers.modular_pipelines.minimax_h3")
 _PATH = "MiniMaxAI/MiniMax-H3"
 
 
-@pytest.mark.parametrize("devices", [(), (0, 1), (-1,), (True,), ("cuda:0",)])
-def test_partitioned_map_rejects_invalid_block_ownership(devices):
+@pytest.mark.parametrize(
+    ("devices", "message"),
+    [
+        ((), "exactly one device per transformer block"),
+        ((0, 1), "exactly one device per transformer block"),
+        ((-1,), "explicit nonnegative CUDA indices"),
+        ((True,), "explicit nonnegative CUDA indices"),
+        (("cuda:0",), "explicit nonnegative CUDA indices"),
+    ],
+)
+def test_partitioned_map_rejects_invalid_block_ownership(devices, message):
     from vrl.models.families.minimax_h3.placement import transformer_device_map
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=message):
         transformer_device_map(
             build_tiny_minimax_h3_transformer(), root_device=0, block_devices=devices
         )
@@ -59,8 +68,16 @@ def _build(*, rollout: bool, num_steps: int | None = None, device: str = "cuda:0
     )
 
 
-@pytest.mark.parametrize("invalid", ["full", "compile", "cpu", "implicit_cuda"])
-def test_partitioned_loader_rejects_unverified_modes_before_loading(monkeypatch, invalid):
+@pytest.mark.parametrize(
+    ("invalid", "message"),
+    [
+        ("full", "requires LoRA"),
+        ("compile", "does not yet support quantization or compile"),
+        ("cpu", "explicit CUDA root device"),
+        ("implicit_cuda", "explicit CUDA root device"),
+    ],
+)
+def test_partitioned_loader_rejects_unverified_modes_before_loading(monkeypatch, invalid, message):
     from dataclasses import replace
 
     from diffusers import MiniMaxH3Transformer3DModel
@@ -74,7 +91,7 @@ def test_partitioned_loader_rejects_unverified_modes_before_loading(monkeypatch,
     config = {"use_lora": invalid != "full", "torch_compile": {"enable": invalid == "compile"}}
     device = {"cpu": "cpu", "implicit_cuda": "cuda"}.get(invalid, "cuda:0")
     build = replace(_build(rollout=False, device=device), model_config=config)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=message):
         load_partitioned_transformer(build, (0, 1))
 
 

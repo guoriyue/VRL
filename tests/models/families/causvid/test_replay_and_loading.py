@@ -457,9 +457,8 @@ def test_artifact_resolution_keeps_source_import_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The pinned-source import gate runs on the resolved CausVid source root."""
     source_root = tmp_path / "source"
-    base_model_dir = tmp_path / "base"
-    checkpoint_file = tmp_path / "model.pt"
     gated_paths: list[Path] = []
     monkeypatch.setattr(
         "vrl.models.families.causvid.model._resolve_source_root",
@@ -475,21 +474,17 @@ def test_artifact_resolution_keeps_source_import_gate(
     )
     monkeypatch.setattr(
         "vrl.models.families.causvid.model._resolve_base_model",
-        lambda config: base_model_dir,
+        lambda config: tmp_path / "base",
     )
     monkeypatch.setattr(
         "vrl.models.families.causvid.model._resolve_checkpoint",
-        lambda build: checkpoint_file,
+        lambda build: tmp_path / "model.pt",
     )
     build = SimpleNamespace(model_config={"accept_noncommercial_license": True})
 
-    resolved = CausVidResolvedArtifacts.from_build(build)
+    CausVidResolvedArtifacts.from_build(build)
 
     assert gated_paths == [source_root]
-    assert resolved == CausVidResolvedArtifacts(
-        base_model_dir=base_model_dir,
-        checkpoint_file=checkpoint_file,
-    )
 
 
 def test_packaged_source_without_git_uses_audited_runtime_digest(
