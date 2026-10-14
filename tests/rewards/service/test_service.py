@@ -281,6 +281,9 @@ async def test_expected_model_identity_mismatch_fails_before_scoring(
         ),
     )
     try:
+        # Both the startup preflight and a lazily checked first score refuse.
+        with pytest.raises(RemoteRewardServiceError, match=message):
+            await client.ensure_ready()
         with pytest.raises(RemoteRewardServiceError, match=message) as caught:
             await client.score_batch(_request(str(artifact_file)))
     finally:
@@ -305,35 +308,6 @@ async def test_ensure_ready_fails_fast_when_service_is_unreachable() -> None:
 
     assert caught.value.code == RewardServiceErrorCode.TRANSPORT_ERROR.value
     assert caught.value.retryable
-
-
-@pytest.mark.asyncio
-async def test_ensure_ready_fails_fast_on_identity_mismatch(tmp_path) -> None:
-    runtime = _FakeRuntime()
-    service = RewardService(
-        runtime,
-        artifact_roots=[tmp_path],
-        host="127.0.0.1",
-        port=0,
-        model_name="actual-model",
-    )
-    await service.start()
-    host, port = service.address
-    client = HttpRewardScorer.from_section(
-        RewardInferenceConfig(
-            kind="http",
-            endpoint=f"http://{host}:{port}",
-            expected_model="wrong-model",
-        ),
-    )
-    try:
-        with pytest.raises(RemoteRewardServiceError, match="identity mismatch"):
-            await client.ensure_ready()
-    finally:
-        await client.shutdown()
-        await service.shutdown_async()
-
-    assert runtime.requests == []
 
 
 @pytest.mark.asyncio

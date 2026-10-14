@@ -234,24 +234,6 @@ async def test_sleep_offload_materializes_lazy_model_inside_cumem_pool(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_dedicated_runtime_keeps_lazy_model_outside_cumem_pool(monkeypatch) -> None:
-    """Without a shared-GPU lease, model loading remains first-score lazy."""
-    import vrl.models.parking as parking_mod
-
-    allocator = _FakeCumemAllocator()
-    monkeypatch.setattr(parking_mod, "cumem_allocator", lambda: allocator)
-    runtime = InProcessRewardScorer(
-        {"model_factory": f"{__name__}:_lazy_torch_factory"},
-    )
-
-    await runtime.score_batch(_make_request())
-
-    assert runtime._model.load_scopes == [False]
-    assert allocator.pool_tags == []
-    await runtime.shutdown()
-
-
-@pytest.mark.asyncio
 async def test_failed_pooled_preparation_rolls_back_before_retry(monkeypatch) -> None:
     """A partial lazy load cannot become the runtime's committed model."""
     import vrl.models.parking as parking_mod
@@ -356,18 +338,20 @@ async def test_reward_partial_wake_never_reaches_model_inference_again(monkeypat
 
 @pytest.mark.asyncio
 async def test_dedicated_reward_runtime_stays_resident(monkeypatch) -> None:
-    """A dedicated runtime never creates or sleeps a parking pool."""
+    """A dedicated runtime never creates or sleeps a parking pool; its lazy model
+    loads on first score, outside any CuMem scope."""
     import vrl.models.parking as parking_mod
     import vrl.rewards.runtime as reward_runtime_module
 
     allocator = _FakeCumemAllocator()
     monkeypatch.setattr(parking_mod, "cumem_allocator", lambda: allocator)
     runtime = InProcessRewardScorer(
-        {"model_factory": f"{__name__}:_immovable_factory"},
+        {"model_factory": f"{__name__}:_lazy_torch_factory"},
     )
 
-    await runtime.score_batch(_parking_request())
+    await runtime.score_batch(_make_request())
 
+    assert runtime._model.load_scopes == [False]
     assert runtime.requires_memory_parking is False
     assert runtime._parking.pool is None
     assert allocator.pool_tags == []
