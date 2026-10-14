@@ -658,11 +658,7 @@ async def test_prefetch_mismatch_fails_instead_of_training_the_wrong_prompt_batc
 
     bench = _bench(monkeypatch, tmp_path)
     schedule = _build(
-        _continuous_config(
-            max_stale_policy_versions=1,
-            max_inflight_groups=2,
-            wait_timeout_s=1.0,
-        ),
+        _continuous_config(max_stale_policy_versions=1, max_inflight_groups=2),
         bench,
     )
 
