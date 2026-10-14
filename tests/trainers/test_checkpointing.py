@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import torch
 from torch import nn
 
+from tests.rollouts.collector._helpers import Trace
 from tests.trainers._checkpoint_helpers import (
     UNIT_IDENTITY,
     _Bundle,
@@ -26,6 +28,52 @@ from vrl.trainers.checkpointing import (
     load_checkpoint_state,
     save_training_checkpoint,
 )
+from vrl.trainers.strategy import SingleProcessStrategy
+
+
+class _RecordingStrategy:
+    """The checkpoint seams of a strategy on one rank of a ``world_size`` run.
+
+    One process cannot produce a peer's rank-agreement votes, so this double
+    records every vote and turns the 1-based votes in ``fail_agreements`` into a
+    peer failure. It records every bundle it exports, raises on export call
+    ``fail_export_at``, and returns ``exported_state`` instead of the real export
+    when given. The real sequences run on gloo in
+    ``tests/trainers/test_fsdp_gather_distributed.py``.
+    """
+
+    def __init__(
+        self,
+        *,
+        rank: int = 0,
+        world_size: int = 1,
+        fail_agreements: tuple[int, ...] = (),
+        fail_export_at: int | None = None,
+        exported_state: dict[str, Any] | None = None,
+    ) -> None:
+        self.context = _context(rank=rank, world_size=world_size)
+        self.collectives = SimpleNamespace(
+            succeeded=self._agree,
+            gather_rng_states=lambda state: [state] * world_size,
+        )
+        self.agreements: list[bool] = []
+        self.exported: list[Any] = []
+        self.exported_weights: list[float] = []
+        self._fail_agreements = fail_agreements
+        self._fail_export_at = fail_export_at
+        self._exported_state = exported_state
+
+    def export_checkpoint_state(self, bundle):
+        self.exported.append(bundle)
+        if len(self.exported) == self._fail_export_at:
+            raise RuntimeError("checkpoint gather failed")
+        state = self._exported_state or export_checkpoint_state(bundle)
+        self.exported_weights.append(float(state["module"]["weight"].item()))
+        return state
+
+    def _agree(self, succeeded: bool) -> bool:
+        self.agreements.append(succeeded)
+        return succeeded and len(self.agreements) not in self._fail_agreements
 
 
 @pytest.mark.parametrize("provider", ["python_random", "numpy"])
@@ -278,23 +326,14 @@ def test_checkpoint_compatibility_preflight_rejects_strict_mismatch(
         )
 
 
-def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path) -> None:
+def test_restore_training_checkpoint_routes_model_load_through_strategy(
+    monkeypatch, tmp_path
+) -> None:
     """Distributed model restore must use the same strategy seam as export."""
 
-    class _SpyStrategy:
-        def __init__(self) -> None:
-            self.calls = []
-            self.context = _context()
-
-        def load_checkpoint_state(self, bundle, state):
-            self.calls.append((bundle, state))
-            load_checkpoint_state(bundle, state)
-
-        def export_checkpoint_state(self, bundle):
-            return export_checkpoint_state(bundle)
-
-        collectives = SimpleNamespace(succeeded=bool)
-
+    strategy = SingleProcessStrategy()
+    loads = Trace(monkeypatch)
+    loads.watch(strategy, "load_checkpoint_state", "load")
     source = _Bundle()
     save_training_checkpoint(
         tmp_path / "checkpoint-strategy-restore",
@@ -307,7 +346,7 @@ def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path
     )
     checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-strategy-restore")
     trainer = _Trainer()
-    trainer._strategy = _SpyStrategy()
+    trainer._strategy = strategy
     restored = _Bundle()
 
     checkpoint.restore_training(
@@ -317,7 +356,7 @@ def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path
         expected_model_identity=UNIT_IDENTITY,
     )
 
-    assert trainer._strategy.calls == [(restored, checkpoint.checkpoint_state)]
+    assert loads.calls == [("load", (restored, checkpoint.checkpoint_state))]
 
 
 def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) -> None:
@@ -327,17 +366,6 @@ def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) 
     strategy export -- not ``export_checkpoint_state(bundle)`` -- was used.
     """
 
-    class _CheckpointStrategy:
-        def __init__(self) -> None:
-            self.calls: list[object] = []
-            self.context = _context()
-
-        def export_checkpoint_state(self, bundle):
-            self.calls.append(bundle)
-            return {"module": {"weight": torch.full((1, 1), 7.0)}}
-
-        collectives = SimpleNamespace(succeeded=bool)
-
     class _CheckpointTrainer(_Trainer):
         def checkpoint_state_dict(self):
             return {"step": 3, "global_step": 8}
@@ -345,7 +373,7 @@ def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) 
         def state_dict(self):
             raise AssertionError("generic trainer state used for checkpoint")
 
-    strategy = _CheckpointStrategy()
+    strategy = _RecordingStrategy(exported_state={"module": {"weight": torch.full((1, 1), 7.0)}})
     bundle = _Bundle()
     save_training_checkpoint(
         tmp_path / "checkpoint-primary-only",
@@ -359,7 +387,7 @@ def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) 
     )
 
     checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-primary-only")
-    assert strategy.calls == [bundle]
+    assert strategy.exported == [bundle]
     assert checkpoint.trainer_state == {"step": 3, "global_step": 8}
     assert checkpoint.checkpoint_state["module"]["weight"].item() == pytest.approx(7.0)
 
@@ -374,25 +402,9 @@ def test_save_training_checkpoint_non_primary_gathers_but_writes_nothing(tmp_pat
     checkpoint directory/files. The spy proves the export ran; the empty tmp_path
     proves nothing was written."""
 
-    class _SpyStrategy:
-        def __init__(self) -> None:
-            self.collectives = SimpleNamespace(
-                succeeded=self._agree_success,
-                gather_rng_states=lambda state: [state] * self.context.world_size,
-            )
-            self.calls: list[object] = []
-            # rank1 of 2: "not primary" only exists in a multi-rank world, and a
-            # multi-rank strategy owes the checkpoint a rank-agreement seam.
-            self.context = _context(rank=1, world_size=2)
-
-        def export_checkpoint_state(self, bundle):
-            self.calls.append(bundle)
-            return {"module": {"weight": torch.full((1, 1), 9.0)}}
-
-        def _agree_success(self, succeeded):
-            return succeeded
-
-    strategy = _SpyStrategy()
+    # rank1 of 2: "not primary" only exists in a multi-rank world, and a
+    # multi-rank strategy owes the checkpoint a rank-agreement seam.
+    strategy = _RecordingStrategy(rank=1, world_size=2)
     bundle = _Bundle()
     ckpt_dir = tmp_path / "checkpoint-nonprimary"
     out = save_training_checkpoint(
@@ -406,7 +418,7 @@ def test_save_training_checkpoint_non_primary_gathers_but_writes_nothing(tmp_pat
         strategy=strategy,
     )
 
-    assert strategy.calls == [bundle]  # joined the collective gather
+    assert strategy.exported == [bundle]  # joined the collective gather
     assert out == {}  # no meta returned
     assert not ckpt_dir.exists()  # rank0-only IO: nothing written on a non-primary rank
 
@@ -418,24 +430,8 @@ def test_primary_checkpoint_publication_failure_reraises_after_rank_agreement(
         def save_pretrained(self, *_args, **_kwargs):
             raise RuntimeError("artifact write failed")
 
-    class _Strategy:
-        def __init__(self) -> None:
-            self.collectives = SimpleNamespace(
-                succeeded=self._agree_success,
-                gather_rng_states=lambda state: [state] * self.context.world_size,
-            )
-            self.context = _context(world_size=2)
-            self.agreements = []
-
-        def export_checkpoint_state(self, bundle):
-            return export_checkpoint_state(bundle)
-
-        def _agree_success(self, succeeded):
-            self.agreements.append(succeeded)
-            return succeeded
-
     module = _ExportModule(1, 1, bias=False)
-    strategy = _Strategy()
+    strategy = _RecordingStrategy(world_size=2)
 
     with pytest.raises(RuntimeError, match="artifact write failed"):
         save_training_checkpoint(
@@ -450,30 +446,16 @@ def test_primary_checkpoint_publication_failure_reraises_after_rank_agreement(
             strategy=strategy,
         )
 
+    # The last vote is the publication verdict the peers wait on: the primary
+    # reports its failure to them before re-raising it.
+    assert strategy.agreements[-1] is False
     assert not (tmp_path / "checkpoint-primary-write-failure").exists()
     assert not list(tmp_path.glob("checkpoint-primary-write-failure.tmp-*"))
 
 
 def test_non_primary_receives_primary_checkpoint_publication_failure(tmp_path) -> None:
-    class _Strategy:
-        def __init__(self) -> None:
-            self.collectives = SimpleNamespace(
-                succeeded=self._agree_success,
-                gather_rng_states=lambda state: [state] * self.context.world_size,
-            )
-            self.context = _context(rank=1, world_size=2)
-            self.agreements = []
-
-        def export_checkpoint_state(self, bundle):
-            return export_checkpoint_state(bundle)
-
-        def _agree_success(self, succeeded):
-            self.agreements.append(succeeded)
-            if len(self.agreements) == 6:
-                return False
-            return succeeded
-
-    strategy = _Strategy()
+    # The sixth vote is the primary's publication verdict.
+    strategy = _RecordingStrategy(rank=1, world_size=2, fail_agreements=(6,))
 
     with pytest.raises(RuntimeError, match="publication failed on the primary"):
         save_training_checkpoint(
@@ -495,25 +477,13 @@ def test_training_checkpoint_restores_raw_weights_when_ema_gather_fails(tmp_path
         def save_pretrained(self, *_args, **_kwargs):
             raise AssertionError("failed gather must not reach artifact IO")
 
-    class _FailSecondGather:
-        def __init__(self) -> None:
-            self.calls = 0
-            self.context = _context()
-
-        def export_checkpoint_state(self, bundle):
-            self.calls += 1
-            if self.calls == 2:
-                raise RuntimeError("EMA gather failed")
-            return export_checkpoint_state(bundle)
-
-        collectives = SimpleNamespace(succeeded=bool)
-
     module = _ExportModule(1, 1, bias=False)
     bundle = _Bundle(module)
     ema = _ema_holding(module, average=7.0, live=3.0)
-    strategy = _FailSecondGather()
+    # The second gather is the EMA artifact's.
+    strategy = _RecordingStrategy(fail_export_at=2)
 
-    with pytest.raises(RuntimeError, match="EMA gather failed"):
+    with pytest.raises(RuntimeError, match="checkpoint gather failed"):
         save_training_checkpoint(
             tmp_path / "checkpoint-failed-ema-gather",
             trainer=_Trainer(),
@@ -527,7 +497,7 @@ def test_training_checkpoint_restores_raw_weights_when_ema_gather_fails(tmp_path
             strategy=strategy,
         )
 
-    assert strategy.calls == 2
+    assert len(strategy.exported) == 2
     # The real wrapper's own copy_temp_to put the raw weights back, and dropped
     # its snapshot while doing so.
     assert module.weight.item() == pytest.approx(3.0)
@@ -579,31 +549,11 @@ def test_peer_ema_swap_failure_rolls_back_before_second_export(tmp_path) -> None
         def save_pretrained(self, *_args, **_kwargs):
             raise AssertionError("peer failure must not reach artifact IO")
 
-    class _AgreementStrategy:
-        def __init__(self) -> None:
-            self.collectives = SimpleNamespace(
-                succeeded=self._agree_success,
-                gather_rng_states=lambda state: [state] * self.context.world_size,
-            )
-            self.context = _context(world_size=2)
-            self.exported_weights = []
-            self.agreements = []
-
-        def export_checkpoint_state(self, bundle):
-            state = export_checkpoint_state(bundle)
-            self.exported_weights.append(float(state["module"]["weight"].item()))
-            return state
-
-        def _agree_success(self, succeeded):
-            self.agreements.append(succeeded)
-            if len(self.agreements) == 7:
-                return False
-            return succeeded
-
     module = _ExportModule(1, 1, bias=False)
     bundle = _Bundle(module)
     ema = _ema_holding(module, average=7.0, live=3.0)
-    strategy = _AgreementStrategy()
+    # The seventh vote is the peers' verdict on the EMA swap.
+    strategy = _RecordingStrategy(world_size=2, fail_agreements=(7,))
 
     with pytest.raises(RuntimeError, match="peer rank failed before"):
         save_training_checkpoint(
@@ -631,26 +581,8 @@ def test_peer_ema_swap_failure_propagates_local_rollback_failure(monkeypatch, tm
         def save_pretrained(self, *_args, **_kwargs):
             raise AssertionError("failed rollback must not reach artifact IO")
 
-    class _AgreementStrategy:
-        def __init__(self) -> None:
-            self.collectives = SimpleNamespace(
-                succeeded=self._agree_success,
-                gather_rng_states=lambda state: [state] * self.context.world_size,
-            )
-            self.context = _context(world_size=2)
-            self.agreements = []
-
-        def export_checkpoint_state(self, bundle):
-            return export_checkpoint_state(bundle)
-
-        def _agree_success(self, succeeded):
-            self.agreements.append(succeeded)
-            if len(self.agreements) == 7:
-                return False
-            return succeeded
-
     module = _ExportModule(1, 1, bias=False)
-    strategy = _AgreementStrategy()
+    strategy = _RecordingStrategy(world_size=2, fail_agreements=(7,))
     # Real EMA, one injected fault: a real wrapper cannot be made to fail its own
     # restore, and that failure is the whole subject here. Patching the one method
     # keeps `has_updates`, the swap and the snapshot real.
@@ -691,28 +623,10 @@ def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path
         def save_pretrained(self, *_args, **_kwargs):
             raise AssertionError("mixed EMA state must fail before artifact IO")
 
-    class _Strategy:
-        def __init__(self) -> None:
-            self.collectives = SimpleNamespace(
-                succeeded=self._agree_success,
-                gather_rng_states=lambda state: [state] * self.context.world_size,
-            )
-            self.context = _context(world_size=2)
-            self.export_calls = 0
-            self.agreements = []
-
-        def export_checkpoint_state(self, bundle):
-            self.export_calls += 1
-            return export_checkpoint_state(bundle)
-
-        def _agree_success(self, succeeded):
-            self.agreements.append(succeeded)
-            if len(self.agreements) in {2, 3}:
-                return False
-            return succeeded
-
     module = _ExportModule(1, 1, bias=False)
-    strategy = _Strategy()
+    # Votes two and three are "every rank exports EMA" / "every rank skips it":
+    # a peer that disagrees turns both False.
+    strategy = _RecordingStrategy(world_size=2, fail_agreements=(2, 3))
     ema = _ema_holding(module, average=7.0, live=3.0)
 
     with pytest.raises(RuntimeError, match="disagree on EMA export decision"):
@@ -729,7 +643,7 @@ def test_mixed_rank_ema_update_state_fails_before_swap_or_second_export(tmp_path
             strategy=strategy,
         )
 
-    assert strategy.export_calls == 0
+    assert strategy.exported == []
     # No swap was attempted: the sentinel assertions the previous stub raised are
     # now the real wrapper's own state — weights untouched, no snapshot taken.
     assert module.weight.item() == pytest.approx(3.0)
@@ -742,27 +656,10 @@ def test_non_primary_joins_ema_artifact_gather_and_restores_raw_weights(tmp_path
         def save_pretrained(self, *_args, **_kwargs):
             raise AssertionError("non-primary rank must not write artifacts")
 
-    class _GatherStrategy:
-        def __init__(self) -> None:
-            self.collectives = SimpleNamespace(
-                succeeded=self._agree_success,
-                gather_rng_states=lambda state: [state] * self.context.world_size,
-            )
-            self.states = []
-            self.context = _context(rank=1, world_size=2)
-
-        def export_checkpoint_state(self, bundle):
-            state = export_checkpoint_state(bundle)
-            self.states.append(float(state["module"]["weight"].item()))
-            return state
-
-        def _agree_success(self, succeeded):
-            return succeeded
-
     module = _ExportModule(1, 1, bias=False)
     bundle = _Bundle(module)
     ema = _ema_holding(module, average=7.0, live=3.0)
-    strategy = _GatherStrategy()
+    strategy = _RecordingStrategy(rank=1, world_size=2)
 
     result = save_training_checkpoint(
         tmp_path / "checkpoint-nonprimary-ema",
@@ -779,7 +676,7 @@ def test_non_primary_joins_ema_artifact_gather_and_restores_raw_weights(tmp_path
 
     assert result == {}
     # The second gather sees the real EMA average, not a number a stub filled in.
-    assert strategy.states == pytest.approx([3.0, 7.0])
+    assert strategy.exported_weights == pytest.approx([3.0, 7.0])
     assert module.weight.item() == pytest.approx(3.0)
     assert ema.temp_stored_parameters is None  # the swap was rolled back, not abandoned
     assert not (tmp_path / "checkpoint-nonprimary-ema").exists()

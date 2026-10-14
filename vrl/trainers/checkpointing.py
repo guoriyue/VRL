@@ -513,12 +513,14 @@ class TrainingCheckpoint:
             bundle=bundle,
             expected_model_identity=expected_model_identity,
         )
-        strategy_loader = getattr(strategy, "load_checkpoint_state", None)
-        full_state_loader = getattr(strategy, "load_full_checkpoint_state", None)
-        if not callable(strategy_loader):
+        if strategy is None:
             strategy_loader = load_checkpoint_state
-        if not callable(full_state_loader):
             full_state_loader = load_full_checkpoint_state
+            export_owned_state = export_checkpoint_state
+        else:
+            strategy_loader = strategy.load_checkpoint_state
+            full_state_loader = strategy.load_full_checkpoint_state
+            export_owned_state = strategy.export_checkpoint_state
         if not resolved_state.full_state_roots:
             state_for_load = {
                 root_name: dict(root_state)
@@ -546,11 +548,7 @@ class TrainingCheckpoint:
                 loader(root_bundle, root_state)
         # The export is a collective under FSDP (every rank joins the gather);
         # only the primary retains the full state, so only it compares.
-        restored_checkpoint_state = (
-            strategy.export_checkpoint_state(bundle)
-            if callable(getattr(strategy, "export_checkpoint_state", None))
-            else export_checkpoint_state(bundle)
-        )
+        restored_checkpoint_state = export_owned_state(bundle)
         if strategy is None or strategy.context.is_primary:
             # Project the validated full/selective state onto the runtime-owned
             # key space.
