@@ -21,11 +21,10 @@ from huggingface_hub.errors import LocalEntryNotFoundError
 from tests import ci_envs
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
-from vrl.config.precision import PrecisionPolicy
-from vrl.config.schema import RootConfig, parse_config
+from vrl.config.schema import parse_config
 from vrl.generation import GenerationOutput, GenerationRequest
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.models.families.registry import ModelFamilyEntry, get_model_family_entry
+from vrl.models.families.registry import get_model_family_entry
 from vrl.ray.resources import ResourcePlan
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.ray import RayRewardPlacement
@@ -58,7 +57,6 @@ class CheckpointField:
     cfg_path: str | None
     repo_id: str
     required_files: tuple[str, ...] = ()
-    allow_file: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +75,6 @@ class RealCheckpointCase:
     # proves reward transport (artifacts, manifest, debug rows) without the
     # real weights; ``None`` keeps the config's real model factory.
     reward_model_factory: str | None = "tests.e2e.test_real_checkpoint_rl:build_tensor_mean_model"
-    synthetic_replay_rollout: bool = False
     # Sample->replay log-prob parity bound (GRPO ratio==1 invariant). With
     # ppo_epochs=1 the optimizer steps after the whole timestep loop, so every
     # replayed log-prob is computed against unchanged weights even at lr>0.
@@ -334,26 +331,6 @@ CASES: tuple[RealCheckpointCase, ...] = (
 )
 
 
-@pytest.mark.parametrize(
-    "case",
-    tuple(
-        case
-        for case in CASES
-        if case.case_id in {"sd3_5_dance_grpo", "sd3_5_flow_dppo", "sd3_5_grpo_guard"}
-    ),
-    ids=lambda case: case.case_id,
-)
-def test_new_diffusion_algorithm_case_overrides_build_without_gpu(
-    case: RealCheckpointCase,
-) -> None:
-    """Real-checkpoint overrides expose only knobs consumed by each loss."""
-    has_reference_kl = "algorithm.kl_coef=0.0" in case.overrides
-    assert has_reference_kl is (case.case_id == "sd3_5_dance_grpo")
-
-    built = BuiltConfigs.from_cfg(load_config(case.config, overrides=list(case.overrides)))
-    assert hasattr(built.algorithm, "kl_coef") is has_reference_kl
-
-
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.case_id)
 def test_every_case_config_parses_without_a_gpu(
     case: RealCheckpointCase,
@@ -440,66 +417,6 @@ class _DirectExecutorGenerationRuntime:
             move_frozen(device)
 
 
-class _SyntheticDiffusionReplayCollector:
-    """Collector that exercises replay training without full generation assets."""
-
-    lifecycle = None
-    # Synthetic replay has no reward runtime with verified device isolation.
-    reward_isolation_verified = False
-
-    def __init__(
-        self,
-        *,
-        model: Any,
-        case: RealCheckpointCase,
-        cfg: Any,
-        device: torch.device,
-    ) -> None:
-        self.model = model
-        self.case = case
-        self.cfg = cfg
-        self.device = device
-        self.generation_runtime = _StaticPolicyRuntime()
-
-    async def prepare_training_batches(
-        self,
-        *,
-        prompts: list[Any],
-        group_size: int,
-        runtime_debug: bool,
-        policy_version: int | None,
-        stats: Any,
-    ) -> list[Any]:
-        """One synthetic replay batch per call; rewards are baked into the batch."""
-
-        del runtime_debug, stats
-        return [
-            _synthetic_diffusion_replay_batch(
-                model=self.model,
-                case=self.case,
-                cfg=self.cfg,
-                prompts=[str(getattr(prompt, "prompt", prompt)) for prompt in prompts],
-                group_size=int(group_size),
-                policy_version=policy_version,
-                device=self.device,
-            )
-        ]
-
-    async def activate_generation_runtime(self) -> None:
-        return None
-
-    async def offload_generation_runtime_memory(self) -> None:
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-    async def shutdown(self) -> None:
-        return None
-
-
-class _StaticPolicyRuntime:
-    current_policy_version = 0
-
-
 @pytest.mark.e2e
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.case_id)
 def test_real_checkpoint_online_rl_updates_trainable_weights(
@@ -557,13 +474,14 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         built = BuiltConfigs.from_cfg(cfg)
         trainer_config = built.trainer
         dtype = resolve_torch_dtype(built.precision.training.dtype)
-        bundle = _build_runtime_bundle(
-            case,
-            entry,
-            built.root,
-            built.precision,
-            device,
-            dtype,
+        bundle = entry.build_rollout(
+            entry.resolve_model_build(
+                built.root,
+                device,
+                precision=built.precision,
+                parameter_dtype_override=dtype,
+            ),
+            expected_identity=None,
         )
         collector_config = RolloutCollectorConfig.from_root(parse_config(cfg))
         resources = ResourcePlan.from_root(parse_config(cfg))
@@ -574,72 +492,65 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         # in production. Index-reward cases keep no plan: their CPU reward
         # runtime has nothing to park.
         lifecycle = resources.lifecycle if case.use_config_reward else None
-        if case.synthetic_replay_rollout:
-            collector = _SyntheticDiffusionReplayCollector(
-                model=bundle.model,
-                case=case,
-                cfg=cfg,
-                device=device,
-            )
-            reward_fn = None
-        else:
-            executor = _build_executor(entry, bundle.model, cfg)
-            ray_placement = None
-            reward_device = resources.reward_torch_device(trainer_device=str(device))
-            reward_parking = resources.reward_parking_mechanism
-            if case.use_config_reward and any(
-                inference.kind == "ray" for inference in built.reward.inference_configs.values()
-            ):
-                from vrl.generation.ray.config import RolloutWorkerConfig
-                from vrl.ray.dependencies import require_ray
-                from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
-                from vrl.scripts.common.online import _RayClusterSession
+        executor = import_from_path(entry.executor_cls)(
+            bundle.model,
+            **entry.executor_kwargs(built.root),
+            gatherer=entry.new_gatherer(),
+        )
+        ray_placement = None
+        reward_device = resources.reward_torch_device(trainer_device=str(device))
+        reward_parking = resources.reward_parking_mechanism
+        if case.use_config_reward and any(
+            inference.kind == "ray" for inference in built.reward.inference_configs.values()
+        ):
+            from vrl.generation.ray.config import RolloutWorkerConfig
+            from vrl.ray.dependencies import require_ray
+            from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
+            from vrl.scripts.common.online import _RayClusterSession
 
-                reward_placement_owner = GlobalRayPlacementOwner(
-                    resources,
-                    RolloutWorkerConfig.from_root(built.root),
-                )
-                ray = require_ray()
-                reward_ray_session = _RayClusterSession.connect(
-                    ray,
-                    cross_node=resources.cross_node,
-                    local_num_cpus=reward_placement_owner.required_local_cluster_cpus(),
-                    local_gpu_ids=tuple(
-                        gpu
-                        for gpu in reward_placement_owner.layout.bundle_gpu_ids
-                        if gpu is not None
-                    ),
-                )
-                if resources.cross_node:
-                    cross_node_preflight(ray, resources)
-                reward_placement_owner.create()
-                if reward_parking is not None and reward_device.startswith("cuda"):
-                    ray_placement = RayRewardPlacement.on_shared_gpu(reward_device)
-                else:
-                    ray_placement = RayRewardPlacement(
-                        placement=reward_placement_owner.reward_placement
-                    )
-            reward_fn = (
-                built.reward.build_function(
-                    device=reward_device, parking=reward_parking, ray_placement=ray_placement
-                )
-                if case.use_config_reward
-                else _IndexReward()
+            reward_placement_owner = GlobalRayPlacementOwner(
+                resources,
+                RolloutWorkerConfig.from_root(built.root),
             )
-            collector = RolloutCollector.from_family(
-                entry,
-                reward_runtime=RewardFunctionRuntime(reward_fn),
-                config=collector_config,
-                lifecycle=lifecycle or resources.lifecycle,
+            ray = require_ray()
+            reward_ray_session = _RayClusterSession.connect(
+                ray,
+                cross_node=resources.cross_node,
+                local_num_cpus=reward_placement_owner.required_local_cluster_cpus(),
+                local_gpu_ids=tuple(
+                    gpu for gpu in reward_placement_owner.layout.bundle_gpu_ids if gpu is not None
+                ),
             )
-            collector.set_generation_runtime(
-                _DirectExecutorGenerationRuntime(
-                    executor,
-                    model=bundle.model,
-                    device=device,
-                    park_model=lifecycle is not None and lifecycle.park_rollout_for_train,
+            if resources.cross_node:
+                cross_node_preflight(ray, resources)
+            reward_placement_owner.create()
+            if reward_parking is not None and reward_device.startswith("cuda"):
+                ray_placement = RayRewardPlacement.on_shared_gpu(reward_device)
+            else:
+                ray_placement = RayRewardPlacement(
+                    placement=reward_placement_owner.reward_placement
                 )
+        reward_fn = (
+            built.reward.build_function(
+                device=reward_device, parking=reward_parking, ray_placement=ray_placement
             )
+            if case.use_config_reward
+            else _IndexReward()
+        )
+        collector = RolloutCollector.from_family(
+            entry,
+            reward_runtime=RewardFunctionRuntime(reward_fn),
+            config=collector_config,
+            lifecycle=lifecycle or resources.lifecycle,
+        )
+        collector.set_generation_runtime(
+            _DirectExecutorGenerationRuntime(
+                executor,
+                model=bundle.model,
+                device=device,
+                park_model=lifecycle is not None and lifecycle.park_rollout_for_train,
+            )
+        )
         pair = AlgorithmEvaluatorPair.from_built(
             built,
             scheduler=bundle.scheduler,
@@ -669,17 +580,14 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         assert metrics.adv_zero_rate < 1.0
         _assert_finite("loss", metrics.loss)
         _assert_finite_positive("grad_norm", metrics.grad_norm)
-        if not case.synthetic_replay_rollout:
-            # Sample->replay log-prob parity (GRPO ratio==1). Regression guard
-            # for family-specific replay wiring: predict2 sat at mean 13.9
-            # before the EDM sigma-domain fix while every metric here still
-            # looked alive. Synthetic-replay cases fabricate old log-probs and
-            # are excluded.
-            assert metrics.logprob_mismatch.logprob_abs_diff_mean < case.logprob_parity_tol, (
-                f"{case.case_id}: replay log-prob diverged from collection "
-                f"(mean {metrics.logprob_mismatch.logprob_abs_diff_mean:.6f} >= "
-                f"{case.logprob_parity_tol}) — broken sample/replay parity"
-            )
+        # Sample->replay log-prob parity (GRPO ratio==1). Regression guard for
+        # family-specific replay wiring: predict2 sat at mean 13.9 before the
+        # EDM sigma-domain fix while every metric here still looked alive.
+        assert metrics.logprob_mismatch.logprob_abs_diff_mean < case.logprob_parity_tol, (
+            f"{case.case_id}: replay log-prob diverged from collection "
+            f"(mean {metrics.logprob_mismatch.logprob_abs_diff_mean:.6f} >= "
+            f"{case.logprob_parity_tol}) — broken sample/replay parity"
+        )
         if case.use_config_reward:
             _assert_local_reward_scored(tmp_path, metrics)
     finally:
@@ -770,191 +678,6 @@ async def _shutdown_if_present(value: Any) -> None:
             await result
 
 
-def _build_runtime_bundle(
-    case: RealCheckpointCase,
-    entry: ModelFamilyEntry,
-    root: RootConfig,
-    precision: PrecisionPolicy,
-    device: torch.device,
-    dtype: torch.dtype,
-) -> Any:
-    for_rollout = not case.synthetic_replay_rollout
-    build = entry.resolve_model_build(
-        root,
-        device,
-        precision=precision,
-        for_rollout=for_rollout,
-        parameter_dtype_override=dtype,
-    )
-    return (
-        entry.build_rollout(build, expected_identity=None)
-        if for_rollout
-        else entry.build_replay(build, expected_identity=None)
-    )
-
-
-def _build_executor(
-    entry: ModelFamilyEntry,
-    model: Any,
-    cfg: Any,
-) -> Any:
-    from vrl.models.families.registry import GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR
-
-    executor_cls = import_from_path(entry.executor_cls)
-    kwargs: dict[str, Any] = {"gatherer": entry.new_gatherer()}
-    signature = inspect.signature(executor_cls)
-    if "samples_per_generation_batch" in signature.parameters:
-        kwargs["samples_per_generation_batch"] = int(cfg.rollout.samples_per_generation_batch)
-    # Same construction as the rollout worker (vrl/generation/execution/worker.py):
-    # the generic denoise executor takes its family/task from the registry entry.
-    if entry.executor_cls == GENERIC_FULL_SEQUENCE_DENOISE_EXECUTOR:
-        kwargs.update(family=entry.family, task=entry.task)
-    return executor_cls(model, **kwargs)
-
-
-def _synthetic_diffusion_replay_batch(
-    *,
-    model: Any,
-    case: RealCheckpointCase,
-    cfg: Any,
-    prompts: list[str],
-    group_size: int,
-    policy_version: int | None,
-    device: torch.device,
-) -> Any:
-    from vrl.math.denoise.flow_matching import sde_step_with_logprob
-    from vrl.rollouts.batch import RolloutBatch
-    from vrl.trajectory.builders import build_diffusion_trajectory
-
-    num_steps = max(1, int(cfg.sampling.num_steps))
-    height = int(cfg.sampling.height)
-    width = int(cfg.sampling.width)
-    latent_scale = 8
-    transformer_cfg = getattr(getattr(model, "transformer", None), "config", None)
-    in_channels = int(getattr(transformer_cfg, "in_channels", 16))
-    text_embed_dim = int(getattr(transformer_cfg, "text_embed_dim", 1024))
-    dtype = _model_tensor_dtype(model)
-
-    if hasattr(model, "set_num_steps"):
-        model.set_num_steps(num_steps)
-    else:
-        model.scheduler.set_timesteps(num_steps, device=device)
-
-    request = GenerationRequest(
-        request_id=f"{case.case_id}:synthetic-replay",
-        family=case.family,
-        task="text_to_image",
-        inputs=list(prompts),
-        samples_per_prompt=group_size,
-        sampling={
-            "height": height,
-            "width": width,
-            "num_frames": 1,
-            "num_steps": num_steps,
-            "guidance_scale": float(cfg.sampling.guidance_scale),
-        },
-        policy_version=None if policy_version is None else int(policy_version),
-    )
-    sample_rows = request.sample_rows()
-    batch_size = len(sample_rows)
-    generator = torch.Generator(device=device)
-    generator.manual_seed(1729)
-
-    observations = torch.randn(
-        (
-            batch_size,
-            num_steps,
-            in_channels,
-            1,
-            max(1, height // latent_scale),
-            max(1, width // latent_scale),
-        ),
-        generator=generator,
-        device=device,
-        dtype=torch.float32,
-    )
-    prompt_embeds = torch.randn(
-        (batch_size, 512, text_embed_dim),
-        generator=generator,
-        device=device,
-        dtype=dtype,
-    )
-    padding_mask = torch.zeros(
-        (batch_size, 1, height, width),
-        device=device,
-        dtype=dtype,
-    )
-    replay_tensors: dict[str, Any] = {
-        "prompt_embeds": prompt_embeds,
-        "negative_prompt_embeds": None,
-        "padding_mask": padding_mask,
-    }
-    context = {
-        "guidance_scale": float(cfg.sampling.guidance_scale),
-        # Same derivation the families use at rollout (do_cfg = guidance > 1).
-        "cfg": float(cfg.sampling.guidance_scale) > 1.0,
-        "model_family": case.family,
-    }
-    timesteps = model.scheduler.timesteps[:num_steps].to(device)
-    timesteps = timesteps.unsqueeze(0).expand(batch_size, -1).clone()
-    noise_level = float(cfg.rollout.noise_level)
-    sde_type = str(getattr(getattr(cfg.rollout, "sde", None), "type", "flow_grpo"))
-
-    action_steps: list[torch.Tensor] = []
-    old_log_prob_steps: list[torch.Tensor] = []
-    with torch.no_grad():
-        for step_idx in range(num_steps):
-            state = model.restore_eval_state(
-                replay_tensors,
-                context,
-                observations[:, step_idx],
-                step_idx,
-            )
-            noise_pred = model.forward_step(state, step_idx)["noise_pred"]
-            sde = sde_step_with_logprob(
-                model.scheduler,
-                noise_pred,
-                timesteps[:, step_idx],
-                observations[:, step_idx],
-                generator=generator,
-                noise_level=noise_level,
-                sde_type=sde_type,
-            )
-            action_steps.append(sde.prev_sample.detach())
-            old_log_prob_steps.append(sde.log_prob.detach())
-
-    actions = torch.stack(action_steps, dim=1)
-    old_log_prob = torch.stack(old_log_prob_steps, dim=1)
-    trajectory = build_diffusion_trajectory(
-        request=request,
-        sample_rows=sample_rows,
-        observations=observations.detach(),
-        actions=actions,
-        old_log_prob=old_log_prob,
-        timesteps=timesteps,
-        replay_tensors=replay_tensors,
-        context=context,
-    )
-    rewards = torch.arange(batch_size, device=device, dtype=torch.float32)
-    return RolloutBatch(
-        rewards=rewards,
-        group_ids=torch.tensor(
-            [row.prompt_index for row in sample_rows],
-            dtype=torch.long,
-            device=device,
-        ),
-        extras={},
-        context=dict(trajectory.context),
-        trajectory=trajectory,
-    )
-
-
-def _model_tensor_dtype(model: Any) -> torch.dtype:
-    for parameter in model.parameters():
-        return parameter.dtype
-    return torch.bfloat16
-
-
 def _skip_unless_case_enabled(case: RealCheckpointCase) -> None:
     if not ci_envs.WM_RUN_REAL_MODEL_TESTS:
         pytest.skip(f"set {RUN_REAL_ENV}=1 to run real checkpoint RL e2e tests")
@@ -986,8 +709,6 @@ def _resolve_checkpoint_path(case: RealCheckpointCase, field: CheckpointField) -
         path = Path(override).expanduser()
         if not path.exists():
             pytest.skip(f"{env_name} points to a missing checkpoint: {path}")
-        if path.is_file() and field.allow_file:
-            return path
         missing = _missing_required_files(path, field.required_files)
         if missing:
             pytest.skip(
