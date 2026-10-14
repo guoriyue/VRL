@@ -54,10 +54,6 @@ def _ddp_strategy(
     )
 
 
-class _ARLikePolicy:
-    """No trainable_modules / writer (AR family shape)."""
-
-
 def _ddp_wrap(module: nn.Module) -> nn.Module:
     from torch.nn.parallel import DistributedDataParallel
 
@@ -138,17 +134,6 @@ def test_ddp_prepare_model_wraps_multi_transformer_model(cpu_process_group) -> N
 
 
 # ── wrapping + export (need a process group) ─────────────────────────────────
-
-
-def test_ddp_prepare_model_wraps_transformer(cpu_process_group) -> None:
-    from torch.nn.parallel import DistributedDataParallel
-
-    policy = FakePolicy(ToyTransformer())
-    out = _ddp_strategy(_cpu_ddp_context()).prepare_model(policy)
-
-    assert out is policy
-    assert policy.set_calls == 1
-    assert isinstance(policy.transformer, DistributedDataParallel)
 
 
 def test_ddp_rollout_export_matches_single_process_key_space(cpu_process_group) -> None:

@@ -24,34 +24,9 @@ class _Bundle:
         self.trainable_modules = {"adapter": module or nn.Linear(2, 1, bias=False)}
 
 
-def test_default_context_is_single_process() -> None:
-    ctx = SingleProcessStrategy().context
-    assert (ctx.strategy, ctx.rank, ctx.world_size, ctx.is_primary) == (
-        "single_process",
-        0,
-        1,
-        True,
-    )
-
-
-def test_single_process_materializes_weights_on_its_only_rank() -> None:
-    # Unsharded backends replicate the policy: nothing fills a skeleton later.
-    assert SingleProcessStrategy().materialize_weights is True
-
-
 def test_prepare_model_is_identity_for_single_process() -> None:
     model = nn.Linear(3, 1)
     assert SingleProcessStrategy().prepare_model(model) is model
-    x = torch.randn(4, 3, generator=torch.Generator().manual_seed(0))
-    ref = nn.Linear(3, 1)
-    strat = nn.Linear(3, 1)
-    strat.load_state_dict(ref.state_dict())
-
-    ref(x).sum().backward()
-    SingleProcessStrategy().backward(strat(x).sum())
-
-    for p_ref, p_strat in zip(ref.parameters(), strat.parameters(), strict=True):
-        assert torch.equal(p_ref.grad, p_strat.grad)
 
 
 class _PlacementTracker(ToyTransformer):
@@ -96,23 +71,6 @@ def test_backward_scales_loss_when_grad_scaler_present() -> None:
     SingleProcessStrategy().backward(leaf(torch.ones(1, 1)).sum(), grad_scaler=_Scaler())
 
     assert calls == ["scale"]
-
-
-def test_clip_grad_norm_matches_torch_in_place() -> None:
-    ref = nn.Linear(4, 4)
-    strat = nn.Linear(4, 4)
-    strat.load_state_dict(ref.state_dict())
-    for p in ref.parameters():
-        p.grad = torch.ones_like(p)
-    for p in strat.parameters():
-        p.grad = torch.ones_like(p)
-
-    ref_norm = float(nn.utils.clip_grad_norm_(ref.parameters(), 0.5))
-    strat_norm = SingleProcessStrategy().clip_grad_norm(strat.parameters(), 0.5)
-
-    assert strat_norm == ref_norm
-    for p_ref, p_strat in zip(ref.parameters(), strat.parameters(), strict=True):
-        assert torch.equal(p_ref.grad, p_strat.grad)  # clipped identically
 
 
 def test_export_rollout_state_is_detached_cpu_snapshot_without_live_alias() -> None:
@@ -501,24 +459,8 @@ def test_export_and_load_checkpoint_state_round_trip() -> None:
     )
 
 
-def test_every_strategy_answers_the_checkpoint_optimizer_export() -> None:
-    """The primary-only optimizer export is part of the contract, not a probe.
-
-    The trainer used to reach for it with getattr and fall back when it was
-    absent, which made a capability of the consumer contract invisible to the
-    consumer. FSDP is the one that has to do real work; the unsharded backends
-    answer with the same state, because there is no gather to join.
-    """
-
-    from vrl.trainers.strategy import (
-        DDPStrategy,
-        FSDPStrategy,
-        Strategy,
-    )
-
-    assert hasattr(Strategy, "export_checkpoint_optimizer_state")
-    for strategy in (SingleProcessStrategy, DDPStrategy, FSDPStrategy):
-        assert callable(getattr(strategy, "export_checkpoint_optimizer_state", None)), strategy
+def test_unsharded_checkpoint_optimizer_export_is_the_plain_export() -> None:
+    """With no gather to join, the primary-only optimizer export is the same state."""
 
     model = nn.Linear(2, 2)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)

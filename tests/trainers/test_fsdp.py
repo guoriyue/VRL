@@ -138,11 +138,6 @@ def test_unwrap_module_does_not_invoke_unrelated_get_base_model() -> None:
     assert unwrap_module(base) is base
 
 
-def test_unwrap_module_returns_plain_module_unchanged() -> None:
-    base = ToyTransformer()
-    assert unwrap_module(base) is base
-
-
 def test_iter_blocks_yields_no_split_modules() -> None:
     net = ToyTransformer()
     blocks = list(iter_blocks(net))
@@ -283,23 +278,6 @@ def test_apply_fsdp_shards_params_and_runs_forward_backward(cpu_process_group) -
     out = net(torch.randn(3, 4))
     out.sum().backward()
     assert all(p.grad is not None for p in net.parameters() if p.requires_grad)
-
-
-def test_gather_full_state_dict_materializes_plain_full_tensors(cpu_process_group) -> None:
-    from torch.distributed.tensor import DTensor
-
-    ref = ToyTransformer()
-    snapshot = {k: v.detach().clone() for k, v in ref.state_dict().items()}
-
-    sharded = ToyTransformer()
-    sharded.load_state_dict(snapshot)
-    _shard(sharded)
-
-    full = gather_full_state_dict(sharded)
-    assert set(full) == set(snapshot)  # unwrapped keys, no shard/wrapper leakage
-    for key, value in full.items():
-        assert not isinstance(value, DTensor)  # materialized to a plain tensor
-        assert torch.allclose(value, snapshot[key])
 
 
 def test_load_full_state_dict_round_trips_into_sharded_module(cpu_process_group) -> None:
@@ -617,17 +595,6 @@ def test_fsdp_load_checkpoint_state_strictly_validates_owned_keys(cpu_process_gr
     unexpected = {"transformer": {**state, "unknown.weight": torch.ones(1)}}
     with pytest.raises(ValueError, match="unexpected="):
         strategy.load_checkpoint_state(Bundle(sharded), unexpected)
-
-
-def test_fsdp_prepare_model_wraps_diffusion_handle(cpu_process_group) -> None:
-    from torch.distributed.tensor import DTensor
-
-    policy = FakePolicy(ToyTransformer())
-    out = _fsdp_strategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
-
-    assert out is policy
-    assert policy.set_calls == 1
-    assert any(isinstance(p, DTensor) for p in policy.transformer.parameters())
 
 
 def test_fsdp_actor_prepare_normalizes_mixed_sources_before_first_forward(

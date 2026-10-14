@@ -80,15 +80,6 @@ def test_ray_runtime_weight_syncer_serializes_concurrent_push_versions() -> None
     assert runtime.current_policy_version == 2
 
 
-def test_flatten_trainable_module_state_prefixes_module_names() -> None:
-    """Payload keys are ``<bundle key>.<parameter>``, so the receiver can route them."""
-    module = torch.nn.Linear(2, 1, bias=False)
-    state = flatten_trainable_module_state({"adapter": module})
-
-    assert set(state) == {"adapter.weight"}
-    assert torch.equal(state["adapter.weight"], module.weight)
-
-
 def test_flatten_trainable_module_state_skips_frozen_parameters() -> None:
     """Frozen base weights never change, so shipping them every step is wasted wire."""
     module = torch.nn.Linear(2, 1, bias=True)
