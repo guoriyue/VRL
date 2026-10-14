@@ -1080,7 +1080,9 @@ async def test_consumer_waits_for_every_slot_and_preserves_prompt_order(
     # The trainer is one version ahead of the installed batch, inside the window.
     assert await stack.bump_version() == 2
     demand = asyncio.create_task(
-        _collect_iteration(_consumer(max_stale=1), prompt_batch, current_policy_version=2)
+        _collect_iteration(
+            _consumer(max_stale=1, wait_timeout_s=5.0), prompt_batch, current_policy_version=2
+        )
     )
     try:
         await _wait_until(lambda: len(started) == 2)
