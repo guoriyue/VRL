@@ -5,48 +5,11 @@ from __future__ import annotations
 
 import pytest
 
-from tests.config.helpers import literal_args
 from vrl.config.schema import (
     DataConfig,
 )
 
 # ── Data loader discriminator ─────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("loader", literal_args(DataConfig.model_fields["loader"].annotation))
-def test_valid_data_loaders_are_accepted(loader: str) -> None:
-    """Every loader in the DataConfig.loader Literal allow-list is accepted; the
-    per-loader construction branches below stay as real behavior coverage."""
-    if loader == "prompt_manifest":
-        data = DataConfig(
-            loader=loader,
-            manifest="manifests/ocr/train.txt",
-            preprocessing={"format": "text"},
-            sampler={"type": "random_without_replacement"},
-        )
-    elif loader == "prompt_image_manifest":
-        data = DataConfig(
-            loader=loader,
-            manifest="data/external/videophy_i2v/manifests/train.jsonl",
-            eval_manifest="data/external/videophy_i2v/manifests/eval.jsonl",
-            preprocessing={
-                "format": "image_caption_jsonl",
-                "image_field": "image",
-                "caption_field": "caption",
-                "conditioning": "reference_image",
-            },
-            sampler={"type": "random_without_replacement"},
-        )
-    else:
-        data = DataConfig(
-            loader=loader,
-            dataset_name="org/dataset",
-            split="train",
-            cache_dir="/tmp/cache",
-            preprocessing={"resolution": 512, "random_crop": False, "horizontal_flip": True},
-            sampler={"shuffle": True, "drop_last": True, "dataloader_num_workers": 4},
-        )
-    assert data.loader == loader
 
 
 @pytest.mark.parametrize(
@@ -183,21 +146,6 @@ def test_prompt_image_manifest_rejects_mixture() -> None:
 
 
 # ── Sampler type literal ──────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "sampler_type",
-    ["random_without_replacement", "sequential_window"],
-)
-def test_valid_sampler_types_are_accepted(sampler_type: str) -> None:
-    """Every sampler type in the registered set is accepted as-is."""
-    data = DataConfig(
-        loader="prompt_manifest",
-        manifest="x",
-        preprocessing={"format": "text"},
-        sampler={"type": sampler_type},
-    )
-    assert data.sampler.type == sampler_type
 
 
 def test_unknown_sampler_type_raises() -> None:

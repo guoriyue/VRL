@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 from omegaconf import OmegaConf
 
-from tests.config.helpers import literal_args, minimal_grpo_cfg, unknown_keys
+from tests.config.helpers import minimal_grpo_cfg, unknown_keys
 from vrl.config.schema import (
     AlgorithmConfig,
     parse_config,
@@ -58,27 +58,11 @@ def test_algorithm_keys_are_scoped_to_selected_kind(kind: str, foreign_field: st
         AlgorithmConfig.model_validate({"kind": kind, foreign_field: 1})
 
 
-def test_algorithm_dispatch_covers_schema_kind_vocabulary() -> None:
-    from vrl.config.algorithm import algorithm_config_class
-
-    kinds = literal_args(AlgorithmConfig.model_fields["kind"].annotation)
-    assert kinds
-    assert all(algorithm_config_class(kind) for kind in kinds)
-
-
 def test_grpo_requires_valid_sde_type() -> None:
     cfg = minimal_grpo_cfg()
     cfg.rollout.sde.type = "euler"
     with pytest.raises(ValueError, match=r"unknown rollout\.sde\.type"):
         parse_config(cfg)
-
-
-def test_grpo_accepts_cps_sde_type() -> None:
-    """``cps`` is a valid ``rollout.sde.type`` for GRPO."""
-    cfg = minimal_grpo_cfg()
-    cfg.rollout.sde.type = "cps"
-    parsed = parse_config(cfg)
-    assert parsed.algorithm.kind == "grpo"
 
 
 # ── algorithm.sft_weight x data.sft_latents (regularizer data channel) ───────

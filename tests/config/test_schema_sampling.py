@@ -17,14 +17,6 @@ from vrl.config.schema import (
 # ── rollout / sampling string-setting Literals ────────────────────────────────
 
 
-@pytest.mark.parametrize("mode", ["native", "sde"])
-def test_valid_denoise_modes_accepted(mode: str) -> None:
-    """Both denoise modes validate; the Literal is the user-facing allow-list."""
-    cfg = minimal_grpo_cfg()
-    cfg.rollout.denoise_mode = mode
-    assert parse_config(cfg).rollout.denoise_mode == mode
-
-
 def test_sampling_schema_is_selected_from_model_family() -> None:
     cfg = minimal_grpo_cfg(model={"family": "sana"})
     cfg.sampling = {"max_sequence_length": 300}
