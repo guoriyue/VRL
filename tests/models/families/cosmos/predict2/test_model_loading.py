@@ -1,6 +1,7 @@
 """Download-free ``from_build`` loading test for Cosmos Predict2 Video2World.
 
-Mirrors ``tests/models/sd3_5/test_model_loading.py``: monkeypatch the
+Mirrors the shared ``from_build`` tests in
+``tests/models/steps/denoise/common/test_model_base.py``: monkeypatch the
 diffusers pipeline ``from_pretrained`` to return a fake pipeline (no Hub fetch,
 no real weights) and assert the loader-constructed state, NOT literal YAML
 config values. The Cosmos wrapper has three load-time behaviors the sd3 test

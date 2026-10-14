@@ -1,6 +1,7 @@
 """Download-free ``from_build`` loading test for Wan 2.1 Image-to-Video.
 
-Mirrors ``tests/models/sd3_5/test_model_loading.py``: monkeypatch the
+Mirrors the shared ``from_build`` tests in
+``tests/models/steps/denoise/common/test_model_base.py``: monkeypatch the
 diffusers pipeline ``from_pretrained`` to return a fake pipeline (no Hub fetch,
 no real weights) and assert the loader-constructed state, NOT literal YAML
 config values. The Wan I2V wrapper has a load-time branch the sd3 test does not
