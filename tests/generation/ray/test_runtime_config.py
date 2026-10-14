@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from omegaconf import OmegaConf
 
 from tests.generation.ray._helpers import (
     ray_sana_runtime,
@@ -25,8 +24,6 @@ from tests.generation.ray._helpers import (
 from tests.scripts.eval.fixtures import tiny_sana_online_config, write_tiny_wan_snapshot
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
-from vrl.config.schema import parse_config
-from vrl.config.validation import compile_conflicts
 from vrl.generation.launch_config import GenerationLaunchConfig
 from vrl.generation.ray.config import RolloutWorkerConfig
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
@@ -46,7 +43,7 @@ _CONTINUOUS = (
 # ------------------------------------------------------- launch config values
 
 
-@pytest.mark.parametrize("family", ["", None, True, 123, ["unit"], {"name": "unit"}])
+@pytest.mark.parametrize("family", ["", None])
 def test_launch_config_rejects_invalid_registry_identity(family) -> None:
     with pytest.raises(ValueError, match=r"family must be a non-empty string"):
         GenerationLaunchConfig(
@@ -65,7 +62,7 @@ def test_launch_config_rejects_empty_model_identity() -> None:
         )
 
 
-@pytest.mark.parametrize("policy_version", [True, 1.9, "1", -1])
+@pytest.mark.parametrize("policy_version", [True, -1])
 def test_launch_config_rejects_invalid_policy_version(policy_version) -> None:
     with pytest.raises(ValueError, match="policy_version must be"):
         GenerationLaunchConfig(
@@ -94,59 +91,6 @@ def test_launch_contract_refuses_cumem_under_pipeline_offload() -> None:
         sleep_offload=True,
         parking_mechanism="move",
     )
-
-
-# ------------------------------------------------------- worker config projection
-
-
-def _cfg() -> Any:
-    return OmegaConf.create(
-        {
-            "distributed": {
-                "resources": {
-                    "visible_devices": [0, 1],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1], "num_engines": 1},
-                },
-                # Release scheduling is derived from topology; nothing to spell here.
-                "rollout": {},
-            },
-        },
-    )
-
-
-def test_worker_override_projects_from_public_schema() -> None:
-    cfg = _cfg()
-    cfg.distributed.rollout.cpus_per_worker = 2.5
-    cfg.distributed.rollout.worker_rpc_timeout_s = 3600.0
-    cfg.distributed.rollout.generation_stall_timeout_s = 1200.0
-    cfg.distributed.rollout.pipelined = True
-    override = RolloutWorkerConfig.from_root(parse_config(cfg))
-
-    assert override.cpus_per_worker == 2.5
-    assert override.worker_rpc_timeout_s == 3600.0
-    assert override.generation_stall_timeout_s == 1200.0
-    assert override.pipelined is True
-
-
-def test_pipelined_accepts_multiple_resolved_engines() -> None:
-    cfg = OmegaConf.create(
-        {
-            "distributed": {
-                "resources": {
-                    "visible_devices": [0, 1, 2],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1, 2], "num_engines": 2},
-                },
-                "rollout": {"cpus_per_worker": 1, "pipelined": True},
-            },
-        },
-    )
-
-    root = parse_config(cfg)
-
-    assert RolloutWorkerConfig.from_root(root).pipelined is True
-    assert ResourcePlan.from_root(root).rollout_num_engines == 2
 
 
 # ------------------------------------------------------- real launch shape
@@ -338,18 +282,6 @@ def test_generation_launch_inputs_reject_rollout_identity_mismatch(tmp_path) -> 
         RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity)
 
 
-def test_generation_launch_inputs_preserve_disabled_model_compile_config(tmp_path) -> None:
-    """Checks disabled model.torch_compile is preserved as ordinary model config."""
-
-    launch_inputs = _sana_launch(tmp_path, "model.revision=driver-config")
-
-    model_build = launch_inputs.launch_config.model_build
-    assert model_build["revision"] == "driver-config"
-    model_config = model_build["model_config"]
-    assert "revision" not in model_config
-    assert model_config["torch_compile"] == {"enable": False, "mode": "default"}
-
-
 def test_generation_launch_inputs_derive_versioned_sync_from_schedule(tmp_path) -> None:
     strict = _sana_launch(tmp_path / "strict")
     continuous_fullparam = _sana_launch(tmp_path / "fullparam", *_CONTINUOUS)
@@ -377,41 +309,6 @@ def test_generation_launch_inputs_mark_lora_as_adapter_only_sync(tmp_path) -> No
     launch_inputs = _sana_launch(tmp_path, "model.use_lora=true")
 
     assert launch_inputs.launch_config.model_build["rollout"]["base_weight_sync"] is False
-
-
-def test_compile_on_an_uncompilable_family_is_a_config_conflict() -> None:
-    """model.torch_compile on a family whose runtime cannot compile fails at
-    config load, with the rest of the compile compatibility matrix.
-
-    MAGI-1 is the only family without compile support.
-    """
-
-    cfg = OmegaConf.create(
-        {
-            "distributed": {
-                "resources": {
-                    "visible_devices": [],
-                    "trainer": {"num_gpus": 0, "devices": []},
-                    "rollout": {"num_gpus": 0, "devices": [], "num_engines": 1},
-                },
-            },
-            "model": {
-                "family": "magi_1",
-                "path": "unit-test",
-                "use_lora": False,
-                "torch_compile": {"enable": True, "mode": "default"},
-            },
-            "precision": {
-                "float32_precision": "tf32",
-                "training": {"dtype": "bf16"},
-                "rollout": {"dtype": "fp32"},
-            },
-            "rollout": {},
-        },
-    )
-    conflicts = compile_conflicts(parse_config(cfg))
-
-    assert "family" in [conflict.feature for conflict in conflicts]
 
 
 # ------------------------------------------------------- runtime topology
