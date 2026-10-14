@@ -8,11 +8,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from tests.scripts.eval.fixtures import (
-    WAN_TINY_SAMPLING,
-    write_prompt_manifest,
-    write_tiny_wan_snapshot,
-)
+from tests.scripts.eval.fixtures import write_tiny_wan_snapshot
 from tests.trainers._checkpoint_helpers import _Trainer
 from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
@@ -252,36 +248,25 @@ def _tiny_wan_run(tmp_path: Path) -> Path:
     and the resolved config ``_load_run`` reads -- everything the generator needs on disk."""
 
     snapshot = write_tiny_wan_snapshot(tmp_path / "wan-snapshot")
-    train = write_prompt_manifest(
-        tmp_path / "manifests" / "train.jsonl",
-        [
-            {
-                "prompt": "move the cup",
-                "target_video": "targets/train.mp4",
-                "metadata": {
-                    "source_repo": "robot/data",
-                    "source_episode": "train-1",
-                    "source_video": "file-0.mp4",
-                    "source_frame_index": 0,
-                },
+    (tmp_path / "manifests").mkdir()
+    train = tmp_path / "manifests" / "train.jsonl"
+    evaluation = tmp_path / "manifests" / "eval.jsonl"
+    for path, prompt, split, source_video in (
+        (train, "move the cup", "train", "file-0.mp4"),
+        (evaluation, "pick up the bowl", "eval", "file-1.mp4"),
+    ):
+        # One JSONL row in the shape ``load_prompt_dataset_index`` reads.
+        row = {
+            "prompt": prompt,
+            "target_video": f"targets/{split}.mp4",
+            "metadata": {
+                "source_repo": "robot/data",
+                "source_episode": f"{split}-1",
+                "source_video": source_video,
+                "source_frame_index": 0,
             },
-        ],
-    )
-    evaluation = write_prompt_manifest(
-        tmp_path / "manifests" / "eval.jsonl",
-        [
-            {
-                "prompt": "pick up the bowl",
-                "target_video": "targets/eval.mp4",
-                "metadata": {
-                    "source_repo": "robot/data",
-                    "source_episode": "eval-1",
-                    "source_video": "file-1.mp4",
-                    "source_frame_index": 0,
-                },
-            },
-        ],
-    )
+        }
+        path.write_text(json.dumps(row) + "\n", encoding="utf-8")
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     OmegaConf.save(
@@ -299,7 +284,16 @@ def _tiny_wan_run(tmp_path: Path) -> Path:
                     "training": {"dtype": "fp32"},
                     "rollout": {"dtype": "fp32"},
                 },
-                "sampling": dict(WAN_TINY_SAMPLING),
+                "sampling": {
+                    "width": 32,
+                    "height": 32,
+                    "num_frames": 1,
+                    "num_steps": 2,
+                    "fps": 4,
+                    "max_sequence_length": 8,
+                    "guidance_scale": 1.0,
+                    "negative_prompt": "",
+                },
                 "rollout": {"denoise_mode": "native", "noise_level": 0.0, "sde": {"type": "cps"}},
                 "data": {
                     "loader": "prompt_manifest",

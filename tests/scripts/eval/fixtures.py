@@ -519,18 +519,6 @@ def cosmos25_eval_config(snapshot: Path, **sampling: Any) -> Any:
     )
 
 
-WAN_TINY_SAMPLING: dict[str, Any] = {
-    "width": 32,
-    "height": 32,
-    "num_frames": 1,
-    "num_steps": 2,
-    "fps": 4,
-    "max_sequence_length": 8,
-    "guidance_scale": 1.0,
-    "negative_prompt": "",
-}
-
-
 def write_tiny_wan_snapshot(path: Path) -> Path:
     """A real on-disk Wan-2.1 T2V model directory ``WanPipeline.from_pretrained`` loads.
 
@@ -591,25 +579,13 @@ def write_tiny_wan_snapshot(path: Path) -> Path:
     return path
 
 
-def write_prompt_manifest(path: Path, rows: list[dict[str, Any]]) -> Path:
-    """One JSONL prompt manifest in the shape ``load_prompt_dataset_index`` reads."""
-
-    import json
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
-    return path
-
-
 __all__ = [
     "COSMOS25_TINY_LORA",
     "COSMOS25_TINY_SAMPLING",
-    "WAN_TINY_SAMPLING",
     "TinySanaPipeline",
     "build_official_sana_scheduler",
     "cosmos25_eval_config",
     "tiny_sana_online_config",
-    "write_prompt_manifest",
     "write_tiny_cosmos25_snapshot",
     "write_tiny_sana_snapshot",
     "write_tiny_wan_snapshot",
