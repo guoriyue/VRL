@@ -1,6 +1,7 @@
 """Tests for SigLIP aesthetic and CLIP preference reward models.
 
-Scoring runs on tiny real CLIP/SigLIP repositories (``tests/rewards/fixtures.py``):
+Scoring runs on tiny real CLIP/SigLIP repositories written below with transformers'
+own ``save_pretrained`` (no download, no cached weights):
 production loaders read genuine encoders and image processors from disk, the
 aesthetic head loads the shipped V2.5 asset, and PickScore's arithmetic is
 checked against an independent oracle. The revision-forwarding tests keep a
@@ -9,7 +10,9 @@ recorder because a local directory has no revision to observe (see their labels)
 
 from __future__ import annotations
 
+import json
 import math
+from importlib import resources
 from pathlib import Path
 
 import numpy as np
@@ -17,13 +20,105 @@ import pytest
 import torch
 from PIL import Image
 
-from tests.rewards.fixtures import (
-    build_tiny_clip_repo,
-    build_tiny_siglip_repo,
-    shipped_aesthetic_hidden_size,
-)
-
 pytest.importorskip("transformers")
+
+
+def shipped_aesthetic_hidden_size() -> int:
+    """The SigLIP hidden width the shipped V2.5 aesthetic head was trained on.
+
+    Read off the packaged asset rather than hard-coded: the head's first
+    ``Linear`` input width is the only source of truth for this number.
+    """
+
+    asset = resources.files("vrl.rewards.assets").joinpath("aesthetic_predictor_v2_5.pth")
+    state = torch.load(asset, map_location="cpu", weights_only=True)
+    return int(state["scoring_head.0.weight"].shape[1])
+
+
+def build_tiny_clip_repo(
+    root: Path,
+    *,
+    projection_dim: int,
+    logit_scale_init_value: float,
+    seed: int = 0,
+) -> Path:
+    """Write a tiny real CLIP model + processor repository under ``root``.
+
+    The tokenizer vocabulary is the byte-level alphabet with zero merges, which
+    tokenizes any prompt; the image processor resizes to the model's 8x8 grid.
+    Weights are seeded inside a CPU-only ``fork_rng`` (a bare ``fork_rng()``
+    would initialise a CUDA context in the CPU lane) and written to disk, so
+    nothing random happens when a test later loads the repository.
+    """
+
+    from transformers import (
+        CLIPConfig,
+        CLIPImageProcessor,
+        CLIPModel,
+        CLIPProcessor,
+        CLIPTokenizer,
+    )
+    from transformers.convert_slow_tokenizer import bytes_to_unicode
+
+    root.mkdir(parents=True, exist_ok=True)
+    alphabet = list(bytes_to_unicode().values())
+    vocab = {
+        token: index for index, token in enumerate([*alphabet, "<|startoftext|>", "<|endoftext|>"])
+    }
+    (root / "vocab.json").write_text(json.dumps(vocab), encoding="utf-8")
+    (root / "merges.txt").write_text("#version: 0.2\n", encoding="utf-8")
+    tokenizer = CLIPTokenizer(str(root / "vocab.json"), str(root / "merges.txt"))
+    image_processor = CLIPImageProcessor(
+        size={"shortest_edge": 8},
+        crop_size={"height": 8, "width": 8},
+    )
+    CLIPProcessor(image_processor=image_processor, tokenizer=tokenizer).save_pretrained(root)
+
+    config = CLIPConfig(
+        text_config={
+            "vocab_size": len(vocab),
+            "hidden_size": 16,
+            "intermediate_size": 32,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "max_position_embeddings": 16,
+        },
+        vision_config={
+            "hidden_size": 16,
+            "intermediate_size": 32,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "image_size": 8,
+            "patch_size": 4,
+        },
+        projection_dim=projection_dim,
+        logit_scale_init_value=logit_scale_init_value,
+    )
+    with torch.random.fork_rng(devices=[], device_type="cpu"):
+        torch.manual_seed(seed)
+        model = CLIPModel(config)
+    model.save_pretrained(root)
+    return root
+
+
+def build_tiny_siglip_repo(root: Path) -> Path:
+    """Real SigLIP encoder/processor with the released V2.5 head's input width."""
+    from transformers import SiglipImageProcessor, SiglipVisionConfig, SiglipVisionModel
+
+    config = SiglipVisionConfig(
+        hidden_size=shipped_aesthetic_hidden_size(),
+        intermediate_size=16,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        image_size=8,
+        patch_size=4,
+    )
+    with torch.random.fork_rng(devices=[], device_type="cpu"):
+        torch.manual_seed(0)
+        model = SiglipVisionModel(config)
+    model.save_pretrained(root)
+    SiglipImageProcessor(size={"height": 8, "width": 8}).save_pretrained(root)
+    return root
 
 
 @pytest.fixture(scope="session")
