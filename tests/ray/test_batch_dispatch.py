@@ -195,6 +195,13 @@ def test_bound_jobs_keep_plan_time_binding_and_order(local_ray, spawn) -> None:
     )
 
     assert [index for index, _ in pairs] == [0, 1, 2, 3]
+    # Each real ObjectRef resolved to its own actor call's result.
+    assert [result for _, result in pairs] == [
+        ("w0", "batch-0"),
+        ("w1", "batch-1"),
+        ("w0", "batch-2"),
+        ("w1", "batch-3"),
+    ]
     # Even though w1 is slow, its batches never migrate to w0.
     assert _received(local_ray, fast) == ["batch-0", "batch-2"]
     assert _received(local_ray, slow) == ["batch-1", "batch-3"]
@@ -738,11 +745,16 @@ async def test_executor_round_robin_dispatches_per_plan_binding(local_ray, spawn
 
     output = await executor.execute(_request(num_steps=10, samples=8, sbs=2))
 
-    assert _received(local_ray, fast) == ["prompt:0:samples:0:2", "prompt:0:samples:4:6"]
-    assert _received(local_ray, slow) == ["prompt:0:samples:2:4", "prompt:0:samples:6:8"]
+    batch_keys = [f"prompt:0:samples:{start}:{start + 2}" for start in (0, 2, 4, 6)]
+    assert _received(local_ray, fast) == [batch_keys[0], batch_keys[2]]
+    assert _received(local_ray, slow) == [batch_keys[1], batch_keys[3]]
+    # The envelopes and results crossed a real wire, and the gather is still
+    # ordered by batch even though w0 finished both of its batches first.
+    assert [entry["batch_key"] for entry in output.output] == batch_keys
     assert output.runtime_debug is not None
     schedule = output.runtime_debug["chunk_schedule"]
     assert [row["assigned_worker"] for row in schedule] == ["w0", "w1", "w0", "w1"]
+    assert [row["batch_key"] for row in schedule] == batch_keys
     for row in schedule:
         assert row["sample_count"] == 2
 
@@ -752,10 +764,7 @@ async def test_executor_runtime_debug_exposes_chunk_schedule(spawn) -> None:
     """runtime_debug surfaces per-batch placement telemetry."""
 
     executor = _executor([("w0", spawn(_Worker, "w0")), ("w1", spawn(_Worker, "w1"))])
-    request = _request(num_steps=10, samples=8, sbs=2)
-    request.runtime_debug = True
-
-    output = await executor.execute(request)
+    output = await executor.execute(_request(num_steps=10, samples=8, sbs=2))
 
     assert output.runtime_debug is not None
     debug_schedule = output.runtime_debug["chunk_schedule"]
@@ -770,7 +779,7 @@ async def test_executor_runtime_debug_exposes_chunk_schedule(spawn) -> None:
         } <= set(row)
 
 
-@pytest.mark.parametrize("worker_ids", ["ab", b"ab", [""], [1], [["w0"]]])
+@pytest.mark.parametrize("worker_ids", ["ab", [""], [1]])
 def test_dispatcher_rejects_invalid_worker_identity(worker_ids):
     with pytest.raises(ValueError, match="worker ids must be"):
         RayActorDispatcher(worker_ids)

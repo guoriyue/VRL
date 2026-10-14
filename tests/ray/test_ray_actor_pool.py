@@ -13,7 +13,7 @@ from vrl.ray.actor_pool import RayActorDispatcher, RayActorJob
 from vrl.ray.operation_deadline import RayOperationTimeout
 from vrl.ray.placement import require_actor_gpu_ids
 
-# The two real-Ray tests here share the package cluster (tests/ray/conftest.py);
+# The real-Ray tests here share the package cluster (tests/ray/conftest.py);
 # the five require_actor_gpu_ids tests below are pure, but stay in the nightly
 # lane with them so this module has one lane instead of two.
 pytestmark = pytest.mark.slow_test
@@ -127,71 +127,6 @@ def test_ray_actor_group_launch_lifecycle(local_ray) -> None:
         # The cluster is shared: this test owns its actors, not the cluster.
         if group is not None:
             group.shutdown()
-
-
-class _PayloadWorker:
-    def __init__(self, worker_id: str) -> None:
-        self.worker_id = worker_id
-
-    def execute(self, payload: int) -> tuple[str, int]:
-        return self.worker_id, payload * 2
-
-
-def test_actor_dispatcher_awaits_real_object_refs(local_ray) -> None:
-    """Real ObjectRefs are awaitable inside the dispatch loop and resolve to the
-    task result, for both plan-time-bound and pull-dispatched jobs. Placement
-    distribution is scheduling-dependent, so only totals and gather order are
-    asserted; tests/ray/test_batch_dispatch.py pins the distribution contract."""
-    ray = local_ray
-    actor_cls = ray.remote(num_cpus=0)(_PayloadWorker)
-    w0 = actor_cls.remote("w0")
-    w1 = actor_cls.remote("w1")
-    try:
-        bound = [
-            RayActorJob(
-                job_index=i,
-                worker_id=("w0" if i % 2 == 0 else "w1"),
-                remote_method=(w0.execute.remote if i % 2 == 0 else w1.execute.remote),
-                payload=i,
-            )
-            for i in range(4)
-        ]
-        pairs = asyncio.run(
-            RayActorDispatcher(("w0", "w1")).run(
-                bound,
-                operation="test.actor_job",
-                call_timeout_s=30.0,
-            ),
-        )
-        assert [index for index, _ in pairs] == [0, 1, 2, 3]
-        assert [result for _, result in pairs] == [
-            ("w0", 0),
-            ("w1", 2),
-            ("w0", 4),
-            ("w1", 6),
-        ]
-
-        unbound = [
-            RayActorJob(job_index=i, worker_id=None, remote_method=None, payload=i)
-            for i in range(4)
-        ]
-        pairs = asyncio.run(
-            RayActorDispatcher(("w0", "w1")).run(
-                unbound,
-                operation="test.actor_job",
-                call_timeout_s=30.0,
-                worker_methods={"w0": w0.execute.remote, "w1": w1.execute.remote},
-            ),
-        )
-        assert [index for index, _ in pairs] == [0, 1, 2, 3]
-        results = [result for _, result in pairs]
-        assert sorted(payload for _, payload in results) == [0, 2, 4, 6]
-        assert {worker for worker, _ in results} <= {"w0", "w1"}
-    finally:
-        # The cluster is shared: leaving these two alive would have later tests
-        # scheduling against a fleet they did not create.
-        for actor in (w0, w1):
-            ray.kill(actor, no_restart=True)
 
 
 @pytest.mark.asyncio

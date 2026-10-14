@@ -4,8 +4,7 @@ Every real-Ray test here used to hand-roll its own ``ray.init()``, so the four o
 them paid four full cluster start/stop cycles — 17.6s of call time for 0.8s of
 actual work. They now share one cluster: the package-scoped shell below overrides
 the function-scoped ``local_ray`` in ``tests/conftest.py``, and the directory went
-from ~19s to ~6s (measured over 3 runs each) while gaining three more real-Ray
-tests — the two executor twins plus the probe-kill test CRD-02 converted.
+from ~19s to ~6s (measured over 3 runs each).
 
 Read ``real_local_ray``'s docstring before adding a test here — a shared cluster
 has no per-test actor namespace, so every test must kill the actors it creates.
