@@ -19,7 +19,12 @@ from typing import Any
 
 import pytest
 
-from tests.generation.ray._helpers import install_slow_workers, ray_sana_runtime
+from tests.generation.ray._helpers import (
+    install_slow_workers,
+    is_dead,
+    ray_sana_runtime,
+    run_launch_inputs,
+)
 from tests.rollouts.collector._helpers import Trace
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.runtime import RayGenerationRuntime
@@ -41,28 +46,6 @@ _STALL = "distributed.rollout.generation_stall_timeout_s=0.5"
 @pytest.fixture(autouse=True)
 def _slow_workers(monkeypatch: pytest.MonkeyPatch) -> None:
     install_slow_workers(monkeypatch)
-
-
-def _actors(runtime: RayGenerationRuntime) -> list[Any]:
-    session = runtime._session
-    assert session is not None
-    return [rank.actor for rank in session.rank_handles]
-
-
-def _is_dead(ray: Any, actor: Any, *, settle_s: float = 10.0) -> bool:
-    """Whether the actor stops answering; ``ray.kill`` takes effect asynchronously."""
-
-    import time
-
-    deadline = time.monotonic() + settle_s
-    while True:
-        try:
-            ray.get(actor.worker_metadata.remote(), timeout=30)
-        except ray.exceptions.RayActorError:
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.05)
 
 
 def _gate(
@@ -166,7 +149,7 @@ async def test_terminated_runtime_fail_fasts_public_operations(
 ) -> None:
     async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
-        actors = _actors(runtime)
+        actors = ray_run.actors()
 
         await runtime.shutdown()
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
@@ -177,7 +160,7 @@ async def test_terminated_runtime_fail_fasts_public_operations(
             await runtime.update_weights({}, 1)
         with pytest.raises(RuntimeLifecycleError, match="activate"):
             await runtime.activate()
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -243,7 +226,7 @@ async def test_cancelled_shutdown_waiter_does_not_cancel_cleanup(
 ) -> None:
     async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
-        actors = _actors(runtime)
+        actors = ray_run.actors()
         close_started = asyncio.Event()
         finish_close = asyncio.Event()
 
@@ -263,7 +246,7 @@ async def test_cancelled_shutdown_waiter_does_not_cancel_cleanup(
         finish_close.set()
         await asyncio.wait_for(surviving_waiter, timeout=30)
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -272,7 +255,7 @@ async def test_cleanup_failure_can_be_retried_without_reporting_terminated(
 ) -> None:
     async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
-        actors = _actors(runtime)
+        actors = ray_run.actors()
         cleanup_error = RuntimeError("cleanup failed")
         closes = Trace(monkeypatch)
         closes.watch(runtime._session, "close", "session.close")
@@ -290,7 +273,7 @@ async def test_cleanup_failure_can_be_retried_without_reporting_terminated(
         with pytest.raises(RuntimeLifecycleError) as rejected:
             await runtime.generate(ray_run.request(["p"]))
         assert rejected.value.__cause__ is cleanup_error
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -299,7 +282,7 @@ async def test_existing_failure_survives_successful_cleanup(
 ) -> None:
     async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
-        actors = _actors(runtime)
+        actors = ray_run.actors()
         root = RuntimeError("actor died")
         runtime.lifecycle.fail(root)
 
@@ -310,7 +293,7 @@ async def test_existing_failure_survives_successful_cleanup(
         with pytest.raises(RuntimeLifecycleError) as rejected:
             await runtime.generate(ray_run.request(["p"]))
         assert rejected.value.__cause__ is root
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -350,7 +333,7 @@ async def test_generation_timeout_force_kills_without_release_rpc(
     ) as ray_run:
         runtime = ray_run.runtime
         session = runtime._session
-        actors = _actors(runtime)
+        actors = ray_run.actors()
         barrier = Trace(monkeypatch)
         # The graceful release waits on the release refs with ray.get; a
         # force-close never submits them.
@@ -365,7 +348,7 @@ async def test_generation_timeout_force_kills_without_release_rpc(
         assert runtime._session is None
         assert session._force_close is True
         assert barrier.events == []
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -375,7 +358,7 @@ async def test_submitted_generation_cancellation_force_kills_and_stays_cancelled
     async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
         session = runtime._session
-        actors = _actors(runtime)
+        actors = ray_run.actors()
         submitted = asyncio.Event()
 
         async def mark(*_args: Any, **_kwargs: Any) -> None:
@@ -396,7 +379,7 @@ async def test_submitted_generation_cancellation_force_kills_and_stays_cancelled
         assert runtime.lifecycle.failure is terminal
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
         assert session._force_close is True
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -461,7 +444,7 @@ async def test_terminal_executor_error_closes_runtime(
 
     async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
-        local_ray.kill(_actors(runtime)[0], no_restart=True)
+        local_ray.kill(ray_run.actors()[0], no_restart=True)
 
         with pytest.raises(RayActorCallError) as caught:
             await runtime.generate(ray_run.request(["p"]))
@@ -606,7 +589,7 @@ async def test_weight_ack_timeout_keeps_previous_version_and_force_kills(
     async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
         session = runtime._session
-        actors = _actors(runtime)
+        actors = ray_run.actors()
         payload = ray_run.trainable_state()
         await runtime.update_weights(payload, 6)
         # Launch shares this RPC budget with the workers' policy load, so the
@@ -625,7 +608,7 @@ async def test_weight_ack_timeout_keeps_previous_version_and_force_kills(
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
         assert session._force_close is True
         assert barrier.events == []
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -672,7 +655,7 @@ async def test_later_timeout_upgrades_ordinary_failure_to_force_cleanup(
     async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
         session = runtime._session
-        actors = _actors(runtime)
+        actors = ray_run.actors()
         ordinary = RuntimeError("health failed first")
         runtime.lifecycle.fail(ordinary)
         timeout = RayOperationTimeout("rollout.generation.batch", 1.0)
@@ -685,7 +668,7 @@ async def test_later_timeout_upgrades_ordinary_failure_to_force_cleanup(
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
         assert session._force_close is True
         assert barrier.events == []
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -695,7 +678,7 @@ async def test_timeout_interrupts_an_already_waiting_release_barrier(
     async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         runtime = ray_run.runtime
         session = runtime._session
-        actors = _actors(runtime)
+        actors = ray_run.actors()
         release_entered = threading.Event()
         finish_release = threading.Event()
         real_get = local_ray.get
@@ -723,7 +706,7 @@ async def test_timeout_interrupts_an_already_waiting_release_barrier(
         assert runtime.lifecycle.failure is timeout
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
         assert session._release_wait_task is None
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -782,7 +765,7 @@ async def test_actor_cleanup_failure_retains_owned_handle_for_retry(
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
         assert runtime._session is None
         assert kills.events == ["ray.kill", "ray.kill"]
-        assert _is_dead(local_ray, ranks[0].actor)
+        assert is_dead(local_ray, ranks[0].actor)
 
 
 @pytest.mark.asyncio
@@ -812,13 +795,13 @@ async def test_partial_engine_cleanup_retries_only_failed_rank(
         with pytest.raises(RuntimeError, match="cleanup incomplete"):
             await runtime.shutdown()
         assert runtime._session.rank_handles == [ranks[1]]
-        assert _is_dead(local_ray, ranks[0].actor)
+        assert is_dead(local_ray, ranks[0].actor)
 
         await runtime.shutdown()
         monkeypatch.setattr(local_ray, "kill", real_kill)
         assert runtime._session is None
         assert killed == [ranks[0].actor, ranks[1].actor, ranks[1].actor]
-        assert _is_dead(local_ray, ranks[1].actor)
+        assert is_dead(local_ray, ranks[1].actor)
 
 
 @pytest.mark.asyncio
@@ -829,25 +812,13 @@ async def test_async_launcher_loads_off_loop(
 
     async with ray_sana_runtime(monkeypatch, tmp_path, ray_sana_snapshot) as ray_run:
         await ray_run.runtime.shutdown()
-        import torch
-
-        from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
-
-        built, resources = ray_run.built, ray_run.resources
-        replay_build = built.family.resolve_model_build(
-            built.root,
-            torch.device(resources.trainer_torch_device),
-            precision=built.precision,
-            for_rollout=False,
-        )
-        replay_identity = replay_build.checkpoint_identity()
         launches = Trace(monkeypatch)
         launches.watch(RayGenerationLauncher, "_launch_session", "launch")
 
         session = await RayGenerationLauncher()._launch_session_async(
-            resources,
+            ray_run.resources,
             ray_run.worker,
-            RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity),
+            run_launch_inputs(ray_run.built, ray_run.resources),
             placement=ray_run.placement_owner.rollout_placement,
         )
         try:
@@ -866,12 +837,12 @@ async def test_shutdown_kills_only_owned_actor(
         ray_sana_runtime(monkeypatch, tmp_path / "owned", ray_sana_snapshot) as owned,
         ray_sana_runtime(monkeypatch, tmp_path / "bystander", ray_sana_snapshot) as bystander,
     ):
-        owned_actor = _actors(owned.runtime)[0]
-        bystander_actor = _actors(bystander.runtime)[0]
+        owned_actor = owned.actors()[0]
+        bystander_actor = bystander.actors()[0]
 
         await owned.runtime.shutdown()
 
-        assert _is_dead(local_ray, owned_actor)
-        assert not _is_dead(local_ray, bystander_actor)
+        assert is_dead(local_ray, owned_actor)
+        assert not is_dead(local_ray, bystander_actor)
         output = await bystander.runtime.generate(bystander.request(["p"]))
         assert output.output.shape[0] == 2

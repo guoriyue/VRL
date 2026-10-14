@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from tests.generation.ray._helpers import ray_sana_runtime
+from tests.generation.ray._helpers import is_dead, ray_sana_runtime
 from vrl.generation.ray.engine import RayGenerationEngine
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.session import RayGenerationSession
@@ -47,19 +47,6 @@ def _alive(ray: Any, actor: Any) -> bool:
     except ray.exceptions.RayActorError:
         return False
     return True
-
-
-def _dead(ray: Any, actor: Any, *, timeout_s: float = 30.0) -> bool:
-    """Whether the actor is gone within ``timeout_s``; ``ray.kill`` is asynchronous."""
-
-    import time
-
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if not _alive(ray, actor):
-            return True
-        time.sleep(0.05)
-    return False
 
 
 def _killed(log: list[tuple[str, tuple[Any, ...], dict[str, Any]]]) -> list[Any]:
@@ -161,7 +148,7 @@ async def test_close_releases_policies_then_kills_workers(
         assert wait == {"timeout": 60}
         assert _killed(calls) == actors
         assert session.engines == []
-        assert all(_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -214,14 +201,14 @@ async def test_close_retains_only_actor_handles_that_failed_to_die(
             await session.close(force=False)
 
         assert isinstance(caught.value.__cause__, RuntimeError)
-        assert _dead(local_ray, first)
+        assert is_dead(local_ray, first)
         assert session.engines == []
         assert [rank.actor for rank in session.rank_handles] == [failed]
 
         await session.close(force=True)
 
         assert session.rank_handles == []
-        assert _dead(local_ray, failed)
+        assert is_dead(local_ray, failed)
 
 
 @pytest.mark.asyncio
@@ -276,4 +263,4 @@ async def test_force_close_interrupts_graceful_release_wait(
 
         assert session.engines == []
         monkeypatch.setattr(local_ray, "get", real_get)
-        assert _dead(local_ray, rank.actor)
+        assert is_dead(local_ray, rank.actor)

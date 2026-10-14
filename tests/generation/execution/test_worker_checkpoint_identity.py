@@ -12,8 +12,8 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-import torch
 
+from tests.generation.ray._helpers import run_launch_inputs
 from tests.scripts.eval.fixtures import (
     TinySanaPipeline,
     tiny_sana_online_config,
@@ -35,15 +35,7 @@ def _launch_inputs(
     if on_snapshot is not None:
         on_snapshot(tmp_path / "sana-snapshot")
     built = BuiltConfigs.from_cfg(cfg)
-    resources = ResourcePlan.from_root(built.root)
-    replay_build = built.family.resolve_model_build(
-        built.root,
-        torch.device(resources.trainer_torch_device),
-        precision=built.precision,
-        for_rollout=False,
-    )
-    replay_identity = replay_build.checkpoint_identity()
-    return RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity)
+    return run_launch_inputs(built, ResourcePlan.from_root(built.root))
 
 
 def _worker(inputs: RayGenerationLaunchInputs) -> GenerationWorkerCore:

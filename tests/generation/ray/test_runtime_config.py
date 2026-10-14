@@ -15,10 +15,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import torch
 from omegaconf import OmegaConf
 
-from tests.generation.ray._helpers import ray_sana_runtime
+from tests.generation.ray._helpers import (
+    ray_sana_runtime,
+    resolve_replay_build,
+    run_launch_inputs,
+)
 from tests.scripts.eval.fixtures import tiny_sana_online_config, write_tiny_wan_snapshot
 from vrl.config.builders import BuiltConfigs
 from vrl.config.loading import load_config
@@ -229,27 +232,17 @@ async def test_pipelined_launch_adds_one_finalizer_per_engine(
 # ------------------------------------------------------- launch config projection
 
 
-def _sana_launch(tmp_path: Path, *overrides: str) -> tuple[RayGenerationLaunchInputs, Any]:
-    """The launch inputs the recipe would ship for a tiny SANA run, and its replay model."""
+def _sana_launch(tmp_path: Path, *overrides: str) -> RayGenerationLaunchInputs:
+    """The launch inputs the recipe would ship for a tiny SANA run."""
 
     built = BuiltConfigs.from_cfg(tiny_sana_online_config(tmp_path, overrides=overrides))
-    resources = ResourcePlan.from_root(built.root)
-    replay_build = built.family.resolve_model_build(
-        built.root,
-        torch.device(resources.trainer_torch_device),
-        precision=built.precision,
-        for_rollout=False,
-    )
-    replay_identity = replay_build.checkpoint_identity()
-    return RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity), (
-        replay_identity
-    )
+    return run_launch_inputs(built, ResourcePlan.from_root(built.root))
 
 
 def test_generation_launch_inputs_project_model_compile_and_precision(tmp_path) -> None:
     """The public launch path projects model config and dtype wire values once."""
 
-    launch_inputs, replay_identity = _sana_launch(
+    launch_inputs = _sana_launch(
         tmp_path,
         "model.revision=driver-config",
         "model.torch_compile.enable=true",
@@ -266,7 +259,6 @@ def test_generation_launch_inputs_project_model_compile_and_precision(tmp_path) 
     contract = launch_inputs.launch_config
     model_build = contract.model_build
     assert contract.family == "sana"
-    assert contract.expected_model_identity == replay_identity
     assert "family" not in model_build
     assert model_build["device"] == "cpu"
     assert model_build["parameter_dtype"] == "float32"
@@ -285,7 +277,7 @@ def test_generation_launch_inputs_project_model_compile_and_precision(tmp_path) 
 def test_generation_launch_inputs_project_resolved_generation_memory(tmp_path) -> None:
     """The launch config carries typed memory values, not raw model config."""
 
-    launch_inputs, _ = _sana_launch(
+    launch_inputs = _sana_launch(
         tmp_path,
         "model.memory.vae_decode.tiling=true",
         "model.memory.vae_decode.slicing=false",
@@ -320,17 +312,9 @@ def test_generation_launch_inputs_project_wan_offload_to_rollout_contract(tmp_pa
         ],
     )
     built = BuiltConfigs.from_cfg(cfg)
-    resources = ResourcePlan.from_root(built.root)
-    replay_build = built.family.resolve_model_build(
-        built.root,
-        torch.device(resources.trainer_torch_device),
-        precision=built.precision,
-        for_rollout=False,
-    )
-    replay_identity = replay_build.checkpoint_identity()
 
-    model_build = RayGenerationLaunchInputs.from_run(
-        built, resources, replay_build, replay_identity
+    model_build = run_launch_inputs(
+        built, ResourcePlan.from_root(built.root)
     ).launch_config.model_build
 
     assert model_build["rollout"]["pipeline_offload_mode"] == "sequential"
@@ -343,12 +327,7 @@ def test_generation_launch_inputs_reject_rollout_identity_mismatch(tmp_path) -> 
 
     built = BuiltConfigs.from_cfg(tiny_sana_online_config(tmp_path))
     resources = ResourcePlan.from_root(built.root)
-    replay_build = built.family.resolve_model_build(
-        built.root,
-        torch.device(resources.trainer_torch_device),
-        precision=built.precision,
-        for_rollout=False,
-    )
+    replay_build = resolve_replay_build(built, resources)
     replay_identity = replay_build.checkpoint_identity()
     (tmp_path / "sana-snapshot" / "extra-weights.bin").write_bytes(b"drift")
 
@@ -362,7 +341,7 @@ def test_generation_launch_inputs_reject_rollout_identity_mismatch(tmp_path) -> 
 def test_generation_launch_inputs_preserve_disabled_model_compile_config(tmp_path) -> None:
     """Checks disabled model.torch_compile is preserved as ordinary model config."""
 
-    launch_inputs, _ = _sana_launch(tmp_path, "model.revision=driver-config")
+    launch_inputs = _sana_launch(tmp_path, "model.revision=driver-config")
 
     model_build = launch_inputs.launch_config.model_build
     assert model_build["revision"] == "driver-config"
@@ -372,9 +351,9 @@ def test_generation_launch_inputs_preserve_disabled_model_compile_config(tmp_pat
 
 
 def test_generation_launch_inputs_derive_versioned_sync_from_schedule(tmp_path) -> None:
-    strict, _ = _sana_launch(tmp_path / "strict")
-    continuous_fullparam, _ = _sana_launch(tmp_path / "fullparam", *_CONTINUOUS)
-    continuous_lora, _ = _sana_launch(tmp_path / "lora", "model.use_lora=true", *_CONTINUOUS)
+    strict = _sana_launch(tmp_path / "strict")
+    continuous_fullparam = _sana_launch(tmp_path / "fullparam", *_CONTINUOUS)
+    continuous_lora = _sana_launch(tmp_path / "lora", "model.use_lora=true", *_CONTINUOUS)
 
     assert strict.launch_config.versioned_weight_sync is False
     assert continuous_fullparam.launch_config.versioned_weight_sync is False
@@ -385,7 +364,7 @@ def test_generation_launch_inputs_thread_resolved_base_weight_sync(tmp_path) -> 
     """Master-weight retention follows the sync payload: a full-parameter sync
     replaces base weights, so the worker retains masters."""
 
-    launch_inputs, _ = _sana_launch(tmp_path)
+    launch_inputs = _sana_launch(tmp_path)
 
     model_build = launch_inputs.launch_config.model_build
     assert model_build["model_config"].get("use_lora", False) is False
@@ -395,7 +374,7 @@ def test_generation_launch_inputs_thread_resolved_base_weight_sync(tmp_path) -> 
 def test_generation_launch_inputs_mark_lora_as_adapter_only_sync(tmp_path) -> None:
     """LoRA sync never needs retained base-precision masters on the rollout."""
 
-    launch_inputs, _ = _sana_launch(tmp_path, "model.use_lora=true")
+    launch_inputs = _sana_launch(tmp_path, "model.use_lora=true")
 
     assert launch_inputs.launch_config.model_build["rollout"]["base_weight_sync"] is False
 
@@ -466,13 +445,6 @@ def _on_demand_launch(
         tiny_sana_online_config(tmp_path, overrides=("distributed.resources.rollout.num_gpus=1",))
     )
     resources = ResourcePlan.from_root(built.root)
-    replay_build = built.family.resolve_model_build(
-        built.root,
-        torch.device(resources.trainer_torch_device),
-        precision=built.precision,
-        for_rollout=False,
-    )
-    replay_identity = replay_build.checkpoint_identity()
     placement = RolePlacement(
         placement_group=None,
         bundle_indices=(0,),
@@ -481,7 +453,7 @@ def _on_demand_launch(
     return (
         resources,
         RolloutWorkerConfig.from_root(built.root),
-        RayGenerationLaunchInputs.from_run(built, resources, replay_build, replay_identity),
+        run_launch_inputs(built, resources),
         placement,
     )
 

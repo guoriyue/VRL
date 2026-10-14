@@ -2,13 +2,14 @@
 
 Every runtime here is real: the tiny SANA run resolved on the package cluster,
 its run-level placement group, and ``RayGenerationWorker`` actors started by
-the real launcher. The on-demand runtime is built the way the launcher's
-on-demand branch builds it -- no session at construction, the launcher's own
-``_launch_session_async`` as the cold-start factory. ``create_runtime`` picks
-that branch only for a rollout that leases the trainer's GPU, which a CPU
-cluster cannot resolve, and the branch's ``sleep_offload`` contract needs a
-CuMem pool a CPU worker cannot have; the runtime's lease state machine reads
-neither, so CPU workers park through their real move ledger.
+the real launcher. The on-demand runtime comes from the launcher's own
+on-demand branch (``ray_sana_runtime(on_demand=True)``) -- no session at
+construction, the launcher's ``_launch_session_async`` as the cold-start
+factory. ``create_runtime`` picks that branch only for a rollout that leases
+the trainer's GPU, which a CPU cluster cannot resolve, so the plan handed to
+the launcher pins both roles to one card; the launch config stays the resolved
+run's, whose ``sleep_offload`` is off, so CPU workers park through their real
+move ledger.
 
 Faults are real or injected onto real replies: a worker subclass the real
 launcher starts (keeping the real actor body) returns a doctored parking
@@ -27,8 +28,8 @@ import gc
 import threading
 import time
 import weakref
-from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, replace
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -37,125 +38,40 @@ import torch
 
 import vrl.generation.ray.launcher as launcher_module
 import vrl.generation.ray.session as session_module
+from tests.generation.ray._helpers import RaySanaRuntime, is_dead, ray_sana_runtime
 from tests.rollouts.collector._helpers import Trace
-from tests.scripts.eval.fixtures import TinySanaPipeline, tiny_sana_online_config
-from vrl.config.builders import BuiltConfigs
-from vrl.generation.ray.config import RolloutWorkerConfig
-from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.launcher import RayGenerationLauncher
-from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.session import RayGenerationSession
 from vrl.generation.ray.worker import RayGenerationWorker
+from vrl.ray.actor_pool import RayActorCallError
 from vrl.ray.operation_deadline import RayOperationTimeout
-from vrl.ray.placement import GlobalRayPlacementOwner
-from vrl.ray.resources import ResourcePlan
-from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.rollouts.collector.requests import GenerationRequestBuilder
-from vrl.trainers.strategy import SingleProcessStrategy
 from vrl.utils.deadline import OperationTimeout
 from vrl.utils.lifecycle import RuntimeLifecycleError, RuntimePhase
 
 _TWO_ENGINES = ("distributed.resources.rollout.num_engines=2",)
 
 
-@dataclass
-class _OnDemand:
-    runtime: RayGenerationRuntime
-    launcher: RayGenerationLauncher
-    built: Any
-    replay_build: Any
-    replay_identity: dict[str, Any]
-
-    def request(self, prompts: list[str], **kwargs: Any) -> Any:
-        builder = GenerationRequestBuilder(
-            entry=self.built.family, config=RolloutCollectorConfig.from_root(self.built.root)
-        )
-        return builder.build(prompts, 2, **kwargs).request
-
-    def payload(self) -> dict[str, Any]:
-        """A fresh copy of the trainer's real weight-sync payload."""
-
-        bundle = self.built.family.build_replay(
-            self.replay_build, expected_identity=self.replay_identity
-        )
-        return SingleProcessStrategy().export_rollout_state(bundle)
-
-    def bad_payload(self) -> dict[str, Any]:
-        """The real payload with one tensor of the wrong shape: the install fails."""
-
-        payload = self.payload()
-        key = next(iter(payload))
-        payload[key] = torch.zeros(1)
-        return payload
-
-    def actors(self) -> list[Any]:
-        session = self.runtime._session
-        assert session is not None
-        return [rank.actor for rank in session.rank_handles]
-
-
-@contextlib.asynccontextmanager
-async def _on_demand(
+def _on_demand(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     snapshot: Path,
     *,
     worker: type[RayGenerationWorker] | None = None,
     overrides: tuple[str, ...] = (),
-) -> AsyncIterator[_OnDemand]:
-    """An on-demand runtime over the real launcher; no session until ``activate``."""
+) -> contextlib.AbstractAsyncContextManager[RaySanaRuntime]:
+    """An on-demand runtime over the real launcher, with ``worker`` as its rank actor class."""
 
     if worker is not None:
         monkeypatch.setattr(launcher_module, "RayGenerationWorker", worker)
-    cfg = tiny_sana_online_config(
-        tmp_path,
-        snapshot=snapshot,
-        overrides=("distributed.rollout.cpus_per_worker=0.5", *overrides),
-    )
-    TinySanaPipeline().install(monkeypatch, snapshot)
-    built = BuiltConfigs.from_cfg(cfg)
-    resources = ResourcePlan.from_root(built.root)
-    worker_config = RolloutWorkerConfig.from_root(built.root)
-    replay_build = built.family.resolve_model_build(
-        built.root,
-        torch.device(resources.trainer_torch_device),
-        precision=built.precision,
-        for_rollout=False,
-    )
-    replay_identity = replay_build.checkpoint_identity()
-    owner = GlobalRayPlacementOwner(resources, worker_config)
-    owner.create()
-    launcher = RayGenerationLauncher()
-    launch_inputs = RayGenerationLaunchInputs.from_run(
-        built, resources, replay_build, replay_identity
-    )
+    return ray_sana_runtime(monkeypatch, tmp_path, snapshot, overrides=overrides, on_demand=True)
 
-    async def launch_session() -> RayGenerationSession:
-        # Looked up at call time, so a test may gate or fail the real launch.
-        return await launcher._launch_session_async(
-            resources,
-            worker_config,
-            launch_inputs,
-            placement=owner.rollout_placement,
-        )
 
-    runtime = RayGenerationRuntime(
-        session=None,
-        session_factory=launch_session,
-        initial_policy_version=launch_inputs.launch_config.policy_version,
-    )
-    try:
-        yield _OnDemand(
-            runtime=runtime,
-            launcher=launcher,
-            built=built,
-            replay_build=replay_build,
-            replay_identity=replay_identity,
-        )
-    finally:
-        with contextlib.suppress(BaseException):
-            await runtime.shutdown()
-        owner.shutdown()
+def _bad_payload(run: RaySanaRuntime) -> dict[str, Any]:
+    """The real payload with one tensor of the wrong shape: the install fails."""
+
+    payload = run.trainable_state()
+    payload[next(iter(payload))] = torch.zeros(1)
+    return payload
 
 
 def _parking_worker(
@@ -200,20 +116,6 @@ def _parking_worker(
             return self.sleep_calls
 
     return _ParkingWorker
-
-
-def _is_dead(ray: Any, actor: Any, *, settle_s: float = 10.0) -> bool:
-    """Whether the actor stops answering; ``ray.kill`` takes effect asynchronously."""
-
-    deadline = time.monotonic() + settle_s
-    while True:
-        try:
-            ray.get(actor.worker_metadata.remote(), timeout=30)
-        except ray.exceptions.RayActorError:
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.05)
 
 
 def _watch_release(monkeypatch: pytest.MonkeyPatch, ray: Any) -> Trace:
@@ -310,7 +212,7 @@ async def test_offload_rejects_untrustworthy_parking_evidence(
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
         assert session._force_close is True
         assert release.events == []
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -338,7 +240,7 @@ async def test_offload_requires_every_worker_parking_rpc_to_succeed(
         assert runtime._session is None
         assert session._force_close is True
         assert release.events == []
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -368,7 +270,7 @@ async def test_worker_parking_remote_error_force_kills_without_graceful_release(
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
         assert session._force_close is True
         assert release.events == []
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -402,7 +304,7 @@ async def test_worker_parking_deadline_force_kills_without_graceful_release(
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
         assert session._force_close is True
         assert release.events == []
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -431,7 +333,7 @@ async def test_sibling_failure_before_lease_transition_preserves_root_and_force_
         assert runtime._session is None
         assert session._force_close is True
         assert release.events == []
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -485,7 +387,7 @@ async def test_cold_weights_are_staged_then_applied_during_activation(
         installs = Trace(monkeypatch)
         installs.watch(RayGenerationSession, "update_weights", "session.update_weights")
 
-        await runtime.update_weights(lease.payload(), 2)
+        await runtime.update_weights(lease.trainable_state(), 2)
 
         assert runtime._session is None
         assert runtime._pending_install.policy_version == 2
@@ -510,7 +412,7 @@ async def test_offload_keeps_workers_and_activation_wakes_latest_policy(
     async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
         runtime = lease.runtime
         await runtime.activate()
-        await runtime.update_weights(lease.payload(), 1)
+        await runtime.update_weights(lease.trainable_state(), 1)
         session = runtime._session
         actors = lease.actors()
         lease_ops = Trace(monkeypatch)
@@ -519,12 +421,14 @@ async def test_offload_keeps_workers_and_activation_wakes_latest_policy(
         lease_ops.watch(session, "update_weights", "update")
 
         await runtime.offload()
-        await runtime.update_weights(lease.payload(), 2)
+        await runtime.update_weights(lease.trainable_state(), 2)
 
         assert runtime._session is session
         assert runtime._session_parked is True
         assert runtime._pending_install.policy_version == 2
         assert lease_ops.events == ["sleep"]
+        # Parking leaves the run-level placement group to its owner.
+        assert lease.placement_owner._placement_group is not None
 
         await runtime.activate()
 
@@ -546,7 +450,7 @@ async def test_active_update_publishes_only_after_session_ack(
     async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
         runtime = lease.runtime
         await runtime.activate()
-        await runtime.update_weights(lease.payload(), 1)
+        await runtime.update_weights(lease.trainable_state(), 1)
         started = asyncio.Event()
         finish = asyncio.Event()
 
@@ -555,7 +459,7 @@ async def test_active_update_publishes_only_after_session_ack(
             await finish.wait()
 
         _gate_class(monkeypatch, RayGenerationSession, "update_weights", before=hold)
-        update = asyncio.create_task(runtime.update_weights(lease.payload(), 2))
+        update = asyncio.create_task(runtime.update_weights(lease.trainable_state(), 2))
         await asyncio.wait_for(started.wait(), timeout=30)
 
         assert runtime._pending_install is None
@@ -583,7 +487,7 @@ async def test_runtime_releases_the_payload_once_installed_or_dropped(
             await runtime.activate()
         if state == "parked":
             await runtime.offload()
-        payload = lease.payload()
+        payload = lease.trainable_state()
         tensor_ref = weakref.ref(next(iter(payload.values())))
 
         await runtime.update_weights(payload, 2)
@@ -609,18 +513,18 @@ async def test_active_update_failure_preserves_installed_version_and_terminates(
     async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
         runtime = lease.runtime
         await runtime.activate()
-        await runtime.update_weights(lease.payload(), 1)
+        await runtime.update_weights(lease.trainable_state(), 1)
         actors = lease.actors()
 
-        with pytest.raises(Exception) as caught:
-            await runtime.update_weights(lease.bad_payload(), 2)
+        with pytest.raises(RayActorCallError, match=r"'rollout\.weight_sync' failed") as caught:
+            await runtime.update_weights(_bad_payload(lease), 2)
 
         assert runtime._pending_install is None
         assert runtime.current_policy_version == 1
         assert runtime.lifecycle.failure is caught.value
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
         assert runtime._session is None
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -630,14 +534,14 @@ async def test_update_cleanup_failure_retains_session_for_retry(
     async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
         runtime = lease.runtime
         await runtime.activate()
-        await runtime.update_weights(lease.payload(), 1)
+        await runtime.update_weights(lease.trainable_state(), 1)
         session = runtime._session
         closes = Trace(monkeypatch)
         closes.watch(session, "close", "session.close")
         closes.fail("session.close", "worker cleanup failed")
 
-        with pytest.raises(Exception) as caught:
-            await runtime.update_weights(lease.bad_payload(), 2)
+        with pytest.raises(RayActorCallError, match=r"'rollout\.weight_sync' failed") as caught:
+            await runtime.update_weights(_bad_payload(lease), 2)
 
         assert runtime.lifecycle.failure is caught.value
         assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
@@ -659,7 +563,7 @@ async def test_cancelled_restore_closes_the_unpublished_candidate(
 ) -> None:
     async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
         runtime = lease.runtime
-        await runtime.update_weights(lease.payload(), 3)
+        await runtime.update_weights(lease.trainable_state(), 3)
         candidates: list[RayGenerationSession] = []
         restore_started = asyncio.Event()
         never = asyncio.Event()
@@ -682,7 +586,7 @@ async def test_cancelled_restore_closes_the_unpublished_candidate(
         assert candidate._force_close is True
         assert runtime._session is None
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -693,20 +597,19 @@ async def test_cancelled_launch_closes_the_fleet_its_thread_still_produces(
 
     async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
         runtime = lease.runtime
-        launcher = lease.launcher
         launch_started = threading.Event()
         finish_launch = threading.Event()
         launched: list[RayGenerationSession] = []
-        real_launch = launcher._launch_session
+        real_launch = RayGenerationLauncher._launch_session
 
-        def launch(*args: Any, **kwargs: Any) -> RayGenerationSession:
+        def launch(self: RayGenerationLauncher, *args: Any, **kwargs: Any) -> RayGenerationSession:
             launch_started.set()
             assert finish_launch.wait(timeout=60)
-            session = real_launch(*args, **kwargs)
+            session = real_launch(self, *args, **kwargs)
             launched.append(session)
             return session
 
-        monkeypatch.setattr(launcher, "_launch_session", launch)
+        monkeypatch.setattr(RayGenerationLauncher, "_launch_session", launch)
         activation = asyncio.create_task(runtime.activate())
         assert await asyncio.to_thread(launch_started.wait, 60)
 
@@ -720,7 +623,7 @@ async def test_cancelled_launch_closes_the_fleet_its_thread_still_produces(
         (candidate,) = launched
         assert runtime._session is None
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-        assert all(_is_dead(local_ray, rank.actor) for rank in candidate.rank_handles)
+        assert all(is_dead(local_ray, rank.actor) for rank in candidate.rank_handles)
 
 
 @pytest.mark.asyncio
@@ -729,11 +632,11 @@ async def test_activation_restore_failure_cleans_candidate_and_terminates(
 ) -> None:
     async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
         runtime = lease.runtime
-        await runtime.update_weights(lease.bad_payload(), 3)
+        await runtime.update_weights(_bad_payload(lease), 3)
         installs = Trace(monkeypatch)
         installs.watch(RayGenerationSession, "update_weights", "session.update_weights")
 
-        with pytest.raises(Exception) as caught:
+        with pytest.raises(RayActorCallError, match=r"'rollout\.weight_sync' failed") as caught:
             await runtime.activate()
 
         (install,) = installs.calls
@@ -742,7 +645,7 @@ async def test_activation_restore_failure_cleans_candidate_and_terminates(
         assert runtime._session is None
         assert runtime.lifecycle.failure is caught.value
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-        assert all(_is_dead(local_ray, rank.actor) for rank in candidate.rank_handles)
+        assert all(is_dead(local_ray, rank.actor) for rank in candidate.rank_handles)
 
 
 @pytest.mark.asyncio
@@ -751,7 +654,7 @@ async def test_cold_restore_timeout_force_kills_unpublished_candidate(
 ) -> None:
     async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
         runtime = lease.runtime
-        await runtime.update_weights(lease.payload(), 2)
+        await runtime.update_weights(lease.trainable_state(), 2)
         candidates: list[RayGenerationSession] = []
         releases: list[Trace] = []
 
@@ -777,7 +680,7 @@ async def test_cold_restore_timeout_force_kills_unpublished_candidate(
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
         assert candidate._force_close is True
         assert release.events == []
-        assert all(_is_dead(local_ray, rank.actor) for rank in candidate.rank_handles)
+        assert all(is_dead(local_ray, rank.actor) for rank in candidate.rank_handles)
 
 
 @pytest.mark.asyncio
@@ -787,7 +690,7 @@ async def test_activation_launch_failure_terminalizes_without_publishing_candida
     async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
         runtime = lease.runtime
         launches = Trace(monkeypatch)
-        launches.watch(lease.launcher, "_launch_session", "launch")
+        launches.watch(RayGenerationLauncher, "_launch_session", "launch")
         launches.fail("launch", "rollout worker startup failed")
 
         with pytest.raises(RuntimeError, match="rollout worker startup failed") as caught:
@@ -821,7 +724,7 @@ async def test_on_demand_shutdown_is_idempotent_for_offloaded_workers(
         assert runtime._session is None
         assert runtime._session_parked is False
         assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
-        assert all(_is_dead(local_ray, actor) for actor in actors)
+        assert all(is_dead(local_ray, actor) for actor in actors)
 
 
 @pytest.mark.asyncio
@@ -830,7 +733,7 @@ async def test_terminated_runtime_rejects_activation(
 ) -> None:
     async with _on_demand(monkeypatch, tmp_path, ray_sana_snapshot) as lease:
         launches = Trace(monkeypatch)
-        launches.watch(lease.launcher, "_launch_session", "launch")
+        launches.watch(RayGenerationLauncher, "_launch_session", "launch")
         await lease.runtime.shutdown()
 
         with pytest.raises(RuntimeLifecycleError, match="terminated"):
