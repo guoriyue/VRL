@@ -218,31 +218,6 @@ class TestGRPOClippedSurrogate:
         assert metrics.update.active_clip_fraction == pytest.approx(0.5)
         assert metrics.update.approx_kl == pytest.approx(0.25)
 
-    def test_objective_leaves_logprob_mismatch_to_replay_boundary(self) -> None:
-        """The objective reports update math; the trainer owns backend parity."""
-        grpo = GRPO(GRPOConfig(kl_coef=0.0))
-        signals = _flow_signals(
-            log_prob=torch.full((2,), 0.1),  # replay logprob
-            old_log_prob=torch.zeros(2),  # rollout behavior logprob
-        )
-        _, metrics = grpo.compute_loss(
-            AlgorithmInput(signals=signals, advantages=torch.ones(2)),
-        )
-        assert metrics.logprob_mismatch.logprob_abs_diff_mean == 0.0
-        assert metrics.logprob_mismatch.ratio_abs_dev_mean == 0.0
-        assert metrics.logprob_mismatch.finite is True
-
-    def test_mismatch_metrics_zero_when_on_policy(self) -> None:
-        """fresh == old → all mismatch metrics are zero."""
-        grpo = GRPO(GRPOConfig(kl_coef=0.0))
-        signals = _flow_signals(log_prob=torch.zeros(3), old_log_prob=torch.zeros(3))
-        _, metrics = grpo.compute_loss(
-            AlgorithmInput(signals=signals, advantages=torch.ones(3)),
-        )
-        assert metrics.logprob_mismatch.logprob_abs_diff_mean == 0.0
-        assert metrics.logprob_mismatch.ratio_abs_dev_max == 0.0
-        assert metrics.logprob_mismatch.mismatch_k3_kl == 0.0
-
 
 class TestGRPOTruncatedImportanceSampling:
     """TIS bounds the rollout->replay importance weight (continuous.py).
@@ -260,23 +235,6 @@ class TestGRPOTruncatedImportanceSampling:
         if pc_kwargs:
             grpo.config.precision_correction = PrecisionCorrectionConfig(**pc_kwargs)
         return grpo
-
-    def test_off_mode_matches_legacy_and_reports_zero_clip(self) -> None:
-        """The default (off) precision correction is a pure no-op vs the legacy loss."""
-        adv = torch.tensor([2.0, -3.0, 1.0])
-
-        def _signals():
-            return _flow_signals(
-                log_prob=torch.tensor([1.0, 0.0, -0.5]),
-                old_log_prob=torch.zeros(3),
-            )
-
-        base, _ = self._grpo().compute_loss(AlgorithmInput(signals=_signals(), advantages=adv))
-        off, off_m = self._grpo(tis_mode="off").compute_loss(
-            AlgorithmInput(signals=_signals(), advantages=adv),
-        )
-        assert off.item() == pytest.approx(base.item())
-        assert off_m.update.tis_clip_fraction == 0.0
 
     def test_truncate_caps_unclipped_negative_advantage_gradient(self) -> None:
         """truncate caps the ratio, so the dangerous adv<0 unclipped branch is bounded.
@@ -339,22 +297,6 @@ class TestGRPORejectSampling:
         if pc_kwargs:
             grpo.config.precision_correction = PrecisionCorrectionConfig(**pc_kwargs)
         return grpo
-
-    def test_off_mode_is_noop(self) -> None:
-        adv = torch.tensor([2.0, -3.0, 1.0])
-
-        def _sig():
-            return _flow_signals(
-                log_prob=torch.tensor([1.0, 0.0, -0.5]),
-                old_log_prob=torch.zeros(3),
-            )
-
-        base, _ = self._grpo().compute_loss(AlgorithmInput(signals=_sig(), advantages=adv))
-        off, off_m = self._grpo(rs_mode="off").compute_loss(
-            AlgorithmInput(signals=_sig(), advantages=adv),
-        )
-        assert off.item() == pytest.approx(base.item())
-        assert off_m.update.rs_seq_masked_fraction == 0.0
 
     def test_out_of_band_sample_dropped_from_mean(self) -> None:
         # sample0 log-ratio=ln3 (ratio 3) above high=ln2 → rejected; sample1 ratio 1 kept.

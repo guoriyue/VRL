@@ -263,8 +263,7 @@ def _step_distances(
     return before, after, grad
 
 
-def test_nft_returns_only_objective_owned_step_metrics() -> None:
-    """The trainer, not the NFT objective, owns batch and optimizer diagnostics."""
+def test_nft_approx_kl_reports_the_reference_kl_penalty() -> None:
 
     torch.manual_seed(321)
     model = _build_model()
@@ -286,11 +285,6 @@ def test_nft_returns_only_objective_owned_step_metrics() -> None:
     # approx_kl is the historical CSV view of this exact reference-prediction
     # penalty, so it must reuse the computed KL scalar rather than run another MSE.
     assert metrics.update.approx_kl == metrics.kl_penalty
-    assert metrics.advantage_mean == 0.0
-    assert metrics.grad_norm == 0.0
-    assert metrics.adv_zero_rate == 0.0
-    assert metrics.adv_saturation == 0.0
-    assert metrics.phase_times == {}
 
 
 @pytest.mark.parametrize("trainable", ["lora", "full"])

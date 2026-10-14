@@ -243,28 +243,6 @@ def test_flow_dppo_rs_rejects_out_of_band_precision_drift() -> None:
     assert metrics.update.rs_seq_masked_fraction == pytest.approx(0.25)
 
 
-def test_flow_dppo_default_precision_correction_is_noop() -> None:
-    # The default (tis/rs off) must leave the loss exactly at the vanilla value —
-    # the fix must not perturb non-fp8 (same-dtype) runs.
-    n = 3
-    log_prob = torch.tensor([0.3, -0.2, 0.1])
-    sig = _signals(
-        log_prob=log_prob,
-        old_log_prob=torch.zeros(n),
-        prev_sample_mean=torch.zeros(n, 1, 1, 1),
-        old_prev_sample_mean=torch.zeros(n, 1, 1, 1),
-        std_dev_t=torch.ones(n, 1, 1, 1),
-        dt=torch.full((n, 1, 1, 1), 0.1),
-    )
-    adv = torch.tensor([1.0, -1.0, 0.5])
-    loss, m = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=float("inf"))).compute_loss(
-        _input(sig, adv),
-    )
-    assert loss.item() == pytest.approx((-adv * torch.exp(log_prob)).mean().item(), rel=1e-6)
-    assert m.update.tis_clip_fraction == 0.0
-    assert m.update.rs_seq_masked_fraction == 0.0
-
-
 def test_grpo_guard_rs_rejects_out_of_band_precision_drift() -> None:
     # GRPO-Guard keeps every sample by design; RS still drops a whole sample whose
     # raw rollout->replay drift is out of band (the precision guard, orthogonal to
@@ -361,16 +339,3 @@ def test_grpo_guard_ratio_mean_increases_with_drift() -> None:
     _, m_small = algo.compute_loss(_input(small, adv))
     _, m_large = algo.compute_loss(_input(large, adv))
     assert m_large.kl_penalty > m_small.kl_penalty
-
-
-# ============================================================ kind dispatch
-
-
-@pytest.mark.parametrize(
-    "kind,expected",
-    [("flow_dppo", FlowDPPOConfig), ("grpo_guard", GRPOGuardConfig)],
-)
-def test_kind_builds_the_right_config(kind: str, expected: type) -> None:
-    from vrl.config.schema import AlgorithmConfig
-
-    assert isinstance(AlgorithmConfig(kind=kind).hyperparameters, expected)

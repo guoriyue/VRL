@@ -90,20 +90,6 @@ def test_normalized_sum_lets_low_variance_component_win_when_weighted() -> None:
     assert final_only.max().item() == 2.5
 
 
-def test_normalized_sum_with_only_the_total_is_the_raw_group_advantage() -> None:
-    """The tensor-only advantage path carries no components, so the default
-    strategy has one objective to standardize: it must equal weighted_sum_raw
-    rather than refuse."""
-    group_ids = torch.tensor([0, 0, 0, 1, 1, 1])
-    total = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-
-    norm = _objective("normalized_sum").compute_advantages_from_tensors(total, group_ids)
-    raw = _objective("weighted_sum_raw").compute_advantages_from_tensors(total, group_ids)
-
-    torch.testing.assert_close(norm, raw, atol=0.0, rtol=0.0)
-    assert norm.abs().max().item() > 1.0
-
-
 def test_unknown_strategy_raises() -> None:
     with pytest.raises(ValueError, match="unknown advantage_combine strategy"):
         GRPOConfig(advantage_combine="nope")

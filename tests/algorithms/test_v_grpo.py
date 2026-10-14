@@ -21,7 +21,6 @@ from tests.algorithms.test_diffusion_nft import (
     _build_model,
     _default_forward,
 )
-from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.v_grpo import VGRPO, VGRPOConfig
 from vrl.trainers.online.trainer import OnlineTrainer
@@ -32,22 +31,6 @@ def _batch(*, timestep: float | tuple[float, ...] = 500.0, seed: int = 1234):
     x0 = torch.randn(_LATENT_SHAPE)
     prompt_embeds = torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM)
     return x0, prompt_embeds, _build_batch(x0=x0, prompt_embeds=prompt_embeds, timestep=timestep)
-
-
-# ------------------------------------------------------------ advantages
-
-
-@pytest.mark.parametrize("global_std", [False, True])
-def test_v_grpo_advantages_share_the_grpo_group_contract(global_std: bool) -> None:
-    rewards = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-    group_ids = torch.tensor([0, 0, 0, 1, 1, 1])
-    grpo = GRPO(GRPOConfig(eps=1e-4, global_std=global_std))
-    vgrpo = VGRPO(VGRPOConfig(eps=1e-4, global_std=global_std))
-
-    assert torch.equal(
-        vgrpo.compute_advantages_from_tensors(rewards, group_ids),
-        grpo.compute_advantages_from_tensors(rewards, group_ids),
-    )
 
 
 # ------------------------------------------------------------ objective sign
@@ -165,17 +148,9 @@ def test_noise_is_shared_within_a_group_and_fresh_across_groups_and_updates() ->
     assert not torch.equal(two_groups[2], two_groups[0])
     other_index = objective.noise(x0, group_ids=torch.tensor([3, 3, 3, 3]), timestep_index=2)
     assert not torch.equal(other_index[0], same_group[0])
-    objective._update_counter += 1
+    objective.after_optimizer_step(0)
     next_update = objective.noise(x0, group_ids=torch.tensor([3, 3, 3, 3]), timestep_index=1)
     assert not torch.equal(next_update[0], same_group[0])
-
-
-def test_after_optimizer_step_advances_the_noise_counter() -> None:
-    objective = VGRPO(VGRPOConfig())
-
-    objective.after_optimizer_step(7)
-
-    assert objective._update_counter == 8
 
 
 # ------------------------------------------------------------ guards

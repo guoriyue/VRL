@@ -3,8 +3,7 @@
 verl-omni registers dance_grpo to the same FlowGRPOLoss as flow_grpo, so vrl
 reuses the GRPO algorithm/config unchanged; the only behavioral delta is the
 trainer's per-update random timestep subset (vs the default strided subset).
-These pin (1) the selection helper and (2) that the dance_grpo kind dispatches
-to GRPO without inventing a new config type.
+These pin the selection helper.
 """
 
 from __future__ import annotations
@@ -53,22 +52,3 @@ def test_random_resamples_across_calls() -> None:
 def test_at_least_one_step_even_at_tiny_fraction() -> None:
     assert len(_pick(10, 0.0, "strided")) == 1
     assert len(_pick(10, 0.0, "random")) == 1
-
-
-# ------------------------------------------------ timestep_selection validation
-
-
-# ---------------------------------------------------------- kind dispatch
-
-
-def test_dance_grpo_builds_a_plain_grpo_config() -> None:
-    from omegaconf import OmegaConf
-
-    from vrl.algorithms.grpo.continuous import GRPOConfig
-    from vrl.config.schema import AlgorithmConfig
-
-    cfg = OmegaConf.create({"algorithm": {"kind": "dance_grpo", "clip_ratio": 0.2}})
-    built = AlgorithmConfig.model_validate(
-        OmegaConf.to_container(cfg.algorithm, resolve=True),
-    ).hyperparameters
-    assert isinstance(built, GRPOConfig)

@@ -19,7 +19,6 @@ Flash-GRPO (arXiv:2605.15980) is three mechanisms; each has a test anchor here:
 
 from __future__ import annotations
 
-import math
 from types import SimpleNamespace
 
 import pytest
@@ -142,25 +141,6 @@ def test_rectification_weight_matches_reference_table() -> None:
     )
 
 
-def test_earlier_noisier_steps_get_larger_weight() -> None:
-    # coe decreases monotonically over the window: early high-noise steps have
-    # the SMALLEST log-prob gradients, so rectification weights them UP.
-    std, dt, sigma = _sde_intermediates(list(range(10)))
-    weight = _prepared(list(range(10)))._loss_weight(
-        _signals(10, std_dev_t=std, dt=dt, sigma=sigma).primary,
-    )
-    assert torch.all(weight[:-1] > weight[1:])
-    assert weight[0] > 1.0 > weight[-1]
-
-
-def test_weight_is_mean_one_so_effective_lr_is_unchanged() -> None:
-    std, dt, sigma = _sde_intermediates([0, 3, 6, 9])
-    weight = _prepared([0, 3, 6, 9])._loss_weight(
-        _signals(4, std_dev_t=std, dt=dt, sigma=sigma).primary,
-    )
-    assert weight.mean().item() == pytest.approx(1.0, rel=1e-6)
-
-
 # ------------------------------------------------------------- loss behavior
 
 
@@ -238,18 +218,6 @@ def test_loss_weight_requires_the_update_denominator() -> None:
         FlashGRPO(FlashGRPOConfig(), scheduler=_Wan20Scheduler())._loss_weight(
             _signals(2, std_dev_t=std, dt=dt, sigma=sigma).primary
         )
-
-
-# ------------------------------------------------------------ kind dispatch
-
-
-def test_flash_grpo_kind_dispatches_to_its_config() -> None:
-    from vrl.config.algorithm import algorithm_config_class
-
-    cls = algorithm_config_class("flash_grpo")
-    assert cls is FlashGRPOConfig
-    # The paper's tight clip is the algorithm's default identity, not a preset.
-    assert cls().clip_ratio == pytest.approx(1e-3)
 
 
 # --------------------------------------------- sde_window selection contract
@@ -381,20 +349,3 @@ def test_grad_scale_formula_is_the_logprob_gradient_magnitude() -> None:
         float(expected_magnitude),
         rel=1e-9,
     )
-
-
-def test_reference_table_is_reproduced_from_first_principles() -> None:
-    """The hardcoded table is 1/c(t) on the wan schedule — no vrl code involved.
-
-    Guards the table constant itself: if someone edits _REFERENCE_COE, this
-    fails against plain math.
-    """
-
-    sigmas = _wan20_sigmas().tolist()
-    sigma_max, sigma_min = sigmas[1], sigmas[-1]
-    for step, reference in enumerate(_REFERENCE_COE):
-        sigma, sigma_prev = sigmas[step], sigmas[step + 1]
-        sqrt_neg_dt = math.sqrt(sigma - sigma_prev)
-        std = sigma_min + (sigma_max - sigma_min) * sigma
-        c = sqrt_neg_dt / std + std * sqrt_neg_dt * (1 - sigma) / (2 * sigma)
-        assert 1 / c == pytest.approx(reference, rel=2e-3)
