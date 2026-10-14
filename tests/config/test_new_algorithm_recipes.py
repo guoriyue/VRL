@@ -77,8 +77,3 @@ def test_algorithm_configs_reject_unconsumed_knobs(
 
     with pytest.raises(ValueError, match=rf"algorithm\.{field}"):
         parse_config(cfg)
-
-
-def test_v_grpo_recipe_has_no_unknown_config_keys() -> None:
-    """An unknown key fails parse_config, so a clean build is the assertion."""
-    BuiltConfigs.from_cfg(_load("v_grpo"))

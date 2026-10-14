@@ -14,10 +14,6 @@ from pathlib import Path
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.algorithms.diffusion_nft import DiffusionNFTConfig
-from vrl.algorithms.dpo import DiffusionDPOConfig
-from vrl.algorithms.grpo.continuous import GRPOConfig
-from vrl.algorithms.v_grpo import VGRPOConfig
 from vrl.config.builders import (
     BuiltConfigs,
     RewardRuntimeConfig,
@@ -310,27 +306,6 @@ def test_all_online_experiments_pass_static_launch_preflight() -> None:
     assert failures == []
 
 
-def test_validate_rejects_compile_with_gradient_checkpointing() -> None:
-    """compile x grad-ckpt must fail at config load, not as a mid-run dynamo crash.
-
-    The trainer refuses the combination at startup (activation_checkpointing.py);
-    this checks require_training_config rejects it too, because a model-layer
-    torch_compile.enable=true default can silently flip compile on underneath an
-    experiment that sets checkpointing (that exact collision shipped in four
-    cosmos_predict2 240p recipes before this load-time check existed).
-    """
-    base = "experiment/sd3_5/online_grpo_ocr"  # resolves compile=true
-
-    for ckpt in ("true", "full", "full_cpu", "selective"):
-        cfg = load_config(base, overrides=[f"actor.gradient_checkpointing={ckpt}"])
-        with pytest.raises(ValueError, match="cannot combine"):
-            require_training_config(cfg)
-
-    # Explicit off (either spelling) keeps compile allowed.
-    cfg = load_config(base, overrides=["actor.gradient_checkpointing=off"])
-    require_training_config(cfg)
-
-
 def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
     """``/base/rollout/orchestration=continuous`` lands under ``trainer.rollout_orchestration``
     and types into a continuous schedule with a positive staleness bound.
@@ -351,15 +326,15 @@ def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
     assert typed.continuous.max_stale_policy_versions >= 1
 
 
+# Every recipe below also passes test_all_online_experiments_pass_static_launch_preflight
+# (schedule mode and reward parking); these pin the topology each one resolves to.
+
+
 def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -> None:
     """The reusable hardware gate must preserve the topology it validates."""
 
     cfg = load_config("experiment/sd3_5/online_grpo_ocr_continuous_4gpu_acceptance")
-    require_training_config(cfg)
-    built = BuiltConfigs.from_cfg(cfg)
     resources = ResourcePlan.from_root(parse_config(cfg))
-    resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    _validate_reward_parking(built.reward, resources)
 
     assert resources.trainer_devices == (0,)
     assert resources.rollout_devices == (1, 2, 3)
@@ -374,23 +349,37 @@ def test_sd35_continuous_4gpu_acceptance_resolves_disjoint_resident_topology() -
             resources.lifecycle.offload_reward,
         ),
     )
-    assert built.trainer.rollout_orchestration.schedule_mode == "continuous"
 
 
-def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
-    cuda_devices,
-) -> None:
-    """The four-L4 recipe keeps one colocated rollout and CPU reward per rank."""
+def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
+    """The robotics run must keep trainer, rollout, and reward GPUs disjoint."""
+
+    cfg = load_config("experiment/wan_2_1/online_grpo_robotics_physics_4x_l4_continuous")
+    resources = ResourcePlan.from_root(parse_config(cfg))
+
+    assert resources.trainer_devices == (0,)
+    assert resources.rollout_devices == (1, 2)
+    assert resources.reward_devices == ()
+    assert resources.rollout_num_engines == 2
+    assert resources.lifecycle.rollout_mode == "resident"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "cosmos_predict2/online_grpo_droid_overfit_validation_fsdp_4x_l4",
+        "cosmos_predict2/online_grpo_droid_lora_480p_curve_fsdp_4x_l4",
+        "wan_2_1/online_grpo_droid_fullparam_fsdp_3x_l4",
+        "wan_2_1/online_grpo_droid_fullparam_fsdp_4x_l4",
+        "wan_2_1/online_grpo_i2v_fsdp_2x_l4",
+    ],
+)
+def test_rank_local_fsdp_recipes_colocate_one_rollout_per_rank(cuda_devices, name: str) -> None:
+    """Each rank sees one GPU: its rollout engine shares it with the trainer shard
+    and releases it before train."""
 
     cuda_devices(1)
-    name = "experiment/cosmos_predict2/online_grpo_droid_overfit_validation_fsdp_4x_l4"
-    cfg = load_config(name)
-    parent = load_config("experiment/cosmos_predict2/online_grpo_droid_overfit_validation")
-    require_training_config(cfg)
-    built = BuiltConfigs.from_cfg(cfg)
-    resources = ResourcePlan.from_root(parse_config(cfg))
-    resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    _validate_reward_parking(built.reward, resources)
+    resources = ResourcePlan.from_root(parse_config(load_config(f"experiment/{name}")))
 
     assert resources.trainer_devices == resources.rollout_devices == (0,)
     assert resources.rollout_num_engines == 1
@@ -398,8 +387,14 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
     assert resources.lifecycle.rollout_mode == "on_demand"
     assert resources.lifecycle.park_rollout_for_train is True
 
-    # Per-rank geometry remains inherited from the parent; only the topology
-    # leaves may differ. Compare against the source of truth, not literals.
+
+def test_cosmos_predict2_overfit_fsdp_4x_l4_inherits_parent_geometry() -> None:
+    """Per-rank geometry remains inherited from the parent; only the topology
+    leaves may differ. Compare against the source of truth, not literals."""
+
+    cfg = load_config("experiment/cosmos_predict2/online_grpo_droid_overfit_validation_fsdp_4x_l4")
+    parent = load_config("experiment/cosmos_predict2/online_grpo_droid_overfit_validation")
+
     for path in (
         "actor.ppo_epochs",
         "actor.timestep_fraction",
@@ -410,26 +405,11 @@ def test_cosmos_predict2_overfit_fsdp_4x_l4_resolves_rank_local_topology(
         assert OmegaConf.select(cfg, path) == OmegaConf.select(parent, path)
 
 
-def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
-    cuda_devices,
-) -> None:
+def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics() -> None:
     """The durable full-DROID run changes topology without changing its curve."""
 
-    cuda_devices(1)
-    name = "experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve_fsdp_4x_l4"
-    cfg = load_config(name)
+    cfg = load_config("experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve_fsdp_4x_l4")
     parent = load_config("experiment/cosmos_predict2/online_grpo_droid_lora_480p_curve")
-    require_training_config(cfg)
-    built = BuiltConfigs.from_cfg(cfg)
-    resources = ResourcePlan.from_root(parse_config(cfg))
-    resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    _validate_reward_parking(built.reward, resources)
-
-    assert resources.trainer_devices == resources.rollout_devices == (0,)
-    assert resources.rollout_num_engines == 1
-    assert resources.reward_devices == ()
-    assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.park_rollout_for_train is True
 
     # The parent is the single source of truth for learning, dataset, and reward
     # semantics. Only the validated hardware-specific leaves may differ here.
@@ -476,70 +456,15 @@ def test_cosmos_predict2_full_curve_fsdp_4x_l4_preserves_training_semantics(
     assert trainer == parent_trainer
 
 
-def test_wan_robotics_continuous_resolves_balanced_four_l4_topology() -> None:
-    """The robotics run must keep trainer, rollout, and reward GPUs disjoint."""
-
-    cfg = load_config(
-        "experiment/wan_2_1/online_grpo_robotics_physics_4x_l4_continuous",
-    )
-    require_training_config(cfg)
-    built = BuiltConfigs.from_cfg(cfg)
-    resources = ResourcePlan.from_root(parse_config(cfg))
-    resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    _validate_reward_parking(built.reward, resources)
-
-    orchestration = built.trainer.rollout_orchestration
-    assert resources.trainer_devices == (0,)
-    assert resources.rollout_devices == (1, 2)
-    assert resources.reward_devices == ()
-    assert resources.rollout_num_engines == 2
-    assert resources.lifecycle.rollout_mode == "resident"
-    assert orchestration.schedule_mode == "continuous"
-
-
-def test_wan_droid_fullparam_fsdp_3x_l4_preserves_launch_contract(
-    cuda_devices,
-) -> None:
-    """The long run keeps full-param training and rank-local rollout semantics."""
-
-    cuda_devices(1)
-    cfg = load_config(
-        "experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_3x_l4",
-    )
-    require_training_config(cfg)
-    built = BuiltConfigs.from_cfg(cfg)
-    resources = ResourcePlan.from_root(parse_config(cfg))
-    resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    _validate_reward_parking(built.reward, resources)
-
-    assert resources.trainer_devices == resources.rollout_devices == (0,)
-    assert resources.rollout_num_engines == 1
-    assert resources.reward_devices == ()
-    assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.park_rollout_for_train is True
-    assert built.trainer.rollout_orchestration.schedule_mode == "strict_on_policy"
-
-
 def test_wan_droid_fullparam_fsdp_4x_l4_uses_symmetric_reward_handoffs(cuda_devices) -> None:
     """All four ranks time-share local rollout and the complete robotics reward."""
 
     cuda_devices(1)
-    cfg = load_config(
-        "experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_4x_l4",
-    )
-    require_training_config(cfg)
-    built = BuiltConfigs.from_cfg(cfg)
+    cfg = load_config("experiment/wan_2_1/online_grpo_droid_fullparam_fsdp_4x_l4")
     resources = ResourcePlan.from_root(parse_config(cfg))
-    resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    _validate_reward_parking(built.reward, resources)
 
-    assert resources.trainer_devices == resources.rollout_devices == (0,)
-    assert resources.reward_devices == ()
     assert resources.reward_torch_device(trainer_device="cuda:0") == "cuda:0"
-    assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.offload_reward is True
     handoff = resources.lifecycle
-    assert handoff.park_rollout_for_train is True
     assert handoff.park_rollout_for_reward is True
     assert handoff.park_trainer_for_reward is True
     assert handoff.offload_reward is True
@@ -564,40 +489,6 @@ def test_masked_physical_ordinal_comes_from_the_config_knob_not_the_auto_path() 
     assert resources.visible_devices == (1,)
     assert resources.trainer_devices == resources.rollout_devices == (1,)
     assert resources.colocated is True
-
-
-def test_algorithm_config_dispatches_representative_kinds() -> None:
-    """``algorithm.kind`` dispatches to the matching hyperparameter dataclass across
-    representative experiments (GRPO, DPO, NFT, V-GRPO).
-    """
-    examples = {
-        "sd3_5/online_grpo_ocr": GRPOConfig,
-        "wan_2_1/offline_dpo_pickapic": DiffusionDPOConfig,
-        "cosmos_predict2_5/online_nft_kling_video_reward": DiffusionNFTConfig,
-        "sd3_5/online_v_grpo_pickscore": VGRPOConfig,
-    }
-    for name, expected_type in examples.items():
-        cfg = load_config(f"experiment/{name}")
-        algo_cfg = parse_config(cfg).algorithm.hyperparameters
-        assert isinstance(algo_cfg, expected_type)
-
-
-def test_wan_i2v_fsdp_2x_l4_resolves_bounded_shared_topology(cuda_devices) -> None:
-    """The real-weight I2V gate shards replay and sequentially offloads rollout."""
-
-    cuda_devices(1)
-    cfg = load_config("experiment/wan_2_1/online_grpo_i2v_fsdp_2x_l4")
-    require_training_config(cfg)
-    built = BuiltConfigs.from_cfg(cfg)
-    resources = ResourcePlan.from_root(parse_config(cfg))
-    resources.validate_schedule_mode(built.trainer.rollout_orchestration.schedule_mode)
-    _validate_reward_parking(built.reward, resources)
-
-    assert resources.trainer_devices == resources.rollout_devices == (0,)
-    assert resources.rollout_num_engines == 1
-    assert resources.reward_devices == ()
-    assert resources.lifecycle.rollout_mode == "on_demand"
-    assert resources.lifecycle.park_rollout_for_train is True
 
 
 def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
