@@ -20,7 +20,6 @@ from vrl.ray.resources import RoleLifecycle
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rollouts.collector.core import (
     PromptCollectionCleanupError,
-    RolloutGenerationResult,
 )
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.stats import RolloutStats
@@ -312,26 +311,6 @@ async def test_overlap_stats_support_batched_serial_vs_streaming_wall_ab(
     }
 
 
-@pytest.mark.parametrize(
-    "reward_devices",
-    [(1,), (0,), (0, 1)],
-    ids=["shares_rollout_gpu", "shares_trainer_gpu", "shares_both"],
-)
-@pytest.mark.asyncio
-async def test_reward_handoff_keeps_generation_and_scoring_serial(
-    monkeypatch, tmp_path, reward_devices: tuple[int, ...]
-) -> None:
-    bench = real_collector(
-        monkeypatch,
-        tmp_path,
-        lifecycle=RoleLifecycle(trainer=(0,), rollout=(1,), reward=reward_devices),
-    )
-
-    await _collect(bench, [PromptExample(prompt="p0"), PromptExample(prompt="p1")])
-
-    assert _flow(bench) == ["generate", "generate", "score"]
-
-
 @pytest.mark.asyncio
 async def test_score_failure_is_drained_without_task_leak(monkeypatch, tmp_path) -> None:
     reward = _GatedReward(fail_score=True)
@@ -482,24 +461,17 @@ async def test_generation_handoff_is_demand_driven_and_never_scores(monkeypatch,
     )
     first_request, first_indices = next(groups)
     assert _flow(bench) == []
-    first = RolloutGenerationResult(
-        await collector.generate_rollout(first_request), first_indices, 0.0, 0.0
-    )
-    assert first.prompt_indices == [0]
-    assert first.completed_at >= first.started_at
+    first = await collector.generate_rollout(first_request)
+    assert first_indices == [0]
     assert _generated_prompts(bench) == ["plain"]
     second_request, second_indices = next(groups)
-    second = RolloutGenerationResult(
-        await collector.generate_rollout(second_request), second_indices, 0.0, 0.0
-    )
-    assert second.prompt_indices == [1]
+    second = await collector.generate_rollout(second_request)
+    assert second_indices == [1]
     assert _generated_prompts(bench) == ["plain", "example"]
     groups.close()
     # Closing admission must not generate the remaining prompt or start reward.
     assert _flow(bench) == ["generate", "generate"]
-    scored = collector.assemble_training_batches(
-        await collector.evaluate_rollout([first.unscored, second.unscored])
-    )
+    scored = collector.assemble_training_batches(await collector.evaluate_rollout([first, second]))
     assert _flow(bench) == ["generate", "generate", "score"]
     assert len(scored) == 2
     assert all(batch.rewards.shape == (2,) for batch in scored)

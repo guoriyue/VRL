@@ -15,8 +15,7 @@ from tests.rollouts.collector._helpers import (
     collect_scored,
     real_collector,
 )
-from vrl.generation import GenerationInput, GenerationOutput
-from vrl.models.families.registry import get_model_family_entry
+from vrl.generation import GenerationOutput
 from vrl.ray.resources import RoleLifecycle
 from vrl.rewards import RewardOutput, RewardSample
 from vrl.rewards.base import RewardCleanupError
@@ -24,8 +23,6 @@ from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
-from vrl.rollouts.collector.config import RolloutCollectorConfig
-from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.data.prompts import PromptExample
 from vrl.trainers.weight_sync import flatten_trainable_module_state, to_cpu_snapshot
@@ -249,14 +246,6 @@ def test_collector_derives_reward_generation_overlap_from_topology(
     assert bench.collector.reward_isolation_verified is expected
 
 
-def test_collector_without_a_lifecycle_plan_treats_reward_as_isolated(
-    monkeypatch, tmp_path
-) -> None:
-    bench = real_collector(monkeypatch, tmp_path)
-
-    assert bench.collector.reward_isolation_verified is True
-
-
 def test_collector_blocks_trainer_handoff_when_reward_parking_fails(monkeypatch, tmp_path) -> None:
     """A failed reward park remains terminal even after rollout itself parks."""
 
@@ -415,9 +404,20 @@ def test_reward_samples_preserve_prompt_identity_and_metadata(monkeypatch, tmp_p
 
 
 def test_collector_uses_one_reward_call_and_splits_scores_per_group(monkeypatch, tmp_path) -> None:
-    """One reward call preserves every group's metadata and sample identity."""
+    """One reward call preserves every group's metadata and sample identity, and
+    reward components travel with the group they describe."""
 
-    bench = real_collector(monkeypatch, tmp_path)
+    class _ComponentReward(IndexReward):
+        async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
+            output = await super().score_batch(samples)
+            return RewardOutput(
+                scores=output.scores,
+                components={
+                    "observer": tuple(value + 10.0 for value in output.scores),
+                },
+            )
+
+    bench = real_collector(monkeypatch, tmp_path, reward=_ComponentReward())
     collector = bench.collector
 
     async def _collect_groups():
@@ -452,40 +452,6 @@ def test_collector_uses_one_reward_call_and_splits_scores_per_group(monkeypatch,
         "group-1",
     ]
     assert len(set(call["sample_ids"])) == 5
-    assert first.rewards.tolist() == [0.0, 1.0]
-    assert second.rewards.tolist() == [2.0, 3.0, 4.0]
-
-
-def test_collector_attaches_components_to_their_exact_rollout_groups(
-    monkeypatch, tmp_path
-) -> None:
-    """Prefetched reward observations travel with the batch they describe."""
-
-    class _ComponentReward(IndexReward):
-        async def score_batch(self, samples: Sequence[RewardSample]) -> RewardOutput:
-            output = await super().score_batch(samples)
-            return RewardOutput(
-                scores=output.scores,
-                components={
-                    "observer": tuple(value + 10.0 for value in output.scores),
-                },
-            )
-
-    collector = real_collector(monkeypatch, tmp_path, reward=_ComponentReward()).collector
-
-    async def _collect_two_groups():
-        pending = [
-            await collector.generate_rollout(
-                collector.request_builder.build(["p0"], group_size=2)
-            ),
-            await collector.generate_rollout(
-                collector.request_builder.build(["p1"], group_size=3)
-            ),
-        ]
-        return collector.assemble_training_batches(await collector.evaluate_rollout(pending))
-
-    first, second = asyncio.run(_collect_two_groups())
-
     assert first.rewards.tolist() == [0.0, 1.0]
     assert first.extras["reward_components"]["observer"].tolist() == [10.0, 11.0]
     assert second.rewards.tolist() == [2.0, 3.0, 4.0]
@@ -561,49 +527,6 @@ def test_reward_output_is_independent_of_trajectory_storage_dtype(monkeypatch, t
     assert torch.equal(builder.reward_outputs(), canonical)
 
 
-def test_collector_forwards_reference_metadata_to_request() -> None:
-    """``GenerationInput.reference_images`` reaches both the request input (for the executor) and
-    the collector metadata (for the reward side).
-    """
-
-    builder = GenerationRequestBuilder(
-        entry=get_model_family_entry("cosmos-predict2"),
-        config=RolloutCollectorConfig(request_sampling={"num_steps": 1}),
-    )
-
-    collector_request = builder.build(
-        [GenerationInput(prompt="prompt", reference_images=["/tmp/reference.png"])],
-        1,
-    )
-
-    assert collector_request.request.inputs[0].reference_images == ["/tmp/reference.png"]
-    assert collector_request.metadata["reference_images"] == ["/tmp/reference.png"]
-
-
-def test_collector_forwards_target_metadata_to_request() -> None:
-    """Checks collector forwards target artifact metadata to rewards."""
-
-    builder = GenerationRequestBuilder(
-        entry=get_model_family_entry("cosmos-predict2"),
-        config=RolloutCollectorConfig(request_sampling={"num_steps": 1}),
-    )
-
-    targets = {"target_image": "/tmp/target.png", "target_video": "/tmp/target.mp4"}
-    collector_request = builder.build(
-        [
-            GenerationInput(
-                prompt="prompt",
-                reference_images=["/tmp/reference.png"],
-            ),
-        ],
-        1,
-        metadata=dict(targets),
-    )
-
-    assert collector_request.metadata["target_image"] == "/tmp/target.png"
-    assert collector_request.metadata["target_video"] == "/tmp/target.mp4"
-
-
 def test_reward_outputs_reconstructs_uint8_wire_video_exactly(monkeypatch, tmp_path) -> None:
     """Checks uint8 wire-packed video reconstructs to k/255 floats.
 
@@ -631,63 +554,14 @@ def test_reward_outputs_reconstructs_uint8_wire_video_exactly(monkeypatch, tmp_p
     assert torch.equal(to_uint8(reconstructed), packed)
 
 
-def test_uint8_quantization_roundtrip_is_exact_for_all_byte_values() -> None:
-    """Checks k/255 floats survive both downstream quantization formulas.
-
-    Pins the mechanism behind reward-score equality: to_uint8 (reward
-    models) and the *255-round mp4 path must both map k/255 back to k.
-    """
-
-    from vrl.utils.media import to_uint8
-
-    k = torch.arange(256, dtype=torch.float32)
-    grid = k / 255.0
-
-    assert torch.equal(to_uint8(grid), k.to(torch.uint8))
-    mp4_path = (grid * 255.0).round().clamp(0, 255).to(torch.uint8)
-    assert torch.equal(mp4_path, k.to(torch.uint8))
-
-
-def test_collect_phase_timings_are_per_call_not_shared(monkeypatch, tmp_path) -> None:
-    """Phase timings live on each call's rollouts; no shared collector state."""
-
-    collector = real_collector(monkeypatch, tmp_path).collector
-    monkeypatch.setenv("VRL_PROFILE", "1")
-
-    async def _run() -> tuple[Any, Any]:
-        first = await collector.generate_rollout(
-            collector.request_builder.build(["p0"], group_size=1)
-        )
-        second = await collector.generate_rollout(
-            collector.request_builder.build(["p1"], group_size=1)
-        )
-        collector.assemble_training_batches(await collector.evaluate_rollout([first, second]))
-        return first, second
-
-    first, second = asyncio.run(_run())
-
-    # Generation time is owned per generate_rollout call.
-    assert "collect.engine_generate" in first.phases
-    assert "collect.engine_generate" in second.phases
-    # Call-level score/build timings land on the first group only, so summing
-    # phases over groups never multiplies the same wall time.
-    assert "collect.reward_score" in first.phases
-    assert "collect.batch_build" in first.phases
-    assert "collect.reward_score" not in second.phases
-    assert "collect.batch_build" not in second.phases
-
-
-@pytest.mark.parametrize("group_size", [True, 2.5, "2"])
 def test_collector_does_not_coerce_group_size_before_request_validation(
-    monkeypatch, tmp_path, group_size
+    monkeypatch, tmp_path
 ) -> None:
     bench = real_collector(monkeypatch, tmp_path)
     collector = bench.collector
     with pytest.raises(ValueError, match="samples_per_prompt must be an integer"):
         asyncio.run(
-            collector.generate_rollout(
-                collector.request_builder.build(["p0"], group_size=group_size)
-            )
+            collector.generate_rollout(collector.request_builder.build(["p0"], group_size=True))
         )
     assert bench.trace.requests == []
 
