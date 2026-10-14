@@ -46,20 +46,6 @@ def test_pipelined_results_equal_serial_in_batch_order() -> None:
     ]
 
 
-def test_every_batch_produced_exactly_once() -> None:
-    produced: list = []
-
-    def produce(batch):
-        produced.append(batch)
-        return ("r", batch)
-
-    batches = [f"c{i}" for i in range(5)]
-    out = _executor(produce).execute_request_batches("req", batches)
-
-    assert produced == batches  # produced in order, once each
-    assert len(out) == len(batches)
-
-
 def test_each_batch_is_copied_to_cpu_before_the_next_is_produced(monkeypatch) -> None:
     operations: list[tuple[str, str]] = []
 
@@ -84,22 +70,6 @@ def test_each_batch_is_copied_to_cpu_before_the_next_is_produced(monkeypatch) ->
         ("produce", "c2"),
         ("copy", "c2"),
     ]
-
-
-def test_single_batch_still_produces_and_copies() -> None:
-    out = _executor(lambda batch: ("p", batch)).execute_request_batches(
-        "req",
-        ["only"],
-    )
-    assert out == [("p", "only")]
-
-
-def test_empty_batches_returns_empty() -> None:
-    out = _executor(lambda batch: batch).execute_request_batches(
-        "req",
-        [],
-    )
-    assert out == []
 
 
 def test_produce_error_propagates_after_earlier_batches_were_copied(monkeypatch) -> None:

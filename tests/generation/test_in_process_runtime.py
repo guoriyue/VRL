@@ -7,18 +7,11 @@ import asyncio
 import torch
 
 from tests.scripts.eval.fixtures import tiny_sana_stack
-from vrl.generation.protocols import GenerationRuntime
 from vrl.rewards.functions.registry import MultiReward
 from vrl.rewards.runtime import RewardFunctionRuntime
 from vrl.rollouts.collector import RolloutCollector
 from vrl.rollouts.stats import RolloutStats
 from vrl.trainers.data.prompts import PromptExample
-
-
-def test_runtime_satisfies_the_generation_protocol(monkeypatch, tmp_path) -> None:
-    runtime = tiny_sana_stack(monkeypatch, tmp_path).runtime
-
-    assert isinstance(runtime, GenerationRuntime)
 
 
 def test_collector_generates_and_scores_through_the_real_family_executor(

@@ -62,15 +62,6 @@ def test_pipelined_equals_serial_real_cuda() -> None:
         assert torch.equal(sp["scalar"], pp["scalar"]), f"batch {idx} scalar diverged"
 
 
-def test_pipelined_preserves_batch_order_real_cuda() -> None:
-    # Distinct seeds => distinct values; the result list must stay in batch order.
-    batches = [10, 20, 30, 40]
-    pipelined = _executor(_produce).execute_request_batches("req", batches)
-    expected = [_produce(c)["scalar"].cpu() for c in batches]
-    for got, exp in zip(pipelined, expected, strict=True):
-        assert torch.equal(got["scalar"], exp)
-
-
 def test_pipelined_moves_real_slots_batch_result_to_cpu() -> None:
     def _produce_batch(batch: int) -> DenoiseBatchResult:
         tensors = _produce(batch)

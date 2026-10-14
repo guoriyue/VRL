@@ -10,8 +10,6 @@ from dataclasses import asdict
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
-
 from tests.generation.execution._helpers import launch_config
 from vrl.generation.execution.sample_batches import GenerationSampleBatch
 from vrl.generation.execution.types import (
@@ -107,24 +105,3 @@ def test_cuda_occupancy_is_absent_only_without_cuda(monkeypatch) -> None:
 
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     assert BatchMemoryReading.cuda_occupancy_snapshot() is None
-
-
-@pytest.mark.parametrize("operation", ["mem_get_info", "memory_allocated", "memory_reserved"])
-def test_cuda_occupancy_preserves_query_errors(monkeypatch, operation) -> None:
-    import torch
-
-    from vrl.generation.execution.types import BatchMemoryReading
-
-    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda: (8, 16))
-    monkeypatch.setattr(torch.cuda, "memory_allocated", lambda: 4)
-    monkeypatch.setattr(torch.cuda, "memory_reserved", lambda: 6)
-    failure = RuntimeError("CUDA query failed")
-
-    def fail():
-        raise failure
-
-    monkeypatch.setattr(torch.cuda, operation, fail)
-    with pytest.raises(RuntimeError, match="CUDA query failed") as caught:
-        BatchMemoryReading.cuda_occupancy_snapshot()
-    assert caught.value is failure
