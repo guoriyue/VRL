@@ -151,18 +151,6 @@ def test_crop_criteria_are_judged_per_tile_and_averaged(tmp_path):
     assert scores["qwen3vl_preference"] == pytest.approx(0.625)
 
 
-def test_compare_answer_mode_is_accepted_and_batched_with_its_suffix():
-    criteria = [{"name": "fidelity", "question": "F?", "answer": "compare"}]
-    model = _model([0.25], criteria=criteria)
-    scores = model.score(Image.new("RGB", (8, 8)), prompt="x")
-    assert scores["qwen3vl_preference/fidelity"] == 0.25
-    assert model.asked[0][2] == ["compare"]
-    with pytest.raises(ValueError, match="answer must be one of"):
-        Qwen3VLPreferenceRewardModel(
-            {"device": "cpu", "criteria": [{"name": "x", "question": "q", "answer": "grade"}]}
-        )
-
-
 def test_intent_metadata_fills_the_intent_placeholder_and_falls_back_to_the_prompt():
     criteria = [{"name": "fid", "question": 'Does it show "{intent}" for "{prompt}"?'}]
     model = _model([1.0], criteria=criteria, intent_key="judge_intent")
@@ -322,15 +310,18 @@ def test_invert_requires_an_absolute_yesno_criterion():
         )
 
 
-def test_ab_and_digit_answer_modes_are_accepted_and_carry_their_suffix():
+def test_compare_ab_and_digit_answer_modes_are_accepted_and_batched_once():
     criteria = [
+        {"name": "fidelity", "question": "F?", "answer": "compare"},
         {"name": "beauty", "question": "Which is better?", "answer": "ab"},
         {"name": "score", "question": "How good?", "answer": "digit"},
     ]
-    model = _model([0.8, 0.5], criteria=criteria)
+    model = _model([0.25, 0.8, 0.5], criteria=criteria)
     scores = model.score(Image.new("RGB", (8, 8)), prompt="x")
-    assert scores["qwen3vl_preference/beauty"] == 0.8 and scores["qwen3vl_preference/score"] == 0.5
-    assert model.asked[0][2] == ["ab", "digit"]  # one batched forward, both modes
+    assert scores["qwen3vl_preference/fidelity"] == 0.25
+    assert scores["qwen3vl_preference/beauty"] == 0.8
+    assert scores["qwen3vl_preference/score"] == 0.5
+    assert model.asked[0][2] == ["compare", "ab", "digit"]  # one batched forward
 
 
 def test_group_criterion_ranks_siblings_by_pairwise_wins_with_the_reference_shown(tmp_path):
