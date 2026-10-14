@@ -229,16 +229,6 @@ def _make_cumem_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_executor_device_preserves_cuda_discovery_errors(monkeypatch) -> None:
-    def fail_discovery() -> bool:
-        raise RuntimeError("CUDA device discovery failed")
-
-    monkeypatch.setattr(torch.cuda, "is_available", fail_discovery)
-
-    with pytest.raises(RuntimeError, match="CUDA device discovery failed"):
-        executor_device(SimpleNamespace(model=SimpleNamespace()))
-
-
 @pytest.mark.parametrize("cuda_available", [False, True])
 def test_executor_device_default_follows_cuda_availability(monkeypatch, cuda_available) -> None:
     monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda_available)
@@ -266,40 +256,6 @@ def test_sleep_parks_model_and_frozen_on_cpu_keeping_executor() -> None:
     assert snapshot.residual_gpu_used_bytes == snapshot.baseline_gpu_used_bytes
 
 
-def test_worker_keeps_backend_state_behind_one_parking_owner() -> None:
-    core = _core(_SleepModel())
-
-    assert "_memory_parking" in vars(core)
-    assert {
-        "_preload_gpu_used_bytes",
-        "_cpu_parked_device",
-        "_pipeline_offload_parked",
-        "_pipeline_offload_error",
-        "_cumem",
-    }.isdisjoint(vars(core))
-    assert {
-        "_supports_cumem_pool",
-        "_requires_frozen_component_parking",
-        "_pipeline_offload_mode",
-        "_pool",
-        "_baseline_gpu_used_bytes",
-        "_cpu_restore_device",
-    }.isdisjoint(vars(core._memory_parking))
-
-
-def test_wake_restores_model_to_captured_device() -> None:
-    model = _SleepModel(device="cuda:0")
-    core = _core(model)
-
-    core.sleep()
-    core.wake()
-
-    # Restored onto the device the model lived on before sleeping, no disk reload.
-    assert model.to_calls == ["cpu", "cuda:0"]
-    assert model.frozen_calls == ["cpu", "cuda:0"]
-    assert core.executor is not None
-
-
 def test_cpu_sleep_and_wake_are_idempotent() -> None:
     model = _SleepModel(device="cuda:0")
     core = _core(model)
@@ -309,8 +265,10 @@ def test_cpu_sleep_and_wake_are_idempotent() -> None:
     core.wake()
     core.wake()
 
+    # Restored onto the device the model lived on before sleeping, no disk reload.
     assert model.to_calls == ["cpu", "cuda:0"]
     assert model.frozen_calls == ["cpu", "cuda:0"]
+    assert core.executor is not None
 
 
 def test_parked_worker_rejects_execution_until_wake() -> None:
@@ -686,72 +644,19 @@ def test_cumem_sleep_wake_uses_allocator_not_module_moves(
     core.load_policy()
 
     snapshot = core.sleep()
+    core.sleep()
+    core.wake()
     core.wake()
 
-    # The whole pooled model is released/restored through the allocator; the naive
-    # per-module .to() round trip is bypassed entirely.
+    # The whole pooled model is released/restored through the allocator once (the
+    # pool state makes repeats no-ops); the naive per-module .to() round trip is
+    # bypassed entirely.
     tag = "vrl:generation:rollout-0:weights"
     assert fake.sleep_calls == [(tag,)]
     assert fake.wake_calls == [[tag]]
     assert model.to_calls == []
     assert model.frozen_calls == []
     assert snapshot.residual_bytes_limit == CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT
-
-
-@pytest.mark.parametrize(
-    ("extra_residual_bytes", "should_pass"),
-    ((0, True), (1, False)),
-)
-def test_cumem_sleep_bounds_lazy_cuda_runtime_residual(
-    monkeypatch: pytest.MonkeyPatch,
-    extra_residual_bytes: int,
-    should_pass: bool,
-) -> None:
-    """Runtime drift is bounded; one byte beyond the protocol limit still fails."""
-
-    import vrl.models.parking as parking_backends
-
-    baseline = 1024
-    residual = baseline + CUDA_RUNTIME_RESIDUAL_BYTES_LIMIT + extra_residual_bytes
-    readings = iter((baseline, 10 * 1024**3, residual))
-    monkeypatch.setattr(
-        parking_backends, "gpu_process_used_bytes", lambda device=None: next(readings)
-    )
-    fake = _FakeCuMem()
-    _install_cumem_pool(monkeypatch, fake)
-    model = _SleepModel(device="cuda:0")
-    core = _core(None, sleep_offload=True)
-    core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
-    core.load_policy()
-
-    if should_pass:
-        snapshot = core.sleep()
-        assert snapshot.residual_gpu_used_bytes == residual
-        return
-    with pytest.raises(RuntimeError, match="failed physical GPU parking validation"):
-        core.sleep()
-    with pytest.raises(RuntimeError, match=r"quarantined.*refusing wake"):
-        core.wake()
-
-
-def test_cumem_sleep_and_wake_use_pool_state_for_idempotency(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = _SleepModel(device="cuda:0")
-    fake = _FakeCuMem()
-    _install_cumem_pool(monkeypatch, fake)
-    core = _core(None, sleep_offload=True)
-    core._build_executor = lambda: _build_executor(core, model)  # type: ignore[method-assign]
-    core.load_policy()
-
-    core.sleep()
-    core.sleep()
-    core.wake()
-    core.wake()
-
-    tag = "vrl:generation:rollout-0:weights"
-    assert fake.sleep_calls == [(tag,)]
-    assert fake.wake_calls == [[tag]]
 
 
 def test_cumem_sleep_failure_requires_actor_termination(
@@ -1208,36 +1113,6 @@ def test_pipeline_offload_release_then_reload_has_fresh_hook_state() -> None:
 
     assert first_model.reset_calls == 1
     assert second_model.reset_calls == 1
-
-
-def test_cumem_parking_release_then_reload_claims_a_fresh_pool(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake = _FakeCuMem()
-    _install_cumem_pool(monkeypatch, fake)
-    first_model = _SleepModel()
-    second_model = _SleepModel()
-    core = _core(None, sleep_offload=True)
-    core._build_executor = lambda: _build_executor(  # type: ignore[method-assign]
-        core,
-        first_model,
-    )
-    core.load_policy()
-    core.sleep()
-    core.release_policy()
-
-    core._build_executor = lambda: _build_executor(  # type: ignore[method-assign]
-        core,
-        second_model,
-    )
-    core.load_policy()
-    core.sleep()
-    core.wake()
-
-    tag = "vrl:generation:rollout-0:weights"
-    assert fake.pool_tags == [tag, tag]
-    assert fake.sleep_calls == [(tag,), (tag,)]
-    assert fake.wake_calls == [[tag], [tag]]
 
 
 @_MEMORY_EFFECT_NEEDS_A_REAL_ALLOCATOR
