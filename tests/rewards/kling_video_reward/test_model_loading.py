@@ -15,6 +15,7 @@ import pytest
 import torch
 
 from tests.rewards.kling_video_reward.fixtures import (
+    bare_kling_reward_model,
     build_tiny_kling_reward_model,
     build_tiny_qwen2vl_repo,
 )
@@ -56,14 +57,11 @@ def test_kling_video_reward_requires_materialized_artifact_path() -> None:
     """An artifact with only in-memory media is refused before any scoring: Kling reads the video
     from a materialized file path.
     """
-    from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 
     def _reward(*args, **kwargs):
         raise AssertionError("file-path validation should run before model scoring")
 
-    model = KlingVideoRewardModel.__new__(KlingVideoRewardModel)
-    model._reward = _reward
-    model.use_norm = True
+    model = bare_kling_reward_model(_reward=_reward, use_norm=True)
     artifact = RewardInferenceArtifact(
         artifact_id="a0",
         sample_id="sample-0",
@@ -408,7 +406,6 @@ def test_prepare_batch_decodes_a_real_clip_through_the_real_processor(tmp_path: 
     real processor and the tiny model scores it."""
     pytest.importorskip("qwen_vl_utils")
     from vrl.rewards.models.kling_video_reward import (
-        KlingVideoRewardModel,
         _create_model_and_processor,
         _DataConfig,
         _ModelConfig,
@@ -426,11 +423,12 @@ def test_prepare_batch_decodes_a_real_clip_through_the_real_processor(tmp_path: 
         disable_flash_attn2=True,
         local_files_only=True,
     )
-    reward_model = KlingVideoRewardModel.__new__(KlingVideoRewardModel)
-    reward_model.model = model
-    reward_model.processor = processor
-    reward_model.device = "cpu"
-    reward_model.data_config = _DataConfig(max_frame_pixels=28 * 28 * 4, num_frames=4)
+    reward_model = bare_kling_reward_model(
+        model=model,
+        processor=processor,
+        device="cpu",
+        data_config=_DataConfig(max_frame_pixels=28 * 28 * 4, num_frames=4),
+    )
 
     batch = reward_model._prepare_batch([str(clip)], ["a robot arm"])
 

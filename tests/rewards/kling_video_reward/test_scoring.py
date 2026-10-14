@@ -12,6 +12,7 @@ import pytest
 import torch
 
 from tests.rewards.kling_video_reward.fixtures import (
+    bare_kling_reward_model,
     build_tiny_kling_reward_model,
     head_logits,
 )
@@ -118,17 +119,16 @@ def test_pooling_rejects_unpadded_batches_and_unknown_reward_tokens() -> None:
 
 def _scoring_model(tiny: torch.nn.Module, inference_config: dict[str, float] | None):
     """A ``KlingVideoRewardModel`` around ``tiny`` with ``_prepare_batch`` stubbed to
-    a fixed token batch, the same construction ``test_model_loading.py`` uses."""
-
-    from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
+    a fixed token batch."""
 
     ids = torch.tensor([[1, 5, 2, 6, 3, 7, _PAD]])
     batch = {"input_ids": ids, "attention_mask": _mask(ids)}
-    model = KlingVideoRewardModel.__new__(KlingVideoRewardModel)
-    model.model = tiny
-    model.device = "cpu"
-    model.inference_config = inference_config
-    model._prepare_batch = lambda video_paths, prompts, max_pixels=None, min_pixels=None: batch
+    model = bare_kling_reward_model(
+        model=tiny,
+        device="cpu",
+        inference_config=inference_config,
+        _prepare_batch=lambda video_paths, prompts, max_pixels=None, min_pixels=None: batch,
+    )
     return model, batch
 
 

@@ -95,6 +95,23 @@ def build_tiny_kling_reward_model(
         )
 
 
+def bare_kling_reward_model(**attributes: Any) -> Any:
+    """A ``KlingVideoRewardModel`` with only the attributes a single method reads.
+
+    The real constructor resolves a hub snapshot and loads the checkpoint; the
+    path validation, scoring arithmetic and batch preparation read a few
+    fields. Every test that needs such a shell builds it here, so the
+    constructor bypass has one owner and the attribute names appear in one place.
+    """
+
+    from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
+
+    model = object.__new__(KlingVideoRewardModel)
+    for name, value in attributes.items():
+        setattr(model, name, value)
+    return model
+
+
 def head_logits(model: Any, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
     """Per-token reward-head logits, the reference every pooling branch selects from."""
 
@@ -191,6 +208,7 @@ def build_tiny_qwen2vl_repo(root: Path, *, output_dim: int = 1, seed: int = 0) -
 
 __all__ = [
     "TINY_HIDDEN_SIZE",
+    "bare_kling_reward_model",
     "build_tiny_kling_reward_model",
     "build_tiny_qwen2vl_processor",
     "build_tiny_qwen2vl_repo",
