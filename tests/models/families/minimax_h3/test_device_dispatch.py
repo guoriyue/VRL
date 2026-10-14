@@ -7,13 +7,45 @@ import pytest
 import torch
 from accelerate import dispatch_model
 
-from tests.models.families.minimax_h3.test_backbone_parity import _model, _sampling_state
-from tests.models.steps.denoise.fixtures import TINY_MINIMAX_H3_PATCH_SIZE
-from vrl.models.families.minimax_h3.model import patchify_video_latents
+from tests.models.steps.denoise.fixtures import (
+    TINY_MINIMAX_H3_PATCH_SIZE,
+    build_tiny_minimax_h3_components,
+    stamp_model_precision,
+)
+from vrl.config.precision import RolePrecision
+from vrl.generation.types import DenoiseRequest
+from vrl.models.families.minimax_h3.model import (
+    MiniMaxH3PipelineModel,
+    MiniMaxH3SamplingState,
+    patchify_video_latents,
+)
 from vrl.models.families.minimax_h3.placement import transformer_device_map
+from vrl.models.interfaces.runtime import ModelBuild
 
 pytest.importorskip("diffusers.modular_pipelines.minimax_h3")
 pytestmark = pytest.mark.gpu
+
+
+def _model(**vae_stats: float) -> MiniMaxH3PipelineModel:
+    model = MiniMaxH3PipelineModel(
+        pipeline=build_tiny_minimax_h3_components(**vae_stats), device=torch.device("cpu")
+    )
+    stamp_model_precision(model)
+    return model
+
+
+def _sampling_state(model: MiniMaxH3PipelineModel) -> MiniMaxH3SamplingState:
+    encoded = model.encode_prompt("a cat video", None, guidance_scale=1.0, max_sequence_length=8)
+    request = DenoiseRequest(
+        width=16,
+        height=16,
+        frame_count=8,
+        num_steps=3,
+        guidance_scale=1.0,
+        seed=0,
+        fps=24,
+    )
+    return model.prepare_sampling(request, encoded)
 
 
 @pytest.mark.skipif(
@@ -100,11 +132,8 @@ def test_cross_device_blocks_preserve_joint_outputs_and_gradients(mixed):
     reason="Requires an explicit two-GPU hardware reservation",
 )
 def test_partitioned_replay_loads_local_shards_and_keeps_native_lora_on_owners(tmp_path):
-    from dataclasses import replace
-
     from diffusers import MiniMaxH3Transformer3DModel
 
-    from tests.models.families.minimax_h3.test_model_loading import _build
     from vrl.models.families.minimax_h3.model import MiniMaxH3Model, load_h3_replay_components
     from vrl.models.families.registry import get_model_family_entry
 
@@ -116,10 +145,14 @@ def test_partitioned_replay_loads_local_shards_and_keeps_native_lora_on_owners(t
     source.save_pretrained(tmp_path / "transformer", max_shard_size="50KB")
     fixture.scheduler.save_pretrained(tmp_path / "scheduler")
     fixture.audio_scheduler.save_pretrained(tmp_path / "audio_scheduler")
-    build = replace(
-        _build(rollout=False, num_steps=3),
+    build = ModelBuild(
         model_name_or_path=str(tmp_path),
         revision=None,
+        device="cuda:0",
+        parameter_dtype=torch.bfloat16,
+        family="minimax_h3",
+        precision=RolePrecision("bf16", "tf32", outer_autocast=False),
+        sampling_config={"num_steps": 3},
         model_config={
             "use_lora": True,
             "lora": {

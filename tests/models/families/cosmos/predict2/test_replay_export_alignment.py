@@ -81,9 +81,9 @@ def _predict25_state(batch_size: int) -> CosmosPredict25SamplingState:
     )
 
 
-# (family name, model class, synthetic-state builder). Each family's
-# export_replay_tensors is invoked via object.__new__ (transformer-free, pure
-# state plumbing) so this stays cheap and CPU-only.
+# (family name, model class, synthetic-state builder). Export is pure state
+# plumbing, so each model wraps a transformer-free pipeline namespace and the
+# test stays cheap and CPU-only.
 _CASES: list[tuple[str, type, Callable[[int], Any]]] = [
     ("predict2", CosmosPredict2PipelineModel, _predict2_state),
     ("predict2_5", CosmosPredict25PipelineModel, _predict25_state),
@@ -101,10 +101,8 @@ def test_replay_export_is_sample_aligned_at_batch_gt_1(
 ) -> None:
     """Checks every exported replay tensor has dim-0 == sample batch."""
     batch_size = 4
-    exported = model_cls.export_replay_tensors(
-        object.__new__(model_cls),
-        build_state(batch_size),
-    )
+    model = model_cls(pipeline=SimpleNamespace(transformer=None))
+    exported = model.export_replay_tensors(build_state(batch_size))
 
     tensors = {n: v for n, v in exported.items() if isinstance(v, torch.Tensor)}
     assert tensors, "export produced no replay tensors to align"
@@ -129,11 +127,11 @@ def test_predict2_restore_tolerates_the_absent_uncond_bundle_when_cfg_is_off() -
     state.guidance_scale = 1.0
     state.uncond_mask = None
     state.uncond_indicator = None
-    model = object.__new__(CosmosPredict2PipelineModel)
-    object.__setattr__(
-        model,
-        "_pipeline",
-        SimpleNamespace(scheduler=SimpleNamespace(timesteps=state.timesteps)),
+    model = CosmosPredict2PipelineModel(
+        pipeline=SimpleNamespace(
+            transformer=None,
+            scheduler=SimpleNamespace(timesteps=state.timesteps),
+        ),
     )
 
     exported = model.export_replay_tensors(state)
@@ -162,8 +160,7 @@ def test_cosmos3_export_keeps_temporal_mask_without_batch_expansion():
         uncond_input_ids=[0],
         vision_condition_mask=temporal_mask,
     )
-    exported = Cosmos3PipelineModel.export_replay_tensors(
-        object.__new__(Cosmos3PipelineModel), state
-    )
+    model = Cosmos3PipelineModel(pipeline=SimpleNamespace(transformer=None))
+    exported = model.export_replay_tensors(state)
     assert exported["vision_condition_mask"] is temporal_mask
     assert exported["vision_condition_mask"].shape == (3, 1, 1)
