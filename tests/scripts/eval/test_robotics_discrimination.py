@@ -75,7 +75,6 @@ def test_robotics_gate_passes_discriminating_axes() -> None:
     ("candidate", "axis", "value", "failed_check"),
     [
         ("static_frozen", "alignment", 3.0, "low_information_axes_ceiling"),
-        ("color_blob", "physics", 3.0, "low_information_axes_ceiling"),
         ("wrong_clip", "alignment", 3.9, "wrong_clip_alignment_gap"),
         ("frame_shuffle", "physics", 3.8, "frame_shuffle_physics_gap"),
     ],

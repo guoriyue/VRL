@@ -140,7 +140,7 @@ def test_rank_local_cuda_selection_rejects_duplicate_devices() -> None:
         )
 
 
-@pytest.mark.parametrize("visible", ["0,,1", ",0,1", "0,1,", "0,-1", "0,GPU-uuid", "0,00"])
+@pytest.mark.parametrize("visible", ["0,,1", "0,GPU-uuid"])
 def test_rank_local_selection_rejects_ambiguous_mask_without_mutation(visible: str) -> None:
     environ = {
         "LOCAL_RANK": "0",

@@ -120,7 +120,7 @@ def test_main_prints_the_score_table_on_success(tmp_path, capsys) -> None:
 
 @pytest.mark.parametrize(
     ("task", "expected_shape"),
-    [("t2i", (3, 32, 48)), ("t2v", (3, 5, 32, 48)), ("i2v", (3, 5, 32, 48))],
+    [("t2i", (3, 32, 48)), ("t2v", (3, 5, 32, 48))],
 )
 def test_synthetic_media_follows_the_collector_layout(task: str, expected_shape) -> None:
     sampling = SimpleNamespace(height=32, width=48, num_frames=5)

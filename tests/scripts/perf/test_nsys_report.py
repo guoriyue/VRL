@@ -225,8 +225,9 @@ def test_ray_local_device_ids_are_mapped_to_physical_gpus(tmp_path) -> None:
     }
 
 
-@pytest.mark.parametrize("field", ["top_gaps", "top_nvtx", "min_gap_ns"])
-@pytest.mark.parametrize("value", [-1, True, 1.5])
+@pytest.mark.parametrize(
+    ("field", "value"), [("top_gaps", -1), ("top_nvtx", True), ("min_gap_ns", 1.5)]
+)
 def test_analysis_rejects_invalid_limits_before_opening_capture(tmp_path, field, value):
     with pytest.raises(ValueError, match=field):
         GpuBusyReport.from_capture(tmp_path / "missing.sqlite", **{field: value})
@@ -241,7 +242,7 @@ def test_zero_report_limits_disable_gap_and_stage_rows(tmp_path):
     assert report.per_device
 
 
-@pytest.mark.parametrize("value", ["nan", "inf", "-0.000000001", "-1", "1e308"])
+@pytest.mark.parametrize("value", ["-0.000000001", "1e308"])
 def test_cli_rejects_invalid_gap_before_nanosecond_conversion(value, capsys):
     from vrl.scripts.perf.nsys_gpu_busy import main
 

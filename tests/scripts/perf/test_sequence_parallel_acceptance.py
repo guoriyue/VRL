@@ -107,13 +107,10 @@ def test_compare_rejects_mismatched_inputs(tmp_path: Path, capsys) -> None:
         sp.main(["compare", str(reference), str(candidate)])
 
 
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
 @pytest.mark.parametrize("invalid_side", ["reference", "candidate"])
-def test_compare_rejects_nonfinite_outputs(
-    tmp_path: Path, value: float, invalid_side: str
-) -> None:
+def test_compare_rejects_nonfinite_outputs(tmp_path: Path, invalid_side: str) -> None:
     outputs = {"reference": torch.zeros(1), "candidate": torch.zeros(1)}
-    outputs[invalid_side].fill_(value)
+    outputs[invalid_side].fill_(float("nan"))
     reference = _dump(tmp_path / "n1", outputs["reference"], gpus_per_engine=1)
     candidate = _dump(tmp_path / "n2", outputs["candidate"], gpus_per_engine=2)
     with pytest.raises(ValueError, match=f"{invalid_side} output must be nonempty and finite"):

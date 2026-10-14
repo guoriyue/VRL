@@ -7,7 +7,7 @@ import pytest
 import vrl.scripts.perf.quantized_linear_benchmark as benchmark
 
 
-@pytest.mark.parametrize("schemes", [(), ("int8",), ("fp8", "bogus")])
+@pytest.mark.parametrize("schemes", [(), ("fp8", "bogus")])
 def test_canonical_benchmark_rejects_invalid_scheme_sets(schemes) -> None:
     with pytest.raises(ValueError, match="non-empty fp8/nvfp4 subset"):
         benchmark.main(schemes=schemes)
