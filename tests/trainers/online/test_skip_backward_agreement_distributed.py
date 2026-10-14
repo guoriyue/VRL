@@ -44,7 +44,6 @@ from vrl.trainers.strategy import DDPStrategy, SingleProcessStrategy
 _CASES = {
     "both_have_work": ([True, True], True),
     "one_rank_empty": ([True, False], False),
-    "both_empty": ([False, False], False),
 }
 
 

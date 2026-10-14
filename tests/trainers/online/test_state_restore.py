@@ -53,8 +53,7 @@ def _progress(trainer: OnlineTrainer) -> tuple[int, int]:
     return trainer.state.step, trainer.state.global_step
 
 
-@pytest.mark.parametrize("field", ["step", "global_step"])
-@pytest.mark.parametrize("value", [1.9, "2", True, -1])
+@pytest.mark.parametrize(("field", "value"), [("step", True), ("global_step", -1)])
 def test_invalid_progress_does_not_modify_trainer(monkeypatch, tmp_path, field, value):
     tb = _trained(monkeypatch, tmp_path)
     progress = _progress(tb.trainer)

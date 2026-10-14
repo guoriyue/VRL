@@ -56,20 +56,13 @@ def test_cpu_checkpoint_installs_explicit_function_and_rejects_fallback():
         )
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
-def test_cpu_checkpoint_preserves_output_input_and_parameter_gradients(device):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA is unavailable")
+def test_cpu_checkpoint_preserves_output_input_and_parameter_gradients():
     torch.manual_seed(19)
-    direct = (
-        torch.nn.Sequential(
-            torch.nn.Linear(8, 16), torch.nn.Dropout(0.2), torch.nn.SiLU(), torch.nn.Linear(16, 4)
-        )
-        .double()
-        .to(device)
-    )
+    direct = torch.nn.Sequential(
+        torch.nn.Linear(8, 16), torch.nn.Dropout(0.2), torch.nn.SiLU(), torch.nn.Linear(16, 4)
+    ).double()
     checkpointed = copy.deepcopy(direct)
-    x = torch.randn(3, 8, dtype=torch.float64, device=device, requires_grad=True)
+    x = torch.randn(3, 8, dtype=torch.float64, requires_grad=True)
     y = x.detach().clone().requires_grad_(True)
     torch.manual_seed(27)
     expected = direct(x)

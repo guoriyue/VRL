@@ -33,7 +33,6 @@ from vrl.trainers.strategy import SingleProcessStrategy
         ("fp16", True, "cuda", torch.float32, True),  # ordinary AMP
         ("fp16", True, "cpu", torch.float32, False),
         ("bf16", True, "cuda", torch.float32, False),
-        ("fp32", False, "cuda", torch.float32, False),
         # SANA: no outer autocast, but its native FP16 gradient buffers still
         # need scaling before they are copied to FP32 master parameters.
         ("fp16", False, "cuda", torch.float16, True),

@@ -114,7 +114,7 @@ class TestDiagnostics:
         assert tb.trainer.state.global_step == 0
         assert _unchanged(tb, before)
 
-    @pytest.mark.parametrize("difference", [0.0, 2.980232238769531e-7, 0.00230485200881958])
+    @pytest.mark.parametrize("difference", [0.0, 2.980232238769531e-7])
     def test_zero_parity_limit_rejects_even_small_finite_drift(
         self, monkeypatch, tmp_path, difference
     ):

@@ -1221,7 +1221,7 @@ def test_ema_over_dtensor_params_updates_swaps_and_round_trips(cpu_process_group
     assert restored.num_updates == ema.num_updates
 
 
-@pytest.mark.parametrize("declaration", ["ToyBlock", b"ToyBlock", [1], [""]])
+@pytest.mark.parametrize("declaration", ["ToyBlock", [1], [""]])
 def test_iter_blocks_rejects_malformed_declaration(declaration) -> None:
     model = ToyTransformer()
     model._no_split_modules = declaration

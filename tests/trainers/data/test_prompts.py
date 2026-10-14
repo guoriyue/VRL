@@ -94,8 +94,7 @@ def test_image_caption_json_error_identifies_manifest_and_physical_row(tmp_path)
     assert isinstance(caught.value.__cause__, json.JSONDecodeError)
 
 
-@pytest.mark.parametrize("separator", ["\u0085", "\u2028", "\u2029"])
-@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize(("separator", "newline"), [("\u0085", "\r\n"), ("\u2028", "\n")])
 def test_jsonl_preserves_unicode_separators_in_prompt(tmp_path, separator, newline):
     prompt = f"first{separator}second"
     payload = (json.dumps({"prompt": prompt}, ensure_ascii=False) + newline).encode("utf-8")

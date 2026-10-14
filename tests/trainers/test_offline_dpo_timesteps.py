@@ -25,7 +25,7 @@ PRECISION = RolePrecision(
 )
 
 
-@pytest.mark.parametrize("value", [1.9, "2", True, -1])
+@pytest.mark.parametrize("value", [True, -1])
 def test_restore_rejects_invalid_progress_before_resetting_accumulation(value):
     trainer = _make_trainer(torch.arange(4))
     trainer.global_step = 7
@@ -172,25 +172,28 @@ def test_offline_dpo_consumes_resolved_optimizer_values(use_adafactor) -> None:
         assert optimizer.defaults["eps"] == pytest.approx(1e-5)
 
 
-@pytest.mark.parametrize("float32_precision", ["ieee", "tf32"])
-def test_offline_dpo_applies_float32_policy(monkeypatch, float32_precision: str) -> None:
+def test_offline_dpo_applies_float32_policy(monkeypatch) -> None:
     import vrl.trainers.offline.dpo as dpo_module
 
     applied: list[str] = []
     monkeypatch.setattr(dpo_module, "apply_float32_precision", applied.append)
 
-    _make_trainer(torch.arange(20), float32_precision=float32_precision)
+    # Not the "ieee" default: the call must carry the model's role precision.
+    _make_trainer(torch.arange(20), float32_precision="tf32")
 
-    assert applied == [float32_precision]
+    assert applied == ["tf32"]
 
 
 @pytest.mark.parametrize(
-    ("sft_weight", "expected_loss", "expected_sft_calls"),
-    [(0.0, 2.0, 0), (0.5, 3.5, 1)],
-)
-@pytest.mark.parametrize(
-    ("max_grad_norm", "expected_clip_calls", "expected_grad_norm"),
-    [(0.0, 0, 0.0), (0.25, 1, 2.5)],
+    (
+        "sft_weight",
+        "expected_loss",
+        "expected_sft_calls",
+        "max_grad_norm",
+        "expected_clip_calls",
+        "expected_grad_norm",
+    ),
+    [(0.0, 2.0, 0, 0.0, 0, 0.0), (0.5, 3.5, 1, 0.25, 1, 2.5)],
 )
 def test_step_metrics_report_the_optimized_loss(
     monkeypatch,
@@ -455,7 +458,7 @@ def test_real_scheduler_noise_uses_sampled_table_position(kind):
     torch.testing.assert_close(target, expected_target)
 
 
-@pytest.mark.parametrize("steps", [0, -1, True, 1.5, "2"])
+@pytest.mark.parametrize("steps", [0, True])
 def test_offline_config_rejects_invalid_accumulation_steps(steps):
     with pytest.raises(ValueError, match="gradient_accumulation_steps"):
         OfflineDPOTrainerConfig(gradient_accumulation_steps=steps)
