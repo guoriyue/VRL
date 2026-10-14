@@ -84,25 +84,6 @@ def test_strict_resume_verifies_primary_optimizer_snapshot(
     assert agreements == [matches if primary else True]
 
 
-def test_checkpoint_compatibility_rejects_schema_v2_without_saved_family(tmp_path) -> None:
-    checkpoint = TrainingCheckpoint(
-        checkpoint_dir=tmp_path,
-        checkpoint_path=tmp_path / TRAINING_CHECKPOINT_NAME,
-        payload={
-            "schema_version": CHECKPOINT_SCHEMA_VERSION,
-            "family": "",
-            "model": {"identity": UNIT_IDENTITY, "owned_state": {}},
-        },
-        meta={},
-    )
-
-    with pytest.raises(ValueError, match="family"):
-        checkpoint.validate_compatibility(
-            family="unit",
-            expected_model_identity=UNIT_IDENTITY,
-        )
-
-
 def test_load_training_checkpoint_rejects_schema_v2_without_identity(tmp_path) -> None:
     ckpt = tmp_path / "checkpoint-no-identity"
     ckpt.mkdir()

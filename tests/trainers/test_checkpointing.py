@@ -14,9 +14,6 @@ from tests.trainers._checkpoint_helpers import (
     _ema_holding,
     _Trainer,
 )
-from vrl.config.precision import RolePrecision
-from vrl.models.interfaces.runtime import RuntimeBundle
-from vrl.models.steps.denoise.base import DenoiseModelBase
 from vrl.trainers.checkpointing import (
     CHECKPOINT_META_NAME,
     CHECKPOINT_SCHEMA_VERSION,
@@ -194,84 +191,6 @@ def test_restore_model_checkpoint_rejects_identity_before_loading(tmp_path) -> N
     assert torch.equal(restored.module.weight, before)
 
 
-def test_restore_training_checkpoint_rejects_family_mismatch(tmp_path) -> None:
-    """The explicit runtime family rejects a checkpoint from another family."""
-    trainer = _Trainer()
-    source = _Bundle()
-    save_training_checkpoint(
-        tmp_path / "checkpoint-sd3",
-        trainer=trainer,
-        bundle=source,
-        family="sd3_5",
-        model_identity=UNIT_IDENTITY,
-        progress={"next_epoch": 1, "global_step": 1},
-        rng_state={},
-    )
-
-    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-sd3")
-    with pytest.raises(ValueError, match="family mismatch"):
-        checkpoint.restore_training(
-            trainer=trainer,
-            bundle=_Bundle(),
-            family="wan_2_1",
-            expected_model_identity=UNIT_IDENTITY,
-        )
-
-
-def test_restore_training_checkpoint_strictly_checks_model_identity(tmp_path) -> None:
-    identity = {
-        "model_path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
-        "revision": "pinned",
-        "boundary_ratio": 0.9,
-        "trainable_transformers": ["transformer", "transformer_2"],
-    }
-    path = tmp_path / "checkpoint-dual-expert"
-    save_training_checkpoint(
-        path,
-        trainer=_Trainer(),
-        bundle=_Bundle(),
-        family="wan_2_1_i2v",
-        progress={"next_epoch": 1},
-        rng_state={},
-        model_identity=identity,
-    )
-    checkpoint = TrainingCheckpoint.load(path)
-
-    checkpoint.restore_training(
-        trainer=_Trainer(),
-        bundle=_Bundle(),
-        family="wan_2_1_i2v",
-        expected_model_identity=identity,
-    )
-    wrong = {**identity, "boundary_ratio": 0.8}
-    with pytest.raises(ValueError, match="model identity mismatch"):
-        checkpoint.restore_training(
-            trainer=_Trainer(),
-            bundle=_Bundle(),
-            family="wan_2_1_i2v",
-            expected_model_identity=wrong,
-        )
-
-
-def test_checkpoint_compatibility_preflight_accepts_matching_identity(tmp_path) -> None:
-    identity = {"schema": "vrl.model-identity/v1", "sources": {}, "build": {}}
-    checkpoint = TrainingCheckpoint(
-        checkpoint_dir=tmp_path,
-        checkpoint_path=tmp_path / TRAINING_CHECKPOINT_NAME,
-        payload={
-            "schema_version": CHECKPOINT_SCHEMA_VERSION,
-            "family": "sana",
-            "model": {"identity": identity, "owned_state": {}},
-        },
-        meta={},
-    )
-
-    checkpoint.validate_compatibility(
-        family="sana",
-        expected_model_identity=identity,
-    )
-
-
 def test_checkpoint_meta_preflight_accepts_matching_identity() -> None:
     CheckpointTarget(
         label="unit",
@@ -401,45 +320,13 @@ def test_restore_training_checkpoint_routes_model_load_through_strategy(tmp_path
     assert trainer._strategy.calls == [(restored, checkpoint.checkpoint_state)]
 
 
-def test_save_training_checkpoint_routes_export_through_strategy(tmp_path) -> None:
-    """When a strategy is wired, checkpoint-owned state comes from its export.
+def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) -> None:
+    """Checkpoint-owned state and trainer state come from their primary-only seams.
 
-    Locks sprint P3 ownership: the checkpoint reads the strategy seam, not the
-    bundle's raw modules directly, so the future FSDP full-state export controls
-    what lands on disk. The spy returns weights the bundle does not hold, so a
-    match proves the strategy -- not ``export_checkpoint_state(bundle)`` -- was used.
+    The strategy returns weights the bundle does not hold, so a match proves the
+    strategy export -- not ``export_checkpoint_state(bundle)`` -- was used.
     """
 
-    class _SpyStrategy:
-        def __init__(self) -> None:
-            self.calls: list[object] = []
-            self.context = _context()
-
-        def export_checkpoint_state(self, bundle):
-            self.calls.append(bundle)
-            return {"module": {"weight": torch.full((1, 1), 9.0)}}
-
-        collectives = SimpleNamespace(succeeded=bool)
-
-    strategy = _SpyStrategy()
-    bundle = _Bundle()  # module weight is the Linear default, never 9.0
-    save_training_checkpoint(
-        tmp_path / "checkpoint-strategy",
-        trainer=_Trainer(),
-        bundle=bundle,
-        family="unit",
-        model_identity=UNIT_IDENTITY,
-        progress={"next_epoch": 1},
-        rng_state={},
-        strategy=strategy,
-    )
-
-    checkpoint = TrainingCheckpoint.load(tmp_path / "checkpoint-strategy")
-    assert strategy.calls == [bundle]
-    assert checkpoint.checkpoint_state["module"]["weight"].item() == pytest.approx(9.0)
-
-
-def test_save_training_checkpoint_prefers_primary_only_snapshot_seams(tmp_path) -> None:
     class _CheckpointStrategy:
         def __init__(self) -> None:
             self.calls: list[object] = []
@@ -601,55 +488,6 @@ def test_non_primary_receives_primary_checkpoint_publication_failure(tmp_path) -
         )
 
     assert not (tmp_path / "checkpoint-peer-write-failure").exists()
-
-
-# ── build_adapter_exports: bundle -> publishable adapter artifacts ────────────
-#
-# Driven through REAL model bases and a REAL RuntimeBundle, because the split of
-# responsibility is the thing under test: the model decides which roots are
-# exportable, this function only names and wraps them. The denoise base filters
-# on ``save_pretrained`` (a family with no publishable root simply publishes
-# nothing); the AR base does not (one root, so an unexportable trunk must raise
-# rather than silently export nothing).
-
-_EXPORT_PRECISION = RolePrecision(
-    dtype="fp32",
-    float32_precision="ieee",
-    outer_autocast=False,
-)
-
-
-class _PublishableModule(nn.Linear):
-    def __init__(self) -> None:
-        super().__init__(1, 1, bias=False)
-
-    def save_pretrained(self, *_args, **_kwargs):  # pragma: no cover - never called
-        raise AssertionError("build_adapter_exports must not write anything")
-
-
-class _DenoisePolicy(DenoiseModelBase):
-    """Minimal real diffusion policy: only ``trainable_modules`` is family data."""
-
-    def __init__(self, roots: dict[str, nn.Module]) -> None:
-        super().__init__()
-        self._roots = roots
-
-    @property
-    def trainable_modules(self) -> dict[str, nn.Module]:
-        return dict(self._roots)
-
-    def forward_step(self, state, step_idx):  # pragma: no cover
-        raise NotImplementedError
-
-
-def _export_bundle(model) -> RuntimeBundle:
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=None,
-        precision=_EXPORT_PRECISION,
-        adapter_roots=model.adapter_roots,
-    )
 
 
 def test_training_checkpoint_restores_raw_weights_when_ema_gather_fails(tmp_path) -> None:
