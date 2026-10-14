@@ -11,7 +11,6 @@ from vrl.config.loading import load_config
 
 
 @pytest.mark.gpu
-@pytest.mark.rollout_preview
 def test_generate_rollout_preview(request: pytest.FixtureRequest) -> None:
     config_name = request.config.getoption("--rollout-preview-config")
     output_dir = request.config.getoption("--rollout-preview-dir")

@@ -211,7 +211,6 @@ markers = [
     "e2e: end-to-end tests requiring GPU and real model weights (opt-in via WM_RUN_REAL_MODEL_TESTS=1)",
     "slow_test: heavy/slow tests (e.g. Ray spin-up); excluded from the fast PR subset, run nightly",
     "gpu: requires a CUDA device; runs locally / on a future GPU runner and auto-skips on the CPU CI runner via tests/conftest.py",
-    "rollout_preview: opt-in few-shot production rollout from an experiment config",
     "distributed: tests requiring an explicit distributed lane (run with --distributed or VRL_RUN_DISTRIBUTED_TESTS=1)",
     "optional: optional tests that are automatically skipped, include --optional to run them",
     "real_cover: this test uses a double for something it cannot run in-process; arg 1 names an existing real counterpart ('path::test', 'path::Class::test', or a bare test file), or is None for a tracked gap. Every label needs non-empty why= explaining why the counterpart is real or why the gap remains; a None target also needs an on-disk tracked_in=. tests/conftest.py rejects at collection a label without why=, a target that does not exist, or a tracked gap without its document",

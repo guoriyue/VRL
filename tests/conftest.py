@@ -13,8 +13,9 @@ Opt-in test lanes live here:
   because local Ray smoke tests and multi-node/GPU distributed tests have very
   different resource profiles.
 - ``optional``: skipped unless ``--optional`` is passed (verbatim vLLM behavior).
-- ``rollout_preview``: test-owned few-shot preview; it skips unless an exact
-  experiment config and fresh output directory are supplied on the command line.
+- rollout preview (``tests/quality/test_rollout_preview.py``): skips unless an
+  exact experiment config and fresh output directory are supplied on the command
+  line through the ``--rollout-preview-*`` options registered below.
 
 ``real_cover`` labels are checked at collection: each needs a non-empty
 ``why=`` and must name something that exists -- a counterpart test node
