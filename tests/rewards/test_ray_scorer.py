@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 import uuid
 from pathlib import Path
 
@@ -160,6 +161,28 @@ def test_real_ray_shutdown_retains_actor_when_kill_fails(local_ray, monkeypatch)
             monkeypatch.setattr(local_ray, "kill", kill)
             await scorer.shutdown()
         assert scorer._actor is None
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.slow_test
+def test_real_ray_shutdown_waits_for_a_kill_that_lands_after_the_first_probe(
+    local_ray, monkeypatch
+):
+    """``ray.kill`` is asynchronous: the closed actor may still answer the death probe."""
+
+    async def exercise():
+        scorer = _scorer()
+        await scorer.ensure_ready()
+        kill = local_ray.kill
+
+        def late_kill(actor, *, no_restart):
+            threading.Timer(0.5, kill, args=(actor,), kwargs={"no_restart": no_restart}).start()
+
+        monkeypatch.setattr(local_ray, "kill", late_kill)
+        await scorer.shutdown()
+        assert scorer._actor is None
+        assert scorer.lifecycle.phase is RuntimePhase.TERMINATED
 
     asyncio.run(exercise())
 

@@ -14,6 +14,7 @@ import math
 import os
 import shutil
 import tempfile
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -383,18 +384,27 @@ class RayRewardScorer:
             try:
                 ray.kill(actor, no_restart=True)
                 self._kill_requested = True
-                # kill() submits termination; keep ownership until an RPC
+                # kill() only submits termination; keep ownership until an RPC
                 # confirms actor death, rather than assuming submission freed GPU.
-                ref = actor.ready.remote()
-                try:
-                    await asyncio.wait_for(
-                        asyncio.wrap_future(ref.future()),
-                        timeout=_SHUTDOWN_TIMEOUT_S,
-                    )
-                except ray.exceptions.ActorDiedError:
-                    pass
-                else:
-                    raise RuntimeError("reward actor responded after termination was requested")
+                # Until the kill lands the actor still answers -- normally, or
+                # as "closed" after the graceful shutdown above -- so probe again.
+                deadline = time.monotonic() + _SHUTDOWN_TIMEOUT_S
+                while True:
+                    ref = actor.ready.remote()
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.wrap_future(ref.future()),
+                            timeout=max(deadline - time.monotonic(), 0.0),
+                        )
+                    except ray.exceptions.ActorDiedError:
+                        break
+                    except ray.exceptions.RayTaskError:
+                        pass
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(
+                            "reward actor still answered after termination was requested",
+                        )
+                    await asyncio.sleep(0.05)
             except BaseException as error:
                 self.lifecycle.fail(error)
                 raise
