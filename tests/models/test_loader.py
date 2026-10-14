@@ -10,22 +10,6 @@ from vrl.models.interfaces.runtime import ModelBuild
 from vrl.models.steps.denoise.base import DiffusersPipelineModelBase
 
 
-def test_full_pipeline_propagates_revision_like_component_loader() -> None:
-    build = ModelBuild(
-        model_name_or_path="org/model",
-        revision="immutable-revision",
-        device="cpu",
-        parameter_dtype=torch.float16,
-        family="sd3_5",
-        precision=RolePrecision("fp16", "tf32"),
-        model_config={},
-    )
-
-    _, kwargs = DiffusersPipelineModelBase._pipeline_load_dtypes(build)
-
-    assert kwargs["revision"] == "immutable-revision"
-
-
 def test_full_pipeline_propagates_local_files_only_like_component_loader() -> None:
     build = ModelBuild(
         model_name_or_path="org/model",
@@ -165,7 +149,8 @@ def test_pipeline_dtype_projection_keeps_encoder_override_separate_from_model() 
     assert kwargs["revision"] == "snapshot"
 
 
-@pytest.mark.parametrize("num_steps", [0, -1, True, 2.5, "3"])
+# One row per require_int branch: below the minimum, and a non-int (bool).
+@pytest.mark.parametrize("num_steps", [0, True])
 def test_model_build_rejects_coerced_scheduler_step_count(num_steps):
     build = ModelBuild(
         model_name_or_path="org/model",

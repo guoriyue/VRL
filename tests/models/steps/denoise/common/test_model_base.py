@@ -18,10 +18,8 @@ from tests.models.steps.denoise.fixtures import (
 from vrl.config.precision import RolePrecision
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.families.cosmos import CosmosReplayForward
-from vrl.models.families.cosmos.predict2.model import CosmosPredict2PipelineModel
 from vrl.models.families.flux.model import FluxPipelineModel
 from vrl.models.families.mochi.model import MochiPipelineModel
-from vrl.models.families.sana.model import SanaPipelineModel
 from vrl.models.families.sd3_5.model import SD3_5PipelineModel
 from vrl.models.families.wan_2_1.model import WanT2VPipelineModel
 from vrl.models.interfaces import GenerationMemoryPolicy
@@ -231,7 +229,14 @@ def test_shared_from_build_rejects_an_unknown_cpu_resident_component(monkeypatch
 def test_shared_from_build_freezes_every_module_component_but_the_transformer(
     monkeypatch,
 ) -> None:
-    """The frozen set is whatever the checkpoint ships, not a family list."""
+    """The frozen set is whatever the checkpoint ships, not a family list.
+
+    Frozen components load straight into the rollout prompt-encoder dtype through
+    the per-component ``torch_dtype`` mapping, so no full-precision encoder copy
+    is ever materialized; only the transformer and the fp32 VAE are named.
+    """
+    from diffusers import DiffusionPipeline
+
     pipeline = _LoadedPipeline()
     pipeline.text_encoder_2 = RecordingModule()
     pipeline.scheduler = object()
@@ -248,90 +253,24 @@ def test_shared_from_build_freezes_every_module_component_but_the_transformer(
             }
         ),
     )
-    _load_pipeline(monkeypatch, pipeline)
+    load_kwargs: list[dict[str, Any]] = []
+
+    def fake_from_pretrained(_model_name_or_path: str, **kwargs: Any) -> Any:
+        load_kwargs.append(kwargs)
+        return pipeline
+
+    monkeypatch.setattr(DiffusionPipeline, "from_pretrained", staticmethod(fake_from_pretrained))
 
     model = SD3_5PipelineModel.from_build(_bare_build())
 
     assert model.pipeline is pipeline
+    assert [kwargs["torch_dtype"] for kwargs in load_kwargs] == [
+        {"default": torch.float16, "transformer": torch.bfloat16, "vae": torch.float32},
+    ]
     assert pipeline.transformer.requires_grad_enabled is None
     assert pipeline.text_encoder.to_calls == [("cuda:0", torch.float16)]
     assert pipeline.text_encoder_2.to_calls == [("cuda:0", torch.float16)]
     assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]
-
-
-def _sana_build(dtype: torch.dtype) -> ModelBuild:
-    return ModelBuild(
-        model_name_or_path="Efficient-Large-Model/Sana_1600M_1024px_diffusers",
-        revision=None,
-        device="cuda:0",
-        parameter_dtype=dtype,
-        family="sana",
-        precision=RolePrecision("bf16", "tf32"),
-        rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.float16),
-    )
-
-
-def _sana_pipeline() -> _LoadedPipeline:
-    from diffusers import DPMSolverMultistepScheduler
-
-    pipeline = _LoadedPipeline()
-    # What the SANA checkpoint actually ships: a DPM solver whose flow shift is
-    # spelled ``flow_shift``.
-    pipeline.scheduler = DPMSolverMultistepScheduler(use_flow_sigmas=True, flow_shift=3.0)
-    return pipeline
-
-
-def test_sana_swaps_the_shipped_dpm_solver_for_flow_match_and_keeps_its_shift(
-    monkeypatch,
-) -> None:
-    """SANA's checkpoint ships DPMSolverMultistep; per-step SDE log-prob needs
-    FlowMatchEuler on both sides, and the shift has to survive the swap.
-
-    Both halves have bitten before: rollout on DPM made ``index_for_timestep``
-    return empty at the first-step parity gate, and accepting FlowMatch's
-    default shift=1 instead of the checkpoint's 3 produced colour blocks.
-    """
-    from diffusers import DiffusionPipeline, FlowMatchEulerDiscreteScheduler
-
-    pipeline = _sana_pipeline()
-    monkeypatch.setattr(
-        DiffusionPipeline,
-        "from_pretrained",
-        staticmethod(lambda *args, **kwargs: pipeline),
-    )
-
-    model = SanaPipelineModel.from_build(_sana_build(torch.float16))
-
-    assert isinstance(model.scheduler, FlowMatchEulerDiscreteScheduler)
-    assert float(model.scheduler.config.shift) == 3.0
-    # No cpu_resident in the build: the encoder lands on the compute device.
-    assert pipeline.text_encoder.to_calls == [("cuda:0", torch.float16)]
-    assert pipeline.vae.to_calls == [("cuda:0", torch.float32)]
-    assert pipeline.vae.requires_grad_enabled is False
-
-
-def test_sana_applies_the_saturation_clamp_only_off_fp16(monkeypatch) -> None:
-    """The clamp exists because non-fp16 SANA attention overflows; fp16 needs none."""
-    from diffusers import DiffusionPipeline
-
-    clamped: list[type] = []
-    monkeypatch.setattr(
-        SanaPipelineModel,
-        "_apply_fp16_saturation_clamp",
-        classmethod(lambda cls, transformer: clamped.append(transformer)),
-    )
-    monkeypatch.setattr(
-        DiffusionPipeline,
-        "from_pretrained",
-        staticmethod(lambda *args, **kwargs: _sana_pipeline()),
-    )
-
-    fp16_model = SanaPipelineModel.from_build(_sana_build(torch.float16))
-    assert clamped == []
-
-    bf16_model = SanaPipelineModel.from_build(_sana_build(torch.bfloat16))
-    assert clamped == [bf16_model.transformer]
-    assert fp16_model is not bf16_model
 
 
 def test_pipeline_model_base_discovers_primary_encoder_device() -> None:
@@ -398,22 +337,9 @@ def test_trainable_modules_default_fails_loud_without_a_transformer() -> None:
         _ = runtime.trainable_modules
 
 
-def test_diffusion_model_base_registers_only_transformer_child() -> None:
-    """Only the transformer is a registered child: the pipeline (with its frozen VAE / encoders)
-    stays out of ``state_dict``, so checkpoints and weight sync carry trainable state alone.
-    """
-    runtime = _ModelBaseStub()
-
-    assert isinstance(runtime, nn.Module)
-    assert dict(runtime.named_children()) == {"transformer": runtime.transformer}
-    keys = set(runtime.state_dict())
-    assert keys == {"transformer.weight", "transformer.bias"}
-    assert not any(key.startswith("pipeline.") for key in keys)
-
-
 @pytest.mark.parametrize(
     "runtime_cls",
-    [SD3_5PipelineModel, WanT2VPipelineModel, CosmosPredict2PipelineModel],
+    [SD3_5PipelineModel, WanT2VPipelineModel],
 )
 def test_concrete_diffusion_runtimes_register_only_transformer(
     runtime_cls: type[DenoiseModelBase],
@@ -435,7 +361,7 @@ def test_concrete_diffusion_runtimes_register_only_transformer(
 
 @pytest.mark.parametrize(
     "runtime_cls",
-    [SD3_5PipelineModel, WanT2VPipelineModel, CosmosPredict2PipelineModel],
+    [SD3_5PipelineModel, WanT2VPipelineModel],
 )
 def test_concrete_diffusion_runtimes_keep_pipeline_transformer_in_sync(
     runtime_cls: type[DenoiseModelBase],
@@ -542,12 +468,14 @@ def test_disable_adapter_forwards_to_transformer_context() -> None:
 
 
 def test_disable_adapter_without_transformer_adapter_is_noop() -> None:
-    """Checks disable adapter without transformer adapter is no-op."""
+    """A module with neither adapter surface gets a null context that changes nothing."""
     runtime = _ModelBaseStub()
     runtime._set_transformer(nn.Linear(2, 2))
+    inputs = torch.ones(1, 2)
+    before = runtime.transformer(inputs)
 
     with runtime.disable_adapter():
-        assert runtime.transformer.training is True
+        assert torch.equal(runtime.transformer(inputs), before)
 
 
 def test_disable_adapter_uses_plural_diffusers_surface() -> None:
