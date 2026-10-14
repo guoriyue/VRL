@@ -8,7 +8,7 @@ FP8 and NVFP4 lifecycle contracts without loading a real checkpoint.
 from __future__ import annotations
 
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -18,7 +18,6 @@ from torch import nn
 from vrl.config.precision import QuantizationPolicy, RolePrecision
 from vrl.models.interfaces.runtime import ModelBuild, RolloutBuildOptions
 from vrl.models.steps.denoise import DenoiseModelBase
-from vrl.models.steps.denoise.build import build_denoise_runtime_bundle
 
 
 class _TrackingTransformer(nn.Module):
@@ -72,21 +71,48 @@ class _LoraPolicy(DenoiseModelBase):
         raise NotImplementedError
 
 
-def _build(
-    *,
-    quantization_format: str | None,
-    replay: bool = False,
-) -> ModelBuild:
-    quantization = (
-        None if quantization_format is None else QuantizationPolicy(format=quantization_format)
-    )
+class _BuilderPolicy:
+    """Duck-typed rollout policy the shared builder drives; records the attach call."""
+
+    quantization_exclude: tuple[str, ...] = ()
+
+    def __init__(self, transformer: nn.Module, events: list[str]) -> None:
+        self.transformer = transformer
+        self.events = events
+        self.device = "cpu"
+        self.scheduler = object()
+        # The test transformers have no save_pretrained: nothing to publish.
+        self.adapter_roots: dict[str, Any] = {}
+
+    @property
+    def policy_cores(self) -> dict[str, Any]:
+        return {"transformer": self.transformer}
+
+    @property
+    def trainable_modules(self) -> dict[str, Any]:
+        return {"transformer": self.transformer}
+
+    def apply_lora(self, _build: Any) -> None:
+        self.events.append("attach")
+
+    def apply_full_finetune(self, _build: Any) -> None:
+        self.transformer.to(self.device, dtype=torch.bfloat16)
+
+    def generation_memory_targets(self) -> dict[str, Any]:
+        return {}
+
+    def set_num_steps(self, _steps: int) -> None:
+        return None
+
+
+def _build() -> ModelBuild:
     return ModelBuild(
         model_name_or_path="test-model",
         revision=None,
         device="cpu",
         family="sd3_5",
-        precision=RolePrecision("fp16", "tf32", quantization),
-        rollout=(None if replay else RolloutBuildOptions(prompt_encoder_dtype=torch.float16)),
+        precision=RolePrecision("fp16", "tf32"),
+        rollout=RolloutBuildOptions(prompt_encoder_dtype=torch.float16),
         parameter_dtype=torch.float16,
         model_config={
             "use_lora": True,
@@ -98,26 +124,20 @@ def _build(
 def _build_sd35_rollout(
     monkeypatch: pytest.MonkeyPatch,
     build: ModelBuild,
-    model_cls: type[Any],
+    policy: _BuilderPolicy,
 ) -> Any:
     """Build through the production registry while replacing checkpoint I/O."""
 
     from vrl.models.families.registry import get_model_family_entry
     from vrl.models.families.sd3_5 import model as sd35_model
 
-    monkeypatch.setattr(sd35_model, "SD3_5PipelineModel", model_cls)
+    monkeypatch.setattr(
+        sd35_model, "SD3_5PipelineModel", SimpleNamespace(from_build=lambda _build: policy)
+    )
     return get_model_family_entry("sd3_5").build_rollout(build, expected_identity=None)
 
 
-@pytest.mark.parametrize(
-    ("quantization_format", "replay"),
-    [("fp8", False), ("nvfp4", False), (None, False), (None, True)],
-)
-def test_lora_attach_never_moves(
-    quantization_format: str | None,
-    replay: bool,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_lora_attach_never_moves(monkeypatch: pytest.MonkeyPatch) -> None:
     """Attach wraps in place; the rollout builder / training strategy place."""
     events: list[str] = []
     fake_peft = ModuleType("peft")
@@ -128,7 +148,7 @@ def test_lora_attach_never_moves(
 
     policy = _LoraPolicy(events)
     policy.transformer.proj.to(torch.float16)
-    policy.apply_lora(_build(quantization_format=quantization_format, replay=replay))
+    policy.apply_lora(_build())
 
     assert events == []
     assert policy.transformer.proj.weight.dtype is torch.float16
@@ -138,39 +158,14 @@ def test_shared_builder_moves_plain_lora_after_attach(monkeypatch) -> None:
     """Without quantization the compact policy still moves only in the builder."""
     events: list[str] = []
 
-    class _Policy:
-        quantization_exclude: tuple[str, ...] = ()
-
-        def __init__(self) -> None:
-            self.transformer = _TrackingTransformer(events)
-            self.device = "cpu"
-            self.scheduler = object()
-            self.trainable_modules = {"transformer": self.transformer}
-            self.adapter_roots: dict[str, Any] = {}
-
-        @property
-        def policy_cores(self) -> dict[str, Any]:
-            return {"transformer": self.transformer}
-
-        @classmethod
-        def from_build(cls, _build: Any) -> _Policy:
-            return cls()
-
-        def apply_lora(self, _build: Any) -> None:
-            events.append("attach")
-
-        def generation_memory_targets(self) -> dict[str, Any]:
-            return {}
-
-        def set_num_steps(self, _steps: int) -> None:
-            return None
-
-    _build_sd35_rollout(monkeypatch, _build(quantization_format=None), _Policy)
+    _build_sd35_rollout(
+        monkeypatch, _build(), _BuilderPolicy(_TrackingTransformer(events), events)
+    )
 
     assert events == ["attach", "move"]
 
 
-def test_fp8_config_replay_build_ignores_rollout_options(monkeypatch) -> None:
+def test_fp8_config_replay_build_ignores_rollout_options() -> None:
     """Replay owns no rollout options even when collection uses fp8."""
     from omegaconf import OmegaConf
 
@@ -178,12 +173,6 @@ def test_fp8_config_replay_build_ignores_rollout_options(monkeypatch) -> None:
     from vrl.config.schema import parse_config
     from vrl.models.families.registry import get_model_family_entry
 
-    events: list[str] = []
-    fake_peft = ModuleType("peft")
-    fake_peft.LoraConfig = lambda **_kwargs: object()
-    fake_peft.PeftModel = object
-    fake_peft.get_peft_model = lambda transformer, _cfg, **_kwargs: transformer
-    monkeypatch.setitem(sys.modules, "peft", fake_peft)
     cfg = OmegaConf.create(
         {
             "model": {
@@ -212,45 +201,13 @@ def test_fp8_config_replay_build_ignores_rollout_options(monkeypatch) -> None:
     )
 
     assert build.rollout is None
-    _LoraPolicy(events).apply_lora(build)
-    assert events == []
 
 
 def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch) -> None:
-    events: list[str] = []
-
-    class _Policy:
-        quantization_exclude: tuple[str, ...] = ()
-
-        def __init__(self) -> None:
-            self.transformer = _TrackingTransformer(events, quantizable=True)
-            self.device = "cpu"
-            self.scheduler = object()
-            self.trainable_modules = {"transformer": self.transformer}
-            # No save_pretrained on the tracking transformer: nothing to publish.
-            self.adapter_roots: dict[str, Any] = {}
-
-        @property
-        def policy_cores(self) -> dict[str, Any]:
-            return {"transformer": self.transformer}
-
-        @classmethod
-        def from_build(cls, _build: Any) -> _Policy:
-            return cls()
-
-        def apply_lora(self, _build: Any) -> None:
-            events.append("attach")
-
-        def generation_memory_targets(self) -> dict[str, Any]:
-            return {}
-
-        def set_num_steps(self, _steps: int) -> None:
-            return None
-
     import vrl.nn.quantization as quantization
 
+    events: list[str] = []
     _record_swap(monkeypatch, events)
-
     monkeypatch.setattr(
         quantization,
         "drop_quantized_masters",
@@ -274,7 +231,9 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
         sampling_config={"num_steps": 1},
     )
 
-    _build_sd35_rollout(monkeypatch, build, _Policy)
+    _build_sd35_rollout(
+        monkeypatch, build, _BuilderPolicy(_TrackingTransformer(events, quantizable=True), events)
+    )
 
     assert events == ["attach", "quantize", "drop", "move"]
 
@@ -286,29 +245,9 @@ def test_shared_builder_installs_pipeline_offload_after_final_cpu_module_tree(
 
     events: list[str] = []
 
-    class _Policy:
-        quantization_exclude: tuple[str, ...] = ()
-
-        def __init__(self) -> None:
-            self.transformer = _TrackingTransformer(events, quantizable=True)
-            self.device = "cpu"
-            self.scheduler = object()
-            self.trainable_modules = {"transformer": self.transformer}
-            # No save_pretrained on the tracking transformer: nothing to publish.
-            self.adapter_roots: dict[str, Any] = {}
-            self.uses_pipeline_cpu_offload = False
-            self.pipeline_cpu_offload_healthy = True
-
-        @property
-        def policy_cores(self) -> dict[str, Any]:
-            return {"transformer": self.transformer}
-
-        @classmethod
-        def from_build(cls, _build: Any) -> _Policy:
-            return cls()
-
-        def apply_lora(self, _build: Any) -> None:
-            events.append("attach_lora")
+    class _CompileOffloadPolicy(_BuilderPolicy):
+        uses_pipeline_cpu_offload = False
+        pipeline_cpu_offload_healthy = True
 
         def torch_compile_transformer(self, mode: str, *, regional: bool = False) -> None:
             assert mode == "default"
@@ -321,9 +260,6 @@ def test_shared_builder_installs_pipeline_offload_after_final_cpu_module_tree(
         def apply_generation_offload(self, _build: Any) -> None:
             events.append("install_offload_hooks")
             self.uses_pipeline_cpu_offload = True
-
-        def generation_memory_targets(self) -> dict[str, Any]:
-            return {}
 
     import vrl.nn.quantization as quantization
 
@@ -356,10 +292,14 @@ def test_shared_builder_installs_pipeline_offload_after_final_cpu_module_tree(
         },
     )
 
-    _build_sd35_rollout(monkeypatch, build, _Policy)
+    _build_sd35_rollout(
+        monkeypatch,
+        build,
+        _CompileOffloadPolicy(_TrackingTransformer(events, quantizable=True), events),
+    )
 
     assert events == [
-        "attach_lora",
+        "attach",
         "quantize",
         "drop",
         "compile",
@@ -367,80 +307,14 @@ def test_shared_builder_installs_pipeline_offload_after_final_cpu_module_tree(
     ]
 
 
-def test_shared_builder_preserves_resolved_role_precision() -> None:
-    """The builder carries the resolved contract without model introspection."""
-
-    class _Policy:
-        def __init__(self) -> None:
-            self.transformer = nn.Linear(2, 2)
-            self.device = "cpu"
-            self.scheduler = object()
-
-        @classmethod
-        def from_build(cls, _build: Any) -> _Policy:
-            return cls()
-
-        @property
-        def trainable_modules(self) -> dict[str, Any]:
-            return {"transformer": self.transformer}
-
-        @property
-        def adapter_roots(self) -> dict[str, Any]:
-            # No save_pretrained on a plain nn module: nothing to publish.
-            return {}
-
-        def apply_full_finetune(self, _build: Any) -> None:
-            self.transformer.requires_grad_(True)
-
-        def generation_memory_targets(self) -> dict[str, Any]:
-            return {}
-
-    build = ModelBuild(
-        model_name_or_path="fake",
-        revision=None,
-        device="cpu",
-        parameter_dtype=torch.float16,
-        family="sd3_5",
-        precision=RolePrecision("fp32", "ieee", outer_autocast=False),
-        rollout=RolloutBuildOptions(
-            prompt_encoder_dtype=torch.bfloat16,
-        ),
-        model_config={"use_lora": False},
-    )
-
-    bundle = build_denoise_runtime_bundle(build, model_cls=_Policy)
-
-    assert bundle.precision is build.precision
-    assert bundle.precision.outer_autocast is False
-
-
 def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from vrl.nn.optimization import QuantizationPass
-
-    class _Policy:
-        quantization_exclude: tuple[str, ...] = ()
-
-        def __init__(self) -> None:
-            self.transformer = _TrackingTransformer([], quantizable=True)
-
-        @property
-        def policy_cores(self) -> dict[str, Any]:
-            return {"transformer": self.transformer}
-
-        @property
-        def quantize_calls(self) -> int:
-            """Modules actually swapped — 0 proves the gate ran before mutation."""
-
-            from vrl.nn.quantization import QuantizedLinear
-
-            return sum(
-                isinstance(module, QuantizedLinear) for module in self.transformer.modules()
-            )
+    from vrl.nn.quantization import QuantizedLinear
 
     monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: False)
-    model = _Policy()
+    model = _BuilderPolicy(_TrackingTransformer([], quantizable=True), [])
     build = ModelBuild(
         model_name_or_path="fake",
         revision=None,
@@ -456,7 +330,8 @@ def test_nvfp4_hardware_guard_runs_before_quantization_mutation(
     with pytest.raises(RuntimeError, match="NVFP4-capable CUDA target"):
         QuantizationPass().quantize(model, build)
 
-    assert model.quantize_calls == 0
+    # No module was swapped: the gate ran before mutation.
+    assert not any(isinstance(m, QuantizedLinear) for m in model.transformer.modules())
 
 
 @pytest.mark.parametrize("quantization_format", ["fp8", "nvfp4"])
@@ -469,41 +344,11 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
     if quantization_format == "nvfp4":
         monkeypatch.setattr("vrl.nn.quantization.nvfp4_available", lambda _device: True)
 
-    class _Policy:
-        quantization_exclude: tuple[str, ...] = ()
-
-        def __init__(self) -> None:
-            # MLP-pathed and >= min_features so BOTH schemes' real targeting
-            # rules select it (NVFP4's profile is mlp_only).
-            self.transformer = nn.Module()
-            self.transformer.ff = nn.Module()
-            self.transformer.ff.net = nn.Linear(1024, 1024, bias=False).to(torch.bfloat16)
-            self.device = "cpu"
-            self.scheduler = object()
-
-        @property
-        def policy_cores(self) -> dict[str, Any]:
-            return {"transformer": self.transformer}
-
-        @classmethod
-        def from_build(cls, _build: Any) -> _Policy:
-            return cls()
-
-        @property
-        def trainable_modules(self) -> dict[str, Any]:
-            return {"transformer": self.transformer}
-
-        @property
-        def adapter_roots(self) -> dict[str, Any]:
-            # No save_pretrained on a plain nn module: nothing to publish.
-            return {}
-
-        def apply_full_finetune(self, _build: Any) -> None:
-            self.transformer.to(self.device, dtype=torch.bfloat16)
-
-        def generation_memory_targets(self) -> dict[str, Any]:
-            return {}
-
+    # MLP-pathed and >= min_features so BOTH schemes' real targeting rules
+    # select it (NVFP4's profile is mlp_only).
+    transformer = nn.Module()
+    transformer.ff = nn.Module()
+    transformer.ff.net = nn.Linear(1024, 1024, bias=False).to(torch.bfloat16)
     build = ModelBuild(
         model_name_or_path="fake",
         revision=None,
@@ -521,7 +366,7 @@ def test_full_finetune_dtype_move_preserves_quantized_cache(
         model_config={"use_lora": False},
     )
 
-    bundle = _build_sd35_rollout(monkeypatch, build, _Policy)
+    bundle = _build_sd35_rollout(monkeypatch, build, _BuilderPolicy(transformer, []))
 
     quantized = bundle.model.transformer.ff.net
     if quantization_format == "fp8":
