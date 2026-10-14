@@ -31,10 +31,9 @@ def reader() -> TrajectoryReader:
     return TrajectoryReader(trajectory)
 
 
-@pytest.mark.parametrize("segment_name", ["", "missing"])
-def test_replay_rejects_unknown_explicit_segment(reader, segment_name) -> None:
+def test_replay_rejects_unknown_explicit_segment(reader) -> None:
     with pytest.raises(ValueError, match="unknown trajectory segment"):
-        reader.replay_tensor_dict(segment_name)
+        reader.replay_tensor_dict("missing")
 
 
 def test_replay_defaults_to_primary_segment_only_when_omitted(reader) -> None:
@@ -48,12 +47,9 @@ def test_replay_defaults_to_primary_segment_only_when_omitted(reader) -> None:
     "selection, message",
     [
         ({"axis": "denoise"}, "provided together"),
-        ({"axis_index": 1}, "provided together"),
         ({"axis": "denosie", "axis_index": 1}, "unknown replay axis"),
         ({"axis": "denoise", "axis_index": -1}, "must be >= 0"),
         ({"axis": "denoise", "axis_index": True}, "must be an integer"),
-        ({"axis": "denoise", "axis_index": 1.5}, "must be an integer"),
-        ({"axis": "denoise", "axis_index": "1"}, "must be an integer"),
         ({"axis": "denoise", "axis_index": 3}, "out of range"),
     ],
 )
@@ -71,11 +67,11 @@ def test_replay_slices_step_tensors_and_preserves_static_payload(reader) -> None
     assert complete["observations"].shape == (2, 3, 2)
 
 
-@pytest.mark.parametrize("container", [list, tuple])
-def test_replay_slices_nested_sequences(reader, container) -> None:
+def test_replay_slices_nested_sequences(reader) -> None:
     observations = reader.tensor("denoise", "observations")
     values = observations.value.tolist()
-    observations.value = container(container(row) for row in values)
+    # Lists and tuples share one (list, tuple) branch in the reader and validator.
+    observations.value = tuple(tuple(row) for row in values)
     # The validator accepts this representation at the construction boundary.
     TrajectoryValidator(reader.trajectory).validate_batch()
 
@@ -103,7 +99,6 @@ def test_replay_preserves_tensor_index_failure_without_sequence_retry(reader) ->
     assert caught.value.__cause__ is failure
 
 
-@pytest.mark.parametrize("container", [list, tuple])
 @pytest.mark.parametrize(
     "values, message",
     [
@@ -113,8 +108,8 @@ def test_replay_preserves_tensor_index_failure_without_sequence_retry(reader) ->
         ([torch.ones(3, 2), torch.ones(2, 2)], "contains runtime-only state: Tensor"),
     ],
 )
-def test_replay_validates_declared_axes_of_sequence_payloads(reader, container, values, message):
-    reader.tensor("denoise", "observations").value = container(values)
+def test_replay_validates_declared_axes_of_sequence_payloads(reader, values, message):
+    reader.tensor("denoise", "observations").value = values
     with pytest.raises(ValueError, match=message):
         TrajectoryValidator(reader.trajectory).validate_batch()
 

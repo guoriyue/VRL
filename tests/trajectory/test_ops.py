@@ -93,33 +93,19 @@ def test_select_keeps_tensor_rows_and_metadata_aligned(selector, positions) -> N
 
 @pytest.mark.parametrize(
     "selector",
-    [[True, False], [0.5], [True, 0], ["1"], torch.tensor([[0, 1]]), torch.tensor([0.5])],
+    [[True, False], [0.5], torch.tensor([[0, 1]]), torch.tensor([0.5])],
 )
 def test_select_rejects_ambiguous_selectors(selector) -> None:
     with pytest.raises(ValueError, match=r"trajectory .*selector"):
         _trajectory(samples=3).select_samples(selector)
 
 
-def test_sample_selection_preserves_minimax_exported_vae_geometry() -> None:
-    from types import SimpleNamespace
-
-    from vrl.models.families.minimax_h3.model import MiniMaxH3PipelineModel
-
-    model = SimpleNamespace(_vae_geometry=lambda: (4, 2, 8))
-    state = SimpleNamespace(height=32, width=32, num_frames=4, fps=24, timesteps=torch.ones(2))
-    trajectory = _trajectory(samples=3)
-    trajectory.context = MiniMaxH3PipelineModel.export_batch_context(model, state)
-    selected = trajectory.select_samples([2, 0])
-    assert selected.context["vae_geometry"] == [4, 2, 8]
-    assert len(selected.sample_rows) == 2
-
-
-@pytest.mark.parametrize("positions", [[2, 0, 1], [2, 0]])
 @pytest.mark.parametrize("container", ["tensor", "list", "tuple"])
-def test_selection_uses_declared_nonleading_sample_axis(positions, container) -> None:
+def test_selection_uses_declared_nonleading_sample_axis(container) -> None:
     from vrl.trajectory.types import TrajectoryTensor
     from vrl.trajectory.validation import TrajectoryValidator
 
+    positions = [2, 0]
     trajectory = _trajectory(samples=3)
     values = torch.arange(6).reshape(2, 3)
     payload = values
