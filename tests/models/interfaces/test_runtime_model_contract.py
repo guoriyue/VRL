@@ -10,13 +10,14 @@ import pytest
 import torch
 import torch.nn as nn
 
-from tests.models.interfaces import registered_runtime_model_classes
 from vrl.config.precision import RolePrecision
+from vrl.models.families.registry import FAMILY_REGISTRY
 from vrl.models.interfaces import (
     RuntimeBundle,
     RuntimeModel,
 )
 from vrl.models.steps.denoise import DenoiseModelBase
+from vrl.utils.config import import_from_path
 
 # RuntimeModel's required surface. Derived from the protocol's
 # ``__protocol_attrs__``, so a method add/rename auto-widens the contract check.
@@ -76,21 +77,32 @@ class _DiffusionModelBaseStub(DenoiseModelBase):
         yield
 
 
-@pytest.mark.parametrize(
-    "family",
-    sorted(registered_runtime_model_classes()),
-)
-def test_registered_family_runtime_model_satisfies_contract(family: str) -> None:
+def _runtime_contract_classes() -> dict[str, type]:
+    """``DenoiseModelBase`` plus every registered runtime class that does not inherit it.
+
+    A ``DenoiseModelBase`` subclass inherits the whole protocol surface, so
+    checking the base once covers those families; the registry walk keeps a
+    newly registered family outside the base from skipping the contract.
+    """
+
+    classes: dict[str, type] = {"DenoiseModelBase": DenoiseModelBase}
+    for family, entry in FAMILY_REGISTRY.items():
+        runtime_cls = import_from_path(entry.family_build.model_cls)
+        if not issubclass(runtime_cls, DenoiseModelBase):
+            classes[family] = runtime_cls
+    return classes
+
+
+@pytest.mark.parametrize("owner", sorted(_runtime_contract_classes()))
+def test_registered_family_runtime_model_satisfies_contract(owner: str) -> None:
     """Every registered family's runtime-model class satisfies RuntimeModel.
 
-    Runs over the family registry (not a hand-written list) so a newly
-    registered family cannot silently skip the contract. The check is
-    class-level — ``callable(getattr(cls, m))`` like the runtime protocol guard —
-    because instantiating a real family model needs weights/GPU.
+    The check is class-level — ``callable(getattr(cls, m))`` like the runtime
+    protocol guard — because instantiating a real family model needs weights/GPU.
     """
-    runtime_cls = registered_runtime_model_classes()[family]
+    runtime_cls = _runtime_contract_classes()[owner]
     missing = [m for m in _RUNTIME_MODEL_METHODS if not callable(getattr(runtime_cls, m, None))]
-    assert not missing, f"{family}: {runtime_cls.__name__} missing RuntimeModel methods {missing}"
+    assert not missing, f"{owner}: {runtime_cls.__name__} missing RuntimeModel methods {missing}"
 
 
 def test_runtime_bundle_exposes_model_contract() -> None:
