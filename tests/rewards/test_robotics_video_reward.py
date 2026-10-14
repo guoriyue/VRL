@@ -10,12 +10,10 @@ from vrl.rewards.inference import RewardInferenceArtifact
 
 
 class _FakeKling:
+    """Like the real KlingVideoRewardModel, it loads eagerly and has no prepare hook."""
+
     def __init__(self, config):
         self.config = config
-        self.prepared = False
-
-    def prepare_for_inference(self):
-        self.prepared = True
 
     def __call__(self, artifact):
         del artifact
@@ -102,7 +100,6 @@ def test_robotics_reward_prepares_every_lazy_child_in_pool(
 
     model.prepare_for_inference()
 
-    assert model.kling.prepared is True
     assert model.dino.prepared is True
     assert model.motion.prepared is True
 

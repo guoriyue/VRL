@@ -88,7 +88,7 @@ def test_missing_regions_and_changed_canvas_fail_before_ocr():
 
     model = TextRegionsRewardModel({"engine": MustNotRun()})
     artifact = RewardInferenceArtifact("a", "a", "", media=Image.new("RGB", (40, 20)))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="validation error for TextLayout"):
         model(artifact)
     layout = {
         "width": 40,
