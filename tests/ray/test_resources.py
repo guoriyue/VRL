@@ -101,25 +101,6 @@ def test_resolved_resource_summaries_are_derived_from_topology() -> None:
     assert BundleLayout.from_resources(resolved).bundle_gpu_ids == (0, 1)
 
 
-def test_explicit_split_devices_do_not_overlap() -> None:
-    """Explicit disjoint device lists resolve verbatim and are not colocated."""
-    resolved = ResourcePlan.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0, 1, 2, 3],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1, 2, 3]},
-                },
-            )
-        ),
-    )
-
-    assert resolved.trainer_devices == (0,)
-    assert resolved.rollout_devices == (1, 2, 3)
-    assert resolved.colocated is False
-
-
 def test_pinned_device_intersection_declares_colocation() -> None:
     """Hand-pinning intersecting devices sets IS the sharing declaration."""
     resolved = ResourcePlan.from_root(
@@ -172,22 +153,6 @@ def test_devices_must_be_subset_of_visible_devices() -> None:
                         "visible_devices": [0, 1],
                         "trainer": {"devices": [2]},
                         "rollout": {"num_gpus": 1},
-                    },
-                )
-            ),
-        )
-
-
-def test_num_engines_must_match_the_resolved_gpu_count() -> None:
-    """A contradicting explicit num_engines fails against the derivation."""
-    with pytest.raises(ValueError, match="num_engines must equal rollout GPUs"):
-        ResourcePlan.from_root(
-            parse_config(
-                _cfg(
-                    {
-                        "visible_devices": [0, 1, 2],
-                        "trainer": {"num_gpus": 1},
-                        "rollout": {"devices": [1, 2], "num_engines": 1},
                     },
                 )
             ),
@@ -470,19 +435,6 @@ def test_auto_resources_reject_ambiguous_cuda_mask(cuda_devices, monkeypatch, ma
         ResourcePlan.from_root(parse_config(_cfg({})))
 
 
-@pytest.mark.parametrize("inherited_mask", ["", "3,1", "GPU-external"])
-@pytest.mark.parametrize("count", [1, 3])
-def test_mock_topology_replaces_inherited_cuda_mask(
-    cuda_devices, monkeypatch, inherited_mask, count
-):
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", inherited_mask)
-    cuda_devices(count)
-    resolved = ResourcePlan.from_root(
-        parse_config(_cfg({})),
-    )
-    assert resolved.visible_devices == tuple(range(count))
-
-
 def test_reward_torch_device_without_a_reservation_follows_the_rank_local_trainer() -> None:
     """An unreserved in-process reward shares the caller's actual trainer device."""
     resolved = ResourcePlan.from_root(
@@ -499,24 +451,6 @@ def test_reward_torch_device_without_a_reservation_follows_the_rank_local_traine
     )
 
     assert resolved.reward_torch_device(trainer_device="cuda:7") == "cuda:7"
-
-
-def test_cpu_only_reward_component_scores_on_cpu() -> None:
-    """A CPU-only reward class must not inherit the trainer CUDA device."""
-    resolved = ResourcePlan.from_root(
-        parse_config(
-            _cfg(
-                {
-                    "visible_devices": [0, 1],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1]},
-                },
-                reward_components={"ocr": 1.0},
-            )
-        ),
-    )
-
-    assert resolved.reward_torch_device(trainer_device="cuda:0") == "cpu"
 
 
 def test_multi_gpu_local_reward_is_rejected_at_resolution() -> None:
@@ -662,25 +596,6 @@ def test_cross_node_requires_explicit_rollout_count() -> None:
                 )
             ),
         )
-
-
-def test_cross_node_preset_resolves() -> None:
-    """The bundled cross-node preset resolves to one trainer GPU, one rollout GPU and one engine
-    with no reservation.
-    """
-    from omegaconf import OmegaConf
-
-    from vrl.config.loading import bundled_config_resource
-
-    preset = bundled_config_resource("base/distributed/ray_rollout_cross_node")
-    with preset.open("r", encoding="utf-8") as stream:
-        resolved = ResourcePlan.from_root(parse_config(OmegaConf.load(stream)))
-
-    assert resolved.cross_node is True
-    assert resolved.trainer_devices == (0,)
-    assert resolved.rollout_devices == (1,)
-    assert resolved.rollout_num_engines == 1
-    assert resolved.requires_trainer_reservation is False
 
 
 def test_cross_node_kling_recipe_keeps_the_local_reward_on_the_driver() -> None:

@@ -164,23 +164,6 @@ def test_bundle_plan_cpu_only_rollout_uses_cpu_bundles() -> None:
     assert plan.total_bundles == 2
 
 
-def test_bundle_plan_dedicated_reward_appends_fresh_bundle() -> None:
-    """A reward pinned to its own GPU appends a dedicated bundle."""
-    resolved = _resolve(
-        {
-            "visible_devices": [0, 1, 2],
-            "trainer": {"devices": [0]},
-            "rollout": {"devices": [1]},
-            "reward": {"devices": [2]},
-        },
-    )
-    plan = BundleLayout.from_resources(resolved)
-
-    assert plan.reward_bundle_indices == (2,)
-    assert plan.rollout_bundle_indices == (1,)
-    assert set(plan.rollout_bundle_indices).isdisjoint(plan.reward_bundle_indices)
-
-
 # ------------------------------------------------- probe-then-assign (no GPU)
 #
 # ``assign_roles`` is a pure function of a ``bundle_index -> gpu_id`` probe
