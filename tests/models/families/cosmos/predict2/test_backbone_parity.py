@@ -8,6 +8,7 @@ verified against the model's OWN real branch outputs.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import torch
@@ -68,10 +69,20 @@ def test_cosmos_predict2_forward_step_runs_real_unbatched_cfg() -> None:
 
     # Predict2 runs cond and uncond as two separate forwards (not batched).
     assert len(calls) == 2
-    uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
-    # CFG combination + sigma->noise conversion verified on the real branches.
-    combined = cond + _GUIDANCE * (cond - uncond)
-    torch.testing.assert_close(out["noise_pred"], (state.latents - combined) / _SIGMA)
     assert out["noise_pred"].shape == TINY_COSMOS_LATENT_SHAPE
+    # Each branch alone is the noise estimate (latents - x0) / sigma. The noise is
+    # affine in x0, so ``x0 = c + g*(c - u)`` becomes the same combine on the noise.
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(
+            state,
+            do_cfg=False,
+            prompt_embeds=state.negative_prompt_embeds,
+            cond_indicator=state.uncond_indicator,
+            cond_mask=state.uncond_mask,
+        ),
+        0,
+    )["noise_pred"]
+    torch.testing.assert_close(out["noise_pred"], cond + _GUIDANCE * (cond - uncond))
     # The real transformer responds to the prompt (cond vs uncond differ).
     assert not torch.allclose(cond, uncond)

@@ -20,7 +20,7 @@ Mochi specifics vs Wan (the reference video family):
   Lumina2 treatment: the scheduler is rebuilt with ``invert_sigmas=False`` on
   Genmo's linear-quadratic sigma ladder, ``forward_step`` feeds the
   transformer ``num_train_timesteps - t`` (its native ascending clock), and
-  ``postprocess_branch`` negates the prediction (a velocity in the reversed
+  negates the prediction (a velocity in the reversed
   axis is the negative standard velocity). ``sde_step_with_logprob`` and
   ``scheduler.step`` then see a completely ordinary flow-match family.
 - The reference pipeline runs CFG combine + scheduler.step in fp32; our SDE
@@ -47,11 +47,9 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
     expand_batch_timestep,
     pack_eval_timestep,
+    predict_with_cfg,
 )
 
 
@@ -95,38 +93,13 @@ class MochiSamplingState(GuidedDenoiseSamplingStateBase):
     num_train_timesteps: int
 
 
-class MochiModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+class MochiModel(DiffusersModelBase):
     """Mochi-1 t2v transformer, scheduler and per-step math: the model replay runs.
 
-    Implements the backbone-runner protocol itself. Both CFG branches pad to
-    the same sequence length (T5 encode at ``max_sequence_length``), so they
-    pack into one batched transformer call; the attention masks ride the
-    batch as ``encoder_attention_mask``.
+    Both CFG branches pad to the same sequence length (T5 encode at
+    ``max_sequence_length``), so they pack into one batched transformer call;
+    the attention masks ride the batch as ``encoder_attention_mask``.
     """
-
-    cfg_mode = "batched_cfg"
-    cfg_base = "uncond"
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map the branch's T5 embeds and attention mask into a branch call."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            mask = request.extra.get("encoder_attention_mask")
-        else:
-            embeds = request.negative_prompt_embeds
-            mask = request.extra.get("negative_encoder_attention_mask")
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs={"encoder_attention_mask": mask},
-        )
-
-    # -- forward_step --------------------------------------------------
 
     def forward_step(
         self,
@@ -144,25 +117,29 @@ class MochiModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
         timestep_batch = float(state.num_train_timesteps) - expand_batch_timestep(t, bsz).to(
             device=latent_input.device, dtype=td
         )
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        return self.run_backbone(
+        cond = {
+            "hidden_states": latent_input,
+            "timestep": timestep_batch,
+            "encoder_hidden_states": state.prompt_embeds.to(td),
+            "encoder_attention_mask": state.prompt_attention_mask,
+        }
+        uncond = None
+        if state.do_cfg:
+            uncond = {
+                **cond,
+                "encoder_hidden_states": state.negative_prompt_embeds.to(td),
+                "encoder_attention_mask": state.negative_prompt_attention_mask,
+            }
+        noise_pred = predict_with_cfg(
             self.transformer,
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "encoder_attention_mask": state.prompt_attention_mask,
-                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
-                },
-            ),
+            cond,
+            uncond,
+            guidance_scale=state.guidance_scale,
+            batched=True,
+            dtype=td,
         )
+        # A velocity in Mochi's reversed time axis is -v_standard.
+        return {"noise_pred": -noise_pred}
 
     def restore_eval_state(
         self,
@@ -186,16 +163,6 @@ class MochiModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
             do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
             num_train_timesteps=int(self.scheduler.config.num_train_timesteps),
         )
-
-    def postprocess_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: DenoiseBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        """Negate: a velocity in Mochi's reversed time axis is -v_standard."""
-        del request, branch
-        return -raw_output
 
     def prepare_replay(self, build: ModelBuild) -> None:
         """Standardize the replay scheduler onto Mochi's descending-sigma domain.

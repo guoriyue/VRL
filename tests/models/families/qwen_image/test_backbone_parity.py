@@ -8,6 +8,7 @@ real outputs.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import torch
@@ -38,7 +39,7 @@ def _model(transformer: torch.nn.Module) -> QwenImagePipelineModel:
 
 
 def test_qwen_forward_step_single_branch_when_no_cfg() -> None:
-    """do_cfg=False: one transformer forward, noise == cond, uncond is zeros."""
+    """do_cfg=False: one transformer forward."""
     transformer = build_tiny_transformer("qwen_image")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
@@ -61,10 +62,6 @@ def test_qwen_forward_step_single_branch_when_no_cfg() -> None:
     out = model.forward_step(state, 0)
 
     assert len(calls) == 1
-    torch.testing.assert_close(out["noise_pred"], out["noise_pred_cond"])
-    torch.testing.assert_close(
-        out["noise_pred_uncond"], torch.zeros_like(out["noise_pred_uncond"])
-    )
     # Timestep normalized by 1000 (500 -> 0.5).
     torch.testing.assert_close(calls[0]["timestep"], torch.full((2,), 0.5))
     assert out["noise_pred"].shape == (2, _SEQ, TINY_QWEN_IN_CHANNELS)
@@ -82,7 +79,7 @@ def test_qwen_forward_step_runs_separate_cfg_with_uneven_seq_lengths() -> None:
         prompt_embeds=torch.randn(2, 5, TINY_QWEN_JOINT_DIM),
         prompt_embeds_mask=torch.ones(2, 5, dtype=torch.int64),
         # Unconditional branch has a DIFFERENT (shorter) text sequence — this is
-        # exactly what batched CFG packing cannot handle, hence separate_cfg.
+        # exactly what batched CFG packing cannot handle, hence separate forwards.
         negative_prompt_embeds=torch.randn(2, 2, TINY_QWEN_JOINT_DIM),
         negative_prompt_embeds_mask=torch.ones(2, 2, dtype=torch.int64),
         guidance_scale=4.0,
@@ -99,7 +96,16 @@ def test_qwen_forward_step_runs_separate_cfg_with_uneven_seq_lengths() -> None:
     assert len(calls) == 2
     assert calls[0]["encoder_hidden_states"].shape[1] == 5
     assert calls[1]["encoder_hidden_states"].shape[1] == 2
-    cond, uncond = out["noise_pred_cond"], out["noise_pred_uncond"]
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(
+            state,
+            prompt_embeds=state.negative_prompt_embeds,
+            prompt_embeds_mask=state.negative_prompt_embeds_mask,
+            do_cfg=False,
+        ),
+        0,
+    )["noise_pred"]
     assert not torch.allclose(cond, uncond)
     # Norm-preserving combine: the final pred carries the conditional branch's norm.
     comb = uncond + 4.0 * (cond - uncond)

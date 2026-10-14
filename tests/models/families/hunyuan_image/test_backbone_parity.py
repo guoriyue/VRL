@@ -11,6 +11,7 @@ hunyuan_image is the only consumer.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -141,8 +142,6 @@ def test_hunyuan_image_forward_step_single_branch_when_no_cfg() -> None:
     assert calls[0]["guidance"] is None
     # Raw scheduler t, no /1000.
     torch.testing.assert_close(calls[0]["timestep"], torch.full((2,), 500.0))
-    torch.testing.assert_close(out["noise_pred"], out["noise_pred_cond"])
-    assert torch.all(out["noise_pred_uncond"] == 0)
     assert out["noise_pred"].shape == TINY_HUNYUAN_IMAGE_LATENT_SHAPE
 
 
@@ -163,7 +162,18 @@ def test_hunyuan_image_forward_step_runs_separate_cfg_with_uneven_seq_lengths() 
     assert not torch.all(calls[0]["encoder_hidden_states_2"] == 0)
     assert torch.all(calls[1]["encoder_hidden_states_2"] == 0)
     assert torch.all(calls[1]["encoder_attention_mask_2"] == 0)
-    cond, uncond = out["noise_pred_cond"], out["noise_pred_uncond"]
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(
+            state,
+            prompt_embeds=state.negative_prompt_embeds,
+            prompt_embeds_mask=state.negative_prompt_embeds_mask,
+            prompt_embeds_2=state.negative_prompt_embeds_2,
+            prompt_embeds_mask_2=state.negative_prompt_embeds_mask_2,
+            do_cfg=False,
+        ),
+        0,
+    )["noise_pred"]
     assert not torch.allclose(cond, uncond)
     # Classic CFG combine (NOT the pipeline's APG guider — see model docstring).
     torch.testing.assert_close(out["noise_pred"], uncond + 4.0 * (cond - uncond))

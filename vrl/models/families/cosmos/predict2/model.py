@@ -25,7 +25,7 @@ from __future__ import annotations
 import random
 import sys
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 import torch
 
@@ -39,99 +39,16 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
     broadcast_spatial_timestep,
+    combine_cfg,
     expand_tensor_to_batch,
     replay_tensor,
     shared_replay_tensor,
 )
 
-
-@dataclass(slots=True)
-class CosmosPredict2DenoiseBackboneRunner(DenoiseBackboneRunnerBase):
-    """Map Cosmos Predict2 transformer kwargs into the shared backbone contract."""
-
-    cfg_mode = "separate_cfg"
-    cfg_base = "cond"
-    current_sigma: torch.Tensor
-    # Compile-time constant of the reference pipeline (see p2.5's twin note).
-    sigma_conditioning: float = 0.0001
-
-    @property
-    def current_t(self) -> torch.Tensor:
-        return self.current_sigma / (self.current_sigma + 1)
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: Literal["cond", "uncond"],
-    ) -> DenoiseBranch:
-        extra = request.extra
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            indicator = extra["cond_indicator"]
-            condition_mask = extra["cond_mask"]
-        else:
-            embeds = request.negative_prompt_embeds
-            indicator = extra["uncond_indicator"]
-            condition_mask = extra.get("uncond_mask")
-        hidden_states, timestep = self._prepare_branch(
-            latents=request.hidden_states,
-            init_latents=extra["init_latents"],
-            indicator=indicator,
-            timestep=request.timestep,
-        )
-        return DenoiseBranch(
-            hidden_states=hidden_states.to(extra["transformer_dtype"]),
-            timestep=timestep.to(extra["transformer_dtype"]),
-            encoder_hidden_states=embeds,
-            extra_kwargs={
-                "fps": extra["fps"],
-                "condition_mask": condition_mask,
-                "padding_mask": extra["padding_mask"],
-            },
-            metadata={"indicator": indicator},
-        )
-
-    def postprocess_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: DenoiseBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        c_skip = 1 - self.current_t
-        c_out = -self.current_t
-        denoised = (c_skip * request.hidden_states + c_out * raw_output.float()).to(
-            request.output_dtype or raw_output.dtype
-        )
-        indicator = branch.metadata["indicator"]
-        return indicator * request.extra["init_latents"] + (1 - indicator) * denoised
-
-    def finalize_noise_pred(
-        self,
-        request: DenoiseBackboneInput,
-        combined: torch.Tensor,
-        cond: torch.Tensor,
-        uncond: torch.Tensor,
-    ) -> torch.Tensor:
-        del cond, uncond
-        return (request.hidden_states - combined) / self.current_sigma
-
-    def _prepare_branch(
-        self,
-        *,
-        latents: torch.Tensor,
-        init_latents: torch.Tensor,
-        indicator: torch.Tensor,
-        timestep: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        c_in = 1 - self.current_t
-        hidden_states = indicator * init_latents + (1 - indicator) * (latents * c_in)
-        condition_timestep = torch.full_like(timestep, float(self.sigma_conditioning))
-        branch_timestep = indicator * condition_timestep + (1 - indicator) * timestep
-        return hidden_states, branch_timestep
+# Compile-time constant of the reference pipeline: the timestep the
+# conditioning frames are stamped with.
+_SIGMA_CONDITIONING = 0.0001
 
 
 @dataclass
@@ -156,17 +73,6 @@ class CosmosPredict2SamplingState(GuidedDenoiseSamplingStateBase):
     uncond_indicator: Any
     fps: int
 
-    def __post_init__(self) -> None:
-        # Cosmos conditions each branch on its own indicator tensor, so the
-        # CFG invariant DenoiseBackboneInput proves for negative_prompt_embeds
-        # has an uncond-indicator twin that only this family knows about.
-        # Proving it here is why the uncond branch reads the key directly,
-        # like its cond twin one line above.
-        if self.do_cfg and self.uncond_indicator is None:
-            raise ValueError(
-                "Cosmos Predict2 CFG requires uncond_indicator; do_cfg=True was paired with None",
-            )
-
 
 class CosmosPredict2Model(CosmosReplayForward, DiffusersModelBase):
     """Cosmos Predict2 Video2World transformer, scheduler and per-step math: the model replay runs."""
@@ -183,15 +89,15 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersModelBase):
         Mirrors the diffusers Cosmos2VideoToWorldPipeline denoising loop:
         sigma scaling (c_in/c_skip/c_out), spatial timestep blending via
         ``cond_indicator``, and post-transformer conditioning re-application.
-        Returns ``{"noise_pred", "noise_pred_cond", "noise_pred_uncond"}``.
-        NO scheduler step happens here.
+        Returns ``{"noise_pred"}``. NO scheduler step happens here.
         """
         batch_size = state.latents.shape[0]
         transformer_dtype = state.prompt_embeds.dtype
 
-        # Sigma scaling coefficients from the scheduler.
+        # Sigma scaling coefficients from the scheduler (c_in == c_skip).
         current_sigma = state.scheduler.sigmas[step_idx]
         current_t = current_sigma / (current_sigma + 1)
+        c_in = 1 - current_t
 
         # Spatial timestep tensor [B, 1, T, 1, 1]
         timestep = broadcast_spatial_timestep(
@@ -199,47 +105,51 @@ class CosmosPredict2Model(CosmosReplayForward, DiffusersModelBase):
             batch_size=batch_size,
             frames=state.latents.size(2),
         )
-
+        condition_timestep = torch.full_like(timestep, _SIGMA_CONDITIONING)
         # Expand cond/uncond fields to runtime batch (prepare_latents may
         # return [1,...] but the collector may have stacked groups).
-        cond_mask = state.cond_mask.expand(batch_size, -1, -1, -1, -1)
-        uncond_mask = (
-            state.uncond_mask.expand(batch_size, -1, -1, -1, -1)
-            if state.uncond_mask is not None
-            else None
-        )
-        # padding_mask kept at [1, 1, H, W] — transformer repeats internally.
-        padding_mask = state.padding_mask
         init_latents = state.init_latents.expand(batch_size, -1, -1, -1, -1)
-        cond_indicator = state.cond_indicator.expand(batch_size, -1, -1, -1, -1)
-        uncond_indicator = (
-            state.uncond_indicator.expand(batch_size, -1, -1, -1, -1)
-            if state.uncond_indicator is not None
-            else None
-        )
 
-        return CosmosPredict2DenoiseBackboneRunner(current_sigma=current_sigma).run_backbone(
-            self.transformer,
-            DenoiseBackboneInput(
-                hidden_states=state.latents,
-                timestep=timestep,
-                prompt_embeds=state.prompt_embeds,
-                negative_prompt_embeds=state.negative_prompt_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=transformer_dtype,
-                extra={
-                    "init_latents": init_latents,
-                    "cond_mask": cond_mask,
-                    "uncond_mask": uncond_mask,
-                    "padding_mask": padding_mask,
-                    "cond_indicator": cond_indicator,
-                    "uncond_indicator": uncond_indicator,
-                    "fps": state.fps,
-                    "transformer_dtype": transformer_dtype,
-                },
-            ),
+        def denoise(
+            embeds: torch.Tensor,
+            indicator: torch.Tensor,
+            condition_mask: torch.Tensor | None,
+        ) -> torch.Tensor:
+            """One branch: blend the conditioning frames in, predict x0, re-apply them."""
+            indicator = indicator.expand(batch_size, -1, -1, -1, -1)
+            hidden_states = indicator * init_latents + (1 - indicator) * (state.latents * c_in)
+            branch_timestep = indicator * condition_timestep + (1 - indicator) * timestep
+            raw = self.transformer(
+                hidden_states=hidden_states.to(transformer_dtype),
+                timestep=branch_timestep.to(transformer_dtype),
+                encoder_hidden_states=embeds,
+                fps=state.fps,
+                condition_mask=condition_mask,
+                # padding_mask kept at [1, 1, H, W] — transformer repeats internally.
+                padding_mask=state.padding_mask,
+                return_dict=False,
+            )[0]
+            denoised = (c_in * state.latents - current_t * raw.float()).to(transformer_dtype)
+            return (indicator * init_latents + (1 - indicator) * denoised).to(transformer_dtype)
+
+        x0 = denoise(
+            state.prompt_embeds,
+            state.cond_indicator,
+            state.cond_mask.expand(batch_size, -1, -1, -1, -1),
         )
+        if state.do_cfg:
+            uncond_mask = state.uncond_mask
+            if uncond_mask is not None:
+                uncond_mask = uncond_mask.expand(batch_size, -1, -1, -1, -1)
+            x0 = combine_cfg(
+                x0,
+                denoise(state.negative_prompt_embeds, state.uncond_indicator, uncond_mask),
+                guidance_scale=state.guidance_scale,
+                base="cond",
+            )
+        # Back from the x0 prediction to the noise domain the SDE step consumes.
+        noise_pred = (state.latents - x0) / current_sigma
+        return {"noise_pred": noise_pred.to(transformer_dtype)}
 
     def restore_eval_state(
         self,

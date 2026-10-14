@@ -46,12 +46,10 @@ from vrl.models.steps.denoise import (
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
     VaeDecodeMixin,
     expand_batch_timestep,
     pack_eval_timestep,
+    predict_with_cfg,
 )
 
 
@@ -65,51 +63,9 @@ class SD3SamplingState(GuidedDenoiseSamplingStateBase):
     negative_pooled_prompt_embeds: torch.Tensor | None
     do_cfg: bool
 
-    def __post_init__(self) -> None:
-        # SD3.5 conditions on an embed AND a pooled embed, so the CFG
-        # invariant DenoiseBackboneInput proves for negative_prompt_embeds
-        # has a pooled twin that only this family knows about. Proving it here
-        # is why the uncond branch reads the key directly, like its cond twin.
-        if self.do_cfg and self.negative_pooled_prompt_embeds is None:
-            raise ValueError(
-                "SD3.5 CFG requires negative_pooled_prompt_embeds; "
-                "do_cfg=True was paired with None",
-            )
 
-
-class SD3_5Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
-    """SD 3.5 transformer, scheduler and per-step math: the model replay runs.
-
-    The model implements the backbone-runner protocol itself (``cfg_mode`` /
-    ``build_branch``): "how to call MY transformer" is model knowledge, so
-    ``forward_step`` passes ``self`` to the shared CFG caller.
-    """
-
-    cfg_mode = "batched_cfg"
-    cfg_base = "uncond"
-
-    # -- backbone runner protocol ---------------------------------------
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map SD3 transformer kwargs into the shared backbone contract."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            pooled = request.extra["pooled_prompt_embeds"]
-        else:
-            embeds = request.negative_prompt_embeds
-            pooled = request.extra["negative_pooled_prompt_embeds"]
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs={"pooled_projections": pooled},
-        )
-
-    # -- forward_step --------------------------------------------------
+class SD3_5Model(DiffusersModelBase):
+    """SD 3.5 transformer, scheduler and per-step math: the model replay runs."""
 
     def forward_step(
         self,
@@ -118,8 +74,7 @@ class SD3_5Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
     ) -> dict[str, Any]:
         """SD3 transformer forward + optional batched CFG.
 
-        Returns noise_pred plus the un/conditional branches; the caller owns
-        scheduler.step / SDE.
+        Returns noise_pred; the caller owns scheduler.step / SDE.
         """
         t = state.timesteps[step_idx]
         bsz = state.latents.shape[0]
@@ -130,32 +85,28 @@ class SD3_5Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
         # If t is already shape [B] (eval path packs timesteps as [1, B]),
         # Tensor.expand(bsz) is a no-op on the equal-sized dim.
         timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td)
-        prompt_embeds = state.prompt_embeds.to(td)
-        pooled_prompt_embeds = state.pooled_prompt_embeds.to(td)
-        negative_prompt_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        negative_pooled_prompt_embeds = (
-            None
-            if state.negative_pooled_prompt_embeds is None
-            else state.negative_pooled_prompt_embeds.to(td)
-        )
-        return self.run_backbone(
+        cond = {
+            "hidden_states": latent_input,
+            "timestep": timestep_batch,
+            "encoder_hidden_states": state.prompt_embeds.to(td),
+            "pooled_projections": state.pooled_prompt_embeds.to(td),
+        }
+        uncond = None
+        if state.do_cfg:
+            uncond = {
+                **cond,
+                "encoder_hidden_states": state.negative_prompt_embeds.to(td),
+                "pooled_projections": state.negative_pooled_prompt_embeds.to(td),
+            }
+        noise_pred = predict_with_cfg(
             self.transformer,
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=prompt_embeds,
-                negative_prompt_embeds=negative_prompt_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "pooled_prompt_embeds": pooled_prompt_embeds,
-                    "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
-                },
-            ),
+            cond,
+            uncond,
+            guidance_scale=state.guidance_scale,
+            batched=True,
+            dtype=td,
         )
+        return {"noise_pred": noise_pred}
 
     def restore_eval_state(
         self,

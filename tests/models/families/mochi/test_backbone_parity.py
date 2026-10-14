@@ -9,6 +9,7 @@ the model's OWN real outputs.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import torch
@@ -77,7 +78,16 @@ def test_mochi_forward_step_runs_real_batched_cfg_on_reversed_clock() -> None:
         calls[0]["timestep"],
         torch.full((doubled,), float(_NUM_TRAIN_TIMESTEPS) - 400.0),
     )
-    uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(
+            state,
+            do_cfg=False,
+            prompt_embeds=state.negative_prompt_embeds,
+            prompt_attention_mask=state.negative_prompt_attention_mask,
+        ),
+        0,
+    )["noise_pred"]
     torch.testing.assert_close(out["noise_pred"], uncond + 4.5 * (cond - uncond))
     assert not torch.allclose(cond, uncond)
 

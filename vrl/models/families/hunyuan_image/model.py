@@ -22,7 +22,8 @@ HunyuanImage specifics vs Qwen-Image (the reference t2i CFG family):
   encode device rather than splitting the one-device call.
 - TRUE classifier-free guidance with separate branches: cond/uncond masks
   differ per branch (and the glyph stream may be zeros on one side only), so
-  ``separate_cfg`` (two independent forwards), ``cfg_base = "uncond"``.
+  the branches run as two independent forwards combined around the uncond
+  prediction.
 - Latents are plain 4D ``[B, 64, H/32, W/32]`` (32x spatial VAE, no packing);
   the transformer computes RoPE internally.
 - The reference pipeline passes an EXPLICIT sigma ladder
@@ -60,12 +61,10 @@ from vrl.models.steps.denoise import (
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
     VaeDecodeMixin,
     expand_batch_timestep,
     pack_eval_timestep,
+    predict_with_cfg,
 )
 
 
@@ -85,48 +84,15 @@ class HunyuanImageSamplingState(GuidedDenoiseSamplingStateBase):
     guidance_embeds: bool
 
 
-class HunyuanImageModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+class HunyuanImageModel(DiffusersModelBase):
     """HunyuanImage-2.1 t2i transformer, scheduler and per-step math: the model replay runs.
 
-    Implements the backbone-runner protocol itself. Cond/uncond prompts carry
-    branch-specific masks and glyph streams (the byT5 pair may be zeros on one
-    branch only), so the two branches run as independent forwards
-    (``separate_cfg``) combined with the classic CFG formula — see the module
-    docstring for the deliberate divergence from the pipeline's APG guider.
+    Cond/uncond prompts carry branch-specific masks and glyph streams (the
+    byT5 pair may be zeros on one branch only), so the two branches run as
+    independent forwards combined with the classic CFG formula — see the
+    module docstring for the deliberate divergence from the pipeline's APG
+    guider.
     """
-
-    cfg_mode = "separate_cfg"
-    cfg_base = "uncond"
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map HunyuanImage transformer kwargs into the shared backbone contract."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            mask = request.extra["encoder_attention_mask"]
-            embeds_2 = request.extra["encoder_hidden_states_2"]
-            mask_2 = request.extra["encoder_attention_mask_2"]
-        else:
-            embeds = request.negative_prompt_embeds
-            mask = request.extra["negative_encoder_attention_mask"]
-            embeds_2 = request.extra["negative_encoder_hidden_states_2"]
-            mask_2 = request.extra["negative_encoder_attention_mask_2"]
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs={
-                "encoder_attention_mask": mask,
-                "encoder_hidden_states_2": embeds_2,
-                "encoder_attention_mask_2": mask_2,
-                "guidance": request.extra["guidance"],
-            },
-        )
-
-    # -- forward_step --------------------------------------------------
 
     def forward_step(
         self,
@@ -154,34 +120,33 @@ class HunyuanImageModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
                 device=latent_input.device,
                 dtype=td,
             )
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        return self.run_backbone(
+        cond = {
+            "hidden_states": latent_input,
+            "timestep": timestep_batch,
+            "encoder_hidden_states": state.prompt_embeds.to(td),
+            "encoder_attention_mask": state.prompt_embeds_mask,
+            "encoder_hidden_states_2": state.prompt_embeds_2.to(td),
+            "encoder_attention_mask_2": state.prompt_embeds_mask_2,
+            "guidance": guidance,
+        }
+        uncond = None
+        if state.do_cfg:
+            uncond = {
+                **cond,
+                "encoder_hidden_states": state.negative_prompt_embeds.to(td),
+                "encoder_attention_mask": state.negative_prompt_embeds_mask,
+                "encoder_hidden_states_2": state.negative_prompt_embeds_2.to(td),
+                "encoder_attention_mask_2": state.negative_prompt_embeds_mask_2,
+            }
+        noise_pred = predict_with_cfg(
             self.transformer,
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "encoder_attention_mask": state.prompt_embeds_mask,
-                    "encoder_hidden_states_2": state.prompt_embeds_2.to(td),
-                    "encoder_attention_mask_2": state.prompt_embeds_mask_2,
-                    "negative_encoder_attention_mask": state.negative_prompt_embeds_mask,
-                    "negative_encoder_hidden_states_2": (
-                        None
-                        if state.negative_prompt_embeds_2 is None
-                        else state.negative_prompt_embeds_2.to(td)
-                    ),
-                    "negative_encoder_attention_mask_2": state.negative_prompt_embeds_mask_2,
-                    "guidance": guidance,
-                },
-            ),
+            cond,
+            uncond,
+            guidance_scale=state.guidance_scale,
+            batched=False,
+            dtype=td,
         )
+        return {"noise_pred": noise_pred}
 
     def restore_eval_state(
         self,

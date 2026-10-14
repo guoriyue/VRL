@@ -18,13 +18,10 @@ Lumina2 specifics vs SD3 (the reference family):
   and t=1 as the image, so ``forward_step`` feeds
   ``1 - t / num_train_timesteps`` (the scheduler itself still steps on raw t).
 - The transformer predicts the NEGATIVE flow velocity: diffusers negates the
-  prediction right before ``scheduler.step``. We negate per branch in
-  ``postprocess_branch`` — equivalent (CFG combine is linear, the norm rescale
-  is magnitude-based) and it keeps the exported cond/uncond branches
-  sign-consistent with what the SDE step consumes.
+  prediction right before ``scheduler.step``, and so does ``forward_step``.
 - TRUE classifier-free guidance run as SEPARATE branches (mirrors the
   reference pipeline), with Lumina's norm-preserving rescale reproduced by the
-  shared ``cfg_normalization`` combine (the pipeline argument of that name).
+  shared ``normalize`` combine (the pipeline's ``cfg_normalization``).
 - ``cfg_trunc_ratio`` (late-step CFG truncation) is NOT supported: a
   step-index-dependent CFG rule cannot be recomputed on the replay path
   (the eval forward sees one packed step, not the original index).
@@ -46,12 +43,10 @@ from vrl.models.steps.denoise import (
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
     VaeDecodeMixin,
     expand_batch_timestep,
     pack_eval_timestep,
+    predict_with_cfg,
 )
 
 
@@ -74,35 +69,8 @@ class Lumina2SamplingState(GuidedDenoiseSamplingStateBase):
     num_train_timesteps: int
 
 
-class Lumina2Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
+class Lumina2Model(DiffusersModelBase):
     """Lumina-Image-2.0 t2i transformer, scheduler and per-step math: the model replay runs."""
-
-    cfg_mode = "separate_cfg"
-    cfg_base = "uncond"
-    # Lumina's reference pipeline rescales the combined prediction back to the
-    # conditional branch's norm on every CFG step.
-    cfg_normalization = True
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map the branch's Gemma-2 embeds and attention mask into a branch call."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            mask = request.extra.get("encoder_attention_mask")
-        else:
-            embeds = request.negative_prompt_embeds
-            mask = request.extra.get("negative_encoder_attention_mask")
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs={"encoder_attention_mask": mask},
-        )
-
-    # -- forward_step --------------------------------------------------
 
     def forward_step(
         self,
@@ -120,25 +88,33 @@ class Lumina2Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
         timestep_batch = 1.0 - expand_batch_timestep(t, bsz).to(
             device=latent_input.device, dtype=td
         ) / float(state.num_train_timesteps)
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        return self.run_backbone(
+        cond = {
+            "hidden_states": latent_input,
+            "timestep": timestep_batch,
+            "encoder_hidden_states": state.prompt_embeds.to(td),
+            "encoder_attention_mask": state.prompt_attention_mask,
+        }
+        uncond = None
+        if state.do_cfg:
+            uncond = {
+                **cond,
+                "encoder_hidden_states": state.negative_prompt_embeds.to(td),
+                "encoder_attention_mask": state.negative_prompt_attention_mask,
+            }
+        noise_pred = predict_with_cfg(
             self.transformer,
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "encoder_attention_mask": state.prompt_attention_mask,
-                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
-                },
-            ),
+            cond,
+            uncond,
+            guidance_scale=state.guidance_scale,
+            batched=False,
+            dtype=td,
+            # Lumina's reference pipeline rescales the combined prediction back
+            # to the conditional branch's norm on every CFG step.
+            normalize=True,
         )
+        # Lumina predicts the reversed-time velocity; the flow-match SDE step
+        # expects the standard sign.
+        return {"noise_pred": -noise_pred}
 
     def restore_eval_state(
         self,
@@ -162,21 +138,6 @@ class Lumina2Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
             do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
             num_train_timesteps=int(self.scheduler.config.num_train_timesteps),
         )
-
-    def postprocess_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: DenoiseBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        """Negate the raw prediction: Lumina predicts the reversed-time velocity.
-
-        diffusers negates AFTER the CFG combine; negating per branch is
-        equivalent (linear combine, magnitude-based rescale) and keeps every
-        exported branch tensor in the sign the flow-match SDE step expects.
-        """
-        del request, branch
-        return -raw_output
 
 
 class Lumina2PipelineModel(VaeDecodeMixin, DiffusersPipelineModelBase, Lumina2Model):

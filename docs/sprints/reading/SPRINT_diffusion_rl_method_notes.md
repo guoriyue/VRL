@@ -41,7 +41,7 @@ PDF 已在 `docs/papers/diffusion-flow-rl/`（dancegrpo、flow-grpo、mixgrpo �
 | 组内共享初始噪声 | **无**：`rollout.group_shared_noise`（2026-09-19 落地）因无 preset 使用已于 2026-09-27 删除。loss 侧另有 `v_grpo.py` 的 `_group_shared_noise` |
 | 多 reward advantage 级合成 | **无**（`MultiReward` 出加权总分，分量保留在 `RewardOutput.components`，但 advantage 只看总分） |
 | Best-of-N top/bottom-k | **无**（只有非零 advantage 掩码） |
-| CFG 下的训练分支 | 有 `DenoiseCFGMode`，但没有审计"训练时 uncond 分支是否也走 replay" |
+| CFG 下的训练分支 | 各家族 `forward_step` 调 `predict_with_cfg`，但没有审计"训练时 uncond 分支是否也走 replay" |
 
 ---
 

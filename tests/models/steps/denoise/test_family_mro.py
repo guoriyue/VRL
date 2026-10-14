@@ -77,7 +77,7 @@ def test_self_loading_replay_model_owns_from_build(replay_cls: type) -> None:
 def test_wan_i2v_pipeline_takes_forward_math_from_i2v_and_plumbing_from_t2v() -> None:
     """Sampling I2V runs the I2V math that the I2V replay model runs.
 
-    ``WanI2VPipelineModel`` takes ``build_branch`` / ``_backbone_extra`` /
+    ``WanI2VPipelineModel`` takes ``_transformer_inputs`` /
     ``restore_eval_state`` from ``WanI2VModel`` and its constructor, offload
     lifecycle and second-expert sync from ``WanT2VPipelineModel``. If the I2V
     math moved onto the pipeline class, replay would silently run the T2V math.
@@ -88,7 +88,7 @@ def test_wan_i2v_pipeline_takes_forward_math_from_i2v_and_plumbing_from_t2v() ->
         WanT2VPipelineModel,
     )
 
-    for name in ("build_branch", "_backbone_extra", "restore_eval_state"):
+    for name in ("_transformer_inputs", "restore_eval_state"):
         assert _owner(WanI2VPipelineModel, name) is WanI2VModel, name
     for name in ("__init__", "_set_transformer_2", "load_trainable_state", "apply_full_finetune"):
         assert _owner(WanI2VPipelineModel, name) is WanT2VPipelineModel, name

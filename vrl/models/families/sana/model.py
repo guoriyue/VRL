@@ -44,12 +44,10 @@ from vrl.models.steps.denoise import (
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
     VaeDecodeMixin,
     expand_batch_timestep,
     pack_eval_timestep,
+    predict_with_cfg,
 )
 from vrl.models.weight_utils import unwrap_compile_and_ddp
 
@@ -69,38 +67,13 @@ class SanaSamplingState(GuidedDenoiseSamplingStateBase):
     do_cfg: bool
 
 
-class SanaModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+class SanaModel(DiffusersModelBase):
     """SANA t2i transformer, scheduler and per-step math: the model replay runs.
 
-    Implements the backbone-runner protocol itself. Both CFG branches pad to
-    the same sequence length (Gemma-2 encode at ``max_sequence_length``), so
-    they pack into one batched transformer call; the attention masks ride the
-    batch as ``encoder_attention_mask``.
+    Both CFG branches pad to the same sequence length (Gemma-2 encode at
+    ``max_sequence_length``), so they pack into one batched transformer call;
+    the attention masks ride the batch as ``encoder_attention_mask``.
     """
-
-    cfg_mode = "batched_cfg"
-    cfg_base = "uncond"
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map the branch's Gemma-2 embeds and attention mask into a branch call."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            mask = request.extra.get("encoder_attention_mask")
-        else:
-            embeds = request.negative_prompt_embeds
-            mask = request.extra.get("negative_encoder_attention_mask")
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs={"encoder_attention_mask": mask},
-        )
-
-    # -- forward_step --------------------------------------------------
 
     def forward_step(
         self,
@@ -120,28 +93,31 @@ class SanaModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
         timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device) * float(
             getattr(config, "timestep_scale", 1.0)
         )
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        return self.run_backbone(
+        cond = {
+            "hidden_states": latent_input,
+            "timestep": timestep_batch,
+            "encoder_hidden_states": state.prompt_embeds.to(td),
+            "encoder_attention_mask": state.prompt_attention_mask,
+        }
+        uncond = None
+        if state.do_cfg:
+            uncond = {
+                **cond,
+                "encoder_hidden_states": state.negative_prompt_embeds.to(td),
+                "encoder_attention_mask": state.negative_prompt_attention_mask,
+            }
+        noise_pred = predict_with_cfg(
             self.transformer,
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                # SanaPipeline promotes each transformer branch before CFG.
-                # Keeping this fp32 also feeds the protected scheduler/log-prob
-                # path without a lossy fp16 round trip.
-                output_dtype=torch.float32,
-                extra={
-                    "encoder_attention_mask": state.prompt_attention_mask,
-                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
-                },
-            ),
+            cond,
+            uncond,
+            guidance_scale=state.guidance_scale,
+            batched=True,
+            # SanaPipeline promotes each transformer branch before CFG.
+            # Keeping this fp32 also feeds the protected scheduler/log-prob
+            # path without a lossy fp16 round trip.
+            dtype=torch.float32,
         )
+        return {"noise_pred": noise_pred}
 
     def restore_eval_state(
         self,

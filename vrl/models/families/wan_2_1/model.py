@@ -58,12 +58,10 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
     expand_batch_timestep,
     expand_tensor_to_batch,
     pack_eval_timestep,
+    predict_with_cfg,
 )
 from vrl.models.weight_utils import load_weights_into, require_weights_for
 
@@ -106,33 +104,14 @@ class WanI2VSamplingState(GuidedDenoiseSamplingStateBase):
     host_timesteps: torch.Tensor | None = field(default=None, init=False, repr=False)
 
 
-class WanT2VModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+class WanT2VModel(DiffusersModelBase):
     """Wan T2V transformers, scheduler and per-step math: the model replay runs.
 
-    Implements the backbone-runner protocol itself (batched CFG over the T5
-    text embeds); the I2V model overrides ``build_branch`` with its
-    channel-wise conditioning concat. A Wan 2.2 dual-stage checkpoint carries
-    a second expert, ``transformer_2``, which ``forward_step`` routes to by
-    timestep against ``boundary_ratio``.
+    Batched CFG over the T5 text embeds; the I2V model overrides
+    ``_transformer_inputs`` with its channel-wise conditioning concat. A Wan
+    2.2 dual-stage checkpoint carries a second expert, ``transformer_2``,
+    which ``forward_step`` routes to by timestep against ``boundary_ratio``.
     """
-
-    cfg_mode = "batched_cfg"
-    cfg_base = "uncond"
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map Wan transformer kwargs into the shared backbone contract."""
-        embeds = request.prompt_embeds
-        if branch == "uncond":
-            embeds = request.negative_prompt_embeds
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-        )
 
     def __init__(
         self,
@@ -355,9 +334,9 @@ class WanT2VModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
     ) -> dict[str, Any]:
         """Wan transformer forward + optional batched CFG.
 
-        Returns noise_pred plus the un/conditional branches; the caller owns
-        scheduler.step / SDE. ``_backbone_extra`` adds the family's extra
-        conditioning (I2V's image condition).
+        Returns noise_pred; the caller owns scheduler.step / SDE.
+        ``_transformer_inputs`` adds the family's latent-side conditioning
+        (I2V's image condition).
 
         Timestep shape convention (mirrors SD3 model):
         - rollouts: ``state.timesteps`` is 1-D ``[T]``; we expand a scalar to ``[B]``.
@@ -383,25 +362,24 @@ class WanT2VModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
             device=latent_input.device,
             dtype=td,
         )
-        prompt_embeds = state.prompt_embeds.to(td)
-        negative_prompt_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
+        cond = {
+            **self._transformer_inputs(state, latent_input, td),
+            "timestep": timestep_batch,
+            "encoder_hidden_states": state.prompt_embeds.to(td),
+        }
+        uncond = None
+        if state.do_cfg:
+            uncond = {**cond, "encoder_hidden_states": state.negative_prompt_embeds.to(td)}
         with self._expert_lifecycle_trace(expert_name, timestep):
-            output = self.run_backbone(
+            noise_pred = predict_with_cfg(
                 transformer,
-                DenoiseBackboneInput(
-                    hidden_states=latent_input,
-                    timestep=timestep_batch,
-                    prompt_embeds=prompt_embeds,
-                    negative_prompt_embeds=negative_prompt_embeds,
-                    guidance_scale=guidance_scale,
-                    do_cfg=state.do_cfg,
-                    output_dtype=td,
-                    extra=self._backbone_extra(state, td),
-                ),
+                cond,
+                uncond,
+                guidance_scale=guidance_scale,
+                batched=True,
+                dtype=td,
             )
-        return output
+        return {"noise_pred": noise_pred}
 
     @contextlib.contextmanager
     def _expert_lifecycle_trace(
@@ -449,11 +427,16 @@ class WanT2VModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
 
     # -- forward_step --------------------------------------------------
 
-    def _backbone_extra(self, state: Any, dtype: torch.dtype) -> dict[str, Any]:
-        """Extra transformer inputs beyond latents, timestep and prompts; none for T2V."""
+    def _transformer_inputs(
+        self,
+        state: Any,
+        latent_input: torch.Tensor,
+        dtype: torch.dtype,
+    ) -> dict[str, Any]:
+        """Latent-side transformer inputs, shared by both CFG branches; T2V feeds the latents."""
 
         del state, dtype
-        return {}
+        return {"hidden_states": latent_input}
 
     def restore_eval_state(
         self,
@@ -892,65 +875,38 @@ class WanT2VPipelineModel(DiffusersPipelineModelBase, WanT2VModel):
 class WanI2VModel(WanT2VModel):
     """Wan I2V per-step math: the channel-wise image conditioning and CLIP image embeds."""
 
-    def build_branch(
+    def _transformer_inputs(
         self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """I2V branch: channel-wise conditioning concat + CLIP image embeds.
+        state: WanI2VSamplingState,
+        latent_input: torch.Tensor,
+        dtype: torch.dtype,
+    ) -> dict[str, Any]:
+        """Channel-wise conditioning concat + CLIP image embeds.
 
         - Hidden states are ``cat([noise_latents, condition], dim=1)`` so the
           transformer sees both the noisy frames and the (mask + first-frame
-          latent) conditioning channel-wise concatenated. The condition tensor
-          is produced once per request by ``pipe.prepare_latents`` and rides
-          ``request.extra``.
+          latent) conditioning channel-wise concatenated, as
+          ``WanImageToVideoPipeline.__call__`` does. The condition tensor is
+          produced once per request by ``pipe.prepare_latents``.
         - ``encoder_hidden_states_image`` is the CLIP visual feature from
-          ``pipe.encode_image``; cond/uncond share the same tensor object so
-          the batched-CFG packer concatenates it along dim 0 alongside
-          ``prompt_embeds``.
+          ``pipe.encode_image``; batched CFG concatenates it along dim 0
+          alongside ``prompt_embeds``.
 
         Wan 2.2 5B's expand_timesteps mode (mask-blended hidden states) remains
         a separate future upgrade path; the A14B dual-stage routing selects
         ``transformer`` / ``transformer_2`` outside this method.
         """
-        embeds = request.prompt_embeds
-        if branch == "uncond":
-            embeds = request.negative_prompt_embeds
-
-        extra = request.extra
-        condition = expand_tensor_to_batch(
-            extra["condition"],
-            request.hidden_states.shape[0],
-        )
-        # Channel-wise concat (mimics WanImageToVideoPipeline `__call__`:
-        # `latent_model_input = torch.cat([latents, condition], dim=1)`).
-        hidden_states = torch.cat(
-            [request.hidden_states, condition.to(request.hidden_states.dtype)],
-            dim=1,
-        )
-
-        extra_kwargs: dict[str, torch.Tensor] = {}
-        image_embeds = extra.get("image_embeds")
-        if image_embeds is not None:
-            extra_kwargs["encoder_hidden_states_image"] = expand_tensor_to_batch(
-                image_embeds,
-                request.hidden_states.shape[0],
-            )
-
-        return DenoiseBranch(
-            hidden_states=hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs=extra_kwargs,
-        )
-
-    def _backbone_extra(self, state: WanI2VSamplingState, dtype: torch.dtype) -> dict[str, Any]:
-        """I2V conditions the transformer on the first-frame latent and image embeds."""
-
-        return {
-            "condition": state.condition.to(dtype),
-            "image_embeds": None if state.image_embeds is None else state.image_embeds.to(dtype),
+        bsz = latent_input.shape[0]
+        condition = expand_tensor_to_batch(state.condition.to(dtype), bsz)
+        inputs: dict[str, Any] = {
+            "hidden_states": torch.cat([latent_input, condition], dim=1),
         }
+        if state.image_embeds is not None:
+            inputs["encoder_hidden_states_image"] = expand_tensor_to_batch(
+                state.image_embeds.to(dtype),
+                bsz,
+            )
+        return inputs
 
     def restore_eval_state(
         self,
@@ -980,7 +936,7 @@ class WanI2VModel(WanT2VModel):
 class WanI2VPipelineModel(WanT2VPipelineModel, WanI2VModel):
     """Wan I2V plus the diffusers pipeline: image encoding, conditioning latents, export.
 
-    The I2V math (``build_branch`` / ``_backbone_extra`` / ``restore_eval_state``)
+    The I2V math (``_transformer_inputs`` / ``restore_eval_state``)
     comes from ``WanI2VModel`` and the pipeline plumbing (constructor, offload
     lifecycle, second-expert sync) from ``WanT2VPipelineModel``. Neither base
     defines the other's members, so their order does not change what resolves.

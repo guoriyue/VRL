@@ -14,6 +14,7 @@ the Hub is unreachable (offline CI).
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -74,7 +75,10 @@ def test_wan_wrapper_runs_on_real_loaded_pipeline() -> None:
 
     out = model.forward_step(state, 0)
 
-    uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(state, do_cfg=False, prompt_embeds=state.negative_prompt_embeds), 0
+    )["noise_pred"]
     torch.testing.assert_close(out["noise_pred"], uncond + 3.0 * (cond - uncond))
     assert out["noise_pred"].shape == (2, c, 1, 4, 4)
 
@@ -110,5 +114,14 @@ def test_sd3_wrapper_runs_on_real_loaded_pipeline() -> None:
 
     out = model.forward_step(state, 0)
 
-    uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(
+            state,
+            do_cfg=False,
+            prompt_embeds=state.negative_prompt_embeds,
+            pooled_prompt_embeds=state.negative_pooled_prompt_embeds,
+        ),
+        0,
+    )["noise_pred"]
     torch.testing.assert_close(out["noise_pred"], uncond + 3.0 * (cond - uncond))

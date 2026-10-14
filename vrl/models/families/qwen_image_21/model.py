@@ -20,8 +20,9 @@ Qwen-Image-2.1 specifics vs the 20B ``qwen_image`` family:
   needs ``img_mask`` over the JOINT sequence: the text-side pad mask plus one
   ``True`` slot per 2x2 group of target latents (diffusers parity).
 - Classifier-free guidance is TRUE CFG (``true_cfg_scale``) but OFF by default
-  (1.0). When enabled, cond/uncond tokenize to different lengths, so the runner
-  is ``separate_cfg``; the combine is plain linear (no norm rescale, unlike 20B).
+  (1.0). When enabled, cond/uncond tokenize to different lengths, so the
+  branches run as separate forwards; the combine is plain linear (no norm
+  rescale, unlike 20B).
 - Prefix KV caching (``kv_cache_mode``) is never used: text-token KV under a LoRA
   differs from the cached prefill, so rollout and replay both recompute the full
   sequence every step and stay bit-comparable.
@@ -49,9 +50,7 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
+    combine_cfg,
     denormalize_video_vae_latents,
     expand_batch_timestep,
     pack_eval_timestep,
@@ -81,61 +80,14 @@ class QwenImage21SamplingState(GuidedDenoiseSamplingStateBase):
     reference_shapes: tuple[tuple[int, int, int], ...] = ()
 
 
-class QwenImage21Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
+class QwenImage21Model(DiffusersModelBase):
     """Qwen-Image-2.1 transformer, scheduler and per-step math: the model replay runs.
 
-    Implements the backbone-runner protocol itself. True CFG with cond/uncond
-    prompts of DIFFERENT token lengths cannot be packed into one batched call,
-    hence ``separate_cfg``; with the checkpoint's default ``true_cfg_scale=1.0``
-    the runner makes one forward per step.
+    True CFG with cond/uncond prompts of DIFFERENT token lengths cannot be
+    packed into one batched call, so the branches run as separate forwards;
+    with the checkpoint's default ``true_cfg_scale=1.0`` there is one forward
+    per step.
     """
-
-    cfg_mode = "separate_cfg"
-    cfg_base = "uncond"
-    # ``QwenImage21Pipeline`` combines linearly:
-    #     noise = uncond + s * (cond - uncond)
-    cfg_normalization = False
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map Qwen-Image-2.1 transformer kwargs into the shared backbone contract."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            mask = request.extra.get("encoder_hidden_states_mask")
-            img_mask = request.extra["img_mask"]
-        else:
-            embeds = request.negative_prompt_embeds
-            mask = request.extra.get("negative_encoder_hidden_states_mask")
-            img_mask = request.extra["negative_img_mask"]
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs={
-                "encoder_hidden_states_mask": mask,
-                "img_shapes": request.extra["img_shapes"],
-                "img_mask": img_mask,
-            },
-        )
-
-    def postprocess_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: DenoiseBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        """Keep the target-image tail of the joint (text + image) output.
-
-        The single-stream transformer returns a prediction for every joint
-        token; ``QwenImage21Pipeline`` slices ``[:, -latents.size(1):]`` and so
-        does the rollout/replay step here.
-        """
-        del branch
-        target_tokens = request.extra["target_tokens"]
-        return raw_output[:, -target_tokens:]
 
     def packed_token_count(self, height: int, width: int) -> int:
         """2.1 packs the 16x VAE grid unpatched, each side rounded to 2 latent cells.
@@ -198,34 +150,38 @@ class QwenImage21Model(DiffusersModelBase, DenoiseBackboneRunnerBase):
         timestep_batch = (
             expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td) / 1000.0
         )
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        negative_img_mask = (
-            None
-            if state.negative_image_pad_mask is None
-            else self._joint_img_mask(state.negative_image_pad_mask, latent_tokens)
-        )
-        return self.run_backbone(
-            self.transformer,
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
+        cond = {
+            "hidden_states": latent_input,
+            "timestep": timestep_batch,
+            "encoder_hidden_states": state.prompt_embeds.to(td),
+            "encoder_hidden_states_mask": state.prompt_embeds_mask,
+            "img_shapes": self._img_shapes(state, bsz),
+            "img_mask": self._joint_img_mask(state.image_pad_mask, latent_tokens),
+        }
+
+        def target_prediction(kwargs: dict[str, Any]) -> torch.Tensor:
+            # The single-stream transformer predicts every joint (text + image)
+            # token; keep the target-image tail like ``QwenImage21Pipeline``.
+            # The branches' text lengths differ, so slice before the combine.
+            output = self.transformer(**kwargs, return_dict=False)[0]
+            return output[:, -latent_tokens:].to(td)
+
+        noise_pred = target_prediction(cond)
+        if state.do_cfg:
+            uncond = {
+                **cond,
+                "encoder_hidden_states": state.negative_prompt_embeds.to(td),
+                "encoder_hidden_states_mask": state.negative_prompt_embeds_mask,
+                "img_mask": self._joint_img_mask(state.negative_image_pad_mask, latent_tokens),
+            }
+            # ``QwenImage21Pipeline`` combines linearly:
+            #     noise = uncond + s * (cond - uncond)
+            noise_pred = combine_cfg(
+                noise_pred,
+                target_prediction(uncond),
                 guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "target_tokens": latent_tokens,
-                    "encoder_hidden_states_mask": state.prompt_embeds_mask,
-                    "negative_encoder_hidden_states_mask": state.negative_prompt_embeds_mask,
-                    "img_shapes": self._img_shapes(state, bsz),
-                    "img_mask": self._joint_img_mask(state.image_pad_mask, latent_tokens),
-                    "negative_img_mask": negative_img_mask,
-                },
-            ),
-        )
+            )
+        return {"noise_pred": noise_pred}
 
     def restore_eval_state(
         self,

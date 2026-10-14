@@ -44,9 +44,6 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
     expand_batch_timestep,
     pack_eval_timestep,
     set_mu_shifted_timesteps,
@@ -66,42 +63,13 @@ class FluxSamplingState(GuidedDenoiseSamplingStateBase):
     width: int
 
 
-class FluxModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+class FluxModel(DiffusersModelBase):
     """FLUX.1 t2i transformer, scheduler and per-step math: the model replay runs.
 
-    Implements the backbone-runner protocol itself. FLUX.1-dev is
-    guidance-distilled: a single transformer forward conditioned on a
-    ``guidance`` embedding, NOT classifier-free guidance with an unconditional
-    branch — hence ``single_branch`` and ``forward_step`` always sets
-    ``do_cfg=False``; the ``guidance`` scalar rides ``request.extra`` as an
-    ordinary conditioning input.
+    FLUX.1-dev is guidance-distilled: a single transformer forward conditioned
+    on a ``guidance`` embedding, NOT classifier-free guidance with an
+    unconditional branch.
     """
-
-    cfg_mode = "single_branch"
-    cfg_base = "cond"
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map FLUX transformer kwargs (packed latents + rotary ids + pooled)."""
-        if branch != "cond":
-            raise ValueError("FLUX is guidance-distilled and has no uncond branch")
-        extra_kwargs = {
-            "pooled_projections": request.extra["pooled_projections"],
-            "img_ids": request.extra["img_ids"],
-            "txt_ids": request.extra["txt_ids"],
-        }
-        # ``guidance`` is None for non-distilled checkpoints (config.guidance_embeds
-        # off); pass it through either way so the transformer's own None-check fires.
-        extra_kwargs["guidance"] = request.extra.get("guidance")
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=request.prompt_embeds,
-            extra_kwargs=extra_kwargs,
-        )
 
     def packed_token_count(self, height: int, width: int) -> int:
         """FLUX packs an 8x VAE + 2x2 patch grid: ``(H // 16) * (W // 16)`` tokens."""
@@ -159,8 +127,7 @@ class FluxModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
     ) -> dict[str, Any]:
         """FLUX transformer forward (single guidance-distilled branch).
 
-        Returns noise_pred (packed) plus the cond/uncond placeholder branches; the
-        caller owns scheduler.step / SDE.
+        Returns noise_pred (packed); the caller owns scheduler.step / SDE.
         """
         t = state.timesteps[step_idx]
         bsz = state.latents.shape[0]
@@ -173,6 +140,8 @@ class FluxModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
         timestep_batch = (
             expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td) / 1000.0
         )
+        # ``guidance`` is None for non-distilled checkpoints (config.guidance_embeds
+        # off); pass it through either way so the transformer's own None-check fires.
         guidance = None
         if state.guidance_embeds:
             guidance = torch.full(
@@ -181,31 +150,18 @@ class FluxModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
                 device=latent_input.device,
                 dtype=td,
             )
-        return self.run_backbone(
-            self.transformer,
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=None,
-                guidance_scale=state.guidance_scale,
-                do_cfg=False,
-                output_dtype=td,
-                extra={
-                    "pooled_projections": state.pooled_prompt_embeds.to(td),
-                    # Rotary position ids stay float32 (computed in float).
-                    "img_ids": state.latent_image_ids.to(
-                        device=latent_input.device,
-                        dtype=torch.float32,
-                    ),
-                    "txt_ids": state.text_ids.to(
-                        device=latent_input.device,
-                        dtype=torch.float32,
-                    ),
-                    "guidance": guidance,
-                },
-            ),
-        )
+        noise_pred = self.transformer(
+            hidden_states=latent_input,
+            timestep=timestep_batch,
+            encoder_hidden_states=state.prompt_embeds.to(td),
+            pooled_projections=state.pooled_prompt_embeds.to(td),
+            # Rotary position ids stay float32 (computed in float).
+            img_ids=state.latent_image_ids.to(device=latent_input.device, dtype=torch.float32),
+            txt_ids=state.text_ids.to(device=latent_input.device, dtype=torch.float32),
+            guidance=guidance,
+            return_dict=False,
+        )[0]
+        return {"noise_pred": noise_pred.to(td)}
 
     def restore_eval_state(
         self,

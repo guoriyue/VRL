@@ -226,7 +226,7 @@ def sde_step_with_logprob(
     one_plus_sigma_prev = schedule.one_plus_sigma_prev
     if schedule.one_plus_sigma is not None:
         # EDM-domain inputs: the model_output is the noise estimate
-        # n = (x - x0)/s (see Cosmos Predict2 runner.finalize_noise_pred), so the
+        # n = (x - x0)/s (see ``CosmosPredict2Model.forward_step``), so the
         # flow velocity (noise - x0) is n*(1+s) - x; x itself rescales by 1+s.
         # prev_sample converts back to the EDM domain before returning.
         model_output = model_output * schedule.one_plus_sigma - sample

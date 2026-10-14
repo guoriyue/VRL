@@ -8,6 +8,7 @@ are verified against the model's OWN real outputs.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import torch
@@ -72,7 +73,10 @@ def test_cogvideox_forward_step_runs_real_batched_cfg_on_bfchw() -> None:
         calls[0]["timestep"],
         torch.full((doubled,), 499, dtype=state.timesteps.dtype),
     )
-    uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(state, do_cfg=False, prompt_embeds=state.negative_prompt_embeds), 0
+    )["noise_pred"]
     torch.testing.assert_close(out["noise_pred"], uncond + 6.0 * (cond - uncond))
     assert out["noise_pred"].shape == TINY_COGVIDEOX_LATENT_SHAPE
     assert not torch.allclose(cond, uncond)

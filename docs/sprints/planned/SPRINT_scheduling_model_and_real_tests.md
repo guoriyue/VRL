@@ -374,6 +374,8 @@ MAGI-1 适配器（`magi_1/model.py`）的六个单调用方 helper——`_prefl
 
 留下的同体函数（四个 masked-prompt family 的 `export_replay_tensors`、lumina2 / sana 的 `encode_prompt` 这类同体 model glue 按上面的边界一律保留，近似重复扫描会一直报它们，结论是“model glue, kept”）：`reward_media` 两个结果类的别名属性、geneval / wd_tagger 的 `__call__`、各 family 相同的协议方法（`encode_prompt_for_batch` 等）、`policy_cores` / `trainable_modules`（同体但概念不同，docstring 写明）、`requires_memory_parking` / `required`（两个协议）、lumina2 / mochi 的 `postprocess_branch`（两家都预测反向时间速度，各自声明）。
 
+2026-10-13 补记：`DenoiseBackboneRunnerBase`、`DenoiseBackboneInput`、`DenoiseBranch` 已删除。上面提到的 `build_branch`、`postprocess_branch` 现在是各家族 `forward_step` 里直接写的 transformer kwargs 字典和内联后处理；Wan I2V 的图像条件钩子 `_backbone_extra` 并入 `_transformer_inputs`。CFG 只剩 `common/cfg.py` 的 `predict_with_cfg` 和 `combine_cfg` 两个函数。
+
 ## 17. 产出某个类实例的自由函数并回该类（2026-10-10）
 
 | 原函数 | 现在 |

@@ -1,12 +1,4 @@
-"""Cosmos3 Omni vision generator family runtime.
-
-NOTE — no ``runner.py``: predict2's runner massages the SD3-shaped backbone
-contract + applies EDM ``/sigma`` finalize. Cosmos3's transformer takes a ~10-kwarg
-interleaved joint sequence and returns a 3-tuple of lists, which does not fit
-``DenoiseBackboneInput``; CFG + velocity-masking run inline in
-``Cosmos3Model.forward_step`` (see model.py). A runner would be a thin no-op layer
-with no protocol boundary, so it is intentionally omitted.
-"""
+"""Cosmos3 Omni vision generator family runtime."""
 
 from __future__ import annotations
 

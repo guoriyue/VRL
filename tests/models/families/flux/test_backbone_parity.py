@@ -1,4 +1,4 @@
-"""Real-inference tests for the FLUX.1 guidance-distilled backbone wrapper.
+"""Real-inference tests for the FLUX.1 guidance-distilled forward step.
 
 A real (tiny, cache-free) ``FluxTransformer2DModel`` runs through
 ``forward_step``; the single-branch / guidance / timestep-normalization behavior
@@ -52,7 +52,7 @@ def _state(model: FluxPipelineModel, *, guidance_embeds: bool) -> FluxSamplingSt
 
 
 def test_flux_forward_step_runs_single_distilled_branch() -> None:
-    """One forward, no uncond branch, noise == cond, timestep fed as t / 1000."""
+    """One forward, no uncond branch, timestep fed as t / 1000."""
     transformer = build_tiny_transformer("flux", guidance_embeds=True)
     calls = record_forward_calls(transformer)
     model = _model(transformer)
@@ -62,11 +62,6 @@ def test_flux_forward_step_runs_single_distilled_branch() -> None:
     # Single guidance-distilled branch: batch is NOT doubled, one transformer call.
     assert len(calls) == 1
     assert calls[0]["hidden_states"].shape[0] == 2
-    # noise == cond and uncond is a zero placeholder (no CFG).
-    torch.testing.assert_close(out["noise_pred"], out["noise_pred_cond"])
-    torch.testing.assert_close(
-        out["noise_pred_uncond"], torch.zeros_like(out["noise_pred_uncond"])
-    )
     # Timestep is normalized by 1000 before the transformer (500 -> 0.5).
     torch.testing.assert_close(
         calls[0]["timestep"],

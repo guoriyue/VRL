@@ -13,7 +13,7 @@ on top of it.
 HunyuanVideo specifics vs Wan (the reference video family):
 - GUIDANCE-DISTILLED, like FLUX: a single transformer forward conditioned on a
   ``guidance`` embedding (``guidance_scale * 1000``), no unconditional branch
-  (``cfg_mode = "single_branch"``, ``do_cfg=False`` always).
+  (``do_cfg=False`` always).
 - Two text encoders: LLaVA-LLaMA-3-8B produces sequence embeds + attention
   mask through a chat template the pipeline crops back out (crop_start=95),
   CLIP-L produces the pooled embed. The 15 GB LLaMA is parked on CPU
@@ -44,9 +44,6 @@ from vrl.models.steps.denoise import (
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
     VaeDecodeMixin,
     expand_batch_timestep,
     pack_eval_timestep,
@@ -62,32 +59,8 @@ class HunyuanVideoSamplingState(GuidedDenoiseSamplingStateBase):
     pooled_prompt_embeds: torch.Tensor
 
 
-class HunyuanVideoModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+class HunyuanVideoModel(DiffusersModelBase):
     """HunyuanVideo t2v transformer, scheduler and per-step math (guidance-distilled): the model replay runs."""
-
-    cfg_mode = "single_branch"
-    cfg_base = "cond"
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map HunyuanVideo transformer kwargs into the shared backbone contract."""
-        if branch != "cond":
-            raise ValueError("HunyuanVideo is guidance-distilled and has no uncond branch")
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=request.prompt_embeds,
-            extra_kwargs={
-                "encoder_attention_mask": request.extra["encoder_attention_mask"],
-                "pooled_projections": request.extra["pooled_projections"],
-                "guidance": request.extra["guidance"],
-            },
-        )
-
-    # -- forward_step --------------------------------------------------
 
     def forward_step(
         self,
@@ -110,22 +83,16 @@ class HunyuanVideoModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
             device=latent_input.device,
             dtype=td,
         )
-        return self.run_backbone(
-            self.transformer,
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                guidance_scale=state.guidance_scale,
-                do_cfg=False,
-                output_dtype=td,
-                extra={
-                    "encoder_attention_mask": state.prompt_attention_mask,
-                    "pooled_projections": state.pooled_prompt_embeds.to(td),
-                    "guidance": guidance,
-                },
-            ),
-        )
+        noise_pred = self.transformer(
+            hidden_states=latent_input,
+            timestep=timestep_batch,
+            encoder_hidden_states=state.prompt_embeds.to(td),
+            encoder_attention_mask=state.prompt_attention_mask,
+            pooled_projections=state.pooled_prompt_embeds.to(td),
+            guidance=guidance,
+            return_dict=False,
+        )[0]
+        return {"noise_pred": noise_pred.to(td)}
 
     def restore_eval_state(
         self,

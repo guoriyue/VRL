@@ -7,6 +7,7 @@ verified against the model's OWN real outputs, never a re-derived formula.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import torch
@@ -56,7 +57,16 @@ def test_sd3_forward_step_runs_real_batched_cfg() -> None:
 
     assert len(calls) == 1
     assert calls[0]["hidden_states"].shape[0] == 2 * TINY_SD3_LATENT_SHAPE[0]
-    uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(
+            state,
+            do_cfg=False,
+            prompt_embeds=state.negative_prompt_embeds,
+            pooled_prompt_embeds=state.negative_pooled_prompt_embeds,
+        ),
+        0,
+    )["noise_pred"]
     torch.testing.assert_close(out["noise_pred"], uncond + 3.0 * (cond - uncond))
     assert out["noise_pred"].shape == TINY_SD3_LATENT_SHAPE
     assert not torch.allclose(cond, uncond)
@@ -80,14 +90,10 @@ def test_sd3_forward_step_single_branch_skips_cfg() -> None:
 
     out = model.forward_step(state, 0)
 
-    # No CFG: a single conditional forward (batch not doubled), noise == cond,
-    # and the uncond branch is a zero placeholder.
+    # No CFG: a single conditional forward (batch not doubled).
     assert len(calls) == 1
     assert calls[0]["hidden_states"].shape[0] == TINY_SD3_LATENT_SHAPE[0]
-    torch.testing.assert_close(out["noise_pred"], out["noise_pred_cond"])
-    torch.testing.assert_close(
-        out["noise_pred_uncond"], torch.zeros_like(out["noise_pred_uncond"])
-    )
+    assert out["noise_pred"].shape == TINY_SD3_LATENT_SHAPE
 
 
 def test_sd3_forward_step_casts_replay_tensors_to_transformer_dtype() -> None:

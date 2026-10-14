@@ -1,10 +1,4 @@
-"""MiniMax-H3 family runtime: the batch-one executor.
-
-NOTE — no ``runner.py``: the H3 transformer takes a packed-sequence layout
-(nine kwargs) and returns a ``(video, audio)`` pair, which does not fit
-``DenoiseBackboneInput``; the call and the audio side-stream update run
-inline in ``MiniMaxH3Model.forward_step``.
-"""
+"""MiniMax-H3 family runtime: the batch-one executor."""
 
 from __future__ import annotations
 

@@ -8,6 +8,7 @@ pipeline-less replay restore are verified against the model's OWN outputs.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -88,7 +89,6 @@ def test_qwen21_forward_step_single_branch_when_no_cfg() -> None:
     assert img_mask[:, 3:].all()
     # No prefix KV caching on either path (LoRA changes the prefix KV).
     assert call.get("kv_cache") is None and call.get("kv_cache_mode") is None
-    torch.testing.assert_close(out["noise_pred"], out["noise_pred_cond"])
     assert out["noise_pred"].shape == (2, _SEQ, TINY_QWEN21_IN_CHANNELS)
 
 
@@ -105,7 +105,17 @@ def test_qwen21_forward_step_runs_separate_cfg_with_linear_combine() -> None:
     assert calls[0]["encoder_hidden_states"].shape[1] == 5
     assert calls[1]["encoder_hidden_states"].shape[1] == 2
     assert calls[1]["img_mask"].shape == (2, 2 + _SEQ // 4)
-    cond, uncond = out["noise_pred_cond"], out["noise_pred_uncond"]
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(
+            state,
+            prompt_embeds=state.negative_prompt_embeds,
+            prompt_embeds_mask=state.negative_prompt_embeds_mask,
+            image_pad_mask=state.negative_image_pad_mask,
+            do_cfg=False,
+        ),
+        0,
+    )["noise_pred"]
     assert not torch.allclose(cond, uncond)
     # QwenImage21Pipeline: noise = uncond + s * (cond - uncond), no norm rescale.
     torch.testing.assert_close(out["noise_pred"], uncond + 4.0 * (cond - uncond))

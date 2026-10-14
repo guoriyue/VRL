@@ -1,130 +1,81 @@
-"""Classifier-free guidance tensor packing for diffusion model calls."""
+"""Classifier-free guidance around one diffusion transformer call."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import torch
 
-DenoiseCFGBase = Literal["uncond", "cond"]
 
-
-@dataclass(slots=True)
-class DenoiseBranch:
-    """One diffusion transformer branch call."""
-
-    hidden_states: torch.Tensor
-    timestep: torch.Tensor
-    encoder_hidden_states: torch.Tensor
-    extra_kwargs: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def as_transformer_kwargs(self) -> dict[str, Any]:
-        return {
-            "hidden_states": self.hidden_states,
-            "timestep": self.timestep,
-            "encoder_hidden_states": self.encoder_hidden_states,
-            **self.extra_kwargs,
-            "return_dict": False,
-        }
-
-
-def pack_batched_cfg(
+def predict_with_cfg(
+    transformer: Any,
+    cond: dict[str, Any],
+    uncond: dict[str, Any] | None,
     *,
-    cond: DenoiseBranch,
-    uncond: DenoiseBranch,
-) -> DenoiseBranch:
-    """Pack uncond+cond branches for a single batched CFG transformer call.
+    guidance_scale: float,
+    batched: bool,
+    dtype: torch.dtype,
+    normalize: bool = False,
+) -> torch.Tensor:
+    """Run the conditional transformer call and, given ``uncond``, guide it.
 
-    Uncond rows precede cond rows in the packed batch dimension; the batched
-    branch carries no ``metadata`` (its default empty mapping).
+    ``cond`` and ``uncond`` are the transformer kwargs of each branch. With
+    ``batched`` the branches run as one call: every tensor kwarg is
+    concatenated uncond-first along the batch dim and every other kwarg must
+    be shared. Without it each branch is its own call, for families whose
+    branches differ in sequence length or non-tensor inputs. Each branch
+    prediction is cast to ``dtype`` before the combine.
     """
 
-    _validate_pair("hidden_states", cond.hidden_states, uncond.hidden_states)
-    _validate_pair("timestep", cond.timestep, uncond.timestep)
-    _validate_pair(
-        "encoder_hidden_states",
-        cond.encoder_hidden_states,
-        uncond.encoder_hidden_states,
+    if uncond is None:
+        return transformer(**cond, return_dict=False)[0].to(dtype)
+    if batched:
+        packed: dict[str, Any] = {}
+        for key, value in cond.items():
+            other = uncond[key]
+            if isinstance(value, torch.Tensor):
+                if value.shape != other.shape:
+                    raise ValueError(
+                        f"{key} branch shapes must match including batch dim: "
+                        f"cond={tuple(value.shape)}, uncond={tuple(other.shape)}",
+                    )
+                packed[key] = torch.cat([other, value], dim=0)
+            elif value is other or value == other:
+                packed[key] = value
+            else:
+                raise ValueError(f"{key!r} cannot be batched because branch values differ")
+        pred_uncond, pred_cond = transformer(**packed, return_dict=False)[0].chunk(2, dim=0)
+    else:
+        pred_cond = transformer(**cond, return_dict=False)[0]
+        pred_uncond = transformer(**uncond, return_dict=False)[0]
+    return combine_cfg(
+        pred_cond.to(dtype),
+        pred_uncond.to(dtype),
+        guidance_scale=guidance_scale,
+        normalize=normalize,
     )
-    if cond.extra_kwargs.keys() != uncond.extra_kwargs.keys():
-        raise ValueError(
-            "cond/uncond extra kwargs must have identical keys for batched CFG: "
-            f"cond={sorted(cond.extra_kwargs)}, uncond={sorted(uncond.extra_kwargs)}",
-        )
-    packed: dict[str, Any] = {}
-    for key, cond_value in cond.extra_kwargs.items():
-        uncond_value = uncond.extra_kwargs[key]
-        if isinstance(cond_value, torch.Tensor) and isinstance(uncond_value, torch.Tensor):
-            _validate_pair(key, cond_value, uncond_value)
-            packed[key] = torch.cat([uncond_value, cond_value], dim=0)
-        elif cond_value is uncond_value or cond_value == uncond_value:
-            packed[key] = cond_value
-        else:
-            raise ValueError(
-                f"extra kwarg {key!r} cannot be batched because branch values differ",
-            )
-    return DenoiseBranch(
-        hidden_states=torch.cat([uncond.hidden_states, cond.hidden_states], dim=0),
-        timestep=torch.cat([uncond.timestep, cond.timestep], dim=0),
-        encoder_hidden_states=torch.cat(
-            [uncond.encoder_hidden_states, cond.encoder_hidden_states],
-            dim=0,
-        ),
-        extra_kwargs=packed,
-    )
-
-
-def split_batched_cfg_output(output: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """Split batched CFG output into ``(uncond, cond)`` branches."""
-
-    if output.shape[0] % 2 != 0:
-        raise ValueError(
-            f"batched CFG output batch dimension must be even, got {output.shape[0]}",
-        )
-    uncond, cond = output.chunk(2, dim=0)
-    return uncond, cond
 
 
 def combine_cfg(
     cond: torch.Tensor,
-    uncond: torch.Tensor | None,
+    uncond: torch.Tensor,
     *,
     guidance_scale: float,
-    do_cfg: bool,
-    base: DenoiseCFGBase = "uncond",
+    base: Literal["uncond", "cond"] = "uncond",
     normalize: bool = False,
 ) -> torch.Tensor:
     """Combine conditional and unconditional branch predictions.
 
+    ``base="cond"`` is the Cosmos form ``cond + g * (cond - uncond)``.
     ``normalize`` reproduces the norm-preserving combine of the Lumina2 and
     Qwen-Image pipelines: after the linear blend, rescale the result back to
-    the conditional branch's norm along the channel axis. It is a flag rather
-    than a second function because it operates on the value this function has
-    just produced, from inputs it already holds.
+    the conditional branch's norm along the channel axis.
     """
 
-    if not do_cfg:
-        return cond
-    if uncond is None:
-        raise ValueError("uncond branch is required when do_cfg=True")
-    if base == "uncond":
-        combined = uncond + float(guidance_scale) * (cond - uncond)
-    elif base == "cond":
-        combined = cond + float(guidance_scale) * (cond - uncond)
-    else:
-        raise ValueError(f"unsupported CFG base: {base!r}")
+    anchor = uncond if base == "uncond" else cond
+    combined = anchor + float(guidance_scale) * (cond - uncond)
     if not normalize:
         return combined
     cond_norm = torch.norm(cond, dim=-1, keepdim=True)
     combined_norm = torch.norm(combined, dim=-1, keepdim=True)
     return combined * (cond_norm / combined_norm)
-
-
-def _validate_pair(name: str, cond: torch.Tensor, uncond: torch.Tensor) -> None:
-    if cond.shape != uncond.shape:
-        raise ValueError(
-            f"{name} branch shapes must match including batch dim: "
-            f"cond={tuple(cond.shape)}, uncond={tuple(uncond.shape)}",
-        )

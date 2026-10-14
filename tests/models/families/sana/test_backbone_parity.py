@@ -8,6 +8,7 @@ outputs, never a re-derived formula.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import torch
@@ -132,7 +133,16 @@ def test_sana_forward_step_runs_real_batched_cfg() -> None:
     assert calls[0]["hidden_states"].shape[0] == doubled
     # The attention masks batched with the branches (uncond rows first).
     assert calls[0]["encoder_attention_mask"].shape == (doubled, _TEXT_LEN)
-    uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(
+            state,
+            do_cfg=False,
+            prompt_embeds=state.negative_prompt_embeds,
+            prompt_attention_mask=state.negative_prompt_attention_mask,
+        ),
+        0,
+    )["noise_pred"]
     torch.testing.assert_close(out["noise_pred"], uncond + 4.5 * (cond - uncond))
     assert out["noise_pred"].dtype is torch.float32
     assert out["noise_pred"].shape == TINY_SANA_LATENT_SHAPE
@@ -140,7 +150,7 @@ def test_sana_forward_step_runs_real_batched_cfg() -> None:
 
 
 def test_sana_forward_step_single_branch_skips_cfg() -> None:
-    """No CFG: single conditional forward, noise == cond, zero uncond placeholder."""
+    """No CFG: a single conditional forward on the undoubled batch."""
     transformer = build_tiny_transformer("sana")
     calls = record_forward_calls(transformer)
     model = _model(transformer)
@@ -150,8 +160,7 @@ def test_sana_forward_step_single_branch_skips_cfg() -> None:
 
     assert len(calls) == 1
     assert calls[0]["hidden_states"].shape[0] == TINY_SANA_LATENT_SHAPE[0]
-    torch.testing.assert_close(out["noise_pred"], out["noise_pred_cond"])
-    assert torch.all(out["noise_pred_uncond"] == 0)
+    assert out["noise_pred"].shape == TINY_SANA_LATENT_SHAPE
 
 
 def test_sana_forward_step_applies_timestep_scale() -> None:

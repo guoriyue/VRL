@@ -8,6 +8,7 @@ CFG combination is verified against the model's OWN real branch outputs.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import torch
@@ -78,9 +79,12 @@ def test_cosmos_predict25_forward_step_runs_real_unbatched_cfg() -> None:
     # The step's sigma reaches the transformer as the (unconditioned) timestep.
     for call in calls:
         torch.testing.assert_close(call["timestep"], torch.full_like(call["timestep"], 0.75))
-    uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
-    torch.testing.assert_close(out["noise_pred"], cond + _GUIDANCE * (cond - uncond))
     assert out["noise_pred"].shape == TINY_COSMOS_LATENT_SHAPE
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(state, do_cfg=False, prompt_embeds=state.negative_prompt_embeds), 0
+    )["noise_pred"]
+    torch.testing.assert_close(out["noise_pred"], cond + _GUIDANCE * (cond - uncond))
     # Prompt response survives the cond_mask blend in the unconditioned region.
     assert not torch.allclose(cond, uncond)
 

@@ -16,8 +16,8 @@ Qwen-Image specifics vs SD3 (the reference family):
   singleton temporal dim ``[B, C, 1, H, W]`` because the VAE is a video VAE.
 - The text encoder is Qwen2.5-VL: ``encode_prompt`` returns a SEQUENCE embed plus
   an attention mask and NO pooled vector (unlike SD3's pooled CLIP).
-- TRUE classifier-free guidance with a real unconditional branch; the runner runs
-  ``separate_cfg`` (see runner.py for why batched packing is impossible).
+- TRUE classifier-free guidance with a real unconditional branch, run as two
+  separate forwards (see ``QwenImageModel`` for why batched packing is impossible).
 - The transformer needs ``img_shapes`` (RoPE grid) and ``encoder_hidden_states_mask``;
   both are rebuilt deterministically on the replay path.
 - The transformer time embedding multiplies its input by 1000 internally, so
@@ -41,12 +41,10 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
     denormalize_video_vae_latents,
     expand_batch_timestep,
     pack_eval_timestep,
+    predict_with_cfg,
     set_mu_shifted_timesteps,
 )
 
@@ -66,48 +64,14 @@ class QwenImageSamplingState(GuidedDenoiseSamplingStateBase):
     vae_scale_factor: int
 
 
-class QwenImageModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+class QwenImageModel(DiffusersModelBase):
     """Qwen-Image t2i transformer, scheduler and per-step math: the model replay runs.
 
-    Implements the backbone-runner protocol itself. Qwen-Image does TRUE
-    classifier-free guidance where cond/uncond prompts tokenize to DIFFERENT
-    sequence lengths (their masks differ), so the two branches cannot be packed
-    into one batched call — hence ``separate_cfg`` (two independent forwards)
-    instead of sd3_5's ``batched_cfg``.
+    Qwen-Image does TRUE classifier-free guidance where cond/uncond prompts
+    tokenize to DIFFERENT sequence lengths (their masks differ), so the two
+    branches cannot be packed into one batched call and run as two
+    independent forwards, unlike sd3_5.
     """
-
-    cfg_mode = "separate_cfg"
-    cfg_base = "uncond"
-    # Qwen-Image's pipeline rescales the combined prediction back to the
-    # conditional branch's norm:
-    #     comb  = uncond + s * (cond - uncond)
-    #     noise = comb * (||cond|| / ||comb||)
-    cfg_normalization = True
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map Qwen-Image transformer kwargs into the shared backbone contract."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            mask = request.extra.get("encoder_hidden_states_mask")
-        else:
-            embeds = request.negative_prompt_embeds
-            mask = request.extra.get("negative_encoder_hidden_states_mask")
-        extra_kwargs = {
-            "encoder_hidden_states_mask": mask,
-            "img_shapes": request.extra["img_shapes"],
-        }
-        if request.extra.get("guidance") is not None:
-            extra_kwargs["guidance"] = request.extra["guidance"]
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs=extra_kwargs,
-        )
 
     def packed_token_count(self, height: int, width: int) -> int:
         """Qwen-Image packs an 8x VAE + 2x2 patch grid: ``(H // 16) * (W // 16)`` tokens."""
@@ -155,27 +119,36 @@ class QwenImageModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
                 device=latent_input.device,
                 dtype=td,
             )
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        return self.run_backbone(
+        cond = {
+            "hidden_states": latent_input,
+            "timestep": timestep_batch,
+            "encoder_hidden_states": state.prompt_embeds.to(td),
+            "encoder_hidden_states_mask": state.prompt_embeds_mask,
+            "img_shapes": self._img_shapes(state, bsz),
+        }
+        if guidance is not None:
+            cond["guidance"] = guidance
+        uncond = None
+        if state.do_cfg:
+            uncond = {
+                **cond,
+                "encoder_hidden_states": state.negative_prompt_embeds.to(td),
+                "encoder_hidden_states_mask": state.negative_prompt_embeds_mask,
+            }
+        noise_pred = predict_with_cfg(
             self.transformer,
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "encoder_hidden_states_mask": state.prompt_embeds_mask,
-                    "negative_encoder_hidden_states_mask": state.negative_prompt_embeds_mask,
-                    "img_shapes": self._img_shapes(state, bsz),
-                    "guidance": guidance,
-                },
-            ),
+            cond,
+            uncond,
+            guidance_scale=state.guidance_scale,
+            batched=False,
+            dtype=td,
+            # Qwen-Image's pipeline rescales the combined prediction back to the
+            # conditional branch's norm:
+            #     comb  = uncond + s * (cond - uncond)
+            #     noise = comb * (||cond|| / ||comb||)
+            normalize=True,
         )
+        return {"noise_pred": noise_pred}
 
     def restore_eval_state(
         self,

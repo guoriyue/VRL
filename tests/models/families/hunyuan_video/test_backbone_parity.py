@@ -1,4 +1,4 @@
-"""Real-inference tests for the HunyuanVideo guidance-distilled backbone wrapper.
+"""Real-inference tests for the HunyuanVideo guidance-distilled forward step.
 
 No fake transformer: a real (tiny, cache-free) ``HunyuanVideoTransformer3DModel``
 runs through ``forward_step``; the single-branch distilled-guidance behavior
@@ -72,8 +72,6 @@ def test_hunyuan_video_forward_step_single_branch_with_scaled_guidance() -> None
         calls[0]["timestep"],
         torch.full((TINY_HUNYUAN_VIDEO_LATENT_SHAPE[0],), 500.0),
     )
-    torch.testing.assert_close(out["noise_pred"], out["noise_pred_cond"])
-    assert torch.all(out["noise_pred_uncond"] == 0)
     assert out["noise_pred"].shape == TINY_HUNYUAN_VIDEO_LATENT_SHAPE
 
 

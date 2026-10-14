@@ -22,9 +22,8 @@ PixArt-Sigma specifics vs SANA (the reference single-encoder t2i family):
   with ``clip_sample=False`` so the DDIM eta-SDE transition stays Gaussian.
 - LEARNED SIGMA: the transformer's ``out_channels`` is twice the latent
   channels (8 vs 4); the first half is the epsilon prediction and the second
-  half the (unused) variance. ``postprocess_branch`` batches per branch BEFORE
-  the CFG combine — the pipeline batches after, which is equivalent since
-  channel-batch and the linear CFG combine commute.
+  half the (unused) variance. ``forward_step`` keeps the first half after
+  the CFG combine, like the pipeline.
 - Single T5-XXL encoder (~9.5 GB bf16, parked on CPU) returning sequence
   embeds + attention masks; true batched CFG with uncond rows first. The mask
   threads through the transformer as ``encoder_attention_mask``.
@@ -53,18 +52,16 @@ from vrl.models.steps.denoise import (
     GuidedDenoiseSamplingStateBase,
 )
 from vrl.models.steps.denoise.common import (
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
     VaeDecodeMixin,
     expand_batch_timestep,
     pack_eval_timestep,
+    predict_with_cfg,
 )
 
 # 512/1024-MS checkpoints train without micro-conditioning, but the
 # transformer forward still requires the dict when config.sample_size == 128;
 # the pipeline passes it unconditionally, so do we (both CFG branches share
-# the same value, which the batched-CFG kwarg packer requires).
+# the same value, which batched CFG requires of non-tensor kwargs).
 _ADDED_COND_KWARGS = {"resolution": None, "aspect_ratio": None}
 
 
@@ -112,43 +109,13 @@ class PixArtSigmaSamplingState(GuidedDenoiseSamplingStateBase):
     do_cfg: bool
 
 
-class PixArtSigmaModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+class PixArtSigmaModel(DiffusersModelBase):
     """PixArt-Sigma t2i transformer, scheduler and per-step math (epsilon DDPM): the model replay runs.
 
-    Implements the backbone-runner protocol itself. Both CFG branches pad to
-    the same sequence length (T5 encode at ``max_sequence_length``), so they
-    pack into one batched transformer call; the attention masks ride the
-    batch as ``encoder_attention_mask``.
+    Both CFG branches pad to the same sequence length (T5 encode at
+    ``max_sequence_length``), so they pack into one batched transformer call;
+    the attention masks ride the batch as ``encoder_attention_mask``.
     """
-
-    cfg_mode = "batched_cfg"
-    cfg_base = "uncond"
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map the branch's T5 embeds and attention mask into a branch call."""
-        if branch == "cond":
-            embeds = request.prompt_embeds
-            mask = request.extra.get("encoder_attention_mask")
-        else:
-            embeds = request.negative_prompt_embeds
-            mask = request.extra.get("negative_encoder_attention_mask")
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            # Both branches carry the SAME added_cond_kwargs value: the
-            # batched-CFG kwarg packer rejects branch-specific non-tensors.
-            extra_kwargs={
-                "encoder_attention_mask": mask,
-                "added_cond_kwargs": _ADDED_COND_KWARGS,
-            },
-        )
-
-    # -- forward_step --------------------------------------------------
 
     def forward_step(
         self,
@@ -162,25 +129,33 @@ class PixArtSigmaModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
 
         latent_input = state.latents.to(td)
         timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device)
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        return self.run_backbone(
+        cond = {
+            "hidden_states": latent_input,
+            "timestep": timestep_batch,
+            "encoder_hidden_states": state.prompt_embeds.to(td),
+            "encoder_attention_mask": state.prompt_attention_mask,
+            "added_cond_kwargs": _ADDED_COND_KWARGS,
+        }
+        uncond = None
+        if state.do_cfg:
+            uncond = {
+                **cond,
+                "encoder_hidden_states": state.negative_prompt_embeds.to(td),
+                "encoder_attention_mask": state.negative_prompt_attention_mask,
+            }
+        noise_pred = predict_with_cfg(
             self.transformer,
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={
-                    "encoder_attention_mask": state.prompt_attention_mask,
-                    "negative_encoder_attention_mask": state.negative_prompt_attention_mask,
-                },
-            ),
+            cond,
+            uncond,
+            guidance_scale=state.guidance_scale,
+            batched=True,
+            dtype=td,
         )
+        # The transformer outputs ``2 * latent_channels`` (learned variance in
+        # the second half); keep the epsilon half like the pipeline does.
+        if noise_pred.shape[1] == 2 * latent_input.shape[1]:
+            noise_pred = noise_pred.chunk(2, dim=1)[0]
+        return {"noise_pred": noise_pred}
 
     def restore_eval_state(
         self,
@@ -203,24 +178,6 @@ class PixArtSigmaModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and negative_prompt_embeds is not None,
         )
-
-    def postprocess_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: DenoiseBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        """Batch the learned-sigma output down to the epsilon prediction.
-
-        The transformer outputs ``2 * latent_channels`` (learned variance in
-        the second half). Chunking per branch before the CFG combine is
-        equivalent to the pipeline's batch-after-combine (both are linear).
-        """
-        del branch
-        latent_channels = request.hidden_states.shape[1]
-        if raw_output.shape[1] == 2 * latent_channels:
-            return raw_output.chunk(2, dim=1)[0]
-        return raw_output
 
     def prepare_replay(self, build: ModelBuild) -> None:
         """Standardize the replay scheduler onto the rollout's DDIM ladder.

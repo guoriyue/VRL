@@ -2,93 +2,98 @@ from __future__ import annotations
 
 import pytest
 import torch
+import torch.nn as nn
 
-from vrl.models.steps.denoise.common.cfg import (
-    DenoiseBranch,
-    combine_cfg,
-    pack_batched_cfg,
-    split_batched_cfg_output,
-)
+from vrl.models.steps.denoise.common.cfg import combine_cfg, predict_with_cfg
 
 
-def test_pack_and_split_batched_cfg_preserves_uncond_cond_order() -> None:
-    """Packing puts the uncond rows first and the cond rows second across hidden states,
-    timesteps, encoder states and extra kwargs; splitting the output honors the same order.
+class _RecordingTransformer(nn.Module):
+    """Predicts ``hidden + timestep + pooled.sum`` per row and records each call."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[dict[str, object]] = []
+
+    def forward(self, **kwargs):
+        self.calls.append(kwargs)
+        hidden = kwargs["hidden_states"]
+        shift = kwargs["timestep"] + kwargs["pooled_projections"].sum(dim=1)
+        return (hidden + shift.unsqueeze(-1),)
+
+
+def _branches() -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    cond = {
+        "hidden_states": torch.ones(2, 1),
+        "timestep": torch.tensor([2.0, 3.0]),
+        "pooled_projections": torch.ones(2, 3),
+    }
+    return cond, {**cond, "pooled_projections": torch.zeros(2, 3)}
+
+
+def test_batched_cfg_is_one_call_on_uncond_first_rows_and_matches_separate_calls() -> None:
+    """Batched CFG concatenates every tensor kwarg uncond-first into one 2B-row call and
+    combines the same branch predictions that two separate calls produce.
     """
-    cond = DenoiseBranch(
-        hidden_states=torch.full((2, 1), 2.0),
-        timestep=torch.tensor([10.0, 11.0]),
-        encoder_hidden_states=torch.full((2, 3), 20.0),
-        extra_kwargs={"pooled_projections": torch.full((2, 4), 200.0)},
+    cond, uncond = _branches()
+    batched = _RecordingTransformer()
+    separate = _RecordingTransformer()
+
+    out = predict_with_cfg(
+        batched, cond, uncond, guidance_scale=2.0, batched=True, dtype=torch.float32
     )
-    uncond = DenoiseBranch(
-        hidden_states=torch.full((2, 1), -2.0),
-        timestep=torch.tensor([1.0, 2.0]),
-        encoder_hidden_states=torch.full((2, 3), -20.0),
-        extra_kwargs={"pooled_projections": torch.full((2, 4), -200.0)},
+    expected = predict_with_cfg(
+        separate, cond, uncond, guidance_scale=2.0, batched=False, dtype=torch.float32
     )
 
-    packed = pack_batched_cfg(cond=cond, uncond=uncond)
+    assert len(batched.calls) == 1
+    assert torch.equal(batched.calls[0]["pooled_projections"][:, 0], torch.tensor([0, 0, 1, 1.0]))
+    assert len(separate.calls) == 2
+    # cond = 1 + t + 3, uncond = 1 + t: uncond + 2 * (cond - uncond) = 7 + t.
+    assert torch.equal(out, torch.tensor([[9.0], [10.0]]))
+    assert torch.equal(out, expected)
 
-    assert torch.equal(
-        packed.hidden_states,
-        torch.tensor([[-2.0], [-2.0], [2.0], [2.0]]),
+
+def test_no_uncond_is_one_conditional_call() -> None:
+    cond, _ = _branches()
+    transformer = _RecordingTransformer()
+
+    out = predict_with_cfg(
+        transformer, cond, None, guidance_scale=2.0, batched=True, dtype=torch.float64
     )
-    assert torch.equal(packed.timestep, torch.tensor([1.0, 2.0, 10.0, 11.0]))
-    assert packed.encoder_hidden_states.shape == (4, 3)
-    assert packed.extra_kwargs["pooled_projections"].shape == (4, 4)
 
-    uncond_out, cond_out = split_batched_cfg_output(torch.arange(8).view(4, 2))
-    assert torch.equal(uncond_out, torch.tensor([[0, 1], [2, 3]]))
-    assert torch.equal(cond_out, torch.tensor([[4, 5], [6, 7]]))
+    assert len(transformer.calls) == 1
+    assert out.dtype == torch.float64
+    assert torch.equal(out, torch.tensor([[6.0], [7.0]], dtype=torch.float64))
 
 
-def test_combine_cfg_supports_sd_and_cosmos_bases() -> None:
-    """``combine_cfg`` supports both bases, the SD form ``uncond + g*(cond - uncond)`` and the
-    cosmos form ``cond + g*(cond - uncond)``, and returns cond untouched when CFG is off.
+def test_batched_cfg_rejects_unequal_branch_rows() -> None:
+    cond, uncond = _branches()
+    uncond["pooled_projections"] = torch.zeros(3, 3)
+
+    with pytest.raises(ValueError, match="pooled_projections"):
+        predict_with_cfg(
+            _RecordingTransformer(),
+            cond,
+            uncond,
+            guidance_scale=2.0,
+            batched=True,
+            dtype=torch.float32,
+        )
+
+
+def test_combine_cfg_bases_and_norm_rescale() -> None:
+    """The SD form ``uncond + g*(cond - uncond)``, the Cosmos form ``cond + g*(cond - uncond)``,
+    and the norm-preserving rescale back to the conditional branch's norm.
     """
-    cond = torch.tensor([3.0])
-    uncond = torch.tensor([1.0])
+    cond = torch.tensor([[3.0, 4.0]])
+    uncond = torch.tensor([[1.0, 0.0]])
 
+    assert torch.equal(combine_cfg(cond, uncond, guidance_scale=2.0), torch.tensor([[5.0, 8.0]]))
     assert torch.equal(
-        combine_cfg(cond, uncond, guidance_scale=4.0, do_cfg=True),
-        torch.tensor([9.0]),
+        combine_cfg(cond, uncond, guidance_scale=2.0, base="cond"), torch.tensor([[7.0, 12.0]])
     )
-    assert torch.equal(
-        combine_cfg(cond, uncond, guidance_scale=4.0, do_cfg=True, base="cond"),
-        torch.tensor([11.0]),
+    normalized = combine_cfg(cond, uncond, guidance_scale=2.0, normalize=True)
+    torch.testing.assert_close(normalized.norm(dim=-1), cond.norm(dim=-1))
+    torch.testing.assert_close(
+        normalized / normalized.norm(), torch.tensor([[5.0, 8.0]]) / 89**0.5
     )
-    assert torch.equal(
-        combine_cfg(cond, None, guidance_scale=1.0, do_cfg=False),
-        cond,
-    )
-
-
-def test_split_batched_cfg_requires_even_batch() -> None:
-    with pytest.raises(ValueError, match="must be even"):
-        split_batched_cfg_output(torch.zeros(3, 1))
-
-
-@pytest.mark.parametrize(
-    "field", ["hidden_states", "timestep", "encoder_hidden_states", "pooled_projections"]
-)
-def test_pack_batched_cfg_rejects_unequal_branch_rows(field) -> None:
-    cond = DenoiseBranch(
-        hidden_states=torch.zeros(1, 2),
-        timestep=torch.zeros(1),
-        encoder_hidden_states=torch.zeros(1, 2),
-        extra_kwargs={"pooled_projections": torch.zeros(1, 2)},
-    )
-    uncond = DenoiseBranch(
-        hidden_states=torch.zeros(1, 2),
-        timestep=torch.zeros(1),
-        encoder_hidden_states=torch.zeros(1, 2),
-        extra_kwargs={"pooled_projections": torch.zeros(1, 2)},
-    )
-    if field == "pooled_projections":
-        uncond.extra_kwargs[field] = torch.zeros(3, 2)
-    else:
-        value = getattr(uncond, field)
-        setattr(uncond, field, value.expand(3, *value.shape[1:]))
-    with pytest.raises(ValueError, match=field):
-        pack_batched_cfg(cond=cond, uncond=uncond)

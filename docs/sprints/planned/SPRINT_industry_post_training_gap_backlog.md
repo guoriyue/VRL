@@ -128,10 +128,10 @@
 
 - **出处**：DanceGRPO——CFG 让训练不稳；FLUX/HunyuanVideo 关 CFG；CFG 依赖模型要同时
   优化 cond+uncond。
-- **VRL 现状**：`DenoiseCFGMode = batched_cfg | separate_cfg | single_branch`；
-  未审计 replay 是否对 uncond 分支也计算策略比值。
-- **做什么**：读 `models/steps/denoise/common/backbone.py` 与 replay 路径，写清三种
-  模式下 log-prob 用的是哪个分支；若 replay 只走 cond 而 rollout 用了 CFG，记为
+- **VRL 现状**：各家族 `forward_step` 自己选 CFG 方式（`predict_with_cfg(batched=True/False)`
+  或不做 CFG 的单分支）；未审计 replay 是否对 uncond 分支也计算策略比值。
+- **做什么**：读 `models/steps/denoise/common/cfg.py` 与 replay 路径，写清三种
+  方式下 log-prob 用的是哪个分支；若 replay 只走 cond 而 rollout 用了 CFG，记为
   已知偏差并在 recipe 默认 `guidance_scale=1`。
 - **验收**：一页 done 文档 + 若有偏差则加 config 校验警告。
 

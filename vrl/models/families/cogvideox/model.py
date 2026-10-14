@@ -48,11 +48,9 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
     expand_batch_timestep,
     pack_eval_timestep,
+    predict_with_cfg,
 )
 
 
@@ -123,27 +121,8 @@ class CogVideoXSamplingState(GuidedDenoiseSamplingStateBase):
     vae_scale_factor_spatial: int
 
 
-class CogVideoXModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
+class CogVideoXModel(DiffusersModelBase):
     """CogVideoX t2v transformer, scheduler and per-step math (v-prediction DDPM): the model replay runs."""
-
-    cfg_mode = "batched_cfg"
-    cfg_base = "uncond"
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: str,
-    ) -> DenoiseBranch:
-        """Map CogVideoX transformer kwargs into the shared backbone contract."""
-        embeds = request.prompt_embeds if branch == "cond" else request.negative_prompt_embeds
-        return DenoiseBranch(
-            hidden_states=request.hidden_states,
-            timestep=request.timestep,
-            encoder_hidden_states=embeds,
-            extra_kwargs={"image_rotary_emb": request.extra.get("image_rotary_emb")},
-        )
-
-    # -- forward_step --------------------------------------------------
 
     def forward_step(
         self,
@@ -168,22 +147,24 @@ class CogVideoXModel(DiffusersModelBase, DenoiseBackboneRunnerBase):
             vae_scale_factor_spatial=state.vae_scale_factor_spatial,
             device=latent_input.device,
         )
-        negative_embeds = (
-            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
-        )
-        return self.run_backbone(
+        cond = {
+            "hidden_states": latent_input,
+            "timestep": timestep_batch,
+            "encoder_hidden_states": state.prompt_embeds.to(td),
+            "image_rotary_emb": rope,
+        }
+        uncond = None
+        if state.do_cfg:
+            uncond = {**cond, "encoder_hidden_states": state.negative_prompt_embeds.to(td)}
+        noise_pred = predict_with_cfg(
             self.transformer,
-            DenoiseBackboneInput(
-                hidden_states=latent_input,
-                timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds.to(td),
-                negative_prompt_embeds=negative_embeds,
-                guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=td,
-                extra={"image_rotary_emb": rope},
-            ),
+            cond,
+            uncond,
+            guidance_scale=state.guidance_scale,
+            batched=True,
+            dtype=td,
         )
+        return {"noise_pred": noise_pred}
 
     def restore_eval_state(
         self,

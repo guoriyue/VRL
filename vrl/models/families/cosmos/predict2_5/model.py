@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 import sys
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 import torch
 
@@ -23,76 +23,16 @@ from vrl.models.steps.denoise import (
 )
 from vrl.models.steps.denoise.common import (
     ChunkedLatentDecoder,
-    DenoiseBackboneInput,
-    DenoiseBackboneRunnerBase,
-    DenoiseBranch,
+    combine_cfg,
     expand_tensor_to_batch,
     replay_tensor,
     shared_replay_tensor,
 )
 
-
-@dataclass(slots=True)
-class CosmosPredict25DenoiseBackboneRunner(DenoiseBackboneRunnerBase):
-    """Map Cosmos Predict2.5 transformer kwargs into the shared backbone contract."""
-
-    cfg_mode = "separate_cfg"
-    cfg_base = "cond"
-    sigma: torch.Tensor
-    # Compile-time constant of the reference pipeline, not a knob: nothing ever
-    # produced another value, so it does not travel through SamplingState or
-    # the replay batch_context.
-    conditional_frame_timestep: float = 0.1
-
-    def build_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: Literal["cond", "uncond"],
-    ) -> DenoiseBranch:
-        extra = request.extra
-        embeds = request.prompt_embeds
-        if branch == "uncond":
-            embeds = request.negative_prompt_embeds
-        hidden_states, timestep, gt_velocity = self._prepare_branch(
-            latents=request.hidden_states,
-            cond_latent=extra["cond_latent"],
-            cond_mask=extra["cond_mask"],
-            cond_indicator=extra["cond_indicator"],
-        )
-        return DenoiseBranch(
-            hidden_states=hidden_states.to(extra["transformer_dtype"]),
-            timestep=timestep.to(extra["transformer_dtype"]),
-            encoder_hidden_states=embeds,
-            extra_kwargs={
-                "condition_mask": extra["cond_mask"].to(extra["transformer_dtype"]),
-                "padding_mask": extra["padding_mask"],
-            },
-            metadata={"gt_velocity": gt_velocity},
-        )
-
-    def postprocess_branch(
-        self,
-        request: DenoiseBackboneInput,
-        branch: DenoiseBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        return branch.metadata["gt_velocity"] + raw_output * (1 - request.extra["cond_mask"])
-
-    def _prepare_branch(
-        self,
-        *,
-        latents: torch.Tensor,
-        cond_latent: torch.Tensor,
-        cond_mask: torch.Tensor,
-        cond_indicator: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        condition_timestep = torch.ones_like(cond_indicator) * float(
-            self.conditional_frame_timestep,
-        )
-        hidden_states = cond_mask * cond_latent + (1 - cond_mask) * latents
-        timestep = cond_indicator * condition_timestep + (1 - cond_indicator) * self.sigma
-        gt_velocity = (latents - cond_latent) * cond_mask
-        return hidden_states, timestep, gt_velocity
+# Compile-time constant of the reference pipeline, not a knob: nothing ever
+# produced another value, so it does not travel through SamplingState or the
+# replay batch_context.
+_CONDITIONAL_FRAME_TIMESTEP = 0.1
 
 
 @dataclass
@@ -130,25 +70,33 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersModelBase):
             .reshape(1)
             .to(device=state.latents.device, dtype=transformer_dtype)
         )
-        return CosmosPredict25DenoiseBackboneRunner(sigma=sigma_t).run_backbone(
-            self.transformer,
-            DenoiseBackboneInput(
-                hidden_states=state.latents,
-                timestep=sigma_t,
-                prompt_embeds=state.prompt_embeds,
-                negative_prompt_embeds=state.negative_prompt_embeds,
+        cond_mask = state.cond_mask
+        condition_timestep = torch.ones_like(state.cond_indicator) * _CONDITIONAL_FRAME_TIMESTEP
+        hidden_states = cond_mask * state.cond_latent + (1 - cond_mask) * state.latents
+        timestep = state.cond_indicator * condition_timestep + (1 - state.cond_indicator) * sigma_t
+        # The conditioning frames' velocity is known; only the rest is predicted.
+        gt_velocity = (state.latents - state.cond_latent) * cond_mask
+
+        def velocity(embeds: torch.Tensor) -> torch.Tensor:
+            raw = self.transformer(
+                hidden_states=hidden_states.to(transformer_dtype),
+                timestep=timestep.to(transformer_dtype),
+                encoder_hidden_states=embeds,
+                condition_mask=cond_mask.to(transformer_dtype),
+                padding_mask=state.padding_mask,
+                return_dict=False,
+            )[0]
+            return (gt_velocity + raw * (1 - cond_mask)).to(transformer_dtype)
+
+        noise_pred = velocity(state.prompt_embeds)
+        if state.do_cfg:
+            noise_pred = combine_cfg(
+                noise_pred,
+                velocity(state.negative_prompt_embeds),
                 guidance_scale=state.guidance_scale,
-                do_cfg=state.do_cfg,
-                output_dtype=transformer_dtype,
-                extra={
-                    "cond_latent": state.cond_latent,
-                    "cond_mask": state.cond_mask,
-                    "cond_indicator": state.cond_indicator,
-                    "padding_mask": state.padding_mask,
-                    "transformer_dtype": transformer_dtype,
-                },
-            ),
-        )
+                base="cond",
+            )
+        return {"noise_pred": noise_pred}
 
     def restore_eval_state(
         self,

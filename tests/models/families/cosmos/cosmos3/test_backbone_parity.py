@@ -11,6 +11,8 @@ audit in ``docs/sprints/done/SPRINT_tiny-real-diffusers-fixtures_audit.md`` §9.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 import torch
 
@@ -189,18 +191,21 @@ def test_forward_step_returns_raw_velocity_and_the_cosmos3_cfg_combine() -> None
         "vision_timesteps",
         "return_dict",  # diffusers 0.40: the three lists, not Cosmos3OmniTransformerOutput
     }
-    cond, uncond = out["noise_pred_cond"], out["noise_pred_uncond"]
-    assert cond.shape == uncond.shape == out["noise_pred"].shape == state.latents.shape
-    assert out["noise_pred"].dtype is torch.float32
-    torch.testing.assert_close(out["noise_pred"], (uncond + _GUIDANCE * (cond - uncond)).float())
-    assert not torch.allclose(cond, uncond)
     torch.testing.assert_close(
         calls[0]["vision_timesteps"],
         torch.full((state.num_noisy_vision_tokens,), float(state.timesteps[0])),
     )
+    assert out["noise_pred"].shape == state.latents.shape
+    assert out["noise_pred"].dtype is torch.float32
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(state, do_cfg=False, cond_packed_static=state.uncond_packed_static), 0
+    )["noise_pred"]
+    torch.testing.assert_close(out["noise_pred"], uncond + _GUIDANCE * (cond - uncond))
+    assert not torch.allclose(cond, uncond)
 
 
-def test_forward_step_without_cfg_runs_one_forward_and_reports_a_zero_uncond() -> None:
+def test_forward_step_without_cfg_runs_one_forward() -> None:
     model = _model()
     calls = record_forward_calls(model.transformer)
     state = _sampling_state(model, guidance_scale=1.0)
@@ -209,8 +214,7 @@ def test_forward_step_without_cfg_runs_one_forward_and_reports_a_zero_uncond() -
 
     assert state.do_cfg is False
     assert len(calls) == 1
-    torch.testing.assert_close(out["noise_pred"], out["noise_pred_cond"].float())
-    assert torch.count_nonzero(out["noise_pred_uncond"]) == 0
+    assert out["noise_pred"].dtype is torch.float32
 
 
 def test_replay_model_sets_its_own_scheduler_through_the_shared_set_num_steps() -> None:

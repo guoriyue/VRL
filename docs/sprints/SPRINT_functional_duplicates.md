@@ -11,12 +11,12 @@ Decided 2026-09-17 after the masked-prompt base (below) was reversed. The
 rule for every later batch:
 
 - **Infrastructure** — code a family calls but does not describe the model:
-  the CFG caller and branch packer (`DenoiseBackboneCaller`), pipeline
+  the CFG call and branch packing (`predict_with_cfg` / `combine_cfg`), pipeline
   load/freeze/placement (`DiffusersPipelineModelBase`), LoRA attach, VAE
   decode plans, timestep utilities, schedulers, replay-tensor helpers, the
   SDE/DDIM log-prob math. One implementation; a second owner is a defect.
 - **Model glue** — the per-family `encode_prompt` / `prepare_sampling` /
-  `forward_step` / `build_branch` / trajectory export and restore, and the
+  `forward_step` (including its branch kwargs) / trajectory export and restore, and the
   family's sampling-state fields. Each family owns its copy, even when two
   families' copies are line-for-line equal today. This is the SGLang /
   vLLM / diffusers / transformers "one model, one file" convention: a
@@ -358,7 +358,7 @@ modules), then read each cluster. Landed, one commit each:
   `masked_prompt.py`, and the fifth candidate (qwen_image: same
   "sequence + mask, no pooled" shape, but `encoder_hidden_states_mask` +
   `img_shapes`) already did not fit. The four families now list
-  `DiffusersPipelineModelBase, DenoiseBackboneRunnerBase` (plus
+  `DiffusersPipelineModelBase` (plus
   `VaeDecodeMixin` where decode is scale + shift) and carry their own
   glue; the constants that were class knobs are literals at the call that
   uses them, and the `num_train_timesteps` field lives only on the two

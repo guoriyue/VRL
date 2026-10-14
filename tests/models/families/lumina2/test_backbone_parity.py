@@ -1,14 +1,15 @@
 """Real-inference tests for the Lumina2 CFG backbone wrapper.
 
 No fake transformer: a real (tiny, cache-free) ``Lumina2Transformer2DModel``
-runs through ``forward_step``; the separate-branch CFG, the per-branch sign
-flip (Lumina predicts the reversed-time velocity), the norm-preserving
-combine, and the reversed timestep are verified against the model's OWN real
+runs through ``forward_step``; the separate-branch CFG, the sign flip (Lumina
+predicts the reversed-time velocity), the norm-preserving combine, and the
+reversed timestep are verified against the model's OWN real
 outputs.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import torch
@@ -72,7 +73,16 @@ def test_lumina2_forward_step_runs_separate_cfg_with_norm_rescale() -> None:
     # Separate CFG: two transformer calls, batch NOT doubled.
     assert len(calls) == 2
     assert calls[0]["hidden_states"].shape[0] == TINY_LUMINA2_LATENT_SHAPE[0]
-    uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(
+            state,
+            prompt_embeds=state.negative_prompt_embeds,
+            prompt_attention_mask=state.negative_prompt_attention_mask,
+            do_cfg=False,
+        ),
+        0,
+    )["noise_pred"]
     combined = uncond + 4.0 * (cond - uncond)
     cond_norm = torch.norm(cond, dim=-1, keepdim=True)
     comb_norm = torch.norm(combined, dim=-1, keepdim=True)
@@ -81,7 +91,7 @@ def test_lumina2_forward_step_runs_separate_cfg_with_norm_rescale() -> None:
 
 
 def test_lumina2_forward_step_negates_raw_prediction() -> None:
-    """The branch output is the NEGATED raw transformer output (velocity sign)."""
+    """noise_pred is the NEGATED raw transformer output (velocity sign)."""
     transformer = build_tiny_transformer("lumina2")
     model = _model(transformer)
     state = _state(do_cfg=False)

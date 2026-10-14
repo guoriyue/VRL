@@ -44,6 +44,7 @@ from vrl.models.steps.denoise import (
     DiffusersPipelineModelBase,
     GuidedDenoiseSamplingStateBase,
 )
+from vrl.models.steps.denoise.common import combine_cfg
 from vrl.utils.logging import init_logger, kv
 from vrl.utils.validation import require_int
 
@@ -163,19 +164,15 @@ class Cosmos3Model(CosmosReplayForward, DiffusersModelBase):
             )
             return velocity
 
-        cond = _run(state.cond_packed_static)
+        noise_pred = _run(state.cond_packed_static)
         if state.do_cfg:
-            uncond = _run(state.uncond_packed_static)
-            combined = uncond + state.guidance_scale * (cond - uncond)
-        else:
-            uncond = torch.zeros_like(cond)
-            combined = cond
+            noise_pred = combine_cfg(
+                noise_pred,
+                _run(state.uncond_packed_static),
+                guidance_scale=state.guidance_scale,
+            )
         # RAW flow velocity -> sde_step_with_logprob (UniPC sigmas in [0,1]).
-        return {
-            "noise_pred": combined.to(torch.float32),
-            "noise_pred_cond": cond,
-            "noise_pred_uncond": uncond,
-        }
+        return {"noise_pred": noise_pred.to(torch.float32)}
 
     @staticmethod
     def _unpack_single_token_sequence(value: Any, *, name: str) -> list[int]:

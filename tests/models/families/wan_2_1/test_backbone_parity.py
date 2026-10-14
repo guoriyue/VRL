@@ -6,8 +6,8 @@ behavior against the model's OWN real outputs — never a hand-re-derived formul
 
 What is pinned, all from real inference:
 - batched CFG issues exactly ONE transformer forward (un/cond concatenated);
-- ``noise_pred == uncond + scale * (cond - uncond)`` holds on the real branches,
-  so a sign/formula error in the wrapper is caught;
+- ``noise_pred == uncond + scale * (cond - uncond)`` holds against the real
+  branches (each run alone without CFG), so a sign/formula error is caught;
 - ``cond != uncond`` — the real model actually responds to the conditioning, which
   a closed-form fake cannot demonstrate;
 - I2V threads the condition latent into the channel axis and the image embeds into
@@ -16,6 +16,7 @@ What is pinned, all from real inference:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -81,10 +82,13 @@ def test_wan_t2v_forward_step_runs_real_batched_cfg() -> None:
     # One batched forward: un/cond concatenated along batch -> 2*B rows.
     assert len(calls) == 1
     assert calls[0]["hidden_states"].shape[0] == 2 * _LATENT_SHAPE[0]
-    # CFG combination verified on the real model's own branch outputs.
-    uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
-    torch.testing.assert_close(out["noise_pred"], uncond + 3.0 * (cond - uncond))
     assert out["noise_pred"].shape == _LATENT_SHAPE
+    # CFG combination verified on the real model's own branch outputs.
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(state, do_cfg=False, prompt_embeds=state.negative_prompt_embeds), 0
+    )["noise_pred"]
+    torch.testing.assert_close(out["noise_pred"], uncond + 3.0 * (cond - uncond))
     # The real transformer genuinely responds to the prompt (not a no-op fake).
     assert not torch.allclose(cond, uncond)
 
@@ -139,9 +143,12 @@ def test_wan_i2v_forward_step_threads_condition_and_image_embeds() -> None:
     # and batched CFG doubles the batch.
     assert call["hidden_states"].shape == (2 * _LATENT_SHAPE[0], 8, 1, 4, 4)
     assert call["encoder_hidden_states_image"] is not None
-    uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
-    torch.testing.assert_close(out["noise_pred"], uncond + 2.0 * (cond - uncond))
     assert out["noise_pred"].shape == _LATENT_SHAPE
+    cond = model.forward_step(replace(state, do_cfg=False), 0)["noise_pred"]
+    uncond = model.forward_step(
+        replace(state, do_cfg=False, prompt_embeds=state.negative_prompt_embeds), 0
+    )["noise_pred"]
+    torch.testing.assert_close(out["noise_pred"], uncond + 2.0 * (cond - uncond))
     assert not torch.allclose(cond, uncond)
 
 
