@@ -40,7 +40,7 @@ from vrl.trainers.checkpointing import (
     load_resolved_run_config,
 )
 from vrl.trainers.data.prompts import PromptExample, load_prompt_dataset_index
-from vrl.utils.artifacts import sha256_file
+from vrl.utils.artifacts import fsync_directory, sha256_file
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import (
     canonical_json_sha256,
@@ -306,7 +306,7 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
     _fsync_tree(staging_dir)
     generation_root.mkdir(parents=True, exist_ok=True)
     os.replace(staging_dir, final_dir)
-    _fsync_directory(generation_root)
+    fsync_directory(generation_root)
     return {
         "output_dir": str(final_dir),
         "protocol_sha256": protocol_sha256,
@@ -390,7 +390,7 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
     write_json(staging_dir / "report.json", report)
     _fsync_tree(staging_dir)
     os.replace(staging_dir, scoring_dir)
-    _fsync_directory(output_dir)
+    fsync_directory(output_dir)
     return {
         "output_dir": str(scoring_dir),
         "report": str(scoring_dir / "report.json"),
@@ -706,26 +706,13 @@ def summarize_scores(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _fsync_tree(path: Path) -> None:
-    for file_path in path.rglob("*"):
-        if not file_path.is_file():
-            continue
-        with file_path.open("rb") as handle:
-            os.fsync(handle.fileno())
-    for directory in sorted(
-        (item for item in path.rglob("*") if item.is_dir()),
-        key=lambda item: len(item.parts),
-        reverse=True,
-    ):
-        _fsync_directory(directory)
-    _fsync_directory(path)
+    """Flush every file and directory entry under ``path``, children before parents."""
 
-
-def _fsync_directory(path: Path) -> None:
-    directory_fd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
+    for directory, _, filenames in os.walk(path, topdown=False):
+        for filename in filenames:
+            with (Path(directory) / filename).open("rb") as handle:
+                os.fsync(handle.fileno())
+        fsync_directory(directory)
 
 
 if __name__ == "__main__":
