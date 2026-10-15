@@ -98,10 +98,8 @@ def build_discrimination_candidates(
         "reverse": frames.flip(0),
         "random": torch.rand(frames.shape, generator=generator),
         "color_blob": color_blob,
+        "wrong_clip": align_frame_counts(other, frames)[0],
     }
-    if other.numel():
-        aligned, _ = align_frame_counts(other, frames)
-        candidates["wrong_clip"] = aligned
     return candidates
 
 
