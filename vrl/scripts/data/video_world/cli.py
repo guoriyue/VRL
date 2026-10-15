@@ -29,97 +29,57 @@ DATASET_NAME = "video_world"
 
 def register(subparsers: Any) -> None:
     bridge = subparsers.add_parser(COMMAND_NAME)
-    bridge.add_argument("--repo-id", default="lerobot/droid_100")
-    bridge.add_argument("--limit", type=int, default=50)
-    bridge.add_argument("--eval-limit", type=int, default=8)
-    bridge.add_argument("--data-root", type=Path, default=None)
-    bridge.add_argument("--manifest-dir", type=Path, default=None)
-    bridge.add_argument("--name", default="robot")
-    bridge.add_argument("--source", default="droid")
-    bridge.add_argument("--cache-dir", type=Path, default=default_cache_dir())
-    bridge.add_argument(
-        "--camera",
-        default="",
-        help="observation.images.<name> video key; default = first camera",
-    )
     bridge.set_defaults(func=_cmd_video_world_bridge)
-
     targets = subparsers.add_parser(TARGET_COMMAND_NAME)
-    targets.add_argument("--repo-id", default="lerobot/droid_100")
-    targets.add_argument("--limit", type=int, default=100)
-    targets.add_argument("--eval-limit", type=int, default=8)
-    targets.add_argument("--data-root", type=Path, default=None)
-    targets.add_argument("--manifest-dir", type=Path, default=None)
-    targets.add_argument("--name", default="droid_targets")
-    targets.add_argument("--source", default="droid")
-    targets.add_argument("--cache-dir", type=Path, default=default_cache_dir())
-    targets.add_argument(
-        "--camera",
-        default="",
-        help="observation.images.<name> video key; default = first camera",
-    )
+    targets.set_defaults(func=_cmd_video_world_targets)
+    for parser, limit, name in ((bridge, 50, "robot"), (targets, 100, "droid_targets")):
+        parser.add_argument("--repo-id", default="lerobot/droid_100")
+        parser.add_argument("--limit", type=int, default=limit)
+        parser.add_argument("--eval-limit", type=int, default=8)
+        parser.add_argument("--data-root", type=Path, default=None)
+        parser.add_argument("--manifest-dir", type=Path, default=None)
+        parser.add_argument("--name", default=name)
+        parser.add_argument("--source", default="droid")
+        parser.add_argument("--cache-dir", type=Path, default=default_cache_dir())
+        parser.add_argument(
+            "--camera",
+            default="",
+            help="observation.images.<name> video key; default = first camera",
+        )
     targets.add_argument(
         "--max-target-frames",
         type=int,
         default=33,
         help="Maximum frames copied from each public demonstration clip.",
     )
-    targets.set_defaults(func=_cmd_video_world_targets)
 
 
 def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    full_targets = (
+        TARGET_COMMAND_NAME,
+        "--repo-id",
+        "lerobot/droid_1.0.1",
+        "--name",
+        "droid_full_targets",
+        "--limit",
+        "1000",
+        "--eval-limit",
+        "64",
+        "--camera",
+        "observation.images.exterior_1_left",
+    )
+    targets = (TARGET_COMMAND_NAME, "--repo-id", "lerobot/droid_100", "--name", "droid_targets")
     return (
-        (
-            f"data/external/{DATASET_NAME}/manifests/droid_full_targets_",
-            (
-                TARGET_COMMAND_NAME,
-                "--repo-id",
-                "lerobot/droid_1.0.1",
-                "--name",
-                "droid_full_targets",
-                "--limit",
-                "1000",
-                "--eval-limit",
-                "64",
-                "--camera",
-                "observation.images.exterior_1_left",
-            ),
-        ),
-        (
-            f"data/external/{DATASET_NAME}/droid_full_targets_report.json",
-            (
-                TARGET_COMMAND_NAME,
-                "--repo-id",
-                "lerobot/droid_1.0.1",
-                "--name",
-                "droid_full_targets",
-                "--limit",
-                "1000",
-                "--eval-limit",
-                "64",
-                "--camera",
-                "observation.images.exterior_1_left",
-            ),
-        ),
-        (
-            f"data/external/{DATASET_NAME}/manifests/droid_targets_",
-            (TARGET_COMMAND_NAME, "--repo-id", "lerobot/droid_100", "--name", "droid_targets"),
-        ),
-        (
-            f"data/external/{DATASET_NAME}/droid_targets_report.json",
-            (TARGET_COMMAND_NAME, "--repo-id", "lerobot/droid_100", "--name", "droid_targets"),
-        ),
+        (f"data/external/{DATASET_NAME}/manifests/droid_full_targets_", full_targets),
+        (f"data/external/{DATASET_NAME}/droid_full_targets_report.json", full_targets),
+        (f"data/external/{DATASET_NAME}/manifests/droid_targets_", targets),
+        (f"data/external/{DATASET_NAME}/droid_targets_report.json", targets),
         (f"data/external/{DATASET_NAME}/", (COMMAND_NAME,)),
     )
 
 
 def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
     data_root = RootedPaths.data_root(args.data_root).root
-    video_root = data_root / "video_world"
-    manifest_dir = args.manifest_dir or (video_root / "manifests")
-    reference_dir = video_root / "references"
-    manifest_dir.mkdir(parents=True, exist_ok=True)
-
     try:
         episodes = iter_lerobot_first_frames(
             args.repo_id,
@@ -129,7 +89,7 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
         )
         rows = build_video_world_rows(
             episodes,
-            reference_dir=reference_dir,
+            reference_dir=data_root / "video_world" / "references",
             data_root=data_root,
             source=args.source,
         )
@@ -144,58 +104,25 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
             "dataset (meta/tasks.parquet + data/*.parquet + videos/*.mp4), or set "
             "--camera to a valid observation.images.<name> key.",
         )
-
-    eval_count = min(args.eval_limit, len(rows) - 1) if len(rows) > 1 else 0
-    split_at = len(rows) - eval_count
-    train_rows, eval_rows = rows[:split_at], rows[split_at:]
-
-    train_manifest = manifest_dir / f"{args.name}_train.jsonl"
-    eval_manifest = manifest_dir / f"{args.name}_eval.jsonl"
-    write_jsonl(train_manifest, train_rows)
-    if eval_rows:
-        write_jsonl(eval_manifest, eval_rows)
-
-    validation_summary: dict[str, Any] = {}
-    if eval_rows:
-        validation = DatasetFileReport.from_video_world_manifest(
-            train_manifest,
-            eval_manifest=eval_manifest,
-            data_root=data_root,
-        )
-        validation_summary = validation.to_dict()
-
-    report = {
-        "dataset": "video_world_bridge",
-        "source": args.source,
-        "repo_id": args.repo_id,
-        "camera": args.camera,
-        "source_split": "main",
-        "decode_method": "pyav_http_first_frame",
-        "episode_count": len(rows),
-        "train_rows": len(train_rows),
-        "eval_rows": len(eval_rows),
-        "data_root": data_root.as_posix(),
-        "train_manifest": train_manifest.as_posix(),
-        "eval_manifest": eval_manifest.as_posix() if eval_rows else "",
-        "reference_dir": reference_dir.as_posix(),
-        "validation_summary": validation_summary,
-        "license_note": (
-            "Respect the source dataset license (BridgeData V2 / DROID). "
-            "Reference frames live under data/external and are not committed to git."
-        ),
-    }
-    write_json(video_root / f"{args.name}_report.json", report)
-    emit(report)
+    _write_manifests_and_report(
+        args,
+        rows,
+        data_root=data_root,
+        require_target_video=False,
+        report={
+            "dataset": "video_world_bridge",
+            "decode_method": "pyav_http_first_frame",
+            "license_note": (
+                "Respect the source dataset license (BridgeData V2 / DROID). "
+                "Reference frames live under data/external and are not committed to git."
+            ),
+        },
+    )
 
 
 def _cmd_video_world_targets(args: argparse.Namespace) -> None:
     data_root = RootedPaths.data_root(args.data_root).root
-    video_root = data_root / "video_world"
-    manifest_dir = args.manifest_dir or (video_root / "manifests")
-    reference_dir = video_root / "references"
-    target_dir = video_root / "targets"
-    manifest_dir.mkdir(parents=True, exist_ok=True)
-
+    target_dir = data_root / "video_world" / "targets"
     try:
         episodes = iter_lerobot_target_clips(
             args.repo_id,
@@ -206,7 +133,7 @@ def _cmd_video_world_targets(args: argparse.Namespace) -> None:
         )
         rows = build_target_video_world_rows(
             episodes,
-            reference_dir=reference_dir,
+            reference_dir=data_root / "video_world" / "references",
             target_dir=target_dir,
             data_root=data_root,
             source=args.source,
@@ -224,7 +151,37 @@ def _cmd_video_world_targets(args: argparse.Namespace) -> None:
             "meta/episodes.jsonl (v2.0), or set "
             "--camera to a valid observation.images.<name> key.",
         )
+    _write_manifests_and_report(
+        args,
+        rows,
+        data_root=data_root,
+        require_target_video=True,
+        report={
+            "dataset": "video_world_targets",
+            "decode_method": "pyav_http_target_clip",
+            "target_dir": target_dir.as_posix(),
+            "max_target_frames": int(args.max_target_frames),
+            "license_note": (
+                "Respect the source dataset license. Target clips are decoded from public "
+                "LeRobot videos and stored under data/external; do not commit them to git."
+            ),
+        },
+    )
 
+
+def _write_manifests_and_report(
+    args: argparse.Namespace,
+    rows: list[dict[str, Any]],
+    *,
+    data_root: Path,
+    require_target_video: bool,
+    report: dict[str, Any],
+) -> None:
+    """Split ``rows`` into train/eval manifests, validate them, and write the run report."""
+
+    video_root = data_root / "video_world"
+    manifest_dir = args.manifest_dir or (video_root / "manifests")
+    manifest_dir.mkdir(parents=True, exist_ok=True)
     eval_count = min(args.eval_limit, len(rows) - 1) if len(rows) > 1 else 0
     split_at = len(rows) - eval_count
     train_rows, eval_rows = rows[:split_at], rows[split_at:]
@@ -232,40 +189,30 @@ def _cmd_video_world_targets(args: argparse.Namespace) -> None:
     train_manifest = manifest_dir / f"{args.name}_train.jsonl"
     eval_manifest = manifest_dir / f"{args.name}_eval.jsonl"
     write_jsonl(train_manifest, train_rows)
-    if eval_rows:
-        write_jsonl(eval_manifest, eval_rows)
-
     validation_summary: dict[str, Any] = {}
     if eval_rows:
-        validation = DatasetFileReport.from_video_world_manifest(
+        write_jsonl(eval_manifest, eval_rows)
+        validation_summary = DatasetFileReport.from_video_world_manifest(
             train_manifest,
             eval_manifest=eval_manifest,
             data_root=data_root,
-            require_target_video=True,
-        )
-        validation_summary = validation.to_dict()
+            require_target_video=require_target_video,
+        ).to_dict()
 
     report = {
-        "dataset": "video_world_targets",
+        **report,
         "source": args.source,
         "repo_id": args.repo_id,
         "camera": args.camera,
         "source_split": "main",
-        "decode_method": "pyav_http_target_clip",
         "episode_count": len(rows),
         "train_rows": len(train_rows),
         "eval_rows": len(eval_rows),
         "data_root": data_root.as_posix(),
         "train_manifest": train_manifest.as_posix(),
         "eval_manifest": eval_manifest.as_posix() if eval_rows else "",
-        "reference_dir": reference_dir.as_posix(),
-        "target_dir": target_dir.as_posix(),
-        "max_target_frames": int(args.max_target_frames),
+        "reference_dir": (video_root / "references").as_posix(),
         "validation_summary": validation_summary,
-        "license_note": (
-            "Respect the source dataset license. Target clips are decoded from public "
-            "LeRobot videos and stored under data/external; do not commit them to git."
-        ),
     }
     write_json(video_root / f"{args.name}_report.json", report)
     emit(report)
