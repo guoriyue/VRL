@@ -137,7 +137,6 @@ def reward_worker_config(
 class CheckpointComparison:
     """A Wan comparison ready to generate: the run, the arms and the protocol."""
 
-    cfg: DictConfig
     entry: Any
     build: Any
     identity: dict[str, Any]
@@ -200,7 +199,6 @@ class CheckpointComparison:
         sampling["denoise_mode"] = str(args.denoise_mode)
         args.output_dir.mkdir(parents=True, exist_ok=True)
         return cls(
-            cfg=cfg,
             entry=entry,
             build=build,
             identity=identity,
