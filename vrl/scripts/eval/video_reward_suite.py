@@ -35,17 +35,19 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from typing import Any
-
-import torch
+from typing import TYPE_CHECKING, Any
 
 from vrl.config.loading import load_config
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.scripts.eval._checkpoint_comparison import reward_worker_config
 from vrl.scripts.eval._device import resolve_eval_device
 from vrl.trainers.data.prompts import load_prompt_dataset_index
+from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.json_files import write_csv
 from vrl.utils.paths import user_path
+
+if TYPE_CHECKING:
+    import torch
 
 logger = logging.getLogger(__name__)
 
@@ -144,8 +146,8 @@ def main(argv: list[str] | None = None) -> None:
         {"video_path": str(video), "prompt": prompts[video]} for video in videos
     ]
 
+    device = resolve_eval_device(args.device)
     if not args.no_kling:
-        device = resolve_eval_device(args.device)
         kling_scores = _score_kling(videos, prompts, args.kling_config, device=device)
         for row, video in zip(rows, videos, strict=True):
             for key in _KLING_SCORE_KEYS:
@@ -158,7 +160,7 @@ def main(argv: list[str] | None = None) -> None:
             videos,
             vbench_dims,
             full_info=args.vbench_full_info,
-            device=args.device,
+            device=device,
         )
         for row, video in zip(rows, videos, strict=True):
             for dim in vbench_dims:
@@ -221,8 +223,7 @@ def _score_kling(
             scores[str(video)] = dict(model(artifact))
     finally:
         del model
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        release_cuda_memory()
     return scores
 
 
@@ -232,7 +233,7 @@ def _score_vbench(
     dimensions: list[str],
     *,
     full_info: str,
-    device: str,
+    device: torch.device,
 ) -> dict[str, dict[str, float]]:
     """Run VBench over the video dir (custom-input) and parse per-video scores.
 
@@ -254,11 +255,8 @@ def _score_vbench(
 
     output_dir = video_dir / "vbench_results"
     output_dir.mkdir(parents=True, exist_ok=True)
-    torch_device = torch.device(
-        device if device != "auto" else ("cuda:0" if torch.cuda.is_available() else "cpu"),
-    )
     try:
-        evaluator = VBench(torch_device, str(user_path(full_info)), str(output_dir))
+        evaluator = VBench(device, str(user_path(full_info)), str(output_dir))
         evaluator.evaluate(
             videos_path=str(video_dir),
             name="video_reward_suite",
