@@ -1,10 +1,9 @@
 """Base (untrained) image-to-video samples from the local Wan 2.2 I2V A14B model.
 
-Why this exists: the repo's wan_2_1 family is text-to-video only; there is no
-I2V runtime wired into the engine yet. This is a standalone eval probe that
-drives diffusers' ``WanImageToVideoPipeline`` directly against the locally
-cached ``Wan-AI/Wan2.2-I2V-A14B-Diffusers`` checkpoint, so we can eyeball base
-I2V quality before investing in a real runtime.
+A standalone eval probe: it drives diffusers' ``WanImageToVideoPipeline``
+directly against the locally cached ``Wan-AI/Wan2.2-I2V-A14B-Diffusers``
+checkpoint, outside the engine's ``wan_2_1_i2v`` runtime, so base I2V quality
+can be eyeballed with nothing but the pipeline and a few baseline clips.
 
 Conditioning frames: we take the *first frame* of existing T2V baseline clips
 under the directory you pass to --baseline-dir, and reuse the same 5 physics
@@ -184,7 +183,6 @@ def main() -> None:
                 torch.cuda.empty_cache()
                 offload = "sequential"
                 pipe = _load_pipe(args.model_path, offload)
-                kwargs = _call_kwargs(pipe, **kwargs)  # re-filter for safety
                 frames = pipe(**kwargs).frames[0]
             else:
                 raise
