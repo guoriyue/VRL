@@ -1,4 +1,4 @@
-"""Timing and profiler helpers shared by perf probe CLIs."""
+"""CUDA-event timing helpers shared by perf probe CLIs."""
 
 from __future__ import annotations
 
@@ -60,23 +60,3 @@ def cuda_median_ms(
     torch.cuda.synchronize()
     times = sorted(cuda_step_times_ms(step_fn, iters=iters))
     return times[len(times) // 2]
-
-
-def kernel_launches_per_step(step_fn: Callable[[], object], *, steps: int = 3) -> float:
-    """Host-side CUDA kernel launch calls issued per step.
-
-    Counts both ``cudaLaunchKernel`` and ``cuLaunchKernel`` so eager and inductor
-    paths are comparable after compilation warmup.
-    """
-
-    activities = [torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]
-    with torch.profiler.profile(activities=activities) as prof:
-        for _ in range(max(1, steps)):
-            step_fn()
-        torch.cuda.synchronize()
-
-    launches = 0
-    for evt in prof.key_averages():
-        if "launchkernel" in str(evt.key).lower():
-            launches += int(getattr(evt, "count", 0) or 0)
-    return launches / float(max(1, steps))

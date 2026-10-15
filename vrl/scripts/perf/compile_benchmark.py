@@ -37,6 +37,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,7 +45,7 @@ import torch
 
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.scripts.perf.common.synthetic_diffusion import build_synthetic_inputs
-from vrl.scripts.perf.common.timing import cuda_median_ms, kernel_launches_per_step
+from vrl.scripts.perf.common.timing import cuda_median_ms
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -85,6 +86,26 @@ def _maybe_compile(model: torch.nn.Module, *, compiled: bool, mode: str) -> torc
         return model
     # Mirrors DenoiseModelBase.torch_compile_transformer (the runtime boundary).
     return torch.compile(model, mode=mode, fullgraph=False)
+
+
+def kernel_launches_per_step(step_fn: Callable[[], object], *, steps: int = 3) -> float:
+    """Host-side CUDA kernel launch calls issued per step.
+
+    Counts both ``cudaLaunchKernel`` and ``cuLaunchKernel`` so eager and inductor
+    paths are comparable after compilation warmup.
+    """
+
+    activities = [torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]
+    with torch.profiler.profile(activities=activities) as prof:
+        for _ in range(max(1, steps)):
+            step_fn()
+        torch.cuda.synchronize()
+
+    launches = 0
+    for evt in prof.key_averages():
+        if "launchkernel" in str(evt.key).lower():
+            launches += int(getattr(evt, "count", 0) or 0)
+    return launches / float(max(1, steps))
 
 
 def _run_cell(
