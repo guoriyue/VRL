@@ -31,7 +31,7 @@
 ## B. 组内共享初始噪声 ★★★ — 已落地 2026-09-19，2026-09-27 删除
 
 > 2026-09-27：没有任何 preset 打开 `rollout.group_shared_noise`，按
-> [过度设计审计](SPRINT_overengineering_audit.md) 删除（schema 字段、collector 的 per-sample
+> [过度设计审计](../done/SPRINT_overengineering_audit.md) 删除（schema 字段、collector 的 per-sample
 > seed 规划、`GenerationRequest.initial_noise_seeds`、`DenoiseLoopConfig.initial_noise_seeds`）。
 > executor 的 `draw_initial_latents` 钩子与家族 `initial_latents` 参数保留，因为
 > `qwen_image_21_edit_probe --compare-reference` 在用。下文是当时的落地记录。

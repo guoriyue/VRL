@@ -9,9 +9,9 @@
 > monotonic 口径变化；T0 的 `attempt` 复用 producer 现有 `failure_counts`；T1 增加
 > 第 0 步（metrics_io 映射派生）。
 
-父 program：[Continuous three-stage pipeline](SPRINT_continuous_three_stage_pipeline_program.md)
+父 program：[Continuous three-stage pipeline](planned/SPRINT_continuous_three_stage_pipeline_program.md)
 
-前置：[Online metrics IO contract](../done/SPRINT_online_metrics_io_contract.md)。这是 program 的首个
+前置：[Online metrics IO contract](done/SPRINT_online_metrics_io_contract.md)。这是 program 的首个
 continuous 实施 sprint，但新增 telemetry columns 前先建立单一 CSV row schema，避免继续同步
 header、row dict 与 format order 三份定义。
 
@@ -297,7 +297,7 @@ max）。并发 slot 的 interval 求和不等于 wall-clock（§1），所以 w
 
 ## 2026-09-09：Miles v0.1 证据补充，不重开已完成 T0/T1/T2
 
-来源：[论文研究总表](../../research/miles_v01_2609_08368.md)，§2.2、§6。
+来源：[论文研究总表](../research/miles_v01_2609_08368.md)，§2.2、§6。
 T3 真实四卡 baseline 仍按原硬件门槛执行；本补充不把现有 telemetry 当成缺失功能。
 
 T3 报告同时保存 ready/unscored 的 item 与 byte 占用、generation/parse/reward

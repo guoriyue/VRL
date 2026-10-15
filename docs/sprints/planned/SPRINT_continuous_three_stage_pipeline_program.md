@@ -1,7 +1,7 @@
 # SPRINT PROGRAM：Continuous rollout / reward / training 三段流水线
 
 状态：**planned（2026-07-21）**。当前尚未开始实施；首个执行项是
-[Stage contracts and baseline](SPRINT_continuous_stage_contracts_and_baseline.md)。
+[Stage contracts and baseline](../SPRINT_continuous_stage_contracts_and_baseline.md)。
 
 > 修订 2026-08-22：`collect_prompt_batches` 已重命名为 `collect_prompt_groups`
 > （83148c9e），§1.1 的 overlap 能力描述按 continuous 生产路径的实际情况更正。
@@ -88,7 +88,7 @@ admission、queue、runtime 调用或 validation consumer；不能增加只打�
 
 ### Sprint 0 — Stage contracts and baseline
 
-[文档](SPRINT_continuous_stage_contracts_and_baseline.md)
+[文档](../SPRINT_continuous_stage_contracts_and_baseline.md)
 
 先建立 stage identity、ownership、时间区间、队列和 GPU duty 的统一测量。退出条件是能解释
 一轮更新中 generation、reward、ready wait、training 和 weight sync 的 wall-clock，并用测试

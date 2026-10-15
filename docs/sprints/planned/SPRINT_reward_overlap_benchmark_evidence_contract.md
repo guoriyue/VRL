@@ -3,7 +3,7 @@
 状态：**planned / CPU-only verdict implementation**。不运行昂贵训练 campaign。
 
 **2026-09-27：作废。** `reward_overlap_benchmark.py`、`reward_collection_mode` 与
-`PER_GROUP_SERIAL` 对照臂已按 [过度设计审计](SPRINT_overengineering_audit.md) 第二档第 7 条删除，
+`PER_GROUP_SERIAL` 对照臂已按 [过度设计审计](../done/SPRINT_overengineering_audit.md) 第二档第 7 条删除，
 本 sprint 的对象不再存在。
 
 ## 根因

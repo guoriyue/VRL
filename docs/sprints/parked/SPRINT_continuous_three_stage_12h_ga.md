@@ -2,7 +2,7 @@
 
 状态：**parked（2026-07-21）**。触发条件：
 
-- [Stage contracts](../planned/SPRINT_continuous_stage_contracts_and_baseline.md)、
+- [Stage contracts](../SPRINT_continuous_stage_contracts_and_baseline.md)、
   [generation/reward pump](SPRINT_continuous_generation_reward_pump.md)、
   [versioned lookahead](SPRINT_continuous_versioned_lookahead.md)、
   [reward batching](SPRINT_unified_reward_adaptive_batching.md)、
