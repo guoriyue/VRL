@@ -23,7 +23,7 @@ hard-negative mining, or reward calibration.
 Rebuild committed prompt manifests with:
 
 ```bash
-python -m vrl.scripts.data.setup anime-prompts
+python -m vrl.scripts.data.setup anime-safety-prompts
 ```
 
 The builder lives in one module, `vrl/scripts/data/danbooru.py`.

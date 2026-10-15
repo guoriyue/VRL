@@ -33,19 +33,11 @@ ANIME_SAFETY_PROMPTS_COMMAND = "anime-safety-prompts"
 OUTPUT_DIR = repo_root() / "manifests" / "danbooru"
 SAFETY_DIR = OUTPUT_DIR / "safety"
 
-DANBOORU_REPO_ID = "nyanko7/danbooru2023"
-DANBOORU_METADATA_FILE = "metadata/posts.tar.gz"
-
 SAFETY_TRAIN_OUTPUT = SAFETY_DIR / "train.jsonl"
 SAFETY_EVAL_OUTPUT = SAFETY_DIR / "eval_baseline.jsonl"
 SAFETY_REPORT_OUTPUT = SAFETY_DIR / "report.json"
 SAFETY_TRAIN_LIMIT = 2_000
 SAFETY_EVAL_LIMIT = 200
-SAFETY_MIN_SCORE = 0.0
-SAFETY_CANDIDATE_POOL_FACTOR = 3
-SAFETY_PROMPT_TAG_LIMIT = 24
-SAFETY_MIN_RISK_TAGS = 1
-SAFETY_SEED = 0
 
 
 class _TagVocabulary(ConfigBase):
@@ -115,9 +107,6 @@ def resolve_metadata_path(
     *,
     metadata: str | Path | None,
     download_metadata: bool,
-    hf_repo: str,
-    hf_file: str,
-    hf_cache_dir: str | Path | None,
 ) -> str:
     if metadata:
         return str(metadata)
@@ -126,8 +115,8 @@ def resolve_metadata_path(
     from vrl.utils.hf_hub import HuggingFaceRepoRevision
 
     return str(
-        HuggingFaceRepoRevision(hf_repo, "main").download_file(
-            hf_file, repo_type="dataset", cache_dir=hf_cache_dir or None
+        HuggingFaceRepoRevision("nyanko7/danbooru2023", "main").download_file(
+            "metadata/posts.tar.gz", repo_type="dataset", cache_dir=None
         ),
     )
 
@@ -342,86 +331,53 @@ def build_safety_prompts(
     *,
     metadata: str | Path | None = None,
     download_metadata: bool = False,
-    hf_repo: str = DANBOORU_REPO_ID,
-    hf_file: str = DANBOORU_METADATA_FILE,
-    hf_cache_dir: str | Path | None = None,
     train_output: str | Path = SAFETY_TRAIN_OUTPUT,
     eval_output: str | Path = SAFETY_EVAL_OUTPUT,
     report_output: str | Path = SAFETY_REPORT_OUTPUT,
     train_limit: int = SAFETY_TRAIN_LIMIT,
     eval_limit: int = SAFETY_EVAL_LIMIT,
-    ratings: Sequence[str] = SAFETY_TARGET_RATINGS,
-    min_score: float = SAFETY_MIN_SCORE,
-    seed: int = SAFETY_SEED,
-    candidate_pool_factor: int = SAFETY_CANDIDATE_POOL_FACTOR,
-    max_metadata_rows: int | None = None,
-    prompt_tag_limit: int = SAFETY_PROMPT_TAG_LIMIT,
-    min_risk_tags: int = SAFETY_MIN_RISK_TAGS,
-    allow_partial: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    metadata_path = resolve_metadata_path(
-        metadata=metadata,
-        download_metadata=download_metadata,
-        hf_repo=hf_repo,
-        hf_file=hf_file,
-        hf_cache_dir=hf_cache_dir,
-    )
+    metadata_path = resolve_metadata_path(metadata=metadata, download_metadata=download_metadata)
     target_count = train_limit + eval_limit
     rows = build_danbooru_safety_prompt_rows(
         metadata_path,
-        ratings=ratings,
-        min_score=min_score,
         limit=target_count,
-        seed=seed,
-        candidate_limit=max(target_count, target_count * candidate_pool_factor),
-        max_metadata_rows=max_metadata_rows,
-        prompt_tag_limit=prompt_tag_limit,
-        min_risk_tags=min_risk_tags,
+        seed=0,
+        candidate_limit=target_count * 3,
     )
     train_rows, eval_rows = split_safety_prompt_rows(
         rows,
         train_limit=train_limit,
         eval_limit=eval_limit,
     )
-    if not allow_partial and (len(train_rows) < train_limit or len(eval_rows) < eval_limit):
+    if len(train_rows) < train_limit or len(eval_rows) < eval_limit:
         raise RuntimeError(
             "Not enough safety prompt rows generated: "
             f"train={len(train_rows)}/{train_limit}, "
-            f"eval={len(eval_rows)}/{eval_limit}. "
-            "Increase max_metadata_rows, lower filters, or set allow_partial=True.",
+            f"eval={len(eval_rows)}/{eval_limit}.",
         )
     write_jsonl(train_output, train_rows, sort_keys=False)
     write_jsonl(eval_output, eval_rows, sort_keys=False)
-    if report_output:
-        write_safety_report(report_output, train_rows, eval_rows)
+    write_safety_report(report_output, train_rows, eval_rows)
     return train_rows, eval_rows
 
 
 def build_danbooru_safety_prompt_rows(
     metadata_path: str | Path,
     *,
-    ratings: Sequence[str] = SAFETY_TARGET_RATINGS,
-    min_score: float = 0.0,
     limit: int | None = None,
     seed: int = 0,
     candidate_limit: int | None = None,
-    max_metadata_rows: int | None = None,
-    prompt_tag_limit: int = 24,
-    min_risk_tags: int = 1,
 ) -> list[dict[str, Any]]:
-    target_ratings = {_normalize_rating(rating) for rating in ratings}
+    target_ratings = {_normalize_rating(rating) for rating in SAFETY_TARGET_RATINGS}
     target_ratings.discard(None)
     if not target_ratings:
         raise ValueError("at least one valid safety rating is required")
 
     context_tags = tuple(POSE_TAGS) + PROMPT_ANCHOR_TAGS + CLOTHING_TAGS + SCENE_TAGS
     candidates: list[dict[str, Any]] = []
-    scanned = 0
     seen_prompts: set[str] = set()
     for row in iter_metadata(metadata_path):
-        scanned += 1
-        if max_metadata_rows is not None and scanned > max_metadata_rows:
-            break
         tags = normalize_tags(row)
         tag_set = set(tags)
         if any(bool(row.get(key)) for key in ("is_deleted", "is_flagged", "is_banned")):
@@ -438,13 +394,13 @@ def build_danbooru_safety_prompt_rows(
                         break
         if rating not in target_ratings:
             continue
-        if record_score(row) < min_score:
+        if record_score(row) < 0.0:
             continue
         nsfw_tags = dedupe_text(
             [f"rating:{rating}", *(tag for tag in tags if tag in SAFETY_RISK_TAGS)],
         )
         risk_tags = [tag for tag in nsfw_tags if not tag.startswith("rating:")]
-        if len(risk_tags) < min_risk_tags:
+        if not risk_tags:
             continue
         parts: list[str] = [f"rating:{rating}", "adult"]
         for tag in SUBJECT_PROMPT_TAGS:
@@ -455,7 +411,7 @@ def build_danbooru_safety_prompt_rows(
             parts.append("solo")
         parts.extend(nsfw_tags)
         parts.extend(tag for tag in context_tags if tag in tag_set)
-        prompt = ", ".join(dedupe_text(parts)[: max(1, prompt_tag_limit)])
+        prompt = ", ".join(dedupe_text(parts)[:24])
         if not prompt or prompt in seen_prompts:
             continue
         seen_prompts.add(prompt)
@@ -548,41 +504,8 @@ def _normalize_rating(value: Any) -> str | None:
 # ── Command line ──────────────────────────────────────────────────────────
 
 
-def build_default_manifests(
-    *,
-    metadata: str | Path | None = None,
-    download_metadata: bool = True,
-    hf_cache_dir: str | Path | None = None,
-) -> None:
-    resolved = resolve_metadata_path(
-        metadata=metadata,
-        download_metadata=download_metadata,
-        hf_repo=DANBOORU_REPO_ID,
-        hf_file=DANBOORU_METADATA_FILE,
-        hf_cache_dir=hf_cache_dir,
-    )
-    build_safety_prompts(metadata=resolved)
-
-
 def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
     return (("manifests/danbooru/safety/", (ANIME_SAFETY_PROMPTS_COMMAND,)),)
-
-
-def main(argv: Sequence[str] | None = None) -> None:
-    if argv is None:
-        import sys
-
-        argv = sys.argv[1:]
-    if not argv:
-        build_default_manifests()
-        return
-    parser = argparse.ArgumentParser(
-        description="Build Danbooru-derived anime datasets in place.",
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    register(subparsers)
-    args = parser.parse_args(argv)
-    args.func(args)
 
 
 def register(subparsers: Any) -> None:
@@ -598,7 +521,4 @@ def _cmd_anime_safety_prompts(args: argparse.Namespace) -> None:
     )
 
 
-__all__ = ["main", "manifest_setup_hints", "register"]
-
-if __name__ == "__main__":
-    main()
+__all__ = ["manifest_setup_hints", "register"]
