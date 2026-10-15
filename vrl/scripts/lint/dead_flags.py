@@ -24,12 +24,6 @@ from vrl.utils.paths import repo_root
 
 REPO_ROOT = repo_root()
 
-# A flag whose dest is read through **vars(args) / getattr(args, name) rather
-# than a literal args.<dest> cannot be proven live by grep. Declare those here
-# with the reason, so an unprovable case is an explicit decision, not a silent
-# pass. Empty today: the audit left no such flag behind.
-DYNAMIC_CONSUMERS: dict[str, str] = {}
-
 
 def declared_flags() -> list[tuple[str, int, str, str]]:
     """Every ``add_argument`` in ``vrl/`` as ``(file, line, option, dest)``."""
@@ -88,8 +82,6 @@ def dead_flags() -> list[tuple[str, int, str, str]]:
 
     dead: list[tuple[str, int, str, str]] = []
     for file, line, option, dest in declared_flags():
-        if dest in DYNAMIC_CONSUMERS:
-            continue
         reader = re.compile(rf"\bargs\.{re.escape(dest)}\b")
         if any(reader.search(text) for text in sources.values()):
             continue
@@ -110,8 +102,7 @@ def main() -> int:
         print(f"✗ {len(findings)} CLI flag(s) declared but never consumed:")
         for file, line, option, dest in findings:
             print(f"    {file}:{line}  {option}  (dest={dest})")
-        print("  fix: delete the flag, wire its consumer, or — if it is read")
-        print("       dynamically — register it in DYNAMIC_CONSUMERS with a reason")
+        print("  fix: delete the flag or wire its consumer")
         return 1
     print(f"✓ dead-flag sweep: all {total} declared CLI flags have a consumer")
     return 0
