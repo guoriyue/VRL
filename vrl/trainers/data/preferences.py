@@ -1,7 +1,7 @@
 """Preference-pair datasets for offline DPO training.
 
-Currently supports the Pick-a-Pic v2 schema (HuggingFace
-``yuvalkirstain/pickapic_v2``):
+Currently supports the Pick-a-Pic schema (the config names the Hub dataset;
+the shipped preset uses the ``pickapic-anonymous/pickapic_v1`` mirror):
   * ``jpg_0``, ``jpg_1`` — image bytes
   * ``label_0`` ∈ {0, 0.5, 1} — 1 ⇔ jpg_0 is the winner
   * ``caption`` — text prompt
@@ -108,7 +108,7 @@ class PickAPicPreferenceDataset(Dataset):
         resolution: int = 512,
         random_crop: bool = False,
         no_hflip: bool = False,
-        dataset_name: str = "yuvalkirstain/pickapic_v2",
+        dataset_name: str,
     ) -> PickAPicPreferenceDataset:
         """Load an indexable preference dataset for a shuffled DataLoader.
 
