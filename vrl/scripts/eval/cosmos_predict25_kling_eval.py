@@ -64,13 +64,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--samples-per-prompt", type=int, default=2)
     parser.add_argument("--seed", type=int, default=20260614)
     parser.add_argument("--output-dir", default="outputs/cosmos_predict25_kling_eval")
-    parser.add_argument("--width", type=int, default=0)
-    parser.add_argument("--height", type=int, default=0)
-    parser.add_argument("--num-frames", type=int, default=0)
-    parser.add_argument("--steps", type=int, default=0)
-    parser.add_argument("--fps", type=int, default=0)
-    parser.add_argument("--max-sequence-length", type=int, default=0)
-    parser.add_argument("--guidance-scale", type=float, default=None)
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=0,
+        help="Denoise steps for every arm; 0 keeps sampling.num_steps. Other sampling "
+        "values are set with sampling.<key>=... overrides.",
+    )
     parser.add_argument(
         "--score-key",
         default="",
@@ -127,20 +127,7 @@ def main(argv: list[str] | None = None) -> None:
         device=device,
         requires_trainer="Cosmos checkpoint evaluation",
     )
-    # Adapt this script's CLI flags to the shared sampling projection. The arg names
-    # (notably --steps -> num_steps) are cosmos-specific; wan has no such overrides.
-    sampling = resolve_eval_sampling(
-        root,
-        overrides={
-            "width": args.width,
-            "height": args.height,
-            "num_frames": args.num_frames,
-            "num_steps": args.steps,
-            "fps": args.fps,
-            "max_sequence_length": args.max_sequence_length,
-            "guidance_scale": args.guidance_scale,
-        },
-    )
+    sampling = resolve_eval_sampling(root, overrides={"num_steps": args.steps})
     if root.model is None:
         raise ValueError("Cosmos checkpoint evaluation requires model configuration")
     entry = get_model_family_entry(str(root.model.family))
