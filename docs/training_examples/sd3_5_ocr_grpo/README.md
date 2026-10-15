@@ -20,8 +20,8 @@ Core recipe:
 - Trainable method: LoRA on SD3.5 transformer attention projections
 - Algorithm: GRPO with flow-matching SDE replay
 - Reward: OCR only, via `reward.components.ocr=1.0`
-- Training data: `datasets/ocr/train.txt`
-- Eval data: `datasets/ocr/test.txt`
+- Training data: `manifests/ocr/train.txt`
+- Eval data: `manifests/ocr/test.txt`
 - Sampling: 512x512, 10 train denoise steps, CFG 4.5
 - Eval sampling: 40 denoise steps, EMA weights enabled
 - Rollout shape: 8 samples per prompt, 8 prompt groups per outer epoch

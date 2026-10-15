@@ -131,7 +131,7 @@ Tier 2 must stay import-light because eval and perf tools pay for it on every
 parse; a check that needs `vrl.trainers` or `vrl.models.interfaces` is a tier 3
 gate. Resolution-time validation that needs a resolved object (the GPU
 topology in `vrl/ray/resources.py`, the rollout schedule, reward parking) stays
-with the resolver that produces that object and runs after `build_configs`.
+with the resolver that produces that object and runs after `BuiltConfigs.from_cfg`.
 
 Whether the configured rewards can actually score the configured rows (a
 reward that reads a target clip or a caption target off each prompt) is not a

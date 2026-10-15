@@ -101,7 +101,7 @@ vrl/generation/
   steps/denoise/              denoise config, hot loop, and TeaCache
   bindings/full_sequence/     full-sequence × denoise binding
   bindings/chunk_autoregressive/ temporal-chunk × denoise contract
-  execution/                  step-neutral chunk planning, pipelining, and workers
+  execution/                  step-neutral sample-batch planning, pipelining, and workers
   ray/                        distributed lifecycle and transport
 ```
 
@@ -116,13 +116,12 @@ one that existed served only the removed token regime). The two causal-chunk fam
 now prove a shared typed result/gather/replay-axis boundary, which lives in
 `bindings/chunk_autoregressive`; their cache lifecycles and denoise
 schedules remain family-owned because those algorithms differ materially.
-`SampleChunk` is execution batching over requests/samples, not an
+`GenerationSampleBatch` is execution batching over requests/samples, not an
 autoregressive temporal chunk.
 
-The older `Diffusion*` class names remain where renaming them would add
-symbol churn without clarifying ownership. They are implementation API names,
-not taxonomy. New imports should use the family-first and axis-based package
-paths above.
+Generation classes are named for the denoise step they run (`Denoise*`), not
+for a model taxonomy. New imports should use the family-first and axis-based
+package paths above.
 
 ## Architecture hygiene and non-goals
 

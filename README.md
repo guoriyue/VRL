@@ -134,7 +134,7 @@ vrl/
   scripts/     training and data preparation entrypoints
 manifests/  committed prompt manifests and dataset build scripts
 docs/       architecture notes, sprint notes, training examples
-third_party/  vendored submodules (+ the CountGD Bazel package)
+third_party/  vendored submodules
 ```
 
 ## Setup
@@ -175,7 +175,6 @@ stack at fetch time (`tools/dependencies/uv_exports.bzl`) and builds the same
 | `//:vrl` | core + cosmos, reward, reward-service, data, ocr, detection, optim8bit + test/lint | trainer, reward service, all CPU/GPU lanes |
 | `//:vrl_vllm` | core + ar-vllm + test | vLLM CuMem memory parking and blockwise-fp8 kernels (`//tests:gpu_vllm_tests`) |
 | `//:vrl_shared_gpu` | both of the above (identical shared pins) | shared-GPU topologies: model stack plus vLLM's allocator (real-weight lane) |
-| `//:vrl_countgd` | `third_party/countgd/requirements.txt` (transformers 4.48, numpy 1.26, torch cu128) | CountGD counting reward service |
 | `//:vrl_videoeval` | core + videoeval + test (tokenizers 0.13.3 built from source with a pinned Rust toolchain) | `//:video_reward_suite` (VBench) |
 
 Not migrated: **MAGI-1** (its official code needs a flash-attn 2.4.2 / torch 2.4 source build;
@@ -202,7 +201,6 @@ HF_HOME=~/.cache/huggingface WM_REAL_MODEL_RL_CASES=sd3_5 \
 bazel run //:vrl_train -- --config experiment/sd3_5/online_grpo_ocr
 bazel run //:vrl_supervise -- --config experiment/sd3_5/online_grpo_ocr   # torchrun DDP/FSDP on one host
 bazel run //:vrl_reward_service -- --config vrl/config/reward_service/<service>.yaml
-bazel run //third_party/countgd:reward_service -- --config vrl/config/reward_service/countgd.yaml
 bazel run //:video_reward_suite -- --video-dir <dir>       # VBench stack
 bazel build --build_python_zip //:vrl_train              # self-contained bazel-bin/vrl_train.zip for other nodes
 bazel build --build_python_zip //tools/delivery:node_probe   # copy to a node: python3 node_probe.zip

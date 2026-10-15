@@ -19,7 +19,7 @@ Output (checkpoints + logs) lives at `outputs/cosmos_ddp_paper/` on the cluster 
 
 ## 2. Exact config
 
-Recipe: `experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1` (paper-aligned base).
+Recipe: `experiment/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1` (paper-aligned base).
 
 Launch overrides (see `launch.cmd`):
 ```
@@ -112,7 +112,7 @@ DDP correctness verified: rank0 and rank1 each draw a **disjoint** 16-prompt sli
 | MQ (motion) | −0.3962 | −0.0434 | **−0.3528** | **INVERTED** — noise monotonically *raises* it (flicker read as "motion") |
 | Overall | −4.3965 | −4.2039 | **−0.1926** | **INVERTED** — MQ corruption flips the trained target |
 
-The training reward is `score_key: overall_reward` (`configs/reward/kling_video_reward.yaml`). So the policy optimizes **Overall**, whose **MQ sub-score is inverted at 33 frames** — high-frequency noise/flicker is scored as good motion, so a *worse* video can score *higher*. That is why training was flat/gameable, **not** too-few-epochs. (VQ alone is correctly signed and real rollouts have a genuine quality spread — Overall std **0.18** across rollouts — so usable signal exists; it is the Overall/MQ combination that is broken.)
+The training reward is `score_key: overall_reward` (`vrl/config/presets/reward/kling_video_reward.yaml`). So the policy optimizes **Overall**, whose **MQ sub-score is inverted at 33 frames** — high-frequency noise/flicker is scored as good motion, so a *worse* video can score *higher*. That is why training was flat/gameable, **not** too-few-epochs. (VQ alone is correctly signed and real rollouts have a genuine quality spread — Overall std **0.18** across rollouts — so usable signal exists; it is the Overall/MQ combination that is broken.)
 
 **Implication & cheap fix (test before any longer run):**
 1. **Switch `score_key` `overall_reward` → `visual_quality`** — VQ is correctly signed and discriminating at 480p_33f. One-line config change, no resolution change.

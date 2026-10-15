@@ -29,7 +29,7 @@ synonym that silently splits one phase into two names.
 | Namespace | Owner | What it covers |
 |---|---|---|
 | `generation.` | `vrl/generation/steps/`, `vrl/generation/bindings/` | Diffusion denoise loop and its per-step pieces |
-| `engine.` | `vrl/generation/execution/`, family runtimes | Engine-level planning, prefill/decode, KV cache |
+| `engine.` | `vrl/generation/execution/`, `vrl/generation/ray/`, `vrl/generation/types.py` | Engine-level request planning and per-batch forward |
 | `trainer.` | `vrl/trainers/online/` | Forward/backward/loss/optimizer of the update |
 | `collector.` | `vrl/rollouts/collector/` | Post-rollout scoring |
 | `weight_sync.` | `vrl/trainers/weight_sync.py` | Trainer -> rollout-worker weight handoff |
@@ -50,7 +50,6 @@ grep -rhno 'profile_range("[a-z_.]*"' vrl/ --include=*.py \
 | `generation.prepare_sampling` | Sampler/scheduler setup |
 | `generation.denoise_step` | One full denoise iteration (outer; encloses the rest) |
 | `generation.denoise_forward` | Policy transformer forward inside a step |
-| `generation.ref_denoise_forward` | Reference-model forward (KL / ratio terms) |
 | `generation.scheduler_step` | Scheduler update from model output to next latent |
 | `generation.latent_snapshot` | Writing the initial latent into the trajectory buffer (once per batch; later observations are the recorded actions) |
 | `generation.latent_write` | Writing latents out |
@@ -61,12 +60,7 @@ grep -rhno 'profile_range("[a-z_.]*"' vrl/ --include=*.py \
 | Phase | Meaning |
 |---|---|
 | `engine.plan` | Execution planning before dispatch |
-| `engine.forward_chunk` | One chunk of batched forward work |
-| `engine.prefill` | Autoregressive prefill |
-| `engine.decode_step` | One autoregressive decode step |
-| `engine.cache_read` | KV cache read |
-| `engine.cache_write` | KV cache write |
-| `engine.vq_decode` | VQ token decode |
+| `engine.forward_chunk` | One worker's `forward_batch` call on one sample batch |
 
 ### `trainer.`
 | Phase | Meaning |

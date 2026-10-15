@@ -7,9 +7,9 @@ family-specific runner, executor, runtime builder, or config extractor.
 
 The physical layout is family-first: family code lives under
 `vrl/models/families/`, while reusable model machinery lives under
-`vrl/models/steps/{denoise,token}/`. Generation code is separated into policy
-steps, generation composition, and concrete bindings under
-`vrl/generation/{steps,composition,bindings}/`. Do not add new `models/ar`,
+`vrl/models/steps/denoise/`. Generation code is separated into policy steps,
+batch execution, and concrete bindings under
+`vrl/generation/{steps,execution,bindings}/`. Do not add new `models/ar`,
 `models/diffusion`, `generation/ar`, or `generation/diffusion` paths.
 
 The `vrl/models/families/` package root owns the import-light registry, names,
@@ -25,10 +25,9 @@ The existing `sd3_5` family is the smallest complete example.
 
 Use the descriptor-driven denoise path when one trainable transformer and one
 scheduler are enough to build rollout and replay runtimes. The shared
-`GenericDiffusionBatchExecutor` in the `full_sequence` binding owns prompt, prepare,
+`GenericDenoiseBatchExecutor` in the `full_sequence` binding owns prompt, prepare,
 denoise, and decode orchestration; `DenoiseFamilyBuild` tells the shared builders
-which model classes and upstream transformer to load. The retained `Diffusion*`
-class names are implementation APIs, not model taxonomy.
+which model classes and upstream transformer to load.
 
 ```text
 vrl/models/families/<family>/
@@ -117,7 +116,7 @@ inference rule. The algorithm validates compatibility; it never rewrites the
 configured family.
 
 `executor_cls` is intentionally absent above, so `_full_sequence_entry` selects
-`vrl.generation.bindings.full_sequence.executor:GenericDiffusionBatchExecutor`. Add a
+`vrl.generation.bindings.full_sequence.executor:GenericDenoiseBatchExecutor`. Add a
 family executor only when its body performs family-specific work; a renamed
 pass-through executor is not an extension point.
 
@@ -147,8 +146,9 @@ vrl-train --config experiment/my_model/online_grpo_<reward>
 
 ## 5. Extend the contract matrix and tests
 
-The shared protocol matrix in `tests/models/interfaces/__init__.py` derives
-rollout and replay model classes from the registry descriptor. A standard
+The shared protocol matrices in `tests/models/interfaces/test_runtime_model_contract.py`
+and `tests/models/interfaces/test_replay_model_contract.py` derive rollout and
+replay model classes from the registry descriptor. A standard
 descriptor family therefore needs no second hand-maintained class table.
 
 Add family tests that cover:
@@ -160,8 +160,8 @@ Add family tests that cover:
 - any custom executor branch, if the generic executor is insufficient.
 
 Keep family tests under `tests/models/families/<family>/`. Put reusable step
-contract tests under `tests/models/steps/{denoise,token}/`, and generation tests
-under the matching `tests/generation/{steps,composition,bindings}/` boundary.
+contract tests under `tests/models/steps/denoise/`, and generation tests
+under the matching `tests/generation/{steps,execution,bindings}/` boundary.
 
 Before the first costly image training run, use the test-owned rollout preview
 with a real experiment config. It derives family support from `FAMILY_REGISTRY`,

@@ -71,11 +71,11 @@ original files intact and requires service-allowed shared filesystem paths.
 Auxiliary assets in metadata always require shared paths for HTTP scoring;
 they are not automatically uploaded.
 
-The service also confines built-in file metadata (`reference_image`,
-`reference_images`, `target_image`, `target_video`, `edit_mask`) to absolute paths
+The service also confines built-in file metadata (`target_image`,
+`target_video`, `reference_images`) to absolute paths
 within its configured `artifact_roots`, including when the candidate is uploaded.
 It hashes these files before and after scoring, and rechecks them on a cached
-success. A changed target/reference/mask rejects that request instead of returning
+success. A changed target/reference file rejects that request instead of returning
 an old score; use a new request identity for intentionally changed inputs. These
 server-owned digests supplement the caller's declared asset provenance. They are
 before/after checks, not a filesystem snapshot against concurrent adversarial

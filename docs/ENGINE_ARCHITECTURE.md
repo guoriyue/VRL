@@ -22,8 +22,8 @@ flowchart LR
         RR[RewardRuntime protocol] --> RFR[RewardFunctionRuntime]
         RFR --> RF[RewardFunction ladder] --> SC[RewardScorer transports]
     end
-    C -- "isinstance check" --> GR
-    C -- "isinstance check" --> RR
+    C -- "typed against" --> GR
+    C -- "typed against" --> RR
 ```
 
 ---
@@ -105,14 +105,14 @@ capacity remains a resource requirement. GPU sharing in
 One request flows: collector → `GenerationRuntime` → split into
 `GenerationSampleBatch`es → dispatched to Ray workers → each worker's
 `GenerationBatchExecutor.forward_batch(batch)` returns a `BatchPayload` →
-driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
+driver-side `GenerationBatchGatherer.merge_generation_batches()` reassembles the
 `GenerationOutput`.
 
 | Protocol | Members | Why it exists |
 |---|---|---|
-| `GenerationRuntime` | `current_policy_version`, `activate/generate/update_weights/offload/shutdown` | The engine's only face toward vrl/rollouts (dual of `RewardRuntime`); the collector is typed against it, and tests/rollouts/test_runtime_protocol_contract.py pins the Ray runtime to it structurally. |
-| `GenerationBatchExecutor` | `family`, `task`, `forward_batch`, `gather_batches` | The model-family plugin contract; keeps `if family == ...` out of neutral execution code. |
-| `GenerationBatchGatherer` | `gather_batches` | The model-free slice of the executor: reassembly runs driver-side where no model is loaded, so it ships separately in the launch config. |
+| `GenerationRuntime` | `current_policy_version`, `activate/generate/update_weights/offload/shutdown` | The engine's only face toward vrl/rollouts (dual of `RewardRuntime`); the collector is typed against it. |
+| `GenerationBatchExecutor` | `family`, `task`, `forward_batch`, `merge_generation_batches` | The model-family plugin contract; keeps `if family == ...` out of neutral execution code. |
+| `GenerationBatchGatherer` | `merge_generation_batches` | The model-free slice of the executor: reassembly runs driver-side where no model is loaded, so it ships beside the launch config in `RayGenerationLaunchInputs`. |
 | `BatchPayload = Any` | — | Deliberate: the payload's shape is owned by the binding that produced it (diffusion latents vs AR tokens share nothing useful). |
 
 ### 2.2 Driver side (`ray/`)
@@ -144,7 +144,7 @@ driver-side `GenerationBatchGatherer.gather_batches()` reassembles the
 ### 2.4 Executor ladder (bindings × families)
 
 `BatchExecutorBase` (`execution/executor_base.py`) is the shared
-implementation base satisfying `GenerationBatchExecutor`. Three bindings
+implementation base satisfying `GenerationBatchExecutor`. Two bindings
 specialize it per generation paradigm; model families subclass the binding
 base (or use its generic implementation directly):
 
@@ -152,25 +152,28 @@ base (or use its generic implementation directly):
 classDiagram
     class GenerationBatchExecutor { <<protocol>> }
     class BatchExecutorBase
-    class DiffusionBatchExecutorBase
-    class GenericDiffusionBatchExecutor
+    class DenoiseBatchExecutorBase
+    class GenericDenoiseBatchExecutor
     class ChunkAutoregressiveDenoiseExecutorBase
     GenerationBatchExecutor <|.. BatchExecutorBase : satisfies
-    BatchExecutorBase <|-- DiffusionBatchExecutorBase
+    BatchExecutorBase <|-- DenoiseBatchExecutorBase
     BatchExecutorBase <|-- ChunkAutoregressiveDenoiseExecutorBase
-    DiffusionBatchExecutorBase <|-- GenericDiffusionBatchExecutor
-    DiffusionBatchExecutorBase <|-- CosmosBatchExecutor
-    DiffusionBatchExecutorBase <|-- Wan_2_1I2VBatchExecutor
-    DiffusionBatchExecutorBase <|-- CosmosPredict25BatchExecutor
-    DiffusionBatchExecutorBase <|-- Cosmos3BatchExecutor
-    DiffusionBatchExecutorBase <|-- EchoBatchExecutor
+    DenoiseBatchExecutorBase <|-- GenericDenoiseBatchExecutor
+    DenoiseBatchExecutorBase <|-- CosmosBatchExecutor
+    DenoiseBatchExecutorBase <|-- Wan_2_1I2VBatchExecutor
+    DenoiseBatchExecutorBase <|-- QwenImage21BatchExecutor
+    DenoiseBatchExecutorBase <|-- CosmosPredict25BatchExecutor
+    DenoiseBatchExecutorBase <|-- Cosmos3BatchExecutor
+    DenoiseBatchExecutorBase <|-- MiniMaxH3BatchExecutor
+    DenoiseBatchExecutorBase <|-- EchoBatchExecutor
+    MiniMaxH3BatchExecutor <|-- VDNH3BatchExecutor
     ChunkAutoregressiveDenoiseExecutorBase <|-- Magi1BatchExecutor
     ChunkAutoregressiveDenoiseExecutorBase <|-- CausVidBatchExecutor
 ```
 
 | Binding | Base / generic | Gatherer | Data types | Families |
 |---|---|---|---|---|
-| `full_sequence` | `DiffusionBatchExecutorBase`; families with no custom per-batch logic get `GenericDiffusionBatchExecutor` via the registry default | `DiffusionBatchGatherer` | `DiffusionSamplingParams`, `DiffusionRequestLayout`, `DiffusionBatchResult`, `ReferenceConditionedBatches` (mixin for i2v reference conditioning) | cosmos predict2/2.5/3, wan 2.1 i2v, echo; every other diffusion family (sana, flux, sd3.5, qwen-image, pixart-sigma, lumina2, mochi, hunyuan image/video, cogvideox, …) uses the generic executor via the registry default |
+| `full_sequence` | `DenoiseBatchExecutorBase`; families with no custom per-batch logic get `GenericDenoiseBatchExecutor` via the registry default | `DenoiseBatchGatherer` | `DenoiseSamplingParams` (parsed per request by `DenoiseBatchExecutorBase.parse_sampling_params`), `DenoiseBatchResult`, `ReferenceConditionedBatches` (mixin for reference-image conditioning) | cosmos predict2/2.5/3, wan 2.1 i2v, qwen-image 2.1, minimax h3 / vdn h3, echo; every other diffusion family (sana, flux, sd3.5, qwen-image, pixart-sigma, lumina2, mochi, hunyuan image/video, cogvideox, …) uses the generic executor via the registry default |
 | `chunk_autoregressive` | `ChunkAutoregressiveDenoiseExecutorBase` | `ChunkAutoregressiveDenoiseGatherer` | `ChunkAutoregressiveDenoiseResult` | magi-1, causvid. Here "chunk" means a **temporal chunk** of the video (causal-chunk generation) — a different concept from sample batches. |
 
 Below the executors, `steps/denoise/` holds the family-neutral inner loop
@@ -193,9 +196,9 @@ engine.
 | Module | Classes | Role |
 |---|---|---|
 | `protocols.py` | `RewardRuntime` | The engine's only face toward vrl/rollouts (dual of `GenerationRuntime`): `preflight/activate/score/park_memory/shutdown`; the collector is typed against it. |
-| | `RewardScorer` | The transport seam below `RewardFunction` (dual of the Ray executor layer): `score_batch(request) -> results`, `shutdown`, plus the two capability flags. Runtime-checkable; validated **once, completely** at scorer injection. |
+| | `RewardScorer` | The transport seam below `RewardFunction` (dual of the Ray executor layer): `score_batch(request) -> results`, `shutdown`. Optional capabilities are separate protocols (`RemoteReadyScorer`, `MemoryParkingScorer`) that `ModelRewardFunction` checks with `isinstance`. |
 | | `RemoteReadyScorer` | Optional capability: remote transports expose `ensure_ready()` so a broken service fails at preflight, not after the first generation batch. |
-| | `MemoryParkingScorer` | Optional capability (dual of `BatchSizeProbeExecutor`): `requires_memory_parking`, `activate`, `park_memory` for verified GPU parking. |
+| | `MemoryParkingScorer` | Optional capability: `requires_memory_parking`, `activate`, `park_memory` for verified GPU parking. |
 | `inference.py` | `RewardInferenceArtifact`, `RewardInferenceRequest`, `RewardInferenceResult` | The schema both transports exchange; the service wire format derives its field sets from these dataclasses. `RewardInferenceRequest.validate_and_order_results()` is the identity guard, run once at the `ModelRewardFunction` seam for every transport: one typed, finite result per artifact, restored to request order. |
 | `worker_config.py` | `RewardWorkerConfig` | The typed closed key set the runtime branches on, parsed once from `worker_config` by both processes that read it (in-process scorer, standalone service). Generation counterpart: `GenerationLaunchConfig`. |
 | `types.py` | `RewardSample`, `RewardOutput` | Collector-facing input/output pair. |
@@ -209,7 +212,6 @@ not taxonomy:
 classDiagram
     class RewardFunction {
         device_config_key: ClassVar
-        memory_parking_residual_bytes_limit: ClassVar
         resolve_execution_device() classmethod
         worker_config_with_device() classmethod
         preflight() activate() park_memory()
@@ -250,16 +252,15 @@ classDiagram
   contract. The driver writes no media files. File-only models declare `input_artifact_format`
   and receive temporary files owned by the scoring process.
 - **`MultiReward`** — weighted composite built by the registry
-  (`MultiReward.from_mapping`, called from `vrl/scripts/common/factory.py`);
-  aggregates both capability flags with `all()` across components (one
-  blocking or unverified component makes the composite blocking/unverified)
-  and fans lifecycle calls out to children with retryable teardown.
+  (`MultiReward.from_mapping`, called from
+  `RewardRuntimeConfig.build_function` in `vrl/config/builders.py`); fans
+  lifecycle calls out to children with retryable teardown.
 
 ### 3.3 Runtime and scorer transports
 
 | Class | Role |
 |---|---|
-| `RewardFunctionRuntime` (`runtime.py`) | Implements `RewardRuntime` around the configured `RewardFunction`: lifecycle FSM, deadlines, parking gate (`validate_parking_residual`). What `RayGenerationRuntime` is to generation. |
+| `RewardFunctionRuntime` (`runtime.py`) | Implements `RewardRuntime` around the configured `RewardFunction`: lifecycle FSM, the score deadline, and one operation lock that serializes scoring and parking. What `RayGenerationRuntime` is to generation. |
 | `RewardParking` (`runtime.py`) | The reward's parking owner (vocabulary in §1 Parking): a `ParkingSession` on the configured device whose mechanism is `distributed.resources.reward.parking.mechanism` (`cumem`, or `reload`: drop the model and trim host allocations at each handoff, rebuild it at the next activation), and the terminal device-cache release every runtime needs. |
 | `InProcessRewardScorer` (`runtime.py`) | `RewardScorer` + `MemoryParkingScorer` implementation: builds the model from `RewardWorkerConfig.model_factory` through `RewardParking`. `_score_artifacts` resolves media and owns model-required temporary files; `_infer` runs the batch hook or per-artifact loop. Remote scoring processes reuse it. |
 | `build_reward_scorer` (`runtime.py`) | Factory: worker config or `RewardInferenceConfig` → in-process or HTTP scorer. |
@@ -290,7 +291,7 @@ prescribes.
 
 | Class | Role |
 |---|---|
-| `RolloutCollector` (`collector/core.py`) | The consumer of both engines: isinstance-validates `GenerationRuntime` and `RewardRuntime` at construction, runs generate → score, applies the lifecycle plan's offload/park decisions. `UnscoredRollout` is its intermediate product. |
+| `RolloutCollector` (`collector/core.py`) | The consumer of both engines: typed against `GenerationRuntime` and `RewardRuntime`, runs generate → score, applies the lifecycle plan's offload/park decisions. `UnscoredRollout` is its intermediate product. |
 | `GenerationRequestBuilder`, `CollectorRequest` | Prompt batch → `GenerationRequest`. |
 | `TrajectoryRolloutBatchBuilder`, `RolloutBatchBuildContext`, `RolloutBatch` | Scored outputs → training batches. |
 | `RolloutSchedule` (protocol) → `StrictOnPolicyRolloutSchedule`, `ContinuousRolloutSchedule` | When to generate vs train. Strict drains everything per iteration; continuous runs a producer/consumer pipeline on `ContinuousRolloutThread`, with scored results stored by prompt slot in `PromptBatch`. `ContinuousRolloutSettings` carries the runtime settings, including the `max_stale_policy_versions` bound the producer and consumer check. |
