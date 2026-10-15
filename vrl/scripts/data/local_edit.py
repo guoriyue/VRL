@@ -29,7 +29,6 @@ These are unverified dataset examples, not gold labels or training targets.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import io
 import json
 import random
@@ -37,6 +36,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from vrl.rewards.models.local_edit import HINT_SUFFIX
+from vrl.utils.artifacts import sha256_file
 from vrl.utils.paths import RootedPaths
 
 LOCAL_TASKS = ("attribute_modification", "swap", "removal", "addition")
@@ -228,7 +228,7 @@ def rows_from_omniedit(
                 edited.convert("RGB").save(reference_path)
                 provenance.update(
                     reference_edit=str(reference_path.relative_to(root)),
-                    reference_edit_sha256=hashlib.sha256(reference_path.read_bytes()).hexdigest(),
+                    reference_edit_sha256=sha256_file(reference_path),
                     reference_edit_review_status="unreviewed",
                 )
             rows.append(

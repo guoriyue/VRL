@@ -1,1 +1,0 @@
-"""Cosmos family command implementations."""

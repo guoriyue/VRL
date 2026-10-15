@@ -15,7 +15,6 @@ derive-text-video-targets, for-experiment, init-dirs.
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 from vrl.scripts.data import (
@@ -26,7 +25,7 @@ from vrl.scripts.data import (
     video_world,
     videophy_i2v,
 )
-from vrl.scripts.data.common import default_cache_dir
+from vrl.scripts.data.common import default_cache_dir, emit
 from vrl.utils.paths import RootedPaths
 
 # init-dirs CLI: dataset -> directories to create under the data root. This is the
@@ -50,16 +49,12 @@ def _cmd_init_dirs(args: argparse.Namespace) -> None:
         cache = default_cache_dir()
         cache.mkdir(parents=True, exist_ok=True)
         created.append(cache)
-    print(
-        json.dumps(
-            {
-                "dataset": args.dataset,
-                "data_root": data_root.as_posix(),
-                "created": [path.as_posix() for path in created],
-            },
-            indent=2,
-            sort_keys=True,
-        ),
+    emit(
+        {
+            "dataset": args.dataset,
+            "data_root": data_root.as_posix(),
+            "created": [path.as_posix() for path in created],
+        },
     )
 
 

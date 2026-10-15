@@ -28,13 +28,9 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
 
-from vrl.scripts.data.common import (
-    default_cache_dir,
-    emit,
-    repo_root,
-)
+from vrl.scripts.data.common import default_cache_dir, emit
 from vrl.utils.json_files import write_json, write_jsonl
-from vrl.utils.paths import RootedPaths, user_path
+from vrl.utils.paths import RootedPaths, repo_root, user_path
 
 # (repo_id, csv_file, official split). Train captions live only in the training
 # CSV and held-out captions only in the test CSV, so both are always read.
