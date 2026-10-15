@@ -23,7 +23,7 @@ import torch
 from omegaconf import DictConfig
 
 from vrl.config.precision import PrecisionPolicy
-from vrl.config.schema import parse_config
+from vrl.config.schema import RootConfig
 from vrl.models.families.registry import get_model_family_entry
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.robotics_video_reward import RoboticsVideoRewardModel
@@ -177,11 +177,11 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--samples-per-prompt must be >= 1")
     if int(args.seed_stride) < 1:
         raise ValueError("--seed-stride must be >= 1")
-    run_dir, cfg, config_path = _load_run(args.run_dir)
+    run_dir, _cfg, root = _load_run(args.run_dir)
     target = _resolve_target(run_dir, str(args.target))
     protocol = _build_protocol(
-        cfg,
-        config_path=config_path,
+        root,
+        config_path=run_dir / RESOLVED_CONFIG_NAME,
         limit=int(args.limit),
         samples_per_prompt=int(args.samples_per_prompt),
         base_seed=int(args.base_seed),
@@ -202,12 +202,7 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
     bundle: Any | None = None
     model: Any | None = None
     try:
-        entry = get_model_family_entry(str(cfg.model.family))
-        if entry.family != "wan_2_1":
-            raise ValueError(f"Wan robotics evaluation requires wan_2_1; got {entry.family!r}")
-        # resolve_model_build rejects raw DictConfig input: project the run's
-        # resolved config through the typed schema and precision policy first.
-        root = parse_config(cfg)
+        entry = get_model_family_entry("wan_2_1")
         precision = PrecisionPolicy.from_section(root.precision)
         build = entry.resolve_model_build(root, device, precision=precision, for_rollout=True)
         bundle = entry.build_rollout(
@@ -318,8 +313,7 @@ def generate_shard(args: argparse.Namespace) -> dict[str, Any]:
 def score_shards(args: argparse.Namespace) -> dict[str, Any]:
     """Validate, score, and atomically publish one paired checkpoint report."""
 
-    run_dir, cfg, config_path = _load_run(args.run_dir)
-    del config_path
+    run_dir, cfg, _root = _load_run(args.run_dir)
     target_values = list(args.target or DEFAULT_TARGETS)
     targets = [_resolve_target(run_dir, value) for value in target_values]
     labels = [target.label for target in targets]
@@ -398,7 +392,9 @@ def score_shards(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def _load_run(run_dir_arg: Path) -> tuple[Path, DictConfig, Path]:
+def _load_run(run_dir_arg: Path) -> tuple[Path, DictConfig, RootConfig]:
+    """The run directory, its resolved config, and that config parsed, checked once."""
+
     run_dir = user_path(run_dir_arg)
     cfg, root = load_resolved_run_config(run_dir)
     if root.model is None:
@@ -408,7 +404,7 @@ def _load_run(run_dir_arg: Path) -> tuple[Path, DictConfig, Path]:
         raise ValueError(f"expected Wan 2.1 T2V run, got {entry.family!r}")
     if root.model.use_lora is not False:
         raise ValueError("Wan robotics checkpoint evaluation accepts full-parameter runs only")
-    return run_dir, cfg, run_dir / RESOLVED_CONFIG_NAME
+    return run_dir, cfg, root
 
 
 def _resolve_target(run_dir: Path, raw_value: str) -> CheckpointTarget:
@@ -439,7 +435,7 @@ def _resolve_target(run_dir: Path, raw_value: str) -> CheckpointTarget:
 
 
 def _build_protocol(
-    cfg: DictConfig,
+    root: RootConfig,
     *,
     config_path: Path,
     limit: int,
@@ -447,7 +443,6 @@ def _build_protocol(
     base_seed: int,
     seed_stride: int,
 ) -> dict[str, Any]:
-    root = parse_config(cfg)
     if root.data is None or root.model is None:
         raise ValueError("training run config needs data and model sections")
     train_path = user_path(str(root.data.manifest))

@@ -11,7 +11,6 @@ from omegaconf import OmegaConf
 from tests.tiny_real_stack import write_tiny_wan_snapshot
 from tests.trainers._checkpoint_helpers import _Trainer
 from vrl.config.precision import PrecisionPolicy
-from vrl.config.schema import parse_config
 from vrl.models.families.registry import get_model_family_entry
 from vrl.scripts.eval import wan_robotics_checkpoint_eval as checkpoint_eval
 from vrl.trainers.checkpointing import save_training_checkpoint
@@ -327,8 +326,7 @@ def _generate_args(run_dir: Path, output_dir: Path, target: str) -> argparse.Nam
 def _save_epoch_checkpoint(run_dir: Path, *, epoch: int, fill: float) -> Path:
     """A real full-parameter checkpoint of the run's model with every weight set to ``fill``."""
 
-    _run_dir, cfg, _config_path = checkpoint_eval._load_run(run_dir)
-    root = parse_config(cfg)
+    _run_dir, _cfg, root = checkpoint_eval._load_run(run_dir)
     entry = get_model_family_entry("wan_2_1")
     build = entry.resolve_model_build(
         root,
