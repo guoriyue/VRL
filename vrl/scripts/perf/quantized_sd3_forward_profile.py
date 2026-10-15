@@ -40,8 +40,7 @@ import torch
 import torch.nn.functional as F
 
 from vrl.nn.quantization import (
-    Fp4Linear,
-    Fp8Linear,
+    QUANTIZATION_SCHEMES,
     LinearTargetProfile,
     QuantizedLinear,
     drop_quantized_masters,
@@ -211,16 +210,6 @@ def _accuracy(output: torch.Tensor, reference: torch.Tensor) -> dict[str, float]
     }
 
 
-def _scheme_linear_cls(scheme: str) -> type[QuantizedLinear]:
-    """Map a CLI scheme name onto the quantized-linear class that owns its policy."""
-
-    schemes: dict[str, type[QuantizedLinear]] = {"fp8": Fp8Linear, "nvfp4": Fp4Linear}
-    try:
-        return schemes[scheme]
-    except KeyError as exc:
-        raise ValueError(f"unsupported quantized scheme {scheme!r}") from exc
-
-
 def _resolve_target_profile(
     scheme: str,
     requested: str,
@@ -229,7 +218,7 @@ def _resolve_target_profile(
         return None
     if requested != "scheme_default":
         return LinearTargetProfile(requested)
-    return _scheme_linear_cls(scheme).default_target_profile
+    return QUANTIZATION_SCHEMES[scheme].default_target_profile
 
 
 def _apply_scheme(
@@ -239,11 +228,9 @@ def _apply_scheme(
 ) -> list[str]:
     if scheme == "bf16":
         return []
-    if target_profile is None:
-        raise ValueError(f"quantized scheme {scheme!r} requires a target profile")
     # An experimental scope is a derived class, so the production scheme classes
     # (and QUANTIZATION_SCHEMES) keep their validated default profile.
-    linear_cls = _scheme_linear_cls(scheme)
+    linear_cls = QUANTIZATION_SCHEMES[scheme]
     scoped_cls = type(
         linear_cls.__name__, (linear_cls,), {"default_target_profile": target_profile}
     )
@@ -259,8 +246,6 @@ def _target_manifest(
     manifest: list[tuple[str, int, int]] = []
     for path in paths:
         module = model.get_submodule(path)
-        if not isinstance(module, QuantizedLinear):
-            raise RuntimeError(f"target path {path!r} is not a QuantizedLinear after swap")
         manifest.append((path, module.in_features, module.out_features))
     return tuple(sorted(manifest))
 
@@ -312,8 +297,6 @@ def _profile_scheme(
     swapped = _apply_scheme(model, scheme, target_profile)
     manifest = _target_manifest(model, swapped)
     if expected_manifest is not None:
-        if expected_scheme is None:
-            raise ValueError("expected_scheme is required with expected_manifest")
         _require_matching_manifest(expected_scheme, expected_manifest, scheme, manifest)
     quantized = [module for module in model.modules() if isinstance(module, QuantizedLinear)]
     if len(quantized) != len(manifest):
