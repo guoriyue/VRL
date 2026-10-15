@@ -25,14 +25,6 @@ from vrl.utils.paths import user_path
 COMMAND_NAME = "derive-text-video-targets"
 
 
-def _add_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--train-manifest", type=Path, required=True)
-    parser.add_argument("--eval-manifest", type=Path, required=True)
-    parser.add_argument("--data-root", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--name", default="droid_full_targets_t2v")
-
-
 def register(subparsers: Any) -> None:
     """Register the derivation command with the canonical dataset setup CLI."""
 
@@ -40,7 +32,11 @@ def register(subparsers: Any) -> None:
         COMMAND_NAME,
         help="Derive text-only T2V manifests from target-backed Video2World rows.",
     )
-    _add_arguments(parser)
+    parser.add_argument("--train-manifest", type=Path, required=True)
+    parser.add_argument("--eval-manifest", type=Path, required=True)
+    parser.add_argument("--data-root", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--name", default="droid_full_targets_t2v")
     parser.set_defaults(func=_cmd_derive_text_video_targets)
 
 
@@ -104,12 +100,6 @@ def _read_manifest(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    _add_arguments(parser)
-    return parser
-
-
 def _cmd_derive_text_video_targets(args: argparse.Namespace) -> None:
     train_source = user_path(args.train_manifest)
     eval_source = user_path(args.eval_manifest)
@@ -153,11 +143,3 @@ def _cmd_derive_text_video_targets(args: argparse.Namespace) -> None:
     report_path = output_dir / f"{args.name}_report.json"
     write_json(report_path, report)
     emit({**report, "report": report_path.as_posix()})
-
-
-def main(argv: list[str] | None = None) -> None:
-    _cmd_derive_text_video_targets(build_parser().parse_args(argv))
-
-
-if __name__ == "__main__":
-    main()
