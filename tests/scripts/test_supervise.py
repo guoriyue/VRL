@@ -381,12 +381,11 @@ def test_build_train_launch_keeps_single_process_direct() -> None:
         parse_config(cfg),
         config="experiment/unit",
         overrides=["trainer.seed=7"],
-        python_executable="/venv/python",
     )
 
     assert launch.expected_world_size == 1
     assert launch.command == (
-        "/venv/python",
+        sys.executable,
         "-m",
         "vrl.scripts.train",
         "--config",
@@ -413,12 +412,11 @@ def test_build_train_launch_uses_one_host_torchrun(strategy: str) -> None:
         parse_config(cfg),
         config="experiment/cosmos",
         overrides=["trainer.total_epochs=2"],
-        python_executable="/venv/python",
     )
 
     assert launch.expected_world_size == 4
     assert launch.command == (
-        "/venv/python",
+        sys.executable,
         "-m",
         "torch.distributed.run",
         "--standalone",
@@ -482,7 +480,7 @@ def test_train_writes_atomic_rank_results_and_failure_wins_aggregation(tmp_path)
         output_dir=out,
         expected_world_size=4,
     )
-    aggregate = supervisor._collect_attempt_result()
+    aggregate = supervisor._collect_attempt_result(exit_code=1)
 
     assert aggregate is not None
     assert aggregate["status"] == "failed"
@@ -550,14 +548,14 @@ def test_distributed_success_requires_every_rank_result(tmp_path) -> None:
         expected_world_size=2,
     )
 
-    incomplete = supervisor._collect_attempt_result()
+    incomplete = supervisor._collect_attempt_result(exit_code=1)
     assert incomplete is not None
     assert incomplete["status"] == "failed"
     assert incomplete["error_class"] == "MissingRankVerdict"
     assert incomplete["missing_ranks"] == [1]
 
     TrainingRunResultWriter(str(out), environ={"RANK": "1", "WORLD_SIZE": "2"}).write()
-    complete = supervisor._collect_attempt_result()
+    complete = supervisor._collect_attempt_result(exit_code=0)
     assert complete is not None
     assert complete["status"] == "success"
 

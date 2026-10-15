@@ -111,11 +111,10 @@ class TrainLaunch:
         *,
         config: str,
         overrides: list[str],
-        python_executable: str | None = None,
     ) -> TrainLaunch:
         """Build the one-host trainer launcher implied by the resolved strategy."""
 
-        executable = python_executable or sys.executable
+        executable = sys.executable
         train_args = ("--config", config, *overrides)
         distributed = root.distributed
         training = None if distributed is None else distributed.training
@@ -612,11 +611,11 @@ class RunSupervisor:
         for path in self.output_dir.glob("training_run_result.rank-*.json"):
             path.unlink(missing_ok=True)
 
-    def _collect_attempt_result(self, *, exit_code: int | None = None) -> dict[str, Any] | None:
+    def _collect_attempt_result(self, *, exit_code: int) -> dict[str, Any] | None:
         aggregate_path = self.output_dir / TRAINING_RUN_RESULT_NAME
         if self.expected_world_size == 1:
             result = self._read_result(aggregate_path)
-            if result is not None and exit_code is not None:
+            if result is not None:
                 result["supervisor_exit_code"] = exit_code
                 write_json(aggregate_path, result)
             return result
@@ -637,8 +636,7 @@ class RunSupervisor:
             rank_results[rank] = result
 
         aggregate = self._aggregate_rank_results(rank_results, missing_ranks)
-        if exit_code is not None:
-            aggregate["supervisor_exit_code"] = exit_code
+        aggregate["supervisor_exit_code"] = exit_code
         write_json(aggregate_path, aggregate)
         return aggregate
 
@@ -750,14 +748,11 @@ class RunSupervisor:
             return exit_code
 
     @staticmethod
-    def _signal_child_group(child: subprocess.Popen, signum: int) -> bool:
+    def _signal_child_group(child: subprocess.Popen, signum: int) -> None:
         if child.poll() is not None:
-            return False
-        try:
+            return
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(child.pid, signum)
-        except ProcessLookupError:
-            return False
-        return True
 
     def _read_result(self, path: Path) -> dict[str, Any] | None:
         try:
