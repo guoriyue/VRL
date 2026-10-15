@@ -9,9 +9,10 @@ training runtime does (``GenericDenoiseBatchExecutor`` applies its
 ``default_*`` values when a request carries none). The dict is intentionally untyped: it is a per-request runtime payload
 handed straight to the generation request, not a launch-time config object.
 
-Note: ``sana_aesthetic_report.resolve_sampling`` is deliberately NOT routed here
-— it returns the frozen ``SANA_EVAL_SAMPLING_CONFIG`` to keep reproducibility
-independent of the training SDE, and must stay separate.
+Note: SANA aesthetic evaluation is deliberately NOT routed here --
+``sana_inference.generate_prompt_images`` always samples with the frozen
+``SANA_EVAL_SAMPLING_CONFIG`` to keep reproducibility independent of the
+training SDE, and must stay separate.
 """
 
 from __future__ import annotations

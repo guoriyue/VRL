@@ -107,7 +107,6 @@ def main(argv: list[str] | None = None) -> None:
 
     targets = _discover_checkpoint_targets(run_dir, root, settings)
     device = resolve_eval_device(args.device)
-    sampling = dict(SANA_EVAL_SAMPLING_CONFIG)
     if root.model is None:
         raise ValueError("SANA checkpoint evaluation requires model configuration")
     identity_precision = PrecisionPolicy.from_section(root.precision)
@@ -134,7 +133,6 @@ def main(argv: list[str] | None = None) -> None:
         targets,
         prompts,
         output_dir=eval_dir,
-        sampling=sampling,
         device=device,
         expected_model_identity=model_identity,
         settings=settings,
@@ -174,7 +172,7 @@ def main(argv: list[str] | None = None) -> None:
         },
         "seed_grid": settings.seed_grid_record(),
         "evaluation_curve": {"checkpoint_interval": settings.checkpoint_interval},
-        "sampling": sampling,
+        "sampling": dict(SANA_EVAL_SAMPLING_CONFIG),
         "scheduler_protocol": dict(SANA_EVAL_SCHEDULER_CONFIG),
         "execution": {"generation_device": str(device)},
         "rewards": [reward_model.to_report_record() for reward_model in reward_models],
@@ -308,7 +306,6 @@ def _generate_images(
     prompts: list[str],
     *,
     output_dir: Path,
-    sampling: dict[str, Any],
     device: Any,
     expected_model_identity: dict[str, Any],
     settings: sana_report.EvaluationSettings | None = None,
@@ -376,7 +373,6 @@ def _generate_images(
                     seed=group_seed,
                     num_images=settings.samples_per_prompt,
                     device=device,
-                    sampling=sampling,
                 )
                 for sample_index, image in enumerate(decoded):
                     path = (

@@ -84,8 +84,6 @@ def generate_prompt_images(
     seed: int,
     num_images: int,
     device: torch.device,
-    sampling: dict[str, Any] | None = None,
-    require_official: bool = True,
 ) -> list[Any]:
     """Generate one prompt group through the official native pipeline."""
 
@@ -93,12 +91,7 @@ def generate_prompt_images(
     if torch.is_autocast_enabled(device.type):
         raise RuntimeError("SANA native inference must run without an outer autocast context")
     require_scheduler(scheduler)
-    protocol = dict(SANA_EVAL_SAMPLING_CONFIG if sampling is None else sampling)
-    if require_official and protocol != SANA_EVAL_SAMPLING_CONFIG:
-        raise ValueError(
-            "SANA quality evaluation sampling changed from the official protocol: "
-            f"{protocol!r} != {SANA_EVAL_SAMPLING_CONFIG!r}",
-        )
+    protocol = SANA_EVAL_SAMPLING_CONFIG
     model.pipeline.scheduler = scheduler
     generator = torch.Generator(device=device).manual_seed(seed)
     with torch.inference_mode():

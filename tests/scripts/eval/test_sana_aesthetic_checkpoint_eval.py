@@ -536,7 +536,6 @@ def test_official_generation_keeps_two_images_in_one_fixed_seed_stream() -> None
         seed=sana_report.EvaluationSettings().group_seed(0),
         num_images=sana_report.EvaluationSettings().samples_per_prompt,
         device=torch.device("cpu"),
-        sampling=dict(sana_inference.SANA_EVAL_SAMPLING_CONFIG),
     )
 
     assert len(decoded) == sana_report.EvaluationSettings().samples_per_prompt
@@ -590,25 +589,6 @@ def test_official_scheduler_uses_build_revision_projection(
         expected_kwargs["revision"] = expected_revision
     assert isinstance(scheduler, diffusers.DPMSolverMultistepScheduler)
     assert calls == [("test/sana", expected_kwargs)]
-
-
-def test_official_generation_rejects_sampling_drift() -> None:
-    changed = dict(sana_inference.SANA_EVAL_SAMPLING_CONFIG)
-    changed["height"] = 512
-
-    with pytest.raises(ValueError, match="changed from the official protocol"):
-        sana_inference.generate_prompt_images(
-            SimpleNamespace(
-                pipeline=SimpleNamespace(),
-                precision=SANA_PRECISION,
-            ),
-            scheduler=build_official_sana_scheduler(),
-            prompt="fox",
-            seed=0,
-            num_images=2,
-            device=torch.device("cpu"),
-            sampling=changed,
-        )
 
 
 def _sana_root(snapshot: Path):
@@ -678,7 +658,6 @@ def test_generation_uses_fresh_base_before_reading_fullparam_checkpoints(
         targets,
         ["fox"],
         output_dir=tmp_path / "eval",
-        sampling=dict(sana_inference.SANA_EVAL_SAMPLING_CONFIG),
         device=torch.device("cpu"),
         expected_model_identity=identity,
     )
@@ -728,7 +707,6 @@ def test_generate_images_rejects_materialized_source_drift_before_generation(
             [CheckpointTarget.base("baseline")],
             ["fox"],
             output_dir=tmp_path / "eval",
-            sampling=dict(sana_inference.SANA_EVAL_SAMPLING_CONFIG),
             device=torch.device("cpu"),
             expected_model_identity={"schema": "unused"},
         )
