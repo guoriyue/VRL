@@ -31,7 +31,7 @@ from collections import defaultdict
 import torch
 
 from vrl.config.loading import load_config
-from vrl.config.precision import PrecisionPolicy, normalize_precision
+from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.scripts.perf.common.diffusion_runtime import build_runtime, make_step_fn, run_e2e
 
@@ -77,20 +77,11 @@ def main(argv=None):
         action="store_true",
         help="torch.compile the transformer before profiling (measures fusion effect)",
     )
-    # Profiler shorthand, not a second public precision schema. Plain tokens select
-    # the rollout base dtype; quantized tokens mean a BF16 base plus selective
-    # rollout GEMMs.
     p.add_argument(
         "--precision",
         default="bf16",
-        choices=["fp32", "fp16", "bf16", "fp8", "nvfp4"],
-        help=("profiler shorthand: fp32/fp16/bf16 base dtype, bf16+fp8, or bf16+nvfp4 rollout"),
-    )
-    p.add_argument(
-        "--fp8-recipe",
-        default="rowwise",
-        choices=["rowwise", "tensorwise"],
-        help="fp8 quant recipe (only with --precision fp8)",
+        choices=["fp32", "fp16", "bf16"],
+        help="rollout base dtype",
     )
     args = p.parse_args(argv)
     if args.steps < 1:
@@ -99,38 +90,19 @@ def main(argv=None):
         p.error("--warmup must be >= 0")
 
     device = torch.device(args.device)
-    precision = normalize_precision(args.precision)
-    fp8 = precision == "fp8"
-    nvfp4 = precision == "nvfp4"
-    rollout_dtype = "bf16" if fp8 or nvfp4 else precision
-    cfg = load_config(args.config, overrides=[f"precision.rollout.dtype={rollout_dtype}"])
+    cfg = load_config(args.config, overrides=[f"precision.rollout.dtype={args.precision}"])
     root = parse_config(cfg)
-    label = f"bf16+fp8/{args.fp8_recipe}" if fp8 else "bf16+nvfp4" if nvfp4 else precision
     sampling = root.sampling
     num_frames = getattr(sampling, "num_frames", None) or 1
     print(
         f"shape {sampling.width}x{sampling.height}x{num_frames}, "
-        f"{sampling.num_steps} steps; precision={label}; profiling {args.steps} steps",
+        f"{sampling.num_steps} steps; precision={args.precision}; profiling {args.steps} steps",
         flush=True,
     )
 
     precision_policy = PrecisionPolicy.from_section(root.precision)
     runtime = build_runtime(root, device, precision=precision_policy)
     model = runtime.model
-    if fp8:
-        swapped = model.quantize_rollout_fp8(recipe=args.fp8_recipe)
-        if not swapped:
-            raise RuntimeError("FP8 profiling matched 0 quantizable policy linears")
-        print(f"fp8/{args.fp8_recipe}: swapped {len(swapped)} transformer linears", flush=True)
-    elif nvfp4:
-        from vrl.nn.quantization import nvfp4_available
-
-        if not nvfp4_available(device):
-            raise SystemExit("nvfp4 profiling requires a Blackwell-class CUDA target")
-        swapped = model.quantize_rollout_nvfp4()
-        if not swapped:
-            raise RuntimeError("NVFP4 profiling matched 0 quantizable policy MLP linears")
-        print(f"nvfp4: swapped {len(swapped)} transformer MLP linears", flush=True)
     if args.compile:
         # use the model's own helper so BOTH self.transformer and pipeline.transformer
         # (forward_step reads self.transformer) point at the compiled module.
