@@ -1,4 +1,5 @@
-# The operator-run judge stays resident on its own device.
+# The operator-run judge stays resident on its own device
+# (vrl/config/reward_service/editreward_qwen25.yaml; start it first).
 reward:
   components:
     editreward: 1.0
