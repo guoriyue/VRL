@@ -221,14 +221,6 @@ def test_swap_targets_aligned_big_mlp_linears_only() -> None:
     assert isinstance(model.proj_out, nn.Linear)
 
 
-def test_attention_mlp_profile_includes_aligned_attention() -> None:
-    model = _Blockish(1024)
-    swapped = Fp4Linear.swap_linears(model, target_profile="attention_mlp")
-    assert swapped == ["to_q", "ff_up"]
-    assert isinstance(model.to_q, Fp4Linear)
-    assert isinstance(model.ff_up, Fp4Linear)
-
-
 # --- runtime wiring (CPU) -----------------------------------------------------
 
 

@@ -121,14 +121,6 @@ def test_swap_targets_big_attention_and_mlp_only():
     assert isinstance(dit.x_embedder, nn.Linear) and not isinstance(dit.x_embedder, Fp8Linear)
 
 
-def test_mlp_only_target_profile_excludes_attention() -> None:
-    dit = _DiT(dim=1024, heads=8, depth=1)
-    swapped = Fp8Linear.swap_linears(dit, target_profile="mlp_only")
-    assert swapped == ["blocks.0.ff.net.0", "blocks.0.ff.net.2"]
-    assert isinstance(dit.blocks[0].attn.to_q, nn.Linear)
-    assert not isinstance(dit.blocks[0].attn.to_q, Fp8Linear)
-
-
 def test_min_features_skips_small_linears():
     dit = _DiT(dim=512, heads=8, depth=1)
     swapped = Fp8Linear.swap_linears(dit, min_features=1024)  # 512 < 1024 → skip all

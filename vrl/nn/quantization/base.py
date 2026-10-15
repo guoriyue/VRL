@@ -62,23 +62,16 @@ class QuantizedLinear(nn.Module):
         *,
         exclude: tuple[str, ...] = DEFAULT_EXCLUDE,
         min_features: int = 1024,
-        target_profile: LinearTargetProfile | str | None = None,
         **init_kwargs: Any,
     ) -> list[str]:
         """Replace eligible ``nn.Linear`` modules under ``root`` with ``cls`` in place.
 
         A Linear is quantized when its dotted path matches no ``exclude``
-        substring, belongs to ``target_profile``, meets ``min_features`` on both
-        dimensions, and passes ``cls.can_replace``. ``init_kwargs`` reach the
+        substring, belongs to ``cls.default_target_profile``, meets
+        ``min_features`` on both dimensions, and passes ``cls.can_replace``. ``init_kwargs`` reach the
         scheme constructor (fp8's ``recipe``). Returns the dotted paths swapped.
         """
 
-        # Resolved before the traversal on purpose: an invalid profile must raise
-        # with the model untouched. It cannot be a signature default either --
-        # ``cls`` does not exist while the ``def`` is evaluated.
-        profile = LinearTargetProfile(
-            cls.default_target_profile if target_profile is None else target_profile
-        )
         swapped: list[str] = []
         # Replaced in place as we go: collecting every target first would keep all
         # source Linears alive beside their quantized copies, roughly doubling the
@@ -90,7 +83,7 @@ class QuantizedLinear(nn.Module):
                 path = f"{parent_path}.{child_name}" if parent_path else child_name
                 if any(token in path for token in exclude):
                     continue
-                if not profile.matches(path):
+                if not cls.default_target_profile.matches(path):
                     continue
                 if child.in_features < min_features or child.out_features < min_features:
                     continue

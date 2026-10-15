@@ -2,8 +2,8 @@
 
 The per-scheme files (``test_fp4.py`` / ``test_fp8.py``) keep the numeric
 parity and targeting tests that differ between formats; the master-weight
-lifecycle and the swap's fail-before-mutation rule are the shared base class
-contract and are asserted here for both schemes.
+lifecycle is the shared base class contract and is asserted here for both
+schemes.
 """
 
 from __future__ import annotations
@@ -61,18 +61,3 @@ def test_drop_quantized_masters_walks_the_tree(scheme: str) -> None:
 
     assert drop_quantized_masters(root) > 0
     assert root[0].weight is None
-
-
-@_SCHEMES
-@pytest.mark.parametrize("use_default", [False, True])
-def test_invalid_target_profile_raises_before_mutation(
-    scheme: str, use_default, monkeypatch
-) -> None:
-    root = nn.Sequential(nn.Linear(1024, 1024))
-    linear_class = QUANTIZATION_SCHEMES[scheme]
-    if use_default:
-        monkeypatch.setattr(linear_class, "default_target_profile", "bogus")
-
-    with pytest.raises(ValueError, match="bogus"):
-        linear_class.swap_linears(root, target_profile=None if use_default else "bogus")
-    assert isinstance(root[0], nn.Linear) and type(root[0]) is nn.Linear

@@ -241,7 +241,13 @@ def _apply_scheme(
         return []
     if target_profile is None:
         raise ValueError(f"quantized scheme {scheme!r} requires a target profile")
-    return _scheme_linear_cls(scheme).swap_linears(model, target_profile=target_profile)
+    # An experimental scope is a derived class, so the production scheme classes
+    # (and QUANTIZATION_SCHEMES) keep their validated default profile.
+    linear_cls = _scheme_linear_cls(scheme)
+    scoped_cls = type(
+        linear_cls.__name__, (linear_cls,), {"default_target_profile": target_profile}
+    )
+    return scoped_cls.swap_linears(model)
 
 
 def _target_manifest(
