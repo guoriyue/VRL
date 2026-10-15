@@ -16,7 +16,7 @@ trainer):
         --path Efficient-Large-Model/Sana_1600M_1024px_diffusers \\
         --dtype fp16 --float32-precision ieee --no-outer-autocast \\
         --prompt "a red fox in the snow" --steps 8 --height 512 --width 512 \\
-        --check-replay --out /tmp/sana_probe.png
+        --check-replay --artifact-dir outputs/probes/sana
 """
 
 from __future__ import annotations
@@ -80,7 +80,6 @@ def build_parser() -> argparse.ArgumentParser:
         "verify rollout correctness slowly",
     )
     parser.add_argument("--max-sequence-length", type=int, default=None)
-    parser.add_argument("--out", default=None, help="save first output image/frame here")
     parser.add_argument(
         "--sde-type",
         default="flow_grpo",
@@ -299,15 +298,6 @@ def main() -> None:
     )
     if not finite or image.std().item() < 1e-3:
         raise SystemExit("[probe] FAIL: output is not finite or has ~zero variance")
-
-    if args.out:
-        from torchvision.utils import save_image
-
-        frame = image
-        if frame.dim() == 5:  # [B, C, T, H, W] -> middle frame
-            frame = frame[:, :, frame.shape[2] // 2]
-        save_image(frame[0].float().cpu().clamp(0, 1), args.out)
-        print(f"[probe] saved {args.out}")
 
     replay_result = None
     if args.check_replay:
