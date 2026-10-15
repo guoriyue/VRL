@@ -17,4 +17,4 @@ algorithm:
 trainer:
   # Generic diffusion GRPO dispatch; family recipes (cosmos) override
   # with their custom entrypoints.
-  entrypoint: vrl.scripts.train:train_online
+  entrypoint: vrl.scripts.common.online:run_online_recipe

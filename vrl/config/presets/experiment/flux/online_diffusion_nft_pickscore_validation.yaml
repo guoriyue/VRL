@@ -51,7 +51,7 @@ rollout:
   sde: { window_range: [0, 10] }
 
 trainer:
-  entrypoint: vrl.scripts.train:train_online
+  entrypoint: vrl.scripts.common.online:run_online_recipe
   output_dir: outputs/flux_diffusion_nft_pickscore_validation
   total_epochs: 256            # paper trains 256 updates
   save_freq: 32

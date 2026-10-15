@@ -8,7 +8,7 @@ defaults:
   - /recipe/online/denoise_grpo
 
 trainer:
-  entrypoint: vrl.scripts.train:train_online
+  entrypoint: vrl.scripts.common.online:run_online_recipe
 
 algorithm:
   # cosmos/wan video GRPO wants a tighter clip than the diffusion default (1e-4);

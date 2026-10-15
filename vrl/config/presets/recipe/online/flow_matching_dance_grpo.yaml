@@ -22,4 +22,4 @@ actor:
 trainer:
   # DanceGRPO trains through the family-agnostic GRPO recipe; the algorithm
   # difference lives in /base/algorithm/dance_grpo, not in a custom entrypoint.
-  entrypoint: vrl.scripts.train:train_online
+  entrypoint: vrl.scripts.common.online:run_online_recipe

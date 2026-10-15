@@ -25,14 +25,6 @@ from vrl.training_run_result import TrainingRunResultWriter
 from vrl.utils.config import import_from_path
 
 
-async def train_online(cfg: DictConfig) -> None:
-    """Run the registry-selected online recipe for any policy semantics."""
-
-    from vrl.scripts.common.online import run_online_recipe
-
-    await run_online_recipe(cfg)
-
-
 def run_config(cfg: DictConfig) -> Any:
     """Run the family trainer named by ``trainer.entrypoint``."""
 
@@ -42,7 +34,7 @@ def run_config(cfg: DictConfig) -> Any:
     import_path = root.trainer.entrypoint if root.trainer is not None else None
     if import_path is None:
         raise ValueError("config missing required field: trainer.entrypoint")
-    if not isinstance(import_path, str) or not import_path.strip():
+    if not import_path.strip():
         raise ValueError("trainer.entrypoint must be a non-empty import path")
     return import_from_path(import_path.strip())(cfg)
 

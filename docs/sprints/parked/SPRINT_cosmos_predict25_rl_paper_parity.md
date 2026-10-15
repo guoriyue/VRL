@@ -82,7 +82,7 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
    家族**(不是 predict2.5),且 v2w 那个是 **Video2World + per-sample 参考图条件**(`/dataset/video_world_v2w`、
    `reference_mode: per_sample`),走另一个数据/入口。
    **→ Implemented (2026-07-08; entrypoint consolidated 2026-07-13):** the current
-   entrypoint is `vrl.scripts.train:train_online`; family/task
+   entrypoint is `vrl.scripts.common.online:run_online_recipe`; family/task
    behavior comes from the registry. The family recipe is
    `vrl/config/presets/recipe/online/cosmos_predict25_grpo.yaml`, with experiment
    `vrl/config/presets/experiment/cosmos_predict2_5/online_grpo_kling_video_reward.yaml` (paper-shaped:

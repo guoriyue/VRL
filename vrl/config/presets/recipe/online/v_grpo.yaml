@@ -19,4 +19,4 @@ rollout:
   denoise_mode: native
 
 trainer:
-  entrypoint: vrl.scripts.train:train_online
+  entrypoint: vrl.scripts.common.online:run_online_recipe

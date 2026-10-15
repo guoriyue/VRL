@@ -7,7 +7,7 @@ defaults:
   - /recipe/online/denoise_grpo
 
 trainer:
-  entrypoint: vrl.scripts.train:train_online
+  entrypoint: vrl.scripts.common.online:run_online_recipe
 
 actor:
   optim:

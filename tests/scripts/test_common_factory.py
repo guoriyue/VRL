@@ -108,7 +108,7 @@ def test_nft_factory_passes_reward_weights_to_component_advantage_protocol() -> 
         "experiment/sd3_5/online_grpo_ocr",
         overrides=[
             "/recipe/online=diffusion_nft",
-            "trainer.entrypoint=vrl.scripts.train:train_online",
+            "trainer.entrypoint=vrl.scripts.common.online:run_online_recipe",
             "algorithm.advantage_combine=normalized_sum",
             "reward.components.locality_keep=0.3",
         ],

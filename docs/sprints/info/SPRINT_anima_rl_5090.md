@@ -22,7 +22,7 @@ checkpoint kept and the blocking reason named.
 | GPU | 1x RTX 5090, 32.6 GB |
 | Repo env | `.venv`, transformers 5.13.0 |
 | Base model | `circlestone-labs/Anima` preview3 (Cosmos Predict2 DiT + Qwen3-0.6B text encoder + Qwen-Image VAE) |
-| Trainer entrypoint | `vrl.scripts.train:train_online` |
+| Trainer entrypoint | `vrl.scripts.common.online:run_online_recipe` |
 
 ## Pre-flight findings (before any training)
 
