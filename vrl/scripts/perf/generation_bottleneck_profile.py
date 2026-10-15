@@ -31,7 +31,6 @@ from collections import defaultdict
 import torch
 
 from vrl.config.loading import load_config
-from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.scripts.perf.common.diffusion_runtime import build_runtime, make_step_fn, run_e2e
 
@@ -100,8 +99,7 @@ def main(argv=None):
         flush=True,
     )
 
-    precision_policy = PrecisionPolicy.from_section(root.precision)
-    runtime = build_runtime(root, device, precision=precision_policy)
+    runtime = build_runtime(root, device)
     model = runtime.model
     if args.compile:
         # use the model's own helper so BOTH self.transformer and pipeline.transformer

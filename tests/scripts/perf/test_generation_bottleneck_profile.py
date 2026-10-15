@@ -49,14 +49,9 @@ def test_monitor_is_reaped_when_profiling_fails(monkeypatch, stage):
         if stage == "forward":
             raise failure
 
-    root = SimpleNamespace(
-        sampling=SimpleNamespace(width=8, height=8, num_steps=1), precision=None
-    )
+    root = SimpleNamespace(sampling=SimpleNamespace(width=8, height=8, num_steps=1))
     monkeypatch.setattr(profiler, "load_config", lambda *a, **kw: root)
     monkeypatch.setattr(profiler, "parse_config", lambda cfg: cfg)
-    monkeypatch.setattr(
-        profiler, "PrecisionPolicy", SimpleNamespace(from_section=lambda value: None)
-    )
     monkeypatch.setattr(profiler, "build_runtime", lambda *a, **kw: SimpleNamespace(model=None))
     monkeypatch.setattr(profiler, "make_step_fn", lambda *a: step)
     monkeypatch.setattr(profiler.torch.cuda, "synchronize", lambda *a: None)

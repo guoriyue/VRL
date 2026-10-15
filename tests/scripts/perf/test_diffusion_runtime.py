@@ -9,7 +9,6 @@ import torch
 from omegaconf import OmegaConf
 
 from tests.tiny_real_stack import TinySanaPipeline, write_tiny_sana_snapshot
-from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.models.families.sana.model import SanaPipelineModel
 from vrl.scripts.perf.common.diffusion_runtime import (
@@ -21,7 +20,7 @@ from vrl.scripts.perf.common.diffusion_runtime import (
 def test_build_runtime_returns_the_family_rollout_bundle(monkeypatch, tmp_path) -> None:
     """``build_runtime`` is registry resolve + family build with no projection of
     its own: on the tiny SANA snapshot it yields the real family model at the
-    caller's precision, loaded once."""
+    config's rollout precision, loaded once."""
 
     snapshot = write_tiny_sana_snapshot(tmp_path / "sana-snapshot")
     pipeline = TinySanaPipeline()
@@ -43,9 +42,7 @@ def test_build_runtime_returns_the_family_rollout_bundle(monkeypatch, tmp_path) 
             },
         ),
     )
-    precision = PrecisionPolicy.from_section(root.precision)
-
-    bundle = build_runtime(root, torch.device("cpu"), precision=precision)
+    bundle = build_runtime(root, torch.device("cpu"))
 
     assert isinstance(bundle.model, SanaPipelineModel)
     assert bundle.model.pipeline is pipeline

@@ -7,22 +7,17 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from vrl.config.precision import PrecisionPolicy
 from vrl.generation.types import DenoiseRequest
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
 from vrl.models.interfaces import RuntimeBundle
 from vrl.scripts.perf.common.diffusion_benchmark import DIFFUSION_BENCHMARK_PROMPT
 
 if TYPE_CHECKING:
-    from vrl.config.precision import PrecisionPolicy
     from vrl.config.schema import RootConfig
 
 
-def build_runtime(
-    root: RootConfig,
-    device,
-    *,
-    precision: PrecisionPolicy,
-) -> RuntimeBundle:
+def build_runtime(root: RootConfig, device) -> RuntimeBundle:
     """Build a registered diffusion rollout runtime from its resolved config."""
 
     from vrl.models.families.registry import (
@@ -32,7 +27,9 @@ def build_runtime(
     if root.model is None:
         raise ValueError("diffusion performance probe requires model configuration")
     entry = get_model_family_entry(str(root.model.family))
-    build = entry.resolve_model_build(root, device, precision=precision)
+    build = entry.resolve_model_build(
+        root, device, precision=PrecisionPolicy.from_section(root.precision)
+    )
     return entry.build_rollout(build, expected_identity=None)
 
 

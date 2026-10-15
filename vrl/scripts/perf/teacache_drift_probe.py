@@ -37,7 +37,6 @@ import torch
 
 from vrl.algorithms.logprob_mismatch import LogprobMismatchStats
 from vrl.config.loading import load_config
-from vrl.config.precision import PrecisionPolicy
 from vrl.config.schema import parse_config
 from vrl.generation.steps.denoise.teacache import TeaCacheConfig, TeaCacheState, relative_l1_change
 from vrl.math.denoise.flow_matching import sde_step_with_logprob
@@ -193,7 +192,6 @@ def main(argv=None):
 
     cfg = load_config(args.config)
     root = parse_config(cfg)
-    precision = PrecisionPolicy.from_section(root.precision)
     device = torch.device(args.device)
     dtype = torch.bfloat16
     # This one-shot probe owns its historical BF16 context locally, so it
@@ -201,7 +199,7 @@ def main(argv=None):
     # instead of silently diverging from the resolved rollout role.
     from vrl.models.dtypes import dtype_to_precision_token
 
-    runtime = build_runtime(root, device, precision=precision)
+    runtime = build_runtime(root, device)
     token = dtype_to_precision_token(dtype)
     if runtime.precision.dtype != token:
         raise ValueError(
