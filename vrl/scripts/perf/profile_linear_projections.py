@@ -57,8 +57,6 @@ logger = init_logger(__name__)
 
 __all__ = [
     "Breakdown",
-    "apply_qkv_fusion",
-    "build_synthetic_inputs",
     "classify_linear",
     "instrument_linear_projections",
     "profile_linear_projections",
@@ -291,25 +289,6 @@ def profile_linear_projections(
     return bd
 
 
-def apply_qkv_fusion(model: nn.Module, family: str) -> bool:
-    """Fuse to_q/to_k/to_v into a single to_qkv GEMM where the model supports it.
-
-    Returns True if fusion was applied. SD3/Wan expose ``fuse_qkv_projections()``;
-    Cosmos has no public fuse API (would need a custom fused attention processor).
-    Mathematically equivalent -- only the GEMM shape/launch count changes.
-    """
-
-    if hasattr(model, "fuse_qkv_projections"):
-        model.fuse_qkv_projections()
-        logger.info("applied fuse_qkv_projections() to %s", family)
-        return True
-    logger.warning(
-        "%s has no fuse_qkv_projections() -- skipping (e.g. Cosmos needs a custom fused processor)",
-        family,
-    )
-    return False
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -366,7 +345,14 @@ def main() -> None:
             return model(**kwargs)
 
     if args.fuse_qkv:
-        apply_qkv_fusion(model, args.family)
+        # SD3/Wan expose fuse_qkv_projections(); Cosmos has no public fuse API (it
+        # would need a custom fused attention processor). Mathematically
+        # equivalent -- only the GEMM shape/launch count changes.
+        if hasattr(model, "fuse_qkv_projections"):
+            model.fuse_qkv_projections()
+            logger.info("applied fuse_qkv_projections() to %s", args.family)
+        else:
+            logger.warning("%s has no fuse_qkv_projections() -- skipping", args.family)
     bd = profile_linear_projections(
         model, forward_fn, device=device, warmup=args.warmup, active=args.active
     )
